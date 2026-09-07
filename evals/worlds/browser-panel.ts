@@ -1,3 +1,4 @@
+import { browserScript, browserSource } from "@openwork/cdp";
 import { control } from "@openwork/behaviors";
 import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets, navigate } from "@openwork/cdp";
 import type { AttachedSurface, CdpClient, Surface } from "@openwork/cdp";
@@ -55,7 +56,12 @@ export const INPUT_PROBE_PAGE = `data:text/html;charset=utf-8,${encodeURICompone
   '<!doctype html><title>input-probe</title>'
   + '<body style="margin:0"><button id="hit" style="position:fixed;inset:0 0 50% 0;font-size:24px">hit</button>'
   + '<input id="field" style="position:fixed;top:60%;left:10px;width:300px;font-size:24px">'
-  + '<script>window.__clicks=0;document.getElementById("hit").addEventListener("click",()=>{window.__clicks+=1});</script>',
+  + `<script>${browserSource(() => {
+    window.__clicks = 0;
+    const button = document.getElementById("hit");
+    if (!button) throw new Error("Input probe button missing");
+    button.addEventListener("click", () => { window.__clicks += 1; });
+  })}</script>`,
 )}`;
 
 function pngSize(png: Buffer): Viewport {
@@ -113,7 +119,7 @@ function stringField(value: unknown): string {
  * browser; the response body is irrelevant to the viewport journey.
  */
 async function embeddedServerUrl(seed: Seed, app: Surface): Promise<string> {
-  const info = await seed.evalIn(app, `window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo")`, { awaitPromise: true });
+  const info = await seed.evalIn(app, () => (window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo")), { awaitPromise: true });
   if (!isRecord(info) || info.running !== true) throw new Error("The embedded OpenWork server is not running.");
   return stringField(info.baseUrl).replace(/\/+$/, "");
 }
@@ -121,7 +127,7 @@ async function embeddedServerUrl(seed: Seed, app: Surface): Promise<string> {
 async function loginWitnessUrl(seed: Seed, app: Surface): Promise<string> {
   return stringField(await seed.evalIn(
     app,
-    "window.__OPENWORK_ELECTRON__.browserLogins.testWitnessUrl()",
+    () => (window.__OPENWORK_ELECTRON__.browserLogins.testWitnessUrl()),
     { awaitPromise: true },
   ));
 }
@@ -173,9 +179,10 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
       const url = `${origin}/?viewport-probe=transcript-link&source=chat%20link#working-page`;
       const artifactName = "browser-handoff.md";
       const artifactText = "Keep these notes open while following the research link.";
-      await seed.evalIn(app, `async (workspaceId, sessionId, url, artifactName, artifactText, fileUrl) => {
+      await seed.evalIn(app, browserScript(async (workspaceId, sessionId, url, artifactName, artifactText, fileUrl) => {
         const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
-        const base = info.baseUrl.replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId);
+        if (!info.baseUrl) throw new Error("Missing local server URL");
+        const base = info.baseUrl.replace(/\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId);
         const headers = { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken), "Content-Type": "application/json" };
         const file = await fetch(base + "/files/content", {
           method: "POST", headers, signal: AbortSignal.timeout(15000),
@@ -192,14 +199,10 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
         });
         if (!message.ok) throw new Error("Could not seed the transcript link: " + message.status);
         const saved = await message.json();
-        if (!Array.isArray(saved.parts) || !saved.parts.some(part => part.type === "text" && part.text.includes(url))) {
+        if (!Array.isArray(saved.parts) || !saved.parts.some((part: { type?: string; text?: string }) => part.type === "text" && part.text?.includes(url))) {
           throw new Error("Transcript seed did not persist the requested link.");
         }
-      }`, {
-        args: [workspace.workspaceId, sessionId, url, artifactName, artifactText, new URL(`file://${workspacePath}/${artifactName}`).href],
-        awaitPromise: true,
-        timeoutMs: 50_000,
-      });
+      }, [workspace.workspaceId, sessionId, url, artifactName, artifactText, new URL(`file://${workspacePath}/${artifactName}`).href]), { awaitPromise: true, timeoutMs: 50_000 });
       return { url, artifactName, artifactText };
     },
 
@@ -223,7 +226,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
       const deadline = Date.now() + 30_000;
       let routed = false;
       while (Date.now() < deadline) {
-        const actions = await seed.evalIn(app, "window.__openworkControl.listActions().map((action) => action.id)");
+        const actions = await seed.evalIn(app, () => (window.__openworkControl.listActions().map((action) => action.id)));
         if (Array.isArray(actions) && actions.includes("session.open")) {
           await control(app, "session.open", { sessionId });
           return;
@@ -242,7 +245,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
       const url = `${origin}/?viewport-probe=${encodeURIComponent(name)}`;
       const result = await seed.evalIn(
         app,
-        `window.__OPENWORK_ELECTRON__.browser.openUrl(${JSON.stringify(url)})`,
+        browserScript((url) => (window.__OPENWORK_ELECTRON__.browser.openUrl(url)), [url]),
         { awaitPromise: true, timeoutMs: 30_000 },
       );
       if (!isRecord(result)) throw new Error("browser.openUrl returned no handle.");
@@ -258,7 +261,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
       const url = `${await loginWitnessUrl(seed, app)}/?login-probe=${encodeURIComponent(name)}`;
       const result = await seed.evalIn(
         app,
-        `window.__OPENWORK_ELECTRON__.browser.openUrl(${JSON.stringify(url)})`,
+        browserScript((url) => (window.__OPENWORK_ELECTRON__.browser.openUrl(url)), [url]),
         { awaitPromise: true, timeoutMs: 30_000 },
       );
       if (!isRecord(result)) throw new Error("browser.openUrl returned no login witness handle.");
@@ -270,11 +273,11 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
       const url = `${await loginWitnessUrl(seed, app)}/?login-probe=${encodeURIComponent(name)}`;
       const result = await seed.evalIn(
         app,
-        `window.__openworkControl.command(${JSON.stringify({
+        browserScript((value) => (window.__openworkControl.command(value)), [{
           id: "browser.open_url",
           args: { url, provider: "builtin" },
           origin: { sessionId: ownerSessionId },
-        })})`,
+        }]),
         { awaitPromise: true, timeoutMs: 30_000 },
       );
       if (!isRecord(result) || result.ok !== true || !isRecord(result.result)) {
@@ -299,11 +302,11 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
       const url = `${origin}/?viewport-probe=${encodeURIComponent(name)}`;
       const result = await seed.evalIn(
         app,
-        `window.__openworkControl.command(${JSON.stringify({
+        browserScript((value) => (window.__openworkControl.command(value)), [{
           id: "browser.open_url",
           args: { url, provider: "builtin" },
           origin: { sessionId: ownerSessionId },
-        })})`,
+        }]),
         { awaitPromise: true, timeoutMs: 30_000 },
       );
       if (!isRecord(result) || result.ok !== true || !isRecord(result.result)) {
@@ -331,7 +334,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
       const storePath = `${directory}/cookies.sqlite`;
       const result = await seed.evalIn(
         app,
-        `window.__OPENWORK_ELECTRON__.browserLogins.writeTestStore(${JSON.stringify({ path: storePath, cookies })})`,
+        browserScript((value) => (window.__OPENWORK_ELECTRON__.browserLogins.writeTestStore(value)), [{ path: storePath, cookies }]),
         { awaitPromise: true, timeoutMs: 30_000 },
       );
       if (!isRecord(result)) throw new Error("The eval seam did not register a login store.");
@@ -342,7 +345,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
     async updateLoginStore(storePath: string, cookies: Array<Record<string, unknown>>): Promise<void> {
       const result = await seed.evalIn(
         app,
-        `window.__OPENWORK_ELECTRON__.browserLogins.writeTestStore(${JSON.stringify({ path: storePath, cookies })})`,
+        browserScript((value) => (window.__OPENWORK_ELECTRON__.browserLogins.writeTestStore(value)), [{ path: storePath, cookies }]),
         { awaitPromise: true, timeoutMs: 30_000 },
       );
       if (!isRecord(result)) throw new Error("The eval seam did not update the login store.");
@@ -357,9 +360,9 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
     async readCheckedSyncSites(): Promise<string[]> {
       const result = await seed.evalIn(
         app,
-        `[...document.querySelectorAll('[data-testid^="login-sync-site-"]')]
+        () => ([...document.querySelectorAll<HTMLElement>('[data-testid^="login-sync-site-"]')]
           .filter((element) => element.getAttribute("aria-checked") === "true" || element.hasAttribute("data-checked"))
-          .map((element) => element.getAttribute("data-testid").slice("login-sync-site-".length))`,
+          .map((element) => (element.getAttribute("data-testid") ?? "").slice("login-sync-site-".length))),
       );
       if (!Array.isArray(result)) throw new Error("The sync dialog did not report its checked sites.");
       return result.map(String);
@@ -367,30 +370,30 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
 
     /** Sites the built-in browser is signed in to, as Settings shows them. */
     async signedInSites(): Promise<string[]> {
-      const result = await seed.evalIn(app, "window.__OPENWORK_ELECTRON__.browserLogins.signedInSites()", { awaitPromise: true });
+      const result = await seed.evalIn(app, () => (window.__OPENWORK_ELECTRON__.browserLogins.signedInSites()), { awaitPromise: true });
       if (!Array.isArray(result)) throw new Error("The desktop bridge did not list signed-in sites.");
       return result.map((site) => (isRecord(site) ? stringField(site.site) : "")).filter(Boolean);
     },
 
     /** Renderer-safe sync metadata, never cookie values. */
     async loginSyncState(): Promise<Record<string, unknown>> {
-      const result = await seed.evalIn(app, "window.__OPENWORK_ELECTRON__.browserLogins.state()", { awaitPromise: true });
+      const result = await seed.evalIn(app, () => (window.__OPENWORK_ELECTRON__.browserLogins.state()), { awaitPromise: true });
       if (!isRecord(result)) throw new Error("The desktop bridge did not report browser login sync state.");
       return result;
     },
 
     async pauseLoginSync(): Promise<void> {
-      await seed.evalIn(app, "window.__OPENWORK_ELECTRON__.browserLogins.pause()", { awaitPromise: true });
+      await seed.evalIn(app, () => (window.__OPENWORK_ELECTRON__.browserLogins.pause()), { awaitPromise: true });
     },
 
     /** What the witness page observes without exposing an HttpOnly cookie value. */
     async readLoginWitness(tab: BuiltinBrowserTab): Promise<string> {
-      return withTabClient(app, tab.targetId, async (client) => String(await evaluate(client, "document.body.dataset.loginState")));
+      return withTabClient(app, tab.targetId, async (client) => String(await evaluate(client, () => (document.body.dataset.loginState))));
     },
 
     /** What the page inside a tab can read from `document.cookie`. */
     async readDocumentCookie(tab: BuiltinBrowserTab): Promise<string> {
-      return withTabClient(app, tab.targetId, async (client) => String(await evaluate(client, "document.cookie")));
+      return withTabClient(app, tab.targetId, async (client) => String(await evaluate(client, () => (document.cookie))));
     },
 
     /** Navigate the existing CDP page without opening a replacement tab. */
@@ -404,7 +407,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
         await client.send("Page.reload");
         const deadline = Date.now() + 15_000;
         while (Date.now() < deadline) {
-          if ((await evaluate(client, "document.readyState")) === "complete") return;
+          if ((await evaluate(client, () => (document.readyState))) === "complete") return;
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
       });
@@ -414,7 +417,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
     async readBrowserState(): Promise<BrowserState> {
       return parseBrowserState(await seed.evalIn(
         app,
-        "window.__OPENWORK_ELECTRON__.browser.getState()",
+        () => (window.__OPENWORK_ELECTRON__.browser.getState()),
         { awaitPromise: true },
       ));
     },
@@ -429,7 +432,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
     /** The viewport a tab lays out for and whether its page believes it has focus. */
     async readPageProbe(tab: BuiltinBrowserTab): Promise<PageProbe> {
       return withTabClient(app, tab.targetId, async (client) => parsePageProbe(
-        await evaluate(client, "({ width: window.innerWidth, height: window.innerHeight, hasFocus: document.hasFocus() })"),
+        await evaluate(client, () => (({ width: window.innerWidth, height: window.innerHeight, hasFocus: document.hasFocus() }))),
       ));
     },
 
@@ -444,7 +447,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
         await navigate(client, INPUT_PROBE_PAGE);
         const deadline = Date.now() + 15_000;
         while (Date.now() < deadline) {
-          if ((await evaluate(client, "document.title")) === "input-probe") return;
+          if ((await evaluate(client, () => (document.title))) === "input-probe") return;
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
         throw new Error("The input probe page did not load in the built-in browser tab.");
@@ -456,12 +459,12 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
       return withTabClient(app, tab.targetId, async (client) => {
         await client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: 100, y: 100, button: "left", clickCount: 1 });
         await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 100, y: 100, button: "left", clickCount: 1 });
-        await evaluate(client, "document.getElementById('field').focus()");
+        await evaluate(client, () => (document.getElementById('field')?.focus()));
         for (const char of text) {
           await client.send("Input.dispatchKeyEvent", { type: "keyDown", text: char });
           await client.send("Input.dispatchKeyEvent", { type: "keyUp", text: char });
         }
-        const result = await evaluate(client, "({ clicks: window.__clicks, value: document.getElementById('field').value })");
+        const result = await evaluate(client, () => (({ clicks: window.__clicks, value: document.querySelector<HTMLInputElement>('#field')?.value })));
         if (!isRecord(result) || typeof result.clicks !== "number" || typeof result.value !== "string") {
           throw new Error("The input probe page did not report clicks and typed text.");
         }
@@ -472,7 +475,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
     /** Observe the existing document without focusing its hidden native view. */
     async readInputProbe(tab: BuiltinBrowserTab): Promise<unknown> {
       return withTabClient(app, tab.targetId, (client) => evaluate(client,
-        "({ clicks: window.__clicks, value: document.getElementById('field').value })"));
+        () => (({ clicks: window.__clicks, value: document.querySelector<HTMLInputElement>('#field')?.value }))));
     },
 
     /**
@@ -493,7 +496,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
     /** The viewport the page inside a tab is laying out for right now. */
     async readViewport(tab: BuiltinBrowserTab): Promise<Viewport> {
       return withTabClient(app, tab.targetId, async (client) => parseViewport(
-        await evaluate(client, "({ width: window.innerWidth, height: window.innerHeight })"),
+        await evaluate(client, () => (({ width: window.innerWidth, height: window.innerHeight }))),
       ));
     },
   };
@@ -523,9 +526,9 @@ export async function transcriptLinkWorld(seed: Seed, world: Awaited<ReturnType<
   const origin = await embeddedServerUrl(seed, app);
   const linkUrl = `${origin}/?link-context=alpha%20beta&encoded=%2Fkeep%3Fyes%3D1#thread-link`;
   const note = "Keep this note in its own conversation.";
-  await seed.evalIn(app, `async (workspaceId, sessionId, note, url) => {
+  await seed.evalIn(app, browserScript(async (workspaceId, sessionId, note, url) => {
     const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
-    const response = await fetch(info.baseUrl.replace(/\\/+$/, "")
+    const response = await fetch(String(info.baseUrl).replace(/\/+$/, "")
       + "/workspace/" + encodeURIComponent(workspaceId)
       + "/opencode/session/" + encodeURIComponent(sessionId) + "/message", {
       method: "POST",
@@ -538,7 +541,7 @@ export async function transcriptLinkWorld(seed: Seed, world: Awaited<ReturnType<
     });
     if (!response.ok) throw new Error("Transcript message seed failed: " + response.status);
     return true;
-  }`, { args: [workspace.workspaceId, reading.sessionId, note, linkUrl], awaitPromise: true, timeoutMs: 35_000 });
+  }, [workspace.workspaceId, reading.sessionId, note, linkUrl]), { awaitPromise: true, timeoutMs: 35_000 });
   await world.showSession(reading.sessionId);
 
   return {
@@ -550,19 +553,19 @@ export async function transcriptLinkWorld(seed: Seed, world: Awaited<ReturnType<
     note,
 
     async readLink() {
-      return evaluate(app.client, `(() => {
-        const link = [...document.querySelectorAll('[data-message-role="user"] a[href]')]
-          .find(node => node.getAttribute("href") === ${JSON.stringify(linkUrl)});
-        return link ? { href: link.href, sessionId: link.closest("[data-session-surface-id]")?.dataset.sessionSurfaceId } : null;
-      })()`);
+      return evaluate(app.client, browserScript((linkUrl) => {
+        const link = [...document.querySelectorAll<HTMLAnchorElement>('[data-message-role="user"] a[href]')]
+          .find(node => node.getAttribute("href") === linkUrl);
+        return link ? { href: link.href, sessionId: link.closest<HTMLElement>("[data-session-surface-id]")?.dataset.sessionSurfaceId } : null;
+      }, [linkUrl]));
     },
 
     async readMainUrl() {
-      return evaluate(app.client, "location.href");
+      return evaluate(app.client, () => (location.href));
     },
 
     async readClipboard() {
-      return evaluate(app.client, "navigator.clipboard.readText()", { awaitPromise: true });
+      return evaluate(app.client, () => (navigator.clipboard.readText()), { awaitPromise: true });
     },
 
     /** Exclude the menu document, but include popups and all built-in pages. */
@@ -588,14 +591,14 @@ export async function transcriptLinkWorld(seed: Seed, world: Awaited<ReturnType<
     },
 
     async menuLabels(surface: Surface) {
-      return evaluate(surface.client, `Array.from(document.querySelectorAll('[role="menu"]'),
-        menu => menu.getAttribute("aria-label"))`);
+      return evaluate(surface.client, () => (Array.from(document.querySelectorAll<HTMLElement>('[role="menu"]'),
+        menu => menu.getAttribute("aria-label"))));
     },
 
     async menuShown(surface: Surface) {
       // Chromium can retain document.hasFocus() on a detached native view. The
       // renderer clears its menu on dismissal, so stale choices cannot persist.
-      return await evaluate(surface.client, 'Boolean(document.querySelector(\'[role="menu"]\'))') === true;
+      return await evaluate(surface.client, () => (Boolean(document.querySelector<HTMLElement>('[role="menu"]')))) === true;
     },
 
     async closePopup(targetId: string) {

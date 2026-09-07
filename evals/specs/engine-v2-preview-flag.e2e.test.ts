@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,21 +72,21 @@ async function serverFetchJson(
   const timeoutMs = init.timeoutMs ?? 15_000;
   const requestBody = init.body === undefined ? undefined : JSON.stringify(init.body);
   if (init.body !== undefined && requestBody === undefined) throw new Error(`Could not serialize request body for ${path}`);
-  const value = await evalIn(app, `(async () => {
+  const value = await evalIn(app, browserScript(async (path, value, inputValue, timeoutMs) => {
     const port = (localStorage.getItem("openwork.server.port") ?? "").trim();
     const token = (localStorage.getItem("openwork.server.token") ?? "").trim();
     if (!port || !token) return { specProbeError: "missing local server credentials" };
-    const response = await fetch("http://127.0.0.1:" + port + ${JSON.stringify(path)}, {
-      method: ${JSON.stringify(init.method ?? "GET")},
+    const response = await fetch("http://127.0.0.1:" + port + path, {
+      method: value,
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-      ${requestBody === undefined ? "" : `body: ${JSON.stringify(requestBody)},`}
-      signal: AbortSignal.timeout(${timeoutMs}),
+      body: inputValue,
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await response.text();
     let json = text;
     try { json = JSON.parse(text); } catch {}
     return { status: response.status, json };
-  })()`, { awaitPromise: true, timeoutMs: timeoutMs + 5_000 });
+  }, [path, init.method ?? "GET", requestBody ?? null, timeoutMs]), { awaitPromise: true, timeoutMs: timeoutMs + 5_000 });
   if (!isRecord(value) || typeof value.status !== "number" || !("json" in value)) {
     throw new Error(`Server request ${path} failed: ${JSON.stringify(value)}`);
   }
@@ -115,8 +116,8 @@ async function untilStatus(
 }
 
 async function clickEngineOption(app: Parameters<typeof evalIn>[0], engine: "v1" | "v2"): Promise<void> {
-  const point = await evalIn(app, `(() => {
-    const control = Array.from(document.querySelectorAll('[aria-label="Chat engine"] [data-engine="${engine}"]'))
+  const point = await evalIn(app, browserScript((engine) => {
+    const control = Array.from(document.querySelectorAll<HTMLElement>(`[aria-label="Chat engine"] [data-engine="${engine}"]`))
       .find((candidate) => {
         const rect = candidate.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
@@ -125,7 +126,7 @@ async function clickEngineOption(app: Parameters<typeof evalIn>[0], engine: "v1"
     control.scrollIntoView({ block: "center", behavior: "instant" });
     const rect = control.getBoundingClientRect();
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-  })()`);
+  }, [engine]));
   if (
     !isRecord(point)
     || typeof point.x !== "number"
@@ -138,18 +139,18 @@ async function clickEngineOption(app: Parameters<typeof evalIn>[0], engine: "v1"
   await app.client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
 }
 
-const engineSelectedExpression = (engine: "v1" | "v2") => `(() => {
-  const group = document.querySelector('[aria-label="Chat engine"]');
-  const control = group?.querySelector('[data-engine="${engine}"]');
+const engineSelectedExpression = (engine: "v1" | "v2") => browserScript((engine) => {
+  const group = document.querySelector<HTMLElement>('[aria-label="Chat engine"]');
+  const control = group?.querySelector<HTMLElement>(`[data-engine="${engine}"]`);
   return control?.getAttribute("aria-pressed") === "true" || control?.getAttribute("data-state") === "on";
-})()`;
+}, [engine]);
 
-const engineReadyExpression = `(() => {
-  const group = document.querySelector('[aria-label="Chat engine"]');
+const engineReadyExpression = () => {
+  const group = document.querySelector<HTMLElement>('[aria-label="Chat engine"]');
   if (!group || group.getAttribute("aria-disabled") === "true" || group.hasAttribute("data-disabled")) return false;
-  const control = group.querySelector('[data-engine="v1"]');
+  const control = group.querySelector<HTMLElement>('[data-engine="v1"]');
   return control?.getAttribute("aria-pressed") === "true" || control?.getAttribute("data-state") === "on";
-})()`;
+};
 
 test.skipIf(!enabled)(title, async ({ evidence, place }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
@@ -205,7 +206,7 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
     const pid0 = runningStatus.pid;
     if (pid0 === undefined) throw new Error("Running OpenCode v2 status did not contain a pid");
     expect(runningStatus.chatRouting).toBe(true);
-    await waitFor(app, `document.body.innerText.includes("Running v")`, {
+    await waitFor(app, () => (document.body.innerText.includes("Running v")), {
       timeoutMs: 30_000,
       label: "OpenCode v2 running status line",
     });

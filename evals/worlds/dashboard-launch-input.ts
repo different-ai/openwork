@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import type { Den, Seed } from "@openwork/env";
 import { evalIn as rawEvalIn } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
@@ -155,28 +156,28 @@ export async function atlassianDashboardTiles(seed: Seed) {
   // product writes: the central Cloud MCP entry plus the private App-host
   // authorization. This is the documented reconcile surface, not a stub.
   // TODO(primitive): seed.connectMcp
-  const reconciled = await rawEvalIn(app, `(async () => {
+  const reconciled = await rawEvalIn(app, browserScript(async (workspaceId, value, inputValue, inputValue2) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return "missing local server credentials";
-    const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(${JSON.stringify(workspace.workspaceId)}) + "/mcp/openwork-cloud/reconcile", {
+    const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/mcp/openwork-cloud/reconcile", {
       method: "POST",
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
       body: JSON.stringify({
         config: {
           type: "remote",
-          url: ${JSON.stringify(`${den.ref.apiUrl}/mcp/agent`)},
+          url: value,
           enabled: true,
-          headers: { Authorization: ${JSON.stringify(`Bearer ${mcpToken}`)} },
+          headers: { Authorization: inputValue },
           oauth: false,
         },
-        appHostAuthorization: ${JSON.stringify(`Bearer ${appHostToken}`)},
+        appHostAuthorization: inputValue2,
         trigger: "dashboard-launch-input-world",
       }),
     });
     const text = await response.text();
     return response.ok ? "ok" : "HTTP " + response.status + " " + text.slice(0, 1_000);
-  })()`, { awaitPromise: true, timeoutMs: 120_000 });
+  }, [workspace.workspaceId, `${den.ref.apiUrl}/mcp/agent`, `Bearer ${mcpToken}`, `Bearer ${appHostToken}`]), { awaitPromise: true, timeoutMs: 120_000 });
   if (reconciled !== "ok") throw new Error(`Reconciling Connect MCP for the desktop failed: ${String(reconciled)}`);
 
   const section = `[data-granted-dashboard="${dashboardId}"]`;
@@ -193,7 +194,7 @@ export async function atlassianDashboardTiles(seed: Seed) {
      */
     // TODO(primitive): user.click({ role: "button", text: "Dashboard" }) should locate the sidebar rail entry and open a collapsed sidebar.
     async openDashboard(): Promise<boolean> {
-      const opened = await rawEvalIn(app, `(() => {
+      const opened = await rawEvalIn(app, () => {
         const button = [...document.querySelectorAll("button")]
           .find((entry) => entry.textContent?.trim() === "Dashboard");
         if (button instanceof HTMLButtonElement && !button.disabled) {
@@ -213,42 +214,42 @@ export async function atlassianDashboardTiles(seed: Seed) {
           if (toggle instanceof HTMLButtonElement) toggle.click();
         }
         return false;
-      })()`);
+      });
       return opened === true;
     },
     /** True once both granted tiles render with their Run buttons. */
     // TODO(primitive): probe.dashboardTiles should expose granted tiles and their launch controls.
     async tilesReady(): Promise<boolean> {
-      const ready = await rawEvalIn(app, `(() => {
-        const section = document.querySelector(${JSON.stringify(section)});
+      const ready = await rawEvalIn(app, browserScript((inputSection, confluenceTileTitle, jiraTileTitle, inputConfluenceTileTitle, inputJiraTileTitle) => {
+        const section = document.querySelector<HTMLElement>(inputSection);
         return section instanceof HTMLElement
-          && section.innerText.includes(${JSON.stringify(confluenceTileTitle)})
-          && section.innerText.includes(${JSON.stringify(jiraTileTitle)})
-          && Boolean(section.querySelector('button[aria-label="Run ${confluenceTileTitle}"]'))
-          && Boolean(section.querySelector('button[aria-label="Run ${jiraTileTitle}"]'));
-      })()`);
+          && section.innerText.includes(confluenceTileTitle)
+          && section.innerText.includes(jiraTileTitle)
+          && Boolean(section.querySelector<HTMLElement>(`button[aria-label="Run ${inputConfluenceTileTitle}"]`))
+          && Boolean(section.querySelector<HTMLElement>(`button[aria-label="Run ${inputJiraTileTitle}"]`));
+      }, [section, confluenceTileTitle, jiraTileTitle, confluenceTileTitle, jiraTileTitle]));
       return ready === true;
     },
     /** The member-visible state of both tiles. */
     // TODO(primitive): probe.dashboardTiles
     async tiles(): Promise<DashboardTilesFacts> {
-      const value = await rawEvalIn(app, `(() => {
-        const section = document.querySelector(${JSON.stringify(section)});
+      const value = await rawEvalIn(app, browserScript((inputSection, confluenceTileTitle, jiraTileTitle) => {
+        const section = document.querySelector<HTMLElement>(inputSection);
         if (!(section instanceof HTMLElement)) return null;
-        const tiles = [...section.querySelectorAll("[data-dashboard-entry]")];
-        const read = (title) => {
+        const tiles = [...section.querySelectorAll<HTMLElement>("[data-dashboard-entry]")];
+        const read = (title: string) => {
           const tile = tiles.find((entry) => entry.textContent?.includes(title));
           if (!(tile instanceof HTMLElement)) return null;
           return {
-            text: tile.innerText.replace(/\\s+/g, " ").trim(),
+            text: tile.innerText.replace(/\s+/g, " ").trim(),
             badgeFailed: tile.innerText.includes("Refresh failed"),
             opaque: tile.innerText.includes("Unexpected server error"),
             namesCloudId: tile.innerText.includes("cloudId"),
           };
         };
-        return { confluence: read(${JSON.stringify(confluenceTileTitle)}), jql: read(${JSON.stringify(jiraTileTitle)}) };
-      })()`);
-      const facts = isRecord(value) ? value : {};
+        return { confluence: read(confluenceTileTitle), jql: read(jiraTileTitle) };
+      }, [section, confluenceTileTitle, jiraTileTitle]));
+      const facts: Record<string, unknown> = isRecord(value) ? value : {};
       return { confluence: parseTileFacts(facts.confluence), jql: parseTileFacts(facts.jql) };
     },
   };

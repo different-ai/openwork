@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { readFile } from "node:fs/promises";
 import { expect } from "vitest";
 import {
@@ -267,10 +268,10 @@ function agentWorkloads(plans: WorkspacePlan[]) {
 }
 
 async function listWorkspaces(desktopApp: App): Promise<WorkspaceListing> {
-  const value = await evalIn(desktopApp, `(async () => {
+  const value = await evalIn(desktopApp, async () => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
-    const response = await fetch(String(info.baseUrl).replace(/\\/+$/, "") + "/workspaces", {
+    const response = await fetch(String(info.baseUrl).replace(/\/+$/, "") + "/workspaces", {
       headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
       signal: AbortSignal.timeout(15000),
     });
@@ -278,10 +279,10 @@ async function listWorkspaces(desktopApp: App): Promise<WorkspaceListing> {
     const items = Array.isArray(body?.items) ? body.items : [];
     return {
       ok: response.ok,
-      ids: items.map((item) => String(item?.id ?? "")).filter(Boolean),
+      ids: items.map((item: { id?: unknown }) => String(item?.id ?? "")).filter(Boolean),
       activeId: typeof body?.activeId === "string" ? body.activeId : null,
     };
-  })()`, { awaitPromise: true, timeoutMs: 20_000 });
+  }, { awaitPromise: true, timeoutMs: 20_000 });
   if (!isRecord(value) || value.ok !== true || !Array.isArray(value.ids)) {
     throw new Error(`Listing workspaces failed: ${JSON.stringify(value)}`);
   }
@@ -306,16 +307,16 @@ async function createWorkspace(desktopApp: App, path: string): Promise<string> {
 }
 
 async function configureWorkspaces(desktopApp: App, plans: WorkspacePlan[], baseUrl: string): Promise<void> {
-  const result = await evalIn(desktopApp, `(async () => {
+  const result = await evalIn(desktopApp, browserScript(async (value, providerId, inputValue, modelId, modelName, inputProviderId, inputModelId, inputValue2) => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
-    const root = String(info.baseUrl).replace(/\\/+$/, "");
+    const root = String(info.baseUrl).replace(/\/+$/, "");
     const headers = {
       Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
       "Content-Type": "application/json",
     };
     const outcomes = [];
-    for (const workspaceId of ${JSON.stringify(plans.map((plan) => plan.workspaceId))}) {
+    for (const workspaceId of value) {
       const config = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
         method: "PATCH",
         headers,
@@ -323,12 +324,12 @@ async function configureWorkspaces(desktopApp: App, plans: WorkspacePlan[], base
           opencode: {
             permission: { edit: "allow", write: "allow", read: "allow", bash: "allow" },
             provider: {
-              [${JSON.stringify(providerId)}]: {
+              [providerId]: {
                 npm: "@ai-sdk/openai-compatible",
                 name: "Active session storm mock",
-                options: { baseURL: ${JSON.stringify(`${baseUrl}/v1`)}, apiKey: "sk-active-session-storm" },
+                options: { baseURL: inputValue, apiKey: "sk-active-session-storm" },
                 models: {
-                  [${JSON.stringify(modelId)}]: { name: ${JSON.stringify(modelName)}, tool_call: true },
+                  [modelId]: { name: modelName, tool_call: true },
                 },
               },
             },
@@ -348,18 +349,18 @@ async function configureWorkspaces(desktopApp: App, plans: WorkspacePlan[], base
       outcomes.push({ workspaceId, stage: "reload", status: reload.status, text: reload.ok ? "ok" : (await reload.text()).slice(0, 300) });
     }
     const raw = localStorage.getItem("openwork.preferences");
-    let preferences = {};
+    let preferences: Record<string, unknown> = {};
     try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
     if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
     localStorage.setItem("openwork.preferences", JSON.stringify({
       ...preferences,
-      defaultModel: { providerID: ${JSON.stringify(providerId)}, modelID: ${JSON.stringify(modelId)} },
+      defaultModel: { providerID: inputProviderId, modelID: inputModelId },
       modelVariant: null,
       providerStepCompleted: true,
     }));
-    localStorage.setItem("openwork.defaultModel", ${JSON.stringify(`${providerId}/${modelId}`)});
+    localStorage.setItem("openwork.defaultModel", inputValue2);
     return { outcomes };
-  })()`, { awaitPromise: true, timeoutMs: 240_000 });
+  }, [plans.map((plan) => plan.workspaceId), providerId, `${baseUrl}/v1`, modelId, modelName, providerId, modelId, `${providerId}/${modelId}`]), { awaitPromise: true, timeoutMs: 240_000 });
   if (!isRecord(result) || !Array.isArray(result.outcomes)) {
     throw new Error(`Workspace provider configuration failed: ${JSON.stringify(result)}`);
   }
@@ -370,12 +371,12 @@ async function configureWorkspaces(desktopApp: App, plans: WorkspacePlan[], base
 async function openExactSessionRoute(desktopApp: App, plan: WorkspacePlan): Promise<void> {
   const route = `/workspace/${plan.workspaceId}/session/${plan.sessionId}`;
   await go(desktopApp, route, { timeoutMs: 60_000 });
-  await waitFor(desktopApp, `(() => {
-    const current = window.__openworkControl?.snapshot().route.split("?")[0].replace(/\\/+$/, "") ?? "";
-    return current === ${JSON.stringify(route)}
-      && (localStorage.getItem("openwork.react.activeWorkspace") ?? "") === ${JSON.stringify(plan.workspaceId)}
-      && document.querySelector("[data-session-surface-id]")?.getAttribute("data-session-surface-id") === ${JSON.stringify(plan.sessionId)};
-  })()`, { timeoutMs: 60_000, label: `exact route ${route}` });
+  await waitFor(desktopApp, browserScript((inputRoute, workspaceId, sessionId) => {
+    const current = window.__openworkControl?.snapshot().route.split("?")[0].replace(/\/+$/, "") ?? "";
+    return current === inputRoute
+      && (localStorage.getItem("openwork.react.activeWorkspace") ?? "") === workspaceId
+      && document.querySelector<HTMLElement>("[data-session-surface-id]")?.getAttribute("data-session-surface-id") === sessionId;
+  }, [route, plan.workspaceId, plan.sessionId]), { timeoutMs: 60_000, label: `exact route ${route}` });
 }
 
 async function readSessionFacts(desktopApp: App, workspaceId: string, sessionId: string): Promise<SessionFacts> {
@@ -402,38 +403,38 @@ async function readSessionFacts(desktopApp: App, workspaceId: string, sessionId:
 }
 
 async function readSurfaceFacts(desktopApp: App, marker: string): Promise<SurfaceFacts> {
-  const value = await evalIn(desktopApp, `(() => {
+  const value = await evalIn(desktopApp, browserScript((marker) => {
     const body = document.body.innerText ?? "";
-    const authActions = [...document.querySelectorAll("button, a")]
+    const authActions = [...document.querySelectorAll<HTMLElement>("button, a")]
       .map((element) => (element.textContent ?? "").trim())
       .filter((text) => /^(sign in|reconnect|connect again|log in)$/i.test(text));
     return {
       route: window.__openworkControl?.snapshot().route ?? window.location.hash,
-      sessionId: document.querySelector("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? "",
+      sessionId: document.querySelector<HTMLElement>("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? "",
       authActions,
       crash: /aw, snap|renderer process gone|application error|uncaught exception/i.test(body),
-      bodyHasMarker: body.includes(${JSON.stringify(marker)}),
+      bodyHasMarker: body.includes(marker),
       bodyHasToolActivity: body.includes("Hold workspace") || body.includes("sleep "),
     };
-  })()`);
+  }, [marker]));
   return parseSurfaceFacts(value);
 }
 
 async function readEngineRuntimeFacts(desktopApp: App): Promise<EngineRuntimeFacts> {
   return parseEngineRuntimeFacts(await evalIn(
     desktopApp,
-    `window.__OPENWORK_ELECTRON__.invokeDesktop("runtimeStatus")`,
+    () => (window.__OPENWORK_ELECTRON__.invokeDesktop("runtimeStatus")),
     { awaitPromise: true, timeoutMs: 15_000 },
   ));
 }
 
 async function readWorkspaceFileFacts(desktopApp: App, plan: WorkspacePlan): Promise<WorkspaceFileFacts> {
-  const value = await evalIn(desktopApp, `(async () => {
+  const value = await evalIn(desktopApp, browserScript(async (workspaceId, value) => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return { status: 0, content: "" };
     const response = await fetch(
-      String(info.baseUrl).replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(${JSON.stringify(plan.workspaceId)})
-        + "/files/content?path=" + encodeURIComponent(${JSON.stringify(plan.filePath.split("/").pop() ?? "")}),
+      String(info.baseUrl).replace(/\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId)
+        + "/files/content?path=" + encodeURIComponent(value),
       {
         headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
         signal: AbortSignal.timeout(10000),
@@ -441,7 +442,7 @@ async function readWorkspaceFileFacts(desktopApp: App, plan: WorkspacePlan): Pro
     );
     const body = await response.json().catch(() => ({}));
     return { status: response.status, content: typeof body?.content === "string" ? body.content : "" };
-  })()`, { awaitPromise: true, timeoutMs: 15_000 });
+  }, [plan.workspaceId, plan.filePath.split("/").pop() ?? ""]), { awaitPromise: true, timeoutMs: 15_000 });
   if (!isRecord(value) || typeof value.status !== "number") {
     throw new Error(`Invalid workspace file facts: ${JSON.stringify(value)}`);
   }
@@ -474,13 +475,13 @@ function sessionCorpus(facts: SessionFacts): string {
 }
 
 async function allowVisibleToolPermission(desktopApp: App): Promise<boolean> {
-  const clicked = await evalIn(desktopApp, `(() => {
+  const clicked = await evalIn(desktopApp, () => {
     const button = [...document.querySelectorAll("button")]
       .find((candidate) => (candidate.textContent ?? "").trim() === "Allow for session" && !candidate.disabled);
     if (!(button instanceof HTMLButtonElement)) return false;
     button.click();
     return true;
-  })()`);
+  });
   if (clicked === true) await sleep(250);
   return clicked === true;
 }
@@ -560,8 +561,8 @@ test.skipIf(!runnable)(
     // The already-mounted model store predates these workspace configs. Reload
     // once, before any session exists, so every workspace sees the same mock
     // provider without perturbing an in-flight engine event subscription.
-    await evalIn(desktopApp, "location.reload(); true");
-    await waitFor(desktopApp, "Boolean(window.__openworkControl)", {
+    await evalIn(desktopApp, () => { location.reload(); return true; });
+    await waitFor(desktopApp, () => (Boolean(window.__openworkControl)), {
       timeoutMs: 60_000,
       label: "desktop reloaded with the storm model preference",
     });
@@ -574,7 +575,7 @@ test.skipIf(!runnable)(
     const workloadStartedAt = new Date().toISOString();
     for (const plan of plans) {
       await go(desktopApp, `/workspace/${plan.workspaceId}/session`);
-      await waitFor(desktopApp, `(localStorage.getItem("openwork.react.activeWorkspace") ?? "") === ${JSON.stringify(plan.workspaceId)}`, {
+      await waitFor(desktopApp, browserScript((workspaceId) => ((localStorage.getItem("openwork.react.activeWorkspace") ?? "") === workspaceId), [plan.workspaceId]), {
         timeoutMs: 60_000,
         label: `workspace ${plan.index} active before task creation`,
       });

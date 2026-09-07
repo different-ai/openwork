@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { newSplitPrimary } from "../worlds/chat.ts";
@@ -21,7 +22,7 @@ function splitFacts(value: unknown) {
 test("side chats keep questions, replies, and saved splits attached to their own conversation", async ({ world, user, probe, agent, step }) => {
   const primary = world.session.sessionId;
   const workspaceId = world.workspace.workspaceId;
-  const shortcut = await probe.eval(`/Mac|iPhone|iPad|iPod/.test(navigator.platform)`) ? "Meta+K" : "Control+K";
+  const shortcut = await probe.eval(() => (/Mac|iPhone|iPad|iPod/.test(navigator.platform))) ? "Meta+K" : "Control+K";
   const facts = async () => splitFacts(await world.splitFacts());
   const ids = async () => (await agent.list()).map((session) => session.sessionId).sort();
   const waitSplit = (main: string, side?: string) => probe.eventually(facts, {
@@ -37,19 +38,19 @@ test("side chats keep questions, replies, and saved splits attached to their own
   const send = async (pane: "primary" | "secondary", text: string) => {
     await user.type({ placeholder: "Describe your task...", nth: pane === "primary" ? 0 : 1 }, text, { verify: true });
     await user.press("Enter");
-    await probe.eventually(() => probe.eval(`(which, text) => {
-      const root = document.querySelector('[data-workbench-pane="' + which + '"]');
-      return [...(root?.querySelectorAll('[data-message-role="user"]') ?? [])]
+    await probe.eventually(() => probe.eval(browserScript((which, text) => {
+      const root = document.querySelector<HTMLElement>('[data-workbench-pane="' + which + '"]');
+      return [...(root?.querySelectorAll<HTMLElement>('[data-message-role="user"]') ?? [])]
         .some((node) => node.getClientRects().length && node.innerText.includes(text));
-    }`, { args: [pane, text] }), {
+    }, [pane, text])), {
       within: 10_000, label: `${pane} displays the submitted message`, until: (value) => value === true,
     });
   };
-  const pane = (which: "primary" | "secondary") => probe.eval(`(which) => {
-    const root = document.querySelector('[data-workbench-pane="' + which + '"]');
-    const messages = [...(root?.querySelectorAll('[data-message-role="assistant"]') ?? [])];
+  const pane = (which: "primary" | "secondary") => probe.eval(browserScript((which) => {
+    const root = document.querySelector<HTMLElement>('[data-workbench-pane="' + which + '"]');
+    const messages = [...(root?.querySelectorAll<HTMLElement>('[data-message-role="assistant"]') ?? [])];
     return { text: root?.textContent ?? "", answer: messages.at(-1)?.innerText ?? "" };
-  }`, { args: [which] });
+  }, [which]));
   const answer = async (which: "primary" | "secondary", included: string, excluded: string) => {
     await probe.eventually(() => pane(which), { within: 45_000, label: `${which} receives only its own answer`,
       until: (value) => isRecord(value) && typeof value.answer === "string"
@@ -61,22 +62,22 @@ test("side chats keep questions, replies, and saved splits attached to their own
     await user.see(paletteInput);
     await user.type(paletteInput, query, { replace: true });
     await user.click({ role: "option", label });
-    await probe.eventually(() => probe.eval(`(() => {
-      const input = document.querySelector('[data-command-palette-input]');
+    await probe.eventually(() => probe.eval(() => {
+      const input = document.querySelector<HTMLElement>('[data-command-palette-input]');
       return !input || input.getClientRects().length === 0 || getComputedStyle(input).visibility === "hidden";
-    })()`), { within: 10_000, label: "the palette closes after selecting the action", until: (value) => value === true })
+    }), { within: 10_000, label: "the palette closes after selecting the action", until: (value) => value === true })
       .catch(async (error: unknown) => { await user.screenshot(); throw error; });
     await user.notSee(paletteInput);
   };
   const rowTarget = async (sessionId: string): Promise<{ role: "button"; label: string; nth: number }> => {
-    const target = await probe.eventually(() => probe.eval(`(id) => {
-      const row = document.querySelector('[data-session-tab-id="' + id + '"]');
+    const target = await probe.eventually(() => probe.eval(browserScript((id) => {
+      const row = document.querySelector<HTMLElement>('[data-session-tab-id="' + id + '"]');
       const label = row?.getAttribute("aria-label");
-      if (!label) return null;
-      const buttons = [...document.querySelectorAll('button, [role="button"]')]
+      if (!row || !label) return null;
+      const buttons = [...document.querySelectorAll<HTMLElement>('button, [role="button"]')]
         .filter((node) => node.getAttribute("aria-label") === label);
       return { label, nth: buttons.indexOf(row) };
-    }`, { args: [sessionId] }), {
+    }, [sessionId])), {
       within: 15_000, label: "the saved conversation has a sidebar control",
       until: (value) => isRecord(value) && typeof value.label === "string" && typeof value.nth === "number" && value.nth >= 0,
     });
@@ -90,12 +91,12 @@ test("side chats keep questions, replies, and saved splits attached to their own
     });
   };
   const preservedHistory = async (sessionId: string, ...messages: string[]) => {
-    await probe.eventually(() => probe.eval(`(id) => {
-      const surface = document.querySelector('[data-session-surface-id="' + id + '"]');
-      return [...(surface?.querySelectorAll('[data-message-role]') ?? [])]
+    await probe.eventually(() => probe.eval(browserScript((id) => {
+      const surface = document.querySelector<HTMLElement>('[data-session-surface-id="' + id + '"]');
+      return [...(surface?.querySelectorAll<HTMLElement>('[data-message-role]') ?? [])]
         .filter((node) => node.getClientRects().length && getComputedStyle(node).visibility !== "hidden")
-        .map((node) => node.innerText).join("\\n");
-    }`, { args: [sessionId] }), {
+        .map((node) => node.innerText).join("\n");
+    }, [sessionId])), {
       within: 30_000, label: "the reopened conversation renders its earlier messages",
       until: (value) => typeof value === "string" && messages.every((message) => value.includes(message)),
     });
@@ -120,10 +121,10 @@ test("side chats keep questions, replies, and saved splits attached to their own
       await send("primary", world.primaryQuestionPrompt);
       await user.see({ text: "Which format should the main task use?" }, { timeoutMs: 45_000 });
       expect(await pane("secondary")).not.toHaveProperty("text", expect.stringContaining("Which format should the main task use?"));
-      await probe.eventually(() => probe.eval(`(id) => {
-        const row = document.querySelector('[data-sidebar-session-id="' + id + '"]');
-        return Boolean(row?.querySelector('[data-session-side-chat] [data-session-attention-indicator]'));
-      }`, { args: [primary] }), {
+      await probe.eventually(() => probe.eval(browserScript((id) => {
+        const row = document.querySelector<HTMLElement>('[data-sidebar-session-id="' + id + '"]');
+        return Boolean(row?.querySelector<HTMLElement>('[data-session-side-chat] [data-session-attention-indicator]'));
+      }, [primary])), {
         within: 15_000, label: "the attached side chat shows that it needs an answer", until: (value) => value === true,
       });
       await user.screenshot();
@@ -157,18 +158,18 @@ test("side chats keep questions, replies, and saved splits attached to their own
   });
 
   await step("the split belongs to the session row and follows it into Pinned", async () => {
-    const rowLayout = () => probe.eval(`(id) => {
-      const row = document.querySelector('[data-sidebar-session-id="' + id + '"]');
-      const main = row?.querySelector('[data-session-tab-id]')?.getBoundingClientRect();
-      const side = row?.querySelector('[data-session-side-chat]')?.getBoundingClientRect();
-      const headers = [...document.querySelectorAll('[data-workbench-pane-header]')];
+    const rowLayout = () => probe.eval(browserScript((id) => {
+      const row = document.querySelector<HTMLElement>('[data-sidebar-session-id="' + id + '"]');
+      const main = row?.querySelector<HTMLElement>('[data-session-tab-id]')?.getBoundingClientRect();
+      const side = row?.querySelector<HTMLElement>('[data-session-side-chat]')?.getBoundingClientRect();
+      const headers = [...document.querySelectorAll<HTMLElement>('[data-workbench-pane-header]')];
       return {
         attached: Boolean(main && side && side.left >= main.right - 1 && Math.abs(main.top - side.top) < 2),
         pinned: Boolean(row?.closest('[data-global-pinned-sessions]')),
         compactHeaders: headers.length === 2 && headers.every((node) => node.getBoundingClientRect().height <= 44),
-        oldControls: document.querySelectorAll('[data-session-tab-split-pill], [data-sidebar-new-split], [data-second-chat-intro], [data-chat-composer-label]').length,
+        oldControls: document.querySelectorAll<HTMLElement>('[data-session-tab-split-pill], [data-sidebar-new-split], [data-second-chat-intro], [data-chat-composer-label]').length,
       };
-    }`, { args: [primary] });
+    }, [primary]));
     expect(await rowLayout()).toMatchObject({ attached: true, pinned: false, compactHeaders: true, oldControls: 0 });
     await user.rightClick(await rowTarget(primary));
     await user.screenshot();

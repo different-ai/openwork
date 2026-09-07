@@ -22,14 +22,14 @@ test("connector-backed tool calls show first-class branding and human-readable l
     expect(await world.den.mocks.connector.toolCalls({ name: "list_channels", sinceIso, atLeast: 1 }))
       .toMatchObject([{ name: "list_channels", args: { limit: 3 } }]);
     // TODO(primitive): probe.connectorBranding
-    const inspect = () => probe.eval(`(() => {
-      const rows = [...document.querySelectorAll('[data-capability-call]')];
+    const inspect = () => probe.eval(() => {
+      const rows = [...document.querySelectorAll<HTMLElement>('[data-capability-call]')];
       const matching = rows.filter(row => row.textContent.includes('Listed channels'));
-      const mark = matching[0]?.querySelector('[data-connector-name="Slack"]');
+      const mark = matching[0]?.querySelector<HTMLElement>('[data-connector-name="Slack"]');
       const image = mark?.querySelector('img');
       return { count: matching.length, connector: mark?.getAttribute('data-connector-name'),
         imageLoaded: image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0 };
-    })()`);
+    });
     const branded = await probe.eventually(inspect, { within: 15_000, label: "Slack tool icon and one completed row",
       until: (value) => isRecord(value) && value.imageLoaded === true });
     expect(branded).toMatchObject({ count: 1, connector: "Slack", imageLoaded: true });

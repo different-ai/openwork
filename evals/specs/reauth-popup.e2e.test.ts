@@ -73,11 +73,11 @@ test("workspace SSO verifies through a real popup and safely recovers from inter
   await step("Cancel closes the real popup and does not retry", async () => {
     await user.click({ role: "button", label: "Continue with SSO" });
     const popup = await waiting();
-    const nonce = await probe.eval("document.querySelector('[data-reauth-nonce]').dataset.reauthNonce");
+    const nonce = await probe.eval(() => (document.querySelector<HTMLElement>('[data-reauth-nonce]')?.dataset.reauthNonce));
     if (typeof nonce !== "string") throw new Error("Expected the current dialog nonce");
     await user.click({ role: "button", label: "Cancel" });
     await world.sendCompletion("stale", nonce);
-    expect(await probe.eval("document.querySelector('[role=dialog]') === null")).toBe(true);
+    expect(await probe.eval(() => (document.querySelector<HTMLElement>('[role=dialog]') === null))).toBe(true);
     await probe.eventually(() => world.popupCount(), { within: 10_000, label: "cancel closes popup", until: (count) => count === 0 });
     expect(await world.storedName()).toBe(world.originalName);
     popup.client.close();
@@ -103,7 +103,7 @@ test("workspace SSO verifies through a real popup and safely recovers from inter
     await user.on(popup).screenshot();
     await user.on(popup).click({ role: "button", label: "Approve sign-in" });
     await user.see({ text: "Workspace settings updated." }, { timeoutMs: 60_000 });
-    expect(await probe.eval("document.querySelector('[role=dialog]') === null")).toBe(true);
+    expect(await probe.eval(() => (document.querySelector<HTMLElement>('[role=dialog]') === null))).toBe(true);
     expect(await world.storedName()).toBe(changedName);
     await probe.eventually(() => world.popupCount(), { within: 10_000, label: "successful popup closes", until: (count) => count === 0 });
     await user.reload();

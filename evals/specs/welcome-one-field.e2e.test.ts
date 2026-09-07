@@ -8,7 +8,7 @@ const inviteUrl = "http://localhost:59991/join-org?invite=inv_demo123";
 test("the welcome join field takes a server URL or web invite and points the app at that organization", async ({ world, user, probe, step }) => {
   // TODO(primitive): read the persisted desktop bootstrap configuration.
   const readBootstrapBaseUrl = () => probe.eval(
-    `window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig").then((config) => config.baseUrl)`,
+    () => (window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig").then((config) => config.baseUrl)),
     { awaitPromise: true },
   );
   await step("Welcome offers three doors", async () => {

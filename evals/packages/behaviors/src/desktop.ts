@@ -1,3 +1,5 @@
+import type { BrowserEvaluation } from "@openwork/cdp";
+import { browserScript } from "@openwork/cdp";
 import { describeAppState, dumpScreenState, evaluateOnSurface, isInteractive, probeAppStateOnSurface } from "@openwork/cdp";
 import type { AppStateProbe, EvaluateOptions, Surface } from "@openwork/cdp";
 
@@ -26,11 +28,11 @@ function jsValue(value: unknown): string {
   return json.replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 }
 
-export async function evalIn(
+export async function evalIn<T>(
   app: Surface,
-  expression: string,
+  expression: BrowserEvaluation<T>,
   opts: EvaluateOptions & { reattachAttempts?: number } = {},
-): Promise<unknown> {
+): Promise<Awaited<T>> {
   // Target healing lives in @openwork/cdp; behaviours just evaluate.
   return evaluateOnSurface(app, expression, {
     ...opts,
@@ -48,11 +50,11 @@ async function timeoutError(app: Surface, message: string): Promise<Error> {
  * evaluation can be caught mid-block; retrying short calls is reliable where one
  * long call is not. Only for IDEMPOTENT reads — never for clicks.
  */
-async function resilientRead(
+async function resilientRead<T>(
   app: Surface,
-  expression: string,
-  { timeoutMs = 60_000, perAttemptMs = DEFAULT_DOM_PROBE_TIMEOUT_MS, label = expression }: { timeoutMs?: number; perAttemptMs?: number; label?: string } = {},
-): Promise<unknown> {
+  expression: BrowserEvaluation<T>,
+  { timeoutMs = 60_000, perAttemptMs = DEFAULT_DOM_PROBE_TIMEOUT_MS, label = "browser callback" }: { timeoutMs?: number; perAttemptMs?: number; label?: string } = {},
+): Promise<Awaited<T>> {
   // A cold profile can block its JS thread for minutes while the workspace
   // runtime boots, so retry to a deadline rather than a fixed attempt count.
   const deadline = Date.now() + timeoutMs;
@@ -75,10 +77,10 @@ async function resilientRead(
   );
 }
 
-export async function waitFor(
+export async function waitFor<T>(
   app: Surface,
-  expression: string,
-  { timeoutMs = DEFAULT_TIMEOUT_MS, label = expression, awaitPromise = false }: { timeoutMs?: number; label?: string; awaitPromise?: boolean } = {},
+  expression: BrowserEvaluation<T>,
+  { timeoutMs = DEFAULT_TIMEOUT_MS, label = "browser callback", awaitPromise = true }: { timeoutMs?: number; label?: string; awaitPromise?: true } = {},
 ): Promise<unknown> {
   const startedAt = Date.now();
   let lastError: unknown = null;
@@ -105,7 +107,7 @@ export async function waitFor(
 }
 
 export async function waitForText(app: Surface, text: string, opts: { timeoutMs?: number } = {}): Promise<void> {
-  await waitFor(app, `document.body.innerText.includes(${jsValue(text)})`, {
+  await waitFor(app, browserScript((text) => (document.body.innerText.includes(text)), [text]), {
     timeoutMs: opts.timeoutMs,
     label: `visible text ${jsValue(text)}`,
   });
@@ -193,11 +195,11 @@ export function parseSessionToolCalls(value: unknown): SessionToolCall[] {
 }
 
 export async function hasText(app: Surface, text: string): Promise<boolean> {
-  return Boolean(await resilientRead(app, `document.body.innerText.includes(${jsValue(text)})`, { label: `text ${jsValue(text)}` }));
+  return Boolean(await resilientRead(app, browserScript((text) => (document.body.innerText.includes(text)), [text]), { label: `text ${jsValue(text)}` }));
 }
 
 export async function visibleText(app: Surface): Promise<string> {
-  const text = await resilientRead(app, "document.body.innerText", { label: "visible text" });
+  const text = await resilientRead(app, () => (document.body.innerText), { label: "visible text" });
   if (typeof text !== "string") throw new Error("CDP did not return document.body.innerText as a string.");
   return text;
 }
@@ -207,61 +209,63 @@ export async function clickText(
   text: string,
   { selector = "button, [role=button], a", timeoutMs = DEFAULT_TIMEOUT_MS }: { selector?: string; timeoutMs?: number } = {},
 ): Promise<unknown> {
-  return waitFor(app, `(() => {
-    const candidates = document.querySelectorAll(${jsValue(selector)});
+  return waitFor(app, browserScript((selector, text) => {
+    const candidates = document.querySelectorAll<HTMLElement>(selector);
     for (const element of candidates) {
       const label = (element.textContent ?? '').trim();
-      if (label.includes(${jsValue(text)})) {
+      if (label.includes(text)) {
         element.scrollIntoView({ block: 'center' });
         element.click();
         return label;
       }
     }
     return null;
-  })()`, { timeoutMs, label: `clickable element with text ${jsValue(text)}` });
+  }, [selector, text]), { timeoutMs, label: `clickable element with text ${jsValue(text)}` });
 }
 
 export async function clickButton(app: Surface, label: string, opts: { timeoutMs?: number } = {}): Promise<void> {
   const timeoutMs = opts.timeoutMs ?? 30_000;
-  await waitFor(app, `Boolean([...document.querySelectorAll('button')]
-    .find((element) => (element.textContent ?? '').trim() === ${jsValue(label)} && !element.disabled))`, {
+  await waitFor(app, browserScript((label) => (Boolean([...document.querySelectorAll('button')]
+    .find((element) => (element.textContent ?? '').trim() === label && !element.disabled))), [label]), {
     timeoutMs,
     label: `enabled button: ${label}`,
   });
-  const clicked = await evalIn(app, `(() => {
+  const clicked = await evalIn(app, browserScript((label) => {
     const button = [...document.querySelectorAll('button')]
-      .find((element) => (element.textContent ?? '').trim() === ${jsValue(label)} && !element.disabled);
+      .find((element) => (element.textContent ?? '').trim() === label && !element.disabled);
     button?.scrollIntoView({ block: 'center' });
     button?.click();
     return Boolean(button);
-  })()`);
+  }, [label]));
   if (clicked !== true) throw new Error(`Could not click ${label}.`);
 }
 
 export async function waitForButtonGone(app: Surface, label: string, opts: { timeoutMs?: number } = {}): Promise<void> {
-  await waitFor(app, `!Boolean([...document.querySelectorAll('button')]
-    .find((element) => (element.textContent ?? '').trim() === ${jsValue(label)}))`, {
+  await waitFor(app, browserScript((label) => (!Boolean([...document.querySelectorAll('button')]
+    .find((element) => (element.textContent ?? '').trim() === label))), [label]), {
     timeoutMs: opts.timeoutMs ?? 60_000,
     label: `button removed: ${label}`,
   });
 }
 
 export async function fill(app: Surface, selector: string, value: string, opts: { timeoutMs?: number } = {}): Promise<void> {
-  await waitFor(app, `Boolean(document.querySelector(${jsValue(selector)}))`, {
+  await waitFor(app, browserScript((selector) => (Boolean(document.querySelector<HTMLElement>(selector))), [selector]), {
     timeoutMs: opts.timeoutMs,
     label: `input ${selector}`,
   });
-  await evalIn(app, `(() => {
-    const input = document.querySelector(${jsValue(selector)});
+  await evalIn(app, browserScript((selector, value) => {
+    const input = document.querySelector<HTMLElement>(selector);
+    if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) throw new Error("Expected an input or textarea");
     const setter = Object.getOwnPropertyDescriptor(
       input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
       'value',
-    ).set;
-    setter.call(input, ${jsValue(value)});
+    )?.set;
+    if (!setter) throw new Error("Native input setter is unavailable");
+    setter.call(input, value);
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
-  })()`);
+  }, [selector, value]));
 }
 
 export async function go(app: Surface, hashPath: string, opts: { timeoutMs?: number } = {}): Promise<void> {
@@ -271,7 +275,7 @@ export async function go(app: Surface, hashPath: string, opts: { timeoutMs?: num
   // desktops on one host) makes those bursts routine, and a bare 20s evaluate
   // here was the single most common way a long journey died near its end.
   const timeoutMs = opts.timeoutMs ?? 60_000;
-  await waitFor(app, `(() => { window.location.hash = ${jsValue(hash)}; return true; })()`, {
+  await waitFor(app, browserScript((inputHash) => { window.location.hash = inputHash; return true; }, [hash]), {
     timeoutMs,
     label: `navigate to ${hash}`,
   });
@@ -283,8 +287,8 @@ export async function waitForConnectionCard(app: Surface, name: string, workspac
     // Short per-probe timeout, failure tolerated: two desktops in one sandbox
     // make the renderer freeze in bursts, and a bare 20s evaluate turns one
     // freeze into a failed spec.
-    const found = await evalIn(app, `([...document.querySelectorAll('button')]
-      .some((button) => (button.textContent ?? '').includes(${JSON.stringify(name)})))`, { timeoutMs: 8_000 })
+    const found = await evalIn(app, browserScript((name) => (([...document.querySelectorAll('button')]
+      .some((button) => (button.textContent ?? '').includes(name)))), [name]), { timeoutMs: 8_000 })
       .catch(() => false);
     if (found === true) return;
     // The app opens a freshly created session on its own, which navigates away
@@ -293,29 +297,29 @@ export async function waitForConnectionCard(app: Surface, name: string, workspac
     // becomes /extensions/connections. Checking for the pre-rewrite form made
     // the steer-back below fire every iteration, so navigation fought the
     // rewrite and the surface never settled — which looked like a blank page.
-    const onExtensions = await evalIn(app, `window.location.hash.includes("/extensions")`, { timeoutMs: 8_000 }).catch(() => false);
+    const onExtensions = await evalIn(app, () => (window.location.hash.includes("/extensions")), { timeoutMs: 8_000 }).catch(() => false);
     if (onExtensions !== true) {
       await go(app, `/workspace/${workspaceId}/settings/extensions/connections`);
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       continue;
     }
-    await evalIn(app, "window.__openworkControl.execute('extensions.refresh-marketplace', null)", { awaitPromise: true, timeoutMs: 15_000 })
+    await evalIn(app, () => (window.__openworkControl.execute('extensions.refresh-marketplace', null)), { awaitPromise: true, timeoutMs: 15_000 })
       .catch(() => undefined);
-    await evalIn(app, `(() => {
+    await evalIn(app, () => {
       const button = [...document.querySelectorAll('button')]
         .find((element) => (element.textContent ?? '').trim() === 'Refresh' && !element.disabled);
       button?.click();
       return Boolean(button);
-    })()`).catch(() => undefined);
+    }).catch(() => undefined);
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
   // Say what WAS on screen: "card missing" alone cannot distinguish an
   // unmounted surface from a connection den never offered this member.
-  const seen = await evalIn(app, `({
+  const seen = await evalIn(app, () => (({
     hash: window.location.hash,
-    buttons: [...document.querySelectorAll('button')].map((b) => (b.textContent ?? '').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 40),
-    text: (document.body.innerText ?? '').replace(/\\s+/g, ' ').slice(0, 600),
-  })`).catch(() => null);
+    buttons: [...document.querySelectorAll('button')].map((b) => (b.textContent ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 40),
+    text: (document.body.innerText ?? '').replace(/\s+/g, ' ').slice(0, 600),
+  }))).catch(() => null);
   throw new Error(`The connection card ${name} never appeared. On screen: ${JSON.stringify(seen)}`);
 }
 
@@ -327,19 +331,19 @@ export async function waitForConnectionCard(app: Surface, name: string, workspac
  * signal alone captures a blank panel intermittently.
  */
 export async function revealText(app: Surface, text: string, timeoutMs = 45_000): Promise<void> {
-  await waitFor(app, `(() => {
+  await waitFor(app, browserScript((text) => {
     // innerText, not textContent: innerText is render-aware, so CSS
     // text-transform (a badge styled uppercase) matches what waitForText saw
     // and what a person reads. Comparing raw textContent can never agree.
-    const wanted = ${JSON.stringify(text)}.toLowerCase();
-    const nodes = [...document.querySelectorAll("button, h1, h2, h3, p, span, div")];
+    const wanted = text.toLowerCase();
+    const nodes = [...document.querySelectorAll<HTMLElement>("button, h1, h2, h3, p, span, div")];
     const node = nodes.reverse().find((element) => ((element.innerText ?? element.textContent ?? "")).toLowerCase().includes(wanted));
     if (!node) return false;
     const rect = node.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return false;
     node.scrollIntoView({ block: "center" });
     return true;
-  })()`, { timeoutMs, label: `visible text ${JSON.stringify(text)}` });
+  }, [text]), { timeoutMs, label: `visible text ${JSON.stringify(text)}` });
   // One paint after scrolling, so the frame is not captured mid-scroll.
   await new Promise((resolve) => setTimeout(resolve, 750));
 }
@@ -357,7 +361,7 @@ export async function openConnectionsSurface(app: Surface, workspaceId: string):
   while (Date.now() < deadline) {
     const settled = await evalIn(
       app,
-      `window.location.hash.includes("/extensions") && document.body.innerText.includes("Extensions")`,
+      () => (window.location.hash.includes("/extensions") && document.body.innerText.includes("Extensions")),
       { timeoutMs: 8_000 },
     ).catch(() => false);
     if (settled === true) return;
@@ -366,26 +370,26 @@ export async function openConnectionsSurface(app: Surface, workspaceId: string):
   }
   // Say what WAS on screen: a bare timeout cannot distinguish a route that
   // never rewrote from a shell the app steered somewhere else entirely.
-  const seen = await evalIn(app, `({
+  const seen = await evalIn(app, () => (({
     hash: window.location.hash,
     title: document.title,
-    buttons: [...document.querySelectorAll('button')].map((b) => (b.textContent ?? '').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 30),
-    text: (document.body.innerText ?? '').replace(/\\s+/g, ' ').slice(0, 500),
-  })`, { timeoutMs: 10_000 }).catch(() => null);
+    buttons: [...document.querySelectorAll('button')].map((b) => (b.textContent ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 30),
+    text: (document.body.innerText ?? '').replace(/\s+/g, ' ').slice(0, 500),
+  })), { timeoutMs: 10_000 }).catch(() => null);
   throw new Error(`The extensions connections surface never settled. On screen: ${JSON.stringify(seen)}`);
 }
 
 export async function currentHash(app: Surface): Promise<string> {
-  const hash = await resilientRead(app, "window.location.hash", { label: "location hash" });
+  const hash = await resilientRead(app, () => (window.location.hash), { label: "location hash" });
   if (typeof hash !== "string") throw new Error("CDP did not return window.location.hash as a string.");
   return hash;
 }
 
 export async function enabledButtons(app: Surface): Promise<string[]> {
-  const labels = await resilientRead(app, `[...document.querySelectorAll('button')]
+  const labels = await resilientRead(app, () => ([...document.querySelectorAll('button')]
     .filter((element) => !element.disabled)
     .map((element) => (element.textContent ?? '').trim())
-    .filter(Boolean)`, { label: "enabled buttons" });
+    .filter(Boolean)), { label: "enabled buttons" });
   if (!Array.isArray(labels) || !labels.every((label) => typeof label === "string")) {
     throw new Error("CDP did not return enabled button labels as strings.");
   }
@@ -402,7 +406,7 @@ export async function control(
   // Control actions are non-idempotent; a timeout must surface, not re-fire.
   const result = await evalIn(
     app,
-    `window.__openworkControl.execute(${JSON.stringify(action)}, ${JSON.stringify(args ?? null)})`,
+    browserScript((action, value) => (window.__openworkControl.execute(action, value)), [action, args ?? null]),
     { timeoutMs: 60_000, reattachAttempts: 0, ...opts, awaitPromise: true },
   );
   if (!isRecord(result) || result.ok !== true) {
@@ -446,7 +450,7 @@ export async function waitUntilTextStable(
   let previous = "";
   let stableSince = Date.now();
   while (Date.now() < deadline) {
-    const currentValue = await evalIn(app, "document.body.innerText", {
+    const currentValue = await evalIn(app, () => (document.body.innerText), {
       timeoutMs: Math.min(DEFAULT_DOM_PROBE_TIMEOUT_MS, Math.max(0, deadline - Date.now())),
     }).catch(() => previous);
     const current = typeof currentValue === "string" ? currentValue : previous;

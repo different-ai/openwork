@@ -118,14 +118,15 @@ test("create, preview, save and reopen an app without changing already-open resu
   evidence.recordAssertionEvidence("Drafts stay off the dashboard until saved, and Cancel does not save them", "Draft list was empty; Cancel retained a null active revision; Save persisted the exact revision, workflow link, and personal dashboard placement without executing or scheduling a run.", true);
 
   await step("saved app header stays readable in a narrow preview", async () => {
-    await seed.evalIn(world.app, `document.querySelector('[data-app-header]').parentElement.style.width = '320px'`);
-    const header = await probe.eval(world.app, `(() => {
-      const header = document.querySelector('[data-app-header]');
-      const title = header.querySelector('h2');
+    await seed.evalIn(world.app, () => { const parent = document.querySelector<HTMLElement>('[data-app-header]')?.parentElement; if (!parent) throw new Error('Missing app header parent'); parent.style.width = '320px'; });
+    const header = await probe.eval(world.app, () => {
+      const header = document.querySelector<HTMLElement>('[data-app-header]');
+      const title = header?.querySelector<HTMLElement>('h2');
+      if (!header || !title) throw new Error('Missing app header or title');
       return { width: header.getBoundingClientRect().width, height: header.getBoundingClientRect().height,
         titleWidth: title.getBoundingClientRect().width, titleFits: title.scrollWidth <= title.clientWidth,
         buttonLabels: [...header.querySelectorAll('button')].map(button => button.textContent.trim()) };
-    })()`);
+    });
     expect(record(header).width).toBe(320);
     expect(record(header).height).toBeLessThan(72);
     expect(record(header).titleWidth).toBeGreaterThan(180);
@@ -137,7 +138,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.see("Delete Team briefing");
     await user.screenshot();
     await user.click("App options for Team briefing");
-    await seed.evalIn(world.app, `document.querySelector('[data-app-header]').parentElement.style.removeProperty('width')`);
+    await seed.evalIn(world.app, () => (document.querySelector<HTMLElement>('[data-app-header]')?.parentElement?.style.removeProperty('width')));
   });
   evidence.recordAssertionEvidence("The saved app header preserves the title at a 320px panel width", "The real preview header remains under 72px tall with over 180px for the fully visible title. Saved is status text and Delete remains reachable in the options menu.", true);
 

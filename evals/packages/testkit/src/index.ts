@@ -1,3 +1,5 @@
+export { browserScript } from "@openwork/cdp";
+export type { BrowserEvaluation, BrowserScript } from "@openwork/cdp";
 export { control, createDesktopHandoffGrant, evalIn, signInDesktopAs } from "@openwork/behaviors";
 export { requestDenLoopback } from "@openwork/labs";
 export { desktop as relaunchDesktop, electronProfilePaths } from "@openwork/hosts";

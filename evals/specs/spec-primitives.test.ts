@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -94,9 +95,9 @@ primitiveTest("worlds and capability channels preserve provenance and ordering",
   await user.click("Run task");
   expect(seed.tmpPath("mid-flow")).toBe("/fake/mid-flow");
   expect(clickCount).toBe(1);
-  expect(await seed.evalIn(fakeSurface, "Promise.resolve('seed')", { awaitPromise: true, timeoutMs: 1_000 })).toBe("evaluated");
-  expect(await probe.eval("Promise.resolve('probe')", { awaitPromise: true, timeoutMs: 1_000 })).toBe("evaluated");
-  await probe.eval("(value) => value", { args: ["argument value"], awaitPromise: true, timeoutMs: 1_000 });
+  expect(await seed.evalIn(fakeSurface, () => (Promise.resolve('seed')), { awaitPromise: true, timeoutMs: 1_000 })).toBe("evaluated");
+  expect(await probe.eval(() => (Promise.resolve('probe')), { awaitPromise: true, timeoutMs: 1_000 })).toBe("evaluated");
+  await probe.eval(browserScript((value) => value, ["argument value"]), { awaitPromise: true, timeoutMs: 1_000 });
   await user.see({ text: /Running 1 command, reading 1 file/ });
   await user.see("composer", { editable: true, text: /Keep this draft/ });
   await user.see({ text: "alice@example.com Bearer abc accessToken=token-value secret='secret-value' password=password-value" });
@@ -119,7 +120,7 @@ primitiveTest("worlds and capability channels preserve provenance and ordering",
     expect.objectContaining({ stage: "body", channel: "user", verb: "type", detail: "type(composer, \"Replacement text\", replace)" }),
   ]));
   expect(trace.some((entry) => entry.verb === "tmpPath")).toBe(false);
-  expect(cdpCalls.filter((call) => call.method === "Runtime.evaluate" && call.params.awaitPromise === true)).toHaveLength(2);
+  expect(cdpCalls.filter((call) => call.method === "Runtime.evaluate" && call.params.awaitPromise === true)).toHaveLength(3);
   expect(cdpCalls).toEqual(expect.arrayContaining([
     expect.objectContaining({
       method: "Input.dispatchKeyEvent",
@@ -127,10 +128,9 @@ primitiveTest("worlds and capability channels preserve provenance and ordering",
     }),
     expect.objectContaining({ method: "Input.insertText", params: { text: "Replacement text" } }),
     expect.objectContaining({
-      method: "Runtime.callFunctionOn",
+      method: "Runtime.evaluate",
       params: expect.objectContaining({
-        functionDeclaration: "(value) => value",
-        arguments: [{ value: "argument value" }],
+        expression: expect.stringContaining('"argument value"'),
         awaitPromise: true,
       }),
     }),

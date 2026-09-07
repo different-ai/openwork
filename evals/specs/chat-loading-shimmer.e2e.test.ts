@@ -22,12 +22,12 @@ test("chat working and command activity use quiet shimmer without spinners", asy
   const working = await step("the main Working state shimmers without a spinner", async () => {
     await user.see({ text: /Working/ });
     // TODO(primitive): inspect the visual treatment, animation cadence, and backdrop composition of a visible status row.
-    const reading = await probe.eval(`(async () => {
-      const row = document.querySelector('[data-loading-message="working"]');
-      const shimmer = row?.querySelector(".ow-text-shimmer");
-      const pane = document.querySelector("main[data-session-pane]");
+    const reading = await probe.eval(async () => {
+      const row = document.querySelector<HTMLElement>('[data-loading-message="working"]');
+      const shimmer = row?.querySelector<HTMLElement>(".ow-text-shimmer");
+      const pane = document.querySelector<HTMLElement>("main[data-session-pane]");
       const header = pane?.querySelector("header");
-      const filterOf = (element) => getComputedStyle(element).backdropFilter;
+      const filterOf = (element: Element) => getComputedStyle(element).backdropFilter;
       const nestedFilters = [];
       if (row instanceof HTMLElement && pane instanceof HTMLElement) {
         for (let node = row.parentElement; node && node !== pane; node = node.parentElement) {
@@ -40,7 +40,7 @@ test("chat working and command activity use quiet shimmer without spinners", asy
       if (shimmer instanceof HTMLElement) {
         const startedAt = performance.now();
         await new Promise((resolve) => {
-          const sample = (now) => {
+          const sample = (now: number) => {
             positions.add(getComputedStyle(shimmer).backgroundPosition);
             sampledFrames += 1;
             if (now - startedAt >= 1000) resolve(undefined);
@@ -51,7 +51,7 @@ test("chat working and command activity use quiet shimmer without spinners", asy
       }
       return {
         text: row instanceof HTMLElement ? row.innerText.trim() : "",
-        hasSpinner: Boolean(row?.querySelector(".animate-spin")),
+        hasSpinner: Boolean(row?.querySelector<HTMLElement>(".animate-spin")),
         hasShimmer: shimmer instanceof HTMLElement,
         animationName: shimmer instanceof HTMLElement ? getComputedStyle(shimmer).animationName : "",
         sampledFrames,
@@ -61,7 +61,7 @@ test("chat working and command activity use quiet shimmer without spinners", asy
         headerFilter: header instanceof HTMLElement ? filterOf(header) : "",
         nestedFilters,
       };
-    })()`, { awaitPromise: true, timeoutMs: 15_000 });
+    }, { awaitPromise: true, timeoutMs: 15_000 });
     expect(reading).toMatchObject({ text: expect.stringContaining("Working"), hasSpinner: false, hasShimmer: true });
     return reading;
   });
@@ -96,17 +96,17 @@ test("chat working and command activity use quiet shimmer without spinners", asy
     await user.see({ text: /Running command/ });
     await user.see({ text: /Reading brief\.md/ });
     // TODO(primitive): inspect the visual treatment and summary of an aggregate status row.
-    const aggregate = await probe.eval(`(() => {
-      const row = document.querySelector("[data-tool-aggregate-now]");
-      const summary = [...document.querySelectorAll("[data-tool-aggregate] > button")]
+    const aggregate = await probe.eval(() => {
+      const row = document.querySelector<HTMLElement>("[data-tool-aggregate-now]");
+      const summary = [...document.querySelectorAll<HTMLElement>("[data-tool-aggregate] > button")]
         .find((button) => (button.textContent ?? "").includes("Running command"));
       return {
-        text: row instanceof HTMLElement ? row.innerText.replace(/\\s+/g, " ").trim() : "",
-        hasSpinner: Boolean(row?.querySelector(".animate-spin")),
-        hasShimmer: Boolean(row?.querySelector(".ow-text-shimmer")),
-        summary: summary instanceof HTMLElement ? summary.innerText.replace(/\\s+/g, " ").trim() : "",
+        text: row instanceof HTMLElement ? row.innerText.replace(/\s+/g, " ").trim() : "",
+        hasSpinner: Boolean(row?.querySelector<HTMLElement>(".animate-spin")),
+        hasShimmer: Boolean(row?.querySelector<HTMLElement>(".ow-text-shimmer")),
+        summary: summary instanceof HTMLElement ? summary.innerText.replace(/\s+/g, " ").trim() : "",
       };
-    })()`);
+    });
     expect(aggregate).toMatchObject({ text: expect.stringContaining("Reading brief.md"), hasSpinner: false, hasShimmer: true });
     expect(aggregate).not.toMatchObject({ text: expect.stringContaining("Now:") });
     expect(aggregate).toMatchObject({ summary: expect.stringContaining("Running command") });
@@ -117,16 +117,16 @@ test("chat working and command activity use quiet shimmer without spinners", asy
     await user.click({ role: "button", label: /Running command/ });
     await user.see({ text: /git status --short --branch/ });
     // TODO(primitive): count command summaries in a visible aggregate.
-    const command = await probe.eval(`(() => {
-      const block = document.querySelector("[data-tool-aggregate-command]");
+    const command = await probe.eval(() => {
+      const block = document.querySelector<HTMLElement>("[data-tool-aggregate-command]");
       const aggregate = block?.closest("[data-tool-aggregate]");
       return {
-        text: block instanceof HTMLElement ? block.innerText.replace(/\\s+/g, " ").trim() : "",
+        text: block instanceof HTMLElement ? block.innerText.replace(/\s+/g, " ").trim() : "",
         summaryCount: aggregate instanceof HTMLElement
           ? (aggregate.innerText.match(/(?:Ran|Running) command/g) ?? []).length
           : 0,
       };
-    })()`);
+    });
     expect(command).toMatchObject({ text: expect.stringContaining("$"), summaryCount: 1 });
     expect(command).toMatchObject({ text: expect.stringContaining("git status --short --branch") });
   });

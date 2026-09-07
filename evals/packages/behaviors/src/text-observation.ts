@@ -3,16 +3,16 @@ import type { Surface } from "@openwork/cdp";
 
 /** Record changes, including empty frames, without modifying the renderer's fetch or event handlers. */
 export async function observeText(surface: Surface, selector: string, options: { ignoreExistingMessages?: boolean } = {}) {
-  const key = `text-observation-${crypto.randomUUID()}`;
-  await callFunctionOnSurface(surface, `(key, selector, ignoreExisting) => {
-    const previous = new Set(ignoreExisting ? [...document.querySelectorAll(selector)].map(node => node.closest('[data-message-id]')?.getAttribute('data-message-id')) : []);
-    const state = { samples: [], frames: 0, expired: false, overflow: false };
-    let frame;
+  const key: `text-observation-${string}` = `text-observation-${crypto.randomUUID()}`;
+  await callFunctionOnSurface(surface, (key: `text-observation-${string}`, selector, ignoreExisting) => {
+    const previous = new Set(ignoreExisting ? [...document.querySelectorAll<HTMLElement>(selector)].map(node => node.closest('[data-message-id]')?.getAttribute('data-message-id')) : []);
+    const state: { samples: string[]; frames: number; expired: boolean; overflow: boolean } = { samples: [], frames: 0, expired: false, overflow: false };
+    let frame = 0;
     const sample = () => {
-      const text = [...document.querySelectorAll(selector)]
+      const text = [...document.querySelectorAll<HTMLElement>(selector)]
         .filter(node => node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden')
         .filter(node => !previous.has(node.closest('[data-message-id]')?.getAttribute('data-message-id')))
-        .map(node => (node.innerText ?? node.textContent ?? '').trim()).join('\\n');
+        .map(node => (node.innerText ?? node.textContent ?? '').trim()).join('\n');
       state.frames++;
       if (state.samples.at(-1) !== text) {
         if (state.samples.length < 2048) state.samples.push(text);
@@ -23,14 +23,14 @@ export async function observeText(surface: Surface, selector: string, options: {
     sample();
     const timer = setTimeout(() => { cancelAnimationFrame(frame); state.expired = true; }, 180000);
     window[key] = { state, stop() { clearTimeout(timer); cancelAnimationFrame(frame); } };
-  }`, [key, selector, options.ignoreExistingMessages === true]);
+  }, [key, selector, options.ignoreExistingMessages === true]);
   return {
     async finish(): Promise<string[]> {
-      const value = await callFunctionOnSurface(surface, `(key) => {
+      const value = await callFunctionOnSurface(surface, (key: `text-observation-${string}`) => {
         const observer = window[key];
         if (!observer) throw new Error('Text observation was lost');
         observer.stop(); delete window[key]; return observer.state;
-      }`, [key]);
+      }, [key]);
       if (!value || typeof value !== "object" || !("samples" in value) || !Array.isArray(value.samples)
         || !value.samples.every((item): item is string => typeof item === "string")
         || !("frames" in value) || typeof value.frames !== "number" || value.frames < 2
@@ -39,7 +39,7 @@ export async function observeText(surface: Surface, selector: string, options: {
       return value.samples;
     },
     async [Symbol.asyncDispose]() {
-      await callFunctionOnSurface(surface, `(key) => { window[key]?.stop(); delete window[key]; }`, [key]);
+      await callFunctionOnSurface(surface, (key: `text-observation-${string}`) => { window[key]?.stop(); delete window[key]; }, [key]);
     },
   };
 }

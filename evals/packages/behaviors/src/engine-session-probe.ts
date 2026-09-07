@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
 
 import { evalIn } from "./desktop.ts";
@@ -162,26 +163,26 @@ async function requestFromSurface(
   if (options.body !== undefined && requestBody === undefined) {
     throw new Error(`Could not serialize engine session probe body for ${path}`);
   }
-  const value = await evalIn(surface, `(async () => {
+  const value = await evalIn(surface, browserScript(async (path, value, inputValue, inputValue2) => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return { status: 0, body: { error: "local_server_unavailable" } };
     const baseUrl = String(info.baseUrl);
     let end = baseUrl.length;
     while (end > 0 && baseUrl[end - 1] === "/") end -= 1;
-    const response = await fetch(baseUrl.slice(0, end) + ${JSON.stringify(path)}, {
-      method: ${JSON.stringify(options.method ?? "GET")},
+    const response = await fetch(baseUrl.slice(0, end) + path, {
+      method: value,
       headers: {
         Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
         "Content-Type": "application/json",
       },
-      ${requestBody === undefined ? "" : `body: ${JSON.stringify(requestBody)},`}
-      signal: AbortSignal.timeout(${options.timeoutMs ?? 15_000}),
+      body: inputValue,
+      signal: AbortSignal.timeout(inputValue2),
     });
     const text = await response.text();
     let body = text;
     try { body = text ? JSON.parse(text) : null; } catch {}
     return { status: response.status, body };
-  })()`, { awaitPromise: true, timeoutMs: (options.timeoutMs ?? 15_000) + 5_000 });
+  }, [path, options.method ?? "GET", requestBody ?? null, options.timeoutMs ?? 15_000]), { awaitPromise: true, timeoutMs: (options.timeoutMs ?? 15_000) + 5_000 });
   return parseTransportResult(value);
 }
 

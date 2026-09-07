@@ -12,14 +12,14 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.see({ testId: "den-onboarding-shell" });
     await user.notSee({ testId: "den-org-sidebar" });
     await user.notSee({ role: "button", label: "Open menu" });
-    expect(await probe.eval(`(() => {
-      const frame = document.querySelector('[data-testid="setup-frame"]');
+    expect(await probe.eval(() => {
+      const frame = document.querySelector<HTMLElement>('[data-testid="setup-frame"]');
       const frameBounds = frame?.getBoundingClientRect();
       const footer = frame?.querySelector('footer')?.getBoundingClientRect();
       const story = frame?.querySelector('aside')?.getBoundingClientRect();
       const panel = frame?.querySelector('aside')?.nextElementSibling?.getBoundingClientRect();
-      const brand = frame?.querySelector('header > div')?.getBoundingClientRect();
-      const progress = frame?.querySelector('nav[aria-label="Setup progress"]')?.getBoundingClientRect();
+      const brand = frame?.querySelector<HTMLElement>('header > div')?.getBoundingClientRect();
+      const progress = frame?.querySelector<HTMLElement>('nav[aria-label="Setup progress"]')?.getBoundingClientRect();
       return Boolean(frameBounds && footer && story && panel && brand && progress
         && Math.abs(frameBounds.left) < 2
         && Math.abs(frameBounds.right - document.documentElement.clientWidth) < 2
@@ -30,8 +30,8 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
         && Math.abs(brand.left - story.left) < 2
         && Math.abs(progress.left - panel.left) < 2
         && Math.abs(progress.right - panel.right) < 2);
-    })()`)).toBe(true);
-    expect(await probe.eval("document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
+    })).toBe(true);
+    expect(await probe.eval(() => (document.documentElement.scrollWidth <= window.innerWidth))).toBe(true);
   };
   const orgs = async () => {
     const result = await probe.api(world.den.admin, "/v1/me/orgs");
@@ -76,7 +76,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.notSee({ role: "textbox", label: "Team name" });
     await user.see({ testId: "auth-landing-visual" });
     await user.see({ text: "Your choice of model. One place to work." });
-    await probe.eventually(() => probe.eval("Boolean(document.querySelector('[data-testid=auth-landing-visual] canvas'))"), { within: 15000, label: "Paper shader canvas", until: (visible) => visible === true });
+    await probe.eventually(() => probe.eval(() => (Boolean(document.querySelector<HTMLElement>('[data-testid=auth-landing-visual] canvas')))), { within: 15000, label: "Paper shader canvas", until: (visible) => visible === true });
     await user.looks(["The signup landing shows Good work starts here alongside a clear email entry form within a restrained black-and-white setup frame, with a compact black-and-white dithered texture band above the form. The product example clearly shows a chat conversation, an inline dashboard result, and a composer with provider choice"]);
     await user.type({ role: "textbox", label: "Email" }, world.owner.email);
     await user.click({ role: "button", label: "Next" });
@@ -158,7 +158,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.see({ text: "macOS" });
     await user.see({ text: "Windows" });
     await user.see({ text: "Linux" });
-    expect(await probe.eval("document.querySelectorAll('[data-testid=download-openwork-card] details a[href]').length")).toBe(8);
+    expect(await probe.eval(() => (document.querySelectorAll<HTMLElement>('[data-testid=download-openwork-card] details a[href]').length))).toBe(8);
     await user.click({ text: "Other platforms and versions" });
     await user.looks(["The final setup screen shows a clear desktop download and model setup path in the same restrained black-and-white design"]);
     expect(await invitationsFor(personalId)).toEqual([]);
@@ -379,7 +379,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await mobileUser.see({ text: "Already added" });
     await mobileUser.notSee({ role: "button", label: "Open menu" });
     await mobileUser.notSee({ testId: "den-org-sidebar" });
-    expect(await probe.eval(mobile, "document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
+    expect(await probe.eval(mobile, () => (document.documentElement.scrollWidth <= window.innerWidth))).toBe(true);
     await mobileUser.press("Control+Home");
     await mobileUser.looks(["The top of the narrow Tools screen shows legible setup progress and the Give your team a head start heading without horizontal clipping"]);
     await mobileUser.hover({ role: "button", label: "Continue" });
@@ -389,7 +389,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await mobileUser.notSee({ testId: "download-openwork-card" });
     await mobileUser.see({ role: "button", label: "Email me the download link" });
     await mobileUser.see({ role: "link", label: "Try OpenWork Web" });
-    expect(await probe.eval(mobile, "document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
+    expect(await probe.eval(mobile, () => (document.documentElement.scrollWidth <= window.innerWidth))).toBe(true);
     expect(await connectionsFor(flexibleId)).toEqual(toolsBefore);
     await mobileUser.hover({ role: "button", label: "Email me the download link" });
     await mobileUser.looks(["The mobile OpenWork Desktop card shows its complete heading, OpenWork mark, explanatory copy, and Email me the download link button in a restrained neutral card"]);
@@ -411,12 +411,12 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
       within: 30_000, label: "the real download email is captured for the signed-in owner", until: (emails) => emails.length === before.length + 1,
     });
     expect(sent.filter((email) => email.to === world.owner.email)).toHaveLength(before.filter((email) => email.to === world.owner.email).length + 1);
-    expect(await probe.eval(mobile, `Array.from(document.querySelectorAll('[data-testid="onboarding-mobile-options"] button')).find((button) => button.textContent.trim() === "Download link sent")?.disabled`)).toBe(true);
+    expect(await probe.eval(mobile, () => (Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid="onboarding-mobile-options"] button')).find((button) => button.textContent.trim() === "Download link sent")?.disabled))).toBe(true);
     await mobileUser.click({ role: "button", label: "Download link sent" });
     expect(await downloadEmails()).toEqual(sent);
-    expect(await probe.eval(mobile, `Array.from(document.querySelectorAll('[data-testid="onboarding-mobile-options"] a')).find((link) => link.textContent.trim() === "Try OpenWork Web")?.getAttribute("href")`)).toBe("/dashboard/web");
+    expect(await probe.eval(mobile, () => (Array.from(document.querySelectorAll<HTMLElement>('[data-testid="onboarding-mobile-options"] a')).find((link) => link.textContent.trim() === "Try OpenWork Web")?.getAttribute("href")))).toBe("/dashboard/web");
     await mobileUser.click({ role: "link", label: "Try OpenWork Web" });
-    await probe.eventually(() => probe.eval(mobile, "window.location.pathname"), {
+    await probe.eventually(() => probe.eval(mobile, () => (window.location.pathname)), {
       within: 30_000, label: "mobile web option opens the existing access and plans page", until: (path) => path === "/dashboard/web",
     });
     evidence.recordAssertionEvidence("Mobile setup preserves configured tools, sends one real download email to the signed-in owner, disables repeat sends, and links to web access without starting checkout", JSON.stringify({ recipient: world.owner.email, newDownloadEmails: 1, repeatSendDisabled: true, webRoute: "/dashboard/web", configuredToolsUnchanged: true }), true);
@@ -427,7 +427,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await mobileUser.see({ text: "Good work starts here." }, { timeoutMs: 90_000 });
     await mobileUser.see({ role: "textbox", label: "Email" });
     await mobileUser.see({ text: "Your choice of model. One place to work." });
-    expect(await probe.eval(mobile, "document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
+    expect(await probe.eval(mobile, () => (document.documentElement.scrollWidth <= window.innerWidth))).toBe(true);
     await mobileUser.looks(["The narrow signup screen has legible progress steps, heading, email form, and model-provider choice without horizontal clipping"]);
   });
 

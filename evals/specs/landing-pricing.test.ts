@@ -7,7 +7,7 @@ test("visitors see consistent monthly Team and Enterprise pricing", async ({ evi
   needs({ env: ["OPENWORK_EVAL_LANDING_URL"] });
   const origin = process.env.OPENWORK_EVAL_LANDING_URL;
   await using browser = await chrome({ startUrl: `${origin}/pricing`, headless: true });
-  const visible = await eventually(async () => evaluateOnSurface(browser, "document.body.innerText"), {
+  const visible = await eventually(async () => evaluateOnSurface(browser, () => (document.body.innerText)), {
     within: 30_000,
     until: (value) => typeof value === "string" && value.includes("$10") && value.includes("$40"),
   });

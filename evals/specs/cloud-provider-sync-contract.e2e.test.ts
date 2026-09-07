@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 import { observeText, textProgressFailures, control, denFetch, evalIn, go, readAvailableModels, selectModel, sendComposerMessage, waitFor } from "@openwork/behaviors";
 import type { DenSession, ModelFacts } from "@openwork/behaviors";
@@ -193,7 +194,7 @@ function parseSyncStatus(payload: Record<string, unknown>): SyncStatusFacts {
 // persisted credentials (localStorage openwork.server.port/openwork.server.token)
 // reach it with a plain Bearer fetch to 127.0.0.1.
 async function readSyncStatusPayload(surface: Parameters<typeof evalIn>[0]): Promise<Record<string, unknown>> {
-  const value = await evalIn(surface, `(async () => {
+  const value = await evalIn(surface, async () => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return { specProbeError: "missing local server credentials" };
@@ -202,7 +203,7 @@ async function readSyncStatusPayload(surface: Parameters<typeof evalIn>[0]): Pro
     });
     if (!response.ok) return { specProbeError: "HTTP " + response.status + " " + (await response.text()).slice(0, 200) };
     return await response.json();
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  }, { awaitPromise: true, timeoutMs: 30_000 });
   if (!isRecord(value)) {
     throw new Error(`GET /cloud-provider-sync/status returned a non-object: ${JSON.stringify(value)}`);
   }
@@ -213,18 +214,18 @@ async function readSyncStatusPayload(surface: Parameters<typeof evalIn>[0]): Pro
 }
 
 async function engineV2Status(surface: Parameters<typeof evalIn>[0], enabled?: boolean) {
-  const value = await evalIn(surface, `(async () => {
+  const value = await evalIn(surface, browserScript(async (inputEnabled) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return { specProbeError: "missing local server credentials" };
-    const enabled = ${String(enabled)};
+    const enabled = inputEnabled;
     const response = await fetch("http://127.0.0.1:" + port + "/experimental/engine-v2-preview" + (enabled === undefined ? "/status" : ""), {
       ...(enabled === undefined ? {} : { method: "PUT", body: JSON.stringify({ enabled, chatRouting: enabled }) }),
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
     });
     if (!response.ok) return { specProbeError: "HTTP " + response.status + " " + (await response.text()).slice(0, 200) };
     return await response.json();
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  }, [enabled]), { awaitPromise: true, timeoutMs: 30_000 });
   if (!isRecord(value) || typeof value.specProbeError === "string"
     || typeof value.enabled !== "boolean" || typeof value.running !== "boolean") {
     throw new Error(`Engine v2 preview status was invalid: ${JSON.stringify(value)}`);
@@ -421,22 +422,22 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
 
   // readAvailableModels leaves the picker dialog open; close it through its
   // own close control so later claims observe a calm, unobstructed app.
-  await evalIn(desktopApp, `(() => {
-    const close = document.querySelector('[data-slot="dialog-content"] [data-slot="dialog-close"]');
+  await evalIn(desktopApp, () => {
+    const close = document.querySelector<HTMLElement>('[data-slot="dialog-content"] [data-slot="dialog-close"]');
     if (close instanceof HTMLElement) close.click();
     return true;
-  })()`);
-  await waitFor(desktopApp, `!document.querySelector('[data-slot="dialog-content"]')`, {
+  });
+  await waitFor(desktopApp, () => (!document.querySelector<HTMLElement>('[data-slot="dialog-content"]')), {
     timeoutMs: 15_000,
     label: "model picker dialog closed",
   });
 
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
   await selectModel(desktopApp, CATALOG_MODEL_ID, { provider: CATALOG_PROVIDER_NAME });
-  const chosenDefault = await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`);
+  const chosenDefault = await evalIn(desktopApp, () => (localStorage.getItem("openwork.defaultModel")));
   expect(typeof chosenDefault).toBe("string");
   expect(String(chosenDefault)).toContain(CATALOG_MODEL_ID);
-  await evalIn(desktopApp, `(() => {
+  await evalIn(desktopApp, () => {
     window.__modelSelectionProof = { changes: 0, loops: 0, unavailable: document.body.innerText.includes("Model no longer available") };
     window.addEventListener("openwork.defaultModelChanged", () => window.__modelSelectionProof.changes++);
     const original = console.error;
@@ -447,9 +448,9 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     new MutationObserver(() => {
       if (document.body.innerText.includes("Model no longer available")) window.__modelSelectionProof.unavailable = true;
     }).observe(document.body, { childList: true, subtree: true });
-  })()`);
+  });
 
-  expect(await evalIn(desktopApp, `window.__modelSelectionProof.unavailable`)).toBe(false);
+  expect(await evalIn(desktopApp, () => (window.__modelSelectionProof.unavailable))).toBe(false);
 
   // ── Claim 3: loud skips — a dropped provider must name itself ───────────
   // The schema (apps/server/src/cloud-provider-sync.ts:38-69) carries no
@@ -510,13 +511,13 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   // ── Claim 5: the settings surface stands, bug present or fixed ──────────
   const settingsRoute = `/workspace/${desktopApp.workspaceId}/settings/cloud-providers`;
   await go(desktopApp, settingsRoute);
-  await waitFor(desktopApp, `(() => {
+  await waitFor(desktopApp, browserScript((value) => {
     if (!window.location.hash.includes('/settings/cloud-providers')) {
-      window.location.hash = ${JSON.stringify(`#${settingsRoute}`)};
+      window.location.hash = value;
       return false;
     }
     return /provider/i.test(document.body.innerText);
-  })()`, { timeoutMs: 60_000, label: "cloud providers settings surface" });
+  }, [`#${settingsRoute}`]), { timeoutMs: 60_000, label: "cloud providers settings surface" });
   const shot = await screenshot(desktopApp);
   const seen = await validate(shot, [
     "The workspace settings cloud providers surface is visible",
@@ -552,9 +553,9 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
       && status.catalogModelIds.includes(CATALOG_MODEL_ID),
     V2_MIRROR_BUDGET_MS, "custom and native Den providers to appear in the v2 catalog",
   );
-  const catalogPrivacy = await evalIn(desktopApp, `(async () => {
+  const catalogPrivacy = await evalIn(desktopApp, browserScript(async (value, providerId) => {
     const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
-    const paths = ${JSON.stringify([`/workspace/${desktopApp.workspaceId}/opencode2/api/model`, `/workspace/${desktopApp.workspaceId}/opencode2/api/model/default`, `/workspace/${desktopApp.workspaceId}/opencode2/api/provider`, `/workspace/${desktopApp.workspaceId}/opencode2/api/provider/${customRuntime.providerId}`])};
+    const paths = value;
     const results = [];
     let model;
     for (const path of paths) {
@@ -562,11 +563,11 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
         headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") }
       });
       const text = await response.text();
-      if (path === paths[0] && response.ok) model = JSON.parse(text).data.find((entry) => entry.providerID === ${JSON.stringify(customRuntime.providerId)});
+      if (path === paths[0] && response.ok) model = JSON.parse(text).data.find((entry: { providerID?: string }) => entry.providerID === providerId);
       results.push({ status: response.status, leaksKey: text.includes("sk-openwork-sync-contract-eval-only"), ...(response.ok ? {} : { error: text.replaceAll("sk-openwork-sync-contract-eval-only", "[redacted]") }) });
     }
     return { results, model };
-  })()`, { awaitPromise: true });
+  }, [[`/workspace/${desktopApp.workspaceId}/opencode2/api/model`, `/workspace/${desktopApp.workspaceId}/opencode2/api/model/default`, `/workspace/${desktopApp.workspaceId}/opencode2/api/provider`, `/workspace/${desktopApp.workspaceId}/opencode2/api/provider/${customRuntime.providerId}`], customRuntime.providerId]), { awaitPromise: true });
   expect(catalogPrivacy).toMatchObject({
     results: Array.from({ length: 4 }, () => ({ status: 200, leaksKey: false })),
     model: { limit: { context: 1050000, output: 128000 }, capabilities: { tools: true, input: ["text", "image", "pdf"], output: ["text"] } },
@@ -574,8 +575,8 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   evidence.recordAssertionEvidence("custom native OpenAI model limits, tools and modalities survive mirroring", "The fixture uses the native @ai-sdk/openai adapter; its live v2 catalog entry retained 1,050,000 context and 128,000 output limits, tool support, text/image/PDF inputs and text output.", true);
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
   await sleep(16_000); // includes the renderer's engine-routing refresh interval
-  expect(await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`)).toBe(chosenDefault);
-  expect(await evalIn(desktopApp, `window.__modelSelectionProof`)).toEqual({ changes: 0, loops: 0, unavailable: false });
+  expect(await evalIn(desktopApp, () => (localStorage.getItem("openwork.defaultModel")))).toBe(chosenDefault);
+  expect(await evalIn(desktopApp, () => (window.__modelSelectionProof))).toEqual({ changes: 0, loops: 0, unavailable: false });
   evidence.recordAssertionEvidence(
     "native organization model selection survives v1 to v2 without false unavailability or a React loop",
     "The selected catalog provider/model stayed unchanged through Settings, cloud refresh, native v2 mirroring and routing refresh; zero default writes, unavailable warnings or maximum-depth errors were observed.", true,
@@ -583,7 +584,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   await selectModel(desktopApp, CUSTOM_MODEL_ID, { provider: CUSTOM_PROVIDER_NAME });
   await using responseObservation = await observeText(desktopApp, '[data-message-role="assistant"] .prose');
   await sendComposerMessage(desktopApp, `Reply to the request marked ${promptMarker}.`);
-  await waitFor(desktopApp, `Array.from(document.querySelectorAll('[data-message-role="assistant"]')).some((row) => row.textContent.includes(${JSON.stringify(finalReply)}))`, { timeoutMs: 120_000, label: "native provider reply in the v2 transcript" });
+  await waitFor(desktopApp, browserScript((finalReply) => (Array.from(document.querySelectorAll<HTMLElement>('[data-message-role="assistant"]')).some((row) => row.textContent.includes(finalReply))), [finalReply]), { timeoutMs: 120_000, label: "native provider reply in the v2 transcript" });
   await sleep(2_000); // includes the streamed-to-persisted message reconciliation
   const frames = await responseObservation.finish();
   expect(textProgressFailures(frames, finalReply), JSON.stringify(frames)).toEqual([]);
@@ -596,11 +597,11 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     "native OpenAI inference completes through the selected v2 model",
     "The signed-in desktop rendered the independent reply nonce; the witness required the private model header and saw the selected model on the native Responses endpoint, with no wrong-model or authentication-error requests.", true,
   );
-  const nativeSessionRoute = await evalIn(desktopApp, `location.hash.slice(1)`);
+  const nativeSessionRoute = await evalIn(desktopApp, () => (location.hash.slice(1)));
   if (typeof nativeSessionRoute !== "string") throw new Error("Native session route was unavailable");
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
   await selectModel(desktopApp, CATALOG_MODEL_ID, { provider: CATALOG_PROVIDER_NAME });
-  const changesBeforeSync = await evalIn(desktopApp, `window.__modelSelectionProof.changes`);
+  const changesBeforeSync = await evalIn(desktopApp, () => (window.__modelSelectionProof.changes));
   const thirdPublishedAt = Date.now();
   const thirdProviderId = await createProvider(den.admin, orgId, {
     name: "Sync Contract Third Models",
@@ -644,39 +645,40 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     `baseURL providers ${customRuntime.providerId} and ${thirdRuntime.providerId} mirrored with models ${CUSTOM_MODEL_ID} and ${THIRD_MODEL_ID}; catalog provider ${catalogRuntime.providerId} was ${catalogOutcome}; third-provider latency=${mirrorLatencyMs}ms; sidecar stayed at pid ${pid0}.`,
     hotMirrored,
   );
-  expect(await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`)).toBe(chosenDefault);
-  expect(await evalIn(desktopApp, `window.__modelSelectionProof.changes`)).toBe(changesBeforeSync);
+  expect(await evalIn(desktopApp, () => (localStorage.getItem("openwork.defaultModel")))).toBe(chosenDefault);
+  expect(await evalIn(desktopApp, () => (window.__modelSelectionProof.changes))).toBe(changesBeforeSync);
   // Remove the selected assignment in the fixture organization, then use the
   // real server sync boundary. A missing model must settle into recovery.
   await deleteProvider(den.admin, orgId, catalogProviderId);
-  const syncResult = await evalIn(desktopApp, `(async () => {
+  const syncResult = await evalIn(desktopApp, async () => {
     const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    if (!info.hostToken) throw new Error("Missing local server host token");
     const port = localStorage.getItem("openwork.server.port");
     const response = await fetch("http://127.0.0.1:" + port + "/cloud-provider-sync/run", {
       method: "POST", headers: { "x-openwork-host-token": info.hostToken, "Content-Type": "application/json" }, body: "{}"
     });
     return response.status;
-  })()`, { awaitPromise: true, timeoutMs: 90_000 });
+  }, { awaitPromise: true, timeoutMs: 90_000 });
   expect(syncResult).toBe(200);
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
   // Opening Models is the user-facing refresh action; server reconciliation
   // alone does not update the renderer's completed catalog snapshot.
   await control(desktopApp, "session.model_picker.open");
-  await waitFor(desktopApp, `document.body.innerText.includes("Model no longer available")`, { timeoutMs: 90_000, label: "revoked model recovery" });
-  const changesAfterRevocation = await evalIn(desktopApp, `window.__modelSelectionProof.changes`);
+  await waitFor(desktopApp, () => (document.body.innerText.includes("Model no longer available")), { timeoutMs: 90_000, label: "revoked model recovery" });
+  const changesAfterRevocation = await evalIn(desktopApp, () => (window.__modelSelectionProof.changes));
   await sleep(5_000);
-  expect(await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`)).toBe(chosenDefault);
-  expect(await evalIn(desktopApp, `window.__modelSelectionProof.changes`)).toBe(changesAfterRevocation);
-  expect(await evalIn(desktopApp, `window.__modelSelectionProof.loops`)).toBe(0);
+  expect(await evalIn(desktopApp, () => (localStorage.getItem("openwork.defaultModel")))).toBe(chosenDefault);
+  expect(await evalIn(desktopApp, () => (window.__modelSelectionProof.changes))).toBe(changesAfterRevocation);
+  expect(await evalIn(desktopApp, () => (window.__modelSelectionProof.loops))).toBe(0);
   await selectModel(desktopApp, CUSTOM_MODEL_ID, { provider: CUSTOM_PROVIDER_NAME });
-  await waitFor(desktopApp, `!document.body.innerText.includes("Model no longer available")`, { timeoutMs: 30_000, label: "explicit model recovery" });
-  const recoveredDefault = await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`);
+  await waitFor(desktopApp, () => (!document.body.innerText.includes("Model no longer available")), { timeoutMs: 30_000, label: "explicit model recovery" });
+  const recoveredDefault = await evalIn(desktopApp, () => (localStorage.getItem("openwork.defaultModel")));
   evidence.recordAssertionEvidence("a genuinely revoked model settles and recovers only after an explicit selection", "Revoking the selected assignment surfaced recovery while preserving its identity for five seconds with no repeated default writes or React loop; selecting an available model cleared the warning.", true);
   // Continue the existing conversation: creating a new task intentionally
   // reconciles the organization credential, which would replace this isolated
   // env-store rotation with the fixture organization's unchanged secret.
   await go(desktopApp, nativeSessionRoute);
-  await waitFor(desktopApp, `Array.from(document.querySelectorAll('[data-message-role="assistant"] .prose')).some((row) => row.textContent.trim() === ${JSON.stringify(finalReply)})`, { timeoutMs: 30_000, label: "original reply restored before continuing the conversation" });
+  await waitFor(desktopApp, browserScript((finalReply) => (Array.from(document.querySelectorAll<HTMLElement>('[data-message-role="assistant"] .prose')).some((row) => row.textContent.trim() === finalReply)), [finalReply]), { timeoutMs: 30_000, label: "original reply restored before continuing the conversation" });
   await using rotationObservation = await observeText(desktopApp, '[data-message-role="assistant"] .prose', { ignoreExistingMessages: true });
   const rotatedMarker = `${promptMarker}-rotated`;
   const rotatedReply = `ROTATED-REPLY-${Date.now()}`;
@@ -688,24 +690,25 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   });
   expect(mockUpdate.ok).toBe(true);
   const rotatedAt = new Date().toISOString();
-  const rotationStatus = await evalIn(desktopApp, `(async () => {
+  const rotationStatus = await evalIn(desktopApp, browserScript(async (providerId, rotatedKey) => {
     const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    if (!info.hostToken) throw new Error("Missing local server host token");
     const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
     const headers = { "x-openwork-host-token": info.hostToken, "Content-Type": "application/json" };
     const config = await (await fetch(base + "/runtime-config/providers", { headers })).json();
-    const names = config.provider[${JSON.stringify(customRuntime.providerId)}]?.env;
+    const names = config.provider[providerId]?.env;
     if (!Array.isArray(names) || names.length !== 1) throw new Error("fixture provider must declare one scoped credential");
-    const response = await fetch(base + "/env", { method: "PUT", headers, body: JSON.stringify({ entries: [{ key: names[0], value: ${JSON.stringify(rotatedKey)} }] }) });
+    const response = await fetch(base + "/env", { method: "PUT", headers, body: JSON.stringify({ entries: [{ key: names[0], value: rotatedKey }] }) });
     return response.status;
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  }, [customRuntime.providerId, rotatedKey]), { awaitPromise: true, timeoutMs: 30_000 });
   expect(rotationStatus).toBe(200);
   await sleep(3_000);
   await sendComposerMessage(desktopApp, `Reply to the request marked ${rotatedMarker}.`);
-  await waitFor(desktopApp, `Array.from(document.querySelectorAll('[data-message-role="assistant"]')).some((row) => row.textContent.includes(${JSON.stringify(rotatedReply)}))`, { timeoutMs: 120_000, label: "reply after credential rotation" });
+  await waitFor(desktopApp, browserScript((rotatedReply) => (Array.from(document.querySelectorAll<HTMLElement>('[data-message-role="assistant"]')).some((row) => row.textContent.includes(rotatedReply))), [rotatedReply]), { timeoutMs: 120_000, label: "reply after credential rotation" });
   await sleep(2_000);
   const rotationFrames = await rotationObservation.finish();
   expect(textProgressFailures(rotationFrames, rotatedReply), JSON.stringify(rotationFrames)).toEqual([]);
-  expect(await evalIn(desktopApp, `document.querySelectorAll('[data-message-role="assistant"]').length >= 2 && Array.from(document.querySelectorAll('[data-message-role="assistant"] .prose')).some((row) => row.textContent.trim() === ${JSON.stringify(finalReply)})`)).toBe(true);
+  expect(await evalIn(desktopApp, browserScript((finalReply) => (document.querySelectorAll<HTMLElement>('[data-message-role="assistant"]').length >= 2 && Array.from(document.querySelectorAll<HTMLElement>('[data-message-role="assistant"] .prose')).some((row) => row.textContent.trim() === finalReply)), [finalReply]))).toBe(true);
   evidence.recordAssertionEvidence("a second assistant response never substitutes the previous answer or overwrites it", "Every new response frame matched only the independent second reply; after completion the first answer remained intact in a separate assistant message.", true);
   const rotatedRequests = await den.mocks.agent.agentRequests({ promptMarker: rotatedMarker, sinceIso: rotatedAt, atLeast: 1 });
   expect(rotatedRequests.some((request) => request.kind === "final" && request.model === CUSTOM_MODEL_ID)).toBe(true);
@@ -715,8 +718,8 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   await engineV2Status(desktopApp, false);
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
   await sleep(16_000);
-  expect(await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`)).toBe(recoveredDefault);
-  expect(await evalIn(desktopApp, `window.__modelSelectionProof.loops`)).toBe(0);
+  expect(await evalIn(desktopApp, () => (localStorage.getItem("openwork.defaultModel")))).toBe(recoveredDefault);
+  expect(await evalIn(desktopApp, () => (window.__modelSelectionProof.loops))).toBe(0);
   evidence.recordAssertionEvidence("selected model survives cloud sync and return to v1", "The exact selected provider/model remained after another Den provider was published, the normal cloud sync completed, and routing returned to v1; no React update loop occurred.", true);
   expect(hotMirrored, `Initial v2 status: ${JSON.stringify(initialV2)}; third v2 status: ${JSON.stringify(thirdV2)}`).toBe(true);
 });

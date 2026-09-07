@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
 import { clickButton, currentHash, evalIn, fill, waitFor, waitForText } from "./desktop.ts";
 
@@ -37,14 +38,14 @@ export async function createLocalWorkspaceViaUi(
   app: Surface,
   input: { path: string; name?: string },
 ): Promise<LocalWorkspaceFacts> {
-  await waitFor(app, "location.hash.includes('/welcome')", { timeoutMs: 30_000, label: "welcome route" });
-  let manualFolderVisible = await evalIn(app, 'Boolean(document.querySelector(\'input[placeholder="/workspace/my-project"]\'))') === true;
+  await waitFor(app, () => (location.hash.includes('/welcome')), { timeoutMs: 30_000, label: "welcome route" });
+  let manualFolderVisible = await evalIn(app, () => (Boolean(document.querySelector<HTMLInputElement>('input[placeholder="/workspace/my-project"]')))) === true;
   if (!manualFolderVisible) {
-    const useWithoutCloudVisible = await evalIn(app, `Boolean([...document.querySelectorAll("button")]
-      .find((button) => (button.textContent ?? "").trim() === "Use Without Cloud" && !button.disabled))`);
+    const useWithoutCloudVisible = await evalIn(app, () => (Boolean([...document.querySelectorAll("button")]
+      .find((button) => (button.textContent ?? "").trim() === "Use Without Cloud" && !button.disabled))));
     if (useWithoutCloudVisible === true) {
       await clickButton(app, "Use Without Cloud");
-      await waitFor(app, 'Boolean(document.querySelector(\'input[placeholder="/workspace/my-project"]\'))', {
+      await waitFor(app, () => (Boolean(document.querySelector<HTMLInputElement>('input[placeholder="/workspace/my-project"]'))), {
         timeoutMs: 15_000,
         label: "local workspace folder input",
       });
@@ -60,27 +61,27 @@ export async function createLocalWorkspaceViaUi(
     await submitFolder(app, input.path);
   } else {
     entrypoint = "workspace-modal";
-    await waitFor(app, `(() => {
+    await waitFor(app, () => {
       const button = [...document.querySelectorAll("button")]
         .find((candidate) => (candidate.textContent ?? "").trim() === "Get started" && !candidate.disabled);
       if (!button) return false;
       button.click();
       return true;
-    })()`, { timeoutMs: 15_000, label: "Get started" });
+    }, { timeoutMs: 15_000, label: "Get started" });
     await waitForText(app, "Local workspace", { timeoutMs: 15_000 });
-    await waitFor(app, `(() => {
+    await waitFor(app, () => {
       const button = [...document.querySelectorAll("button")]
         .find((candidate) => (candidate.textContent ?? "").trim() === "Local workspace" && !candidate.disabled);
       if (!button) return false;
       button.click();
       return true;
-    })()`, { timeoutMs: 15_000, label: "Local workspace" });
+    }, { timeoutMs: 15_000, label: "Local workspace" });
     await waitForText(app, "No folder selected yet.", { timeoutMs: 15_000 });
-    const injected = await evalIn(app, `(() => {
-      const placeholder = [...document.querySelectorAll("span, div, p")]
+    const injected = await evalIn(app, browserScript((path) => {
+      const placeholder = [...document.querySelectorAll<HTMLElement>("span, div, p")]
         .find((node) => (node.textContent ?? "").includes("No folder selected yet."));
       if (!placeholder) return { ok: false, reason: "folder placeholder not found" };
-      const key = Object.keys(placeholder).find((candidate) => candidate.startsWith("__reactFiber$"));
+      const key = Object.keys(placeholder).find((candidate): candidate is `__reactFiber$${string}` => candidate.startsWith("__reactFiber$"));
       let fiber = key ? placeholder[key] : null;
       while (fiber) {
         const componentName = fiber.elementType?.name || fiber.type?.name || "";
@@ -91,35 +92,35 @@ export async function createLocalWorkspaceViaUi(
       let hook = fiber.memoizedState;
       while (hook) {
         if (hook.queue?.dispatch) {
-          hook.queue.dispatch({ type: "set", key: "selectedFolder", value: ${JSON.stringify(input.path)} });
+          hook.queue.dispatch({ type: "set", key: "selectedFolder", value: path });
           hook.queue.dispatch({ type: "set", key: "pickingFolder", value: false });
           return { ok: true };
         }
         hook = hook.next;
       }
       return { ok: false, reason: "folder reducer dispatch not found" };
-    })()`);
+    }, [input.path]));
     if (!isRecord(injected) || injected.ok !== true) {
       throw new Error(`Could not inject the folder chosen by the native picker: ${JSON.stringify(injected)}`);
     }
     if (input.name) {
-      await evalIn(app, `(() => {
-        const nameInput = document.querySelector('input[placeholder*="name" i], input[placeholder*="workspace" i]');
+      await evalIn(app, browserScript((name) => {
+        const nameInput = document.querySelector<HTMLInputElement>('input[placeholder*="name" i], input[placeholder*="workspace" i]');
         if (!nameInput) return false;
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-        setter?.call(nameInput, ${JSON.stringify(input.name)});
+        setter?.call(nameInput, name);
         nameInput.dispatchEvent(new Event("input", { bubbles: true }));
         nameInput.dispatchEvent(new Event("change", { bubbles: true }));
         return true;
-      })()`);
+      }, [input.name]));
     }
-    await waitFor(app, `(() => {
+    await waitFor(app, () => {
       const button = [...document.querySelectorAll("button")]
         .find((candidate) => (candidate.textContent ?? "").trim() === "Create Workspace" && !candidate.disabled);
       if (!button) return false;
       button.click();
       return true;
-    })()`, { timeoutMs: 15_000, label: "Create Workspace" });
+    }, { timeoutMs: 15_000, label: "Create Workspace" });
   }
 
   await waitForText(app, "Power your first task", { timeoutMs: 120_000 });

@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { execFile } from "node:child_process";
 import { writeFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -272,7 +273,7 @@ async function writeProviderConfig(workspacePath: string, witnessUrl: string): P
 }
 
 async function readServerInfo(app: Surface): Promise<ServerInfo> {
-  const value = await evalIn(app, `(async () => {
+  const value = await evalIn(app, async () => {
     let baseUrl = "";
     let token = "";
     try {
@@ -280,7 +281,7 @@ async function readServerInfo(app: Surface): Promise<ServerInfo> {
       if (invokeDesktop) {
         const info = await invokeDesktop("openworkServerInfo");
         if (info && info.running === true) {
-          baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").trim().replace(/\\\/+$/, "");
+          baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").trim().replace(/\/+$/, "");
           token = String(info.ownerToken ?? info.clientToken ?? "").trim();
         }
       }
@@ -291,7 +292,7 @@ async function readServerInfo(app: Surface): Promise<ServerInfo> {
       token = token || (localStorage.getItem("openwork.server.token") ?? "").trim();
     }
     return { baseUrl, token };
-  })()`, { awaitPromise: true, timeoutMs: 15_000 });
+  }, { awaitPromise: true, timeoutMs: 15_000 });
   if (!isRecord(value) || typeof value.baseUrl !== "string" || !value.baseUrl || typeof value.token !== "string" || !value.token) {
     throw new Error(`Local server credentials are unavailable: ${JSON.stringify(value)}`);
   }
@@ -461,7 +462,7 @@ async function observeExecutionEvents(info: ServerInfo, workspaceId: string, con
 
 async function pollExpression(
   app: Surface,
-  expression: string,
+  expression: import("@openwork/cdp").BrowserEvaluation,
   label: string,
   within = 120_000,
 ): Promise<void> {
@@ -485,52 +486,52 @@ async function waitForComposerReady(app: Surface, label: string): Promise<void> 
 async function selectBenchModel(app: Surface): Promise<void> {
   await pollExpression(
     app,
-    `Boolean(document.querySelector('button[aria-label="Change model"]'))`,
+    () => (Boolean(document.querySelector<HTMLButtonElement>('button[aria-label="Change model"]'))),
     "bench model picker trigger",
   );
-  const opened = await evalIn(app, `(() => {
-    const trigger = document.querySelector('button[aria-label="Change model"]');
+  const opened = await evalIn(app, () => {
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Change model"]');
     if (!(trigger instanceof HTMLButtonElement)) return false;
     trigger.click();
     return true;
-  })()`);
+  });
   expect(opened).toBe(true);
   await pollExpression(
     app,
-    `Boolean(document.querySelector('[data-slot="popover-content"]'))`,
+    () => (Boolean(document.querySelector<HTMLElement>('[data-slot="popover-content"]'))),
     "open bench model picker",
     30_000,
   );
-  const modelPaneOpened = await evalIn(app, `(() => {
-    const popover = document.querySelector('[data-slot="popover-content"]');
+  const modelPaneOpened = await evalIn(app, browserScript((modelName) => {
+    const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
     if (!(popover instanceof HTMLElement)) return false;
-    if ([...popover.querySelectorAll('[data-slot="command-item"]')]
-      .some((item) => (item.textContent ?? "").includes(${JSON.stringify(modelName)}))) return true;
+    if ([...popover.querySelectorAll<HTMLElement>('[data-slot="command-item"]')]
+      .some((item) => (item.textContent ?? "").includes(modelName))) return true;
     const modelButton = [...popover.querySelectorAll('button')]
       .find((button) => (button.textContent ?? "").trim().startsWith("Model"));
     if (!(modelButton instanceof HTMLButtonElement)) return false;
     modelButton.click();
     return true;
-  })()`);
+  }, [modelName]));
   expect(modelPaneOpened).toBe(true);
-  await pollExpression(app, `(() => {
-    const popover = document.querySelector('[data-slot="popover-content"]');
+  await pollExpression(app, browserScript((modelName) => {
+    const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
     if (!(popover instanceof HTMLElement)) return false;
-    return [...popover.querySelectorAll('[data-slot="command-item"]')]
-      .some((item) => (item.textContent ?? "").includes(${JSON.stringify(modelName)}));
-  })()`, "Bench Model listed in picker");
-  const picked = await evalIn(app, `(() => {
-    const popover = document.querySelector('[data-slot="popover-content"]');
-    const item = [...(popover?.querySelectorAll('[data-slot="command-item"]') ?? [])]
-      .find((candidate) => (candidate.textContent ?? "").includes(${JSON.stringify(modelName)}));
+    return [...popover.querySelectorAll<HTMLElement>('[data-slot="command-item"]')]
+      .some((item) => (item.textContent ?? "").includes(modelName));
+  }, [modelName]), "Bench Model listed in picker");
+  const picked = await evalIn(app, browserScript((modelName) => {
+    const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
+    const item = [...(popover?.querySelectorAll<HTMLElement>('[data-slot="command-item"]') ?? [])]
+      .find((candidate) => (candidate.textContent ?? "").includes(modelName));
     if (!(item instanceof HTMLElement)) return false;
     item.click();
     return true;
-  })()`);
+  }, [modelName]));
   expect(picked).toBe(true);
   await pollExpression(
     app,
-    `(document.querySelector('button[aria-label="Change model"]')?.textContent ?? "").includes(${JSON.stringify(modelName)})`,
+    browserScript((modelName) => ((document.querySelector<HTMLButtonElement>('button[aria-label="Change model"]')?.textContent ?? "").includes(modelName)), [modelName]),
     "Bench Model selected",
     30_000,
   );
@@ -557,62 +558,62 @@ async function selectBenchModelV2(app: Surface): Promise<void> {
   const deadline = Date.now() + 60_000;
   await pollExpression(
     app,
-    `Boolean(document.querySelector('button[aria-label="Change model"]'))`,
+    () => (Boolean(document.querySelector<HTMLButtonElement>('button[aria-label="Change model"]'))),
     "v2 bench model picker trigger",
     60_000,
   );
   let lastItems: string[] = [];
   while (Date.now() < deadline) {
-    const opened = await evalIn(app, `(() => {
-      if (document.querySelector('[data-slot="popover-content"]')) return true;
-      const trigger = document.querySelector('button[aria-label="Change model"]');
+    const opened = await evalIn(app, () => {
+      if (document.querySelector<HTMLElement>('[data-slot="popover-content"]')) return true;
+      const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Change model"]');
       if (!(trigger instanceof HTMLButtonElement)) return false;
       trigger.click();
       return true;
-    })()`);
+    });
     if (opened === true) {
       await sleep(300);
-      await evalIn(app, `(() => {
-        const popover = document.querySelector('[data-slot="popover-content"]');
+      await evalIn(app, browserScript((modelName, modelId) => {
+        const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
         if (!(popover instanceof HTMLElement)) return false;
-        const matches = (text) => text.includes(${JSON.stringify(modelName)}) || text.includes(${JSON.stringify(modelId)});
-        if ([...popover.querySelectorAll('[data-slot="command-item"]')]
+        const matches = (text: string) => text.includes(modelName) || text.includes(modelId);
+        if ([...popover.querySelectorAll<HTMLElement>('[data-slot="command-item"]')]
           .some((item) => matches(item.textContent ?? ""))) return true;
         const modelButton = [...popover.querySelectorAll('button')]
           .find((button) => (button.textContent ?? "").trim().startsWith("Model"));
         if (!(modelButton instanceof HTMLButtonElement)) return false;
         modelButton.click();
         return true;
-      })()`);
+      }, [modelName, modelId]));
       await sleep(200);
-      const items = await evalIn(app, `(() => {
-        const popover = document.querySelector('[data-slot="popover-content"]');
+      const items = await evalIn(app, () => {
+        const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
         if (!(popover instanceof HTMLElement)) return [];
-        return [...popover.querySelectorAll('[data-slot="command-item"]')]
+        return [...popover.querySelectorAll<HTMLElement>('[data-slot="command-item"]')]
           .map((item) => (item.textContent ?? "").trim());
-      })()`);
+      });
       if (Array.isArray(items) && items.every((item) => typeof item === "string")) {
         lastItems = items;
         if (items.some((item) => item.includes(modelName) || item.includes(modelId))) {
-          const picked = await evalIn(app, `(() => {
-            const popover = document.querySelector('[data-slot="popover-content"]');
-            const item = [...(popover?.querySelectorAll('[data-slot="command-item"]') ?? [])]
+          const picked = await evalIn(app, browserScript((modelName, modelId) => {
+            const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
+            const item = [...(popover?.querySelectorAll<HTMLElement>('[data-slot="command-item"]') ?? [])]
               .find((candidate) => {
                 const text = candidate.textContent ?? "";
-                return text.includes(${JSON.stringify(modelName)}) || text.includes(${JSON.stringify(modelId)});
+                return text.includes(modelName) || text.includes(modelId);
               });
             if (!(item instanceof HTMLElement)) return false;
             item.click();
             return true;
-          })()`);
+          }, [modelName, modelId]));
           expect(picked).toBe(true);
           const remaining = Math.max(1, deadline - Date.now());
           await pollExpression(
             app,
-            `(() => {
-              const text = document.querySelector('button[aria-label="Change model"]')?.textContent ?? "";
-              return text.includes(${JSON.stringify(modelName)}) || text.includes(${JSON.stringify(modelId)});
-            })()`,
+            browserScript((modelName, modelId) => {
+              const text = document.querySelector<HTMLButtonElement>('button[aria-label="Change model"]')?.textContent ?? "";
+              return text.includes(modelName) || text.includes(modelId);
+            }, [modelName, modelId]),
             "v2 Bench Model selected",
             remaining,
           );
@@ -643,34 +644,34 @@ async function ensureBenchModelV2(app: Surface): Promise<boolean> {
 }
 
 async function typeIntoComposer(app: Surface, text: string): Promise<void> {
-  await pollExpression(app, `(() => {
-    const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]');
+  await pollExpression(app, () => {
+    const editor = document.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]');
     return editor instanceof HTMLElement && (editor.innerText ?? "").trim() === "";
-  })()`, "empty composer ready");
-  const focused = await evalIn(app, `(() => {
-    const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]');
+  }, "empty composer ready");
+  const focused = await evalIn(app, () => {
+    const editor = document.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]');
     if (!(editor instanceof HTMLElement)) return false;
     editor.focus();
     return true;
-  })()`);
+  });
   expect(focused).toBe(true);
   await app.client.send("Input.insertText", { text });
   const expectedLength = text.length;
   const expectedStart = text.slice(0, 64);
   const expectedEnd = text.slice(-64);
-  await pollExpression(app, `(() => {
-    const value = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]')?.innerText ?? "";
-    return value.length === ${expectedLength}
-      && value.startsWith(${JSON.stringify(expectedStart)})
-      && value.endsWith(${JSON.stringify(expectedEnd)});
-  })()`, `composer contains ${expectedLength} inserted characters`);
+  await pollExpression(app, browserScript((expectedLength, expectedStart, expectedEnd) => {
+    const value = document.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]')?.innerText ?? "";
+    return value.length === expectedLength
+      && value.startsWith(expectedStart)
+      && value.endsWith(expectedEnd);
+  }, [expectedLength, expectedStart, expectedEnd]), `composer contains ${expectedLength} inserted characters`);
 }
 
 async function activeSessionId(app: Surface): Promise<string> {
   return eventually(async () => {
     const value = await evalIn(
       app,
-      `document.querySelector("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? ""`,
+      () => (document.querySelector<HTMLElement>("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? ""),
     );
     return typeof value === "string" ? value : "";
   }, {
@@ -687,7 +688,7 @@ async function measurePreparedSend(
   witnessNonce: string,
 ): Promise<SendFacts> {
   const beforeAssistantIds = await evalIn(app,
-    `[...document.querySelectorAll('[data-message-role="assistant"]')].map((message) => message.getAttribute('data-message-id'))`);
+    () => ([...document.querySelectorAll<HTMLElement>('[data-message-role="assistant"]')].map((message) => message.getAttribute('data-message-id'))));
   if (!Array.isArray(beforeAssistantIds)) throw new Error("Invalid assistant message identities.");
   const startedAt = Date.now();
   await clickButton(app, "Run task", { timeoutMs: 30_000 });
@@ -697,23 +698,23 @@ async function measurePreparedSend(
   // Observe all milestones together. Waiting for the user row first masks
   // tokens that already streamed while that row was still being reconciled.
   await eventually(async () => {
-    const observed = await evalIn(app, `(() => {
-      const users = [...document.querySelectorAll('[data-message-role="user"]')];
-      const assistants = [...document.querySelectorAll('[data-message-role="assistant"]')];
+    const observed = await evalIn(app, browserScript((beforeAssistantIds, expectedUserMarker, witnessNonce) => {
+      const users = [...document.querySelectorAll<HTMLElement>('[data-message-role="user"]')];
+      const assistants = [...document.querySelectorAll<HTMLElement>('[data-message-role="assistant"]')];
       const text = assistants[assistants.length - 1]?.innerText ?? "";
       const latestAssistant = assistants[assistants.length - 1];
       const newAssistant = Boolean(latestAssistant)
-        && !${JSON.stringify(beforeAssistantIds)}.includes(latestAssistant?.getAttribute('data-message-id'));
-      const sessionId = document.querySelector('[data-session-surface-id]')?.getAttribute('data-session-surface-id');
-      const row = [...document.querySelectorAll('[data-sidebar-session-id]')]
+        && !beforeAssistantIds.includes(latestAssistant?.getAttribute('data-message-id'));
+      const sessionId = document.querySelector<HTMLElement>('[data-session-surface-id]')?.getAttribute('data-session-surface-id');
+      const row = [...document.querySelectorAll<HTMLElement>('[data-sidebar-session-id]')]
         .find((item) => item.getAttribute('data-sidebar-session-id') === sessionId);
       return {
-        userRendered: (users[users.length - 1]?.innerText ?? "").includes(${JSON.stringify(expectedUserMarker)}),
+        userRendered: (users[users.length - 1]?.innerText ?? "").includes(expectedUserMarker),
         firstToken: newAssistant && text.includes("token 1 "),
-        complete: newAssistant && Boolean(row) && text.includes("token 20")
-          && text.includes(${JSON.stringify(witnessNonce)}) && !row.querySelector('[data-session-loading-indicator]'),
+        complete: newAssistant && !!row && text.includes("token 20")
+          && text.includes(witnessNonce) && !row.querySelector<HTMLElement>('[data-session-loading-indicator]'),
       };
-    })()`);
+    }, [beforeAssistantIds, expectedUserMarker, witnessNonce]));
     if (!isRecord(observed)) throw new Error("Invalid benchmark milestone observation.");
     const elapsed = Date.now() - startedAt;
     if (observed.userRendered === true) userRendered ??= elapsed;
@@ -730,15 +731,15 @@ async function measurePreparedSend(
     throw new Error("Benchmark render milestones were incomplete.");
   }
   const sessionId = await activeSessionId(app);
-  const facts = await evalIn(app, `(() => {
-    const users = [...document.querySelectorAll('[data-message-role="user"]')];
-    const assistants = [...document.querySelectorAll('[data-message-role="assistant"]')];
+  const facts = await evalIn(app, () => {
+    const users = [...document.querySelectorAll<HTMLElement>('[data-message-role="user"]')];
+    const assistants = [...document.querySelectorAll<HTMLElement>('[data-message-role="assistant"]')];
     const latestUser = users[users.length - 1];
     return {
-      userLength: latestUser?.querySelector("span.whitespace-pre-wrap")?.textContent?.length ?? 0,
+      userLength: latestUser?.querySelector<HTMLElement>("span.whitespace-pre-wrap")?.textContent?.length ?? 0,
       assistantText: assistants[assistants.length - 1]?.innerText ?? "",
     };
-  })()`);
+  });
   if (!isRecord(facts) || typeof facts.userLength !== "number" || typeof facts.assistantText !== "string") {
     throw new Error(`Could not read completed message facts: ${JSON.stringify(facts)}`);
   }
@@ -758,26 +759,26 @@ async function sendMessage(app: Surface, text: string, witnessNonce: string): Pr
 async function createNewSession(app: Surface): Promise<{ sessionId: string; ms: number }> {
   const previousSessionId = await evalIn(
     app,
-    `document.querySelector("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? ""`,
+    () => (document.querySelector<HTMLElement>("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? ""),
   );
   const previous = typeof previousSessionId === "string" ? previousSessionId : "";
-  await pollExpression(app, `(() => {
-    const button = document.querySelector('[data-sidebar-new-chat]');
+  await pollExpression(app, () => {
+    const button = document.querySelector<HTMLElement>('[data-sidebar-new-chat]');
     return button instanceof HTMLButtonElement && !button.disabled;
-  })()`, "enabled sidebar New task control");
+  }, "enabled sidebar New task control");
   const startedAt = Date.now();
-  const clicked = await evalIn(app, `(() => {
-    const button = document.querySelector("[data-sidebar-new-chat]");
+  const clicked = await evalIn(app, () => {
+    const button = document.querySelector<HTMLElement>("[data-sidebar-new-chat]");
     if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
     button.click();
     return true;
-  })()`);
+  });
   expect(clicked).toBe(true);
   const sessionId = await eventually(async () => {
-    const value = await evalIn(app, `(() => {
-      const match = /\\/session\\/(ses_[^/?#]+)/.exec(window.location.hash);
+    const value = await evalIn(app, () => {
+      const match = /\/session\/(ses_[^/?#]+)/.exec(window.location.hash);
       return match?.[1] ?? "";
-    })()`);
+    });
     return typeof value === "string" ? value : "";
   }, {
     within: 60_000,
@@ -785,10 +786,10 @@ async function createNewSession(app: Surface): Promise<{ sessionId: string; ms: 
     label: "new session route",
     until: (value) => value.startsWith("ses_") && value !== previous,
   });
-  await pollExpression(app, `(() => {
-    const surface = document.querySelector("[data-session-surface-id]");
-    return surface?.getAttribute("data-session-surface-id") === ${JSON.stringify(sessionId)};
-  })()`, `new session surface ${sessionId}`);
+  await pollExpression(app, browserScript((sessionId) => {
+    const surface = document.querySelector<HTMLElement>("[data-session-surface-id]");
+    return surface?.getAttribute("data-session-surface-id") === sessionId;
+  }, [sessionId]), `new session surface ${sessionId}`);
   await waitForComposerReady(app, `new session ${sessionId} composer and Run task`);
   return { sessionId, ms: Date.now() - startedAt };
 }
@@ -796,36 +797,36 @@ async function createNewSession(app: Surface): Promise<{ sessionId: string; ms: 
 async function createSecondWorkspaceViaUi(app: Surface, firstWorkspaceId: string, workspacePath: string): Promise<string> {
   await pollExpression(
     app,
-    `Boolean(document.querySelector('button[aria-label="Add workspace"]'))`,
+    () => (Boolean(document.querySelector<HTMLButtonElement>('button[aria-label="Add workspace"]'))),
     "Add workspace control",
   );
-  const addClicked = await evalIn(app, `(() => {
-    const button = document.querySelector('button[aria-label="Add workspace"]');
+  const addClicked = await evalIn(app, () => {
+    const button = document.querySelector<HTMLButtonElement>('button[aria-label="Add workspace"]');
     if (!(button instanceof HTMLButtonElement)) return false;
     button.click();
     return true;
-  })()`);
+  });
   expect(addClicked).toBe(true);
-  await pollExpression(app, `(() => [...document.querySelectorAll("button")]
-    .some((button) => (button.textContent ?? "").trim().startsWith("Local workspace") && !button.disabled))()`, "Local workspace option");
-  const localClicked = await evalIn(app, `(() => {
+  await pollExpression(app, () => ((() => [...document.querySelectorAll("button")]
+    .some((button) => (button.textContent ?? "").trim().startsWith("Local workspace") && !button.disabled))()), "Local workspace option");
+  const localClicked = await evalIn(app, () => {
     const button = [...document.querySelectorAll("button")]
       .find((candidate) => (candidate.textContent ?? "").trim().startsWith("Local workspace") && !candidate.disabled);
     if (!(button instanceof HTMLButtonElement)) return false;
     button.click();
     return true;
-  })()`);
+  });
   expect(localClicked).toBe(true);
-  await pollExpression(app, `document.body.innerText.includes("No folder selected yet.")`, "local workspace folder chooser");
+  await pollExpression(app, () => (document.body.innerText.includes("No folder selected yet.")), "local workspace folder chooser");
 
   // CDP cannot operate Electron's native folder dialog. Dispatching the same
   // selected-folder reducer event used after that dialog returns keeps the rest
   // of workspace creation on the visible Add workspace flow.
-  const injected = await evalIn(app, `(() => {
-    const placeholder = [...document.querySelectorAll("span, div, p")]
+  const injected = await evalIn(app, browserScript((workspacePath) => {
+    const placeholder = [...document.querySelectorAll<HTMLElement>("span, div, p")]
       .find((node) => (node.textContent ?? "").includes("No folder selected yet."));
     if (!placeholder) return { ok: false, reason: "folder placeholder not found" };
-    const key = Object.keys(placeholder).find((candidate) => candidate.startsWith("__reactFiber$"));
+    const key = Object.keys(placeholder).find((candidate): candidate is `__reactFiber$${string}` => candidate.startsWith("__reactFiber$"));
     let fiber = key ? placeholder[key] : null;
     while (fiber) {
       const componentName = fiber.elementType?.name || fiber.type?.name || "";
@@ -836,20 +837,20 @@ async function createSecondWorkspaceViaUi(app: Surface, firstWorkspaceId: string
     let hook = fiber.memoizedState;
     while (hook) {
       if (hook.queue?.dispatch) {
-        hook.queue.dispatch({ type: "set", key: "selectedFolder", value: ${JSON.stringify(workspacePath)} });
+        hook.queue.dispatch({ type: "set", key: "selectedFolder", value: workspacePath });
         hook.queue.dispatch({ type: "set", key: "pickingFolder", value: false });
         return { ok: true };
       }
       hook = hook.next;
     }
     return { ok: false, reason: "folder reducer dispatch not found" };
-  })()`);
+  }, [workspacePath]));
   if (!isRecord(injected) || injected.ok !== true) {
     throw new Error(`Could not simulate the native folder selection: ${JSON.stringify(injected)}`);
   }
   await clickButton(app, "Create Workspace", { timeoutMs: 30_000 });
   const workspaceId = await eventually(async () => {
-    const value = await evalIn(app, `localStorage.getItem("openwork.react.activeWorkspace") ?? ""`);
+    const value = await evalIn(app, () => (localStorage.getItem("openwork.react.activeWorkspace") ?? ""));
     return typeof value === "string" ? value : "";
   }, {
     within: 120_000,
@@ -859,7 +860,7 @@ async function createSecondWorkspaceViaUi(app: Surface, firstWorkspaceId: string
   });
   await pollExpression(
     app,
-    `Boolean(document.querySelector(${JSON.stringify(`[data-sidebar-workspace-id="${workspaceId}"]`)}))`,
+    browserScript((value) => (Boolean(document.querySelector<HTMLElement>(value))), [`[data-sidebar-workspace-id="${workspaceId}"]`]),
     "second workspace visible in sidebar",
   );
   await waitForComposerReady(app, "second workspace composer ready");
@@ -867,48 +868,48 @@ async function createSecondWorkspaceViaUi(app: Surface, firstWorkspaceId: string
 }
 
 async function clickSessionRow(app: Surface, chat: Chat): Promise<void> {
-  const clicked = await evalIn(app, `(() => {
-    const row = document.querySelector(${JSON.stringify(`[data-sidebar-session-id="${chat.sessionId}"][data-sidebar-session-workspace-id="${chat.workspaceId}"]`)});
-    const control = row?.querySelector(${JSON.stringify(`[data-session-tab-id="${chat.sessionId}"]`)});
+  const clicked = await evalIn(app, browserScript((value, inputValue) => {
+    const row = document.querySelector<HTMLElement>(value);
+    const control = row?.querySelector<HTMLElement>(inputValue);
     if (!(row instanceof HTMLElement) || !(control instanceof HTMLElement)) return false;
     row.scrollIntoView({ block: "center" });
     control.click();
     return true;
-  })()`);
+  }, [`[data-sidebar-session-id="${chat.sessionId}"][data-sidebar-session-workspace-id="${chat.workspaceId}"]`, `[data-session-tab-id="${chat.sessionId}"]`]));
   expect(clicked, `sidebar row for ${chat.title}`).toBe(true);
 }
 
 async function waitForSessionRow(app: Surface, chat: Chat): Promise<void> {
   // Expansion is untimed setup: the metric starts at the target task click.
-  await evalIn(app, `(() => {
-    const group = document.querySelector(${JSON.stringify(`[data-sidebar-workspace-id="${chat.workspaceId}"]`)});
-    const expand = group?.querySelector('button[aria-label="Expand"][aria-expanded="false"]');
+  await evalIn(app, browserScript((value) => {
+    const group = document.querySelector<HTMLElement>(value);
+    const expand = group?.querySelector<HTMLButtonElement>('button[aria-label="Expand"][aria-expanded="false"]');
     if (expand instanceof HTMLElement) expand.click();
-  })()`);
+  }, [`[data-sidebar-workspace-id="${chat.workspaceId}"]`]));
   try {
-    await pollExpression(app, `(() => {
-    const row = document.querySelector(${JSON.stringify(`[data-sidebar-session-id="${chat.sessionId}"][data-sidebar-session-workspace-id="${chat.workspaceId}"]`)});
+    await pollExpression(app, browserScript((value, inputValue) => {
+    const row = document.querySelector<HTMLElement>(value);
     return row instanceof HTMLElement
-      && row.querySelector(${JSON.stringify(`[data-session-tab-id="${chat.sessionId}"]`)}) instanceof HTMLElement;
-    })()`, `sidebar row for ${chat.title}`, 10_000);
+      && row.querySelector<HTMLElement>(inputValue) instanceof HTMLElement;
+    }, [`[data-sidebar-session-id="${chat.sessionId}"][data-sidebar-session-workspace-id="${chat.workspaceId}"]`, `[data-session-tab-id="${chat.sessionId}"]`]), `sidebar row for ${chat.title}`, 10_000);
   } catch (error) {
-    const facts = await evalIn(app, `({
+    const facts = await evalIn(app, browserScript((value) => (({
       route: window.location.hash,
-      targetWorkspace: document.querySelector(${JSON.stringify(`[data-sidebar-workspace-id="${chat.workspaceId}"]`)})?.innerText,
-      rows: [...document.querySelectorAll('[data-sidebar-session-id]')].map((row) => ({
+      targetWorkspace: document.querySelector<HTMLElement>(value)?.innerText,
+      rows: [...document.querySelectorAll<HTMLElement>('[data-sidebar-session-id]')].map((row) => ({
         session: row.getAttribute('data-sidebar-session-id'), workspace: row.getAttribute('data-sidebar-session-workspace-id'),
       })),
-    })`);
+    })), [`[data-sidebar-workspace-id="${chat.workspaceId}"]`]));
     throw new Error(`${error instanceof Error ? error.message : String(error)}; sidebar facts: ${JSON.stringify(facts)}`);
   }
 }
 
 async function waitForChatSurface(app: Surface, chat: Chat): Promise<void> {
-  await pollExpression(app, `(() => {
-    const surface = document.querySelector("[data-session-surface-id]");
-    return surface?.getAttribute("data-session-surface-id") === ${JSON.stringify(chat.sessionId)}
-      && (localStorage.getItem("openwork.react.activeWorkspace") ?? "") === ${JSON.stringify(chat.workspaceId)};
-  })()`, `surface for ${chat.title}`);
+  await pollExpression(app, browserScript((sessionId, workspaceId) => {
+    const surface = document.querySelector<HTMLElement>("[data-session-surface-id]");
+    return surface?.getAttribute("data-session-surface-id") === sessionId
+      && (localStorage.getItem("openwork.react.activeWorkspace") ?? "") === workspaceId;
+  }, [chat.sessionId, chat.workspaceId]), `surface for ${chat.title}`);
 }
 
 async function switchAndMeasure(app: Surface, chat: Chat): Promise<number> {
@@ -923,7 +924,7 @@ async function switchAndMeasure(app: Surface, chat: Chat): Promise<number> {
 async function visibleUserTexts(app: Surface): Promise<string[]> {
   const value = await evalIn(
     app,
-    `[...document.querySelectorAll('[data-message-role="user"]')].map((message) => message.innerText ?? "")`,
+    () => ([...document.querySelectorAll<HTMLElement>('[data-message-role="user"]')].map((message) => message.innerText ?? "")),
   );
   if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
     throw new Error(`Visible user messages were malformed: ${JSON.stringify(value)}`);
@@ -1213,9 +1214,9 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
             expect(aIsolated, `workspace A transcript after switch ${switchIndex}`).toBe(true);
           }
 
-          const compactionProbe = await evalIn(app, `(() => {
-            const root = document.querySelector("[data-session-surface-id]") ?? document;
-            const controls = [...root.querySelectorAll('button, [role="menuitem"], [role="option"], [data-slot="command-item"]')];
+          const compactionProbe = await evalIn(app, () => {
+            const root = document.querySelector<HTMLElement>("[data-session-surface-id]") ?? document;
+            const controls = [...root.querySelectorAll<HTMLElement>('button, [role="menuitem"], [role="option"], [data-slot="command-item"]')];
             return controls.some((control) => {
               const label = [control.textContent, control.getAttribute("aria-label"), control.getAttribute("title")]
                 .filter(Boolean)
@@ -1223,7 +1224,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
                 .toLowerCase();
               return label.includes("compact") || label.includes("summarize");
             });
-          })()`);
+          });
           uiCompactionAvailable = compactionProbe === true;
         }
 

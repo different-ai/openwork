@@ -48,11 +48,11 @@ test("first run signs in through the browser, then shares a skill with a colleag
   await step("The browser-issued grant returns to the app", async () => {
     // TODO(primitive): read the browser-issued desktop handoff URL.
     const deepLink = await probe.eventually(
-      () => webProbe.eval(`(() => {
+      () => webProbe.eval(() => {
         const input = [...document.querySelectorAll("input")].find((candidate) => candidate.value.startsWith("openwork://") && candidate.value.includes("grant="));
         if (input) return input.value;
-        return document.querySelector('a[href^="openwork://"]')?.getAttribute("href") ?? "";
-      })()`),
+        return document.querySelector<HTMLElement>('a[href^="openwork://"]')?.getAttribute("href") ?? "";
+      }),
       { within: 120_000, label: "browser-issued desktop handoff URL", until: (value) => typeof value === "string" && value.startsWith("openwork://") },
     );
     if (typeof deepLink !== "string") throw new Error("The browser-issued handoff URL was not a string.");

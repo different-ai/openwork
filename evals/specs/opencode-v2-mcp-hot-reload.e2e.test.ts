@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import { createHash } from "node:crypto";
 import { control, evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, provisionLiveOpenAi, liveProviderId, liveV2Turn } from "@openwork/behaviors";
@@ -8,25 +9,20 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function literal(value: unknown): string {
-  const json = JSON.stringify(value);
-  if (json === undefined) throw new Error("Missing probe value");
-  return json.replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-}
 
 async function request(surface: Surface, path: string, method = "GET", body?: unknown) {
-  const result = await evalIn(surface, `(async () => {
+  const result = await evalIn(surface, browserScript(async (path, inputMethod, value) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
-    const response = await fetch("http://127.0.0.1:" + port + ${literal(path)}, {
-      method: ${literal(method)}, headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-      ${body === undefined ? "" : `body: ${literal(JSON.stringify(body))},`}
+    const response = await fetch("http://127.0.0.1:" + port + path, {
+      method: inputMethod, headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: value,
       signal: AbortSignal.timeout(60_000),
     });
     const text = await response.text();
     let json = text; try { json = JSON.parse(text); } catch {}
     return { status: response.status, json };
-  })()`, { awaitPromise: true, timeoutMs: 65_000 });
+  }, [path, method, body === undefined ? null : JSON.stringify(body)]), { awaitPromise: true, timeoutMs: 65_000 });
   if (!record(result) || typeof result.status !== "number") throw new Error("Invalid server response");
   assertNoLiveSecret(result.json);
   return { status: result.status, json: result.json };

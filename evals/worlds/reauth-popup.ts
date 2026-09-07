@@ -1,3 +1,4 @@
+import { evaluate, browserScript } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 import { connect, debuggerUrlFor, listTargets, setViewport, type Surface } from "@openwork/cdp";
 import { chrome, daytonaSandbox, defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
@@ -92,12 +93,27 @@ PY`);
     },
     async blockPopups(blocked: boolean) {
       // Browser fault injection only; no authentication response or application state is mocked.
-      await web.client.send("Runtime.evaluate", { expression: blocked
-        ? "window.__reauthOriginalOpen = window.open; window.open = () => null"
-        : "window.open = window.__reauthOriginalOpen; delete window.__reauthOriginalOpen" });
+      await evaluate(web.client, browserScript((blocked) => {
+        if (blocked) {
+          window.__reauthOriginalOpen = window.open;
+          window.open = () => null;
+        } else if (window.__reauthOriginalOpen) {
+          window.open = window.__reauthOriginalOpen;
+          delete window.__reauthOriginalOpen;
+        }
+      }, [blocked]));
     },
     async sendCompletion(kind: "wrong-nonce" | "foreign-origin" | "stale", nonce?: string) {
-      await web.client.send("Runtime.evaluate", { expression: `window.dispatchEvent(new MessageEvent("message", { origin: ${kind === "foreign-origin" ? '"https://foreign.example.test"' : 'location.origin'}, data: { type: "openwork:reauth-complete", nonce: ${nonce !== undefined ? JSON.stringify(nonce) : kind === "wrong-nonce" ? '"unrelated"' : 'document.querySelector("[data-reauth-nonce]").dataset.reauthNonce'}, error: null } }))` });
+      await evaluate(web.client, browserScript((kind, nonce) => {
+        window.dispatchEvent(new MessageEvent("message", {
+          origin: kind === "foreign-origin" ? "https://foreign.example.test" : location.origin,
+          data: {
+            type: "openwork:reauth-complete",
+            nonce: nonce ?? (kind === "wrong-nonce" ? "unrelated" : document.querySelector<HTMLElement>("[data-reauth-nonce]")?.dataset.reauthNonce),
+            error: null,
+          },
+        }));
+      }, [kind, nonce ?? null]));
     },
   };
 }

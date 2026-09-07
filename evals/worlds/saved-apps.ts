@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 import { go, runWorkflow, saveWorkflow } from "@openwork/behaviors";
 import { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
@@ -118,20 +119,25 @@ export async function savedAppCreation(seed: Seed) {
     } },
     mcp: { "openwork-cloud": { type: "remote", url: `${den.ref.apiUrl}/mcp/agent`, enabled: true, oauth: false, headers: { Authorization: `Bearer ${token}` } } },
   });
-  const inPreview = async (expression: string) => {
-    // The opaque sandbox is an out-of-process frame; the parent's DOM snapshot excludes it.
+  const inPreview = async (action: "read" | "details") => {
     const targets = await listTargets(app.handle.cdpUrl);
     const target = targets.find((entry) => entry.type === "iframe" && (entry.url === "about:srcdoc" || entry.url.includes("/mcp-apps/sandbox.html")));
     if (!target) return "";
     const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
-    try { return await evaluate(client, `(() => { const appDocument = document.querySelector("iframe")?.contentDocument ?? document; return (() => { ${expression} })(); })()`); }
-    finally { client.close(); }
+    try {
+      return await evaluate(client, browserScript((action) => {
+        const appDocument = document.querySelector("iframe")?.contentDocument ?? document;
+        if (action === "read") return appDocument.body.innerText;
+        appDocument.querySelector("button")?.click();
+        return "";
+      }, [action]));
+    } finally { client.close(); }
   };
   return {
     app, den, proxy, resetProxy, workspace, configObjectId, dashboardId, rpc, run,
     open: (path: string) => go(app, path),
-    previewText: async () => String(await inPreview("return appDocument.body.innerText")),
-    showDetails: () => inPreview('appDocument.querySelector("button")?.click()'),
+    previewText: async () => String(await inPreview("read")),
+    showDetails: () => inPreview("details"),
     receiptId: field(firstRun, "receiptId"),
     render: () => rpc("render_workflow_artifact", { configObjectId }),
     async revise(appId: string) {

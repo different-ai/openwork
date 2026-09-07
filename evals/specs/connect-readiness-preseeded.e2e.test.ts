@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import { readAvailableModels, selectModel } from "@openwork/behaviors";
 import { observeTranscript, spec } from "@openwork/testkit";
@@ -34,7 +35,7 @@ test("bundled engine connects to preseeded organization skills and connections",
 
   const health = await probe.eventually(
     // TODO(primitive): probe.cloudMcpHealth
-    () => probe.eval(cloudHealthExpression, { args: [world.workspaceId] }),
+    () => probe.eval(browserScript(cloudHealthExpression, [world.workspaceId])),
     {
       within: 180_000,
       label: "openwork-cloud engine and agent-tool readiness",

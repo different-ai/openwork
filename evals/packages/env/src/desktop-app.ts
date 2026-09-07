@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import { createAndSelectWorkspace, signInDesktopAs } from "@openwork/behaviors";
 import { attachSurface, evaluateOnSurface, isInteractive, probeAppStateOnSurface } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
@@ -51,11 +52,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function serializedPageValue(value: unknown): string {
-  const serialized = JSON.stringify(value);
-  if (serialized === undefined) throw new Error("Installed production renderer state could not be serialized.");
-  return serialized.replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-}
 
 async function mirrorInstalledProductionRendererState(target: Surface): Promise<AppReadiness> {
   const cdpUrl = process.env.OPENWORK_EVAL_INSTALLED_PRODUCTION_CDP_URL?.trim() || "http://127.0.0.1:9223";
@@ -65,10 +61,10 @@ async function mirrorInstalledProductionRendererState(target: Surface): Promise<
     hostKind: "local",
     cdpUrl,
   });
-  const raw = await evaluateOnSurface(source, `({
+  const raw = await evaluateOnSurface(source, () => (({
     route: location.hash,
     entries: Object.entries(localStorage).filter(([key]) => key.startsWith("openwork.")),
-  })`);
+  })));
   if (!isRecord(raw) || typeof raw.route !== "string" || !Array.isArray(raw.entries)) {
     throw new Error(`Installed production desktop at ${cdpUrl} returned invalid renderer state.`);
   }
@@ -80,13 +76,13 @@ async function mirrorInstalledProductionRendererState(target: Surface): Promise<
     entries.push([entry[0], entry[1]]);
   }
   try {
-    await evaluateOnSurface(target, `(() => {
-      const state = ${serializedPageValue({ route: raw.route, entries })};
+    await evaluateOnSurface(target, browserScript((inputValue) => {
+      const state = inputValue;
       for (const [key, value] of state.entries) localStorage.setItem(key, value);
       location.hash = state.route;
       location.reload();
       return true;
-    })()`);
+    }, [{ route: raw.route, entries }]));
   } catch {
     // The CDP evaluator includes expression prefixes in timeout errors. Never
     // propagate the expression because it contains production localStorage.

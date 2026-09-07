@@ -1,19 +1,9 @@
+import { browserScript } from "@openwork/cdp";
 import { evalIn } from "@openwork/behaviors";
-import type { Surface } from "@openwork/cdp";
+import type { Surface, EvaluateOptions } from "@openwork/cdp";
+export type InPageOptions = EvaluateOptions;
 
-export interface InPageOptions {
-  awaitPromise?: boolean;
-  timeoutMs?: number;
-}
-
-/** Execute function source in the page with one JSON-serialized argument. */
-export function inPage(
-  surface: Surface,
-  fnSource: string,
-  args: unknown,
-  options: InPageOptions = {},
-): Promise<unknown> {
-  const injected = JSON.stringify(args);
-  if (injected === undefined) throw new Error("inPage arguments must be JSON-serializable.");
-  return evalIn(surface, `(${fnSource})(${injected})`, options);
+/** Execute a checked browser callback with one explicit argument. */
+export function inPage<A, R>(surface: Surface, callback: (args: A) => R, args: A, options: InPageOptions = {}): Promise<Awaited<R>> {
+  return evalIn(surface, browserScript(callback, [args]), options);
 }

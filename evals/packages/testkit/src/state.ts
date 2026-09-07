@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import { readFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { evalIn } from "@openwork/behaviors";
@@ -50,12 +51,12 @@ function errorCode(error: unknown): string | null {
 }
 
 export async function readDenClientState(app: Surface): Promise<DenClientState> {
-  const value = await evalIn(app, `(() => ({
+  const value = await evalIn(app, () => ((() => ({
     authTokenPresent: Boolean((localStorage.getItem("openwork.den.authToken") ?? "").trim()),
     activeOrgId: (localStorage.getItem("openwork.den.activeOrgId") ?? "").trim() || null,
     activeOrgSlug: (localStorage.getItem("openwork.den.activeOrgSlug") ?? "").trim() || null,
     activeOrgName: (localStorage.getItem("openwork.den.activeOrgName") ?? "").trim() || null,
-  }))()`);
+  }))()));
   if (!isRecord(value)) throw new Error("The desktop returned an invalid Den client state.");
   return {
     authTokenPresent: value.authTokenPresent === true,
@@ -66,7 +67,7 @@ export async function readDenClientState(app: Surface): Promise<DenClientState> 
 }
 
 export async function readConnectState(app: Surface): Promise<ConnectState> {
-  const value = await evalIn(app, `(async () => {
+  const value = await evalIn(app, async () => {
     // Resolve the local server the same way the app does: live runtime info
     // from the Electron bridge first (loopback port + token are ephemeral per
     // boot), then the web-mode localStorage overrides as a fallback.
@@ -77,7 +78,7 @@ export async function readConnectState(app: Surface): Promise<ConnectState> {
       if (invokeDesktop) {
         const info = await invokeDesktop("openworkServerInfo");
         if (info && info.running === true) {
-          baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").trim().replace(/\\/+$/, "");
+          baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").trim().replace(/\/+$/, "");
           token = String(info.ownerToken ?? info.clientToken ?? "").trim();
         }
       }
@@ -96,15 +97,15 @@ export async function readConnectState(app: Surface): Promise<ConnectState> {
         { headers: { Authorization: "Bearer " + token } },
       );
       const text = await response.text();
-      let raw = text;
+      let raw: unknown = text;
       try { raw = text ? JSON.parse(text) : null; } catch {}
       return {
         ok: response.ok,
-        status: raw && typeof raw === "object"
+        status: raw && typeof raw === "object" && "status" in raw
           && (raw.status === "available" || raw.status === "missing" || raw.status === "invalid" || raw.status === "unreadable")
           ? raw.status
           : null,
-        connectEnabled: raw && typeof raw === "object" && typeof raw.connectEnabled === "boolean"
+        connectEnabled: raw && typeof raw === "object" && "connectEnabled" in raw && typeof raw.connectEnabled === "boolean"
           ? raw.connectEnabled
           : null,
         raw,
@@ -117,7 +118,7 @@ export async function readConnectState(app: Surface): Promise<ConnectState> {
         raw: { error: error instanceof Error ? error.message : String(error) },
       };
     }
-  })()`, { awaitPromise: true, timeoutMs: 15_000 });
+  }, { awaitPromise: true, timeoutMs: 15_000 });
   if (!isRecord(value)) throw new Error("The desktop returned an invalid Connect state.");
   return {
     ok: value.ok === true,
@@ -134,7 +135,7 @@ export async function readCloudMcpHealth(
   workspaceId: string,
   opts?: { probe?: boolean; timeoutMs?: number },
 ): Promise<CloudMcpHealthSummary> {
-  const value = await evalIn(app, `(async () => {
+  const value = await evalIn(app, browserScript(async (workspaceId, value) => {
     // Resolve the local server the same way the app does: live runtime info
     // from the Electron bridge first (loopback port + token are ephemeral per
     // boot), then the web-mode localStorage overrides as a fallback.
@@ -145,7 +146,7 @@ export async function readCloudMcpHealth(
       if (invokeDesktop) {
         const info = await invokeDesktop("openworkServerInfo");
         if (info && info.running === true) {
-          baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").trim().replace(/\\/+$/, "");
+          baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").trim().replace(/\/+$/, "");
           token = String(info.ownerToken ?? info.clientToken ?? "").trim();
         }
       }
@@ -160,11 +161,11 @@ export async function readCloudMcpHealth(
     }
     try {
       const response = await fetch(
-        baseUrl + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)}) + "/mcp/openwork-cloud/health" + ${JSON.stringify(opts?.probe === true ? "?probe=1" : "")},
+        baseUrl + "/workspace/" + encodeURIComponent(workspaceId) + "/mcp/openwork-cloud/health" + value,
         { headers: { Authorization: "Bearer " + token } },
       );
       const text = await response.text();
-      let raw = text;
+      let raw: unknown = text;
       try { raw = text ? JSON.parse(text) : null; } catch {}
       return { ok: response.ok, raw };
     } catch (error) {
@@ -173,8 +174,8 @@ export async function readCloudMcpHealth(
         raw: { error: error instanceof Error ? error.message : String(error) },
       };
     }
-  })()`, { awaitPromise: true, timeoutMs: opts?.timeoutMs ?? 15_000 });
-  const result = isRecord(value) ? value : {};
+  }, [workspaceId, opts?.probe === true ? "?probe=1" : ""]), { awaitPromise: true, timeoutMs: opts?.timeoutMs ?? 15_000 });
+  const result: Record<string, unknown> = isRecord(value) ? value : {};
   const raw = result.raw;
   const health = isRecord(raw) ? raw : {};
   const engine = isRecord(health.engine) ? health.engine : {};

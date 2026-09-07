@@ -38,7 +38,7 @@ export interface ShotOptions<T extends ShotSurface> {
 async function waitForExpectedText(surface: Surface, expect: readonly string[]): Promise<void> {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
-    const ready = await inPage(surface, `(args) => args.expect.every((text) => document.body.innerText.includes(text))`, {
+    const ready = await inPage(surface, (args) => args.expect.every((text) => document.body.innerText.includes(text)), {
       expect,
     }, { timeoutMs: 8_000 }).catch(() => false);
     if (ready === true) return;

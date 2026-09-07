@@ -32,7 +32,7 @@ async function greet(user: User, probe: Probe) {
 }
 
 test("existing workspaces create usable sessions after changing chat engines", async ({ world, user, probe, step }) => {
-  const macPlatform = await probe.eval(`/Mac|iPhone|iPad|iPod/.test(navigator.platform)`);
+  const macPlatform = await probe.eval(() => (/Mac|iPhone|iPad|iPod/.test(navigator.platform)));
   const paletteShortcut = macPlatform ? "Meta+K" : "Control+K";
   const createPaletteChat = async () => {
     const previousRoute = await probe.hash();

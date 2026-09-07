@@ -1,3 +1,5 @@
+import { browserSource, browserLiteral } from "./browser-script.ts";
+import type { BrowserEvaluation } from "./browser-script.ts";
 /**
  * Minimal Chrome DevTools Protocol client for the eval runner.
  *
@@ -30,11 +32,11 @@ export interface CdpConnectOptions {
 }
 
 export interface EvaluateOptions {
-  awaitPromise?: boolean;
+  awaitPromise?: true;
   timeoutMs?: number;
 }
 
-export type CdpFunctionArgument = string | number | boolean | null;
+export type CdpFunctionArgument = string | number | boolean | null | undefined;
 
 /** Cheap DOM/CDP probes should fail quickly enough for their caller to retry. */
 export const DEFAULT_CDP_PROBE_TIMEOUT_MS = 8_000;
@@ -275,21 +277,22 @@ export function connect(
   });
 }
 
-export async function evaluate(
+export async function evaluate<T>(
   client: CdpClient,
-  expression: string,
-  { awaitPromise = false, timeoutMs = DEFAULT_CDP_PROBE_TIMEOUT_MS }: EvaluateOptions = {},
-): Promise<unknown> {
+  expression: BrowserEvaluation<T>,
+  { awaitPromise = true, timeoutMs = DEFAULT_CDP_PROBE_TIMEOUT_MS }: EvaluateOptions = {},
+): Promise<Awaited<T>> {
   const payload = await client.send("Runtime.evaluate", {
-    expression,
+    expression: browserSource(expression),
     awaitPromise,
     returnByValue: true,
   }, { timeoutMs });
-  return runtimeResultValue(payload);
+  // CDP is the one untyped transport boundary; callers infer the callback result.
+  return runtimeResultValue(payload) as Awaited<T>;
 }
 
 function runtimeResultValue(payload: unknown): unknown {
-  if (!isRecord(payload)) return undefined;
+  if (!isRecord(payload)) throw new Error("CDP returned a malformed evaluation result");
   if (isRecord(payload.exceptionDetails)) {
     const exception = payload.exceptionDetails.exception;
     throw new Error(
@@ -299,15 +302,22 @@ function runtimeResultValue(payload: unknown): unknown {
     );
   }
   const result = payload.result;
-  return isRecord(result) ? result.value : undefined;
+  if (!isRecord(result)) throw new Error("CDP evaluation did not return a RemoteObject");
+  if (result.unserializableValue === "NaN") return NaN;
+  if (result.unserializableValue === "Infinity") return Infinity;
+  if (result.unserializableValue === "-Infinity") return -Infinity;
+  if (result.unserializableValue === "-0") return -0;
+  if (typeof result.unserializableValue === "string") throw new Error("Unsupported browser result: " + result.unserializableValue);
+  return result.value;
 }
 
-export async function callFunction(
+export async function callFunction<Args extends CdpFunctionArgument[], T>(
   client: CdpClient,
-  functionDeclaration: string,
-  args: readonly CdpFunctionArgument[] = [],
-  { awaitPromise = false, timeoutMs = DEFAULT_CDP_PROBE_TIMEOUT_MS }: EvaluateOptions = {},
-): Promise<unknown> {
+  callback: (...args: Args) => T,
+  args: [...Args],
+  { awaitPromise = true, timeoutMs = DEFAULT_CDP_PROBE_TIMEOUT_MS }: EvaluateOptions = {},
+): Promise<Awaited<T>> {
+  browserLiteral(args); // Reject functions, accessors and cyclic data before sending anything.
   const receiverPayload = await client.send("Runtime.evaluate", {
     expression: "globalThis",
     returnByValue: false,
@@ -320,13 +330,28 @@ export async function callFunction(
   if (!objectId) throw new Error("CDP did not identify the page global object.");
 
   const payload = await client.send("Runtime.callFunctionOn", {
-    functionDeclaration,
+    functionDeclaration: callback.toString(),
     objectId,
-    arguments: args.map((value) => ({ value })),
+    arguments: args.map((value) => typeof value === "number" && (!Number.isFinite(value) || Object.is(value, -0))
+      ? { unserializableValue: Object.is(value, -0) ? "-0" : String(value) }
+      : { value }),
     awaitPromise,
     returnByValue: true,
   }, { timeoutMs });
-  return runtimeResultValue(payload);
+  return runtimeResultValue(payload) as Awaited<T>;
+}
+
+export async function addInitScript<T>(client: CdpClient, script: BrowserEvaluation<T>): Promise<AsyncDisposable & { dispose(): Promise<void> }> {
+  const result = await client.send("Page.addScriptToEvaluateOnNewDocument", { source: browserSource(script) });
+  if (!isRecord(result) || typeof result.identifier !== "string") throw new Error("CDP did not return an init script identifier");
+  const identifier = result.identifier;
+  let disposed = false;
+  const dispose = async () => {
+    if (disposed) return;
+    await client.send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
+    disposed = true;
+  };
+  return { dispose, [Symbol.asyncDispose]: dispose };
 }
 
 export async function navigate(client: CdpClient, url: string): Promise<void> {

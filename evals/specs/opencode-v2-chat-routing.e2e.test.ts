@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -94,21 +95,21 @@ async function serverFetchJson(
   const timeoutMs = init.timeoutMs ?? 15_000;
   const requestBody = init.body === undefined ? undefined : JSON.stringify(init.body);
   if (init.body !== undefined && requestBody === undefined) throw new Error(`Could not serialize request body for ${path}`);
-  const value = await evalIn(app, `(async () => {
+  const value = await evalIn(app, browserScript(async (path, value, inputValue, timeoutMs) => {
     const port = (localStorage.getItem("openwork.server.port") ?? "").trim();
     const token = (localStorage.getItem("openwork.server.token") ?? "").trim();
     if (!port || !token) return { specProbeError: "missing local server credentials" };
-    const response = await fetch("http://127.0.0.1:" + port + ${JSON.stringify(path)}, {
-      method: ${JSON.stringify(init.method ?? "GET")},
+    const response = await fetch("http://127.0.0.1:" + port + path, {
+      method: value,
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-      ${requestBody === undefined ? "" : `body: ${JSON.stringify(requestBody)},`}
-      signal: AbortSignal.timeout(${timeoutMs}),
+      body: inputValue,
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await response.text();
     let json = text;
     try { json = JSON.parse(text); } catch {}
     return { status: response.status, json };
-  })()`, { awaitPromise: true, timeoutMs: timeoutMs + 5_000 });
+  }, [path, init.method ?? "GET", requestBody ?? null, timeoutMs]), { awaitPromise: true, timeoutMs: timeoutMs + 5_000 });
   if (!isRecord(value) || typeof value.status !== "number" || !("json" in value)) {
     throw new Error(`Server request ${path} failed: ${JSON.stringify(value)}`);
   }
@@ -154,17 +155,17 @@ async function engineSessionCount(app: Surface, workspaceId: string, lane: "open
   return result.json.data.length;
 }
 
-const engineSelectedExpression = (engine: "v1" | "v2", options: { ready?: boolean } = {}) => `(() => {
-  const group = document.querySelector('[aria-label="Chat engine"]');
+const engineSelectedExpression = (engine: "v1" | "v2", options: { ready?: boolean } = {}) => browserScript((value, engine) => {
+  const group = document.querySelector<HTMLElement>('[aria-label="Chat engine"]');
   if (!group) return false;
-  ${options.ready ? 'if (group.getAttribute("aria-disabled") === "true" || group.hasAttribute("data-disabled")) return false;' : ""}
-  const control = group.querySelector('[data-engine="${engine}"]');
+  if (value && (group.getAttribute("aria-disabled") === "true" || group.hasAttribute("data-disabled"))) return false;
+  const control = group.querySelector<HTMLElement>(`[data-engine="${engine}"]`);
   return control?.getAttribute("aria-pressed") === "true" || control?.getAttribute("data-state") === "on";
-})()`;
+}, [options.ready === true, engine]);
 
 async function clickEngineOption(app: Surface, engine: "v1" | "v2"): Promise<void> {
-  const point = await evalIn(app, `(() => {
-    const control = [...document.querySelectorAll('[aria-label="Chat engine"] [data-engine="${engine}"]')]
+  const point = await evalIn(app, browserScript((engine) => {
+    const control = [...document.querySelectorAll<HTMLElement>(`[aria-label="Chat engine"] [data-engine="${engine}"]`)]
       .find((candidate) => {
         const rect = candidate.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
@@ -173,7 +174,7 @@ async function clickEngineOption(app: Surface, engine: "v1" | "v2"): Promise<voi
     control.scrollIntoView({ block: "center", behavior: "instant" });
     const rect = control.getBoundingClientRect();
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-  })()`);
+  }, [engine]));
   if (!isRecord(point) || typeof point.x !== "number" || typeof point.y !== "number") {
     throw new Error(`Could not resolve the ${engine} chat engine option: ${JSON.stringify(point)}`);
   }
@@ -200,40 +201,40 @@ async function closeModelPicker(app: Surface): Promise<void> {
 }
 
 async function waitForModelInPicker(app: Surface, expected: string, timeoutMs = 45_000): Promise<void> {
-  await waitFor(app, `Boolean(document.querySelector('button[aria-label="Change model"]'))`, {
+  await waitFor(app, () => (Boolean(document.querySelector<HTMLButtonElement>('button[aria-label="Change model"]'))), {
     timeoutMs: 30_000,
     label: "composer model picker",
   });
   const deadline = Date.now() + timeoutMs;
   let lastItems: string[] = [];
   while (Date.now() < deadline) {
-    const opened = await evalIn(app, `(() => {
-      if (document.querySelector('[data-slot="popover-content"]')) return true;
-      const trigger = document.querySelector('button[aria-label="Change model"]');
+    const opened = await evalIn(app, () => {
+      if (document.querySelector<HTMLElement>('[data-slot="popover-content"]')) return true;
+      const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Change model"]');
       if (!(trigger instanceof HTMLButtonElement)) return false;
       trigger.click();
       return true;
-    })()`);
+    });
     if (opened === true) {
       await sleep(300);
-      await evalIn(app, `(() => {
-        const popover = document.querySelector('[data-slot="popover-content"]');
+      await evalIn(app, browserScript((expected) => {
+        const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
         if (!(popover instanceof HTMLElement)) return false;
-        if ([...popover.querySelectorAll('[data-slot="command-item"]')]
-          .some((item) => (item.textContent ?? "").includes(${JSON.stringify(expected)}))) return true;
+        if ([...popover.querySelectorAll<HTMLElement>('[data-slot="command-item"]')]
+          .some((item) => (item.textContent ?? "").includes(expected))) return true;
         const modelButton = [...popover.querySelectorAll('button')]
           .find((button) => (button.textContent ?? "").trim().startsWith("Model"));
         if (!(modelButton instanceof HTMLButtonElement)) return false;
         modelButton.click();
         return true;
-      })()`);
+      }, [expected]));
       await sleep(200);
-      const items = await evalIn(app, `(() => {
-        const popover = document.querySelector('[data-slot="popover-content"]');
+      const items = await evalIn(app, () => {
+        const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
         if (!(popover instanceof HTMLElement)) return [];
-        return [...popover.querySelectorAll('[data-slot="command-item"]')]
+        return [...popover.querySelectorAll<HTMLElement>('[data-slot="command-item"]')]
           .map((item) => (item.textContent ?? "").trim());
-      })()`);
+      });
       if (Array.isArray(items) && items.every((item) => typeof item === "string")) {
         lastItems = items;
         if (items.some((item) => item.includes(expected))) return;
@@ -247,87 +248,87 @@ async function waitForModelInPicker(app: Surface, expected: string, timeoutMs = 
 
 async function selectModel(app: Surface, modelName: string): Promise<void> {
   await waitForModelInPicker(app, modelName);
-  const picked = await evalIn(app, `(() => {
-    const popover = document.querySelector('[data-slot="popover-content"]');
-    const item = [...(popover?.querySelectorAll('[data-slot="command-item"]') ?? [])]
-      .find((candidate) => (candidate.textContent ?? "").includes(${JSON.stringify(modelName)}));
+  const picked = await evalIn(app, browserScript((modelName) => {
+    const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
+    const item = [...(popover?.querySelectorAll<HTMLElement>('[data-slot="command-item"]') ?? [])]
+      .find((candidate) => (candidate.textContent ?? "").includes(modelName));
     if (!(item instanceof HTMLElement)) return false;
     item.click();
     return true;
-  })()`);
+  }, [modelName]));
   expect(picked).toBe(true);
-  await waitFor(app, `(document.querySelector('button[aria-label="Change model"]')?.textContent ?? "").includes(${JSON.stringify(modelName)})`, {
+  await waitFor(app, browserScript((modelName) => ((document.querySelector<HTMLButtonElement>('button[aria-label="Change model"]')?.textContent ?? "").includes(modelName)), [modelName]), {
     timeoutMs: 15_000,
     label: `${modelName} selected`,
   });
 }
 
 async function typeIntoComposer(app: Surface, text: string): Promise<void> {
-  await waitFor(app, `(() => {
-    const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]');
+  await waitFor(app, () => {
+    const editor = document.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]');
     return editor instanceof HTMLElement && (editor.innerText ?? "").trim() === "";
-  })()`, { timeoutMs: 30_000, label: "empty composer ready" });
-  const focused = await evalIn(app, `(() => {
-    const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]');
+  }, { timeoutMs: 30_000, label: "empty composer ready" });
+  const focused = await evalIn(app, () => {
+    const editor = document.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]');
     if (!(editor instanceof HTMLElement)) return false;
     editor.focus();
     return true;
-  })()`);
+  });
   expect(focused).toBe(true);
   await app.client.send("Input.insertText", { text });
-  await waitFor(app, `(document.querySelector('[contenteditable="true"][data-lexical-editor="true"]')?.innerText ?? "").trim() === ${JSON.stringify(text)}`, {
+  await waitFor(app, browserScript((text) => ((document.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]')?.innerText ?? "").trim() === text), [text]), {
     timeoutMs: 10_000,
     label: `composer contains ${text}`,
   });
 }
 
 async function createNewSessionThroughSidebar(app: Surface): Promise<string> {
-  const previousValue = await evalIn(app, `document.querySelector('[data-session-surface-id]')?.getAttribute('data-session-surface-id') ?? ""`);
+  const previousValue = await evalIn(app, () => (document.querySelector<HTMLElement>('[data-session-surface-id]')?.getAttribute('data-session-surface-id') ?? ""));
   const previous = typeof previousValue === "string" ? previousValue : "";
-  await waitFor(app, `(() => {
-    const button = document.querySelector('[data-sidebar-new-chat]');
+  await waitFor(app, () => {
+    const button = document.querySelector<HTMLElement>('[data-sidebar-new-chat]');
     return button instanceof HTMLButtonElement && !button.disabled;
-  })()`, { timeoutMs: 30_000, label: "enabled sidebar New task control" });
-  const clicked = await evalIn(app, `(() => {
-    const button = document.querySelector('[data-sidebar-new-chat]');
+  }, { timeoutMs: 30_000, label: "enabled sidebar New task control" });
+  const clicked = await evalIn(app, () => {
+    const button = document.querySelector<HTMLElement>('[data-sidebar-new-chat]');
     if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
     button.click();
     return true;
-  })()`);
+  });
   expect(clicked).toBe(true);
-  await waitFor(app, `(() => {
-    const id = document.querySelector('[data-session-surface-id]')?.getAttribute('data-session-surface-id') ?? "";
-    return id.startsWith("ses_") && id !== ${JSON.stringify(previous)}
+  await waitFor(app, browserScript((previous) => {
+    const id = document.querySelector<HTMLElement>('[data-session-surface-id]')?.getAttribute('data-session-surface-id') ?? "";
+    return id.startsWith("ses_") && id !== previous
       && window.location.hash.includes("/session/" + id);
-  })()`, { timeoutMs: 60_000, label: "new session created by the active engine client" });
-  const value = await evalIn(app, `document.querySelector('[data-session-surface-id]')?.getAttribute('data-session-surface-id') ?? ""`);
+  }, [previous]), { timeoutMs: 60_000, label: "new session created by the active engine client" });
+  const value = await evalIn(app, () => (document.querySelector<HTMLElement>('[data-session-surface-id]')?.getAttribute('data-session-surface-id') ?? ""));
   if (typeof value !== "string" || !value.startsWith("ses_")) throw new Error(`New session id was unavailable: ${String(value)}`);
   return value;
 }
 
 async function clickSessionRow(app: Surface, sessionId: string, workspaceId: string): Promise<void> {
-  const clicked = await evalIn(app, `(() => {
-    const row = document.querySelector(${JSON.stringify(`[data-sidebar-session-id="${sessionId}"][data-sidebar-session-workspace-id="${workspaceId}"]`)});
-    const control = row?.querySelector(${JSON.stringify(`[data-session-tab-id="${sessionId}"]`)});
+  const clicked = await evalIn(app, browserScript((value, inputValue) => {
+    const row = document.querySelector<HTMLElement>(value);
+    const control = row?.querySelector<HTMLElement>(inputValue);
     if (!(row instanceof HTMLElement) || !(control instanceof HTMLElement)) return false;
     row.scrollIntoView({ block: "center" });
     control.click();
     return true;
-  })()`);
+  }, [`[data-sidebar-session-id="${sessionId}"][data-sidebar-session-workspace-id="${workspaceId}"]`, `[data-session-tab-id="${sessionId}"]`]));
   expect(clicked).toBe(true);
 }
 
 async function waitForChatSurface(app: Surface, sessionId: string, workspaceId: string): Promise<void> {
-  await waitFor(app, `(() => {
-    const surface = document.querySelector("[data-session-surface-id]");
-    return surface?.getAttribute("data-session-surface-id") === ${JSON.stringify(sessionId)}
-      && (localStorage.getItem("openwork.react.activeWorkspace") ?? "") === ${JSON.stringify(workspaceId)};
-  })()`, { timeoutMs: 10_000, label: "v2 session surface after workspace switch" });
+  await waitFor(app, browserScript((sessionId, workspaceId) => {
+    const surface = document.querySelector<HTMLElement>("[data-session-surface-id]");
+    return surface?.getAttribute("data-session-surface-id") === sessionId
+      && (localStorage.getItem("openwork.react.activeWorkspace") ?? "") === workspaceId;
+  }, [sessionId, workspaceId]), { timeoutMs: 10_000, label: "v2 session surface after workspace switch" });
 }
 
 async function expectSessionTitle(app: Surface, sessionId: string, workspaceId: string, expected: string): Promise<void> {
   const selector = `[data-sidebar-session-id="${sessionId}"][data-sidebar-session-workspace-id="${workspaceId}"] [data-session-title-text]`;
-  await waitFor(app, `(document.querySelector(${JSON.stringify(selector)})?.textContent ?? "").trim() === ${JSON.stringify(expected)}`, {
+  await waitFor(app, browserScript((selector, expected) => ((document.querySelector<HTMLElement>(selector)?.textContent ?? "").trim() === expected), [selector, expected]), {
     timeoutMs: 45_000,
     label: `sidebar title becomes ${expected}`,
   });
@@ -368,8 +369,8 @@ async function sendAndWaitForNonce(
       && candidate.auth === auth && candidate.model === model,
     `${round} streamed witness request`,
   );
-  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')]
-    .some((message) => message.textContent?.includes(${JSON.stringify(request.nonce)}))`, {
+  await waitFor(app, browserScript((nonce) => ([...document.querySelectorAll<HTMLElement>('[data-message-role="assistant"]')]
+    .some((message) => message.textContent?.includes(nonce))), [request.nonce]), {
     timeoutMs: 120_000,
     label: `${round} transcript nonce ${request.nonce}`,
   });
@@ -620,7 +621,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
     // New task uses the selected workspace's currently swapped client. This
     // avoids sending a v2 prompt to the pre-toggle v1 session id.
     const v2SessionId = await createNewSessionThroughSidebar(app);
-    await waitFor(app, `(document.querySelector(${JSON.stringify(`[data-sidebar-session-id="${v2SessionId}"] [data-session-title-text]`)})?.textContent ?? "").trim() === "New session"`, {
+    await waitFor(app, browserScript((value) => ((document.querySelector<HTMLElement>(value)?.textContent ?? "").trim() === "New session"), [`[data-sidebar-session-id="${v2SessionId}"] [data-session-title-text]`]), {
       timeoutMs: 15_000,
       label: "an unnamed v2 session is displayed as a new session, not a finished title",
     });
@@ -655,7 +656,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
     await sleep(1_000);
     // Guards the dev #4364 refetch-on-select interaction: the sidebar must list from the routed engine
     // (`route-workspaces.ts` v2 transport), never drop a v2 session because the refetch listed v1.
-    await waitFor(app, `Boolean(document.querySelector(${JSON.stringify(`[data-sidebar-session-id="${v2SessionId}"][data-sidebar-session-workspace-id="${workspaceId}"]`)}))`, {
+    await waitFor(app, browserScript((value) => (Boolean(document.querySelector<HTMLElement>(value))), [`[data-sidebar-session-id="${v2SessionId}"][data-sidebar-session-workspace-id="${workspaceId}"]`]), {
       timeoutMs: 10_000,
       label: "v2 session remains in the sidebar after switching workspaces",
     });

@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { computerUseWorld, toolState } from "../worlds/computer-use.ts";
@@ -233,14 +234,14 @@ test("Computer Use enables workspace tools from the desktop setup page", async (
   await using app = await world.desktop();
   const { workspaceId } = await createAndSelectWorkspace(app, { path: world.workspacePath });
   await step("Granted macOS access still requires explicit workspace enablement", async () => {
-    await evalIn(app, `location.hash = ${JSON.stringify(`#/workspace/${workspaceId}/extensions/computer-use`)}`);
-    await waitFor(app, `document.body.innerText.includes("Permissions are ready. Enable Computer Use for this workspace.")`, { timeoutMs: 60_000 });
-    expect(await evalIn(app, `[...document.querySelectorAll("button")].some(b => b.textContent.trim() === "Enable Computer Use" && !b.disabled)`)).toBe(true);
+    await evalIn(app, browserScript((value) => (location.hash = value), [`#/workspace/${workspaceId}/extensions/computer-use`]));
+    await waitFor(app, () => (document.body.innerText.includes("Permissions are ready. Enable Computer Use for this workspace.")), { timeoutMs: 60_000 });
+    expect(await evalIn(app, () => ([...document.querySelectorAll("button")].some(b => b.textContent.trim() === "Enable Computer Use" && !b.disabled)))).toBe(true);
   });
   await step("Enable resolves the bundled helper and reaches Ready", async () => {
-    await evalIn(app, `[...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Enable Computer Use").click()`);
-    await waitFor(app, `document.body.innerText.includes("Ready · app access is approved when a session starts")`, { timeoutMs: 60_000 });
-    expect(await evalIn(app, `[...document.querySelectorAll("button")].some(b => /^(Enable|Reconnect) Computer Use$/.test(b.textContent.trim()))`)).toBe(false);
+    await evalIn(app, () => ([...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Enable Computer Use")?.click()));
+    await waitFor(app, () => (document.body.innerText.includes("Ready · app access is approved when a session starts")), { timeoutMs: 60_000 });
+    expect(await evalIn(app, () => ([...document.querySelectorAll("button")].some(b => /^(Enable|Reconnect) Computer Use$/.test(b.textContent.trim()))))).toBe(false);
   });
 });
 

@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -68,42 +69,44 @@ export async function signInInBrowser(
   credentials: { email: string; password: string },
 ): Promise<void> {
   await timed("browser.signIn", async () => {
-    await evalIn(browser, `window.location.href = ${JSON.stringify(url)}`);
-    await waitFor(browser, `(() => {
-      if (document.querySelector('input[type="password"], input[name="password"]')) return true;
-      const email = document.querySelector('input[type="email"], input[name="email"]');
+    await evalIn(browser, browserScript((url) => (window.location.href = url), [url]));
+    await waitFor(browser, browserScript((inputEmail) => {
+      if (document.querySelector<HTMLInputElement>('input[type="password"], input[name="password"]')) return true;
+      const email = document.querySelector<HTMLInputElement>('input[type="email"], input[name="email"]');
       if (!email) return false;
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-      setter.call(email, ${JSON.stringify(credentials.email)});
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+      if (!setter) throw new Error("Native input setter is unavailable");
+      setter.call(email, inputEmail);
       email.dispatchEvent(new Event("input", { bubbles: true }));
       const next = [...document.querySelectorAll("button")]
         .find((candidate) => /next|continue|sign ?in/i.test(candidate.textContent ?? "") && !candidate.disabled);
       if (!next) return false;
       next.click();
       return true;
-    })()`, { timeoutMs: 120_000, label: "den email step submitted" });
-    await waitFor(browser, `(() => {
+    }, [credentials.email]), { timeoutMs: 120_000, label: "den email step submitted" });
+    await waitFor(browser, browserScript((inputPassword) => {
       if (/signed in/i.test(document.body?.innerText ?? "")) return true;
-      const password = document.querySelector('input[type="password"], input[name="password"]');
+      const password = document.querySelector<HTMLInputElement>('input[type="password"], input[name="password"]');
       if (!password) return false;
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-      setter.call(password, ${JSON.stringify(credentials.password)});
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+      if (!setter) throw new Error("Native input setter is unavailable");
+      setter.call(password, inputPassword);
       password.dispatchEvent(new Event("input", { bubbles: true }));
       const submit = [...document.querySelectorAll("button")]
         .find((candidate) => /sign ?in|continue|log ?in/i.test(candidate.textContent ?? "") && !candidate.disabled);
       if (!submit) return false;
       submit.click();
       return true;
-    })()`, { timeoutMs: 60_000, label: "den password step submitted" });
+    }, [credentials.password]), { timeoutMs: 60_000, label: "den password step submitted" });
     // Signed in means the outcome page, not a submit in flight ("Working...").
-    await waitFor(browser, `(() => {
+    await waitFor(browser, () => {
       const text = document.body?.innerText ?? "";
       // Plain web sign-in redirects into the dashboard; handoff shows "signed in" or the openwork:// code.
       if (location.pathname.startsWith("/dashboard")) return true;
       if (/signed in/i.test(text)) return true;
       return [...document.querySelectorAll("input")]
         .some((input) => (input.value ?? "").startsWith("openwork://"));
-    })()`, { timeoutMs: 60_000, label: "den sign-in outcome" });
+    }, { timeoutMs: 60_000, label: "den sign-in outcome" });
   }, credentials.email);
 }
 
@@ -118,18 +121,18 @@ export async function signInInBrowser(
  * Den issued for this session.
  */
 export async function readHandoffDeepLink(browser: Surface, { timeoutMs = 60_000 } = {}): Promise<string> {
-  const found = await waitFor(browser, `(() => {
+  const found = await waitFor(browser, () => {
     const fromInput = [...document.querySelectorAll("input")]
       .map((input) => input.value)
       .find((value) => typeof value === "string" && value.startsWith("openwork://") && value.includes("grant="));
     if (fromInput) return fromInput;
-    const fromAnchor = [...document.querySelectorAll('a[href^="openwork://"]')]
+    const fromAnchor = [...document.querySelectorAll<HTMLElement>('a[href^="openwork://"]')]
       .map((anchor) => anchor.getAttribute("href"))
       .find((href) => typeof href === "string" && href.includes("grant="));
     if (fromAnchor) return fromAnchor;
-    const inText = (document.body?.innerText ?? "").match(/openwork:\\/\\/[^\\s"']+grant=[^\\s"']+/);
+    const inText = (document.body?.innerText ?? "").match(/openwork:\/\/[^\s"']+grant=[^\s"']+/);
     return inText ? inText[0] : false;
-  })()`, { timeoutMs, label: "handoff deep link in the browser" });
+  }, { timeoutMs, label: "handoff deep link in the browser" });
   if (typeof found !== "string") throw new Error("Could not read a handoff deep link from the browser page.");
   return found;
 }

@@ -14,15 +14,15 @@ test("a parent task surfaces and resolves its child session permission request",
     await user.see("Allow once");
     await user.see("Allow for session");
     // TODO(primitive): read delegated-task permission treatment state.
-    const waiting = await probe.eval(`(() => {
-      const row = document.querySelector('[data-subagent-permission="pending"]');
+    const waiting = await probe.eval(() => {
+      const row = document.querySelector<HTMLElement>('[data-subagent-permission="pending"]');
       return {
         activity: row instanceof HTMLElement ? row.dataset.subagentActivity ?? "" : "",
         childSessionId: row instanceof HTMLElement ? row.dataset.subagentSessionId ?? "" : "",
-        hasPermissionIcon: Boolean(row?.querySelector('[data-subagent-permission-icon]')),
-        hasShimmer: Boolean(row?.querySelector('.ow-text-shimmer')),
+        hasPermissionIcon: Boolean(row?.querySelector<HTMLElement>('[data-subagent-permission-icon]')),
+        hasShimmer: Boolean(row?.querySelector<HTMLElement>('.ow-text-shimmer')),
       };
-    })()`);
+    });
     expect(waiting).toMatchObject({ activity: "waiting-permission", hasPermissionIcon: true, hasShimmer: false });
     expect(waiting).toMatchObject({ childSessionId: expect.stringContaining(":eval-child") });
     await user.screenshot();
@@ -33,11 +33,11 @@ test("a parent task surfaces and resolves its child session permission request",
     await user.notSee({ text: /Requested by Investigate the deployment failure/ }, { timeoutMs: 15_000 });
     await user.notSee({ text: /Needs permission/ });
     // TODO(primitive): read resolved delegated-task running treatment state.
-    expect(await probe.eval(`({
-      permissionPanelVisible: Boolean(document.querySelector('[data-permission-source="child-session"]')),
-      waitingIconVisible: Boolean(document.querySelector('[data-subagent-permission="pending"]')),
-      runningTreatmentVisible: Boolean(document.querySelector('[data-subagent-activity="shimmer"] .ow-text-shimmer')),
-    })`)).toEqual({ permissionPanelVisible: false, waitingIconVisible: false, runningTreatmentVisible: true });
+    expect(await probe.eval(() => (({
+      permissionPanelVisible: Boolean(document.querySelector<HTMLElement>('[data-permission-source="child-session"]')),
+      waitingIconVisible: Boolean(document.querySelector<HTMLElement>('[data-subagent-permission="pending"]')),
+      runningTreatmentVisible: Boolean(document.querySelector<HTMLElement>('[data-subagent-activity="shimmer"] .ow-text-shimmer')),
+    })))).toEqual({ permissionPanelVisible: false, waitingIconVisible: false, runningTreatmentVisible: true });
   });
 });
 

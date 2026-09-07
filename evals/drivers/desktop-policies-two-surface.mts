@@ -1,3 +1,5 @@
+import type { CdpClient, BrowserEvaluation } from "@openwork/cdp";
+import { browserScript } from "@openwork/cdp";
 /**
  * Two-surface desktop policies demo driver.
  *
@@ -17,7 +19,7 @@
  *   - Chrome   :9224  signed in as alex@acme.test, on /dashboard/org-settings
  *   - Electron :9823  signed into Acme Robotics via handoff grant
  *
- * Usage: node evals/drivers/desktop-policies-two-surface.mjs
+ * Usage: node evals/drivers/desktop-policies-two-surface.mts
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
@@ -32,17 +34,17 @@ const DEN_API = "http://localhost:8790";
 const DEN_WEB = "http://localhost:3005";
 const ADMIN_EMAIL = "alex@acme.test";
 const ADMIN_PASSWORD = "OpenWorkDemo123!";
-const GENPACT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/5/50/Genpact_Logo_Black_%283%29.png";
+const DEMO_LOGO = "https://openworklabs.com/favicon.ico";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const runId = new Date().toISOString().replace(/[:.]/g, "-");
 const outDir = join(__dirname, "..", "results", `two-surface-${runId}`);
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const frames = [];
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const frames: { file: string; surface: string; name: string; claim: string; hash: string; checks: { label: string; passed: boolean; detail?: string }[]; ok: boolean }[] = [];
 let frameIdx = 0;
 
-async function connectTo(baseUrl) {
+async function connectTo(baseUrl: string) {
   const target = await pickAppTarget(baseUrl);
   const ws = debuggerUrlFor(baseUrl, target);
   const client = await connect(ws);
@@ -56,13 +58,14 @@ async function connectAdmin() {
   const page = targets.find((t) => t.type === "page" && t.title.includes("OpenWork Cloud"))
     ?? targets.find((t) => t.type === "page" && t.url.includes("3005"))
     ?? targets.find((t) => t.type === "page");
+  if (!page) throw new Error("Admin browser target not found");
   const ws = debuggerUrlFor(ADMIN_CDP, page);
   const client = await connect(ws);
   await client.send("Page.enable").catch(() => {});
   return client;
 }
 
-async function shot(client, surface, name, claim, validations = []) {
+async function shot(client: CdpClient, surface: string, name: string, claim: string, validations: { label: string; passed: boolean; detail?: string }[] = []) {
   frameIdx += 1;
   const file = `frame-${String(frameIdx).padStart(2, "0")}-${surface}-${name}.png`;
   const buffer = await captureScreenshot(client);
@@ -81,7 +84,7 @@ async function shot(client, surface, name, claim, validations = []) {
   return file;
 }
 
-async function denApi(token, path, options = {}) {
+async function denApi(token: string, path: string, options: RequestInit = {}) {
   const res = await fetch(`${DEN_API}${path}`, {
     ...options,
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(options.headers || {}) },
@@ -93,44 +96,46 @@ async function denApi(token, path, options = {}) {
 }
 
 /** Drive the admin web UI: fill logo URL field + click Save. */
-async function adminSetLogoViaUI(admin, logoUrl) {
+async function adminSetLogoViaUI(admin: CdpClient, logoUrl: string) {
   // Set the controlled React input by writing through the native setter AND
   // clearing React's internal value tracker so onChange fires.
-  await evaluate(admin, `(() => {
+  await evaluate(admin, browserScript((logoUrl) => {
     const logo = [...document.querySelectorAll('input')].find(i => (i.placeholder || '').includes('logo'));
     if (!logo) throw new Error('Logo URL input not found');
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
     if (logo._valueTracker) logo._valueTracker.setValue('');
-    setter.call(logo, ${JSON.stringify(logoUrl)});
+    if (!setter) throw new Error("Native form setter missing");
+    setter.call(logo, logoUrl);
     logo.dispatchEvent(new Event('input', { bubbles: true }));
     logo.dispatchEvent(new Event('change', { bubbles: true }));
     logo.scrollIntoView({ block: 'center' });
     return logo.value;
-  })()`);
+  }, [logoUrl]));
 }
 
-async function adminSetAccentViaUI(admin, accentValue) {
-  await evaluate(admin, `(() => {
+async function adminSetAccentViaUI(admin: CdpClient, accentValue: string) {
+  await evaluate(admin, browserScript((accentValue) => {
     const select = document.querySelector('select');
     if (!select) throw new Error('Accent select not found');
-    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
     if (select._valueTracker) select._valueTracker.setValue('');
-    setter.call(select, ${JSON.stringify(accentValue)});
+    if (!setter) throw new Error("Native form setter missing");
+    setter.call(select, accentValue);
     select.dispatchEvent(new Event('input', { bubbles: true }));
     select.dispatchEvent(new Event('change', { bubbles: true }));
     select.scrollIntoView({ block: 'center' });
     return select.value;
-  })()`);
+  }, [accentValue]));
 }
 
-async function adminClickSave(admin) {
-  await evaluate(admin, `(() => {
+async function adminClickSave(admin: CdpClient) {
+  await evaluate(admin, () => {
     const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Save settings');
     if (!btn) throw new Error('Save settings button not found');
     btn.scrollIntoView({ block: 'center' });
     btn.click();
     return true;
-  })()`);
+  });
 }
 
 /**
@@ -138,21 +143,21 @@ async function adminClickSave(admin) {
  * browser session so privileged PATCH /v1/org and policy edits aren't blocked
  * by a 403 fresh_auth_required.
  */
-async function adminEnsureFreshAuth(admin) {
-  const result = await evaluate(admin, `(async () => {
+async function adminEnsureFreshAuth(admin: CdpClient) {
+  const result = await evaluate(admin, browserScript(async (ADMIN_EMAIL, ADMIN_PASSWORD) => {
     const r = await fetch('/api/auth/sign-in/email', {
       method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'include',
-      body: JSON.stringify({ email: ${JSON.stringify(ADMIN_EMAIL)}, password: ${JSON.stringify(ADMIN_PASSWORD)} }),
+      body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
     });
     return r.status;
-  })()`, { awaitPromise: true });
+  }, [ADMIN_EMAIL, ADMIN_PASSWORD]), { awaitPromise: true });
   if (result !== 200) throw new Error(`Admin fresh re-auth failed: HTTP ${result}`);
 }
 
 /** Trigger the member app to refresh its desktop config and wait for a DOM condition. */
-async function memberRefreshAndWait(member, condition, label, timeoutMs = 25000) {
-  await evaluate(member, `window.dispatchEvent(new CustomEvent('openwork-den-settings-changed', { detail: {} }))`);
-  await evaluate(member, `window.dispatchEvent(new CustomEvent('openwork-den-session-updated', { detail: {} }))`);
+async function memberRefreshAndWait(member: CdpClient, condition: BrowserEvaluation, label: string, timeoutMs = 25000) {
+  await evaluate(member, () => (window.dispatchEvent(new CustomEvent('openwork-den-settings-changed', { detail: {} }))));
+  await evaluate(member, () => (window.dispatchEvent(new CustomEvent('openwork-den-session-updated', { detail: {} }))));
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const ok = await evaluate(member, condition).catch(() => false);
@@ -165,25 +170,25 @@ async function memberRefreshAndWait(member, condition, label, timeoutMs = 25000)
 /** Open the member app's notification center (bell) and wait for the panel.
  *  Assumes we're already on the session route; does NOT re-navigate (that would
  *  re-render and dismiss the panel). Retries the click until the panel opens. */
-async function memberOpenNotifications(member) {
+async function memberOpenNotifications(member: CdpClient) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    await evaluate(member, `(() => {
-      const bell = document.querySelector('[title="Notifications"]');
+    await evaluate(member, () => {
+      const bell = document.querySelector<HTMLElement>('[title="Notifications"]');
       if (bell) bell.click();
       return Boolean(bell);
-    })()`);
+    });
     await sleep(700);
-    const open = await evaluate(member, `Boolean([...document.querySelectorAll('div')].find(e => e.innerText && e.innerText.startsWith('Notifications') && e.innerText.includes('Clear all')))`).catch(() => false);
+    const open = await evaluate(member, () => (Boolean([...document.querySelectorAll('div')].find(e => e.innerText && e.innerText.startsWith('Notifications') && e.innerText.includes('Clear all'))))).catch(() => false);
     if (open) return true;
   }
   return false;
 }
 
 /** Count how many distinct accent-colored pixels appear (proves the accent paints). */
-async function memberAccentVisible(member) {
+async function memberAccentVisible(member: CdpClient) {
   // The notification badge + unread dots use the accent. Verify a blue-ish
   // pixel exists by sampling the accent CSS var and an actual painted element.
-  return evaluate(member, `(() => {
+  return evaluate(member, () => {
     const v = getComputedStyle(document.documentElement).getPropertyValue('--dls-accent').trim();
     // Find an element actually painted with the accent (badge, unread dot, primary button).
     const candidates = [...document.querySelectorAll('*')].slice(0, 4000);
@@ -192,14 +197,14 @@ async function memberAccentVisible(member) {
       const s = getComputedStyle(el);
       const bg = s.backgroundColor;
       // Radix blue-9 ≈ rgb(0, 144, 255)
-      const m = bg.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+      const m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
       if (m) {
         const [r,g,b] = [+m[1],+m[2],+m[3]];
         if (b > 180 && r < 80 && g > 100 && g < 200) { painted = true; break; }
       }
     }
     return { accentVar: v, painted };
-  })()`);
+  });
 }
 
 async function main() {
@@ -220,7 +225,7 @@ async function main() {
   console.log("Reset: clearing brand + restoring policies");
   await denApi(token, "/v1/org", { method: "PATCH", body: JSON.stringify({ brandLogoUrl: null, brandAccentColor: null }) });
   const list0 = await denApi(token, "/v1/desktop-policies");
-  const def = list0.desktopPolicies.find((p) => p.isDefault);
+  const def = list0.desktopPolicies.find((p: { isDefault?: boolean; name?: string; id: string }) => p.isDefault);
   await denApi(token, `/v1/desktop-policies/${def.id}`, {
     method: "PATCH",
     body: JSON.stringify({ policyName: def.policyName, policy: {
@@ -229,9 +234,9 @@ async function main() {
     } }),
   });
   // Member: light mode + session view + refresh to clear brand.
-  await evaluate(member, `localStorage.setItem('openwork.react.settings.theme-mode','light')`);
-  await evaluate(member, `window.location.hash = '#/session'`);
-  await memberRefreshAndWait(member, "!document.querySelector('[data-testid=\\\"brand-logo\\\"]')", "no logo (clean)").catch(() => {});
+  await evaluate(member, () => (localStorage.setItem('openwork.react.settings.theme-mode','light')));
+  await evaluate(member, () => (window.location.hash = '#/session'));
+  await memberRefreshAndWait(member, () => (!document.querySelector('[data-testid=\"brand-logo\"]')), "no logo (clean)").catch(() => {});
   await sleep(1500);
 
   // Reload admin org-settings so the form reflects the cleared state.
@@ -244,23 +249,23 @@ async function main() {
   // JOURNEY 0: baseline — both surfaces clean
   // =================================================================
   console.log("\nJourney 0: baseline");
-  await evaluate(admin, `(() => { const h=[...document.querySelectorAll('h2')].find(x=>x.textContent.includes('Brand Appearance')); if(h) h.scrollIntoView({block:'center'}); return true; })()`);
+  await evaluate(admin, () => { const h=[...document.querySelectorAll('h2')].find(x=>x.textContent.includes('Brand Appearance')); if(h) h.scrollIntoView({block:'center'}); return true; });
   await shot(admin, "admin", "00-baseline-brand-card",
     "Admin: Brand Appearance card with empty logo + default accent.",
-    [{ label: "Brand Appearance card visible", passed: await evaluate(admin, "document.body.innerText.includes('Brand Appearance')") }]);
+    [{ label: "Brand Appearance card visible", passed: await evaluate(admin, () => (document.body.innerText.includes('Brand Appearance'))) }]);
   await shot(member, "member", "00-baseline-app",
     "Member: clean app, no logo, default accent.",
-    [{ label: "no brand logo", passed: await evaluate(member, "!document.querySelector('[data-testid=\"brand-logo\"]')") }]);
+    [{ label: "no brand logo", passed: await evaluate(member, () => (!document.querySelector('[data-testid="brand-logo"]'))) }]);
 
   // =================================================================
-  // JOURNEY 1: admin sets Genpact logo in the web UI → member sees it
+  // JOURNEY 1: admin sets OpenWork demo logo in the web UI → member sees it
   // =================================================================
   console.log("\nJourney 1: admin sets logo via web UI");
-  await adminSetLogoViaUI(admin, GENPACT_LOGO);
+  await adminSetLogoViaUI(admin, DEMO_LOGO);
   await sleep(500);
   await shot(admin, "admin", "01-logo-typed",
-    "Admin: typed Genpact logo URL into the Logo URL field.",
-    [{ label: "logo URL in field", passed: await evaluate(admin, `[...document.querySelectorAll('input')].some(i => i.value.includes('Genpact'))`) }]);
+    "Admin: typed OpenWork demo logo URL into the Logo URL field.",
+    [{ label: "logo URL in field", passed: await evaluate(admin, () => ([...document.querySelectorAll('input')].some(i => i.value.includes('openworklabs.com')))) }]);
 
   await adminClickSave(admin);
   await sleep(2500); // let the PATCH land
@@ -268,18 +273,18 @@ async function main() {
   const cfg1 = await denApi(token, "/v1/me/desktop-config");
   await shot(admin, "admin", "01-logo-saved",
     "Admin: clicked Save → server persisted brandLogoUrl.",
-    [{ label: "server has brandLogoUrl", passed: cfg1.brandLogoUrl === GENPACT_LOGO, detail: cfg1.brandLogoUrl || "(none)" }]);
+    [{ label: "server has brandLogoUrl", passed: cfg1.brandLogoUrl === DEMO_LOGO, detail: cfg1.brandLogoUrl || "(none)" }]);
 
   // Member app fetches the change on its own and renders the logo.
   await memberRefreshAndWait(member,
-    `(() => { const img = document.querySelector('[data-testid="brand-logo"] img'); return img && img.naturalWidth > 0 && img.complete; })()`,
-    "Genpact logo loaded in member app");
+    () => { const img = document.querySelector<HTMLImageElement>('[data-testid="brand-logo"] img'); return img && img.naturalWidth > 0 && img.complete; },
+    "OpenWork demo logo loaded in member app");
   // Verify the logo renders at a legible size (not a squished icon).
-  const logoDims = await evaluate(member, `(() => { const i = document.querySelector('[data-testid="brand-logo"] img'); const r = i.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; })()`);
+  const logoDims = await evaluate(member, () => { const i = document.querySelector<HTMLImageElement>('[data-testid="brand-logo"] img'); if (!i) throw new Error('Brand logo missing'); const r = i.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; });
   await shot(member, "member", "01-logo-appeared",
-    "Member: app fetched the change and rendered the Genpact logo at a legible size (no reload).",
+    "Member: app fetched the change and rendered the OpenWork demo logo at a legible size (no reload).",
     [
-      { label: "Genpact logo rendered", passed: await evaluate(member, `Boolean(document.querySelector('[data-testid="brand-logo"] img'))`) },
+      { label: "OpenWork demo logo rendered", passed: await evaluate(member, () => (Boolean(document.querySelector<HTMLImageElement>('[data-testid="brand-logo"] img')))) },
       { label: "logo legible (height ≥ 28px)", passed: logoDims.h >= 28, detail: `${logoDims.w}x${logoDims.h}` },
     ]);
 
@@ -291,7 +296,7 @@ async function main() {
   await sleep(400);
   await shot(admin, "admin", "02-accent-selected",
     "Admin: selected 'Blue' accent in the dropdown.",
-    [{ label: "blue selected", passed: await evaluate(admin, `document.querySelector('select')?.value === 'blue'`) }]);
+    [{ label: "blue selected", passed: await evaluate(admin, () => (document.querySelector('select')?.value === 'blue')) }]);
 
   await adminClickSave(admin);
   await sleep(2500);
@@ -301,16 +306,15 @@ async function main() {
     [{ label: "server has accent=blue", passed: cfg2.brandAccentColor === "blue", detail: cfg2.brandAccentColor || "(none)" }]);
 
   await memberRefreshAndWait(member,
-    `document.documentElement.dataset.brandAccent === 'blue'`,
+    () => (document.documentElement.dataset.brandAccent === 'blue'),
     "blue accent applied in member app");
   // The accent's most prominent painted surface is the notification badge +
   // unread dots. Push a fresh unread notice so the blue accent is guaranteed
   // visible, then open the bell — this single frame shows the blue accent
-  // (badge + unread dot) together with the Genpact logo top-left.
-  await evaluate(member, `window.location.hash = '#/session'`);
+  // (badge + unread dot) together with the OpenWork demo logo top-left.
+  await evaluate(member, () => (window.location.hash = '#/session'));
   await sleep(800);
-  await evaluate(member, `(() => {
-    const store = window.__openwork?.notificationStore;
+  await evaluate(member, () => {
     // Use the public notify path if exposed; otherwise write an unread entry.
     try {
       const raw = localStorage.getItem('openwork:notifications:v1');
@@ -323,21 +327,21 @@ async function main() {
       localStorage.setItem('openwork:notifications:v1', JSON.stringify(data));
     } catch {}
     return true;
-  })()`);
+  });
   // Reload so the store rehydrates the unread entry, then re-apply brand.
-  await evaluate(member, `location.reload()`);
-  await memberRefreshAndWait(member, `document.documentElement.dataset.brandAccent === 'blue'`, "accent re-applied after reload");
+  await evaluate(member, () => (location.reload()));
+  await memberRefreshAndWait(member, () => (document.documentElement.dataset.brandAccent === 'blue'), "accent re-applied after reload");
   await sleep(800);
   await memberOpenNotifications(member);
-  const cssAccent = await evaluate(member, `getComputedStyle(document.documentElement).getPropertyValue('--dls-accent').trim()`);
+  const cssAccent = await evaluate(member, () => (getComputedStyle(document.documentElement).getPropertyValue('--dls-accent').trim()));
   const accentCheck = await memberAccentVisible(member);
   await shot(member, "member", "02-accent-applied",
-    "Member: accent switched to blue — visible on the notification badge + unread dots, with the Genpact logo top-left.",
+    "Member: accent switched to blue — visible on the notification badge + unread dots, with the OpenWork demo logo top-left.",
     [
-      { label: "data-brand-accent=blue", passed: await evaluate(member, `document.documentElement.dataset.brandAccent === 'blue'`) },
+      { label: "data-brand-accent=blue", passed: await evaluate(member, () => (document.documentElement.dataset.brandAccent === 'blue')) },
       { label: "--dls-accent is blue-9", passed: cssAccent === "#0090ff" || cssAccent.includes("blue"), detail: cssAccent },
       { label: "blue accent painted on screen", passed: accentCheck.painted, detail: accentCheck.painted ? "blue pixels found" : "no blue painted" },
-      { label: "Genpact logo still shown", passed: await evaluate(member, `Boolean(document.querySelector('[data-testid="brand-logo"] img'))`) },
+      { label: "OpenWork demo logo still shown", passed: await evaluate(member, () => (Boolean(document.querySelector<HTMLImageElement>('[data-testid="brand-logo"] img')))) },
     ]);
 
   // =================================================================
@@ -350,21 +354,21 @@ async function main() {
   await sleep(3500);
   await shot(admin, "admin", "03-policies-list",
     "Admin: opens the Desktop Policies page.",
-    [{ label: "policies page", passed: await evaluate(admin, "document.body.innerText.toLowerCase().includes('policic') || document.body.innerText.includes('Desktop')") }]);
+    [{ label: "policies page", passed: await evaluate(admin, () => (document.body.innerText.toLowerCase().includes('policic') || document.body.innerText.includes('Desktop'))) }]);
 
   // Open the default policy editor.
-  await evaluate(admin, `(() => {
-    const link = [...document.querySelectorAll('a, button')].find(el => /edit|default/i.test(el.textContent));
+  await evaluate(admin, () => {
+    const link = [...document.querySelectorAll<HTMLElement>('a, button')].find(el => /edit|default/i.test(el.textContent));
     if (link) link.click();
     return Boolean(link);
-  })()`);
+  });
   await sleep(3000);
 
   // Toggle off "Multiple workspaces" checkbox in the editor.
-  const toggled = await evaluate(admin, `(() => {
+  const toggled = await evaluate(admin, () => {
     const labels = [...document.querySelectorAll('label, div')];
     // find checkbox associated with "Multiple workspaces"
-    const checkboxes = [...document.querySelectorAll('input[type="checkbox"], [role="switch"]')];
+    const checkboxes = [...document.querySelectorAll<HTMLElement>('input[type="checkbox"], [role="switch"]')];
     // Heuristic: find the checkbox whose nearby text mentions "workspace".
     for (const cb of checkboxes) {
       const scope = cb.closest('label, div, li, tr');
@@ -375,19 +379,19 @@ async function main() {
       }
     }
     return false;
-  })()`);
+  });
   console.log(`  toggled workspaces checkbox in UI: ${toggled}`);
   await sleep(500);
   await shot(admin, "admin", "03-policy-editor",
     "Admin: in the policy editor, unchecks 'Multiple workspaces'.",
-    [{ label: "editor open", passed: await evaluate(admin, "document.body.innerText.includes('workspace') || document.body.innerText.includes('Workspace')") }]);
+    [{ label: "editor open", passed: await evaluate(admin, () => (document.body.innerText.includes('workspace') || document.body.innerText.includes('Workspace'))) }]);
 
   // Save the policy (button text may be "Save").
-  await evaluate(admin, `(() => {
+  await evaluate(admin, () => {
     const btn = [...document.querySelectorAll('button')].find(b => /save/i.test(b.textContent));
     if (btn) { btn.scrollIntoView({block:'center'}); btn.click(); }
     return Boolean(btn);
-  })()`);
+  });
   await sleep(2500);
 
   // If the UI toggle didn't take (editor markup varies), enforce via API so
@@ -397,7 +401,7 @@ async function main() {
   if (cfg3.allowMultipleWorkspaces !== false) {
     restrictedVia = "api-fallback";
     const list3 = await denApi(token, "/v1/desktop-policies");
-    const d3 = list3.desktopPolicies.find((p) => p.isDefault);
+    const d3 = list3.desktopPolicies.find((p: { isDefault?: boolean; name?: string; id: string }) => p.isDefault);
     await denApi(token, `/v1/desktop-policies/${d3.id}`, {
       method: "PATCH",
       body: JSON.stringify({ policyName: d3.policyName, policy: {
@@ -416,20 +420,20 @@ async function main() {
   // which is the primary surface for org-policy notices. Open it and assert
   // the "Organization policies active" entry is present.
   await memberRefreshAndWait(member,
-    `(() => {
+    () => {
       const raw = localStorage.getItem('openwork:notifications:v1');
       if (!raw) return false;
-      try { return (JSON.parse(raw)?.state?.notifications ?? []).some(n => n.dedupeKey === 'desktop-policy-active'); }
+      try { return (JSON.parse(raw)?.state?.notifications ?? []).some((n: { dedupeKey?: string; readAt?: number | null }) => n.dedupeKey === 'desktop-policy-active'); }
       catch { return false; }
-    })()`,
+    },
     "desktop-policy notification in store");
-  await evaluate(member, `window.location.hash = '#/session'`);
+  await evaluate(member, () => (window.location.hash = '#/session'));
   await sleep(1200);
   await memberOpenNotifications(member);
-  const notifText = await evaluate(member, `(() => {
+  const notifText = await evaluate(member, () => {
     const panel = [...document.querySelectorAll('div')].find(e => e.innerText && e.innerText.startsWith('Notifications') && e.innerText.includes('Organization policies active'));
     return panel ? panel.innerText.slice(0, 400) : '';
-  })()`);
+  });
   await shot(member, "member", "03-notification-center",
     "Member: the notification center (bell) shows the 'Organization policies active' entry after the admin's change.",
     [
@@ -438,11 +442,11 @@ async function main() {
     ]);
 
   // Also capture the in-context settings banner as a secondary surface.
-  await evaluate(member, `window.location.hash = '#/settings/general'`);
+  await evaluate(member, () => (window.location.hash = '#/settings/general'));
   await sleep(1500);
   await shot(member, "member", "03-settings-banner",
     "Member: settings also shows the 'Organization policies active' banner (secondary surface).",
-    [{ label: "policy banner visible", passed: await evaluate(member, `Boolean(document.querySelector('[data-testid="desktop-policy-banner"]'))`) }]);
+    [{ label: "policy banner visible", passed: await evaluate(member, () => (Boolean(document.querySelector('[data-testid="desktop-policy-banner"]')))) }]);
 
   // =================================================================
   // JOURNEY 4: admin clears everything → member returns to default
@@ -452,19 +456,19 @@ async function main() {
   await admin.send("Page.navigate", { url: `${DEN_WEB}/dashboard/org-settings` });
   await sleep(3500);
   // Clear logo field + reset accent to Default, then Save.
-  await evaluate(admin, `(() => {
+  await evaluate(admin, () => {
     const logo = [...document.querySelectorAll('input')].find(i => (i.placeholder||'').includes('logo'));
-    if (logo) { const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; s.call(logo,''); logo.dispatchEvent(new Event('input',{bubbles:true})); logo.dispatchEvent(new Event('change',{bubbles:true})); }
+    if (logo) { const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set; if (!s) throw new Error('Native form setter missing'); s.call(logo,''); logo.dispatchEvent(new Event('input',{bubbles:true})); logo.dispatchEvent(new Event('change',{bubbles:true})); }
     const sel = document.querySelector('select');
-    if (sel) { const s=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set; s.call(sel,''); sel.dispatchEvent(new Event('change',{bubbles:true})); }
+    if (sel) { const s=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value')?.set; if (!s) throw new Error('Native form setter missing'); s.call(sel,''); sel.dispatchEvent(new Event('change',{bubbles:true})); }
     return true;
-  })()`);
+  });
   await sleep(400);
   await adminClickSave(admin);
   await sleep(2500);
   // Restore the policy too (via API — owner action).
   const list4 = await denApi(token, "/v1/desktop-policies");
-  const d4 = list4.desktopPolicies.find((p) => p.isDefault);
+  const d4 = list4.desktopPolicies.find((p: { isDefault?: boolean; name?: string; id: string }) => p.isDefault);
   await denApi(token, `/v1/desktop-policies/${d4.id}`, {
     method: "PATCH",
     body: JSON.stringify({ policyName: d4.policyName, policy: {
@@ -477,15 +481,15 @@ async function main() {
     "Admin: cleared logo + accent and restored policies. Server clean.",
     [{ label: "server: no brand", passed: !cfg4.brandLogoUrl && !cfg4.brandAccentColor }]);
 
-  await evaluate(member, `window.location.hash = '#/session'`);
+  await evaluate(member, () => (window.location.hash = '#/session'));
   await memberRefreshAndWait(member,
-    `!document.documentElement.dataset.brandAccent && !document.querySelector('[data-testid="brand-logo"]')`,
+    () => (!document.documentElement.dataset.brandAccent && !document.querySelector('[data-testid="brand-logo"]')),
     "member app returned to default");
   await shot(member, "member", "04-back-to-default",
     "Member: app returned to clean default — no logo, no custom accent.",
     [
-      { label: "no brand accent", passed: await evaluate(member, `!document.documentElement.dataset.brandAccent`) },
-      { label: "no brand logo", passed: await evaluate(member, `!document.querySelector('[data-testid="brand-logo"]')`) },
+      { label: "no brand accent", passed: await evaluate(member, () => (!document.documentElement.dataset.brandAccent)) },
+      { label: "no brand logo", passed: await evaluate(member, () => (!document.querySelector('[data-testid="brand-logo"]'))) },
     ]);
 
   admin.close();
@@ -500,9 +504,9 @@ async function main() {
   process.exit(allOk ? 0 : 1);
 }
 
-function renderHtml(frames, allOk) {
-  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const cards = frames.map((f) => `
+function renderHtml(items: typeof frames, allOk: boolean) {
+  const esc = (s: string) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] ?? c));
+  const cards = items.map((f) => `
     <figure class="frame ${f.ok ? "ok" : "fail"} ${f.surface}">
       <div class="tag">${f.surface.toUpperCase()}</div>
       <img src="${f.file}" alt="${esc(f.name)}" />

@@ -98,8 +98,9 @@ test("a streaming answer renders as markdown block by block and settles to the s
     expect(ready).toMatchObject({ controls: true, autoplay: false, paused: true, error: null });
     await world.videoState(true);
     const playing = await eventually(() => world.videoState(), {
-      within: 5_000, until: (state) => state?.time > 0,
+      within: 5_000, until: (state) => (state?.time ?? 0) > 0,
     });
+    if (!playing) throw new Error("Video disappeared during playback");
     expect(playing.time).toBeGreaterThan(0);
     expect(playing.error).toBeNull();
   });

@@ -101,10 +101,10 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     }
     // The old URL redirects into Analytics and receives the same gate.
     await user.see({ text: "Workflow Runs is part of the Enterprise plan." }, { timeoutMs: 90_000 });
-    expect(await probe.eval(world.web, "location.pathname")).toBe("/dashboard/analytics/workflow-runs");
+    expect(await probe.eval(world.web, () => location.pathname)).toBe("/dashboard/analytics/workflow-runs");
     await user.navigate(`${world.den.ref.webUrl}/dashboard/script-runs`);
     await user.see({ text: "Workflow Runs is part of the Enterprise plan." });
-    expect(await probe.eval(world.web, "location.pathname")).toBe("/dashboard/analytics/workflow-runs");
+    expect(await probe.eval(world.web, () => location.pathname)).toBe("/dashboard/analytics/workflow-runs");
     await user.see({ role: "link", label: /^Usage & adoption$/ });
     await user.see({ role: "link", label: "Models & usage" });
     await user.notSee({ testId: "nav-workflow-runs" });
@@ -174,7 +174,7 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     expect(await readRuns()).toEqual(before);
     await user.navigate(`${world.den.ref.webUrl}/dashboard/workflow-runs`);
     await user.see({ text: "Workflow Runs" });
-    expect(await probe.eval(world.web, "location.pathname")).toBe("/dashboard/analytics/workflow-runs");
+    expect(await probe.eval(world.web, () => location.pathname)).toBe("/dashboard/analytics/workflow-runs");
     await user.click({ testId: `workflow-run-details-${world.receiptId}` });
     await user.see({ text: `plugin:${world.pluginId}:${world.configObjectId}` });
 

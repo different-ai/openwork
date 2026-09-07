@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -159,7 +160,7 @@ export function mcpCallBody(id: number, name: string, args: Record<string, unkno
   });
 }
 
-export const connectStateExpression = `(() => {
+export const connectStateExpression = () => {
   const port = localStorage.getItem("openwork.server.port") ?? "";
   const baseUrl = port ? "http://127.0.0.1:" + port : "";
   const token = localStorage.getItem("openwork.server.token") ?? "";
@@ -170,9 +171,9 @@ export const connectStateExpression = `(() => {
   request.send();
   const raw = JSON.parse(request.responseText || "{}");
   return { ok: request.status >= 200 && request.status < 300, status: raw?.status ?? null, connectEnabled: raw?.connectEnabled ?? null };
-})()`;
+};
 
-export const runtimeGenerationExpression = `(async () => {
+export const runtimeGenerationExpression = async () => {
   const invokeDesktop = window.__OPENWORK_ELECTRON__?.invokeDesktop;
   if (!invokeDesktop) return { running: false, baseUrl: "", generation: null };
   const info = await invokeDesktop("openworkServerInfo");
@@ -181,9 +182,9 @@ export const runtimeGenerationExpression = `(async () => {
     baseUrl: String(info?.baseUrl ?? ""),
     generation: typeof info?.generation === "number" ? info.generation : null,
   };
-})()`;
+};
 
-export const cloudHealthExpression = `(workspaceId) => {
+export const cloudHealthExpression = (workspaceId: string) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return { error: "missing local server credentials" };
@@ -192,7 +193,7 @@ export const cloudHealthExpression = `(workspaceId) => {
     request.setRequestHeader("Authorization", "Bearer " + token);
     request.send();
     return JSON.parse(request.responseText || "{}");
-  }`;
+  };
 
 export async function connectPolicyRuntimeRestart(seed: Seed, { place }: { place: import("@openwork/env").Place }) {
   const stamp = Date.now();
@@ -205,9 +206,7 @@ export async function connectPolicyRuntimeRestart(seed: Seed, { place }: { place
   });
   const app = await startApp({ den, as: "fresh", place, localServerDelayMs: 5_000 });
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }`, {
-    args: [app.workspaceId],
-  });
+  await seed.evalIn(app, browserScript((workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }, [app.workspaceId]));
   return withDispose({ app }, async () => app.stop());
 }
 
@@ -234,9 +233,7 @@ export async function connectStateProvenance(seed: Seed) {
   const app = await seed.desktop({ den, signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("connect-state-provenance"));
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }`, {
-    args: [workspace.workspaceId],
-  });
+  await seed.evalIn(app, browserScript((workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }, [workspace.workspaceId]));
   return { app, member: den.members.fresh };
 }
 
@@ -297,9 +294,7 @@ export async function preseededConnect(seed: Seed) {
   const app = await seed.desktop({ den, signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("preseeded-connect"));
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }`, {
-    args: [workspace.workspaceId],
-  });
+  await seed.evalIn(app, browserScript((workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }, [workspace.workspaceId]));
   return {
     app, den, prompt, proofPhrase, providerName, modelId,
     admin: den.admin,
@@ -400,9 +395,7 @@ export async function libraryConnectorDiscovery(seed: Seed) {
     mobile: false,
   });
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }`, {
-    args: [workspace.workspaceId],
-  });
+  await seed.evalIn(app, browserScript((workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }, [workspace.workspaceId]));
   return { app, organizationId, denWebUrl: den.ref.webUrl };
 }
 
@@ -417,7 +410,7 @@ export async function librarySessionRestore(seed: Seed) {
   const workspace = await seed.workspace(app, seed.tmpPath("library-session-restore"));
   const skillsRoute = `/workspace/${workspace.workspaceId}/extensions/skills`;
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `(route) => { location.hash = route; return true; }`, { args: [`#${skillsRoute}`] });
+  await seed.evalIn(app, browserScript((route) => { location.hash = route; return true; }, [`#${skillsRoute}`]));
   return {
     app,
     proxy,
@@ -436,9 +429,7 @@ export async function libraryAdvancedRefresh(seed: Seed) {
   const app = await seed.desktop({ den: { ...den, ref: proxy.ref }, as: "admin" });
   const workspace = await seed.workspace(app, seed.tmpPath("library-advanced-refresh"));
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }`, {
-    args: [workspace.workspaceId],
-  });
+  await seed.evalIn(app, browserScript((workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }, [workspace.workspaceId]));
   return { app, proxy, admin: den.admin, connector: den.mocks.connector };
 }
 
@@ -465,9 +456,7 @@ export async function libraryAuthoringRoutes(seed: Seed) {
   const app = await seed.desktop({ den: { ...den, ref: proxy.ref }, signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("library-authoring-routes"));
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/extensions"; return true; }`, {
-    args: [workspace.workspaceId],
-  });
+  await seed.evalIn(app, browserScript((workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/extensions"; return true; }, [workspace.workspaceId]));
   const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/library", headless: true });
   return {
     app,
@@ -489,13 +478,13 @@ export async function libraryConfigReadBudget(seed: Seed) {
   const app = await seed.desktop({ name: "library-config-read-budget" });
   await seed.workspace(app, repoRoot);
   // TODO(primitive): seed.networkObserver
-  await seed.evalIn(app, `(() => {
+  await seed.evalIn(app, () => {
     window.__opencodeConfigReads = 0;
     window.__librarySkillReads = 0;
     window.__libraryLifecycleReads = 0;
     const originalFetch = window.fetch;
     window.fetch = function (...args) {
-      const target = typeof args[0] === "string" ? args[0] : args[0]?.url;
+      const target = args[0] instanceof Request ? args[0].url : String(args[0]);
       if (typeof target === "string" && target.includes("/opencode-config")) window.__opencodeConfigReads += 1;
       if (typeof target === "string" && target.includes("/skills/browser-automation")) window.__librarySkillReads += 1;
       if (typeof target === "string" && (target.includes("/cloud-provider-sync/status") || target.includes("/opencode/config?") || target.endsWith("/mcp") || target.endsWith("/den-session"))) window.__libraryLifecycleReads += 1;
@@ -511,7 +500,7 @@ export async function libraryConfigReadBudget(seed: Seed) {
     }
     location.hash = "#/settings/general";
     return true;
-  })()`);
+  });
   return { app };
 }
 
@@ -524,9 +513,7 @@ export async function libraryMcpConnectError(seed: Seed) {
   const app = await seed.desktop({ den, as: "admin" });
   const workspace = await seed.workspace(app, seed.tmpPath("library-mcp-connect-error"));
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }`, {
-    args: [workspace.workspaceId],
-  });
+  await seed.evalIn(app, browserScript((workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }, [workspace.workspaceId]));
   return {
     app,
     connector: den.mocks.connector,
@@ -543,18 +530,18 @@ export async function librarySignedInStability(seed: Seed) {
   const app = await seed.desktop({ den, as: "member" });
   const workspace = await seed.workspace(app, repoRoot);
   // TODO(primitive): seed.networkObserver
-  await seed.evalIn(app, `(workspaceId) => {
+  await seed.evalIn(app, browserScript((workspaceId) => {
     window.__libraryStability = { requests: [], denEvents: 0, samples: [] };
     const originalFetch = window.fetch;
     window.fetch = function (...args) {
-      const target = typeof args[0] === "string" ? args[0] : args[0]?.url;
+      const target = args[0] instanceof Request ? args[0].url : String(args[0]);
       window.__libraryStability.requests.push(String(target));
       return originalFetch.apply(this, args);
     };
     window.addEventListener("openwork-den-settings-changed", () => { window.__libraryStability.denEvents += 1; });
     location.hash = "#/workspace/" + workspaceId + "/settings/general";
     return true;
-  }`, { args: [workspace.workspaceId] });
+  }, [workspace.workspaceId]));
   return { app };
 }
 
@@ -562,7 +549,7 @@ export async function libraryStateTabs(seed: Seed) {
   const app = await seed.desktop({ name: "library-state-tabs" });
   await seed.workspace(app, repoRoot);
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `location.hash = "#/settings/general"; true`);
+  await seed.evalIn(app, () => { location.hash = "#/settings/general"; return true; });
   return { app };
 }
 
@@ -575,9 +562,7 @@ export async function localManagedMcp(seed: Seed) {
   const app = await seed.desktop({ den, as: "admin" });
   const workspace = await seed.workspace(app, seed.tmpPath("local-managed-mcp"));
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }`, {
-    args: [workspace.workspaceId],
-  });
+  await seed.evalIn(app, browserScript((workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }, [workspace.workspaceId]));
   return { app, connector: den.mocks.connector, name: `local-managed-${stamp}`, workspaceId: workspace.workspaceId };
 }
 
@@ -882,11 +867,11 @@ async function configureWorkspaceModel(seed: Seed, input: {
   directMcp?: { name: string; url: string };
 }): Promise<void> {
   // TODO(primitive): seed.workspaceRuntimeConfig
-  const result = await rawEvalIn(input.app, `(async () => {
+  const result = await rawEvalIn(input.app, browserScript(async (inputWorkspaceId, providerId, value, modelId, inputValue, inputValue2, inputProviderId, inputModelId, inputValue3) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return "missing local server credentials";
-    const request = async (path, init) => {
+    const request = async (path: string, init?: RequestInit) => {
       const response = await fetch("http://127.0.0.1:" + port + path, {
         ...init,
         headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
@@ -894,68 +879,62 @@ async function configureWorkspaceModel(seed: Seed, input: {
       if (!response.ok) return path + " failed: " + response.status + " " + (await response.text()).slice(0, 500);
       return "ok";
     };
-    const workspaceId = ${JSON.stringify(input.workspaceId)};
+    const workspaceId = inputWorkspaceId;
     const patched = await request("/workspace/" + encodeURIComponent(workspaceId) + "/config", {
       method: "PATCH",
       body: JSON.stringify({ opencode: {
         provider: {
-          [${JSON.stringify(input.providerId)}]: {
+          [providerId]: {
             npm: "@ai-sdk/openai-compatible",
             name: "E2E MCP App model",
-            options: { baseURL: ${JSON.stringify(`${input.fixtureUrl}/v1`)}, apiKey: "sk-e2e-fixture" },
-            models: { [${JSON.stringify(input.modelId)}]: { name: "E2E MCP App model", tool_call: true } },
+            options: { baseURL: value, apiKey: "sk-e2e-fixture" },
+            models: { [modelId]: { name: "E2E MCP App model", tool_call: true } },
           },
         },
-        mcp: ${JSON.stringify(input.directMcp ? {
-          [input.directMcp.name]: { type: "remote", url: input.directMcp.url, enabled: true, oauth: false },
-        } : {})},
+        mcp: inputValue,
       } }),
     });
     if (patched !== "ok") return patched;
     const reloaded = await request("/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST" });
     if (reloaded !== "ok" && !reloaded.includes("opencode_reload_timeout")) return reloaded;
-    ${input.denApiUrl && input.mcpToken ? `
+    if (inputValue2) {
       const reconcile = await request("/workspace/" + encodeURIComponent(workspaceId) + "/mcp/openwork-cloud/reconcile", {
-        method: "POST",
-        body: JSON.stringify({
-          config: {
-            type: "remote",
-            url: ${JSON.stringify(`${input.denApiUrl}/mcp/agent`)},
-            enabled: true,
-            headers: { Authorization: ${JSON.stringify(`Bearer ${input.mcpToken}`)} },
-            oauth: false,
-          },
-          appHostAuthorization: ${JSON.stringify(input.appHostToken ? `Bearer ${input.appHostToken}` : undefined)},
-          provider: ${JSON.stringify(input.providerId)},
-          model: ${JSON.stringify(input.modelId)},
-          trigger: "spec-primitives-migration",
-        }),
+        method: "POST", body: JSON.stringify(inputValue2),
       });
       if (reconcile !== "ok") return reconcile;
-    ` : ""}
+    }
     const raw = localStorage.getItem("openwork.preferences");
-    let preferences = {};
+    let preferences: Record<string, unknown> = {};
     try { preferences = raw ? JSON.parse(raw) : {}; } catch {}
     if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
     localStorage.setItem("openwork.preferences", JSON.stringify({
       ...preferences,
-      defaultModel: { providerID: ${JSON.stringify(input.providerId)}, modelID: ${JSON.stringify(input.modelId)} },
+      defaultModel: { providerID: inputProviderId, modelID: inputModelId },
       modelVariant: null,
       providerStepCompleted: true,
     }));
-    localStorage.setItem("openwork.defaultModel", ${JSON.stringify(`${input.providerId}/${input.modelId}`)});
+    localStorage.setItem("openwork.defaultModel", inputValue3);
     localStorage.removeItem("openwork.sessionModels." + workspaceId);
     return "ok";
-  })()`, { awaitPromise: true, timeoutMs: 120_000 });
+  }, [input.workspaceId, input.providerId, `${input.fixtureUrl}/v1`, input.modelId, input.directMcp ? {
+          [input.directMcp.name]: { type: "remote", url: input.directMcp.url, enabled: true, oauth: false },
+        } : {}, input.denApiUrl && input.mcpToken ? {
+      config: {
+        type: "remote", url: `${input.denApiUrl}/mcp/agent`, enabled: true,
+        headers: { Authorization: `Bearer ${input.mcpToken}` }, oauth: false,
+      },
+      appHostAuthorization: input.appHostToken ? `Bearer ${input.appHostToken}` : undefined,
+      provider: input.providerId, model: input.modelId, trigger: "spec-primitives-migration",
+    } : null, input.providerId, input.modelId, `${input.providerId}/${input.modelId}`]), { awaitPromise: true, timeoutMs: 120_000 });
   if (result !== "ok") throw new Error(`Configuring the fixture model failed: ${String(result)}`);
 }
 
 async function reloadConfiguredApp(app: import("@openwork/cdp").Surface): Promise<void> {
   // TODO(primitive): seed.reloadConfiguredDesktop
-  await rawEvalIn(app, "location.reload(); true").catch(() => undefined);
+  await rawEvalIn(app, () => { location.reload(); return true; }).catch(() => undefined);
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
-    if (await rawEvalIn(app, "Boolean(window.__openworkControl)").catch(() => false) === true) return;
+    if (await rawEvalIn(app, () => (Boolean(window.__openworkControl))).catch(() => false) === true) return;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error("The configured desktop control did not return after reload.");

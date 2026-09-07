@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import { spawn } from "node:child_process";
 import { chmod, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -77,7 +78,7 @@ export async function appSmokeWorld(seed: Seed) {
   return {
     app, workspace, packaged,
     async packagedRuntime() {
-      return evalIn(app, `(async () => {
+      return evalIn(app, async () => {
         const bridge = window.__OPENWORK_ELECTRON__;
         if (typeof bridge?.invokeDesktop !== "function") return { bridge: false };
         const info = await bridge.invokeDesktop("openworkServerInfo");
@@ -86,16 +87,16 @@ export async function appSmokeWorld(seed: Seed) {
           welcome: location.hash === "#/welcome" && [...document.querySelectorAll("button")]
             .some(button => button.textContent.trim() === "Use Without Cloud" && !button.disabled),
           crash: /Something went wrong|Cannot find module|Maximum update depth exceeded/.test(document.body.innerText) };
-      })()`, { awaitPromise: true });
+      }, { awaitPromise: true });
     },
     async packagedToolIds() {
-      return evalIn(app, `(async () => {
-        await window.__OPENWORK_ELECTRON__.invokeDesktop("engineStart", ${JSON.stringify(seed.tmpPath("packaged-plugin-smoke"))}, { runtime: "direct" });
+      return evalIn(app, browserScript(async (value, inputValue) => {
+        await window.__OPENWORK_ELECTRON__.invokeDesktop("engineStart", value, { runtime: "direct" });
         const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
         const headers = { Authorization: "Bearer " + info.ownerToken, "Content-Type": "application/json" };
         const created = await fetch(info.baseUrl + "/workspaces/local", {
           method: "POST", headers, signal: AbortSignal.timeout(15000),
-          body: JSON.stringify({ folderPath: ${JSON.stringify(seed.tmpPath("packaged-plugin-smoke"))} }),
+          body: JSON.stringify({ folderPath: inputValue }),
         });
         if (created.status !== 201) throw new Error("Workspace creation failed: " + created.status);
         const workspace = await created.json();
@@ -104,7 +105,7 @@ export async function appSmokeWorld(seed: Seed) {
         });
         if (!tools.ok) throw new Error("Engine tool discovery failed: " + tools.status);
         return tools.json();
-      })()`, { awaitPromise: true, timeoutMs: 60_000 });
+      }, [seed.tmpPath("packaged-plugin-smoke"), seed.tmpPath("packaged-plugin-smoke")]), { awaitPromise: true, timeoutMs: 60_000 });
     },
     async [Symbol.asyncDispose]() { await app[Symbol.asyncDispose](); },
   };
@@ -139,14 +140,14 @@ export async function sessionWorld(seed: Seed) {
 export async function parentChildPermissionWorld(seed: Seed) {
   const base = await sessionWorld(seed);
   // TODO(primitive): seed a child-session permission request and parent activity row.
-  const seeded = await seed.evalIn(base.app, `(async () => {
+  const seeded = await seed.evalIn(base.app, async () => {
     const child = await window.__openworkControl.execute("eval.child_permission.seed", null);
-    if (!child?.ok || typeof child.result?.childSessionId !== "string") return child;
+    if (!child?.ok || !child.result || typeof child.result !== "object" || !("childSessionId" in child.result) || typeof child.result.childSessionId !== "string") return { child, activity: null };
     const activity = await window.__openworkControl.execute("eval.task_activity.seed", {
       childSessionId: child.result.childSessionId,
     });
     return { child, activity };
-  })()`, { awaitPromise: true });
+  }, { awaitPromise: true });
   if (!isRecord(seeded) || !isRecord(seeded.child) || seeded.child.ok !== true
     || !isRecord(seeded.activity) || seeded.activity.ok !== true) {
     throw new Error(`Child permission seed failed: ${JSON.stringify(seeded)}`);
@@ -160,11 +161,11 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
   if (!session) throw new Error("Could not seed the artifact code browser session.");
   await go(base.app, `/workspace/${base.workspace.workspaceId}/session/${session.sessionId}`);
   // TODO(primitive): write workspace files through the local server fixture.
-  const wrote = await seed.evalIn(base.app, `async (workspaceId) => {
+  const wrote = await seed.evalIn(base.app, browserScript(async (workspaceId) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return false;
-    const write = (path, content) => fetch(
+    const write = (path: string, content: string) => fetch(
       "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/files/content",
       {
         method: "POST",
@@ -174,34 +175,34 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
     );
     const responses = await Promise.all([
       write("restricted/hidden-proof.ts", "export const restricted = true;"),
-      write("src/openwork-artifact-proof.ts", "export const artifactEditor = true;\\n"),
-      write("config/openwork-artifact-settings.json", "{\\"artifactEditor\\":true}\\n"),
+      write("src/openwork-artifact-proof.ts", "export const artifactEditor = true;\n"),
+      write("config/openwork-artifact-settings.json", "{\"artifactEditor\":true}\n"),
     ]);
     return responses.every((response) => response.ok);
-  }`, { args: [base.workspace.workspaceId], awaitPromise: true });
+  }, [base.workspace.workspaceId]), { awaitPromise: true });
   if (wrote !== true) throw new Error("Could not seed artifact code files.");
   // TODO(primitive): open an initial built-in browser artifact tab.
-  await seed.evalIn(base.app, `window.__openworkControl.execute("browser.open_url", { url: "about:blank" })`, { awaitPromise: true });
+  await seed.evalIn(base.app, () => (window.__openworkControl.execute("browser.open_url", { url: "about:blank" })), { awaitPromise: true });
   await waitForBehavior(
     base.app,
-    `window.__openworkControl.listActions().some((action) => action.id === "eval.artifact_tabs.seed_overflow" && !action.disabled)`,
+    () => (window.__openworkControl.listActions().some((action) => action.id === "eval.artifact_tabs.seed_overflow" && !action.disabled)),
     { timeoutMs: 30_000, label: "artifact seed action enabled" },
   );
   // TODO(primitive): seed artifact tabs through a first-class artifact fixture.
-  const tabs = await seed.evalIn(base.app, `window.__openworkControl.execute("eval.artifact_tabs.seed_overflow", { count: 12 })`, { awaitPromise: true });
+  const tabs = await seed.evalIn(base.app, () => (window.__openworkControl.execute("eval.artifact_tabs.seed_overflow", { count: 12 })), { awaitPromise: true });
   if (!isRecord(tabs) || tabs.ok !== true) throw new Error(`Could not seed artifact tabs: ${JSON.stringify(tabs)}`);
   return {
     ...base,
     async visibleArtifactCode() {
-      return seed.evalIn(base.app, `(() => {
-        const root = document.querySelector("[data-artifact-code-view]");
+      return seed.evalIn(base.app, () => {
+        const root = document.querySelector<HTMLElement>("[data-artifact-code-view]");
         if (!root || root.getBoundingClientRect().height === 0) return "";
-        const text = (node) => [...node.childNodes].map((child) =>
+        const text = (node: Node): string => [...node.childNodes].map((child) =>
           child.nodeType === Node.TEXT_NODE ? child.textContent :
           child instanceof Element ? text(child.shadowRoot || child) : ""
         ).join("");
         return text(root);
-      })()`);
+      });
     },
     async setCatalogFolderRestricted(restricted: boolean) {
       const path = join(base.workspacePath, "restricted");
@@ -324,20 +325,20 @@ export async function unconfiguredNotificationWorld(seed: Seed) {
   });
   const engineError: unknown = await engineResponse.json();
   // TODO(primitive): point a desktop at a caller-owned local server and observe transient notification text.
-  const switched = await evalIn(app, `(async () => {
+  const switched = await evalIn(app, browserScript(async (port, serverToken) => {
     const state = { rawSeen: document.body.innerText.includes('{"code":') };
     const observer = new MutationObserver(() => {
       if (document.body.innerText.includes('{"code":')) state.rawSeen = true;
     });
     observer.observe(document.body, { subtree: true, childList: true, characterData: true });
     window.__issue3980NotificationProbe = { observer, state };
-    localStorage.setItem("openwork.server.urlOverride", "http://127.0.0.1.nip.io:${port}");
-    localStorage.setItem("openwork.server.token", ${JSON.stringify(serverToken)});
+    localStorage.setItem("openwork.server.urlOverride", `http://127.0.0.1.nip.io:${port}`);
+    localStorage.setItem("openwork.server.token", serverToken);
     localStorage.removeItem("openwork.server.hostToken");
     await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("engineStop");
     window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
     return true;
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  }, [port, serverToken]), { awaitPromise: true, timeoutMs: 30_000 });
   if (switched !== true) throw new Error("Could not switch the desktop to the unconfigured server.");
   return {
     app,
@@ -357,10 +358,10 @@ export async function unconfiguredNotificationWorld(seed: Seed) {
 }
 
 async function installAlphaUpdateBridge(app: Awaited<ReturnType<typeof desktop>>) {
-  const installed = await evalIn(app, `(() => {
+  const installed = await evalIn(app, () => {
     const nativeUpdater = window.__OPENWORK_ELECTRON__?.updater;
     if (!nativeUpdater?.getChannel || !nativeUpdater.setChannel) return false;
-    const state = { checks: [], currentVersion: "0.18.37-alpha.2491+64d2d37", latestVersion: "0.18.37-alpha.2492+4921a02" };
+    const state: Window["__openworkAlphaUpdateEligibilityEvalState"] = { checks: [], currentVersion: "0.18.37-alpha.2491+64d2d37", latestVersion: "0.18.37-alpha.2492+4921a02" };
     window.__openworkAlphaUpdateEligibilityEvalState = state;
     localStorage.setItem("openwork.react.settings.update-auto-check", "0");
     window.__openworkApplyDesktopConfig?.({ allowAlphaUpdates: true });
@@ -382,7 +383,7 @@ async function installAlphaUpdateBridge(app: Awaited<ReturnType<typeof desktop>>
       onDownloadProgress: () => () => {},
     };
     return true;
-  })()`);
+  });
   if (installed !== true) throw new Error("Could not install the controlled updater bridge.");
 }
 
@@ -426,7 +427,7 @@ export async function compatibleReleaseWorld(_seed: Seed, { place }: { place: Pl
       ]),
     },
   });
-  const snapshot = () => evalIn(app, `window.__openworkRecoveryControl.snapshot()`, { awaitPromise: true });
+  const snapshot = () => evalIn(app, () => (window.__openworkRecoveryControl.snapshot()), { awaitPromise: true });
   return { app, snapshot, async [Symbol.asyncDispose]() { await app.stop(); } };
 }
 
@@ -442,9 +443,9 @@ export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Pla
     : null;
   const host = provisioned ? daytonaSandbox(provisioned.sandbox) : localHost();
   const seeded = await desktop({ name: "recovery-profile-seed", host, profileDir });
-  const names = await evalIn(seeded, `window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceCreate", {
-    folderPath: ${JSON.stringify(`${profileDir}/continuity-workspace`)}, name: "reliable-recovery-profile-marker"
-  }).then((state) => state.workspaces.map((workspace) => workspace.displayName))`, { awaitPromise: true });
+  const names = await evalIn(seeded, browserScript((value) => (window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceCreate", {
+    folderPath: value, name: "reliable-recovery-profile-marker"
+  }).then((state) => state.workspaces.map((workspace) => workspace.displayName))), [`${profileDir}/continuity-workspace`]), { awaitPromise: true });
   if (!Array.isArray(names) || !names.includes("reliable-recovery-profile-marker")) throw new Error("Could not seed recovery profile.");
   await seeded.stop();
   const app = await desktop({
@@ -460,10 +461,10 @@ export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Pla
       ]),
     },
   });
-  const snapshot = () => evalIn(app, `window.__openworkRecoveryControl.snapshot()`, { awaitPromise: true });
+  const snapshot = () => evalIn(app, () => (window.__openworkRecoveryControl.snapshot()), { awaitPromise: true });
   const workspaceNames = () => evalIn(
     app,
-    `window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceBootstrap").then((state) => state.workspaces.map((entry) => entry.displayName))`,
+    () => (window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceBootstrap").then((state) => state.workspaces.map((entry) => entry.displayName))),
     { awaitPromise: true },
   );
   return {
@@ -489,10 +490,10 @@ export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Pla
 }
 
 async function installUpdaterRaceBridge(app: Awaited<ReturnType<typeof desktop>>, delayStable: boolean) {
-  const installed = await evalIn(app, `(() => {
+  const installed = await evalIn(app, browserScript((delayStable) => {
     const nativeUpdater = window.__OPENWORK_ELECTRON__?.updater;
     if (!nativeUpdater?.getChannel || !nativeUpdater.setChannel) return false;
-    const state = { checks: [], setChannels: [], stableStarted: false, finishStable: null };
+    const state: Window["__openworkUpdaterEvalState"] = { checks: [], setChannels: [], stableStarted: false, finishStable: null };
     window.__openworkUpdaterEvalState = state;
     window.__openworkApplyDesktopConfig?.({ allowAlphaUpdates: true });
     window.__openworkSetDesktopConfigRefreshResult?.({ allowAlphaUpdates: true });
@@ -501,7 +502,7 @@ async function installUpdaterRaceBridge(app: Awaited<ReturnType<typeof desktop>>
       setChannel: async (channel) => { state.setChannels.push(channel); return nativeUpdater.setChannel(channel); },
       check: async (channel) => {
         state.checks.push(channel);
-        if (${JSON.stringify(delayStable)} && channel === "stable") {
+        if (delayStable && channel === "stable") {
           state.stableStarted = true;
           return new Promise((resolve) => { state.finishStable = () => resolve({ available: true, channel: "stable", currentVersion: "0.18.0", latestVersion: "9.9.9" }); });
         }
@@ -512,7 +513,7 @@ async function installUpdaterRaceBridge(app: Awaited<ReturnType<typeof desktop>>
       onDownloadProgress: () => () => {},
     };
     return true;
-  })()`);
+  }, [delayStable]));
   if (installed !== true) throw new Error("Could not install updater race bridge.");
 }
 
@@ -544,7 +545,7 @@ export async function updaterChannelWorld(_seed: Seed) {
     await go(active, "/session");
     await installUpdaterRaceBridge(active, false);
     await go(active, `/workspace/${workspace.workspaceId}/settings/updates`);
-    await waitForBehavior(active, `window.location.hash.includes("/settings/updates") && Boolean(document.querySelector('[aria-label="Release channel"]'))`, {
+    await waitForBehavior(active, () => (window.location.hash.includes("/settings/updates") && Boolean(document.querySelector<HTMLElement>('[aria-label="Release channel"]'))), {
       timeoutMs: 60_000,
       label: "relaunched Updates page",
     });
@@ -629,18 +630,18 @@ export async function enterpriseTlsWorld(seed: Seed, { place }: { place: Place }
     // TODO(primitive): seed a named workspace in a caller-owned desktop profile.
     const seededWorkspaceNames = await seed.evalIn(
       rawApp,
-      `(folderPath) => window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceCreate", {
+      browserScript((folderPath) => window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceCreate", {
         folderPath,
         name: "enterprise-tls-profile-continuity"
-      }).then((state) => state.workspaces.map((workspace) => workspace.displayName))`,
-      { args: [`${profileDir}/continuity-workspace`], awaitPromise: true },
+      }).then((state) => state.workspaces.map((workspace) => workspace.displayName)), [`${profileDir}/continuity-workspace`]),
+      { awaitPromise: true },
     );
     if (!Array.isArray(seededWorkspaceNames) || !seededWorkspaceNames.includes("enterprise-tls-profile-continuity")) {
       throw new Error("Could not seed the enterprise TLS continuity workspace.");
     }
     await waitForBehavior(
       rawApp,
-      `window.__openworkControl?.listActions?.().some((action) => action.id === "auth.exchange-grant")`,
+      () => (window.__openworkControl?.listActions?.().some((action) => action.id === "auth.exchange-grant")),
       { timeoutMs: 60_000, label: "pre-trust sign-in reachability action" },
     );
     const grant = await createDesktopHandoffGrant(den.admin);
@@ -842,16 +843,14 @@ export async function toolTesterWorld(seed: Seed) {
     /** The Tool Tester link destination for this connection. */
     // TODO(primitive): read a visible link destination by test id.
     async testToolsHref(): Promise<string> {
-      const value = await seed.evalIn(web, `(connectionId) => document.querySelector('[data-testid="test-mcp-tools-' + connectionId + '"]')?.getAttribute("href") ?? ""`, {
-        args: [connection.id],
-      });
+      const value = await seed.evalIn(web, browserScript((connectionId) => document.querySelector<HTMLElement>('[data-testid="test-mcp-tools-' + connectionId + '"]')?.getAttribute("href") ?? "", [connection.id]));
       return typeof value === "string" ? value : "";
     },
     /** Whether Tool Tester appears in Manage rather than Settings. */
     // TODO(primitive): identify a nav item's containing sidebar group.
     async toolTesterSidebarPlacement(): Promise<{ inManage: boolean; inSettings: boolean }> {
-      const value = await seed.evalIn(web, `(() => {
-        const sidebar = document.querySelector('[data-testid="den-org-sidebar"]');
+      const value = await seed.evalIn(web, () => {
+        const sidebar = document.querySelector<HTMLElement>('[data-testid="den-org-sidebar"]');
         const links = sidebar ? [...sidebar.querySelectorAll('a')] : [];
         const toolTester = links.find((link) => link.textContent?.trim() === "Tool Tester");
         const settings = links.find((link) => link.textContent?.trim() === "Settings");
@@ -859,7 +858,7 @@ export async function toolTesterWorld(seed: Seed) {
           inManage: toolTester?.closest('[data-sidebar-section="manage"]') != null,
           inSettings: settings?.parentElement?.contains(toolTester ?? null) ?? false,
         };
-      })()`);
+      });
       if (!isRecord(value) || typeof value.inManage !== "boolean" || typeof value.inSettings !== "boolean") {
         throw new Error(`Expected Tool Tester sidebar placement booleans, received ${JSON.stringify(value)}.`);
       }
@@ -867,18 +866,18 @@ export async function toolTesterWorld(seed: Seed) {
     },
     /** The current web location. */
     async location(): Promise<string> {
-      const value = await seed.evalIn(web, `location.href`);
+      const value = await seed.evalIn(web, () => (location.href));
       if (typeof value !== "string") throw new Error("Expected the web location to be a string.");
       return value;
     },
     /** The checked states of the arguments editor modes by label. */
     // TODO(primitive): assert selected and unselected radio state.
     async argumentsEditorModes(): Promise<Record<string, string | null>> {
-      const value = await seed.evalIn(web, `(() => {
-        const editor = document.querySelector('[role="radiogroup"][aria-label="Arguments editor mode"]');
-        const radios = editor ? [...editor.querySelectorAll('[role="radio"]')] : [];
+      const value = await seed.evalIn(web, () => {
+        const editor = document.querySelector<HTMLElement>('[role="radiogroup"][aria-label="Arguments editor mode"]');
+        const radios = editor ? [...editor.querySelectorAll<HTMLElement>('[role="radio"]')] : [];
         return Object.fromEntries(radios.map((radio) => [(radio.textContent ?? "").trim(), radio.getAttribute("aria-checked")]));
-      })()`);
+      });
       if (!isRecord(value) || !Object.values(value).every((entry) => typeof entry === "string" || entry === null)) {
         throw new Error(`Expected arguments editor modes, received ${JSON.stringify(value)}.`);
       }
@@ -891,25 +890,25 @@ export async function toolTesterWorld(seed: Seed) {
     /** The selected Tool call inspection tab's label. */
     // TODO(primitive): assert the selected result tab state.
     async selectedInspectionTab(): Promise<string> {
-      const value = await seed.evalIn(web, `document.querySelector('[aria-label="Tool call inspection"] [role="tab"][aria-selected="true"]')?.textContent?.trim() ?? ""`);
+      const value = await seed.evalIn(web, () => (document.querySelector<HTMLElement>('[aria-label="Tool call inspection"] [role="tab"][aria-selected="true"]')?.textContent?.trim() ?? ""));
       return typeof value === "string" ? value : "";
     },
     /** The organization tools switch's checked state. */
     // TODO(primitive): assert a visible switch's checked state.
     async orgToolsSwitchChecked(): Promise<string | null> {
-      const value = await seed.evalIn(web, `document.querySelector('[role="switch"][aria-label="Tools enabled for your organization"]')?.getAttribute("aria-checked")`);
+      const value = await seed.evalIn(web, () => (document.querySelector<HTMLElement>('[role="switch"][aria-label="Tools enabled for your organization"]')?.getAttribute("aria-checked")));
       return typeof value === "string" ? value : null;
     },
     /** The arguments editor's nested-schema fallback state. */
     // TODO(primitive): assert disabled and selected radio state.
     async argumentsEditorFallback(): Promise<{ formDisabled: boolean; jsonChecked: string }> {
-      const value = await seed.evalIn(web, `(() => {
-        const editor = document.querySelector('[role="radiogroup"][aria-label="Arguments editor mode"]');
-        const radios = editor ? [...editor.querySelectorAll('[role="radio"]')] : [];
+      const value = await seed.evalIn(web, () => {
+        const editor = document.querySelector<HTMLElement>('[role="radiogroup"][aria-label="Arguments editor mode"]');
+        const radios = editor ? [...editor.querySelectorAll<HTMLElement>('[role="radio"]')] : [];
         const form = radios.find((radio) => (radio.textContent ?? "").trim() === "Form");
         const json = radios.find((radio) => (radio.textContent ?? "").trim() === "JSON");
         return { formDisabled: form?.hasAttribute("disabled") ?? false, jsonChecked: json?.getAttribute("aria-checked") ?? "" };
-      })()`);
+      });
       if (!isRecord(value) || typeof value.formDisabled !== "boolean" || typeof value.jsonChecked !== "string") {
         throw new Error(`Expected arguments editor fallback state, received ${JSON.stringify(value)}.`);
       }
@@ -918,7 +917,7 @@ export async function toolTesterWorld(seed: Seed) {
     /** Whether the Run tool button is disabled. */
     // TODO(primitive): assert a visible button's disabled state.
     async runToolDisabled(): Promise<boolean> {
-      return await seed.evalIn(web, `[...document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Run tool" && button.disabled)`) === true;
+      return await seed.evalIn(web, () => ([...document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Run tool" && button.disabled))) === true;
     },
   };
 }
@@ -938,7 +937,7 @@ export async function managedVaultWorld(_seed: Seed, { place }: { place: Place }
   const serverTarget = async (surface = app) => {
     const deadline = Date.now() + 120_000;
     while (Date.now() < deadline) {
-      const info = await evalIn(surface, `window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo")`, {
+      const info = await evalIn(surface, () => (window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo")), {
         awaitPromise: true,
         timeoutMs: 15_000,
       }).catch(() => null);
@@ -1049,14 +1048,16 @@ export async function managedVaultWorld(_seed: Seed, { place }: { place: Place }
 export async function backgroundUpdateWorld(seed: Seed) {
   const app = await seed.desktop({ name: "background-update", signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("background-update"));
-  await evalIn(app, `(async () => {
+  await evalIn(app, async () => {
     const currentVersion = "0.18.0";
     const now = Date.now.bind(Date);
-    const state = { checks: 0, downloads: 0, installs: 0, offset: 0, finishDownload: null, intervalCheck: null };
+    const state: Window["__backgroundUpdateWitness"] = { checks: 0, downloads: 0, installs: 0, offset: 0, finishDownload: null, intervalCheck: null };
     window.__backgroundUpdateWitness = state;
     const schedule = window.setInterval.bind(window);
-    window.setInterval = (callback, delay, ...args) => {
-      if (delay === 15 * 60 * 1000) state.intervalCheck = callback;
+    // The browser timer returns a numeric handle; Node's merged ambient overload does not apply here.
+    const browserWindow: Window = window;
+    browserWindow.setInterval = (callback: TimerHandler, delay?: number, ...args: unknown[]) => {
+      if (delay === 15 * 60 * 1000 && typeof callback === "function") state.intervalCheck = () => callback(...args);
       return schedule(callback, delay, ...args);
     };
     Date.now = () => now() + state.offset;
@@ -1081,35 +1082,35 @@ export async function backgroundUpdateWorld(seed: Seed) {
     };
     state.offset += 16 * 60 * 1000;
     window.dispatchEvent(new Event("focus"));
-  })()`, { awaitPromise: true });
+  }, { awaitPromise: true });
   return {
     app,
-    snapshot: () => evalIn(app, `(() => {
+    snapshot: () => evalIn(app, () => {
       const { checks, downloads, installs } = window.__backgroundUpdateWitness;
       return {
         checks, downloads, installs, route: location.hash,
-        updateInTitlebar: Boolean(document.querySelector('header [data-update-button]')),
-        updateInSidebar: Boolean(document.querySelector('[data-sidebar="footer"] [data-update-button]')),
-        sidebarName: document.querySelector('[data-sidebar-brand]')?.textContent?.trim() ?? null,
-        customLogoLoaded: Boolean(document.querySelector('[data-testid="brand-logo"] img')?.naturalWidth),
+        updateInTitlebar: Boolean(document.querySelector<HTMLElement>('header [data-update-button]')),
+        updateInSidebar: Boolean(document.querySelector<HTMLElement>('[data-sidebar="footer"] [data-update-button]')),
+        sidebarName: document.querySelector<HTMLElement>('[data-sidebar-brand]')?.textContent?.trim() ?? null,
+        customLogoLoaded: Boolean(document.querySelector<HTMLImageElement>('[data-testid="brand-logo"] img')?.naturalWidth),
       };
-    })()`),
-    setCustomBranding: () => evalIn(app, `(() => {
+    }),
+    setCustomBranding: () => evalIn(app, () => {
       const logo = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="32"><rect width="120" height="32" rx="5" fill="#25262b"/><text x="12" y="22" font-family="sans-serif" font-size="18" fill="white">Studio</text></svg>');
       window.__openworkApplyDesktopConfig({ brandAppName: "Studio", brandLogoUrl: logo });
-    })()`),
-    tickUpdateInterval: () => evalIn(app, `(() => {
+    }),
+    tickUpdateInterval: () => evalIn(app, () => {
       const state = window.__backgroundUpdateWitness;
       if (!state.intervalCheck) throw new Error("Update interval was not registered");
       state.offset += 15 * 60 * 1000;
       state.intervalCheck();
-    })()`),
-    finishDownload: () => evalIn(app, `window.__backgroundUpdateWitness.finishDownload()`),
-    returnToApp: () => evalIn(app, `(() => {
+    }),
+    finishDownload: () => evalIn(app, () => (window.__backgroundUpdateWitness.finishDownload?.())),
+    returnToApp: () => evalIn(app, () => {
       window.__backgroundUpdateWitness.offset += 16 * 60 * 1000;
       window.dispatchEvent(new Event("focus"));
       window.dispatchEvent(new Event("online"));
-    })()`),
+    }),
     openSettings: () => go(app, `/workspace/${workspace.workspaceId}/settings/updates`),
     openWorkspace: () => go(app, `/workspace/${workspace.workspaceId}/session`),
   };

@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
 import { engineSessionProbe, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
@@ -67,21 +68,17 @@ async function additionalWorkspace(
   app: Awaited<ReturnType<Seed["desktop"]>>,
   path: string,
 ): Promise<ShellWorkspace> {
-  const previous = await seed.evalIn(app, `localStorage.getItem("openwork.react.activeWorkspace") ?? ""`);
+  const previous = await seed.evalIn(app, () => (localStorage.getItem("openwork.react.activeWorkspace") ?? ""));
   // TODO(primitive): seed.workspace should always create the requested additional workspace.
-  const result = await seed.evalIn(app, `(path) => window.__openworkControl.execute("workspace.create", { path })`, {
-    args: [path],
-    awaitPromise: true,
-    timeoutMs: 120_000,
-  });
+  const result = await seed.evalIn(app, browserScript((path) => window.__openworkControl.execute("workspace.create", { path }), [path]), { awaitPromise: true, timeoutMs: 120_000 });
   if (!isRecord(result) || result.ok !== true) throw new Error(`Could not create workspace ${path}: ${JSON.stringify(result)}`);
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
-    const state = await seed.evalIn(app, `({
+    const state = await seed.evalIn(app, () => (({
       workspaceId: localStorage.getItem("openwork.react.activeWorkspace") ?? "",
       route: window.location.hash,
       ready: Boolean(window.__openworkControl),
-    })`);
+    })));
     if (isRecord(state)
       && typeof state.workspaceId === "string"
       && state.workspaceId
@@ -109,18 +106,18 @@ async function configureWorkspaceProvider(
   },
 ): Promise<void> {
   // TODO(primitive): seed.configureWorkspaceProvider should configure and reload a workspace model without raw renderer evaluation.
-  const result = await seed.evalIn(app, `async (workspaceIdsJson, smallModel, allowTools, providerId, modelId, modelName, baseUrl, defaultModel) => {
+  const result = await seed.evalIn(app, browserScript(async (workspaceIdsJson, smallModel, allowTools, providerId, modelId, modelName, baseUrl, defaultModel) => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
     const workspaceIds = JSON.parse(workspaceIdsJson);
-    const root = String(info.baseUrl).replace(/\\/+$/, "");
+    const root = String(info.baseUrl).replace(/\/+$/, "");
     const headers = {
       Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
       "Content-Type": "application/json",
     };
     const outcomes = [];
     for (const workspaceId of workspaceIds) {
-      const opencode = {
+      const opencode: { provider: Record<string, unknown>; small_model?: string; permission?: unknown } = {
         provider: {
           [providerId]: {
             npm: "@ai-sdk/openai-compatible",
@@ -150,7 +147,7 @@ async function configureWorkspaceProvider(
       outcomes.push({ workspaceId, stage: "reload", status: reload.status, text: reload.ok ? "ok" : (await reload.text()).slice(0, 300) });
     }
     const raw = localStorage.getItem("openwork.preferences");
-    let preferences = {};
+    let preferences: Record<string, unknown> = {};
     try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
     if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
     localStorage.setItem("openwork.preferences", JSON.stringify({
@@ -162,8 +159,7 @@ async function configureWorkspaceProvider(
     localStorage.setItem("openwork.defaultModel", defaultModel);
     for (const workspaceId of workspaceIds) localStorage.removeItem("openwork.sessionModels." + workspaceId);
     return { outcomes };
-  }`, {
-    args: [
+  }, [
       JSON.stringify(workspaceIds),
       options.smallModel ?? null,
       options.allowTools ?? false,
@@ -172,10 +168,7 @@ async function configureWorkspaceProvider(
       options.modelName,
       options.baseUrl,
       `${options.providerId}/${options.modelId}`,
-    ],
-    awaitPromise: true,
-    timeoutMs: 240_000,
-  });
+    ]), { awaitPromise: true, timeoutMs: 240_000 });
   if (typeof result !== "object" || result === null || !("outcomes" in result) || !Array.isArray(result.outcomes)) {
     throw new Error(`Workspace provider configuration failed: ${JSON.stringify(result)}`);
   }
@@ -234,20 +227,20 @@ export async function workspaceNewTask(seed: Seed) {
   // TODO(primitive): seed.networkFault should delay and observe renderer requests.
   // Keep real session creation behind a slow transport boundary. Opening the
   // composer must not reach this boundary; submitting must reach it only once.
-  await seed.evalIn(app, `(() => {
+  await seed.evalIn(app, () => {
     window.__newTaskRequests = [];
     const originalFetch = window.fetch;
     window.fetch = async function (...args) {
       const request = args[0];
-      const url = typeof request === "string" ? request : request.url;
-      const method = args[1]?.method ?? request.method ?? "GET";
+      const url = request instanceof Request ? request.url : String(request);
+      const method = args[1]?.method ?? (request instanceof Request ? request.method : "GET");
       if (method.toUpperCase() === "POST" && new URL(url, location.href).pathname.endsWith("/session")) {
         window.__newTaskRequests.push(url);
         await new Promise((resolve) => setTimeout(resolve, 5000));
       }
       return originalFetch.apply(this, args);
     };
-  })()`);
+  });
   return { app, workspace, workspacePath, sessions, prompt, reply };
 }
 
@@ -260,7 +253,7 @@ export async function pinnedSessions(seed: Seed) {
 
   // TODO(primitive): probe.context should expose the OpenWork context snapshot.
   async function context(): Promise<{ pinnedSessionIds: string[]; pinnedResourceRefs: string[] }> {
-    const value = await seed.evalIn(app, `(() => {
+    const value = await seed.evalIn(app, () => {
       const c = window.__openworkControl?.context?.();
       return {
         pinnedSessionIds: c?.conversations?.pinnedSessionIds ?? null,
@@ -268,7 +261,7 @@ export async function pinnedSessions(seed: Seed) {
           .filter((r) => r.kind === "session" && r.state?.pinned === true)
           .map((r) => r.ref),
       };
-    })()`);
+    });
     if (!isRecord(value)
       || !Array.isArray(value.pinnedSessionIds)
       || !value.pinnedSessionIds.every((id) => typeof id === "string")
@@ -284,12 +277,12 @@ export async function pinnedSessions(seed: Seed) {
 
   // TODO(primitive): probe.sidebar complements user.see({ text: "Pinned" }) by exposing which rows the section contains.
   async function pinnedSidebarRows(): Promise<string[] | null> {
-    const value = await seed.evalIn(app, `(() => {
-      const section = document.querySelector("[data-global-pinned-sessions]");
+    const value = await seed.evalIn(app, () => {
+      const section = document.querySelector<HTMLElement>("[data-global-pinned-sessions]");
       if (!section) return null;
-      return [...section.querySelectorAll("[data-sidebar-session-id]")]
+      return [...section.querySelectorAll<HTMLElement>("[data-sidebar-session-id]")]
         .map((row) => row.getAttribute("data-sidebar-session-id"));
-    })()`);
+    });
     if (value === null) return null;
     if (!Array.isArray(value) || !value.every((sessionId) => typeof sessionId === "string")) {
       throw new Error(`Global pinned sidebar rows were malformed: ${JSON.stringify(value)}`);
@@ -318,11 +311,11 @@ export async function archiveSessions(seed: Seed) {
    */
   // TODO(primitive): probe.sessions should expose the workspace's native session list.
   async function archivedAt(): Promise<Record<string, number>> {
-    const value = await seed.evalIn(app, `async (workspaceId, engine) => {
+    const value = await seed.evalIn(app, browserScript(async (workspaceId, engine) => {
       const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
       if (!info?.running || !info.baseUrl) throw new Error("OpenWork server is unavailable");
       const response = await fetch(
-        String(info.baseUrl).replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId) + (engine === "v2" ? "/opencode2/api/session?limit=200" : "/opencode/session?limit=200"),
+        String(info.baseUrl).replace(/\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId) + (engine === "v2" ? "/opencode2/api/session?limit=200" : "/opencode/session?limit=200"),
         {
           headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
           signal: AbortSignal.timeout(15000),
@@ -335,7 +328,7 @@ export async function archiveSessions(seed: Seed) {
       return Object.fromEntries(sessions
         .filter((session) => typeof session?.id === "string")
         .map((session) => [session.id, typeof session?.time?.archived === "number" ? session.time.archived : 0]));
-    }`, { args: [workspace.workspaceId, engine], awaitPromise: true, timeoutMs: 20_000 });
+    }, [workspace.workspaceId, engine]), { awaitPromise: true, timeoutMs: 20_000 });
     if (!isRecord(value)) throw new Error(`Workspace archived state was malformed: ${JSON.stringify(value)}`);
     const stamps: Record<string, number> = {};
     for (const [sessionId, stamp] of Object.entries(value)) {
@@ -348,16 +341,16 @@ export async function archiveSessions(seed: Seed) {
   /** Which rows the workspace's own session tree shows, and whether the global Archived section exists. */
   // TODO(primitive): probe.sidebar should expose the workspace tree and the Archived section.
   async function sidebar(): Promise<{ active: string[]; archivedSection: boolean; archiveMenuDisabled: boolean }> {
-    const value = await seed.evalIn(app, `(workspaceId) => {
-      const tree = document.querySelector('[data-sidebar-workspace-id="' + workspaceId + '"]');
+    const value = await seed.evalIn(app, browserScript((workspaceId) => {
+      const tree = document.querySelector<HTMLElement>('[data-sidebar-workspace-id="' + workspaceId + '"]');
       return {
-        active: [...(tree?.querySelectorAll("[data-sidebar-session-id]") ?? [])]
+        active: [...(tree?.querySelectorAll<HTMLElement>("[data-sidebar-session-id]") ?? [])]
           .map((row) => row.getAttribute("data-sidebar-session-id")),
-        archivedSection: Boolean(document.querySelector("[data-global-archived-sessions]")),
-        archiveMenuDisabled: [...document.querySelectorAll('[role="menuitem"][aria-disabled="true"]')]
+        archivedSection: Boolean(document.querySelector<HTMLElement>("[data-global-archived-sessions]")),
+        archiveMenuDisabled: [...document.querySelectorAll<HTMLElement>('[role="menuitem"][aria-disabled="true"]')]
           .some((item) => item.textContent?.trim() === "Archive session"),
       };
-    }`, { args: [workspace.workspaceId] });
+    }, [workspace.workspaceId]));
     if (!isRecord(value)
       || !Array.isArray(value.active)
       || !value.active.every((sessionId) => typeof sessionId === "string")
@@ -371,13 +364,13 @@ export async function archiveSessions(seed: Seed) {
   /** True once the undo pill is on screen and its slide-in has finished, i.e. when a person would reach for it. */
   // TODO(primitive): user.click should wait for a target's entrance animation to settle.
   async function undoToastSettled(): Promise<boolean> {
-    const value = await seed.evalIn(app, `(() => {
-      const pill = document.querySelector("[data-undo-toast]");
+    const value = await seed.evalIn(app, () => {
+      const pill = document.querySelector<HTMLElement>("[data-undo-toast]");
       const toast = pill?.closest("[data-sonner-toast]");
       if (!(toast instanceof HTMLElement)) return false;
       return toast.dataset.mounted === "true"
         && toast.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running");
-    })()`);
+    });
     return value === true;
   }
 
@@ -467,16 +460,16 @@ export async function externalSessionVisibility(seed: Seed) {
   // and explicitly close its picker before testing sidebar clicks: the missing
   // default-model prompt can otherwise appear between hit-testing and clicking.
   await readAvailableModels(app);
-  await seed.evalIn(app, `(() => {
-    const close = document.querySelector('[data-slot="dialog-content"] [data-slot="dialog-close"]');
+  await seed.evalIn(app, () => {
+    const close = document.querySelector<HTMLElement>('[data-slot="dialog-content"] [data-slot="dialog-close"]');
     if (!(close instanceof HTMLElement)) throw new Error("Model picker close control unavailable");
     close.click();
-  })()`);
-  await waitFor(app, `!document.querySelector('[data-slot="dialog-overlay"]')`, {
+  });
+  await waitFor(app, () => (!document.querySelector<HTMLElement>('[data-slot="dialog-overlay"]')), {
     timeoutMs: 30_000,
     label: "model picker backdrop dismissed before sidebar interaction",
   });
-  const rawServerInfo = await seed.evalIn(app, `window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo")`, {
+  const rawServerInfo = await seed.evalIn(app, () => (window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo")), {
     awaitPromise: true,
     timeoutMs: 30_000,
   });
@@ -632,7 +625,7 @@ export async function externalSessionVisibility(seed: Seed) {
     /** The sidebar's own per-workspace session lists and load state. */
     // TODO(primitive): probe.route should expose the sidebar's per-workspace session lists.
     async route(): Promise<SidebarRouteFacts> {
-      return parseSidebarRouteFacts(await seed.evalIn(app, `(() => {
+      return parseSidebarRouteFacts(await seed.evalIn(app, () => {
         const route = window.__openwork?.slice?.("route");
         if (!route) return null;
         return {
@@ -648,7 +641,7 @@ export async function externalSessionVisibility(seed: Seed) {
             (sessions ?? []).map((session) => ({ id: String(session?.id ?? ""), title: String(session?.title ?? "") })),
           ])),
         };
-      })()`));
+      }));
     },
     /**
      * Creates a session the way another client would: straight against the
@@ -724,12 +717,12 @@ export async function settingsRuntime(seed: Seed) {
   const firstWorkspace = await seed.workspace(app, `/tmp/${firstName}`);
   const secondWorkspace = await additionalWorkspace(seed, app, `/tmp/${secondName}`);
   // TODO(primitive): seed.runtimeErrorCapture should install a scoped renderer error witness.
-  await seed.evalIn(app, `(() => {
+  await seed.evalIn(app, () => {
     window.__sessionSettingsRuntimeErrors = [];
     window.addEventListener("error", (event) => window.__sessionSettingsRuntimeErrors.push(String(event.error?.message ?? event.message ?? "window error")));
     window.addEventListener("unhandledrejection", (event) => window.__sessionSettingsRuntimeErrors.push(String(event.reason?.message ?? event.reason ?? "unhandled rejection")));
     return true;
-  })()`);
+  });
   return { app, firstWorkspace, secondWorkspace, firstName, secondName };
 }
 
@@ -753,11 +746,11 @@ export async function renderCycle(seed: Seed, { place }: { place: import("@openw
   const workspacePath = seed.tmpPath("desktop-render-cycle");
   await mkdir(workspacePath, { recursive: true });
   // TODO(primitive): seed.storage should arrange persisted renderer preferences without raw evaluation.
-  await seed.evalIn(app, `(() => {
+  await seed.evalIn(app, () => {
     localStorage.setItem("openwork.debug.profilerOverlay", "1");
     location.reload();
     return true;
-  })()`).catch(() => undefined);
+  }).catch(() => undefined);
   return {
     app,
     workspacePath,
@@ -943,11 +936,11 @@ export async function activeSessionStorm(seed: Seed) {
     baseUrl: `${den.mocks.agent.url}/v1`,
     allowTools: true,
   });
-  await seed.evalIn(app, "location.reload(); true").catch(() => undefined);
+  await seed.evalIn(app, () => { location.reload(); return true; }).catch(() => undefined);
   const reloadDeadline = Date.now() + 60_000;
   while (Date.now() < reloadDeadline) {
-    const ready = await seed.evalIn(app, `Boolean(window.__openworkControl)
-      && Boolean((localStorage.getItem("openwork.den.authToken") ?? "").trim())`)
+    const ready = await seed.evalIn(app, () => (Boolean(window.__openworkControl)
+      && Boolean((localStorage.getItem("openwork.den.authToken") ?? "").trim())))
       .catch(() => false);
     if (ready === true) break;
     await new Promise((resolve) => setTimeout(resolve, 250));

@@ -15,16 +15,16 @@ test("chat suggests Slack setup and lets an admin browse every quick-add connect
   await appUser.see({ role: "button", label: "Set up Slack" });
   await appUser.see({ text: "Admin setup" });
   await appUser.notSee({ testId: "desktop-connection-card" });
-  const visibleIds = () => appProbe.eval(`Array.from(document.querySelectorAll('[data-connector-preset]'), element => element.getAttribute('data-connector-preset'))`);
+  const visibleIds = () => appProbe.eval(() => (Array.from(document.querySelectorAll<HTMLElement>('[data-connector-preset]'), element => element.getAttribute('data-connector-preset'))));
   expect(await visibleIds()).toEqual(["slack"]);
-  const suggestedWidth = await appProbe.eval(`document.querySelector('[data-testid="connector-catalog"]')?.getBoundingClientRect().width`);
+  const suggestedWidth = await appProbe.eval(() => (document.querySelector<HTMLElement>('[data-testid="connector-catalog"]')?.getBoundingClientRect().width));
   await appUser.screenshot();
   evidence.recordAssertionEvidence("A Slack request offers setup without claiming the service is connected", "Only Slack is suggested with Admin setup; no account connection card is shown", true);
 
   await appUser.click({ role: "button", label: `Browse all ${world.expectedIds.length}` });
   await appUser.see({ role: "textbox", label: "Filter connectors" });
   expect(await visibleIds()).toEqual(world.expectedIds);
-  const expandedWidth = await appProbe.eval(`document.querySelector('[data-testid="connector-catalog"]')?.getBoundingClientRect().width`);
+  const expandedWidth = await appProbe.eval(() => (document.querySelector<HTMLElement>('[data-testid="connector-catalog"]')?.getBoundingClientRect().width));
   expect(expandedWidth).toBe(suggestedWidth);
   evidence.recordAssertionEvidence("Browsing all connectors preserves the suggestion card width", JSON.stringify({ suggestedWidth, expandedWidth }), true);
   await appUser.see({ role: "button", label: "Set up Linear" });
@@ -36,7 +36,7 @@ test("chat suggests Slack setup and lets an admin browse every quick-add connect
   await appUser.type({ role: "textbox", label: "Filter connectors" }, "slack", { replace: true });
   expect(await visibleIds()).toEqual(["slack"]);
   await probe.eventually(
-    () => appProbe.eval(`document.querySelector('button[aria-label="Set up Slack"]')?.disabled === false`),
+    () => appProbe.eval(() => (document.querySelector<HTMLButtonElement>('button[aria-label="Set up Slack"]')?.disabled === false)),
     { within: 15_000, label: "admin setup action is enabled", until: value => value === true },
   );
   expect(await world.browserUrls.opened()).toEqual([]);
@@ -68,10 +68,10 @@ test("chat suggests Slack setup and lets an admin browse every quick-add connect
   await appUser.see({ text: "Try one of these:" });
   await agent.on(world.app).send(allConnectorsPrompt);
   await appUser.see({ text: allConnectorsReply }, { timeoutMs: 120_000 });
-  const listed = await appProbe.eval(`(() => {
-    const cards = Array.from(document.querySelectorAll('[data-testid="connector-catalog"]'));
-    return Array.from(cards.at(-1)?.querySelectorAll('[data-connector-preset]') ?? [], entry => entry.getAttribute('data-connector-preset'));
-  })()`);
+  const listed = await appProbe.eval(() => {
+    const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="connector-catalog"]'));
+    return Array.from(cards.at(-1)?.querySelectorAll<HTMLElement>('[data-connector-preset]') ?? [], entry => entry.getAttribute('data-connector-preset'));
+  });
   expect(listed).toEqual(world.expectedIds);
   await appUser.screenshot();
   evidence.recordAssertionEvidence("Asking for all quick adds immediately opens the complete catalog", JSON.stringify(listed), true);

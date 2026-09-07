@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { commandPaletteSearch } from "../worlds/session-shell.ts";
@@ -13,7 +14,7 @@ function stringArray(value: unknown): string[] {
 
 test("command palette searches settings by alias, navigates, records recents, and filters actions", async ({ world, user, probe, step }) => {
   const workspaceId = world.workspace.workspaceId;
-  const macPlatform = await probe.eval(`/Mac|iPhone|iPad|iPod/.test(navigator.platform)`);
+  const macPlatform = await probe.eval(() => (/Mac|iPhone|iPad|iPod/.test(navigator.platform)));
   const paletteShortcut = macPlatform ? "Meta+K" : "Control+K";
   const waitForPaletteClose = () => probe.eventually(() => probe.has("Arrow keys to navigate"), {
     within: 15_000,
@@ -153,12 +154,12 @@ test("command palette searches settings by alias, navigates, records recents, an
       });
       expect(sectionHash).toBe(`#/workspace/${workspaceId}/settings/advanced/${section.id}`);
       await waitForPaletteClose();
-      expect(await probe.eventually(() => probe.eval(`(id) => {
+      expect(await probe.eventually(() => probe.eval(browserScript((id) => {
         const section = document.getElementById(id);
-        const heading = section?.querySelector("h3");
+        const heading = section?.querySelector<HTMLElement>("h3");
         const bounds = heading?.getBoundingClientRect();
         return document.activeElement === section && !!bounds && bounds.top >= 0 && bounds.bottom <= innerHeight;
-      }`, { args: [`advanced-${section.id}`] }), {
+      }, [`advanced-${section.id}`])), {
         within: 15_000,
         label: `${section.title} is focused and in view`,
         until: (value) => value === true,

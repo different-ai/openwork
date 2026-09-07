@@ -1,5 +1,5 @@
 import type { DenSession, DenFetchResult, FieldTypingOptions } from "@openwork/behaviors";
-import type { CdpFunctionArgument, Surface, Target } from "@openwork/cdp";
+import type { BrowserEvaluation, Surface, Target } from "@openwork/cdp";
 import type {
   MockHandle,
   Place,
@@ -30,8 +30,7 @@ export interface TypeOptions extends FieldTypingOptions {
 }
 
 export interface ProbeEvalOptions {
-  args?: readonly CdpFunctionArgument[];
-  awaitPromise?: boolean;
+  awaitPromise?: true;
   timeoutMs?: number;
 }
 
@@ -69,8 +68,8 @@ export interface Probe {
   storage(key: string): Promise<unknown>;
   storage<T>(key: string, pick: (value: unknown) => T): Promise<T>;
   hash(): Promise<string>;
-  eval(expression: string, options?: ProbeEvalOptions): Promise<unknown>;
-  eval(surface: Surface, expression: string, options?: ProbeEvalOptions): Promise<unknown>;
+  eval<T>(expression: BrowserEvaluation<T>, options?: ProbeEvalOptions): Promise<Awaited<T>>;
+  eval<T>(surface: Surface, expression: BrowserEvaluation<T>, options?: ProbeEvalOptions): Promise<Awaited<T>>;
   connectState(app: Surface): ReturnType<typeof import("../state.ts").readConnectState>;
   api(session: DenSession, path: string, init?: RequestInit): Promise<DenFetchResult>;
   /** GET from the bound desktop's local server; authentication stays in the renderer. */

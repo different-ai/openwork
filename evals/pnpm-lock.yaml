@@ -38,6 +38,9 @@ importers:
       '@openwork/testkit':
         specifier: workspace:*
         version: link:packages/testkit
+      '@openwork/types':
+        specifier: link:../packages/types
+        version: link:../packages/types
       '@openwork/world':
         specifier: link:../packages/world
         version: link:../packages/world

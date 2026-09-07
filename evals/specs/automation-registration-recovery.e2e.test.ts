@@ -42,7 +42,7 @@ test("desktop registration recovers from a transient Den outage without another 
   })
   await proxy.faults.status(registrationPath, 503, { times: 1 })
   const start = (await proxy.requestLog()).length
-  await evalIn(desktop, `window.dispatchEvent(new Event("online"))`)
+  await evalIn(desktop, () => (window.dispatchEvent(new Event("online"))))
   await eventually(async () => {
     const requests = (await proxy.requestLog()).slice(start)
       .filter((request) => request.path === registrationPath)

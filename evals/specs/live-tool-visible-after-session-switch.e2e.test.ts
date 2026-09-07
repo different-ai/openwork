@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import {
   control,
@@ -78,15 +79,15 @@ function parseVisibleToolFact(value: unknown): VisibleToolFact {
 }
 
 async function configureWorkspaces(appSurface: App, workspaceIds: string[], baseUrl: string): Promise<void> {
-  const result = await evalIn(appSurface, `(async () => {
+  const result = await evalIn(appSurface, browserScript(async (workspaceIds, providerId, modelName, value, modelId, inputModelName, inputProviderId, inputModelId, inputValue) => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return "local_server_unavailable";
-    const root = String(info.baseUrl).replace(/\\/+$/, "");
+    const root = String(info.baseUrl).replace(/\/+$/, "");
     const headers = {
       Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
       "Content-Type": "application/json",
     };
-    for (const workspaceId of ${JSON.stringify(workspaceIds)}) {
+    for (const workspaceId of workspaceIds) {
       const configured = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
         method: "PATCH",
         headers,
@@ -94,12 +95,12 @@ async function configureWorkspaces(appSurface: App, workspaceIds: string[], base
           opencode: {
             permission: { bash: "allow" },
             provider: {
-              [${JSON.stringify(providerId)}]: {
+              [providerId]: {
                 npm: "@ai-sdk/openai-compatible",
-                name: ${JSON.stringify(modelName)},
-                options: { baseURL: ${JSON.stringify(`${baseUrl}/v1`)}, apiKey: "sk-live-tool-switch" },
+                name: modelName,
+                options: { baseURL: value, apiKey: "sk-live-tool-switch" },
                 models: {
-                  [${JSON.stringify(modelId)}]: { name: ${JSON.stringify(modelName)}, tool_call: true },
+                  [modelId]: { name: inputModelName, tool_call: true },
                 },
               },
             },
@@ -116,22 +117,22 @@ async function configureWorkspaces(appSurface: App, workspaceIds: string[], base
       if (!reloaded.ok) return "reload:" + reloaded.status + ":" + (await reloaded.text()).slice(0, 300);
     }
     const raw = localStorage.getItem("openwork.preferences");
-    let preferences = {};
+    let preferences: Record<string, unknown> = {};
     try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
     if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
     localStorage.setItem("openwork.preferences", JSON.stringify({
       ...preferences,
-      defaultModel: { providerID: ${JSON.stringify(providerId)}, modelID: ${JSON.stringify(modelId)} },
+      defaultModel: { providerID: inputProviderId, modelID: inputModelId },
       modelVariant: null,
       providerStepCompleted: true,
     }));
-    localStorage.setItem("openwork.defaultModel", ${JSON.stringify(`${providerId}/${modelId}`)});
+    localStorage.setItem("openwork.defaultModel", inputValue);
     return "ok";
-  })()`, { awaitPromise: true, timeoutMs: 120_000 });
+  }, [workspaceIds, providerId, modelName, `${baseUrl}/v1`, modelId, modelName, providerId, modelId, `${providerId}/${modelId}`]), { awaitPromise: true, timeoutMs: 120_000 });
   expect(result).toBe("ok");
 
-  await evalIn(appSurface, "location.reload(); true");
-  await waitFor(appSurface, "Boolean(window.__openworkControl)", {
+  await evalIn(appSurface, () => { location.reload(); return true; });
+  await waitFor(appSurface, () => (Boolean(window.__openworkControl)), {
     timeoutMs: 60_000,
     label: "desktop restored after mock provider configuration",
   });
@@ -154,20 +155,20 @@ async function createSession(appSurface: App): Promise<string> {
 }
 
 async function clickSessionRow(appSurface: App, workspaceId: string, sessionId: string): Promise<void> {
-  const clicked = await evalIn(appSurface, `(() => {
-    const row = document.querySelector(${JSON.stringify(`[data-sidebar-session-id="${sessionId}"][data-sidebar-session-workspace-id="${workspaceId}"]`)});
-    const control = row?.querySelector(${JSON.stringify(`[data-session-tab-id="${sessionId}"]`)});
+  const clicked = await evalIn(appSurface, browserScript((value, inputValue) => {
+    const row = document.querySelector<HTMLElement>(value);
+    const control = row?.querySelector<HTMLElement>(inputValue);
     if (!(row instanceof HTMLElement) || !(control instanceof HTMLElement)) return false;
     row.scrollIntoView({ block: "center" });
     control.click();
     return true;
-  })()`);
+  }, [`[data-sidebar-session-id="${sessionId}"][data-sidebar-session-workspace-id="${workspaceId}"]`, `[data-session-tab-id="${sessionId}"]`]));
   expect(clicked).toBe(true);
-  await waitFor(appSurface, `(() => {
-    const surface = document.querySelector("[data-session-surface-id]");
-    return surface?.getAttribute("data-session-surface-id") === ${JSON.stringify(sessionId)}
-      && (localStorage.getItem("openwork.react.activeWorkspace") ?? "") === ${JSON.stringify(workspaceId)};
-  })()`, { timeoutMs: 60_000, label: `workspace ${workspaceId} session ${sessionId} visible after sidebar click` });
+  await waitFor(appSurface, browserScript((sessionId, workspaceId) => {
+    const surface = document.querySelector<HTMLElement>("[data-session-surface-id]");
+    return surface?.getAttribute("data-session-surface-id") === sessionId
+      && (localStorage.getItem("openwork.react.activeWorkspace") ?? "") === workspaceId;
+  }, [sessionId, workspaceId]), { timeoutMs: 60_000, label: `workspace ${workspaceId} session ${sessionId} visible after sidebar click` });
 }
 
 async function readSessionFacts(appSurface: App, workspaceId: string, sessionId: string): Promise<SessionFacts> {
@@ -208,18 +209,18 @@ async function approvePendingPermission(appSurface: App, workspaceId: string, se
 }
 
 async function expectLeftSessionIndicator(appSurface: App, sessionId: string, kind: "loading" | "attention"): Promise<void> {
-  const fact = await eventually(() => evalIn(appSurface, `(() => {
-    const row = document.querySelector('[data-sidebar-session-id="' + CSS.escape(${JSON.stringify(sessionId)}) + '"]');
-    const title = row?.querySelector("[data-session-title-slot]");
-    const indicators = row?.querySelectorAll("[data-session-loading-indicator], [data-session-attention-indicator]");
-    const indicator = row?.querySelector(${JSON.stringify(`[data-session-${kind}-indicator]`)});
+  const fact = await eventually(() => evalIn(appSurface, browserScript((sessionId, value) => {
+    const row = document.querySelector<HTMLElement>('[data-sidebar-session-id="' + CSS.escape(sessionId) + '"]');
+    const title = row?.querySelector<HTMLElement>("[data-session-title-slot]");
+    const indicators = row?.querySelectorAll<HTMLElement>("[data-session-loading-indicator], [data-session-attention-indicator]");
+    const indicator = row?.querySelector<HTMLElement>(value);
     if (!(title instanceof HTMLElement) || !(indicator instanceof HTMLElement)) return false;
     const box = indicator.getBoundingClientRect();
     const style = getComputedStyle(indicator);
     return indicators?.length === 1 && box.width > 0 && box.height > 0
       && box.right <= title.getBoundingClientRect().left
       && style.visibility === "visible" && style.opacity === "1";
-  })()`), {
+  }, [sessionId, `[data-session-${kind}-indicator]`])), {
     within: 15_000,
     intervalMs: 250,
     label: `exactly one visible ${kind} indicator before the session title`,
@@ -233,11 +234,11 @@ async function readVisibleTool(
   sessionId: string,
   toolCallId: string,
 ): Promise<VisibleToolFact> {
-  const value = await evalIn(appSurface, `(() => {
-    const surface = document.querySelector(${JSON.stringify(`[data-session-surface-id="${sessionId}"]`)});
-    const currentSessionId = document.querySelector("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? "";
+  const value = await evalIn(appSurface, browserScript((value, toolCallId) => {
+    const surface = document.querySelector<HTMLElement>(value);
+    const currentSessionId = document.querySelector<HTMLElement>("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? "";
     if (!(surface instanceof HTMLElement)) return { currentSessionId, found: false, visible: false, text: "" };
-    const row = surface.querySelector('[data-tool-aggregate="' + CSS.escape(${JSON.stringify(toolCallId)}) + '"]');
+    const row = surface.querySelector<HTMLElement>('[data-tool-aggregate="' + CSS.escape(toolCallId) + '"]');
     if (!(row instanceof HTMLElement)) return { currentSessionId, found: false, visible: false, text: "" };
     const style = getComputedStyle(row);
     const rect = row.getBoundingClientRect();
@@ -253,7 +254,7 @@ async function readVisibleTool(
       && rect.right > Math.max(0, surfaceRect.left)
       && rect.left < Math.min(window.innerWidth, surfaceRect.right);
     return { currentSessionId, found: true, visible, text: row.innerText ?? "" };
-  })()`);
+  }, [`[data-session-surface-id="${sessionId}"]`, toolCallId]));
   return parseVisibleToolFact(value);
 }
 

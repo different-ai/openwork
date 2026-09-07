@@ -27,7 +27,7 @@ export async function signupWorkspace(seed: Seed, options: { filmDirectory?: str
       den.admin = await signIn(den.ref, owner);
     },
     async pathname() {
-      const path = await seed.evalIn(web, "window.location.pathname");
+      const path = await seed.evalIn(web, () => (window.location.pathname));
       if (typeof path !== "string") throw new Error("Expected browser path");
       return path;
     },

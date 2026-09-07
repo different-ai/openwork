@@ -92,7 +92,7 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
       if (record(definition) && typeof definition.id === "string" && typeof definition.restrictedValue === "boolean") assert.equal(policy.policy[definition.id], definition.restrictedValue);
     }
     await using surface = await attachSurface({ name: "preview-proof", kind: "electron", hostKind: "daytona", cdpUrl: desktop.outputs.cdp });
-    const before = await evaluateOnSurface(surface, "({ route: location.hash, marker: localStorage.setItem('preview-proof', 'preserved') })");
+    const before = await evaluateOnSurface(surface, () => (({ route: location.hash, marker: localStorage.setItem('preview-proof', 'preserved') })));
     assert.ok(record(before) && typeof before.route === "string" && before.route.includes("workspace"));
     await screenshot(surface);
     evidence.recordAssertionEvidence("Desktop preview reaches real Electron through noVNC", "The viewer returns 200, its WebSocket speaks RFB, and the Electron renderer is on a workspace route. Restricted policy matches Den definitions; two team connectors use unconnected individual accounts.", true);
@@ -109,7 +109,7 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
     const after = await denFetch(ref, "/v1/mcp-connections?scope=manageable", { headers });
     assert.ok(record(after.body) && Array.isArray(after.body.connections));
     assert.deepEqual(after.body.connections, savedConnections);
-    assert.equal(await evaluateOnSurface(surface, "localStorage.getItem('preview-proof')"), "preserved");
+    assert.equal(await evaluateOnSurface(surface, () => (localStorage.getItem('preview-proof'))), "preserved");
     assert.equal((await snapshot("preview-desktop")).pid, desktop.pid);
     evidence.recordAssertionEvidence("Frontend update preserves the preview", "The live HTTP response contains the new Next build ID, which differs from the previous build; the existing session still reads the same connectors, Electron retains its localStorage marker, and world ownership stays unchanged.", true);
     await surface[Symbol.asyncDispose]();

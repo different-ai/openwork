@@ -1,3 +1,4 @@
+import type { BrowserEvaluation } from "./browser-script.ts";
 import { probeAppState } from "./app-state.ts";
 import { callFunction, DEFAULT_CDP_PROBE_TIMEOUT_MS, connect, debuggerUrlFor, evaluate, pickAppTarget } from "./cdp.ts";
 import { firstPageTarget, targetById, waitForCdp } from "./targets.ts";
@@ -126,11 +127,11 @@ async function readOnSurface<T>(
  * that here means callers — behaviours, specs, the readiness gate — never carry
  * re-attach bookkeeping.
  */
-export async function evaluateOnSurface(
+export async function evaluateOnSurface<T>(
   surface: Surface,
-  expression: string,
+  expression: BrowserEvaluation<T>,
   opts: EvaluateOptions & { reattachAttempts?: number } = {},
-): Promise<unknown> {
+): Promise<Awaited<T>> {
   const { reattachAttempts = 1, timeoutMs = DEFAULT_CDP_PROBE_TIMEOUT_MS, ...evaluateOptions } = opts;
   return readOnSurface(
     surface,
@@ -139,12 +140,12 @@ export async function evaluateOnSurface(
   );
 }
 
-export async function callFunctionOnSurface(
+export async function callFunctionOnSurface<Args extends CdpFunctionArgument[], T>(
   surface: Surface,
-  functionDeclaration: string,
-  args: readonly CdpFunctionArgument[] = [],
+  functionDeclaration: (...args: Args) => T,
+  args: [...Args],
   opts: EvaluateOptions & { reattachAttempts?: number } = {},
-): Promise<unknown> {
+): Promise<Awaited<T>> {
   const { reattachAttempts = 1, timeoutMs = DEFAULT_CDP_PROBE_TIMEOUT_MS, ...callOptions } = opts;
   return readOnSurface(
     surface,

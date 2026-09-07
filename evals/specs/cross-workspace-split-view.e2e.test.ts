@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import { evalIn, go, waitFor } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
@@ -80,9 +81,7 @@ function parseSplitFacts(value: unknown): SplitFacts {
 }
 
 async function waitForSessionRow(app: Surface, candidate: SplitCandidate): Promise<void> {
-  await waitFor(app, `Boolean(document.querySelector(${JSON.stringify(
-    `[data-sidebar-session-id="${candidate.sessionId}"][data-sidebar-session-workspace-id="${candidate.workspaceId}"]`,
-  )}))`, {
+  await waitFor(app, browserScript((value) => (Boolean(document.querySelector<HTMLElement>(value))), [`[data-sidebar-session-id="${candidate.sessionId}"][data-sidebar-session-workspace-id="${candidate.workspaceId}"]`]), {
     timeoutMs: 60_000,
     label: `sidebar row for ${candidate.title}`,
   });
@@ -90,23 +89,23 @@ async function waitForSessionRow(app: Surface, candidate: SplitCandidate): Promi
 
 async function openSessionRoute(app: Surface, candidate: SplitCandidate): Promise<void> {
   await go(app, `/workspace/${candidate.workspaceId}/session/${candidate.sessionId}`, { timeoutMs: 60_000 });
-  await waitFor(app, `(() => {
-    const surface = document.querySelector("[data-session-surface-id]");
-    return (localStorage.getItem("openwork.react.activeWorkspace") ?? "") === ${JSON.stringify(candidate.workspaceId)}
-      && surface?.getAttribute("data-session-surface-id") === ${JSON.stringify(candidate.sessionId)};
-  })()`, { timeoutMs: 60_000, label: `visible session ${candidate.title}` });
+  await waitFor(app, browserScript((workspaceId, sessionId) => {
+    const surface = document.querySelector<HTMLElement>("[data-session-surface-id]");
+    return (localStorage.getItem("openwork.react.activeWorkspace") ?? "") === workspaceId
+      && surface?.getAttribute("data-session-surface-id") === sessionId;
+  }, [candidate.workspaceId, candidate.sessionId]), { timeoutMs: 60_000, label: `visible session ${candidate.title}` });
 }
 
 async function openContextMenuForSession(app: Surface, user: User, candidate: SplitCandidate): Promise<void> {
   await user.press("Escape");
   await user.rightClick({ text: candidate.title });
-  await waitFor(app, `Boolean(document.querySelector('[role="menu"]'))`, {
+  await waitFor(app, () => (Boolean(document.querySelector<HTMLElement>('[role="menu"]'))), {
     timeoutMs: 15000, label: `context menu rendered for ${candidate.title}`,
   });
 }
 
 async function splitMenuVisible(app: Surface): Promise<boolean> {
-  return await evalIn(app, `Boolean(document.querySelector("[data-session-menu-open-split]"))`) === true;
+  return await evalIn(app, () => (Boolean(document.querySelector<HTMLElement>("[data-session-menu-open-split]")))) === true;
 }
 
 async function clickOpenSplit(user: User): Promise<void> {
@@ -115,8 +114,8 @@ async function clickOpenSplit(user: User): Promise<void> {
 
 async function closeSecondaryPane(app: Surface, user: User, primary: SplitCandidate): Promise<void> {
   await user.click({ role: "button", label: "Close side chat" });
-  await waitFor(app, `!document.querySelector('[data-workbench-pane="secondary"]')
-    && Boolean(document.querySelector('[data-session-surface-id="${primary.sessionId}"]'))`, {
+  await waitFor(app, browserScript((sessionId) => (!document.querySelector<HTMLElement>('[data-workbench-pane="secondary"]')
+    && Boolean(document.querySelector<HTMLElement>(`[data-session-surface-id="${sessionId}"]`))), [primary.sessionId]), {
     timeoutMs: 15000, label: "side chat closes and the main conversation remains visible",
   });
 }
@@ -130,13 +129,13 @@ async function openCrossWorkspaceSplitFromPalette(app: Surface, user: User, cand
 }
 
 async function readSplitFacts(app: Surface, primary: SplitCandidate, secondary: SplitCandidate): Promise<SplitFacts> {
-  return parseSplitFacts(await evalIn(app, `(() => {
+  return parseSplitFacts(await evalIn(app, browserScript((inputSessionId, inputSessionId2, inputSessionId3, inputSessionId4) => {
     const context = window.__openworkControl?.context?.();
     const layout = context?.conversations?.layout;
-    const primaryPane = document.querySelector('[data-workbench-pane="primary"]');
-    const secondaryPane = document.querySelector('[data-workbench-pane="secondary"]');
-    const primarySurface = primaryPane?.querySelector('[data-session-surface-id="${primary.sessionId}"]');
-    const secondarySurface = secondaryPane?.querySelector('[data-session-surface-id="${secondary.sessionId}"]');
+    const primaryPane = document.querySelector<HTMLElement>('[data-workbench-pane="primary"]');
+    const secondaryPane = document.querySelector<HTMLElement>('[data-workbench-pane="secondary"]');
+    const primarySurface = primaryPane?.querySelector<HTMLElement>(`[data-session-surface-id="${inputSessionId}"]`);
+    const secondarySurface = secondaryPane?.querySelector<HTMLElement>(`[data-session-surface-id="${inputSessionId2}"]`);
     const resources = Array.isArray(context?.resources) ? context.resources : [];
     const primaryResource = resources.find((resource) => resource?.kind === "session"
       && resource?.state?.pane === "primary" && resource?.state?.visible === true);
@@ -144,30 +143,30 @@ async function readSplitFacts(app: Surface, primary: SplitCandidate, secondary: 
       && resource?.state?.pane === "secondary" && resource?.state?.visible === true);
     return {
       layout: layout?.kind ?? "",
-      primarySessionId: layout?.primarySessionId ?? layout?.sessionId ?? "",
-      secondarySessionId: layout?.secondarySessionId ?? "",
-      primaryLayoutWorkspaceId: layout?.primaryWorkspaceId ?? layout?.workspaceId ?? "",
-      secondaryLayoutWorkspaceId: layout?.secondaryWorkspaceId ?? "",
+      primarySessionId: (layout?.kind === "split" ? layout.primarySessionId : undefined) ?? (layout?.kind === "single" ? layout.sessionId : undefined) ?? "",
+      secondarySessionId: (layout?.kind === "split" ? layout.secondarySessionId : undefined) ?? "",
+      primaryLayoutWorkspaceId: (layout?.kind === "split" ? layout.primaryWorkspaceId : undefined) ?? (layout?.kind === "single" ? layout.workspaceId : undefined) ?? "",
+      secondaryLayoutWorkspaceId: (layout?.kind === "split" ? layout.secondaryWorkspaceId : undefined) ?? "",
       primaryPaneWorkspaceId: primaryPane?.getAttribute("data-workbench-workspace-id") ?? "",
       secondaryPaneWorkspaceId: secondaryPane?.getAttribute("data-workbench-workspace-id") ?? "",
       primarySurfaceWorkspaceId: primarySurface?.getAttribute("data-session-surface-workspace-id") ?? "",
       secondarySurfaceWorkspaceId: secondarySurface?.getAttribute("data-session-surface-workspace-id") ?? "",
-      primaryWorkspaceName: primaryPane?.querySelector('[data-workbench-pane-header="primary"]')
+      primaryWorkspaceName: primaryPane?.querySelector<HTMLElement>('[data-workbench-pane-header="primary"]')
         ?.getAttribute("data-workbench-pane-workspace-name") ?? "",
-      secondaryWorkspaceName: secondaryPane?.querySelector('[data-workbench-pane-header="secondary"]')
+      secondaryWorkspaceName: secondaryPane?.querySelector<HTMLElement>('[data-workbench-pane-header="secondary"]')
         ?.getAttribute("data-workbench-pane-workspace-name") ?? "",
       primaryResourceWorkspaceId: primaryResource?.state?.workspaceId ?? "",
       secondaryResourceWorkspaceId: secondaryResource?.state?.workspaceId ?? "",
-      primaryOwnsSecondarySurface: Boolean(primaryPane?.querySelector(
-        '[data-session-surface-id="${secondary.sessionId}"]',
+      primaryOwnsSecondarySurface: Boolean(primaryPane?.querySelector<HTMLElement>(
+        `[data-session-surface-id="${inputSessionId3}"]`,
       )),
-      secondaryOwnsPrimarySurface: Boolean(secondaryPane?.querySelector(
-        '[data-session-surface-id="${primary.sessionId}"]',
+      secondaryOwnsPrimarySurface: Boolean(secondaryPane?.querySelector<HTMLElement>(
+        `[data-session-surface-id="${inputSessionId4}"]`,
       )),
-      primaryUnavailable: Boolean(primaryPane?.querySelector('[data-workbench-pane-unavailable]')),
-      secondaryUnavailable: Boolean(secondaryPane?.querySelector('[data-workbench-pane-unavailable]')),
+      primaryUnavailable: Boolean(primaryPane?.querySelector<HTMLElement>('[data-workbench-pane-unavailable]')),
+      secondaryUnavailable: Boolean(secondaryPane?.querySelector<HTMLElement>('[data-workbench-pane-unavailable]')),
     };
-  })()`));
+  }, [primary.sessionId, secondary.sessionId, secondary.sessionId, primary.sessionId])));
 }
 
 test("same-workspace and cross-workspace split sessions retain visible ownership", async ({ world, user, evidence }) => {
@@ -191,9 +190,9 @@ test("same-workspace and cross-workspace split sessions retain visible ownership
     await openContextMenuForSession(app, user, sameWorkspacePeer);
     expect(await splitMenuVisible(app)).toBe(true);
     await clickOpenSplit(user);
-    await waitFor(app, `Boolean(document.querySelector(
-      '[data-workbench-pane="secondary"][data-workbench-workspace-id="${workspaceA}"] [data-session-surface-id="${sameWorkspacePeer.sessionId}"]'
-    ))`, { timeoutMs: 60_000, label: "same-workspace split renders" });
+    await waitFor(app, browserScript((workspaceA, sessionId) => (Boolean(document.querySelector<HTMLElement>(
+      `[data-workbench-pane="secondary"][data-workbench-workspace-id="${workspaceA}"] [data-session-surface-id="${sessionId}"]`
+    ))), [workspaceA, sameWorkspacePeer.sessionId]), { timeoutMs: 60_000, label: "same-workspace split renders" });
     const sameWorkspaceFacts = await readSplitFacts(app, primary, sameWorkspacePeer);
     expect(sameWorkspaceFacts.primaryPaneWorkspaceId).toBe(workspaceA);
     expect(sameWorkspaceFacts.secondaryPaneWorkspaceId).toBe(workspaceA);
@@ -225,15 +224,15 @@ test("same-workspace and cross-workspace split sessions retain visible ownership
         && !sameWorkspaceFacts.secondaryUnavailable,
     );
     await closeSecondaryPane(app, user, primary);
-    expect(await evalIn(app, `document.querySelector('[data-session-surface-id="${primary.sessionId}"]') !== null`)).toBe(true);
-    expect(await evalIn(app, `document.querySelector('[data-session-surface-id="${sameWorkspacePeer.sessionId}"]') === null`)).toBe(true);
+    expect(await evalIn(app, browserScript((sessionId) => (document.querySelector<HTMLElement>(`[data-session-surface-id="${sessionId}"]`) !== null), [primary.sessionId]))).toBe(true);
+    expect(await evalIn(app, browserScript((sessionId) => (document.querySelector<HTMLElement>(`[data-session-surface-id="${sessionId}"]`) === null), [sameWorkspacePeer.sessionId]))).toBe(true);
 
     await openContextMenuForSession(app, user, crossWorkspacePeer);
     expect(await splitMenuVisible(app)).toBe(true);
     await openCrossWorkspaceSplitFromPalette(app, user, crossWorkspacePeer);
-    await waitFor(app, `Boolean(document.querySelector(
-      '[data-workbench-pane="secondary"][data-workbench-workspace-id="${workspaceB}"] [data-session-surface-id="${crossWorkspacePeer.sessionId}"]'
-    ))`, { timeoutMs: 60_000, label: "cross-workspace palette split renders" });
+    await waitFor(app, browserScript((workspaceB, sessionId) => (Boolean(document.querySelector<HTMLElement>(
+      `[data-workbench-pane="secondary"][data-workbench-workspace-id="${workspaceB}"] [data-session-surface-id="${sessionId}"]`
+    ))), [workspaceB, crossWorkspacePeer.sessionId]), { timeoutMs: 60_000, label: "cross-workspace palette split renders" });
 
     const crossWorkspaceFacts = await readSplitFacts(app, primary, crossWorkspacePeer);
     expect(crossWorkspaceFacts.layout).toBe("split");

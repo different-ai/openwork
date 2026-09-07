@@ -28,10 +28,10 @@ test("desktop connects an account directly with the provider and confirms author
   expect(calls.filter(call => call.kind === "tool").every(call => call.toolName?.endsWith("search_capabilities"))).toBe(true);
   expect(calls.filter(call => call.kind === "tool")).toHaveLength(1);
   expect((await world.den.mocks.connector.requests()).filter(request => request.path === "/authorize")).toHaveLength(0);
-  const compact = await probe.eval(`(() => {
-    const card = document.querySelector('[data-testid="desktop-connection-card"]');
-    return { height: card?.getBoundingClientRect().height, width: card?.getBoundingClientRect().width, hasChecklist: Boolean(card?.querySelector('ol')), embeddedApp: Boolean(document.querySelector('[data-mcp-app-resource="ui://openwork/connection-action/v1/view.html"]')) };
-  })()`);
+  const compact = await probe.eval(() => {
+    const card = document.querySelector<HTMLElement>('[data-testid="desktop-connection-card"]');
+    return { height: card?.getBoundingClientRect().height, width: card?.getBoundingClientRect().width, hasChecklist: Boolean(card?.querySelector('ol')), embeddedApp: Boolean(document.querySelector<HTMLElement>('[data-mcp-app-resource="ui://openwork/connection-action/v1/view.html"]')) };
+  });
   expect(compact).toMatchObject({ hasChecklist: false, embeddedApp: false });
   if (!compact || typeof compact !== "object" || !("height" in compact) || typeof compact.height !== "number" || !("width" in compact) || typeof compact.width !== "number") throw new Error("The connection card was not rendered.");
   expect(compact.height).toBeLessThan(88);
@@ -39,14 +39,14 @@ test("desktop connects an account directly with the provider and confirms author
   evidence.recordAssertionEvidence("Search shows one native connection card without a checklist or embedded setup", JSON.stringify(compact), true);
   evidence.recordAssertionEvidence("Authorization does not start before the user clicks Connect", "No provider authorization request before Connect", true);
 
-  await probe.eval(`(() => {
-    const card = document.querySelector('[data-testid="desktop-connection-card"]');
+  await probe.eval(() => {
+    const card = document.querySelector<HTMLElement>('[data-testid="desktop-connection-card"]');
     if (!card) throw new Error("Connection card missing");
-    const sizes = [];
+    const sizes: { width: number; height: number; text: string | null }[] = [];
     const record = () => { const rect = card.getBoundingClientRect(); sizes.push({ width: rect.width, height: rect.height, text: card.textContent }); card.dataset.observedSizes = JSON.stringify(sizes); };
     new MutationObserver(record).observe(card, { childList: true, subtree: true, characterData: true });
     record();
-  })()`);
+  });
   const clickedAt = new Date().toISOString();
   await user.click({ role: "button", label: "Connect Notion" });
   const authorization = await world.den.mocks.connector.authorizeRequestSince(clickedAt, { timeoutMs: 60_000 });
@@ -55,16 +55,16 @@ test("desktop connects an account directly with the provider and confirms author
   await user.see({ text: "Connected" }, { timeoutMs: 120_000 });
   await user.notSee({ role: "button", label: "Connect Notion" });
   await user.notSee({ text: "Your Connections" });
-  const completed = await probe.eval(`(() => {
-    const card = document.querySelector('[data-testid="desktop-connection-card"]');
+  const completed = await probe.eval(() => {
+    const card = document.querySelector<HTMLElement>('[data-testid="desktop-connection-card"]');
     return { height: card?.getBoundingClientRect().height, width: card?.getBoundingClientRect().width, buttons: card?.querySelectorAll('button').length };
-  })()`);
+  });
   expect(completed).toMatchObject({ buttons: 0 });
   if (!completed || typeof completed !== "object" || !("height" in completed) || typeof completed.height !== "number") throw new Error("The connected indicator was not rendered.");
   expect(completed.height).toBe(compact.height);
   expect(completed).toMatchObject({ width: compact.width });
   evidence.recordAssertionEvidence("Connection completion preserves the card dimensions", JSON.stringify({ ready: compact, connected: completed }), true);
-  const transitions = await probe.eval(`JSON.parse(document.querySelector('[data-testid="desktop-connection-card"]')?.getAttribute("data-observed-sizes") ?? "[]")`);
+  const transitions = await probe.eval(() => (JSON.parse(document.querySelector<HTMLElement>('[data-testid="desktop-connection-card"]')?.getAttribute("data-observed-sizes") ?? "[]")));
   if (!Array.isArray(transitions)) throw new Error("No card transition measurements were recorded");
   for (const dimensions of transitions) expect(dimensions).toMatchObject({ width: compact.width, height: compact.height });
   for (const status of ["Opening sign-in…", "Finish sign-in in your browser", "Ready to use"]) {

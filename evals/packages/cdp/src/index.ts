@@ -1,3 +1,4 @@
+export * from "./browser-script.ts";
 export * from "./app-state.ts";
 export * from "./cdp.ts";
 export * from "./input.ts";

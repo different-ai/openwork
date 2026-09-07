@@ -1,3 +1,4 @@
+import { addInitScript, browserScript } from "@openwork/cdp";
 import { localMysqlIsRunning, SkipError } from "@openwork/env";
 import type { Seed } from "@openwork/env";
 import { waitFor } from "@openwork/behaviors";
@@ -98,22 +99,19 @@ export async function ssoInvite(seed: Seed) {
       httpOnly: true,
     });
     if (!booleanField(configurationCookie, "success")) throw new Error("Could not apply the admin session to the SSO configuration test browser.");
-    await configurationWeb.client.send("Page.addScriptToEvaluateOnNewDocument", {
-      source: `(() => {
-        const apiOrigin = ${JSON.stringify(den.ref.apiUrl)};
-        const originalFetch = window.fetch.bind(window);
-        window.fetch = (input, init) => {
-          const rawUrl = typeof input === "string" || input instanceof URL ? input.toString() : input.url;
-          const url = new URL(rawUrl, window.location.href);
-          if (url.pathname.startsWith("/v1/sso/test/") && url.origin !== apiOrigin) {
-            return originalFetch(new URL(url.pathname + url.search, apiOrigin), init);
-          }
-          return originalFetch(input, init);
-        };
-      })();`,
-    });
+    await addInitScript(configurationWeb.client, browserScript((apiOrigin) => {
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const rawUrl = input instanceof Request ? input.url : String(input);
+        const url = new URL(rawUrl, window.location.href);
+        if (url.pathname.startsWith("/v1/sso/test/") && url.origin !== apiOrigin) {
+          return originalFetch(new URL(url.pathname + url.search, apiOrigin), init);
+        }
+        return originalFetch(input, init);
+      };
+    }, [den.ref.apiUrl]));
     await navigate(configurationWeb.client, testUrl);
-    await waitFor(configurationWeb, `/authentication test finished/i.test(document.body?.innerText ?? "")`, {
+    await waitFor(configurationWeb, () => (/authentication test finished/i.test(document.body?.innerText ?? "")), {
       timeoutMs: 90_000,
       label: "successful SSO configuration test",
     });

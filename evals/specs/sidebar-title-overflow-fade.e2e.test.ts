@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import { spec, type Probe } from "@openwork/testkit";
 import { sidebarOverflow } from "../worlds/session-shell.ts";
@@ -30,9 +31,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 async function rowStates(probe: Probe): Promise<RowState[]> {
   // TODO(primitive): probe.geometry should read the boxes of a row's title and actions.
-  const value = await probe.eval(`(() => [...document.querySelectorAll("[data-sidebar-session-id]")].map((row) => {
-    const title = row.querySelector("[data-session-title-slot]");
-    const actions = row.querySelector("[data-session-hover-actions]");
+  const value = await probe.eval(() => ((() => [...document.querySelectorAll<HTMLElement>("[data-sidebar-session-id]")].map((row) => {
+    const title = row.querySelector<HTMLElement>("[data-session-title-slot]");
+    const actions = row.querySelector<HTMLElement>("[data-session-hover-actions]");
     if (!(title instanceof HTMLElement) || !(actions instanceof HTMLElement)) return null;
     return {
       title: (title.textContent ?? "").trim(),
@@ -40,7 +41,7 @@ async function rowStates(probe: Probe): Promise<RowState[]> {
       actionsLeft: actions.getBoundingClientRect().left,
       actionsOpacity: getComputedStyle(actions).opacity,
     };
-  }))()`);
+  }))()));
   if (!Array.isArray(value)) throw new Error(`Unexpected sidebar rows: ${JSON.stringify(value)}`);
   return value.map((row) => {
     if (!isRecord(row)
@@ -54,11 +55,11 @@ async function rowStates(probe: Probe): Promise<RowState[]> {
 
 async function listState(probe: Probe): Promise<ListState> {
   // TODO(primitive): probe.geometry should read the scroll extents of a visible target.
-  const value = await probe.eval(`(() => {
-    const list = document.querySelector('[data-sidebar="content"]');
+  const value = await probe.eval(() => {
+    const list = document.querySelector<HTMLElement>('[data-sidebar="content"]');
     if (!(list instanceof HTMLElement)) return null;
     return { clientWidth: list.clientWidth, scrollLeft: list.scrollLeft, scrollWidth: list.scrollWidth };
-  })()`);
+  });
   if (!isRecord(value)
     || typeof value.clientWidth !== "number"
     || typeof value.scrollLeft !== "number"
@@ -75,8 +76,8 @@ async function expectListFits(probe: Probe): Promise<void> {
 
 async function titleState(probe: Probe, title: string): Promise<TitleState> {
   // TODO(primitive): probe.computedStyle should read overflow geometry and computed masks for a visible target.
-  const value = await probe.eval(`(title) => {
-    const text = [...document.querySelectorAll("[data-session-title-text]")]
+  const value = await probe.eval(browserScript((title) => {
+    const text = [...document.querySelectorAll<HTMLElement>("[data-session-title-text]")]
       .find((node) => (node.textContent ?? "").trim() === title);
     if (!(text instanceof HTMLElement) || !(text.parentElement instanceof HTMLElement)) return null;
     const viewport = text.parentElement;
@@ -86,7 +87,7 @@ async function titleState(probe: Probe, title: string): Promise<TitleState> {
       maskImage: getComputedStyle(viewport).maskImage,
       scrollWidth: text.scrollWidth,
     };
-  }`, { args: [title] });
+  }, [title]));
   if (!isRecord(value)
     || typeof value.clientWidth !== "number"
     || typeof value.hiddenEdges !== "string"
@@ -112,19 +113,19 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
   await step("collapsing the macOS sidebar aligns the pane with the window controls, and reopening restores its inset", async () => {
     await user.see({ text: world.longTitle });
     // Exercise the macOS titlebar layout even when the desktop host is Linux.
-    const platformClasses = await seed.evalIn(world.app, `document.documentElement.className`);
+    const platformClasses = await seed.evalIn(world.app, () => (document.documentElement.className));
     if (typeof platformClasses !== "string") throw new Error("Desktop platform classes were not readable.");
-    await seed.evalIn(world.app, `(() => {
+    await seed.evalIn(world.app, () => {
       document.documentElement.classList.remove('openwork-platform-linux', 'openwork-platform-windows');
       document.documentElement.classList.add('openwork-electron', 'openwork-platform-mac');
-    })()`);
+    });
     // TODO(primitive): probe.geometry should compare a pane and its visible titlebar trigger.
-    const geometry = () => probe.eval(`(() => {
-      const pane = document.querySelector('[data-session-pane]');
+    const geometry = () => probe.eval(() => {
+      const pane = document.querySelector<HTMLElement>('[data-session-pane]');
       const header = pane?.querySelector('header');
-      const trigger = [...document.querySelectorAll('[data-sidebar="trigger"]')]
+      const trigger = [...document.querySelectorAll<HTMLElement>('[data-sidebar="trigger"]')]
         .find((element) => element.getBoundingClientRect().width > 0);
-      const sidebar = document.querySelector('[data-slot="sidebar"][data-state]');
+      const sidebar = document.querySelector<HTMLElement>('[data-slot="sidebar"][data-state]');
       if (!pane || !header || !trigger || !sidebar) return null;
       const box = pane.getBoundingClientRect();
       const headerBox = header.getBoundingClientRect();
@@ -136,7 +137,7 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
         left: box.left,
         centerOffset: Math.abs(headerBox.top + headerBox.height / 2 - triggerBox.top - triggerBox.height / 2),
       };
-    })()`);
+    });
     const expanded = await geometry();
     expect(expanded).toMatchObject({ state: "expanded", top: 8 });
     if (!isRecord(expanded) || typeof expanded.isMac !== "boolean") throw new Error("Pane geometry was not readable.");
@@ -159,7 +160,7 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
       until: (value) => isRecord(value) && value.state === "expanded" && value.left === expanded.left,
     });
     expect(await geometry()).toMatchObject({ top: expanded.top, left: expanded.left });
-    await seed.evalIn(world.app, `(classes) => { document.documentElement.className = classes; }`, { args: [platformClasses] });
+    await seed.evalIn(world.app, browserScript((classes) => { document.documentElement.className = classes; }, [platformClasses]));
   });
 
   await step("the list fits the sidebar and does not scroll sideways", async () => {
@@ -203,12 +204,12 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
   await step("widening the sidebar removes the fade", async () => {
     // TODO(primitive): user.drag should resize a visible rail using trusted pointer input.
     // TODO(primitive): probe.geometry should resolve the center of a visible target.
-    const point = await probe.eval(`(() => {
-      const rail = document.querySelector('[data-sidebar="rail"]');
+    const point = await probe.eval(() => {
+      const rail = document.querySelector<HTMLElement>('[data-sidebar="rail"]');
       if (!(rail instanceof HTMLElement)) return null;
       const rect = rail.getBoundingClientRect();
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-    })()`);
+    });
     if (!isRecord(point) || typeof point.x !== "number" || typeof point.y !== "number") throw new Error("Sidebar rail was not measurable.");
     await world.app.client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
     await world.app.client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x + 340, y: point.y, button: "left" });

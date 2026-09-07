@@ -15,6 +15,9 @@
 //
 // Usage: node packages/handsfree/test/e2e/run.mjs
 
+import { connect } from "../../../../evals/packages/cdp/src/cdp.ts";
+import { groundTruth } from "./browser.ts";
+
 import { spawn, execSync } from "node:child_process";
 import { createReadStream, createWriteStream, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -108,20 +111,8 @@ mcpIn.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized"
 const targets = await cdpTargets();
 const tab = targets.find((t) => t.type === "page" && t.url.includes("bench.html"));
 if (!tab) throw new Error("bench.html tab not found in disposable Chrome");
-const ws = new WebSocket(tab.webSocketDebuggerUrl);
-await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
-let wsId = 0;
-const wsPending = new Map();
-ws.onmessage = (ev) => {
-  const m = JSON.parse(ev.data);
-  if (m.id && wsPending.has(m.id)) { wsPending.get(m.id)(m); wsPending.delete(m.id); }
-};
-const evaljs = (expression) => new Promise((res, rej) => {
-  const i = ++wsId;
-  const t = setTimeout(() => rej(new Error("cdp timeout")), 15000);
-  wsPending.set(i, (m) => { clearTimeout(t); res(m.result?.result?.value); });
-  ws.send(JSON.stringify({ id: i, method: "Runtime.evaluate", params: { expression, returnByValue: true } }));
-});
+const client = await connect(tab.webSocketDebuggerUrl);
+const browser = groundTruth(client);
 
 await sleep(2000);
 const findEl = (snap, pred) => snap.elements?.find(pred);
@@ -143,15 +134,15 @@ record("element_recall", found.length, expected.length, `missing: ${expected.fil
 // 2. click accuracy across all three addressing modes, CDP-verified
 async function clickRound(key, makeArgs) {
   let ok = 0;
-  await evaljs("window.__events = []");
+  await browser.resetEvents();
   for (const name of buttons) {
     const el = findEl(snap, (e) => e.role === "Button" && (e.label ?? "").includes(name));
     if (!el) continue;
-    const before = (await evaljs("window.__events.length")) ?? 0;
+    const before = (await browser.eventCount()) ?? 0;
     await cu("click", { app: CHROME_APP, ...makeArgs(el) });
     await sleep(150);
-    const last = await evaljs("window.__events[window.__events.length-1]?.id");
-    const after = await evaljs("window.__events.length");
+    const last = await browser.lastClickedId();
+    const after = await browser.eventCount();
     if (after === before + 1 && last === name) ok++;
     else console.log(`${key} MISS: ${name} -> ${last}`);
   }
@@ -176,11 +167,11 @@ const strings = [
 ];
 let typeOk = 0;
 for (const text of strings) {
-  await evaljs("document.getElementById('field').value=''; document.getElementById('field').focus()");
+  await browser.resetField();
   await sleep(100);
   await cu("type_text", { app: CHROME_APP, text });
   await sleep(300);
-  if ((await evaljs("document.getElementById('field').value")) === text) typeOk++;
+  if ((await browser.fieldValue()) === text) typeOk++;
 }
 record("type_text", typeOk, strings.length);
 
@@ -189,16 +180,16 @@ snap = await cu("snapshot", { app: CHROME_APP });
 const field = findEl(snap, (e) => (e.label ?? "").includes("bench-field"));
 await cu("set_value", { app: CHROME_APP, ref: field.ref, value: "set-value-test-42" });
 await sleep(300);
-record("set_value", (await evaljs("document.getElementById('field').value")) === "set-value-test-42" ? 1 : 0, 1);
+record("set_value", (await browser.fieldValue()) === "set-value-test-42" ? 1 : 0, 1);
 
 // 6. background modifier combo: cmd+a + retype
 await cu("snapshot", { app: CHROME_APP });
-await evaljs("document.getElementById('field').focus()");
+await browser.focusField();
 await cu("press_key", { app: CHROME_APP, combo: "command+a" });
 await sleep(100);
 await cu("type_text", { app: CHROME_APP, text: "replaced" });
 await sleep(300);
-record("select_all_replace", (await evaljs("document.getElementById('field').value")) === "replaced" ? 1 : 0, 1);
+record("select_all_replace", (await browser.fieldValue()) === "replaced" ? 1 : 0, 1);
 
 // --- report ---
 console.log("\n========== RESULTS ==========");
@@ -214,6 +205,7 @@ console.log("\n-- Execution paths --");
 for (const [k, v] of Object.entries(results.paths)) console.log(`${k.padEnd(24)} ${v.length}x`);
 
 // --- cleanup ---
+client.close();
 try { execSync(`pkill -f "user-data-dir=${profileDir}"`); } catch {}
 try { execSync(`pkill -f 'OpenWork Computer Use.app'`); } catch {}
 await sleep(1000);
