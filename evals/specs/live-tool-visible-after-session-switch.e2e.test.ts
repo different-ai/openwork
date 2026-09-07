@@ -271,17 +271,32 @@ async function readTranscript(appSurface: App, sessionId: string) {
     return {
       sessionId: surface?.getAttribute("data-session-surface-id") ?? "",
       text: surface?.innerText ?? "",
+      userText: [...(surface?.querySelectorAll<HTMLElement>('[data-message-role="user"]') ?? [])]
+        .map((message) => message.innerText).join("\n"),
       assistantText: [...(surface?.querySelectorAll<HTMLElement>('[data-message-role="assistant"]') ?? [])]
         .map((message) => message.innerText).join("\n"),
     };
   }, [sessionId]));
 }
 
+async function queueFollowUp(appSurface: App, sessionId: string, text: string, count: number) {
+  await writeComposerText(appSurface, text);
+  // Enter is the user-facing queue action while busy; composer.send would steer.
+  expect(await evalIn(appSurface, browserScript((sessionId) => {
+    const editor = document.querySelector<HTMLElement>(`[data-session-surface-id="${sessionId}"] [contenteditable="true"]`);
+    if (!editor) return false;
+    editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+    return true;
+  }, [sessionId]))).toBe(true);
+  await waitForText(appSurface, `${count} queued`, { timeoutMs: 10_000 });
+  expect((await readTranscript(appSurface, sessionId)).text).toContain(text);
+}
+
 // Run the identical journey with OPENWORK_EVAL_ENGINE=v1 and v2. Keep the
 // cross-workspace regression as well as creating a second task in one workspace.
 for (const scope of ["same workspace", "different workspaces"]) {
 test.skipIf(!runnable)(
-  `two long-running chats continue their own transcripts after switching — ${scope}, ${evalEngine}${skipSuffix}`,
+  `two long-running chats restore live transcripts and drain isolated queues — ${scope}, ${evalEngine}${skipSuffix}`,
   { timeout: 12 * 60_000 },
   async ({ evidence, place }) => {
     needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
@@ -294,7 +309,13 @@ test.skipIf(!runnable)(
     const replyA = `REPLY-A-${runId}`;
     const promptB = `SECOND-CHAT-${runId}`;
     const replyB = `REPLY-B-${runId}`;
-    const commandB = `sleep 120 && printf '%s\\n' 'TOOL-B-${runId}'`;
+    const progressA = `PROGRESS-A-${runId}`;
+    const progressB = `PROGRESS-B-${runId}`;
+    const queuedA = [`FOLLOW-UP-A1-${runId}`, `FOLLOW-UP-A2-${runId}`];
+    const queuedB = `FOLLOW-UP-B-${runId}`;
+    const queuedRepliesA = [`ANSWER-A1-${runId}`, `ANSWER-A2-${runId}`];
+    const queuedReplyB = `ANSWER-B-${runId}`;
+    const commandB = `sleep 180 && printf '%s\\n' 'TOOL-B-${runId}'`;
     const firstCommand = `sleep 45 && printf '%s\\n' '${firstMarker}'`;
     const command = `sleep 45 && printf '%s\\n' '${completionMarker}'`;
     const matchesDescription = (tool: ToolFact, description: string) =>
@@ -306,6 +327,7 @@ test.skipIf(!runnable)(
         agent: mcpMock({
           agentWorkloads: [{
             promptMarker,
+            latestUserTurn: true,
             finalReply: replyA,
             finalReplyChunkSize: 4,
             steps: [
@@ -319,6 +341,7 @@ test.skipIf(!runnable)(
               },
               {
                 tool: shellToolName,
+                text: progressA,
                 arguments: {
                   command,
                   timeout: 90_000,
@@ -328,16 +351,29 @@ test.skipIf(!runnable)(
             ],
           }, {
             promptMarker: promptB,
+            latestUserTurn: true,
             finalReply: replyB,
             finalReplyChunkSize: 4,
             steps: [{
               tool: shellToolName,
+              text: progressB,
               arguments: {
                 command: commandB,
-                timeout: 180_000,
+                timeout: 240_000,
                 ...(evalEngine === "v1" ? { description: "Long-running tool in chat B" } : {}),
               },
             }],
+          }, ...queuedA.map((promptMarker, index) => ({
+            promptMarker,
+            latestUserTurn: true,
+            finalReply: queuedRepliesA[index],
+            finalReplyDelayMs: 1000,
+            steps: [],
+          })), {
+            promptMarker: queuedB,
+            latestUserTurn: true,
+            finalReply: queuedReplyB,
+            steps: [],
           }],
         }),
       },
@@ -434,6 +470,8 @@ test.skipIf(!runnable)(
     expect(absentFromChatB.currentSessionId).toBe(chatB);
     expect(absentFromChatB.found).toBe(false);
     expect((await readTranscript(desktopApp, chatB)).text).not.toContain(promptMarker);
+    await queueFollowUp(desktopApp, chatB, queuedB, 1);
+    expect((await readSessionFacts(desktopApp, workspaceB.workspaceId, chatB)).text).not.toContain(queuedB);
 
     const laterRunning = await eventually(async () => {
       await approvePendingPermission(desktopApp, workspaceA.workspaceId, chatA);
@@ -471,11 +509,26 @@ test.skipIf(!runnable)(
     expect(visibleAfterReturn.visible, JSON.stringify(visibleAfterReturn)).toBe(true);
     expect(visibleAfterReturn.text).toContain(completionMarker);
     expect((await readVisibleTool(desktopApp, chatA, toolB.callId)).found).toBe(false);
-    const beforeCompletion = await readTranscript(desktopApp, chatA);
-    expect(beforeCompletion.text).toContain(promptMarker);
+    const beforeCompletion = await eventually(() => readTranscript(desktopApp, chatA), {
+      within: 10_000,
+      intervalMs: 250,
+      label: "user message and intermediate assistant text restored before completion",
+      until: (fact) => fact.userText.includes(promptMarker) && fact.assistantText.includes(progressA),
+    });
+    expect(beforeCompletion.userText).toContain(promptMarker);
+    expect(beforeCompletion.assistantText).toContain(progressA);
     expect(beforeCompletion.text).not.toContain(promptB);
     expect(beforeCompletion.assistantText).not.toContain(replyA);
     expect(beforeCompletion.assistantText).not.toContain(replyB);
+    // Check AFTER the DOM assertions: waiting until completion must not pass.
+    expect((await readSessionFacts(desktopApp, workspaceA.workspaceId, chatA)).tools
+      .some((tool) => tool.callId === laterTool.callId && tool.status === "running")).toBe(true);
+    await queueFollowUp(desktopApp, chatA, queuedA[0], 1);
+    await queueFollowUp(desktopApp, chatA, queuedA[1], 2);
+    const heldA = await readSessionFacts(desktopApp, workspaceA.workspaceId, chatA);
+    expect(heldA.text).not.toContain(queuedA[0]);
+    expect(heldA.text).not.toContain(queuedA[1]);
+    expect(heldA.tools.some((tool) => tool.status === "running")).toBe(true);
     evidence.recordAssertionEvidence(
       "A tool that started while away is visible when the user returns to its chat",
       `The first tool completed and tool ${laterTool.callId} started while workspace B chat ${chatB} was visible; after returning to workspace A chat ${chatA}, scoped CDP found its visible row with text ${JSON.stringify(visibleAfterReturn.text)}.`,
@@ -505,6 +558,19 @@ test.skipIf(!runnable)(
     });
     expect(continuedA.assistantText.split(replyA)).toHaveLength(2);
     expect(continuedA.text).not.toContain(replyB);
+    const drainedA = await eventually(() => readTranscript(desktopApp, chatA), {
+      within: 45_000,
+      intervalMs: 250,
+      label: "both queued A follow-ups execute as separate turns in order",
+      until: (fact) => queuedRepliesA.every((reply) => fact.assistantText.includes(reply)),
+    });
+    for (const prompt of queuedA) expect(drainedA.userText.split(prompt)).toHaveLength(2);
+    for (const reply of queuedRepliesA) expect(drainedA.assistantText.split(reply)).toHaveLength(2);
+    expect(drainedA.assistantText.indexOf(replyA)).toBeLessThan(drainedA.assistantText.indexOf(queuedRepliesA[0]));
+    expect(drainedA.assistantText.indexOf(queuedRepliesA[0])).toBeLessThan(drainedA.assistantText.indexOf(queuedRepliesA[1]));
+    expect(drainedA.text).not.toMatch(/\d+ queued/);
+    expect(drainedA.text).not.toContain(queuedB);
+    expect(drainedA.text).not.toContain(queuedReplyB);
     evidence.recordAssertionEvidence(
       "The returned transcript continues live, without duplicates or the other chat's content",
       `${evalEngine}, ${scope}: A retained its prompt and running tool on return, then rendered exactly one new assistant reply without navigating or reloading. Both original tools completed; B's prompt, tool and reply were absent from A.`,
@@ -522,17 +588,26 @@ test.skipIf(!runnable)(
       until: (fact) => fact.currentSessionId === chatB && fact.visible,
     });
     expect(visibleB.visible).toBe(true);
-    expect((await readTranscript(desktopApp, chatB)).text).not.toContain(replyA);
+    const restoredB = await readTranscript(desktopApp, chatB);
+    expect(restoredB.userText).toContain(promptB);
+    expect(restoredB.assistantText).toContain(progressB);
+    expect(restoredB.text).toContain("1 queued");
+    expect(restoredB.text).toContain(queuedB);
+    expect(restoredB.text).not.toContain(replyA);
+    expect((await readSessionFacts(desktopApp, workspaceB.workspaceId, chatB)).tools
+      .some((tool) => tool.callId === toolB.callId && tool.status === "running")).toBe(true);
     await clickSessionRow(desktopApp, workspaceA.workspaceId, chatA);
     const completedB = await eventually(() => readSessionFacts(desktopApp, workspaceB.workspaceId, chatB), {
       within: 150_000,
       intervalMs: 500,
       label: "chat B completes in the background",
-      until: (facts) => facts.text.includes(replyB) && facts.tools.some((tool) =>
+      until: (facts) => facts.text.includes(replyB) && facts.text.includes(queuedReplyB) && facts.tools.some((tool) =>
         tool.callId === toolB.callId && tool.status === "completed"),
     });
     expect(completedB.tools).toHaveLength(1);
     expect(completedB.text).not.toContain(replyA);
+    for (const prompt of queuedA) expect(completedB.text).not.toContain(prompt);
+    for (const reply of queuedRepliesA) expect(completedB.text).not.toContain(reply);
     await expectLeftSessionIndicator(desktopApp, chatB, "attention");
     expect((await readTranscript(desktopApp, chatA)).text).not.toContain(replyB);
     await screenshot(desktopApp);
@@ -541,12 +616,21 @@ test.skipIf(!runnable)(
       within: 30_000,
       intervalMs: 250,
       label: "chat B restores its completed transcript",
-      until: (fact) => fact.sessionId === chatB && fact.assistantText.includes(replyB),
+      until: (fact) => fact.sessionId === chatB && fact.assistantText.includes(replyB) && fact.assistantText.includes(queuedReplyB),
     });
     expect(continuedB.assistantText.split(replyB)).toHaveLength(2);
     expect(continuedB.text).toContain(promptB);
     expect(continuedB.text).not.toContain(promptMarker);
     expect(continuedB.text).not.toContain(replyA);
+    expect(continuedB.userText.split(queuedB)).toHaveLength(2);
+    expect(continuedB.assistantText.split(queuedReplyB)).toHaveLength(2);
+    expect(continuedB.assistantText.indexOf(replyB)).toBeLessThan(continuedB.assistantText.indexOf(queuedReplyB));
+    expect(continuedB.text).not.toMatch(/\d+ queued/);
+    evidence.recordAssertionEvidence(
+      "Queued follow-ups wait for completion, drain exactly once in order, and stay in their own session",
+      `${evalEngine}, ${scope}: A held two follow-ups while busy, then rendered each prompt and answer once in order. B preserved its queue across navigation and delivered its follow-up while unmounted. Neither session received the other's queued content.`,
+      true,
+    );
     evidence.recordAssertionEvidence(
       "The second chat survives switching and background completion without mixing transcripts",
       `${evalEngine}, ${scope}: B restored its original running tool, completed it exactly once while A was visible, showed one left-side attention indicator, and restored exactly one final assistant reply with no A prompt or reply.`,
