@@ -245,6 +245,23 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     await user.click({ text: world.session.title });
     const ownerTab = (await probe.browserState()).tabs.find((tab) => tab.id === tabId);
     if (!ownerTab) throw new Error("The original tab was lost.");
+    const background = await probe.browserState();
+    expect(background.visibleSessionId).toBe(sessionId);
+    expect(background.activeTabId).not.toBe(tabId);
+    expect(background.nativeViews.find((view) => view.tabId === tabId)).toMatchObject({ attached: false, aboveApp: false });
+    const actions = [
+      { type: "click" }, { type: "fill", text: "must not be entered" }, { type: "key", key: "Enter" }, { type: "scroll", x: 20, y: 20, deltaY: 100 },
+    ] satisfies NonNullable<BrowserTaskInput["args"]>["action"][];
+    for (const action of actions) {
+      const observed = await task("observe", { tabId });
+      const ref = observed.elements?.find((element) => element.name === (action.type === "fill" ? "Draft title" : "Save draft"))?.ref;
+      if (!ref) throw new Error("Missing hidden page control.");
+      expect(await task("act", { tabId, observationId: observed.observationId, action: { ...action, ref } })).toMatchObject({ ok: false, code: "needs_attention", dispatched: false });
+    }
+    expect(await task("site_tool", { tabId, toolId: ownTool.toolId, input: { confirm: true } })).toMatchObject({ ok: false, code: "needs_attention", dispatched: false });
+    await user.notSee({ role: "button", label: "Allow once" });
+    expect(await probe.browserState()).toEqual(background);
+    expect(await witness()).toMatchObject({ inputValue: "", records: [{ method: "webmcp", count: 1, signedIn: true }, { method: "dom", count: 1, signedIn: true }] });
     await user.click({ role: "button", label: `Select tab: ${ownerTab.label}` });
   });
 
@@ -260,12 +277,19 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     const observed = await task("observe", { tabId, includeImage: true });
     expect(observed.elements?.some((element) => element.name === "Frame action")).toBe(false);
     const point = browserImageTarget(observed.image, [238, 111, 18]);
+    const native = await probe.browserState();
+    expect(native).toMatchObject({ activeTabId: tabId, visibleSessionId: sessionId });
+    expect(native.nativeViews.find((view) => view.tabId === tabId)).toMatchObject({ attached: true, aboveApp: true, visible: true, bounds: { width: point.width, height: point.height } });
     const pending = task("act", { tabId, observationId: observed.observationId, action: { type: "click", x: point.x, y: point.y } });
     await user.see({ role: "button", label: "Allow once" });
     expect((await witness()).frameClicks).toBe(0);
+    expect((await probe.browserState()).nativeViews.find((view) => view.tabId === tabId)?.visible).toBe(false);
     await user.click({ role: "button", label: "Allow once" });
     expect(await pending).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
-    expect((await probe.eventually(witness, { within: 5_000, until: (value) => value.frameClicks === 1, label: "the iframe received one visual click" })).frameClicks).toBe(1);
+    const clicked = await probe.eventually(witness, { within: 5_000, until: (value) => value.frameClicks === 1 && value.frameInputs.some((input) => input.type === "click"), label: "the iframe received one visual click" });
+    expect(clicked.frameClicks).toBe(1);
+    expect(clicked.frameInputs.filter((input) => input.type === "click")).toEqual([expect.objectContaining({ page: "/frame-allowed", target: "BUTTON", trusted: true })]);
+    expect((await probe.browserState()).nativeViews.find((view) => view.tabId === tabId)).toMatchObject({ attached: true, aboveApp: true, visible: true });
     expect(await task("act", { tabId, observationId: observed.observationId, action: { type: "click", x: point.x, y: point.y } })).toMatchObject({ ok: false, code: "stale_observation" });
     const fresh = await task("observe", { tabId, includeImage: true });
     expect(fresh.observationId).not.toBe(observed.observationId);

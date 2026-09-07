@@ -47,6 +47,7 @@ export class WebContentsView {
     const targetId = "target-" + createdViews.length;
     const view = this;
     this.bounds = { x: 0, y: 0, width: 0, height: 0 };
+    this.visible = true;
     this.webContents = {
       url: "about:blank",
       targetId, domReady: false, loading: false, audible: false, closeMode: "destroy", loads: [],
@@ -99,6 +100,7 @@ export class WebContentsView {
   }
   setBounds(bounds) { this.bounds = bounds; }
   setVisible(visible) { this.visible = visible; }
+  getVisible() { return this.visible; }
   getBounds() { return this.bounds; }
 }
 `;

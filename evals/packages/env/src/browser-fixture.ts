@@ -56,7 +56,12 @@ if(location.pathname!='/fallback'){
 }
 </script>`;
 
+const frameInputWitness = `for(const type of ['mousemove','mousedown','mouseup','click'])document.addEventListener(type,event=>{
+  fetch('http://127.0.0.1:'+location.port+'/frame-input',{method:'POST',mode:'no-cors',body:JSON.stringify({page:location.pathname,type,x:event.clientX,y:event.clientY,target:event.target.tagName,trusted:event.isTrusted})});
+},true);`;
+
 const framesPage = `<!doctype html><title>Frame delegation</title><h1>Frame delegation</h1><style>iframe{display:block;height:75px;width:250px;border:0}</style><script>
+${frameInputWitness}
 const outer=document.createElement('iframe');document.body.append(outer);
 const fallback=document.createElement('iframe');fallback.allow='tools *';outer.append(fallback);
 for(const name of ['denied','allowed']){
@@ -66,6 +71,7 @@ for(const name of ['denied','allowed']){
 </script>`;
 
 const framePage = `<!doctype html><title>Frame tool</title><body><script>
+${frameInputWitness}
 fetch('http://127.0.0.1:'+location.port+'/privileges',{method:'POST',mode:'no-cors',body:JSON.stringify({page:location.pathname,require:typeof require,process:typeof process,Buffer:typeof Buffer})});
 document.modelContext.registerTool({name:location.pathname.slice(1).replace('-','_'),description:'Controlled frame tool.',execute:()=>({ok:true})});
 if(location.pathname==='/frame-allowed'){
@@ -107,6 +113,7 @@ export interface BrowserFixtureState {
   privileges: Array<{ page: string; require: string; process: string; Buffer: string; blocked?: boolean }>;
   inputValue: string;
   frameClicks: number;
+  frameInputs: Array<{ page: string; type: string; x: number; y: number; target: string; trusted: boolean }>;
   uploads: number;
   discovery: { waiting: number; released: number; resumed: number; callbacks: number };
   model: { requests: number; toolNames: string[]; receivedSaveResult: boolean; observedSaved: boolean };
@@ -116,7 +123,7 @@ export async function startBrowserFixture(app: Surface, { requireSignIn = true }
   const ready = `/tmp/browser-task-fixture-${randomUUID()}.json`;
   const fixturePage = requireSignIn ? page : page.replace(/<form id="signin">[\s\S]*?<\/form>/, "");
   const source = `import {createServer} from 'node:http';import {writeFileSync} from 'node:fs';
-    const records=[],signals=[],popups=[],privileges=[],pageRequests=[];
+    const records=[],signals=[],popups=[],privileges=[],pageRequests=[],frameInputs=[];
     let signInCount=0,sessionReads=0,frameClicks=0,uploads=0,inputValue='';
     let holdDiscovery=false;
     const discovery={waiting:0,released:0,resumed:0,callbacks:0},pendingDiscovery=new Set();
@@ -128,7 +135,7 @@ export async function startBrowserFixture(app: Surface, { requireSignIn = true }
       res.setHeader('Cache-Control','no-store');res.setHeader('Origin-Agent-Cluster','?1');
       res.setHeader('Permissions-Policy',url.pathname==='/denied'?'tools=()':url.pathname==='/frames'?'tools=(self "http://localhost:'+server.address().port+'")':'tools=(self)');
       if(req.method==='GET'&&url.pathname==='/state'){
-        res.setHeader('Content-Type','application/json');res.end(JSON.stringify({records,signals,popups,privileges,pageRequests,signInCount,sessionReads,frameClicks,uploads,inputValue,model,discovery}));return;
+        res.setHeader('Content-Type','application/json');res.end(JSON.stringify({records,signals,popups,privileges,pageRequests,signInCount,sessionReads,frameClicks,frameInputs,uploads,inputValue,model,discovery}));return;
       }
       if(req.method==='GET'&&url.pathname==='/discovery'){
         res.setHeader('Content-Type','application/json');
@@ -152,6 +159,7 @@ export async function startBrowserFixture(app: Surface, { requireSignIn = true }
         else if(url.pathname==='/privileges')privileges.push(JSON.parse(body));
         else if(url.pathname==='/input')inputValue=body;
         else if(url.pathname==='/frame-click')frameClicks++;
+        else if(url.pathname==='/frame-input'){if(frameInputs.length<100)frameInputs.push(JSON.parse(body));}
         else if(url.pathname==='/upload')uploads++;
         else if(url.pathname==='/discovery-resumed')discovery.resumed++;
         else if(url.pathname==='/delayed-callback')discovery.callbacks++;
@@ -213,6 +221,7 @@ export async function readBrowserFixtureState(app: Surface, origin: string): Pro
   return {
     signInCount: number(state.signInCount), sessionReads: number(state.sessionReads), frameClicks: number(state.frameClicks), uploads: number(state.uploads), inputValue: string(state.inputValue),
     signals: array(state.signals).map(string), popups: array(state.popups).map(boolean),
+    frameInputs: array(state.frameInputs).map((item) => { const row = object(item); return { page: string(row.page), type: string(row.type), x: number(row.x), y: number(row.y), target: string(row.target), trusted: boolean(row.trusted) }; }),
     records: array(state.records).map((item) => { const row = object(item); return { method: string(row.method), count: number(row.count), signedIn: boolean(row.signedIn) }; }),
     pageRequests: array(state.pageRequests).map((item) => { const row = object(item); return { path: string(row.path), signedIn: boolean(row.signedIn) }; }),
     privileges: array(state.privileges).map((item) => { const row = object(item); return { page: string(row.page), require: string(row.require), process: string(row.process), Buffer: string(row.Buffer), ...(row.blocked === undefined ? {} : { blocked: boolean(row.blocked) }) }; }),
