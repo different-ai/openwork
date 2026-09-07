@@ -37,6 +37,7 @@ import { buildOpenWorkV2Instructions, waitForOpenWorkV2Skills, OPENWORK_V2_INSTR
 import {
   callMcpAppTool,
   listMcpAppCatalog,
+  listMcpServerTools,
   McpAppHostError,
   resolveConnectMcpAppResource,
   resolveMcpAppResource,
@@ -3188,8 +3189,9 @@ function createRoutes(
     readJsonBody,
     requireClientScope,
     resolveWorkspace,
-    reloadOpencodeEngine: (routeConfig, workspace) =>
-      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, { reason: "operation_route" }),
+    reloadOpencodeEngine: (routeConfig, workspace, options) =>
+      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, { reason: "operation_route", manual: options?.force === true }),
+    readOptionalJsonBody,
   });
 
   registerUiControlRoutes({ routes, jsonResponse, readJsonBody, requireClientScope });
@@ -3411,6 +3413,24 @@ function createRoutes(
         workspaceRoot: workspace.path,
       });
       return jsonResponse({ servers });
+    } catch (error) {
+      rethrowMcpAppHostError(error);
+    }
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/mcp/:name/tools", "client", async (ctx) => {
+    requireClientScope(ctx, "viewer");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) throw new ApiError(400, "invalid_payload", "name is required");
+    try {
+      const tools = await listMcpServerTools({
+        serverConfig: config,
+        workspaceId: workspace.id,
+        workspaceRoot: workspace.path,
+        serverName: name,
+      });
+      return jsonResponse({ tools });
     } catch (error) {
       rethrowMcpAppHostError(error);
     }
@@ -4464,13 +4484,14 @@ async function reloadOpencodeEngine(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   serverState?: EngineMcpServerState,
-  options?: { awaitPostRefreshSync?: boolean; forceStandby?: boolean; reason?: RolloverReason },
+  options?: { awaitPostRefreshSync?: boolean; forceStandby?: boolean; reason?: RolloverReason; manual?: boolean },
 ): Promise<void> {
   const pool = enginePoolForConfig(config);
   if (pool) {
     await pool.requestRollover({
       reason: options?.reason ?? "engine_reload",
       workspace,
+      manual: options?.manual,
       awaitPostRefreshSync: options?.awaitPostRefreshSync,
       forceStandby: options?.forceStandby,
     });

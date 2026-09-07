@@ -2,7 +2,7 @@
 import { journeyFiles, testName } from "./test-files.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { basename, join, relative, sep } from "node:path";
+import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const evalsDir = fileURLToPath(new URL("..", import.meta.url));
@@ -17,7 +17,8 @@ Run E2E tests:
   --daytona          Require Daytona (fails if the CLI is not authenticated)
   --den <url>        Set OPENWORK_EVAL_DEN_API_URL=<url>
 
-Without a placement flag, Daytona is used when the daytona CLI is authenticated, otherwise local.
+Without a placement flag, a supplied native Electron binary runs locally. Otherwise
+Daytona is used when the daytona CLI is authenticated, or local when it is not.
 
 Judge then publish evidence:
   --publish         Enter judge-then-publish mode
@@ -176,6 +177,13 @@ export function resolveRunEnvironment(options, env = process.env, probe = dayton
   }
   if (env.OPENWORK_EVAL_DAYTONA === "1") {
     return { env: childEnv, placement: "daytona", reason: "OPENWORK_EVAL_DAYTONA=1 in environment" };
+  }
+  // A supplied native package is on this host, not inside a newly provisioned
+  // sandbox. Report the actual placement without overriding an explicit remote
+  // or attached topology. Missing/unlaunchable packages still fail in the host.
+  const binary = env.OPENWORK_EVAL_ELECTRON_BINARY?.trim();
+  if (binary && isAbsolute(binary) && !REMOTE_PLACEMENT_ENV.some((name) => env[name]?.trim())) {
+    return { env: childEnv, placement: "local", reason: "supplied native Electron binary" };
   }
   if (probe()) {
     childEnv.OPENWORK_EVAL_DAYTONA = "1";

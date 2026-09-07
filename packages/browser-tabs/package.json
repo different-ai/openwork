@@ -7,11 +7,15 @@
     ".": {
       "types": "./index.d.ts",
       "default": "./index.mjs"
-    }
+    },
+    "./electron": "./electron.mjs",
+    "./preload": "./browser-content-preload.cjs"
   },
   "files": [
     "index.d.ts",
-    "index.mjs"
+    "index.mjs",
+    "electron.mjs",
+    "browser-content-preload.cjs"
   ],
   "scripts": {
     "test": "bun test",

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { BrandLogo } from "./lp-brand-logos";
+import { CoworkerAction } from "./coworker-announcement-actions";
 import { LandingAppDemoPanel } from "./landing-app-demo-panel";
 import {
   defaultLandingDemoFlowId,
@@ -83,6 +84,16 @@ export function LandingHome(props: Props) {
 
         <main className="mx-auto w-full max-w-[1176px] px-6 pb-8">
           <section className="max-w-4xl pt-8 md:pt-12">
+            <CoworkerAction
+              href="/coworker"
+              action="announcement"
+              placement="homepage"
+              className="mb-7 inline-flex max-w-full items-center gap-3 rounded-2xl border border-black/10 bg-white/70 px-4 py-3 text-sm text-[var(--lp-ink)] transition-colors hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4"
+            >
+              <span className="rounded-full bg-[#e4ecff] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider">New</span>
+              <span>Meet Open Coworker. <span className="text-gray-600">Your work. Better together.</span></span>
+              <ArrowRight size={16} className="shrink-0" aria-hidden="true" />
+            </CoworkerAction>
             <h1 className="mb-5 text-4xl font-medium leading-[1.1] tracking-tight md:text-5xl lg:text-6xl">
               The open source
               <br />

@@ -65,18 +65,31 @@ export function toolState(value: unknown): Record<string, unknown> {
   return result;
 }
 
-export async function computerUseWorld(_seed: Seed, { place }: { place: Place }) {
+export async function computerUseWorld(_seed: Seed, { place }: { place: Place }, externalHelper?: {
+  executable: string;
+  /** Locate only the caller-owned app's helper; never launch a replacement. */
+  pid(): Promise<number | undefined>;
+}) {
   // Do not silently run local Mac resources after the CLI selected Daytona.
   if (place.kind !== "local" || process.platform !== "darwin") throw new SkipError("macOS native desktop placement; the selected host cannot run AppKit");
-  needs({ commands: ["swift", "swiftc"] });
+  needs({ commands: externalHelper ? ["swiftc"] : ["swift", "swiftc"] });
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const native = join(root, "packages/computer-use/native");
-  const build = spawnSync("swift", ["build", "--package-path", native, "--product", "ComputerUse"], { encoding: "utf8", timeout: 120_000 });
-  if (build.status !== 0) throw new Error(`Computer Use build failed: ${build.stderr.slice(-4000)}`);
-  const executable = join(native, ".build/debug/ComputerUse");
+  if (!externalHelper) {
+    const build = spawnSync("swift", ["build", "--package-path", native, "--product", "ComputerUse"], { encoding: "utf8", timeout: 120_000 });
+    if (build.status !== 0) throw new Error(`Computer Use build failed: ${build.stderr.slice(-4000)}`);
+  }
+  const executable = externalHelper ? externalHelper.executable : join(native, ".build/debug/ComputerUse");
   const checked = spawnSync(executable, ["--check"], { encoding: "utf8", timeout: 5000 });
+  if (checked.error || checked.status !== 0) throw new Error("The native Computer Use permission check failed.");
   const permissions: unknown = JSON.parse(checked.stdout);
-  if (!record(permissions) || permissions.ok !== true) throw new SkipError("macOS Accessibility and Screen Recording granted to the native helper by a person");
+  if (!record(permissions) || permissions.protocolVersion !== "openwork.computer-use/1"
+    || ![permissions.ok, permissions.supported, permissions.accessibility, permissions.screenRecording].every((value) => typeof value === "boolean")) {
+    throw new Error("The native Computer Use helper returned an invalid or incompatible permission status.");
+  }
+  if (!permissions.supported) throw new SkipError("a supported macOS Computer Use helper");
+  if (!permissions.accessibility || !permissions.screenRecording) throw new SkipError("macOS Accessibility and Screen Recording granted to the native helper by a person");
+  if (!permissions.ok) throw new Error("The native Computer Use helper is not ready despite reporting both permissions.");
   const directory = await mkdtemp(join(tmpdir(), "openwork-computer-use-"));
   const contents = join(directory, "Computer Use Fixture.app/Contents");
   await mkdir(join(contents, "MacOS"), { recursive: true });
@@ -85,15 +98,21 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
   const compiled = spawnSync("swiftc", ["-parse-as-library", join(root, "evals/packages/labs/fixtures/computer-use-app.swift"), "-o", fixtureExecutable], { encoding: "utf8", timeout: 90_000 });
   if (compiled.status !== 0) { await rm(directory, { recursive: true }); throw new Error(compiled.stderr); }
   const fixture = pipeClient(fixtureExecutable, []);
-  const helper = pipeClient(executable, ["mcp"]);
-  const peer = pipeClient(executable, ["mcp"]);
-  const close = async () => { await Promise.all([helper.close(), peer.close(), fixture.close()]); await rm(directory, { recursive: true, force: true }); };
+  const helper = externalHelper ? null : pipeClient(executable, ["mcp"]);
+  const peer = externalHelper ? null : pipeClient(executable, ["mcp"]);
+  const target = async () => ({ pid: externalHelper ? await externalHelper.pid() : helper?.pid, executable });
+  const close = async () => { await Promise.all([helper?.close(), peer?.close(), fixture.close()]); await rm(directory, { recursive: true, force: true }); };
   try {
     await fixture.request("state");
     const fixturePermissions = await fixture.request("permissions");
-    if (!record(fixturePermissions) || fixturePermissions.accessibility !== true) throw new SkipError("Accessibility permission for the disposable native person-input fixture");
-    await helper.request("initialize", { protocolVersion: "2025-11-25", clientInfo: { name: "native-journey", version: "1" }, capabilities: {} });
-    await peer.request("initialize", { protocolVersion: "2025-11-25", clientInfo: { name: "peer-journey", version: "1" }, capabilities: {} });
+    if (!record(fixturePermissions) || typeof fixturePermissions.accessibility !== "boolean") throw new Error("The disposable person-input fixture returned an invalid permission status.");
+    if (!fixturePermissions.accessibility) throw new SkipError("Accessibility permission for the disposable native person-input fixture");
+    await helper?.request("initialize", { protocolVersion: "2025-11-25", clientInfo: { name: "native-journey", version: "1" }, capabilities: {} });
+    await peer?.request("initialize", { protocolVersion: "2025-11-25", clientInfo: { name: "peer-journey", version: "1" }, capabilities: {} });
+    const owned = (client: typeof helper) => {
+      if (!client) throw new Error("The caller owns the native helper; use its product tool boundary.");
+      return client;
+    };
     return {
       async electronFixture() {
         const main = join(directory, "electron-fixture.cjs");
@@ -116,7 +135,7 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
         const client = pipeClient(electron, [main]);
         try {
           await client.request("state");
-          const discovered = toolState(await helper.request("tools/call", { name: "computer_discover", arguments: {} }));
+          const discovered = toolState(await owned(helper).request("tools/call", { name: "computer_discover", arguments: {} }));
           const identity = Array.isArray(discovered.apps) ? discovered.apps.find((entry: unknown) => record(entry) && entry.pid === client.pid) : undefined;
           if (!record(identity) || typeof identity.app_id !== "string") throw new Error("Electron fixture was not discoverable");
           return { appId: identity.app_id, pid: client.pid, state: () => client.request("state"), [Symbol.asyncDispose]: () => client.close() };
@@ -126,9 +145,9 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
       workspacePath: join(directory, "workspace"),
       appId: "org.example.openwork.computer-use-fixture",
       appPid: fixture.pid,
-      call: (name: string, args: Record<string, unknown> = {}) => helper.request("tools/call", { name, arguments: args }),
-      peerCall: (name: string, args: Record<string, unknown> = {}) => peer.request("tools/call", { name, arguments: args }),
-      list: () => helper.request("tools/list"),
+      call: (name: string, args: Record<string, unknown> = {}) => owned(helper).request("tools/call", { name, arguments: args }),
+      peerCall: (name: string, args: Record<string, unknown> = {}) => owned(peer).request("tools/call", { name, arguments: args }),
+      list: () => owned(helper).request("tools/list"),
       state: () => fixture.request("state"),
       refreshChanges: (continuous: boolean) => fixture.request("refresh_changes", { continuous }),
       refreshStable: () => fixture.request("refresh_stable"),
@@ -156,14 +175,20 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
           });
         }
       },
-      panel: () => fixture.request("helper_panel", { name: "", pid: helper.pid, executable }),
+      panel: async () => fixture.request("helper_panel", { name: "", ...await target() }),
       foregroundWindow: () => fixture.request("foreground_window"),
       minimized: () => fixture.request("minimized"),
       minimize: () => fixture.request("minimize"),
       restore: () => fixture.request("restore"),
       humanEdit: async () => {
-        const activated = spawnSync("/usr/bin/osascript", ["-e", `tell application "System Events" to set frontmost of (first application process whose unix id is ${fixture.pid}) to true`], { encoding: "utf8", timeout: 5000 });
-        if (activated.status !== 0) throw new Error(activated.stderr);
+        if (externalHelper) {
+          // Self-activation needs no System Events/Apple Events authorization.
+          // The fixture checks ownership and focus before posting any input.
+          await fixture.request("front");
+        } else {
+          const activated = spawnSync("/usr/bin/osascript", ["-e", `tell application "System Events" to set frontmost of (first application process whose unix id is ${fixture.pid}) to true`], { encoding: "utf8", timeout: 5000 });
+          if (activated.status !== 0) throw new Error(activated.stderr);
+        }
         return fixture.request("human_edit");
       },
       prepareDrag: () => fixture.request("prepare_drag"),
@@ -172,7 +197,7 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
       async selectWindow() {
         const deadline = Date.now() + 10_000;
         while (Date.now() < deadline) {
-          const result = await fixture.request("select_helper_window", { name: "Workspace window", pid: helper.pid, executable });
+          const result = await fixture.request("select_helper_window", { name: "Workspace window", ...await target() });
           if (record(result) && result.ok === true) return result;
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
@@ -181,7 +206,7 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
       async pressControl(name: "Allow this session" | "Cancel" | "Take over" | "Continue" | "Stop" | "Hide panel" | "Show Computer Use task") {
         const deadline = Date.now() + 10_000;
         while (Date.now() < deadline) {
-          const result = await fixture.request("press_helper_button", { name, pid: helper.pid, executable });
+          const result = await fixture.request("press_helper_button", { name, ...await target() });
           if (record(result) && result.ok === true) return;
           await new Promise((resolve) => setTimeout(resolve, 100));
         }

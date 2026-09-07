@@ -74,6 +74,9 @@ copyFileSync(resolve(repoRoot, "apps", "server", "package.json"), resolve(packag
 for (const fileName of readdirSync(electronRoot).filter((name) => name.endsWith(".mjs")).sort()) {
   run(nodeCmd, ["--check", resolve(electronRoot, fileName)], repoRoot);
 }
+for (const entry of ["@openwork/browser-tabs/electron", "@openwork/browser-tabs/preload"]) {
+  run(nodeCmd, ["--check", fileURLToPath(import.meta.resolve(entry))], repoRoot);
+}
 run(nodeCmd, [resolve(__dirname, "check-electron-bridge.mjs")], repoRoot);
 
 process.stdout.write(

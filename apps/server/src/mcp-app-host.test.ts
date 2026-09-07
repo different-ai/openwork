@@ -24,6 +24,7 @@ import { readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig, w
 import {
   callMcpAppTool,
   listMcpAppCatalog,
+  listMcpServerTools,
   McpAppHostError,
   projectedMcpToolName,
   resolveConnectMcpAppResource,
@@ -376,6 +377,34 @@ describe("MCP Apps host transport", () => {
     const renderEditor = fixture?.apps.find((app) => app.toolName === "render_editor");
     expect(renderEditor?.requiresInput).toBe(false);
     expect(renderEditor?.requiresApproval).toBe(true);
+  });
+
+  test("lists everything one server offers, with its App binding noted and denied tools left out", async () => {
+    const { config, root } = await configuredFixture("openwork-mcp-server-tools-");
+
+    const tools = await listMcpServerTools({
+      serverConfig: config,
+      workspaceId: WORKSPACE_ID,
+      workspaceRoot: root,
+      serverName: "fixture",
+    });
+    const names = tools.map((tool) => tool.name);
+    // Every advertised tool, not only the Apps: plain tools and app-only tools included.
+    expect(names).toContain("render_fixture");
+    expect(names).toContain("save_artifact_view");
+    expect(names).toContain("read_detail");
+    expect(names).toContain("model_only_fixture");
+    const renderFixture = tools.find((tool) => tool.name === "render_fixture");
+    expect(renderFixture?.description).toBe("Render the fixture");
+    expect(renderFixture?.resourceUri).toBe(RESOURCE_URI);
+    expect(tools.find((tool) => tool.name === "save_artifact_view")?.resourceUri).toBeNull();
+
+    await expect(listMcpServerTools({
+      serverConfig: config,
+      workspaceId: WORKSPACE_ID,
+      workspaceRoot: root,
+      serverName: "missing",
+    })).rejects.toMatchObject({ code: "server_unavailable" });
   });
 
   test("lists Connect app-host apps with their connection references", async () => {
