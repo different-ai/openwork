@@ -267,9 +267,11 @@ test("Computer Use enables workspace tools from the desktop setup page", async (
     expect(await evalIn(app, () => ([...document.querySelectorAll("button")].some(b => /^(Enable|Reconnect) Computer Use$/.test(b.textContent.trim()))))).toBe(false);
   });
   const workspaceMcp = (body?: unknown) => evalIn(app, browserScript(async (id, body) => {
-    const response = await fetch(`http://127.0.0.1:${localStorage.getItem("openwork.server.port")}/workspace/${id}/mcp`, {
+    const server = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    if (!server.running || !server.baseUrl || !server.clientToken) throw new Error("Isolated workspace server is not running");
+    const response = await fetch(`${server.baseUrl}/workspace/${id}/mcp`, {
       method: body === null ? "GET" : "POST",
-      headers: { Authorization: `Bearer ${localStorage.getItem("openwork.server.token")}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${server.clientToken}`, "Content-Type": "application/json" },
       body, signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) throw new Error(`Workspace MCP request failed: ${response.status}`);
