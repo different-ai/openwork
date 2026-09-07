@@ -81,7 +81,16 @@ test("Computer Use respects window consent, fresh observations and the person's 
     expect(busy.code).toBe("computer_busy");
   });
 
-  const observe = async () => toolState(await world.call("computer_observe", { session_id: session }));
+  const observe = async () => {
+    // Activation and resize animations can exhaust one capture's retry budget.
+    // Follow the read-only requery contract; never retry a paused session or action.
+    for (let attempt = 0; ; attempt++) {
+      const observed = toolState(await world.call("computer_observe", { session_id: session }));
+      if (observed.code !== "stale_observation" || attempt === 4) return observed;
+      expect(observed.next).toBe("observe");
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  };
   const refFor = (state: Record<string, unknown>, text: string) => {
     if (!Array.isArray(state.elements)) throw new Error("No accessible elements");
     const match = state.elements.find((value: unknown) => typeof value === "object" && value !== null && "label" in value && value.label === text);
