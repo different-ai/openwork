@@ -105,7 +105,6 @@ jobs:
             git diff --name-only --diff-filter=ACMR "$BASE_SHA...$HEAD_SHA" | jq -Rsc 'split("\n") | map(select(length > 0))' > /tmp/journey-changes.json
             export CHANGED_FILES=/tmp/journey-changes.json
           fi
-          node --test evals/scripts/journey-ci.test.mjs
           node evals/scripts/plan-journeys.mjs
       - name: Save selected coverage
         if: steps.matrix.outcome == 'success'

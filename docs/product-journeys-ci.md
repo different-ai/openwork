@@ -95,7 +95,8 @@ settings or remove Slack comment subscriptions if the channel still receives the
 
 Run `node --test evals/scripts/journey-ci.test.mjs` for selection, result handling,
 threading, recovery, escaping, and failed-delivery checks. These are infrastructure
-checks, not substitutes for the actual product journeys. Dispatch Product journeys
-on the pushed branch with `suite=critical` to exercise all four existing specs and
+checks, not substitutes for the actual product journeys. They also run in the
+normal PR core-check job. Dispatch Product journeys on the pushed branch with
+`suite=critical` to exercise all four existing specs and
 inspect both the uploaded report and their real assertions. No Slack messages are
 sent by manual validation runs.
