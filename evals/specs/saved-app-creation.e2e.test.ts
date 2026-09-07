@@ -6,7 +6,7 @@ import { creationPrompt, creationReply, field, record, savedAppCreation } from "
 const test = spec.world(savedAppCreation, { timeout: 900_000 });
 
 test("create, preview, save and reopen an app without changing already-open results", async ({ world, user, probe, seed, step, evidence }) => {
-  await step("discover the direct artifact builder without capability search", async () => {
+  await step("advertise direct artifact creation guidance and prerequisites", async () => {
     const { tools } = await world.listTools();
     if (!Array.isArray(tools)) throw new Error("MCP did not advertise tools.");
     const search = tools.map(record).find((tool) => tool.name === "search_capabilities");
@@ -19,7 +19,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     expect(builder?.description).toContain("have a successful saved-Workflow run matching that schema");
     expect(builder?.description).toContain("execute_capability_script alone does not create its artifact snapshot");
   });
-  evidence.recordAssertionEvidence("Capability discovery routes dashboard requests to the available direct builder", "The live MCP tools/list advertises the artifact builder and search explicitly routes dashboard requests to it without requiring capability search; the builder requires a saved Workflow run.", true);
+  evidence.recordAssertionEvidence("MCP tool descriptions advertise direct artifact creation and saved-run prerequisites", "The live tools/list response includes save_artifact_view. Its descriptions identify the direct builder and require an output schema and matching successful saved-Workflow run; search no longer says Always search first. These assertions verify advertised guidance, not model tool selection. The conversation below uses a prescribed model workload to verify the artifact integration.", true);
   const viewsPath = `/v1/workflows/${world.configObjectId}/views`;
   expect(record((await probe.api(world.den.admin, viewsPath)).body).items).toEqual([]);
   await step("only offer sharing when the server supports it", async () => {
