@@ -25,19 +25,23 @@ export function AuthScreen() {
 
     const oauthRoute = typeof window === "undefined" ? null : getMcpOAuthSelectOrganizationRoute(window.location.search);
     if (oauthRoute && !isSamePathname(pathname, oauthRoute)) {
+      routingRef.current = true;
       router.replace(oauthRoute);
       return;
     }
 
     routingRef.current = true;
+    let navigationStarted = false;
     void resolveUserLandingRoute()
       .then((target) => {
         if (target && !isSamePathname(pathname, target)) {
+          navigationStarted = true;
           router.replace(target);
         }
       })
       .finally(() => {
-        routingRef.current = false;
+        // Hold the guard until unmount: provider updates can arrive before navigation commits.
+        if (!navigationStarted) routingRef.current = false;
       });
   }, [hasResolvedSession, pathname, resolveUserLandingRoute, router]);
 

@@ -19,15 +19,18 @@ export function DashboardRedirectScreen() {
     }
 
     redirectingRef.current = true;
+    let navigationStarted = false;
     void resolveUserLandingRoute()
       .then((target) => {
         const nextTarget = target ?? "/";
         if (!isSamePathname(pathname, nextTarget)) {
+          navigationStarted = true;
           router.replace(nextTarget);
         }
       })
       .finally(() => {
-        redirectingRef.current = false;
+        // Hold the guard until unmount: provider updates can arrive before navigation commits.
+        if (!navigationStarted) redirectingRef.current = false;
       });
   }, [pathname, resolveUserLandingRoute, router, sessionHydrated]);
 
