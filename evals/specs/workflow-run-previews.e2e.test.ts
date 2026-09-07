@@ -101,6 +101,10 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     }
     // The old URL redirects into Analytics and receives the same gate.
     await user.see({ text: "Workflow Runs is part of the Enterprise plan." }, { timeoutMs: 90_000 });
+    expect(await probe.eval(world.web, "location.pathname")).toBe("/dashboard/analytics/workflow-runs");
+    await user.navigate(`${world.den.ref.webUrl}/dashboard/script-runs`);
+    await user.see({ text: "Workflow Runs is part of the Enterprise plan." });
+    expect(await probe.eval(world.web, "location.pathname")).toBe("/dashboard/analytics/workflow-runs");
     await user.see({ role: "link", label: /^Usage & adoption$/ });
     await user.see({ role: "link", label: "Models & usage" });
     await user.notSee({ testId: "nav-workflow-runs" });
@@ -111,7 +115,7 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     await user.notSee({ testId: `workflow-run-link-${world.receiptId}` });
     await user.screenshot();
   });
-  evidence.recordAssertionEvidence("Workflow run analytics is Enterprise-only through navigation, saved links and both API paths", "The free workspace's already executed workflows are hidden from analytics: both API aliases return 402 without runs, both old and new page URLs show the Enterprise gate, and there is no standalone sidebar destination or Workflow Runs analytics link.", true);
+  evidence.recordAssertionEvidence("Workflow run analytics is Enterprise-only through navigation, saved links and both API paths", "The free workspace's already executed workflows are hidden from analytics: both API aliases return 402 without runs, both legacy page URLs resolve to /dashboard/analytics/workflow-runs, which shows the Enterprise gate, and there is no standalone sidebar destination or Workflow Runs analytics link.", true);
   await world.setEnterprise(true);
   await user.reload();
   await user.click({ role: "link", label: /^Usage & adoption$/ });
@@ -170,6 +174,7 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     expect(await readRuns()).toEqual(before);
     await user.navigate(`${world.den.ref.webUrl}/dashboard/workflow-runs`);
     await user.see({ text: "Workflow Runs" });
+    expect(await probe.eval(world.web, "location.pathname")).toBe("/dashboard/analytics/workflow-runs");
     await user.click({ testId: `workflow-run-details-${world.receiptId}` });
     await user.see({ text: `plugin:${world.pluginId}:${world.configObjectId}` });
 
