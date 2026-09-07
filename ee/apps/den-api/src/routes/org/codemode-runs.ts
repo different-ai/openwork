@@ -5,9 +5,10 @@ import { workflowRunPreviewSchema } from "@openwork/types/workflows"
 import { listWorkflowRuns } from "../../workflow-runs.js"
 import { workflowRunPreviews } from "../../workflows.js"
 import { listTeamsForMember } from "../../orgs.js"
+import { checkEntitlement } from "../../entitlements.js"
 import { db } from "../../db.js"
 import { orgMemberRoute, queryValidator } from "../../middleware/index.js"
-import { denTypeIdSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, enterprisePlanRequiredSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { memberHasRole } from "./shared.js"
 
@@ -46,12 +47,15 @@ export function registerOrgWorkflowRunRoutes<T extends { Variables: OrgRouteVari
         200: jsonResponse("Workflow runs returned successfully.", workflowRunListResponseSchema),
         400: jsonResponse("The Workflow run list query was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to list Workflow runs.", unauthorizedSchema),
+        402: jsonResponse("Workflow run analytics requires an Enterprise plan.", enterprisePlanRequiredSchema),
       },
     }),
     orgMemberRoute(),
     queryValidator(listWorkflowRunsQuerySchema),
     async (c) => {
       const context = c.get("organizationContext")
+      const entitlement = checkEntitlement(context.organization.metadata, "analytics")
+      if (!entitlement.ok) return c.json(entitlement.response, entitlement.status)
       const member = context.currentMember
       const isAdmin = member.isOwner || memberHasRole(member.role, "admin")
       const rows = await listWorkflowRuns(db, {

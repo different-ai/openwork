@@ -21,6 +21,19 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   expect(baseline).toMatchObject({ enabled: true, subscribed: true, tier: "tier1" });
   await user.see({ role: "button", label: "Manage subscription" }, { timeoutMs: 90_000 });
   await user.notSee({ text: "Unlock custom insights" });
+  await user.notSee({ label: "Analytics views" });
+  await user.notSee({ text: "Shared usage limits" });
+  await user.notSee({ role: "tab", label: "Activity" });
+  await user.screenshot();
+  await user.click({ role: "link", label: /^Analytics$/ });
+  await user.see({ text: "Usage analytics is part of the Enterprise plan." });
+  await user.notSee({ role: "link", label: "Workflow Runs" });
+  await user.click({ role: "link", label: "Models & usage" });
+  await user.see({ text: "Shared usage limits" });
+  await user.notSee({ role: "button", label: "Manage subscription" });
+  await user.notSee({ text: "Unlock custom insights" });
+  evidence.recordAssertionEvidence("Paid Models usage lives in Analytics independently of the Enterprise plan", "The existing subscriber's Models page contains subscription controls without analytics or usage limits. Analytics exposes Models & usage and shared limits, while enterprise adoption analytics is locked and Workflow Runs is absent.", true);
+
   expect(await settings()).toMatchObject({ available: false, enabled: false });
   const beforeRollout = await world.complete({ sessionId: "existing-conversation", taskId: "before-rollout" });
   expect(beforeRollout.status).toBe(200);
@@ -59,6 +72,19 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   await user.click({ role: "button", label: "Enable task analytics" });
   await user.see({ role: "tab", label: "Activity" });
   expect(await settings()).toMatchObject({ enabled: true, consentVersion: 1 });
+  await user.navigate(`${world.den.ref.webUrl}/dashboard/inference`);
+  await user.see({ role: "button", label: "Manage subscription" });
+  await user.notSee({ label: "Analytics views" });
+  await user.notSee({ text: "Task analytics" });
+  await user.notSee({ text: "Shared usage limits" });
+  await user.notSee({ role: "tab", label: "Integrations" });
+  await user.click({ role: "link", label: /^Analytics$/ });
+  await user.click({ role: "link", label: "Models & usage" });
+  await user.see({ role: "tab", label: "Activity" });
+  await user.see({ role: "button", label: "Turn off analytics" });
+  expect(await settings()).toMatchObject({ enabled: true, consentVersion: 1 });
+  evidence.recordAssertionEvidence("Moving between Models and Analytics preserves consent and keeps the Models page focused", "After opting in, the Models page still contains no task analytics, usage limits, analytics navigation or integrations. Returning through Analytics restores the enabled Activity view without asking again.", true);
+
   expect(await activity()).toHaveLength(0);
   await user.see({ text: "Your next OpenWork Models task appears here" });
   await user.see({ text: "Tasks using your own provider connections" });

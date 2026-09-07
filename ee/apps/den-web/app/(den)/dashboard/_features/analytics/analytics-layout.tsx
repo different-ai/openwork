@@ -2,21 +2,24 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { ArrowUpRight, BarChart3, Sparkles } from "lucide-react";
-import { getAnalyticsRoute, getInferenceRoute } from "../../../_lib/den-org";
+import { ArrowUpRight, BarChart3, Sparkles, ScrollText } from "lucide-react";
+import { getAnalyticsRoute, getModelsAnalyticsRoute, getWorkflowRunsRoute } from "../../../_lib/den-org";
+import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useDenFlow } from "../../../_providers/den-flow-provider";
 
 export const analyticsSurfaceClass = "rounded-2xl border border-[#e3e7ee] bg-white";
 export const analyticsPageClass = "mx-auto grid w-full max-w-[1160px] gap-6 px-4 pb-12 pt-5 sm:px-6 lg:px-8";
 
 export function AnalyticsPageHeader({ orgSlug, active, title, description, action, caption }: {
-  orgSlug?: string | null; active: "adoption" | "models";
+  orgSlug?: string | null; active: "adoption" | "models" | "workflows";
   title: string; description: string; action?: ReactNode; caption?: ReactNode;
 }) {
   const { runtimeConfig } = useDenFlow();
+  const { orgContext } = useOrgDashboard();
   const pages = [
     { id: "adoption", label: "Usage & adoption", href: getAnalyticsRoute(orgSlug), icon: BarChart3 },
-    ...(runtimeConfig.orgMode === "single_org" ? [] : [{ id: "models", label: "Models & usage", href: getInferenceRoute(orgSlug), icon: Sparkles }]),
+    ...(runtimeConfig.orgMode === "single_org" ? [] : [{ id: "models", label: "Models & usage", href: getModelsAnalyticsRoute(orgSlug), icon: Sparkles }]),
+    ...(orgContext?.capabilities.workflows && orgContext.entitlements.analytics ? [{ id: "workflows", label: "Workflow Runs", href: getWorkflowRunsRoute(orgSlug), icon: ScrollText }] : []),
   ];
   return <header className="grid gap-5">
     <p className="text-xs font-medium text-[#637291]">Analytics</p>
@@ -28,7 +31,7 @@ export function AnalyticsPageHeader({ orgSlug, active, title, description, actio
       </div>
       {action}
     </div>
-    <nav aria-label="Analytics views" className="flex gap-6 border-b border-[#e3e7ee]">
+    <nav aria-label="Analytics views" className="flex flex-wrap gap-x-6 border-b border-[#e3e7ee]">
       {pages.map(({ id, label, href, icon: Icon }) => <Link key={id} href={href} aria-current={active === id ? "page" : undefined}
         className={`-mb-px inline-flex items-center gap-2 border-b-2 pb-3 text-sm font-medium transition-colors focus-visible:outline-offset-4 ${active === id ? "border-[#6F3DFF] text-[#6F3DFF]" : "border-transparent text-[#637291] hover:text-[#07192C]"}`}>
         <Icon className="h-4 w-4" aria-hidden="true" />{label}

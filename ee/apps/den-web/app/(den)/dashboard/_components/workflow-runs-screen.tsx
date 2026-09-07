@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { ScrollText } from "lucide-react";
-import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { RefreshCw } from "lucide-react";
+import { DenButton } from "../../_components/ui/button";
+import { DenNotice } from "../../_components/ui/notice";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { EnterprisePlanNotice } from "./enterprise-plan-notice";
+import { AnalyticsEmptyState, AnalyticsPageHeader, analyticsPageClass, analyticsSurfaceClass } from "../_features/analytics/analytics-layout";
 import { DenCard } from "../../_components/ui/card";
 import { DenChip } from "../../_components/ui/chip";
 import { WorkflowFlowDiagram } from "./workflow-flow-diagram";
@@ -57,45 +61,34 @@ function WorkflowRunCard({ run }: { run: WorkflowRun }) {
 }
 
 export function WorkflowRunsScreen() {
-  const [runs, setRuns] = useState<WorkflowRun[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { activeOrg, orgContext } = useOrgDashboard();
+  const entitled = orgContext?.entitlements.analytics === true;
+  const { data: runs, isPending, isFetching, isError, refetch } = useQuery({
+    queryKey: ["workflow-runs", orgContext?.organization.id],
+    enabled: entitled,
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const { response, payload } = await requestJson("/v1/workflow-runs", { method: "GET" }, 12000);
+      if (!response.ok) throw new Error(getErrorMessage(payload, "Could not load workflow runs."));
+      return getWorkflowRuns(payload);
+    },
+  });
 
-  useEffect(() => {
-    let active = true;
-    void requestJson("/v1/workflow-runs", { method: "GET" }, 12000)
-      .then(({ response, payload }) => {
-        if (!response.ok) throw new Error(getErrorMessage(payload, `Failed to load Workflow runs (${response.status}).`));
-        if (active) setRuns(getWorkflowRuns(payload));
-      })
-      .catch((reason: unknown) => {
-        if (active) setError(reason instanceof Error ? reason.message : "Failed to load Workflow runs.");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  return (
-    <DashboardPageTemplate
-      icon={ScrollText}
-      title="Workflow Runs"
+  return <div className={analyticsPageClass}>
+    <AnalyticsPageHeader orgSlug={activeOrg?.slug} active="workflows" title="Workflow Runs"
       description="Workflows are repeatable tasks you and your team can save, share, and run again. See their recent activity here."
-      colors={["#EEF2FF", "#6366F1", "#C7D2FE", "#A5B4FC"]}
-    >
-      {error ? <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">{error}</div> : null}
-      {loading ? (
-        <DenCard><p className="text-[13px] text-gray-500">Loading Workflow runs...</p></DenCard>
-      ) : runs.length === 0 ? (
-        <DenCard><p className="text-[13px] text-gray-500">No Workflow runs yet.</p></DenCard>
-      ) : (
-        <ol className="space-y-4" aria-label="Workflow runs">
+      caption="Enterprise analytics · Saved and one-off workflow activity"
+      action={entitled ? <DenButton variant="secondary" disabled={isFetching} onClick={() => void refetch()}>
+        <RefreshCw className={`mr-2 h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh runs
+      </DenButton> : null} />
+    {!entitled ? <EnterprisePlanNotice feature="Workflow Runs" /> : <>
+      {isError ? <DenNotice tone="error" message="Could not load workflow runs. Try refreshing." /> : null}
+      {isPending ? <p role="status" className="text-sm text-[#637291]">Loading workflow runs…</p>
+        : runs?.length === 0 ? <div className={analyticsSurfaceClass}>
+          <AnalyticsEmptyState title="No workflow runs yet">Run a saved workflow or a one-off task to see its activity here.</AnalyticsEmptyState>
+        </div> : runs ? <ol className="space-y-4" aria-label="Workflow runs">
           {runs.map((run) => <WorkflowRunCard key={run.id} run={run} />)}
-        </ol>
-      )}
-    </DashboardPageTemplate>
-  );
+        </ol> : null}
+    </>}
+  </div>;
 }

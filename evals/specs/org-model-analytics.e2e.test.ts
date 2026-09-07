@@ -134,9 +134,10 @@ test("organization model analytics aggregate session dimensions without cross-or
   await user.notSee({ text: "Could not load analytics." });
   evidence.recordAssertionEvidence("An analytics outage is shown as an error and can recover without inventing zero usage", "An analytics storage outage returned HTTP 500 and produced the error state with no empty charts; Refresh restored the previously ingested models after recovery", true);
   await user.click({ role: "link", label: "Models & usage" });
-  await user.see({ text: "Reliable, hand-picked models for knowledge work." });
+  await user.see({ text: "Understand your team’s OpenWork Models activity, consumption, and shared limits." });
+  await user.notSee({ role: "button", label: "Subscribe" });
   await user.click({ role: "link", label: /^Usage & adoption$/ });
   await user.see({ text: "Understand how your team works in OpenWork" });
   await user.see({ text: "prov/model-b" });
-  evidence.recordAssertionEvidence("Shared navigation connects adoption analytics and OpenWork Models", "Both views are reachable through the shared navigation and returning preserves access to the same organization’s model analytics", true);
+  evidence.recordAssertionEvidence("Shared navigation connects adoption and Models analytics", "Both views are reachable through the shared navigation and returning preserves access to the same organization’s model analytics", true);
 });

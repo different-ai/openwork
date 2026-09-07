@@ -519,6 +519,10 @@ export function getAnalyticsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/analytics`;
 }
 
+export function getModelsAnalyticsRoute(orgSlug?: string | null): string {
+  return `${getAnalyticsRoute(orgSlug)}/models`;
+}
+
 export function getManageMembersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/manage-members`;
 }
@@ -536,7 +540,7 @@ export function getBackgroundAgentsRoute(orgSlug?: string | null): string {
 }
 
 export function getWorkflowRunsRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/workflow-runs`;
+  return `${getAnalyticsRoute(orgSlug)}/workflow-runs`;
 }
 
 export function getAutomationsRoute(orgSlug?: string | null): string {

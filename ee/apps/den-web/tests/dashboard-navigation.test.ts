@@ -46,13 +46,14 @@ describe("dashboard navigation index", () => {
     ]);
   });
 
-  test("gates Workflow Runs on the workflows capability", () => {
+  test("keeps workflow analytics inside the Analytics destination", () => {
     const withoutWorkflows = buildFor("admin").flatMap((section) => section.items);
     const withWorkflows = buildFor("admin", { ...baseCapabilities, workflows: true })
       .flatMap((section) => section.items);
 
     expect(withoutWorkflows.some((item) => item.label === "Workflow Runs")).toBe(false);
-    expect(withWorkflows.some((item) => item.label === "Workflow Runs")).toBe(true);
+    expect(withWorkflows.some((item) => item.label === "Workflow Runs")).toBe(false);
+    expect(withWorkflows.some((item) => item.label === "Analytics")).toBe(true);
   });
 
   test("flattens grouped pages with their plain-language search keywords", () => {

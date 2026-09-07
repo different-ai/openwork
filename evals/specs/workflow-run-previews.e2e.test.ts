@@ -1,5 +1,7 @@
 import { expect } from "vitest";
 import { runWorkflow, saveWorkflow } from "@openwork/behaviors";
+import { queryDenDatabase } from "@openwork/env";
+import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import { spec } from "@openwork/testkit";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -26,8 +28,23 @@ function runs(value: unknown): Record<string, unknown>[] {
 // New journey: browse organization workflow activity and open the saved workflow
 // from the visualization of the version that produced a particular run.
 const test = spec.world(async (seed) => {
-  const den = await seed.den({ org: { name: "Workflow activity", members: { colleague: { name: "Teammate" } } } });
+  const den = await seed.den({ env: { DEN_PLAN_GATING_ENABLED: "true", DEN_ORG_MODE: "multi_org" }, org: { name: "Workflow activity", members: { colleague: { name: "Teammate" } } } });
   const organizationId = field(record((await seed.api(den.admin, "/v1/org")).body).organization, "id");
+  const setEnterprise = async (enabled: boolean) => {
+    const statement = "UPDATE organization SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.plan', JSON_OBJECT('tier', ?, 'source', 'manual')) WHERE id = ?";
+    const values = [enabled ? "enterprise" : "free", organizationId];
+    if (den.placement?.kind === "daytona") {
+      const script = `import { createConnection } from "/workspace/ee/packages/den-db/node_modules/mysql2/promise.js";
+        const connection = await createConnection("mysql://root:password@127.0.0.1:3306/openwork_den");
+        try { await connection.execute(${JSON.stringify(statement)}, ${JSON.stringify(values)}); } finally { await connection.end(); }`;
+      const encoded = Buffer.from(script).toString("base64");
+      const result = await execInSandbox(defaultDaytonaExec, den.placement.sandboxId, `printf %s ${encoded} | base64 -d | node --input-type=module`, { timeoutMs: 15_000, context: "Arrange isolated workspace plan" });
+      if (result.code !== 0) throw new Error("Could not arrange the workspace plan");
+    } else {
+      if (!den.database) throw new Error("Plan transition proof requires its own database");
+      await queryDenDatabase(den.database.url, statement, values);
+    }
+  };
   const token = field((await seed.api(den.admin, "/v1/mcp/token", {
     method: "POST", headers: { "x-openwork-org-id": organizationId }, body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }),
   })).body, "token");
@@ -66,7 +83,7 @@ const test = spec.world(async (seed) => {
   });
   if (failed.response.ok) throw new Error("Missing workflow input must fail");
   const web = await seed.web({ den, signedInAs: "admin", startPath: "/dashboard/workflow-runs", headless: true, viewport: { width: 1440, height: 1000 } });
-  return { den, web, configObjectId, pluginId, configObjectVersionId, receiptId: field(firstRun, "receiptId"), originalGraph: record(saved.body).graph, revisedGraph: record(revised.body).graph };
+  return { den, web, setEnterprise, configObjectId, pluginId, configObjectVersionId, receiptId: field(firstRun, "receiptId"), originalGraph: record(saved.body).graph, revisedGraph: record(revised.body).graph };
 }, { timeout: 600_000 });
 
 test("workflow activity shows linked version diagrams and keeps one-off and inaccessible runs readable", async ({ world, user, probe, seed, evidence, step }) => {
@@ -75,7 +92,33 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     expect(response.response.status, response.text).toBe(200);
     return runs(response.body);
   };
+  await step("restrict workflow analytics before an Enterprise upgrade", async () => {
+    for (const path of ["/v1/workflow-runs", "/v1/codemode-runs"]) {
+      const blocked = await probe.api(world.den.admin, path);
+      expect(blocked.response.status).toBe(402);
+      expect(blocked.body).toMatchObject({ error: "enterprise_plan_required", feature: "analytics" });
+      expect(record(blocked.body).runs).toBeUndefined();
+    }
+    // The old URL redirects into Analytics and receives the same gate.
+    await user.see({ text: "Workflow Runs is part of the Enterprise plan." }, { timeoutMs: 90_000 });
+    await user.see({ label: "Analytics views" });
+    await user.notSee({ testId: "nav-workflow-runs" });
+    await user.notSee({ role: "link", label: "Workflow Runs" });
+    await user.notSee({ testId: `workflow-run-link-${world.receiptId}` });
+    await user.navigate(`${world.den.ref.webUrl}/dashboard/analytics/workflow-runs`);
+    await user.see({ text: "Workflow Runs is part of the Enterprise plan." });
+    await user.notSee({ testId: `workflow-run-link-${world.receiptId}` });
+    await user.screenshot();
+  });
+  evidence.recordAssertionEvidence("Workflow run analytics is Enterprise-only through navigation, saved links and both API paths", "The free workspace's already executed workflows are hidden from analytics: both API aliases return 402 without runs, both old and new page URLs show the Enterprise gate, and there is no standalone sidebar destination or Workflow Runs analytics link.", true);
+  await world.setEnterprise(true);
+  await user.reload();
+  await user.click({ role: "link", label: /^Usage & adoption$/ });
+  await user.click({ role: "link", label: "Workflow Runs" });
+  await user.notSee({ text: "Workflow Runs is part of the Enterprise plan." });
+  await user.notSee({ testId: "nav-workflow-runs" });
   const before = await readRuns();
+  evidence.recordAssertionEvidence("An Enterprise upgrade unlocks Workflow Runs inside Analytics with existing history intact", "The upgraded workspace opens Workflow Runs from the shared Analytics navigation and the API returns its pre-upgrade receipts, including the original saved version.", before.some((run) => run.id === world.receiptId));
   const first = before.find((run) => run.id === world.receiptId);
   expect(first).toMatchObject({ workflow: { configObjectId: world.configObjectId, title: "Weekly briefing", graph: world.originalGraph } });
   expect(record(first?.workflow).graph).not.toEqual(world.revisedGraph);
@@ -196,5 +239,22 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     await user.screenshot();
   });
   evidence.recordAssertionEvidence("The workflow opens with a simple run form and shows the submitted result", "The form precedes the latest result and existing diagram. Advanced input starts hidden and stays synchronized with the named field; editing and inspecting it create no runs. Submitting creates exactly one successful run of the current saved version and displays the entered topic in its result.", true);
+
+  await step("keep workflow execution working after Enterprise access is removed", async () => {
+    await world.setEnterprise(false);
+    await user.navigate(`${world.den.ref.webUrl}/dashboard/analytics/workflow-runs`);
+    await user.see({ text: "Workflow Runs is part of the Enterprise plan." });
+    await user.notSee({ testId: `workflow-run-link-${world.receiptId}` });
+    await user.notSee({ role: "link", label: "Workflow Runs" });
+    expect((await probe.api(world.den.admin, "/v1/workflow-runs")).response.status).toBe(402);
+    await user.navigate(`${world.den.ref.webUrl}/dashboard/library/workflows/${world.configObjectId}`);
+    await user.see({ role: "button", label: "Run workflow" });
+    await user.type({ role: "textbox", label: /^Topic/ }, "Briefing after plan change", { replace: true, verify: true });
+    await user.click({ role: "button", label: "Run workflow" });
+    await user.see({ testId: "den-workflow-artifact-result" }, { text: /Briefing after plan change/, timeoutMs: 60_000 });
+    expect((await probe.api(world.den.admin, "/v1/workflow-runs")).response.status).toBe(402);
+    await user.screenshot();
+  });
+  evidence.recordAssertionEvidence("Removing Enterprise access hides history without breaking workflow execution", "After the downgrade, previously viewed receipts and the Workflow Runs link are absent and the API is locked. Running the saved workflow from the Library still succeeds and displays the newly submitted result.", true);
 
 });
