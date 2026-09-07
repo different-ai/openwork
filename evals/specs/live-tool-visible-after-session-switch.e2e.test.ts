@@ -608,6 +608,9 @@ test.skipIf(!runnable)(
     expect(drainedA.text).not.toMatch(/\d+ queued/);
     expect(drainedA.text).not.toContain(queuedB);
     expect(drainedA.text).not.toContain(queuedReplyB);
+    const queuedRequestsA = (await den.mocks.agent.agentRequests())
+      .filter((request) => request.kind === "final" && queuedA.includes(request.promptMarker ?? ""));
+    expect(queuedRequestsA.map((request) => request.promptMarker)).toEqual(queuedA);
     evidence.recordAssertionEvidence(
       "The returned transcript continues live, without duplicates or the other chat's content",
       `${evalEngine}, ${scope}: A restored its prompt, assistant progress and running tool, then rendered new assistant progress and a third running tool before completion without navigating or reloading. All three tools completed and the final answer appeared exactly once; B's content was absent from A.`,
@@ -663,6 +666,9 @@ test.skipIf(!runnable)(
     expect(continuedB.assistantText.split(queuedReplyB)).toHaveLength(2);
     expect(continuedB.assistantText.indexOf(replyB)).toBeLessThan(continuedB.assistantText.indexOf(queuedReplyB));
     expect(continuedB.text).not.toMatch(/\d+ queued/);
+    const queuedRequestsB = (await den.mocks.agent.agentRequests({ promptMarker: queuedB }))
+      .filter((request) => request.kind === "final");
+    expect(queuedRequestsB).toHaveLength(1);
     evidence.recordAssertionEvidence(
       "Queued follow-ups wait for completion, drain exactly once in order, and stay in their own session",
       `${evalEngine}, ${scope}: A held two follow-ups while busy, then rendered each prompt and answer once in order. B preserved its queue across navigation and delivered its follow-up while unmounted. Neither session received the other's queued content.`,
@@ -674,6 +680,11 @@ test.skipIf(!runnable)(
       true,
     );
     await clickSessionRow(desktopApp, workspaceA.workspaceId, chatA);
+    // Follow-up turns can legitimately push the earlier tool above the viewport.
+    await evalIn(desktopApp, browserScript((sessionId, callId) => {
+      document.querySelector<HTMLElement>(`[data-session-surface-id="${sessionId}"] [data-tool-aggregate="${callId}"]`)
+        ?.scrollIntoView({ block: "center" });
+    }, [chatA, laterTool.callId]));
     const visibleAfterCompletion = await eventually(
       () => readVisibleTool(desktopApp, chatA, laterTool.callId),
       {
