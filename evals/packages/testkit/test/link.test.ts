@@ -168,8 +168,8 @@ test("denLink admin rejects missing and wrong bearer tokens without mutating sta
     assert.match(authorization, /^Bearer [a-f0-9]{64}$/);
     const phaseUrl = adminHealthUrl.replace(/\/health$/, "/phase");
     for (const headers of [
-      { "content-type": "application/json" },
-      { authorization: "Bearer " + "b".repeat(64), "content-type": "application/json" },
+      new Headers({ "content-type": "application/json" }),
+      new Headers({ authorization: "Bearer " + "b".repeat(64), "content-type": "application/json" }),
     ]) {
       const denied = await originalFetch(phaseUrl, {
         method: "POST",
