@@ -243,3 +243,24 @@ test("Computer Use enables workspace tools from the desktop setup page", async (
     expect(await evalIn(app, `[...document.querySelectorAll("button")].some(b => /^(Enable|Reconnect) Computer Use$/.test(b.textContent.trim()))`)).toBe(false);
   });
 });
+
+test("Computer Use prepares an Electron accessibility tree before window consent", async ({ world, step }) => {
+  await using electron = await world.electronFixture();
+  await step("A fresh Electron app starts with its accessibility tree disabled", async () => {
+    expect(await electron.state()).toEqual({ accessibility: false });
+  });
+  const session = await step("Opening a session enables the tree and still requires window approval", async () => {
+    const pending = world.call("computer_open_session", { app_id: electron.appId, pid: electron.pid, mode: "observe", purpose: "Read the disposable Electron fixture." });
+    const [reply] = await Promise.all([pending, world.pressControl("Allow this session")]);
+    const result = toolState(reply);
+    expect(result).toMatchObject({ ok: true, mode: "observe", window_title: "Electron Fixture" });
+    return result.session_id;
+  });
+  await step("The approved Electron window exposes its rendered controls", async () => {
+    const observation = toolState(await world.call("computer_observe", { session_id: session }));
+    expect(observation.ok).toBe(true);
+    expect(JSON.stringify(observation)).toContain("Fixture action");
+    expect(JSON.stringify(observation)).toContain("Fixture draft value");
+    expect(toolState(await world.call("computer_close_session", { session_id: session }))).toMatchObject({ ok: true });
+  });
+});

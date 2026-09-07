@@ -86,6 +86,20 @@ final class MacAccessibility {
         try app.validate()
         let root = AXUIElementCreateApplication(app.pid)
         AXUIElementSetMessagingTimeout(root, 0.2)
+        // Electron exposes its accessibility tree on demand. This is its
+        // documented assistive-technology handshake, not a macOS permission grant.
+        // Native apps can reject the optional attribute and still expose windows.
+        if (attribute(root, "AXManualAccessibility") as? Bool) == false,
+           AXUIElementSetAttributeValue(root, "AXManualAccessibility" as CFString, kCFBooleanTrue) == .success {
+            // Electron debounces activation for two seconds. Do not keep setting
+            // the attribute during retries: that restarts its countdown.
+            let deadline = ProcessInfo.processInfo.systemUptime + 3
+            while ProcessInfo.processInfo.systemUptime < deadline {
+                try app.validate()
+                if (attribute(root, "AXManualAccessibility") as? Bool) == true { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+        }
         for attempt in 0..<5 {
             let axWindows = attribute(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
             let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)

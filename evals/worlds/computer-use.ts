@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
+import { createRequire } from "node:module";
 import { needs, SkipError } from "@openwork/env";
 import type { Place, Seed } from "@openwork/env";
 import { desktop } from "@openwork/hosts";
@@ -94,6 +95,33 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
     await helper.request("initialize", { protocolVersion: "2025-11-25", clientInfo: { name: "native-journey", version: "1" }, capabilities: {} });
     await peer.request("initialize", { protocolVersion: "2025-11-25", clientInfo: { name: "peer-journey", version: "1" }, capabilities: {} });
     return {
+      async electronFixture() {
+        const main = join(directory, "electron-fixture.cjs");
+        await writeFile(main, `
+          const { app, BrowserWindow } = require('electron');
+          const readline = require('node:readline');
+          let window;
+          const ready = app.whenReady().then(async () => {
+            window = new BrowserWindow({ width: 600, height: 420, title: 'Electron Fixture' });
+            await window.loadURL('data:text/html,' + encodeURIComponent('<title>Electron Fixture</title><main><h1>Fixture workspace</h1><button>Fixture action</button><input aria-label="Fixture draft" value="Fixture draft value"></main>'));
+          });
+          readline.createInterface({ input: process.stdin }).on('line', async (line) => {
+            const request = JSON.parse(line); await ready;
+            process.stdout.write(JSON.stringify({ id: request.id, result: { accessibility: app.isAccessibilitySupportEnabled() } }) + '\\n');
+          }).on('close', () => app.quit());
+        `);
+        const require = createRequire(join(root, "apps/desktop/package.json"));
+        const electron: unknown = require("electron");
+        if (typeof electron !== "string") throw new Error("Electron executable unavailable");
+        const client = pipeClient(electron, [main]);
+        try {
+          await client.request("state");
+          const discovered = toolState(await helper.request("tools/call", { name: "computer_discover", arguments: {} }));
+          const identity = Array.isArray(discovered.apps) ? discovered.apps.find((entry: unknown) => record(entry) && entry.pid === client.pid) : undefined;
+          if (!record(identity) || typeof identity.app_id !== "string") throw new Error("Electron fixture was not discoverable");
+          return { appId: identity.app_id, pid: client.pid, state: () => client.request("state"), [Symbol.asyncDispose]: () => client.close() };
+        } catch (error) { await client.close(); throw error; }
+      },
       desktop: () => desktop({ name: "computer-use-setup", host: place.host(), env: { OPENWORK_COMPUTER_USE_BINARY: executable } }),
       workspacePath: join(directory, "workspace"),
       appId: "org.example.openwork.computer-use-fixture",
