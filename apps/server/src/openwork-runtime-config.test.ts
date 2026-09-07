@@ -58,6 +58,17 @@ async function readConfigFile(config: ServerConfig): Promise<Record<string, unkn
 }
 
 describe("openwork runtime config file", () => {
+  test("restricted runtime enables materialized org gateway rows, not ordinary custom providers", () => {
+    const provider = { lpr_legacy: {}, ipr_gateway: {}, openwork: {}, personal: {}, opencode: {} };
+    const restricted = buildOpenworkRuntimeConfigObjectFromSnapshot({
+      managedPolicy: { allowCustomProviders: false, allowZenModel: false }, provider,
+    });
+    expect(restricted.enabled_providers).toEqual(["lpr_legacy", "ipr_gateway", "openwork"]);
+    expect(buildOpenworkRuntimeConfigObjectFromSnapshot({
+      managedPolicy: { allowCustomProviders: false }, provider,
+    }).enabled_providers).toEqual(["lpr_legacy", "ipr_gateway", "openwork", "opencode"]);
+    expect(buildOpenworkRuntimeConfigObjectFromSnapshot({ provider }).enabled_providers).toBeUndefined();
+  });
   test("managed browser restrictions use scalar actions in global and agent permissions", () => {
     const parsed = buildOpenworkRuntimeConfigObjectFromSnapshot({
       plugin: [managedPolicyPluginPath(), pathToFileURL(managedPolicyPluginPath(true)).href,

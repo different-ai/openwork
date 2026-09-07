@@ -65,7 +65,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
   return {
     ...engineConfig,
     ...(runtimeConfig.managedPolicy?.allowCustomProviders === false ? { enabled_providers: [
-      ...Object.keys(provider).filter((id) => /^(?:lpr_|openwork$)/i.test(id)),
+      ...Object.keys(provider).filter((id) => /^(?:lpr_|ipr_|openwork$)/i.test(id)),
       ...(runtimeConfig.managedPolicy.allowZenModel !== false ? ["opencode"] : []),
     ] } : {}),
     permission: { ...engineConfig.permission, ...permissions },

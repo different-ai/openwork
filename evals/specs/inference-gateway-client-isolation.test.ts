@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { eventually, needs, test } from "@openwork/testkit";
-import { isRecord, readBody, stopChild } from "../worlds/openwork-server-cli.ts";
+import { engineBinary, isRecord, readBody, stopChild } from "../worlds/openwork-server-cli.ts";
 
 const repo = fileURLToPath(new URL("../..", import.meta.url));
 const hostHeaders = { "x-openwork-host-token": "test-host-token", "content-type": "application/json" };
@@ -21,12 +21,19 @@ function record(value: unknown): Record<string, unknown> {
   return value;
 }
 
-async function fixture(gatewayIds = ["ipr_first", "ipr_second"]) {
+async function fixture(gatewayIds = ["ipr_first", "ipr_second"], managedBinary?: string) {
   needs({ commands: ["pnpm", "bun"] });
   const root = await mkdtemp(join(tmpdir(), "gateway-client-isolation-"));
   const requests: Array<{ path: string; authorization: string | undefined; org: string | undefined; legacyOrg: string | undefined; cookie: string | undefined; accept: string | undefined }> = [];
   const engineAuth = new Map<string, string>([["personal", "personal-auth"], [oldId, "old-org-key"]]);
   let gatewayEnabled = false;
+  let restricted = false;
+  let legacyEnabled = false;
+  let gatewayListStatus = 200;
+  let llmListStatus = 200;
+  let foreignInLegacyList = false;
+  let gatewayOrganizationId = "org_fixture";
+  const modelRequests: string[] = [];
   let unscopedGateway = false;
   let shortGatewayNames = false;
   let responseUrl = authorizationUrl;
@@ -38,14 +45,33 @@ async function fixture(gatewayIds = ["ipr_first", "ipr_second"]) {
     const envName = `${prefix}_GOOGLE_GENERATIVE_AI_API_KEY`;
     return {
       id, name: `Vertex ${id}`, providerId: "google-vertex", source: "openwork_gateway",
-      credentialMode: "org", credentialStatus: "ready", updatedAt: "2026-09-07T00:00:00Z", authUrl: null,
-      providerConfig: { npm: "@ai-sdk/google", env: [envName], options: { baseURL: `https://gateway.example.test/api/v1/providers/${id}` } },
-      models: [{ id: "fixture-model", name: "Fixture model", config: {} }],
+      credentialMode: "org", credentialStatus: "ready", status: "active", updatedAt: "2026-09-07T00:00:00Z", authUrl: null,
+      providerConfig: { npm: managedBinary ? "@ai-sdk/anthropic" : "@ai-sdk/google", env: [envName], options: { baseURL: managedBinary ? `${base}/gateway/${id}` : `https://gateway.example.test/api/v1/providers/${id}` } },
+      models: [{ id: "fixture-model", name: "Fixture model", config: { limit: { context: 10000, output: 1000 } } }],
       apiKey: key, apiKeys: { [envName]: key },
     };
   };
+  const legacy = () => ({
+    ...gateway(oldId), source: "models_dev", providerId: "anthropic", name: "Legacy organization provider",
+    providerConfig: { npm: "@ai-sdk/anthropic", env: [oldEnv] }, apiKey: "old-org-key", apiKeys: null,
+  });
   const http = createServer(async (request, response) => {
     const path = request.url ?? "";
+    if (path.startsWith("/gateway/")) {
+      modelRequests.push(path);
+      if (request.headers["x-api-key"] !== key) { response.statusCode = 401; response.end(); return; }
+      await readBody(request);
+      response.setHeader("content-type", "text/event-stream");
+      response.end([
+        { type: "message_start", message: { id: "msg_fixture", type: "message", role: "assistant", model: "fixture-model", content: [], usage: { input_tokens: 1, output_tokens: 0 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Policy gateway response" } },
+        { type: "content_block_stop", index: 0 },
+        { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 3 } },
+        { type: "message_stop" },
+      ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""));
+      return;
+    }
     if (path.startsWith("/auth/")) {
       const id = decodeURIComponent(path.slice(6));
       if (request.method === "PUT") {
@@ -78,9 +104,18 @@ async function fixture(gatewayIds = ["ipr_first", "ipr_second"]) {
       }
       response.end(JSON.stringify({ authUrl: responseUrl })); return;
     }
-    if (path === "/api/den/v1/llm-providers") { response.end('{"llmProviders":[]}'); return; }
+    if (path === "/api/den/v1/me/desktop-config") {
+      response.end(JSON.stringify(restricted ? { allowCustomProviders: false, allowZenModel: false } : {})); return;
+    }
+    if (path === "/api/den/v1/llm-providers" || path === "/api/den/v1/llm-providers?scope=usable") {
+      response.statusCode = llmListStatus;
+      response.end(JSON.stringify({ llmProviders: [...(legacyEnabled ? [legacy()] : []), ...(foreignInLegacyList ? [gateway("ipr_foreign")] : [])] })); return;
+    }
+    if (path === `/api/den/v1/llm-providers/${oldId}/connect`) { response.end(JSON.stringify({ llmProvider: legacy() })); return; }
     if (path === "/api/den/v1/inference-providers?scope=usable") {
-      response.end(JSON.stringify({ inferenceProviders: gatewayEnabled ? gatewayIds.map(gateway) : [] })); return;
+      response.statusCode = gatewayListStatus;
+      const scoped = request.headers["x-openwork-org-id"] === gatewayOrganizationId && request.headers["x-openwork-legacy-org-id"] === gatewayOrganizationId;
+      response.end(JSON.stringify({ inferenceProviders: gatewayEnabled && scoped ? gatewayIds.map(gateway) : [] })); return;
     }
     const match = /^\/api\/den\/v1\/inference-providers\/(ipr_[a-z0-9]+)\/connect$/.exec(path);
     const provider = match && gatewayIds.includes(match[1]) ? gateway(match[1]) : null;
@@ -96,8 +131,8 @@ async function fixture(gatewayIds = ["ipr_first", "ipr_second"]) {
   await writeFile(configPath, JSON.stringify({
     host: "127.0.0.1", port: 0, token: "test-client-token", hostToken: "test-host-token",
     approval: { mode: "auto" }, corsOrigins: ["http://localhost:5173"],
-    workspaces: [{ id: "ws_fixture", name: "Fixture", path: root, baseUrl: base }],
-    authorizedRoots: [root], opencodeBaseUrl: base, logRequests: false,
+    workspaces: [{ id: "ws_fixture", name: "Fixture", path: root, ...(managedBinary ? {} : { baseUrl: base }) }],
+    authorizedRoots: [root], ...(managedBinary ? {} : { opencodeBaseUrl: base }), logRequests: false,
   }));
   let child: ChildProcess | null = null;
   let serverUrl = "";
@@ -108,7 +143,8 @@ async function fixture(gatewayIds = ["ipr_first", "ipr_second"]) {
       env: {
         PATH: process.env.PATH, HOME: root, OPENWORK_DATA_DIR: root,
         OPENWORK_RUNTIME_DB: join(root, "runtime.sqlite"), OPENWORK_ENV_STORE: join(root, "env.json"),
-        OPENWORK_TOKEN_STORE: join(root, "tokens.json"), OPENWORK_MANAGE_OPENCODE: "0",
+        OPENWORK_TOKEN_STORE: join(root, "tokens.json"), OPENWORK_MANAGE_OPENCODE: managedBinary ? "1" : "0",
+        ...(managedBinary ? { OPENWORK_OPENCODE_BIN: managedBinary, OPENCODE_MODELS_URL: `${base}/catalog` } : {}),
         OPENWORK_CLOUD_PROVIDER_SYNC_INTERVAL_MS: "3600000", OPENWORK_LOG_REQUESTS: "false",
       }, stdio: ["ignore", "pipe", "pipe"],
     });
@@ -134,7 +170,7 @@ async function fixture(gatewayIds = ["ipr_first", "ipr_second"]) {
     if (child) await stopChild(child);
     http.closeAllConnections();
     await new Promise<void>((resolve) => http.close(() => resolve()));
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   };
   try {
     await boot();
@@ -143,7 +179,14 @@ async function fixture(gatewayIds = ["ipr_first", "ipr_second"]) {
     throw error;
   }
   return {
-    requests, engineAuth, request, session, base,
+    requests, engineAuth, request, session, base, modelRequests,
+    restrictProviders() { restricted = true; },
+    enableLegacy() { legacyEnabled = true; },
+    removeLegacy() { legacyEnabled = false; },
+    setGatewayListStatus(status: number) { gatewayListStatus = status; },
+    setLlmListStatus(status: number) { llmListStatus = status; },
+    injectForeignLegacyGrant() { foreignInLegacyList = true; },
+    changeGatewayOrganization(orgId: string) { gatewayOrganizationId = orgId; },
     enableGateway() { gatewayEnabled = true; },
     removeGateway(id: string) { gatewayIds = gatewayIds.filter((entry) => entry !== id); },
     useShortGatewayNames() { shortGatewayNames = true; },
@@ -289,4 +332,86 @@ test("gateway rows with the same last five ID characters retain independent full
   expect((await f.request("/env/IPR_120JV_GOOGLE_GENERATIVE_AI_API_KEY")).status).toBe(404);
   expect(record(await (await f.request(`/env/${secondEnv}`)).json()).item).toMatchObject({ value: key });
   evidence.recordAssertionEvidence("Full gateway IDs isolate same-suffix rows", "Two real-form ipr IDs sharing 120jv materialized separate full-ID env/auth bindings, retained their names and gateway source per resource, and removing one after restart preserved the other. The former last-five env format was rejected without creating its shared slot or changing the surviving credential.", true);
+});
+
+test("restricted policy revalidates gateway and legacy grants in the current org and fails closed without prefix-only authorization", async ({ evidence }) => {
+  await using f = await fixture();
+  const model = { "fixture-model": { id: "fixture-model", name: "Fixture model" } };
+  expect((await f.request("/workspace/ws_fixture/config", "PATCH", { opencode: { provider: {
+    ipr_unknown: { id: "google", npm: "@ai-sdk/google", models: model },
+    ipr_foreign: { id: "google", npm: "@ai-sdk/google", models: model },
+    personal: { id: "google", npm: "@ai-sdk/google", models: model },
+  } } }, clientHeaders)).status).toBe(200);
+  f.enableGateway();
+  f.enableLegacy();
+  f.restrictProviders();
+  await f.session();
+  const evaluate = (providerID: string, id = "fixture-model") => f.request("/managed-policy/evaluate", "POST", { action: "model", input: { providerID, id } }, clientHeaders);
+  const before = f.requests.length;
+  expect((await evaluate("ipr_first")).status).toBe(200);
+  const catalogs = f.requests.slice(before).filter((entry) => entry.path.endsWith("?scope=usable"));
+  expect(catalogs.map((entry) => entry.path).sort()).toEqual(["/api/den/v1/inference-providers?scope=usable", "/api/den/v1/llm-providers?scope=usable"]);
+  expect(catalogs.every((entry) => entry.authorization === "Bearer desktop-fixture-session" && entry.org === "org_fixture" && entry.legacyOrg === "org_fixture" && entry.accept === "application/json" && !entry.cookie)).toBe(true);
+  expect((await evaluate(oldId)).status).toBe(200);
+  expect((await evaluate("ipr_first", "not-assigned")).status).toBe(403);
+  expect((await evaluate("ipr_unknown")).status).toBe(403);
+  expect((await evaluate("personal")).status).toBe(403);
+  expect((await evaluate("opencode")).status).toBe(403);
+  f.injectForeignLegacyGrant();
+  expect((await evaluate("ipr_foreign")).status).toBe(403);
+  f.changeGatewayOrganization("org_other");
+  expect((await evaluate("ipr_first")).status).toBe(403);
+  f.changeGatewayOrganization("org_fixture");
+  expect((await evaluate("ipr_first")).status).toBe(200);
+  f.removeGateway("ipr_first");
+  // Do not sync: revoked access must override the still-materialized model.
+  expect((await evaluate("ipr_first")).status).toBe(403);
+  expect((await evaluate("ipr_second")).status).toBe(200);
+  f.setGatewayListStatus(404);
+  expect((await evaluate(oldId)).status).toBe(200);
+  expect((await evaluate("ipr_second")).status).toBe(403);
+  f.setGatewayListStatus(503);
+  expect((await evaluate(oldId)).status).toBe(403);
+  f.setGatewayListStatus(200);
+  f.setLlmListStatus(404);
+  expect((await evaluate("ipr_second")).status).toBe(403);
+  f.setLlmListStatus(200);
+  f.removeLegacy();
+  expect((await evaluate(oldId)).status).toBe(403);
+  expect((await evaluate("ipr_second")).status).toBe(200);
+  expect((await f.request("/den-session", "DELETE")).status).toBe(204);
+  expect((await evaluate("ipr_second")).status).toBe(403);
+  evidence.recordAssertionEvidence("Restricted model access remains scoped and live", "Both usable catalogs were fetched with the desktop bearer, both current-org headers and Accept JSON. Granted gateway and LPR models passed; unknown models/providers, cross-org grants, a forged ipr grant in the LPR catalog, custom/Zen providers, revoked access and signed-out access were denied. Gateway 404 preserved LPR access but denied gateways; other catalog failures denied sends.", true);
+});
+
+test("real managed engine initializes and uses a granted gateway under restricted policy, then denies revoked access", async ({ evidence, skip }) => {
+  const binary = engineBinary();
+  if (!binary) return skip("needs: local managed OpenCode binary");
+  await using f = await fixture(["ipr_first"], binary);
+  f.enableGateway();
+  f.restrictProviders();
+  await f.session();
+  const engine = (path: string, method = "GET", data?: unknown) => f.request(`/workspace/ws_fixture/opencode${path}`, method, data, clientHeaders);
+  await eventually(async () => {
+    const response = await engine("/provider");
+    if (!response.ok) return false;
+    const providers = record(await response.json());
+    return Array.isArray(providers.all) && providers.all.some((provider) => isRecord(provider) && provider.id === "ipr_first" && provider.name === "Vertex ipr_first");
+  }, { within: 60_000, intervalMs: 250, label: "restricted gateway in real managed provider initialization" });
+  const initialized = record(await (await engine("/config")).json());
+  expect(initialized.enabled_providers).toEqual(["ipr_first"]);
+  const created = await engine("/session", "POST", { title: "Restricted gateway regression" });
+  expect(created.ok).toBe(true);
+  const sessionId = record(await created.json()).id;
+  if (typeof sessionId !== "string") throw new Error("Engine did not create a session");
+  const prompt = { model: { providerID: "ipr_first", modelID: "fixture-model" }, parts: [{ type: "text", text: "Reply with a short greeting." }] };
+  const reply = await engine(`/session/${sessionId}/message`, "POST", prompt);
+  expect(reply.status).toBe(200);
+  expect(await reply.text()).toContain("Policy gateway response");
+  expect(f.modelRequests.length).toBeGreaterThan(0);
+  const sent = f.modelRequests.length;
+  f.removeGateway("ipr_first");
+  expect((await engine(`/session/${sessionId}/message`, "POST", prompt)).status).toBe(403);
+  expect(f.modelRequests).toHaveLength(sent);
+  evidence.recordAssertionEvidence("Restricted gateway survives native provider initialization without bypassing policy", "The real managed OpenCode process initialized the named ipr resource with enabled_providers limited to that resource, completed an Anthropic SDK request to the local witness, and returned its response. Revoking the Den grant without clearing engine caches rejected the next send before any additional witness request.", true);
 });

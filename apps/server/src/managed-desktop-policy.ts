@@ -100,7 +100,7 @@ class ManagedDesktopPolicy {
   private identityChanged(generation: number): void {
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
   }
-  private async readDenJson(session: CloudProviderDenSession, path: string, generation: number): Promise<unknown> {
+  private async readDenJson(session: CloudProviderDenSession, path: string, generation: number, allowNotFound = false): Promise<unknown> {
     const deadline = performance.now() + DEN_READ_DEADLINE_MS;
     for (let attempt = 1; attempt <= DEN_READ_MAX_ATTEMPTS; attempt += 1) {
       this.identityChanged(generation);
@@ -116,10 +116,12 @@ class ManagedDesktopPolicy {
       if (remainingMs <= 0) throw new Error("Den read deadline exceeded");
       try {
         const response = await externalFetch(`${session.baseUrl}${path}`, {
-          headers: { Authorization: `Bearer ${session.token}`, "x-openwork-legacy-org-id": session.orgId },
+          headers: { Accept: "application/json", Authorization: `Bearer ${session.token}`, "x-openwork-org-id": session.orgId, "x-openwork-legacy-org-id": session.orgId },
+          redirect: "error",
           signal: AbortSignal.timeout(Math.min(DEN_READ_ATTEMPT_TIMEOUT_MS, remainingMs)),
         });
         this.identityChanged(generation);
+        if (allowNotFound && response.status === 404) return null;
         if (!response.ok) {
           if (attempt < DEN_READ_MAX_ATTEMPTS && RETRYABLE_DEN_STATUSES.has(response.status)) {
             console.warn("[openwork:managed-policy] retrying Den verification", {
@@ -223,17 +225,29 @@ class ManagedDesktopPolicy {
       if (!session) throw new ApiError(403, "policy_unavailable", "Sign in to verify assigned models.");
       let assigned = false;
       try {
-        const catalog = await this.readDenJson(session, "/v1/llm-providers", generation);
-        if (!isRecord(catalog) || !Array.isArray(catalog.llmProviders)) throw new Error("Invalid catalog");
-        assigned = catalog.llmProviders.filter(isRecord).some((item) =>
-          (item.source === "openwork" ? "openwork" : item.id) === providerID && Array.isArray(item.models)
-          && item.models.filter(isRecord).some((model) => model.id === modelID));
+        const grants = await Promise.all([
+          { path: "/v1/llm-providers?scope=usable", field: "llmProviders", gateway: false },
+          { path: "/v1/inference-providers?scope=usable", field: "inferenceProviders", gateway: true },
+        ].map(async ({ path, field, gateway }) => {
+          // Older Den deployments have no gateway resource. Never treat other
+          // failures as an empty or cached grant list.
+          const catalog = await this.readDenJson(session, path, generation, gateway);
+          if (gateway && catalog === null) return false;
+          const items = isRecord(catalog) ? catalog[field] : null;
+          if (!Array.isArray(items)) throw new Error("Invalid catalog");
+          return items.filter(isRecord).some((item) =>
+            (gateway ? /^ipr_/.test(providerID) && item.source === "openwork_gateway" && item.status === "active" && item.credentialStatus === "ready" && item.id === providerID
+              : /^(?:lpr_|openwork$)/i.test(providerID) && (item.source === "openwork" ? "openwork" : item.id) === providerID)
+            && (item.organizationId === undefined || item.organizationId === session.orgId)
+            && Array.isArray(item.models) && item.models.filter(isRecord).some((model) => model.id === modelID));
+        }));
+        assigned = grants.some(Boolean);
       } catch (error) {
         if (error instanceof ApiError && error.code === "policy_identity_changed") throw error;
         throw new ApiError(403, "policy_unavailable", "Your organization's assigned models could not be verified.");
       }
       if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
-      if (!(assigned && /^(?:lpr_|openwork$)/i.test(providerID) && models && typeof models === "object" && Object.hasOwn(models, modelID))) {
+      if (!(assigned && isRecord(models) && Object.hasOwn(models, modelID))) {
         throw new ApiError(403, "organization_model_denied", "Choose an AI model assigned by your organization.");
       }
     }
