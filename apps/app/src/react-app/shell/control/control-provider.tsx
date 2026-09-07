@@ -831,6 +831,7 @@ export function OpenworkRouteControlActions() {
         capabilities: [
           { id: "browse", label: "Browse the web", description: "Control a browser to navigate, scrape, and automate web tasks." },
           { id: "providers", label: "AI model providers", description: "Connect Anthropic, OpenAI, Google, OpenRouter, Ollama, or other LLM providers." },
+          { id: "connect", label: "Connections", description: "Set up Computer Use, browser, Ollama, and connected services in Settings." },
           { id: "extensions", label: "Library", description: "Skills, connections, and tools your agent can use." },
           { id: "voice", label: "Voice mode", description: "Talk to OpenWork with real-time voice using OpenAI Realtime." },
           { id: "files", label: "File management", description: "Read, write, and organize files in your workspace." },

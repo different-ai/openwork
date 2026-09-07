@@ -1,5 +1,7 @@
 /** @jsxImportSource react */
 import * as React from "react";
+import { useNavigate } from "react-router";
+import { workspaceSettingsRoute } from "../../../shell/workspace-routes";
 import {
   AlertCircle,
   AlertTriangle,
@@ -8,6 +10,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Blocks,
+  Cable,
   Clock3,
   ChevronRight,
   Columns2,
@@ -906,6 +909,7 @@ function isSessionActivityStatus(status: string | undefined): status is SessionA
 }
 
 export function AppSidebar(props: AppSidebarProps) {
+  const navigate = useNavigate();
   // Lives in the UI store (not component state) so the open/closed state of
   // each workspace group survives this sidebar unmounting, e.g. while the
   // user is in Settings.
@@ -1167,6 +1171,12 @@ export function AppSidebar(props: AppSidebarProps) {
                 onSelect={props.onOpenAutomations}
               />
             ) : null}
+            <SidebarDestination
+              active={false}
+              icon={Cable}
+              label="Connections"
+              onSelect={() => navigate(workspaceSettingsRoute(props.selectedWorkspaceId, "connect"))}
+            />
             <SidebarDestination
               active={props.extensionsActive === true}
               icon={LayoutGrid}

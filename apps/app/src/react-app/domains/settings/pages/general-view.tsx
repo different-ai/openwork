@@ -3,6 +3,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   Cloud,
+  Cable,
   Cog,
   FolderLock,
   LifeBuoy,
@@ -32,6 +33,7 @@ type SettingsCardDefinition = { tab: SettingsTab; icon: typeof Sparkles } & (
 );
 
 const workspaceCards: SettingsCardDefinition[] = [
+  { tab: "connect", icon: Cable, title: "Connections", desc: "Computer Use, Ollama, browser, and connected services." },
   { tab: "preferences", icon: Cog, title: "Preferences", desc: "Default model, reasoning, and compaction." },
   { tab: "permissions", icon: FolderLock, title: "Permissions", desc: "Authorized folders and file access." },
   { tab: "advanced", icon: Wrench, title: "Advanced", desc: "Runtime, engine, recovery, and developer options." },
