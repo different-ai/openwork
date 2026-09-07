@@ -192,6 +192,7 @@ test("Computer Use respects window consent, fresh observations and the person's 
     await expect.poll(() => world.foregroundWindow()).toEqual({ title: "Workspace window" });
     await expect.poll(async () => toolState(await world.call("computer_session_status", { session_id: id })).state).toBe("active");
     const observed = toolState(await world.call("computer_observe", { session_id: id }));
+    expect(observed, JSON.stringify(observed)).toMatchObject({ ok: true });
     const elements = observed.elements;
     if (!Array.isArray(elements)) throw new Error("No controls in drag observation");
     const surface = elements.find((element: unknown) => typeof element === "object" && element !== null && "label" in element && element.label === "Drag surface");
@@ -322,7 +323,7 @@ test("Computer Use enables workspace tools from the desktop setup page", async (
   });
   await step("Person input requires a quiet period and fresh state, without a Continue click", async () => {
     const before = await observeWhenQuiet(session);
-    expect(before.ok).toBe(true);
+    expect(before, JSON.stringify(before)).toMatchObject({ ok: true });
     await world.humanEdit();
     await expect.poll(async () => toolState(await computer.call("computer_session_status", { session_id: session })).phase).toBe("person_interacting");
     expect(toolState(await computer.call("computer_observe", { session_id: session }))).toMatchObject({ code: "user_interacting", next: "wait_then_observe" });
