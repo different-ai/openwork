@@ -2,7 +2,7 @@ import { expect } from "vitest";
 import { browserScript, server, test } from "@openwork/testkit";
 import { addInitScript, setViewport } from "@openwork/cdp";
 import { chrome } from "@openwork/hosts";
-import { evalIn, waitFor } from "@openwork/behaviors";
+import { clickText, evalIn, waitFor } from "@openwork/behaviors";
 
 declare global {
   interface Window {
@@ -79,9 +79,10 @@ test("SSO handoff keeps the shared status screen and supports manual navigation 
   expect(await evalIn(browser, () => (document.querySelector<HTMLAnchorElement>("main a")?.href))).toBe(destination);
   expect(await evalIn(browser, () => (document.querySelector("main a")?.parentElement?.textContent))).toBe("If the page did not open, click here.");
   await evalIn(browser, () => {
-    history.replaceState(null, "", location.pathname);
-    document.querySelector<HTMLAnchorElement>("main a")?.click();
+    location.hash = "";
   });
+  await waitFor(browser, () => location.hash === "");
+  await clickText(browser, "click here");
   await waitFor(browser, () => location.hash === "#identity-provider");
   expect(await evalIn(browser, () => window.ssoRequests.length)).toBe(1);
   evidence.recordAssertionEvidence("Automatic and manual handoff", "The real page sends a credentialed SSO POST, never exposes internal organization identifiers, has no premature fallback, and both location.assign and the fallback anchor reach the returned URL without another request.", true);
@@ -96,7 +97,7 @@ test("SSO handoff keeps the shared status screen and supports manual navigation 
   expect(await requestBody(0)).toEqual({ organizationSlug: "synthetic-team", ...context });
   await reply(0, 403, { message: "Provider unavailable" });
   await expectError("Provider unavailable");
-  await evalIn(browser, () => document.querySelector<HTMLButtonElement>("main button")?.click());
+  await clickText(browser, "Try again");
   await waitFor(browser, () => (window.ssoRequests.length === 2 && !document.querySelector('[role="alert"]')));
   await pending();
   expect(await requestBody(1)).toEqual(await requestBody(0));
