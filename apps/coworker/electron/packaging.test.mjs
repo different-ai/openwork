@@ -118,6 +118,12 @@ test("Open Coworker mirrors every embedded-server runtime dependency for electro
   process.env.pnpm_config_filter = "*";
   before();
   assert.equal(process.env.pnpm_config_filter, "@openwork/coworker", "Collect only Coworker, without expanding to all workspace roots");
+  const workflow = YAML.parse(await readFile(path.resolve(coworkerRoot, "../../.github/workflows/build-electron-coworker.yml"), "utf8"));
+  for (const name of ["build-electron", "electron-macos-signed"]) {
+    const install = workflow.jobs[name].steps.find((step) => step.name === "Install dependencies");
+    assert.match(install.run, /pnpm config set node-linker isolated --location project/, "Keep pnpm's exact-version snapshot paths available to the collector");
+    assert.match(install.run, /pnpm install --frozen-lockfile/, "Do not re-resolve release dependencies");
+  }
 });
 
 test("Open Coworker owns a branded boot surface and cross-platform icon set", async () => {

@@ -668,10 +668,14 @@ test("cancellation fences a stale pump snapshot and cannot be retried into runni
       await service.request({ entry: root, callId: "first" }, "consultation", { to: "editor", question: "First" });
       await service.request({ entry: root, callId: "second" }, "consultation", { to: "ops", question: "Second" });
       await eventually(() => called.length === 1);
+      // Parent settlement may admit either child first; cancellation must fence
+      // the other child regardless of which preparation is already in flight.
+      const firstPrepared = called[0];
+      assert.ok(firstPrepared === "editor" || firstPrepared === "ops");
       await service.cancel(root.taskId);
       release();
       await new Promise((resolve) => setTimeout(resolve, 40));
-      assert.deepEqual(called, ["editor"]);
+      assert.deepEqual(called, [firstPrepared]);
       assert.equal(fixture.requests.some((request) => request.slug !== "scout"), false);
       assert.equal((await service.read((state) => state.tasks[root.taskId])).state, "cancelled");
       await assert.rejects(service.retry(root.taskId), /new request/);

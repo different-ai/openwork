@@ -63,7 +63,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pnpm config set node-linker hoisted --location project
+          pnpm config set node-linker isolated --location project
           pnpm install --frozen-lockfile
 
       - name: Typecheck and unit tests
@@ -165,7 +165,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pnpm config set node-linker hoisted --location project
+          pnpm config set node-linker isolated --location project
           pnpm install --frozen-lockfile
 
       - name: Typecheck and unit tests
