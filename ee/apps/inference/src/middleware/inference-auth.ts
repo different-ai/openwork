@@ -1,6 +1,7 @@
 import { inferenceBearerKey } from "@openwork-ee/utils/inference-bearer-key"
 import { createMiddleware } from "hono/factory"
 import type { findActiveInferenceKey as findActiveInferenceKeyFn } from "../keys.js"
+import { buildRequestId } from "../relay.js"
 
 export type InferenceKeyRow = NonNullable<Awaited<ReturnType<typeof findActiveInferenceKeyFn>>>
 
@@ -13,6 +14,7 @@ export type InferenceContext = {
 
 export type InferenceAuthVariables = {
   inference: InferenceContext
+  openworkRequestId: string
 }
 
 export type InferenceAuthEnv = { Variables: InferenceAuthVariables }
@@ -23,17 +25,28 @@ export type InferenceAuthDependencies = {
 
 export function readInferenceBearerKey(request: Request) {
   const auth = request.headers.get("authorization")
-  if (auth?.toLowerCase().startsWith("bearer ")) {
-    const value = auth.slice(7).trim()
-    return value ? inferenceBearerKey(value) : null
+  const candidates = ["x-api-key", "x-goog-api-key", "api-key"].flatMap((name) => {
+    const value = request.headers.get(name)
+    return value === null ? [] : [value.trim()]
+  })
+  if (auth !== null) candidates.push(/^Bearer\s+(\S+)$/i.exec(auth)?.[1] ?? "")
+  // Google SDK query auth carries the OpenWork key, never an upstream key.
+  candidates.push(...new URL(request.url).searchParams.getAll("key"))
+  if (candidates.some((value) => !value || /[\s,]/.test(value)) || new Set(candidates).size > 1) {
+    throw new Error("ambiguous_api_key")
   }
-  const value = request.headers.get("x-api-key")?.trim()
-  return value ? inferenceBearerKey(value) : null
+  return candidates.length ? inferenceBearerKey(candidates[0]) : null
 }
 
 export function inferenceAuth(dependencies: InferenceAuthDependencies) {
   return createMiddleware<InferenceAuthEnv>(async (c, next) => {
-    const bearerKey = readInferenceBearerKey(c.req.raw)
+    const requestId = buildRequestId()
+    c.set("openworkRequestId", requestId)
+    c.header("x-openwork-request-id", requestId)
+    let bearerKey
+    try { bearerKey = readInferenceBearerKey(c.req.raw) } catch {
+      return c.json({ error: { message: "Conflicting or malformed OpenWork credentials.", type: "authentication_error", code: "ambiguous_api_key" } }, 401)
+    }
     if (!bearerKey) {
       console.error("[inference-proxy] Missing inference API key", { path: c.req.path, method: c.req.method })
       return c.json({ error: { message: "Missing OpenWork inference API key.", type: "authentication_error", code: "missing_api_key" } }, 401)
@@ -52,5 +65,6 @@ export function inferenceAuth(dependencies: InferenceAuthDependencies) {
       inferenceKeyId: key.id,
     })
     await next()
+    c.res.headers.set("x-openwork-request-id", requestId)
   })
 }

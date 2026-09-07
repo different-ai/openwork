@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/node"
+import { createMiddleware } from "hono/factory"
 import { shouldEmitSentryLog } from "./instrumentation.js"
 import type { ChatCompletionReport } from "./chat-response.js"
 
@@ -42,50 +43,54 @@ export type InferenceReporter = {
   completion?(report: ChatCompletionReport & { openworkRequestId: string; organizationId: string; orgMembershipId: string; modelAlias: string }): void
 }
 
-type PayloadLog = {
-  mode: PayloadLogMode
-  payload: unknown
+export function sanitizeIncomingHeaders(headers: Headers) {
+  return Object.fromEntries([...headers.keys()].map((name) => [name, "[REDACTED]"]))
+}
+
+export function safeAccessUrl(input: string) {
+  try { const url = new URL(input); return `${url.origin}${url.pathname}` } catch { return "[invalid-url]" }
+}
+
+export const inferenceAccessLogger = createMiddleware(async (c, next) => {
+  const startedAt = Date.now()
+  const route = ["/api/v1/models", "/api/v1/chat/completions", "/webhooks/openrouter"].includes(c.req.path) ? c.req.path : "other"
+  try { await next() } finally {
+    console.log("[inference-http]", { method: c.req.method, route, status: c.res.status, durationMs: Date.now() - startedAt })
+  }
+})
+
+export function safeInferenceReporter(reporter: InferenceReporter): InferenceReporter {
+  return {
+    completion(report) {
+      try { reporter.completion?.(report) } catch { /* Optional reporting. */ }
+    },
+    request(report) {
+      try { reporter.request(report) } catch { /* Optional reporting cannot break inference. */ }
+    },
+    handledError(report) {
+      const { error, exception, statusText, ...safe } = report
+      try { reporter.handledError({ ...safe, upstreamUrl: safe.upstreamUrl ? safeAccessUrl(safe.upstreamUrl) : undefined }) } catch { /* Optional reporting. */ }
+    },
+  }
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-export function sanitizeIncomingHeaders(headers: Headers) {
-  const sanitized: Record<string, string> = {}
-  for (const header of ["content-type", "accept", "content-length"]) {
-    const value = headers.get(header)
-    if (value) sanitized[header] = value
-  }
-  return sanitized
+export function buildInferencePayloadLog(_organizationId: string, payload: unknown): { mode: PayloadLogMode; payload: unknown } {
+  // Counts only, for every organization. Field names, roles, tool names and
+  // other caller-provided strings can themselves contain prompt content.
+  return { mode: "summary", payload: {
+    bodyType: payload === null ? "null" : Array.isArray(payload) ? "array" : typeof payload,
+    messageCount: isJsonObject(payload) && Array.isArray(payload.messages) ? payload.messages.length : 0,
+    toolCount: isJsonObject(payload) && Array.isArray(payload.tools) ? payload.tools.length : 0,
+    stream: isJsonObject(payload) && payload.stream === true,
+  } }
 }
 
-function summarizePayload(value: unknown) {
-  if (!isJsonObject(value)) return { bodyType: "invalid" }
-  const messages = Array.isArray(value.messages) ? value.messages : []
-  const tools = Array.isArray(value.tools) ? value.tools : []
-  return {
-    bodyType: "object",
-    stream: typeof value.stream === "boolean" ? value.stream : null,
-    messageCount: messages.length,
-    toolCount: tools.length,
-    roles: messages.map((message) => isJsonObject(message) && ["system", "developer", "user", "assistant", "tool"].includes(String(message.role)) ? message.role : "unknown"),
-  }
-}
-
-export function buildInferencePayloadLog(_organizationId: string, payload: unknown): PayloadLog {
-  return { mode: "summary", payload: summarizePayload(payload) }
-}
-
-export function buildUnparsedPayloadLog(reason: string, contentType: string | null): PayloadLog {
-  return {
-    mode: "summary",
-    payload: {
-      bodyType: "unparsed",
-      reason,
-      contentType,
-    },
-  }
+export function buildUnparsedPayloadLog(reason: string, contentType: string | null): { mode: PayloadLogMode; payload: unknown } {
+  return { mode: "summary", payload: { bodyType: "unparsed", reason, hasContentType: contentType !== null } }
 }
 
 function reportAttributes(report: InferenceRequestReport | InferenceHandledErrorReport) {
@@ -102,16 +107,6 @@ function reportAttributes(report: InferenceRequestReport | InferenceHandledError
   }
 }
 
-function reportTags(report: InferenceRequestReport | InferenceHandledErrorReport) {
-  return {
-    organization_id: report.organizationId,
-    inference_key_id: report.inferenceKeyId,
-    openwork_request_id: report.openworkRequestId,
-    route: report.route,
-    method: report.method,
-  }
-}
-
 export const sentryInferenceReporter: InferenceReporter = {
   completion(report) {
     if (shouldEmitSentryLog(report.outcome === "completed" ? "info" : "error")) {
@@ -120,39 +115,21 @@ export const sentryInferenceReporter: InferenceReporter = {
     }
   },
   request(report) {
-    if (!shouldEmitSentryLog("info")) {
-      return
-    }
-
+    if (!shouldEmitSentryLog("info")) return
     Sentry.logger.info("OpenWork chat completions inference request", {
-      ...reportAttributes(report),
-      payloadMode: report.payloadMode,
-      payload: report.payload,
+      ...reportAttributes(report), payloadMode: report.payloadMode, payload: report.payload,
     })
   },
   handledError(report) {
     const attributes = {
-      ...reportAttributes(report),
-      reason: report.reason,
-      status: report.status,
-      statusText: report.statusText,
-      upstreamUrl: report.upstreamUrl,
-      error: report.error,
+      ...reportAttributes(report), reason: report.reason, status: report.status,
+      upstreamUrl: report.upstreamUrl ? safeAccessUrl(report.upstreamUrl) : undefined,
     }
-    if (shouldEmitSentryLog("error")) {
-      Sentry.logger.error("OpenWork inference handled error", attributes)
-    }
-    if (report.exception === undefined) {
-      Sentry.captureMessage(`OpenWork inference handled error: ${report.reason}`, {
-        level: "error",
-        tags: reportTags(report),
-        contexts: { inference: attributes },
-      })
-      return
-    }
-    Sentry.captureException(report.exception, {
+    if (shouldEmitSentryLog("error")) Sentry.logger.error("OpenWork inference handled error", attributes)
+    // Exceptions often contain request/SQL parameters. Never send them to Sentry.
+    Sentry.captureMessage(`OpenWork inference handled error: ${report.reason}`, {
       level: "error",
-      tags: reportTags(report),
+      tags: { organization_id: report.organizationId, inference_key_id: report.inferenceKeyId, openwork_request_id: report.openworkRequestId, route: report.route, method: report.method },
       contexts: { inference: attributes },
     })
   },

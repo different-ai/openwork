@@ -56,7 +56,7 @@ function sseResponse(events: string[], init: ResponseInit = {}) {
 }
 
 async function waitForRows(rows: InferenceRequestLogRow[], count = 1) {
-  for (let attempt = 0; attempt < 50 && rows.length < count; attempt += 1) {
+  for (let attempt = 0; attempt < 50 && (rows.length < count || rows.some((row) => !row.completed_at)); attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
   assert.equal(rows.length, count)
@@ -224,10 +224,16 @@ function createTestServer(options: TestServerOptions = {}) {
     fetch: upstreamFetch,
     analytics: options.analytics,
     async loadOrganization(organizationId) {
-      return { id: organizationId, metadata: null }
+      return { id: organizationId, metadata: { inference: { enabled: true, tier: "tier1" } } }
     },
     async insertRequestLog(row) {
       logRows.push(row)
+    },
+    async updateRequestLog(row) {
+      const index = logRows.findIndex((entry) => entry.id === row.id)
+      if (index < 0) return false
+      logRows[index] = row
+      return true
     },
     reporter,
   })
@@ -644,7 +650,7 @@ test("summarizes ordinary organization payload shape without message content or 
   const payload = requireReportPayload(report)
   assert.equal(payload.stream, true)
   assert.equal(payload.messageCount, 2)
-  assert.deepEqual(payload.roles, ["system", "user"])
+  assert.equal(payload.toolCount, 1)
 })
 
 test("every organization uses content-free diagnostics", async () => {
@@ -655,11 +661,11 @@ test("every organization uses content-free diagnostics", async () => {
   assert.ok(!JSON.stringify(reports).includes("private prompt"))
 })
 
-test("redacts credential-like incoming headers without redacting non-secret IDs", async () => {
+test("redacts all caller-controlled header values", async () => {
   const { app, reports } = createTestServer()
   const headers = authHeaders("application/json")
   headers.set("key", "generic-header-key")
-  headers.set("x-api-key", "caller-api-key")
+  headers.set("x-api-key", "test-key")
   headers.set("x-api-key-id", "api_key_id_123")
   headers.set("x-provider-key-id", "provider_key_id_123")
   headers.set("cookie", "session=secret")
@@ -683,7 +689,24 @@ test("redacts credential-like incoming headers without redacting non-secret IDs"
 
   assert.equal(response.status, 200)
   const report = requireRequestReport(reports)
-  assert.deepEqual(report.headers, { "content-type": "application/json" })
+  assert.equal(report.headers.authorization, "[REDACTED]")
+  assert.equal(report.headers.key, "[REDACTED]")
+  assert.equal(report.headers["x-api-key"], "[REDACTED]")
+  assert.equal(report.headers["x-api-key-id"], "[REDACTED]")
+  assert.equal(report.headers["x-provider-key-id"], "[REDACTED]")
+  assert.equal(report.headers.cookie, "[REDACTED]")
+  assert.equal(report.headers["client-secret"], "[REDACTED]")
+  assert.equal(report.headers["x-private-key"], "[REDACTED]")
+  assert.equal(report.headers["sentry-dsn"], "[REDACTED]")
+  assert.equal(report.headers["x-signature"], "[REDACTED]")
+  assert.equal(report.headers["x-custom-token"], "[REDACTED]")
+  assert.equal(report.headers.forwarded, "[REDACTED]")
+  assert.equal(report.headers["x-forwarded-for"], "[REDACTED]")
+  assert.equal(report.headers["x-real-ip"], "[REDACTED]")
+  assert.equal(report.headers["cf-connecting-ip"], "[REDACTED]")
+  assert.equal(report.headers["true-client-ip"], "[REDACTED]")
+  assert.equal(report.headers["x-inference-key-id"], "[REDACTED]")
+  assert.equal(report.headers["x-safe-header"], "[REDACTED]")
 })
 
 test("returns usage-limit 429 without reporting a handled error or contacting provider/upstream", async () => {
@@ -755,7 +778,7 @@ test("reports upstream connection failures without retaining exception payloads"
   const errorReport = requireHandledErrorReport(reports)
   assert.equal(errorReport.reason, "upstream_unreachable")
   assert.equal(errorReport.exception, undefined)
-  assert.equal(errorReport.error, "Upstream connection failed")
+  assert.equal(errorReport.error, undefined)
   assert.equal(errorReport.organizationId, "organization_123")
   assert.equal(errorReport.inferenceKeyId, "inference_key_123")
 })
@@ -1130,7 +1153,7 @@ test("logs a rejected row for model_not_found", async () => {
   assert.equal(row.status, 404)
   assert.equal(row.protocol, "openai_chat")
   assert.equal(row.requested_model, "openwork/unknown-model")
-  assert.equal(row.upstream_model, null)
+  assert.equal(row.upstream_model, "openwork/unknown-model")
   assert.equal(row.stream, true)
   assert.equal(row.usage_source, "missing")
   assert.equal(row.upstream_host, "upstream.test")
@@ -1211,6 +1234,7 @@ test("logs upstream_error for a non-2xx upstream response", async () => {
   }))
 
   assert.equal(response.status, 503)
+  await response.arrayBuffer()
   const row = await waitForRows(logRows)
   assert.equal(row.outcome, "upstream_error")
   assert.equal(row.status, 503)

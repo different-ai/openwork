@@ -41,7 +41,7 @@ test("token minter: posts the jwt-bearer grant, caches per credential, re-mints 
   const calls: Array<{ url: string; assertion: string | null }> = []
   let counter = 0
   const minter = createGcpServiceAccountTokenMinter({
-    fetch: async (input, init) => {
+    tokenFetch: async (input, init) => {
       const body = init?.body
       assert.ok(body instanceof URLSearchParams)
       assert.equal(body.get("grant_type"), "urn:ietf:params:oauth:grant-type:jwt-bearer")
@@ -74,7 +74,7 @@ test("token minter: posts the jwt-bearer grant, caches per credential, re-mints 
 })
 
 test("token minter: endpoint errors and unsignable keys are reported, not thrown", async () => {
-  const failing = createGcpServiceAccountTokenMinter({ fetch: async () => Response.json({ error: "invalid_grant" }, { status: 400 }) })
+  const failing = createGcpServiceAccountTokenMinter({ tokenFetch: async () => Response.json({ error: "invalid_grant" }, { status: 400 }) })
   const result = await failing({ credentialId: "ipc_x", serviceAccount, now: new Date() })
   assert.deepEqual(result, { kind: "error", message: "token endpoint returned 400" })
 

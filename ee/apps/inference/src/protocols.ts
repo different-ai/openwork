@@ -62,16 +62,16 @@ export function classifyRequestProtocol(family: ProtocolFamily, restPath: string
   switch (family) {
     case "anthropic":
     case "google_vertex_anthropic":
-      return pathname.endsWith("/messages") ? "anthropic_messages" : "passthrough"
+      return /^\/(?:v1\/)?messages$/.test(pathname) ? "anthropic_messages" : "passthrough"
     case "openai":
     case "azure":
     case "openai_compatible":
-      if (pathname.endsWith("/chat/completions")) return "openai_chat"
-      if (pathname.endsWith("/responses")) return "openai_responses"
+      if (/^\/(?:v1\/)?(?:deployments\/[^/]+\/)?chat\/completions$/.test(pathname)) return "openai_chat"
+      if (/^\/(?:v1\/)?(?:deployments\/[^/]+\/)?responses$/.test(pathname)) return "openai_responses"
       return "passthrough"
     case "google":
     case "google_vertex":
-      return parseGoogleModelPath(pathname) ? "google_generate_content" : "passthrough"
+      return /^\/(?:v1(?:beta|alpha)?\/)?models\/[^/]+:(?:generateContent|streamGenerateContent)$/.test(pathname) ? "google_generate_content" : "passthrough"
     case "bedrock":
       return parseBedrockModelPath(pathname) ? "bedrock_converse" : "passthrough"
   }
@@ -119,9 +119,11 @@ export function isAllowedRequestHeader(family: ProtocolFamily, name: string) {
   return familyHeaderAllowlist[family].includes(lower)
 }
 
-export function filterQuery(family: ProtocolFamily, search: string) {
+export function filterQuery(_family: ProtocolFamily, search: string) {
   const params = new URLSearchParams(search)
-  if (family === "google" || family === "google_vertex") params.delete("key")
+  for (const name of [...params.keys()]) {
+    if (["key", "api_key", "api-key", "apikey", "access_token", "token", "authorization"].includes(name.toLowerCase())) params.delete(name)
+  }
   const filtered = params.toString()
   return filtered ? `?${filtered}` : ""
 }
@@ -129,7 +131,7 @@ export function filterQuery(family: ProtocolFamily, search: string) {
 export function defaultBaseUrl(family: ProtocolFamily, settings: Record<string, unknown>) {
   if (family === "azure") {
     const resourceName = settings.resourceName
-    return typeof resourceName === "string" && resourceName
+    return typeof resourceName === "string" && /^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$/.test(resourceName)
       ? `https://${resourceName}.openai.azure.com/openai`
       : null
   }
@@ -138,6 +140,7 @@ export function defaultBaseUrl(family: ProtocolFamily, settings: Record<string, 
     // wins over settings.region, plan §5.3), so a missing region here must not
     // fail URL resolution: the region-less host is replaced before use.
     const region = settings.region
+    if (region !== undefined && (typeof region !== "string" || !/^[a-z]{2}(?:-[a-z]+)+-\d+$/.test(region))) return null
     return `https://${typeof region === "string" && region ? bedrockRuntimeHost(region) : "bedrock-runtime.amazonaws.com"}`
   }
   return defaultBaseUrlByFamily[family] ?? null
@@ -150,7 +153,8 @@ export function vertexHost(location: string) {
 export function vertexPublisherBase(settings: Record<string, unknown>, publisher: "google" | "anthropic") {
   const project = settings.project
   const location = settings.location
-  if (typeof project !== "string" || !project || typeof location !== "string" || !location) return null
+  if (typeof project !== "string" || !/^(?:[a-z][a-z0-9-]{4,61}[a-z0-9]|[0-9]{6,20})$/.test(project)
+    || typeof location !== "string" || !/^(?:global|[a-z]+(?:-[a-z]+)*[0-9]+)$/.test(location)) return null
   return `https://${vertexHost(location)}/v1/projects/${project}/locations/${location}/publishers/${publisher}`
 }
 

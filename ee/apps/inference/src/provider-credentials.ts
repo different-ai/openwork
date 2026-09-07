@@ -3,14 +3,17 @@
 // own row, never falling back to the org row. Member `oauth_google` tokens are
 // refreshed under a lock near expiry (§5.5), `gcp_service_account` secrets are
 // minted into a bearer (§5.6) and `aws_keys` are handed to the SigV4 signer.
-import { and, eq } from "@openwork-ee/den-db/drizzle"
-import { InferenceProviderCredentialTable, InferenceProviderTable } from "@openwork-ee/den-db"
+import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
+import { InferenceProviderCredentialTable, InferenceProviderTable, MemberTable } from "@openwork-ee/den-db"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap as pickApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
+export { pickInferenceApiKeyFromMap as pickApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
 import { parseInferenceProviderSecret } from "@openwork/types/den/inference"
 import type { InferenceAwsKeysSecret, InferenceProviderCredentialKind } from "@openwork/types/den/inference"
 import type { MintGcpAccessToken } from "./credentials/gcp-service-account.js"
 import { needsGoogleOauthRefresh } from "./credentials/google-oauth-refresh.js"
 import type { RefreshGoogleOauthToken } from "./credentials/google-oauth-refresh.js"
+import { hasProviderAccessFromDb } from "./provider-access.js"
 
 export type GatewayProvider = Pick<
   typeof InferenceProviderTable.$inferSelect,
@@ -25,6 +28,7 @@ export type GatewayCredential = Pick<
 export type LoadProviderCredential = (input: {
   inferenceProviderId: string
   subject: string
+  orgMembershipId: string
 }) => Promise<GatewayCredential | null>
 
 type CredentialId = GatewayCredential["id"]
@@ -37,19 +41,9 @@ export type ResolvedUpstreamCredential =
   | { kind: "org_credential_expired"; credentialId: CredentialId }
   | { kind: "invalid_secret"; credentialId: CredentialId; message: string }
   | { kind: "token_mint_failed"; credentialId: CredentialId; message: string }
+  | { kind: "retry"; credentialId: CredentialId; reason: "refresh_busy" | "refresh_unavailable" | "credential_changed" }
 
 export const ORG_CREDENTIAL_SUBJECT = "org"
-
-const keyLikeEnvName = /(API_KEY|_KEY|TOKEN)$/
-
-export function pickApiKeyFromMap(apiKeys: Record<string, string>, envNames: string[]) {
-  const keyLike = envNames.find((name) => keyLikeEnvName.test(name) && apiKeys[name])
-  if (keyLike) return apiKeys[keyLike]
-  const primary = envNames[0]
-  if (primary && apiKeys[primary]) return apiKeys[primary]
-  const values = Object.values(apiKeys)
-  return values.length === 1 ? values[0] : null
-}
 
 function isExpired(credential: GatewayCredential, now: Date) {
   return credential.expires_at !== null && credential.expires_at.getTime() <= now.getTime()
@@ -58,8 +52,8 @@ function isExpired(credential: GatewayCredential, now: Date) {
 function parseSecret(credential: GatewayCredential) {
   try {
     return parseInferenceProviderSecret(credential.kind, credential.secret)
-  } catch (error) {
-    return { kind: "invalid_secret" as const, credentialId: credential.id, message: error instanceof Error ? error.message : String(error) }
+  } catch {
+    return { kind: "invalid_secret" as const, credentialId: credential.id, message: "Credential secret is invalid" }
   }
 }
 
@@ -76,7 +70,7 @@ async function materialize(
     case "api_key_map": {
       const secret = pickApiKeyFromMap(parsed.apiKeys, input.envNames)
       if (!secret) {
-        return { kind: "invalid_secret", credentialId: credential.id, message: "api_key_map has no value for the provider's key env name" }
+        return { kind: "invalid_secret", credentialId: credential.id, message: "api_key_map has no unambiguous trusted credential field" }
       }
       return { kind: "secret", credentialId: credential.id, credentialKind: parsed.kind, secret }
     }
@@ -99,6 +93,7 @@ async function materialize(
 export async function resolveUpstreamCredential(input: {
   provider: GatewayProvider
   orgMembershipId: string
+  /** From ProviderCatalog, not provider_config.env or member input. */
   envNames: string[]
   loadProviderCredential: LoadProviderCredential
   refreshGoogleOauthToken?: RefreshGoogleOauthToken
@@ -106,42 +101,64 @@ export async function resolveUpstreamCredential(input: {
   now?: Date
 }): Promise<ResolvedUpstreamCredential> {
   const now = input.now ?? new Date()
+  const started = performance.now()
   const materializeInput = { envNames: input.envNames, now, mintGcpAccessToken: input.mintGcpAccessToken }
   const subject = input.provider.credential_mode === "member" ? input.orgMembershipId : ORG_CREDENTIAL_SUBJECT
-  let credential = await input.loadProviderCredential({ inferenceProviderId: input.provider.id, subject })
-
-  if (input.provider.credential_mode !== "member") {
-    if (!credential || credential.status !== "active") return { kind: "org_credential_missing" }
-    if (isExpired(credential, now)) return { kind: "org_credential_expired", credentialId: credential.id }
-    const parsed = parseSecret(credential)
-    return parsed.kind === "invalid_secret" ? parsed : materialize(credential, parsed, materializeInput)
-  }
-
-  if (!credential) return { kind: "auth_required", credentialId: null, reason: "missing" }
-  if (credential.status !== "active") return { kind: "auth_required", credentialId: credential.id, reason: "inactive" }
+  const inactive = (credentialId: CredentialId | null): ResolvedUpstreamCredential => input.provider.credential_mode === "member"
+    ? { kind: "auth_required", credentialId, reason: "inactive" } : { kind: "org_credential_missing" }
+  if (input.provider.status !== "active") return inactive(null)
+  const lookup = { inferenceProviderId: input.provider.id, subject, orgMembershipId: input.orgMembershipId }
+  let credential = await input.loadProviderCredential(lookup)
+  if (!credential) return input.provider.credential_mode === "member" ? { kind: "auth_required", credentialId: null, reason: "missing" } : { kind: "org_credential_missing" }
+  if (credential.status !== "active") return inactive(credential.id)
   let parsed = parseSecret(credential)
   if (parsed.kind === "invalid_secret") return parsed
 
-  if (parsed.kind === "oauth_google" && credential.kind === "oauth_google" && input.refreshGoogleOauthToken && needsGoogleOauthRefresh(credential, parsed.token, now)) {
-    const outcome = await input.refreshGoogleOauthToken({ credential: { ...credential, kind: "oauth_google" }, token: parsed.token, provider: input.provider, now })
+  if (!isInferenceCredentialKindSupported(parsed.kind, input.provider.provider_id)) {
+    return { kind: "invalid_secret", credentialId: credential.id, message: "Credential kind is not supported by this provider" }
+  }
+
+  if (input.provider.credential_mode === "member" && parsed.kind === "oauth_google" && credential.kind === "oauth_google" && input.refreshGoogleOauthToken && needsGoogleOauthRefresh(credential, parsed.token, now)) {
+    const outcome = await input.refreshGoogleOauthToken({ credential: { ...credential, kind: "oauth_google" }, token: parsed.token, provider: input.provider, subject, now })
     if (outcome.kind === "auth_required") return { kind: "auth_required", credentialId: credential.id, reason: "refresh_failed" }
     if (outcome.kind === "refreshed") {
       credential = outcome.credential
       parsed = parseSecret(credential)
       if (parsed.kind === "invalid_secret") return parsed
     } else {
-      // Lock held elsewhere or a transient token-endpoint failure: send the
-      // stale token and let the upstream 401 pass through.
-      return materialize(credential, parsed, materializeInput)
+      return { ...outcome, credentialId: credential.id }
     }
   }
 
-  if (isExpired(credential, now)) return { kind: "auth_required", credentialId: credential.id, reason: "expired" }
-  return materialize(credential, parsed, materializeInput)
+  if (isExpired(credential, now)) return input.provider.credential_mode === "member"
+    ? { kind: "auth_required", credentialId: credential.id, reason: "expired" }
+    : { kind: "org_credential_expired", credentialId: credential.id }
+  const result = await materialize(credential, parsed, materializeInput)
+  // The minter's cache is not authorization. Recheck after mint/refresh/cache
+  // awaits so concurrent revocation or replacement never returns that token.
+  const current = await input.loadProviderCredential(lookup)
+  if (!current || current.status !== "active") return inactive(credential.id)
+  if (current.id !== credential.id || current.kind !== credential.kind || current.secret !== credential.secret
+    || current.expires_at?.getTime() !== credential.expires_at?.getTime()) {
+    return { kind: "retry", credentialId: credential.id, reason: "credential_changed" }
+  }
+  if (isExpired(current, new Date(now.getTime() + Math.floor(performance.now() - started)))) {
+    return { kind: "retry", credentialId: credential.id, reason: "credential_changed" }
+  }
+  return result
 }
 
 export const loadProviderCredentialFromDb: LoadProviderCredential = async (input) => {
   const { db } = await import("./db.js")
+  // Cache hits still require a live member, provider and grant. This runs both
+  // before and after token work, including for a shared org credential.
+  const [authorized] = await db.select({ organizationId: MemberTable.organizationId, mode: InferenceProviderTable.credential_mode }).from(MemberTable)
+    .innerJoin(InferenceProviderTable, eq(InferenceProviderTable.organization_id, MemberTable.organizationId))
+    .where(and(eq(MemberTable.id, normalizeDenTypeId("member", input.orgMembershipId)), isNull(MemberTable.removedAt), isNotNull(MemberTable.userId),
+      eq(InferenceProviderTable.id, normalizeDenTypeId("inferenceProvider", input.inferenceProviderId)), eq(InferenceProviderTable.status, "active")))
+    .limit(1)
+  if (!authorized || !(await hasProviderAccessFromDb(input))) return null
+  if (input.subject !== (authorized.mode === "member" ? input.orgMembershipId : ORG_CREDENTIAL_SUBJECT)) return null
   const [row] = await db
     .select({
       id: InferenceProviderCredentialTable.id,
@@ -153,6 +170,7 @@ export const loadProviderCredentialFromDb: LoadProviderCredential = async (input
     .from(InferenceProviderCredentialTable)
     .where(and(
       eq(InferenceProviderCredentialTable.inference_provider_id, normalizeDenTypeId("inferenceProvider", input.inferenceProviderId)),
+      eq(InferenceProviderCredentialTable.organization_id, authorized.organizationId),
       eq(InferenceProviderCredentialTable.subject, input.subject),
     ))
     .limit(1)

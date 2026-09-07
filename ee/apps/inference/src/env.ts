@@ -19,6 +19,7 @@ const EnvSchema = z
     OPENAI_REALTIME_API_KEY: z.string().optional(),
     OPENAI_API_KEY: z.string().optional(),
     INFERENCE_ADMIN_TOKEN: z.string().optional(),
+    INFERENCE_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1000).max(24 * 60 * 60_000).default(30 * 60_000),
     INFERENCE_WEBHOOK_SECRET: z.string().optional(),
     INFERENCE_CREDITS_PER_DOLLAR: z.string().optional(),
   })
@@ -113,6 +114,7 @@ const planetscale: PlanetScaleCredentials | null =
     : null;
 
 export const env = {
+  upstreamTimeoutMs: parsed.INFERENCE_UPSTREAM_TIMEOUT_MS,
   port: parsePort(parsed.PORT),
   upstreamTimeoutMs: parsed.INFERENCE_UPSTREAM_TIMEOUT_MS,
   streamIdleMs: parsed.INFERENCE_STREAM_IDLE_MS,

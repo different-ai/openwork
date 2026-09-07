@@ -5,6 +5,7 @@
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { InferenceProviderTable } from "@openwork-ee/den-db"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
+import { validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
 import type { InferenceRequestOutcome, InferenceRequestProtocol } from "@openwork/types/den/inference"
 import type { Context, Hono } from "hono"
 import { sanitizeIncomingHeaders } from "./inference-reporting.js"
@@ -35,9 +36,10 @@ import { loadProviderCatalogFromFile } from "./provider-catalog.js"
 import type { CatalogProvider, ProviderCatalog } from "./provider-catalog.js"
 import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provider-credentials.js"
 import type { GatewayCredential, GatewayProvider, LoadProviderCredential, ResolvedUpstreamCredential } from "./provider-credentials.js"
-import { buildRequestId, isEventStreamContentType, isJsonContentType, trackStream } from "./relay.js"
+import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBody, RequestBodyLimitError, upstreamLifetime } from "./relay.js"
+import { env } from "./env.js"
 import { createRequestLogRecorder } from "./request-log.js"
-import type { InsertRequestLog, RequestLogRecorder } from "./request-log.js"
+import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
 import { createAnthropicMessagesSseUsageParser, parseAnthropicMessagesJsonUsage } from "./usage/anthropic-messages.js"
 import {
   createBedrockConverseEventStreamUsageParser,
@@ -66,6 +68,7 @@ export type LoadInferenceProvider = (input: {
 export type GatewayDependencies = {
   fetch: typeof fetch
   insertRequestLog: InsertRequestLog
+  updateRequestLog?: RequestLogRecorderDependencies["updateRequestLog"]
   reporter: InferenceReporter
   loadInferenceProvider: LoadInferenceProvider
   hasProviderAccess: HasProviderAccess
@@ -87,7 +90,7 @@ type ResolvedUpstream = {
 }
 
 type PreparedRequest = {
-  body: string | null
+  body: string | Uint8Array<ArrayBuffer> | null
   requestedModel: string | null
   stream: boolean
   url: URL
@@ -99,12 +102,12 @@ type UsableCredential = Extract<ResolvedUpstreamCredential, { kind: "secret" | "
 // hashes the body, so it follows every body rewrite).
 type UpstreamAuth =
   | { kind: "header"; header: AuthHeader }
-  | { kind: "signer"; host: string; sign: (request: { method: string; url: URL; headers: Headers; body: string | null }) => void }
+  | { kind: "signer"; host: string; sign: (request: { method: string; url: URL; headers: Headers; body: string | Uint8Array<ArrayBuffer> | null }) => void }
 
 export const gatewayPathPrefix = "/api/v1/providers"
 
-const droppedResponseHeaders = new Set(["content-encoding", "content-length", "transfer-encoding", "connection"])
-const bodylessMethods = new Set(["GET", "HEAD", "OPTIONS"])
+const droppedResponseHeaders = new Set(["content-length", "transfer-encoding", "connection"])
+const bodylessMethods = new Set(["GET", "HEAD"])
 const vertexAnthropicVersion = "vertex-2023-10-16"
 
 export const loadInferenceProviderFromDb: LoadInferenceProvider = async (input) => {
@@ -143,8 +146,8 @@ function gatewayError(status: number, code: string, message: string, extra: Json
 }
 
 function readBaseUrl(provider: GatewayProvider, catalog: CatalogProvider | null, family: ProtocolFamily) {
-  // Org-configured override (regional host / compatible self-hosted endpoint,
-  // plan §4.1). den-api validates it as a clean http(s) URL at write time.
+  // Revalidate persisted overrides at runtime; self-hosted origins require an
+  // explicit operator allowlist even when den-api accepted the configuration.
   const override = provider.settings.upstreamBaseUrl
   if (typeof override === "string" && override) return override
   const config = provider.provider_config
@@ -176,7 +179,10 @@ function resolveUpstream(provider: GatewayProvider, catalog: CatalogProvider | n
   const protocol = classifyRequestProtocol(family, forwardedRest)
   let url: URL
   try {
+    validateInferenceUrl(base, { base: true })
     url = new URL(`${base.replace(/\/+$/, "")}${forwardedRest ? `/${forwardedRest}` : ""}${filterQuery(family, search)}`)
+    validateInferenceUrl(url)
+    if (url.origin !== new URL(base).origin) return { error: "Invalid upstream origin." }
   } catch {
     return { error: `Provider ${provider.provider_id} has an invalid upstream base URL.` }
   }
@@ -202,7 +208,7 @@ function materializeAuth(credential: UsableCredential, provider: GatewayProvider
   }
   const settingsRegion = typeof provider.settings.region === "string" && provider.settings.region ? provider.settings.region : null
   const region = (credential.kind === "aws_keys" ? credential.awsKeys.region : undefined) ?? settingsRegion
-  if (!region) return { error: "Bedrock providers require a region on the AWS credential or settings.region." }
+  if (!region || !/^[a-z]{2}(?:-[a-z]+)+-\d+$/.test(region)) return { error: "Bedrock providers require a valid AWS region." }
   // A static key (Bedrock API key) keeps the settings.region host resolved earlier.
   if (credential.kind === "secret") return { kind: "header", header: buildAuthHeader(family, credential.secret) }
   const credentials = credential.awsKeys
@@ -222,17 +228,22 @@ async function prepareRequest(request: Request, upstream: ResolvedUpstream): Pro
     return { body: null, requestedModel: pathModel, stream: isStreamingPath(upstream.protocol, url.pathname), url }
   }
 
-  const text = await request.text()
+  let bytes: Uint8Array<ArrayBuffer>
+  try { bytes = await readBoundedBody(request) } catch (error) {
+    const limited = error instanceof RequestBodyLimitError
+    const code = limited ? "request_too_large" : "request_body_failed"
+    return { error: gatewayError(limited ? 413 : 400, code, "Could not read the request body within gateway limits."), errorCode: code }
+  }
   let json: unknown = null
-  if (isJsonContentType(request.headers.get("content-type"))) {
+  if (upstream.protocol !== "passthrough" && isJsonContentType(request.headers.get("content-type"))) {
     try {
-      json = JSON.parse(text)
+      json = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
     } catch {
       json = null
     }
   }
   if (!isJsonObject(json)) {
-    return { body: text, requestedModel: pathModel, stream: isStreamingPath(upstream.protocol, url.pathname), url }
+    return { body: bytes, requestedModel: pathModel, stream: isStreamingPath(upstream.protocol, url.pathname), url }
   }
 
   const requestedModel = typeof json.model === "string" ? json.model : pathModel
@@ -251,10 +262,10 @@ async function prepareRequest(request: Request, upstream: ResolvedUpstream): Pro
     delete json.model
     json.anthropic_version = vertexAnthropicVersion
     modified = true
-    url.pathname = url.pathname.replace(/\/messages$/, `/models/${requestedModel}:${stream ? "streamRawPredict" : "rawPredict"}`)
+    url.pathname = url.pathname.replace(/\/messages$/, `/models/${encodeURIComponent(requestedModel)}:${stream ? "streamRawPredict" : "rawPredict"}`)
   }
 
-  return { body: modified ? JSON.stringify(json) : text, requestedModel, stream, url }
+  return { body: modified ? JSON.stringify(json) : bytes, requestedModel, stream, url }
 }
 
 function buildUpstreamHeaders(request: Request, family: ProtocolFamily, openworkRequestId: string) {
@@ -276,7 +287,7 @@ function relayHeaders(upstream: Response, openworkRequestId: string) {
 }
 
 function upstreamRequestId(headers: Headers) {
-  return headers.get("x-request-id") ?? headers.get("request-id") ?? headers.get("x-goog-request-id")
+  return headers.get("x-request-id") ?? headers.get("request-id") ?? headers.get("x-goog-request-id") ?? headers.get("x-amzn-requestid")
 }
 
 function upstreamOutcome(upstream: Response): InferenceRequestOutcome {
@@ -301,8 +312,8 @@ function parseJsonUsage(protocol: InferenceRequestProtocol, body: unknown): Pars
 }
 
 function createStreamUsageParser(protocol: InferenceRequestProtocol, contentType: string | null): UsageParser | null {
-  if (protocol === "bedrock_converse") {
-    return isAwsEventStreamContentType(contentType) ? createBedrockConverseEventStreamUsageParser() : null
+  if (protocol === "bedrock_converse" && isAwsEventStreamContentType(contentType)) {
+    return createBedrockConverseEventStreamUsageParser()
   }
   if (isEventStreamContentType(contentType)) {
     switch (protocol) {
@@ -315,6 +326,7 @@ function createStreamUsageParser(protocol: InferenceRequestProtocol, contentType
       case "google_generate_content":
         return createGoogleGenerateContentSseUsageParser()
       case "passthrough":
+      case "bedrock_converse":
         return null
     }
   }
@@ -336,31 +348,14 @@ function recordUsage(recorder: RequestLogRecorder, usage: ParsedUsage, source: "
     cacheWriteTokens: usage.cacheWriteTokens ?? null,
     reasoningTokens: usage.reasoningTokens,
     costUsd: usage.costUsd ?? null,
+    upstreamRequestId: usage.upstreamRequestId,
+    streamError: usage.streamError,
   })
 }
 
-async function relayJsonResponse(upstream: Response, protocol: InferenceRequestProtocol, headers: Headers, recorder: RequestLogRecorder) {
-  const text = await upstream.text()
-  recorder.markFirstByte()
-  let body: unknown = null
-  try {
-    body = JSON.parse(text)
-  } catch {
-    body = null
-  }
-  const usage = parseJsonUsage(protocol, body)
-  if (usage) recordUsage(recorder, usage, "json")
-  void recorder.finish({
-    status: upstream.status,
-    outcome: upstreamOutcome(upstream),
-    upstreamRequestId: upstreamRequestId(upstream.headers),
-    responseBytes: Buffer.byteLength(text),
-  })
-  return new Response(text, { status: upstream.status, statusText: upstream.statusText, headers })
-}
-
-function relayStreamResponse(upstream: Response, protocol: InferenceRequestProtocol, headers: Headers, recorder: RequestLogRecorder) {
+function relayStreamResponse(upstream: Response, protocol: InferenceRequestProtocol, headers: Headers, recorder: RequestLogRecorder, lifetime: ReturnType<typeof upstreamLifetime>) {
   if (!upstream.body) {
+    lifetime.dispose()
     void recorder.finish({
       status: upstream.status,
       outcome: upstreamOutcome(upstream),
@@ -374,7 +369,9 @@ function relayStreamResponse(upstream: Response, protocol: InferenceRequestProto
   const decoder = new TextDecoder()
   let responseBytes = 0
   const finish = (outcome: InferenceRequestOutcome) => {
-    if (parser) recordUsage(recorder, parser.result(), "stream")
+    try {
+      if (parser) recordUsage(recorder, parser.result(), isJsonContentType(upstream.headers.get("content-type")) ? "json" : "stream")
+    } catch { /* Malformed accounting must not suppress completion. */ }
     void recorder.finish({
       status: upstream.status,
       outcome,
@@ -384,7 +381,7 @@ function relayStreamResponse(upstream: Response, protocol: InferenceRequestProto
   }
   const body = trackStream(upstream.body, {
     chunk(value) {
-      recorder.markFirstByte()
+      if (value.byteLength) recorder.markFirstByte()
       responseBytes += value.byteLength
       if (parser?.pushBytes) parser.pushBytes(value)
       else if (parser) parser.push(decoder.decode(value, { stream: true }))
@@ -393,16 +390,16 @@ function relayStreamResponse(upstream: Response, protocol: InferenceRequestProto
       finish(upstreamOutcome(upstream))
     },
     fail() {
-      finish("client_aborted")
+      finish(lifetime.signal.aborted && !lifetime.timedOut ? "client_aborted" : "upstream_error")
     },
-  })
+  }, lifetime)
   return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers })
 }
 
-function refreshGoogleOauthTokenWithDb(fetchImpl: typeof fetch): RefreshGoogleOauthToken {
+function refreshGoogleOauthTokenWithDb(): RefreshGoogleOauthToken {
   let refresher: Promise<RefreshGoogleOauthToken> | null = null
   return (input) => {
-    refresher ??= import("./db.js").then(({ db }) => createGoogleOauthRefresher({ fetch: fetchImpl, store: createDbGoogleOauthRefreshStore(db) }))
+    refresher ??= import("./db.js").then(({ db }) => createGoogleOauthRefresher({ store: createDbGoogleOauthRefreshStore(db) }))
     return refresher.then((refresh) => refresh(input))
   }
 }
@@ -416,12 +413,13 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
   const dependencies: GatewayDependencies = {
     fetch: input.fetch,
     insertRequestLog: input.insertRequestLog,
+    updateRequestLog: input.updateRequestLog,
     reporter: input.reporter,
     loadInferenceProvider: input.loadInferenceProvider ?? loadInferenceProviderFromDb,
     hasProviderAccess: input.hasProviderAccess ?? hasProviderAccessFromDb,
     loadProviderCredential: input.loadProviderCredential ?? loadProviderCredentialFromDb,
-    refreshGoogleOauthToken: input.refreshGoogleOauthToken ?? refreshGoogleOauthTokenWithDb(input.fetch),
-    mintGcpAccessToken: input.mintGcpAccessToken ?? createGcpServiceAccountTokenMinter({ fetch: input.fetch }),
+    refreshGoogleOauthToken: input.refreshGoogleOauthToken ?? refreshGoogleOauthTokenWithDb(),
+    mintGcpAccessToken: input.mintGcpAccessToken ?? createGcpServiceAccountTokenMinter(),
     catalog: input.catalog ?? loadProviderCatalogFromFile(),
     now: input.now ?? (() => new Date()),
   }
@@ -433,7 +431,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       return gatewayError(404, "provider_not_found", "Missing inference provider id.")
     }
     const requestUrl = new URL(c.req.url)
-    const openworkRequestId = buildRequestId()
+    const openworkRequestId = c.get("openworkRequestId")
     const startedAt = dependencies.now()
     const method = c.req.method
     const incomingHeaders = sanitizeIncomingHeaders(c.req.raw.headers)
@@ -446,7 +444,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const catalog = dependencies.catalog.getCatalogProvider(provider.provider_id)
     const rest = restOfPath(requestUrl.pathname, inferenceProviderId)
     const resolved = resolveUpstream(provider, catalog, rest, requestUrl.search)
-    const recorder = createRequestLogRecorder({ insertRequestLog: dependencies.insertRequestLog, reporter: dependencies.reporter, now: dependencies.now })
+    const recorder = createRequestLogRecorder({ insertRequestLog: dependencies.insertRequestLog, updateRequestLog: dependencies.updateRequestLog, reporter: dependencies.reporter, now: dependencies.now })
     const startRecorder = (state: {
       protocol: InferenceRequestProtocol
       url: URL | null
@@ -531,6 +529,11 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         credentialId: "credentialId" in credential ? credential.credentialId : null,
       })
       switch (credential.kind) {
+        case "retry": {
+          const response = gatewayError(503, "provider_credential_retry", "The provider credential is temporarily unavailable. Retry shortly.", { provider_id: provider.id })
+          response.headers.set("retry-after", "5")
+          return reject(response, credential.reason, "Provider credential retry required")
+        }
         case "auth_required": {
           const response = gatewayError(
             401,
@@ -593,17 +596,23 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     if (auth.kind === "header") headers.set(auth.header.name, auth.header.value)
     else auth.sign({ method, url: prepared.url, headers, body: prepared.body })
 
+    if (await recorder.whenStarted?.() === false) {
+      return reject(gatewayError(503, "request_log_unavailable", "Inference accounting is temporarily unavailable."), "request_log_unavailable", "Request log unavailable")
+    }
+
+    const lifetime = upstreamLifetime(c.req.raw.signal, env.upstreamTimeoutMs)
     let upstream: Response
     try {
-      upstream = await dependencies.fetch(prepared.url, { method, headers, body: prepared.body })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      validateInferenceUrl(prepared.url)
+      lifetime.signal.throwIfAborted()
+      upstream = await dependencies.fetch(prepared.url, { method, headers, body: prepared.body, signal: lifetime.signal, redirect: "error" })
+    } catch {
+      lifetime.dispose()
       console.error("[inference-gateway] Failed to reach provider upstream", {
         openworkRequestId,
         organizationId: identity.organizationId,
         inferenceProviderId: provider.id,
         upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
-        error: message,
       })
       dependencies.reporter.handledError({
         reason: "upstream_unreachable",
@@ -617,10 +626,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         incomingModel: prepared.requestedModel,
         status: 502,
         upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
-        error: message,
-        exception: error,
       })
-      void recorder.finish({ status: 502, outcome: "upstream_unreachable", errorCode: "upstream_unreachable" })
+      void recorder.finish({ status: 502, outcome: lifetime.signal.aborted && !lifetime.timedOut ? "client_aborted" : "upstream_unreachable", errorCode: lifetime.timedOut ? "upstream_timeout" : "upstream_unreachable" })
       const response = gatewayError(502, "upstream_unreachable", "Failed to reach the inference provider upstream.", { provider_id: provider.id })
       response.headers.set("x-openwork-request-id", openworkRequestId)
       return response
@@ -638,10 +645,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }
 
     const responseHeaders = relayHeaders(upstream, openworkRequestId)
-    if (!prepared.stream && isJsonContentType(upstream.headers.get("content-type"))) {
-      return relayJsonResponse(upstream, resolved.protocol, responseHeaders, recorder)
-    }
-    return relayStreamResponse(upstream, resolved.protocol, responseHeaders, recorder)
+    return relayStreamResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
   }
 
   api.all(`${gatewayPathPrefix}/:inferenceProviderId`, handleGatewayRequest)

@@ -64,6 +64,22 @@ test("sigv4: helpers", () => {
   assert.equal(awsUriEncode("a b/~-_.:é"), "a%20b%2F~-_.%3A%C3%A9")
 })
 
+test("sigv4: binary ArrayBuffer and offset Uint8Array hash the raw bytes, never UTF-8 replacements", () => {
+  const bytes = new Uint8Array([255, 254, 0, 128, 1])
+  const backing = new Uint8Array([99, ...bytes, 99])
+  for (const body of [bytes, bytes.buffer, backing.subarray(1, -1)]) {
+    const result = signAwsRequest({ method: "POST", url: new URL("https://example.amazonaws.com/"), headers: new Headers(), body, credentials, region: "us-east-1", service: "service", now })
+    assert.equal(result.canonicalRequest.split("\n").at(-1), createHash("sha256").update(bytes).digest("hex"))
+    assert.notEqual(result.canonicalRequest.split("\n").at(-1), hashHex(new TextDecoder().decode(bytes)))
+  }
+})
+
+test("sigv4: normalizes non-S3 paths and sorts encoded duplicate query keys and values", () => {
+  const result = signAwsRequest({ method: "GET", url: new URL("https://example.amazonaws.com/a//b/../c/%2F/?z=2&z=1&space=+&space=%2B&%C3%A9=x&empty"), headers: new Headers(), body: null, credentials, region: "us-east-1", service: "service", now })
+  assert.equal(result.canonicalRequest.split("\n")[1], "/a/c/%252F/")
+  assert.equal(result.canonicalRequest.split("\n")[2], "%C3%A9=x&empty=&space=%20&space=%2B&z=1&z=2")
+})
+
 function hashHex(value: string) {
   return createHash("sha256").update(value).digest("hex")
 }

@@ -13,7 +13,7 @@ export type SignableRequest = {
   method: string
   url: URL
   headers: Headers
-  body: string | null
+  body: string | Uint8Array | ArrayBuffer | null
 }
 
 export type SignAwsRequestInput = SignableRequest & {
@@ -25,8 +25,8 @@ export type SignAwsRequestInput = SignableRequest & {
 
 const unreserved = /[A-Za-z0-9\-_.~]/
 
-function sha256Hex(value: string) {
-  return createHash("sha256").update(value, "utf8").digest("hex")
+function sha256Hex(value: string | Uint8Array | ArrayBuffer) {
+  return createHash("sha256").update(value instanceof ArrayBuffer ? new Uint8Array(value) : value).digest("hex")
 }
 
 function hmac(key: Uint8Array | string, value: string) {
@@ -60,7 +60,7 @@ export function amzDate(now: Date) {
 // Non-S3 services expect each already-encoded path segment to be encoded once
 // more in the canonical URI (what @smithy/signature-v4 does with uriEscapePath).
 function canonicalUri(pathname: string) {
-  const path = pathname || "/"
+  const path = (pathname || "/").replace(/\/{2,}/g, "/")
   return path.split("/").map((segment) => awsUriEncode(segment)).join("/")
 }
 

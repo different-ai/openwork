@@ -5,6 +5,9 @@ import type { GatewayCredential, GatewayProvider } from "../src/gateway.js"
 import type { InferenceReporter } from "../src/inference-reporting.js"
 import type { MintGcpAccessToken } from "../src/credentials/gcp-service-account.js"
 import type { RefreshGoogleOauthToken } from "../src/credentials/google-oauth-refresh.js"
+import { createGoogleOauthRefresher } from "../src/credentials/google-oauth-refresh.js"
+import type { LoadProviderCredential } from "../src/provider-credentials.js"
+import { memoryStore, row as oauthRow } from "./google-oauth-refresh-fixture.js"
 import { createProviderCatalog } from "../src/provider-catalog.js"
 import type { InferenceRequestLogRow } from "../src/request-log.js"
 import { bedrockStreamFrames } from "./helpers/event-stream.js"
@@ -13,6 +16,8 @@ process.env.OPENWORK_DEV_MODE = "1"
 process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_den"
 process.env.DEN_DB_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1234567890"
 process.env.OPENROUTER_UPSTREAM_URL = "https://upstream.test/api/v1"
+// Explicit operator configuration for the fake endpoint, not a dev-mode bypass.
+process.env.INFERENCE_EGRESS_ALLOWED_ORIGINS = "http://127.0.0.1:4321"
 
 const { registerProxyRoutes } = await import("../src/proxy.js")
 
@@ -20,11 +25,15 @@ const organizationId = "org_test_org"
 const memberId = "om_test_member"
 const providerId = "ipr_test_provider"
 const credentialId = "ipc_test_credential"
+const vertexProvider = { provider_id: "google-vertex", provider_config: { npm: "@ai-sdk/google-vertex" }, settings: { project: "test-project", location: "us-central1" } }
 
 const catalog = createProviderCatalog({
   anthropic: { npm: "@ai-sdk/anthropic", env: ["ANTHROPIC_API_KEY"] },
   openai: { npm: "@ai-sdk/openai", env: ["OPENAI_API_KEY"] },
   azure: { npm: "@ai-sdk/azure", env: ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"] },
+  "azure-cognitive-services": { npm: "@ai-sdk/openai-compatible", api: "https://fixture.example/v1", env: ["AZURE_RESOURCE_NAME", "AZURE_COGNITIVE_SERVICES_API_KEY"] },
+  alibaba: { npm: "@ai-sdk/openai-compatible", api: "https://fixture.example/v1", env: ["DASHSCOPE_API_KEY"] },
+  moonshotai: { npm: "@ai-sdk/openai-compatible", api: "https://fixture.example/v1", env: ["MOONSHOT_API_KEY"] },
   google: { npm: "@ai-sdk/google", env: ["GOOGLE_GENERATIVE_AI_API_KEY"] },
   "google-vertex": { npm: "@ai-sdk/google-vertex", env: ["GOOGLE_VERTEX_PROJECT", "GOOGLE_VERTEX_LOCATION", "GOOGLE_APPLICATION_CREDENTIALS"] },
   "google-vertex-anthropic": { npm: "@ai-sdk/google-vertex/anthropic", env: ["GOOGLE_VERTEX_PROJECT"] },
@@ -48,6 +57,7 @@ type TestServerOptions = {
   now?: Date
   refreshGoogleOauthToken?: RefreshGoogleOauthToken
   mintGcpAccessToken?: MintGcpAccessToken
+  loadProviderCredential?: LoadProviderCredential
 }
 
 function provider(overrides: Partial<GatewayProvider> = {}): GatewayProvider {
@@ -89,6 +99,7 @@ function sseResponse(events: string[], headers: Record<string, string> = {}) {
 
 function readInitBody(body: BodyInit | null | undefined) {
   if (typeof body === "string") return body
+  if (body instanceof Uint8Array) return new TextDecoder().decode(body)
   if (!body) return null
   throw new Error("Expected forwarded body to be a string")
 }
@@ -117,7 +128,7 @@ async function readError(response: Response) {
 }
 
 async function waitForRows(rows: InferenceRequestLogRow[], count = 1) {
-  for (let attempt = 0; attempt < 50 && rows.length < count; attempt += 1) {
+  for (let attempt = 0; attempt < 50 && (rows.length < count || rows.some((row) => !row.completed_at)); attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
   assert.equal(rows.length, count)
@@ -131,7 +142,7 @@ function createTestServer(options: TestServerOptions = {}) {
   const upstreamRequests: UpstreamRequest[] = []
   const logRows: InferenceRequestLogRow[] = []
   const accessChecks: Array<{ inferenceProviderId: string; orgMembershipId: string }> = []
-  const credentialLookups: Array<{ inferenceProviderId: string; subject: string }> = []
+  const credentialLookups: Array<Parameters<LoadProviderCredential>[0]> = []
   const reporter: InferenceReporter = { request() {}, handledError() {} }
   const capturingFetch: typeof fetch = async (input, init) => {
     upstreamRequests.push({
@@ -163,6 +174,12 @@ function createTestServer(options: TestServerOptions = {}) {
     async insertRequestLog(row) {
       logRows.push(row)
     },
+    async updateRequestLog(row) {
+      const index = logRows.findIndex((entry) => entry.id === row.id)
+      if (index < 0) return false
+      logRows[index] = row
+      return true
+    },
     reporter,
     gateway: {
       catalog,
@@ -183,7 +200,7 @@ function createTestServer(options: TestServerOptions = {}) {
       },
       async loadProviderCredential(input) {
         credentialLookups.push(input)
-        return credentialRow
+        return options.loadProviderCredential ? options.loadProviderCredential(input) : credentialRow
       },
     },
   })
@@ -204,17 +221,31 @@ function gatewayRequest(input: { path: string; method?: string; body?: unknown; 
 
 const openAiChatUsageEvent = 'data: {"id":"chatcmpl-1","model":"gpt-4o-2024","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":6}}}\n\n'
 
+test("trusted catalog key maps route Cognitive Services, Alibaba and Moonshot; stored env injection never chooses a secret", async () => {
+  for (const [providerName, field] of [["azure-cognitive-services", "AZURE_COGNITIVE_SERVICES_API_KEY"], ["alibaba", "DASHSCOPE_API_KEY"], ["moonshotai", "MOONSHOT_API_KEY"]]) {
+    const accepted = createTestServer({ provider: { provider_id: providerName }, credential: { kind: "api_key_map", secret: JSON.stringify({ [field]: "trusted-key" }) } })
+    const response = await accepted.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "fixture", messages: [] } }))
+    assert.equal(response.status, 200)
+    await response.text()
+    assert.equal(accepted.upstreamRequests[0]?.headers.get("authorization"), "Bearer trusted-key")
+    const rejected = createTestServer({ provider: { provider_id: providerName, provider_config: { env: ["ATTACKER_API_KEY"] } }, credential: { kind: "api_key_map", secret: JSON.stringify({ ATTACKER_API_KEY: "not-trusted" }) } })
+    const blocked = await rejected.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "fixture", messages: [] } }))
+    assert.equal(blocked.status, 502)
+    assert.equal(rejected.upstreamRequests.length, 0)
+  }
+})
+
 test("openai chat: forwards with bearer auth, strips incoming auth, injects include_usage and logs stream usage", async () => {
   const { app, upstreamRequests, logRows, accessChecks, credentialLookups } = createTestServer({
     fetch: async () => sseResponse(
       ['data: {"id":"chatcmpl-1","choices":[{"delta":{"content":"hi"}}]}\n\n', openAiChatUsageEvent, "data: [DONE]\n\n"],
-      { "x-request-id": "req_up_1", "content-encoding": "gzip", "content-length": "999" },
+      { "x-request-id": "req_up_1", "content-length": "999" },
     ),
   })
   const response = await app.fetch(gatewayRequest({
     path: "/chat/completions",
     body: { model: "gpt-4o", stream: true, messages: [] },
-    headers: { "openai-organization": "org-abc", "x-stainless-lang": "js", cookie: "a=b", "x-api-key": "leak", "anthropic-version": "2023-06-01" },
+    headers: { "openai-organization": "org-abc", "x-stainless-lang": "js", cookie: "a=b", "x-api-key": "ow_inf_test", "anthropic-version": "2023-06-01" },
   }))
 
   assert.equal(response.status, 200)
@@ -239,7 +270,7 @@ test("openai chat: forwards with bearer auth, strips incoming auth, injects incl
   assert.equal(body.model, "gpt-4o")
 
   assert.deepEqual(accessChecks, [{ inferenceProviderId: providerId, orgMembershipId: memberId }])
-  assert.deepEqual(credentialLookups, [{ inferenceProviderId: providerId, subject: "org" }])
+  assert.deepEqual(credentialLookups, Array.from({ length: 2 }, () => ({ inferenceProviderId: providerId, subject: "org", orgMembershipId: memberId })))
 
   const row = await waitForRows(logRows)
   assert.equal(row.route, "org_provider")
@@ -273,6 +304,7 @@ test("openai responses: JSON usage is captured and the path selects the response
   const body = parseJsonObject(upstream.body)
   assert.equal(body.stream_options, undefined)
 
+  await response.arrayBuffer()
   const row = await waitForRows(logRows)
   assert.equal(row.protocol, "openai_responses")
   assert.equal(row.usage_source, "json")
@@ -333,6 +365,7 @@ test("azure: api-key auth, api-version query preserved, resource base from setti
   assert.equal(upstream.url, "https://acme-openai.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21")
   assert.equal(upstream.headers.get("api-key"), "azure-key")
   assert.equal(upstream.headers.get("authorization"), null)
+  await response.arrayBuffer()
   const row = await waitForRows(logRows)
   assert.equal(row.protocol, "openai_chat")
   assert.equal(row.upstream_path, "/openai/deployments/gpt-4o/chat/completions")
@@ -348,6 +381,7 @@ test("openai-compatible: catalog api base and bearer auth; unknown npm with api 
   assert.ok(upstream)
   assert.equal(upstream.url, "https://api.groq.com/openai/v1/chat/completions")
   assert.equal(upstream.headers.get("authorization"), "Bearer upstream-secret")
+  await response.arrayBuffer()
   const row = await waitForRows(logRows)
   assert.equal(row.protocol, "openai_chat")
   assert.equal(row.upstream_provider_id, "groq")
@@ -377,6 +411,7 @@ test("settings.upstreamBaseUrl overrides both provider_config.options.baseURL an
   assert.ok(upstream)
   assert.equal(upstream.url, "http://127.0.0.1:4321/fake-anthropic/v1/messages")
   assert.equal(upstream.headers.get("x-api-key"), "upstream-secret")
+  await response.arrayBuffer()
   const row = await waitForRows(logRows)
   assert.equal(row.upstream_host, "127.0.0.1")
   assert.equal(row.upstream_path, "/fake-anthropic/v1/messages")
@@ -398,7 +433,7 @@ test("google: x-goog-api-key auth, key query stripped, alt=sse preserved, model 
     ], { "x-goog-request-id": "goog_1" }),
   })
   const response = await app.fetch(gatewayRequest({
-    path: "/models/gemini-2.5-pro:streamGenerateContent?alt=sse&key=leaked",
+    path: "/models/gemini-2.5-pro:streamGenerateContent?alt=sse&key=ow_inf_test",
     body: { contents: [] },
   }))
   assert.equal(response.status, 200)
@@ -441,6 +476,7 @@ test("google vertex (gemini): path rewritten under the project/location publishe
   assert.equal(upstream.url, "https://us-central1-aiplatform.googleapis.com/v1/projects/acme-proj/locations/us-central1/publishers/google/models/gemini-2.5-pro:generateContent")
   assert.equal(upstream.headers.get("authorization"), "Bearer ya29.token")
   assert.equal(upstream.headers.get("x-goog-api-key"), null)
+  await response.arrayBuffer()
   const row = await waitForRows(logRows)
   assert.equal(row.protocol, "google_generate_content")
   assert.equal(row.upstream_host, "us-central1-aiplatform.googleapis.com")
@@ -481,7 +517,7 @@ test("google vertex (anthropic): rawPredict path, model removed, anthropic_versi
 
 test("google vertex: non-stream anthropic uses rawPredict; missing project/location → 502 provider_misconfigured", async () => {
   const ok = createTestServer({
-    provider: { provider_id: "google-vertex-anthropic", provider_config: {}, settings: { project: "p", location: "europe-west1" } },
+    provider: { provider_id: "google-vertex-anthropic", provider_config: {}, settings: { project: "test-project", location: "europe-west1" } },
     credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "t" }) },
   })
   await ok.app.fetch(gatewayRequest({ path: "/messages", body: { model: "claude", messages: [] } }))
@@ -508,6 +544,7 @@ test("passthrough: GET /models forwarded with query, no body, no usage parsed", 
   assert.equal(upstream.url, "https://api.openai.com/v1/models?limit=5")
   assert.equal(upstream.method, "GET")
   assert.equal(upstream.body, null)
+  await response.arrayBuffer()
   const row = await waitForRows(logRows)
   assert.equal(row.protocol, "passthrough")
   assert.equal(row.usage_source, "missing")
@@ -558,7 +595,7 @@ test("member mode without a credential → 401 openwork_auth_required with heade
   assert.equal(error.code, "openwork_auth_required")
   assert.equal(error.provider_id, providerId)
   assert.equal(typeof error.message, "string")
-  assert.deepEqual(credentialLookups, [{ inferenceProviderId: providerId, subject: memberId }])
+  assert.deepEqual(credentialLookups, [{ inferenceProviderId: providerId, subject: memberId, orgMembershipId: memberId }])
   assert.equal(upstreamRequests.length, 0)
   const row = await waitForRows(logRows)
   assert.equal(row.outcome, "rejected")
@@ -568,7 +605,7 @@ test("member mode without a credential → 401 openwork_auth_required with heade
 test("member mode with an expired oauth token → 401 openwork_auth_required", async () => {
   const now = new Date("2026-09-03T12:00:00Z")
   const { app, upstreamRequests, logRows } = createTestServer({
-    provider: { credential_mode: "member" },
+    provider: { ...vertexProvider, credential_mode: "member" },
     credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "old" }), expires_at: new Date("2026-09-03T11:59:59Z") },
     now,
   })
@@ -582,10 +619,10 @@ test("member mode with an expired oauth token → 401 openwork_auth_required", a
   assert.equal(row.started_at.toISOString(), now.toISOString())
 })
 
-test("member mode with a valid oauth token forwards it as the bearer", async () => {
+test("member mode with a valid Vertex oauth token forwards it as the bearer", async () => {
   const { app, upstreamRequests } = createTestServer({
-    provider: { credential_mode: "member" },
-    credential: { kind: "oauth_azure", secret: JSON.stringify({ accessToken: "fresh" }), expires_at: new Date(Date.now() + 60_000) },
+    provider: { ...vertexProvider, credential_mode: "member" },
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "fresh" }), expires_at: new Date(Date.now() + 600_000) },
   })
   const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
   assert.equal(response.status, 200)
@@ -605,16 +642,29 @@ test("org mode without a credential → 502 provider_credential_missing", async 
 test("member oauth_google near expiry is refreshed under the lock and the fresh bearer is forwarded", async () => {
   const now = new Date("2026-09-03T12:00:00Z")
   const refreshCalls: Array<Parameters<RefreshGoogleOauthToken>[0]> = []
+  const currentProvider = provider({ ...vertexProvider, credential_mode: "member", oauth_client_id: "cid", oauth_client_secret: "csecret" })
+  const { state, store } = memoryStore(oauthRow({ id: credentialId, inference_provider_id: providerId, organization_id: organizationId,
+    subject: memberId, org_membership_id: memberId, updated_at: now,
+    secret: JSON.stringify({ accessToken: "old", refreshToken: "rt" }), expires_at: new Date(now.getTime() + 30_000) }))
+  state.client = currentProvider
+  const refresh = createGoogleOauthRefresher({ store, tokenFetch: async (_url, init) => {
+    assert.ok(init?.body instanceof URLSearchParams)
+    assert.equal(init.body.get("refresh_token"), "rt")
+    assert.equal(init.body.get("client_id"), "cid")
+    return Response.json({ access_token: "fresh", expires_in: 3600 })
+  } })
   const { app, upstreamRequests, logRows } = createTestServer({
-    provider: { credential_mode: "member", provider_id: "google-vertex", provider_config: { npm: "@ai-sdk/google-vertex" }, settings: { project: "p", location: "us-central1" }, oauth_client_id: "cid", oauth_client_secret: "csecret" },
-    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "old", refreshToken: "rt" }), expires_at: new Date(now.getTime() + 30_000) },
+    provider: currentProvider,
+    loadProviderCredential: async (input) => {
+      assert.deepEqual(input, { inferenceProviderId: providerId, subject: memberId, orgMembershipId: memberId })
+      return state.row ? structuredClone(state.row) : null
+    },
     now,
     async refreshGoogleOauthToken(input) {
       refreshCalls.push(input)
-      return {
-        kind: "refreshed",
-        credential: { ...input.credential, secret: JSON.stringify({ accessToken: "fresh", refreshToken: "rt" }), expires_at: new Date(now.getTime() + 3600_000) },
-      }
+      assert.equal(input.provider.id, providerId)
+      assert.equal(input.subject, memberId)
+      return refresh(input)
     },
   })
   const response = await app.fetch(gatewayRequest({ path: "/v1beta/models/gemini-2.5-pro:generateContent", body: { contents: [] } }))
@@ -623,6 +673,8 @@ test("member oauth_google near expiry is refreshed under the lock and the fresh 
   assert.equal(refreshCalls.length, 1)
   assert.equal(refreshCalls[0]?.provider.oauth_client_id, "cid")
   assert.equal(refreshCalls[0]?.token.refreshToken, "rt")
+  assert.equal(state.saves, 1)
+  await response.arrayBuffer()
   const row = await waitForRows(logRows)
   assert.equal(row.outcome, "ok")
   assert.equal(row.inference_provider_credential_id, credentialId)
@@ -630,7 +682,7 @@ test("member oauth_google near expiry is refreshed under the lock and the fresh 
 
 test("member oauth_google with plenty of time left is not refreshed", async () => {
   const { app, upstreamRequests } = createTestServer({
-    provider: { credential_mode: "member" },
+    provider: { ...vertexProvider, credential_mode: "member" },
     credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "current", refreshToken: "rt" }), expires_at: new Date(Date.now() + 10 * 60_000) },
   })
   const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
@@ -638,10 +690,10 @@ test("member oauth_google with plenty of time left is not refreshed", async () =
   assert.equal(upstreamRequests[0]?.headers.get("authorization"), "Bearer current")
 })
 
-test("member oauth_google refresh invalid_grant → 401 openwork_auth_required; stale outcome forwards the old token", async () => {
+test("member oauth_google refresh invalid_grant requires auth; transient retries never forward the old token", async () => {
   const now = new Date("2026-09-03T12:00:00Z")
   const failed = createTestServer({
-    provider: { credential_mode: "member" },
+    provider: { ...vertexProvider, credential_mode: "member" },
     credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "old", refreshToken: "rt" }), expires_at: new Date(now.getTime() - 1000) },
     now,
     refreshGoogleOauthToken: async () => ({ kind: "auth_required" }),
@@ -656,22 +708,33 @@ test("member oauth_google refresh invalid_grant → 401 openwork_auth_required; 
   const row = await waitForRows(failed.logRows)
   assert.equal(row.error_code, "member_auth_required")
 
-  const stale = createTestServer({
-    provider: { credential_mode: "member" },
-    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "old", refreshToken: "rt" }), expires_at: new Date(now.getTime() - 1000) },
-    now,
-    refreshGoogleOauthToken: async () => ({ kind: "stale" }),
-    fetch: async () => Response.json({ error: "expired" }, { status: 401 }),
-  })
-  const staleResponse = await stale.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
-  assert.equal(staleResponse.status, 401)
-  assert.equal(staleResponse.headers.get("x-openwork-auth-required"), null)
-  assert.equal(stale.upstreamRequests[0]?.headers.get("authorization"), "Bearer old")
+  const retryReasons: Array<"refresh_busy" | "refresh_unavailable" | "credential_changed"> = ["refresh_busy", "refresh_unavailable", "credential_changed"]
+  for (const reason of retryReasons) {
+    const retry = createTestServer({
+      provider: { ...vertexProvider, credential_mode: "member" },
+      credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "old", refreshToken: "rt" }), expires_at: new Date(now.getTime() - 1000) },
+      now,
+      refreshGoogleOauthToken: async (input) => {
+        assert.equal(input.subject, memberId)
+        assert.equal(input.provider.id, providerId)
+        return { kind: "retry", reason }
+      },
+    })
+    const response = await retry.app.fetch(gatewayRequest({ path: "/models/gemini:generateContent", body: {} }))
+    assert.equal(response.status, 503)
+    assert.equal(response.headers.get("retry-after"), "5")
+    assert.equal(response.headers.get("x-openwork-auth-required"), null)
+    assert.ok(response.headers.get("x-openwork-request-id"))
+    assert.equal((await readError(response)).code, "provider_credential_retry")
+    assert.equal(retry.upstreamRequests.length, 0)
+    assert.equal((await waitForRows(retry.logRows)).error_code, reason)
+  }
 })
 
 test("org-subject oauth expired → 502 provider_credential_expired, no refresh attempted", async () => {
   const now = new Date("2026-09-03T12:00:00Z")
   const { app, upstreamRequests, logRows } = createTestServer({
+    provider: vertexProvider,
     credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "old", refreshToken: "rt" }), expires_at: new Date(now.getTime() - 1000) },
     now,
   })
@@ -686,7 +749,7 @@ test("org-subject oauth expired → 502 provider_credential_expired, no refresh 
 test("org gcp_service_account on vertex mints a bearer from the service account", async () => {
   const mintCalls: string[] = []
   const { app, upstreamRequests, logRows } = createTestServer({
-    provider: { provider_id: "google-vertex", provider_config: { npm: "@ai-sdk/google-vertex" }, settings: { project: "p", location: "us-east1" } },
+    provider: { provider_id: "google-vertex", provider_config: { npm: "@ai-sdk/google-vertex" }, settings: { project: "test-project", location: "us-east1" } },
     credential: { kind: "gcp_service_account", secret: JSON.stringify({ client_email: "a@b", private_key: "k", token_uri: "https://oauth2.googleapis.com/token" }) },
     async mintGcpAccessToken(input) {
       mintCalls.push(`${input.credentialId}:${input.serviceAccount.client_email}`)
@@ -696,13 +759,14 @@ test("org gcp_service_account on vertex mints a bearer from the service account"
   const response = await app.fetch(gatewayRequest({ path: "/models/gemini:generateContent", body: { contents: [] } }))
   assert.equal(response.status, 200)
   assert.deepEqual(mintCalls, [`${credentialId}:a@b`])
-  assert.equal(upstreamRequests[0]?.url, "https://us-east1-aiplatform.googleapis.com/v1/projects/p/locations/us-east1/publishers/google/models/gemini:generateContent")
+  assert.equal(upstreamRequests[0]?.url, "https://us-east1-aiplatform.googleapis.com/v1/projects/test-project/locations/us-east1/publishers/google/models/gemini:generateContent")
   assert.equal(upstreamRequests[0]?.headers.get("authorization"), "Bearer ya29.sa")
+  await response.arrayBuffer()
   const row = await waitForRows(logRows)
   assert.equal(row.outcome, "ok")
 
   const broken = createTestServer({
-    provider: { provider_id: "google-vertex", provider_config: { npm: "@ai-sdk/google-vertex" }, settings: { project: "p", location: "us-east1" } },
+    provider: { provider_id: "google-vertex", provider_config: { npm: "@ai-sdk/google-vertex" }, settings: { project: "test-project", location: "us-east1" } },
     credential: { kind: "gcp_service_account", secret: JSON.stringify({ client_email: "a@b", private_key: "k", token_uri: "https://oauth2.googleapis.com/token" }) },
     mintGcpAccessToken: async () => ({ kind: "error", message: "token endpoint returned 500" }),
   })
@@ -728,7 +792,7 @@ test("bedrock: aws_keys request is SigV4-signed after the body rewrite, host fro
   const response = await app.fetch(gatewayRequest({
     path: "/model/anthropic.claude-3-5-sonnet-20241022-v2%3A0/converse-stream",
     body: { messages: [{ role: "user", content: [{ text: "hi" }] }] },
-    headers: { "x-api-key": "leak" },
+    headers: { "x-api-key": "ow_inf_test" },
   }))
   assert.equal(response.status, 200)
   await response.text()
@@ -782,6 +846,7 @@ test("bedrock: non-stream converse JSON usage; settings.region host; missing reg
   assert.equal(ok.upstreamRequests[0]?.url, "https://bedrock-runtime.us-west-2.amazonaws.com/model/claude/converse")
   assert.equal(ok.upstreamRequests[0]?.headers.get("x-amz-security-token"), null)
   assert.ok(ok.upstreamRequests[0]?.headers.get("authorization")?.startsWith("AWS4-HMAC-SHA256 Credential=a/"))
+  await response.arrayBuffer()
   const row = await waitForRows(ok.logRows)
   assert.equal(row.usage_source, "json")
   assert.equal(row.total_tokens, 7)
@@ -800,13 +865,24 @@ test("bedrock: non-stream converse JSON usage; settings.region host; missing reg
   assert.equal(missingRow.inference_provider_credential_id, credentialId)
 })
 
-test("aws_keys on a non-bedrock provider → 502 provider_misconfigured", async () => {
+test("aws_keys on a non-bedrock provider is rejected before upstream auth materialization", async () => {
   const { app, upstreamRequests } = createTestServer({
     credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b", region: "us-east-1" }) },
   })
   const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
   assert.equal(response.status, 502)
-  assert.equal((await readError(response)).code, "provider_misconfigured")
+  assert.equal((await readError(response)).code, "provider_credential_invalid")
+  assert.equal(upstreamRequests.length, 0)
+})
+
+test("unsupported Azure OAuth cannot be forwarded as a bearer", async () => {
+  const { app, upstreamRequests } = createTestServer({
+    provider: { provider_id: "azure", credential_mode: "member", settings: { resourceName: "test-resource" } },
+    credential: { kind: "oauth_azure", secret: JSON.stringify({ accessToken: "not-forwarded" }) },
+  })
+  const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: {} }))
+  assert.equal(response.status, 502)
+  assert.equal((await readError(response)).code, "provider_credential_invalid")
   assert.equal(upstreamRequests.length, 0)
 })
 
@@ -832,6 +908,7 @@ test("relays upstream errors as-is with our request id and logs upstream_error",
   assert.equal(response.status, 401)
   assert.equal(response.headers.get("x-openwork-auth-required"), null)
   assert.ok(response.headers.get("x-openwork-request-id"))
+  await response.arrayBuffer()
   const row = await waitForRows(logRows)
   assert.equal(row.outcome, "upstream_error")
   assert.equal(row.status, 401)
