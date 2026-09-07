@@ -298,6 +298,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         attached: index !== -1,
         // BrowserWindow's primary renderer is below the entire contentView.
         aboveApp: index !== -1,
+        visible: view.getVisible(),
         bounds: view.getBounds(),
       };
     });
@@ -597,9 +598,14 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   const approvals = new Map();
+  function browserTabVisible(tabId) {
+    const tab = getBrowserTab(tabId);
+    return !!tab && browserViewVisible && registry.onScreenTabId() === tabId
+      && window()?.contentView.children.includes(tab.view) === true && tab.view.getVisible();
+  }
   function confirmBrowserAction({ tabId, title, message, detail, signal, approveLabel = "Allow once" }) {
     const tab = getBrowserTab(tabId);
-    if (!tab || registry.ownerOf(tabId) !== registry.visibleSessionId() || signal?.aborted) return Promise.resolve(false);
+    if (!tab || !browserTabVisible(tabId) || signal?.aborted) return Promise.resolve(false);
     if (approvals.has(tabId)) return Promise.resolve(false);
     return new Promise((resolve) => {
       const id = createBrowserTabId();
@@ -609,7 +615,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         if (approvals.get(tabId)?.id !== id) return;
         approvals.delete(tabId); tab.browserApproval = null;
         if (!tab.view.webContents.isDestroyed()) tab.view.setVisible(true);
-        sendBrowserState(); resolve(allowed);
+        sendBrowserState(); resolve(allowed && browserTabVisible(tabId));
       };
       const canceled = () => finish(false);
       const timer = setTimeout(canceled, 60_000);
@@ -668,7 +674,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     tabsFor: (sessionId) => registry.tabsFor(sessionId).map((item) => getBrowserTab(item.tabId)).filter(Boolean),
     ownerOf: (tabId) => registry.ownerOf(tabId),
     activeFor: (sessionId) => registry.activeTabIdFor(sessionId),
-    visibleSession: () => registry.visibleSessionId(),
+    isVisible: browserTabVisible,
     enabled: () => browserControlEnabled,
     allowed: browserTaskAllowed,
     openTab: openBrowserTab,

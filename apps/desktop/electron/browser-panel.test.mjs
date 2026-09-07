@@ -34,6 +34,7 @@ export class WebContentsView {
     const listeners = new Map();
     let attached = false;
     this.bounds = { x: 0, y: 0, width: 0, height: 0 };
+    this.visible = true;
     this.webContents = {
       url: "about:blank",
       sent: [],
@@ -66,6 +67,7 @@ export class WebContentsView {
   }
   setBounds(bounds) { this.bounds = bounds; }
   setVisible(visible) { this.visible = visible; }
+  getVisible() { return this.visible; }
   getBounds() { return this.bounds; }
 }
 `;

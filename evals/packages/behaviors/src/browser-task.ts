@@ -39,7 +39,7 @@ export interface BrowserState {
   activeTabId: string | null;
   visibleSessionId: string | null;
   tabs: Array<{ id: string; label: string; ownerSessionId: string | null }>;
-  nativeViews: Array<{ tabId: string; attached: boolean; aboveApp: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
+  nativeViews: Array<{ tabId: string; attached: boolean; aboveApp: boolean; visible: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -92,11 +92,11 @@ export async function readBrowserState(app: Surface): Promise<BrowserState> {
       return { id: string(tab.id), label: string(tab.label), ownerSessionId: typeof tab.ownerSessionId === "string" ? tab.ownerSessionId : null };
     }),
     nativeViews: value.nativeViews.map((view: unknown) => {
-      if (!record(view) || typeof view.attached !== "boolean" || typeof view.aboveApp !== "boolean" || !record(view.bounds)
+      if (!record(view) || typeof view.attached !== "boolean" || typeof view.aboveApp !== "boolean" || typeof view.visible !== "boolean" || !record(view.bounds)
         || typeof view.bounds.x !== "number" || typeof view.bounds.y !== "number" || typeof view.bounds.width !== "number" || typeof view.bounds.height !== "number") {
         throw new Error("Invalid native browser view.");
       }
-      return { tabId: string(view.tabId), attached: view.attached, aboveApp: view.aboveApp,
+      return { tabId: string(view.tabId), attached: view.attached, aboveApp: view.aboveApp, visible: view.visible,
         bounds: { x: view.bounds.x, y: view.bounds.y, width: view.bounds.width, height: view.bounds.height } };
     }),
   };

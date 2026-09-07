@@ -98,7 +98,7 @@ async function isolated(webContents, fn, ...args) {
   return webContents.executeJavaScriptInIsolatedWorld(WORLD, [{ code: `(${fn.toString()})(...${JSON.stringify(args)})` }]);
 }
 
-export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, visibleSession, openTab, navigate,
+export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isVisible, openTab, navigate,
   allowed, enabled, confirm, changed, siteTools, runSiteTool }) {
   const states = new Map();
   const grants = new Map();
@@ -127,7 +127,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, vis
     const url = browserTaskUrl(tab.view.webContents.getURL());
     const key = `${sessionId}:${url.origin}`;
     if (grants.has(key)) return;
-    if (visibleSession() !== sessionId) fail("needs_attention", "Open this conversation to review website access, then retry.");
+    if (!isVisible(tab.tabId)) fail("needs_attention", "Select this tab in its conversation's browser panel to review website access, then retry.");
     publish(tab.tabId, "needs_attention", "Website access");
     const accepted = await confirm({ tabId: tab.tabId, title: "Allow website access?", message: `Allow this conversation to read ${url.origin}?`, detail: "It can read pages and site tool descriptions using the built-in browser's signed-in account. Website content is untrusted. Actions that change the page require separate approval.", signal });
     signal.throwIfAborted();
@@ -184,7 +184,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, vis
     try {
       if (typeof sessionId !== "string" || !sessionId.trim()) fail("missing_session", "Browser control requires a requesting conversation.");
       if (!enabled()) fail("browser_disabled", "Enable OpenWork Browser in Library, or ask your organization to allow browser control.");
-      if (operation === "tabs") return { ok: true, provider: "builtin", externalBrowsers: "unsupported", tabs: tabsFor(sessionId).map((item) => ({ tabId: item.tabId, url: safeUrl(item.view.webContents.getURL()), title: item.view.webContents.getTitle().slice(0, 300), visible: visibleSession() === sessionId, ...stateFor(item.tabId), observation: undefined, controller: undefined })) };
+      if (operation === "tabs") return { ok: true, provider: "builtin", externalBrowsers: "unsupported", tabs: tabsFor(sessionId).map((item) => ({ tabId: item.tabId, url: safeUrl(item.view.webContents.getURL()), title: item.view.webContents.getTitle().slice(0, 300), visible: isVisible(item.tabId), ...stateFor(item.tabId), observation: undefined, controller: undefined })) };
       if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control. Resume in the browser panel before continuing.");
       if (operation === "open") {
         if (args.provider && !["builtin", "auto"].includes(args.provider)) fail("unsupported_browser", "External browser control is not connected. Use the built-in browser or open the requested external browser yourself.");
@@ -214,7 +214,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, vis
           openingController.signal.throwIfAborted();
         }
         else if (tab.view.webContents.getURL() !== url.href) fail("different_page", "Use navigate to change the selected tab's page.");
-        return { ok: true, provider: "builtin", tabId: tab.tabId, url: safeUrl(tab.view.webContents.getURL()), visible: visibleSession() === sessionId, next: "observe" };
+        return { ok: true, provider: "builtin", tabId: tab.tabId, url: safeUrl(tab.view.webContents.getURL()), visible: isVisible(tab.tabId), next: "observe" };
       }
       tab = await resolve(sessionId, args.tabId, ["navigate", "pause", "handoff"].includes(operation));
       state = stateFor(tab.tabId);
@@ -233,7 +233,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, vis
         if (operation === "observe") return observe(tab, args.includeImage === true, controller.signal);
         if (operation === "site_tools") return siteTools({ tabId: tab.tabId, sessionId });
         if (operation === "site_tool") {
-          if (visibleSession() !== sessionId) fail("needs_attention", "Open this conversation to review its website action, then retry.");
+          if (!isVisible(tab.tabId)) fail("needs_attention", "Select this tab in its conversation's browser panel to review its website action, then retry.");
           state.observation = null;
           dispatched = true;
           const result = await runSiteTool({ ...args, tabId: tab.tabId, sessionId }, { signal: controller.signal });
@@ -261,7 +261,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, vis
         const keys = { Enter: "Enter", Tab: "Tab", Escape: "Escape", ArrowDown: "Down", ArrowUp: "Up", ArrowLeft: "Left", ArrowRight: "Right", Backspace: "Backspace", Space: "Space" };
         if (action.type === "key" && !Object.hasOwn(keys, action.key)) fail("invalid_key", "Use Enter, Tab, Escape, arrows, Backspace or Space. System shortcuts are unavailable.");
         if (action.type === "scroll" && (!Number.isFinite(action.deltaY) || Math.abs(action.deltaY) > 1200)) fail("invalid_scroll", "Scroll distance must be between -1200 and 1200.");
-        if (visibleSession() !== sessionId) fail("needs_attention", "Open this conversation to review its browser action, then retry from a fresh observation.");
+        if (!isVisible(tab.tabId)) fail("needs_attention", "Select this tab in its conversation's browser panel, then retry from a fresh observation.");
         publish(tab.tabId, "needs_attention", `Approve ${action.type}`);
         const accepted = await confirm({ tabId: tab.tabId, title: "Allow browser action?", message: `Allow ${action.type} on ${new URL(observed.url).origin}?`, detail: `Target: ${observed.elements.find((item) => item.ref === action.ref)?.name || (action.key ? `key ${action.key}` : `position ${action.x}, ${action.y}`)}.${action.type === "fill" ? ` Text to enter: ${action.text}` : ""} This can submit information or change website data. Review your requested task before allowing it.`, signal: controller.signal });
         controller.signal.throwIfAborted();
@@ -278,16 +278,23 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, vis
           throw error;
         }
         state.observation = null; controller.signal.throwIfAborted();
+        if (!isVisible(tab.tabId)) fail("needs_attention", "The tab is no longer visible. Select it and observe again before acting.");
         publish(tab.tabId, "running", action.type);
         const contents = tab.view.webContents;
         dispatched = true;
         if (action.type === "fill") await contents.insertText(action.text);
         if (action.type === "click") {
-          // Chromium must route the pointer to an out-of-process child frame
-          // before its button events; a main-frame click does not need this hop.
-          contents.sendInputEvent({ type: "mouseMove", x: Math.round(point.x), y: Math.round(point.y) });
-          contents.sendInputEvent({ type: "mouseDown", x: Math.round(point.x), y: Math.round(point.y), button: "left", clickCount: 1 });
-          contents.sendInputEvent({ type: "mouseUp", x: Math.round(point.x), y: Math.round(point.y), button: "left", clickCount: 1 });
+          // sendInputEvent targets the main widget, not an OOPIF's widget.
+          // Chromium's input router hit-tests these already-approved CSS pixels.
+          const cdp = contents.debugger;
+          const attached = !cdp.isAttached();
+          if (attached) cdp.attach("1.3");
+          try {
+            await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+            await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+          } finally {
+            if (attached && cdp.isAttached()) cdp.detach();
+          }
         }
         if (action.type === "key") { contents.sendInputEvent({ type: "keyDown", keyCode: keys[action.key] }); contents.sendInputEvent({ type: "keyUp", keyCode: keys[action.key] }); }
         if (action.type === "scroll") contents.sendInputEvent({ type: "mouseWheel", x: Math.round(point.x), y: Math.round(point.y), deltaY: action.deltaY, canScroll: true });
