@@ -177,7 +177,7 @@ function parsePageProbe(value: unknown): PageProbe {
  * A desktop with one session open, so the built-in browser side panel has a
  * home, plus helpers that play an automation client against its tabs.
  */
-async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string>) {
+export async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string>) {
   const app = await seed.desktop({ name: "builtin-browser", env });
   const workspacePath = seed.tmpPath("builtin-browser");
   const workspace = await seed.workspace(app, workspacePath);

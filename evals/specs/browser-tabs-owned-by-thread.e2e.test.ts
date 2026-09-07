@@ -1,12 +1,13 @@
 import { expect } from "vitest";
 import { browserImageTarget, eventually, spec } from "@openwork/testkit";
 import type { BrowserTaskInput, Target } from "@openwork/testkit";
-import { browserTabHandle, builtinBrowserWorld, transcriptLinkWorld } from "../worlds/browser-panel.ts";
+import { browserTabHandle, createBuiltinBrowserWorld, transcriptLinkWorld } from "../worlds/browser-panel.ts";
 import { browserBackgroundWorld } from "../worlds/browser-webmcp.ts";
 
 const test = spec.world(browserBackgroundWorld);
-const lifecycleTest = spec.world(builtinBrowserWorld);
+const lifecycleTest = spec.world((seed) => createBuiltinBrowserWorld(seed));
 const linkTest = spec.world(transcriptLinkWorld);
+const artifactTest = spec.world((seed) => createBuiltinBrowserWorld(seed));
 const tabButton = (name: string): Target => ({ role: "button", label: `Select tab: Project ${name}` });
 const lifecycleTabButton = (name: string): Target => ({ role: "button", label: new RegExp(`^Select tab: .*viewport-probe=${name}$`) });
 const conversation = (title: string): Target => ({ text: title });
@@ -546,8 +547,8 @@ linkTest("a transcript link's menu copies its exact address and opens only its o
   });
 });
 
-lifecycleTest("a transcript link replaces the selected artifact with its own live sidebar tab, not a native window", async ({ world, user, step }) => {
-  const tabButton = lifecycleTabButton;
+artifactTest("a transcript link replaces the selected artifact with its own live sidebar tab, not a native window", async ({ world, user, step }) => {
+  const tabButton = (name: string): Target => ({ role: "button", label: new RegExp(`^Select tab: .*viewport-probe=${name}$`) });
   const reading = { ...world.session, title: "Linked research" };
   await world.renameSession(reading.sessionId, reading.title);
   const link = await world.seedTranscriptLink(reading.sessionId);
