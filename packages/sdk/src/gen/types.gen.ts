@@ -1371,6 +1371,149 @@ export type ConflictError = {
   message?: string;
 };
 
+export type InferenceProviderSummary = {
+  /**
+   * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+   */
+  id: string;
+  providerId: string;
+  name: string;
+  source: "openwork_gateway";
+  credentialMode: "org" | "member";
+  status: "active" | "disabled";
+  updatedAt: string;
+  providerConfig: {
+    [key: string]: unknown;
+  };
+  models: Array<{
+    id: string;
+    name: string;
+    config: {
+      [key: string]: unknown;
+    };
+  }>;
+  credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
+  /**
+   * Absolute URL of the member OAuth start endpoint when credentialStatus is member_auth_required; otherwise null.
+   */
+  authUrl: string | null;
+  access?: {
+    allMembers: boolean;
+    memberIds: Array<string>;
+    teamIds: Array<string>;
+  };
+  oauthClientId?: string | null;
+  settings?: {
+    [key: string]: unknown;
+  };
+  oauthCallbackUrl?: string;
+  migration?: {
+    /**
+     * Den TypeID with 'lpr_' prefix and a 26-character base32 suffix.
+     */
+    llmProviderId: string;
+    runtimeEnvNames: Array<string>;
+  };
+  hasOauthClientSecret?: boolean;
+  credentials?: Array<{
+    subject: string;
+    orgMembershipId: string | null;
+    memberName: string | null;
+    memberEmail: string | null;
+    kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+    status: string;
+    expiresAt: string | null;
+  }>;
+};
+
+export type InferenceProviderListResponse = {
+  inferenceProviders: Array<InferenceProviderSummary>;
+};
+
+export type InferenceProviderResponse = {
+  inferenceProvider: InferenceProviderSummary;
+};
+
+export type InferenceProviderConnectResponse = {
+  inferenceProvider: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    id: string;
+    providerId: string;
+    name: string;
+    source: "openwork_gateway";
+    credentialMode: "org" | "member";
+    status: "active" | "disabled";
+    updatedAt: string;
+    providerConfig: {
+      [key: string]: unknown;
+    };
+    models: Array<{
+      id: string;
+      name: string;
+      config: {
+        [key: string]: unknown;
+      };
+    }>;
+    credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
+    /**
+     * Absolute URL of the member OAuth start endpoint when credentialStatus is member_auth_required; otherwise null.
+     */
+    authUrl: string | null;
+    access?: {
+      allMembers: boolean;
+      memberIds: Array<string>;
+      teamIds: Array<string>;
+    };
+    oauthClientId?: string | null;
+    settings?: {
+      [key: string]: unknown;
+    };
+    oauthCallbackUrl?: string;
+    migration?: {
+      /**
+       * Den TypeID with 'lpr_' prefix and a 26-character base32 suffix.
+       */
+      llmProviderId: string;
+      runtimeEnvNames: Array<string>;
+    };
+    hasOauthClientSecret?: boolean;
+    credentials?: Array<{
+      subject: string;
+      orgMembershipId: string | null;
+      memberName: string | null;
+      memberEmail: string | null;
+      kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+      status: string;
+      expiresAt: string | null;
+    }>;
+    apiKey: string;
+    apiKeys: {
+      [key: string]: string;
+    };
+  };
+};
+
+export type InferenceProviderOauthStartResponse = {
+  authUrl: string;
+};
+
+export type InferenceProviderUnsupportedCredentialModeError = {
+  error: "unsupported_credential_mode";
+  message?: string;
+};
+
+export type InferenceProviderOauthClientRequiredError = {
+  error: "oauth_client_required";
+  message?: string;
+};
+
+export type InferenceProviderUnsupportedError = {
+  error: "unsupported_provider";
+  message?: string;
+};
+
 export type OAuthClientConfigResponse = {
   ok: true;
   providerId: string;
@@ -11974,6 +12117,613 @@ export type DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponses = {
 
 export type DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponse =
   DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponses[keyof DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponses];
+
+export type GetV1InferenceProvidersData = {
+  body?: never;
+  path?: never;
+  query?: {
+    scope?: "usable" | "manageable";
+  };
+  url: "/v1/inference-providers";
+};
+
+export type GetV1InferenceProvidersErrors = {
+  /**
+   * The query parameters were invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in to list inference providers.
+   */
+  401: UnauthorizedError;
+};
+
+export type GetV1InferenceProvidersError = GetV1InferenceProvidersErrors[keyof GetV1InferenceProvidersErrors];
+
+export type GetV1InferenceProvidersResponses = {
+  /**
+   * Inference providers returned successfully.
+   */
+  200: InferenceProviderListResponse;
+};
+
+export type GetV1InferenceProvidersResponse = GetV1InferenceProvidersResponses[keyof GetV1InferenceProvidersResponses];
+
+export type PostV1InferenceProvidersData = {
+  body: {
+    name: string;
+    providerId: string;
+    modelIds: Array<string>;
+    credentialMode?: "org" | "member";
+    status?: "active" | "disabled";
+    settings?: {
+      project?: string;
+      location?: string;
+      resourceName?: string;
+      apiVersion?: string;
+      region?: string;
+      upstreamBaseUrl?: string;
+    };
+    credential?: {
+      kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+      secret: string;
+    };
+    apiKeys?: {
+      [key: string]: string;
+    };
+    oauthClientId?: string;
+    oauthClientSecret?: string;
+    memberIds?: Array<string>;
+    teamIds?: Array<string>;
+    allMembers?: boolean;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers";
+};
+
+export type PostV1InferenceProvidersErrors = {
+  /**
+   * The request was invalid or the provider SDK is not supported by the gateway.
+   */
+  400:
+    | InvalidRequestError
+    | InferenceProviderUnsupportedError
+    | InferenceProviderUnsupportedCredentialModeError
+    | InferenceProviderOauthClientRequiredError
+    | {
+        error: "migration_requires_configuration";
+        message?: string;
+      }
+    | {
+        error: "provider_requires_configuration";
+        message?: string;
+      }
+    | {
+        error: "unsupported_model_sdk";
+        message?: string;
+      }
+    | {
+        error: "invalid_credential";
+        message?: string;
+      }
+    | {
+        error: "invalid_api_keys";
+        message?: string;
+      }
+    | {
+        error: "invalid_settings";
+        message?: string;
+      };
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * A referenced provider, model, member, or team could not be found.
+   */
+  404: NotFoundError;
+};
+
+export type PostV1InferenceProvidersError = PostV1InferenceProvidersErrors[keyof PostV1InferenceProvidersErrors];
+
+export type PostV1InferenceProvidersResponses = {
+  /**
+   * Inference provider created successfully.
+   */
+  201: InferenceProviderResponse;
+};
+
+export type PostV1InferenceProvidersResponse =
+  PostV1InferenceProvidersResponses[keyof PostV1InferenceProvidersResponses];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}";
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdErrors = {
+  /**
+   * The path parameters were invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only the provider creator or a workspace admin can delete providers.
+   */
+  403: ForbiddenError;
+  /**
+   * The provider could not be found.
+   */
+  404: NotFoundError;
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdError =
+  DeleteV1InferenceProvidersByInferenceProviderIdErrors[keyof DeleteV1InferenceProvidersByInferenceProviderIdErrors];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdResponses = {
+  /**
+   * Inference provider deleted successfully.
+   */
+  204: void;
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdResponse =
+  DeleteV1InferenceProvidersByInferenceProviderIdResponses[keyof DeleteV1InferenceProvidersByInferenceProviderIdResponses];
+
+export type GetV1InferenceProvidersByInferenceProviderIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}";
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdErrors = {
+  /**
+   * The path parameters were invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only the provider creator or a workspace admin can view provider management details.
+   */
+  403: ForbiddenError;
+  /**
+   * The provider could not be found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdError =
+  GetV1InferenceProvidersByInferenceProviderIdErrors[keyof GetV1InferenceProvidersByInferenceProviderIdErrors];
+
+export type GetV1InferenceProvidersByInferenceProviderIdResponses = {
+  /**
+   * Inference provider returned successfully.
+   */
+  200: InferenceProviderResponse;
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdResponse =
+  GetV1InferenceProvidersByInferenceProviderIdResponses[keyof GetV1InferenceProvidersByInferenceProviderIdResponses];
+
+export type PatchV1InferenceProvidersByInferenceProviderIdData = {
+  body: {
+    name?: string;
+    providerId?: string;
+    modelIds?: Array<string>;
+    credentialMode?: "org" | "member";
+    status?: "active" | "disabled";
+    settings?: {
+      project?: string;
+      location?: string;
+      resourceName?: string;
+      apiVersion?: string;
+      region?: string;
+      upstreamBaseUrl?: string;
+    };
+    credential?: {
+      kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+      secret: string;
+    };
+    apiKeys?: {
+      [key: string]: string;
+    };
+    oauthClientId?: string;
+    oauthClientSecret?: string;
+    memberIds?: Array<string>;
+    teamIds?: Array<string>;
+    allMembers?: boolean;
+  };
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}";
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdErrors = {
+  /**
+   * The request was invalid or the provider SDK is not supported by the gateway.
+   */
+  400:
+    | InvalidRequestError
+    | InferenceProviderUnsupportedError
+    | InferenceProviderUnsupportedCredentialModeError
+    | InferenceProviderOauthClientRequiredError
+    | {
+        error: "migration_requires_configuration";
+        message?: string;
+      }
+    | {
+        error: "provider_requires_configuration";
+        message?: string;
+      }
+    | {
+        error: "unsupported_model_sdk";
+        message?: string;
+      }
+    | {
+        error: "invalid_credential";
+        message?: string;
+      }
+    | {
+        error: "invalid_api_keys";
+        message?: string;
+      }
+    | {
+        error: "invalid_settings";
+        message?: string;
+      };
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only the provider creator or a workspace admin can update providers.
+   */
+  403: ForbiddenError;
+  /**
+   * The provider or a referenced resource could not be found.
+   */
+  404: NotFoundError;
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdError =
+  PatchV1InferenceProvidersByInferenceProviderIdErrors[keyof PatchV1InferenceProvidersByInferenceProviderIdErrors];
+
+export type PatchV1InferenceProvidersByInferenceProviderIdResponses = {
+  /**
+   * Inference provider updated successfully.
+   */
+  200: InferenceProviderResponse;
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdResponse =
+  PatchV1InferenceProvidersByInferenceProviderIdResponses[keyof PatchV1InferenceProvidersByInferenceProviderIdResponses];
+
+export type GetV1InferenceProvidersByInferenceProviderIdConnectData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/connect";
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdConnectErrors = {
+  /**
+   * The path parameters were invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only members with access can connect to this provider.
+   */
+  403: ForbiddenError;
+  /**
+   * The provider could not be found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdConnectError =
+  GetV1InferenceProvidersByInferenceProviderIdConnectErrors[keyof GetV1InferenceProvidersByInferenceProviderIdConnectErrors];
+
+export type GetV1InferenceProvidersByInferenceProviderIdConnectResponses = {
+  /**
+   * Connect payload returned successfully.
+   */
+  200: InferenceProviderConnectResponse;
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdConnectResponse =
+  GetV1InferenceProvidersByInferenceProviderIdConnectResponses[keyof GetV1InferenceProvidersByInferenceProviderIdConnectResponses];
+
+export type GetV1InferenceProvidersOauthCallbackData = {
+  body?: never;
+  path?: never;
+  query?: {
+    code?: string;
+    state?: string;
+    error?: string;
+  };
+  url: "/v1/inference-providers/oauth/callback";
+};
+
+export type GetV1InferenceProvidersOauthCallbackErrors = {
+  /**
+   * Missing, reused, or expired state; or the token exchange failed.
+   */
+  400: string;
+};
+
+export type GetV1InferenceProvidersOauthCallbackError =
+  GetV1InferenceProvidersOauthCallbackErrors[keyof GetV1InferenceProvidersOauthCallbackErrors];
+
+export type GetV1InferenceProvidersOauthCallbackResponses = {
+  /**
+   * Connected — a static success page.
+   */
+  200: string;
+};
+
+export type GetV1InferenceProvidersOauthCallbackResponse =
+  GetV1InferenceProvidersOauthCallbackResponses[keyof GetV1InferenceProvidersOauthCallbackResponses];
+
+export type GetV1InferenceProvidersByInferenceProviderIdOauthStartData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: {
+    redirectTo?: string;
+  };
+  url: "/v1/inference-providers/{inferenceProviderId}/oauth/start";
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdOauthStartErrors = {
+  /**
+   * The provider is not in member credential mode, has no OAuth client, or redirectTo is not allowed.
+   */
+  400:
+    | InvalidRequestError
+    | InferenceProviderUnsupportedCredentialModeError
+    | InferenceProviderOauthClientRequiredError
+    | {
+        error: "invalid_redirect";
+        message?: string;
+      };
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only members with access can connect to this provider.
+   */
+  403: ForbiddenError;
+  /**
+   * The provider could not be found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdOauthStartError =
+  GetV1InferenceProvidersByInferenceProviderIdOauthStartErrors[keyof GetV1InferenceProvidersByInferenceProviderIdOauthStartErrors];
+
+export type GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses = {
+  /**
+   * Authorize URL (Accept: application/json).
+   */
+  200: InferenceProviderOauthStartResponse;
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdOauthStartResponse =
+  GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses[keyof GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdOauthData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/oauth";
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdOauthErrors = {
+  /**
+   * The path parameters were invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The provider or the caller's credential could not be found.
+   */
+  404: NotFoundError;
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdOauthError =
+  DeleteV1InferenceProvidersByInferenceProviderIdOauthErrors[keyof DeleteV1InferenceProvidersByInferenceProviderIdOauthErrors];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdOauthResponses = {
+  /**
+   * Credential revoked.
+   */
+  204: void;
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdOauthResponse =
+  DeleteV1InferenceProvidersByInferenceProviderIdOauthResponses[keyof DeleteV1InferenceProvidersByInferenceProviderIdOauthResponses];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdAccessByAccessIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+    /**
+     * Den TypeID with 'ipa_' prefix and a 26-character base32 suffix.
+     */
+    accessId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/access/{accessId}";
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdAccessByAccessIdErrors = {
+  /**
+   * The path parameters were invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only the provider creator or a workspace admin can manage provider access.
+   */
+  403: ForbiddenError;
+  /**
+   * The provider or access grant could not be found.
+   */
+  404: NotFoundError;
+  /**
+   * The request tried to remove a protected access entry.
+   */
+  409: {
+    error: "protected_access";
+    message?: string;
+  };
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdAccessByAccessIdError =
+  DeleteV1InferenceProvidersByInferenceProviderIdAccessByAccessIdErrors[keyof DeleteV1InferenceProvidersByInferenceProviderIdAccessByAccessIdErrors];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdAccessByAccessIdResponses = {
+  /**
+   * Access grant removed successfully.
+   */
+  204: void;
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdAccessByAccessIdResponse =
+  DeleteV1InferenceProvidersByInferenceProviderIdAccessByAccessIdResponses[keyof DeleteV1InferenceProvidersByInferenceProviderIdAccessByAccessIdResponses];
+
+export type PostV1InferenceProvidersMigrateFromLlmProviderData = {
+  body: {
+    /**
+     * Den TypeID with 'lpr_' prefix and a 26-character base32 suffix.
+     */
+    llmProviderId: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers/migrate-from-llm-provider";
+};
+
+export type PostV1InferenceProvidersMigrateFromLlmProviderErrors = {
+  /**
+   * The LLM provider is not a models.dev provider or its SDK is not supported by the gateway.
+   */
+  400:
+    | InvalidRequestError
+    | InferenceProviderUnsupportedError
+    | InferenceProviderUnsupportedCredentialModeError
+    | InferenceProviderOauthClientRequiredError
+    | {
+        error: "migration_requires_configuration";
+        message?: string;
+      }
+    | {
+        error: "provider_requires_configuration";
+        message?: string;
+      }
+    | {
+        error: "unsupported_model_sdk";
+        message?: string;
+      }
+    | {
+        error: "invalid_credential";
+        message?: string;
+      }
+    | {
+        error: "invalid_api_keys";
+        message?: string;
+      }
+    | {
+        error: "invalid_settings";
+        message?: string;
+      };
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only the provider creator or a workspace admin can migrate providers.
+   */
+  403: ForbiddenError;
+  /**
+   * The LLM provider could not be found.
+   */
+  404: NotFoundError;
+  /**
+   * The source is being changed, was already migrated, or was removed.
+   */
+  409: {
+    error: "migration_source_unavailable" | "migration_in_progress";
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersMigrateFromLlmProviderError =
+  PostV1InferenceProvidersMigrateFromLlmProviderErrors[keyof PostV1InferenceProvidersMigrateFromLlmProviderErrors];
+
+export type PostV1InferenceProvidersMigrateFromLlmProviderResponses = {
+  /**
+   * Inference provider created from the LLM provider.
+   */
+  201: InferenceProviderResponse;
+};
+
+export type PostV1InferenceProvidersMigrateFromLlmProviderResponse =
+  PostV1InferenceProvidersMigrateFromLlmProviderResponses[keyof PostV1InferenceProvidersMigrateFromLlmProviderResponses];
 
 export type PostV1MembersByMemberIdRoleData = {
   body: {
