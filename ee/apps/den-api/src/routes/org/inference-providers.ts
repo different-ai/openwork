@@ -51,6 +51,7 @@ import {
   revokeGoogleToken,
 } from "../../llm/inference-provider-google-oauth.js"
 import { getModelsDevProvider } from "../../llm/models-dev.js"
+import { isMigrationSourceLockConflict } from "../../llm/inference-provider-migration.js"
 import { decodeProviderCredential, readProviderEnvNames, runtimeProviderEnvNames } from "../../llm/provider-credentials.js"
 import { lockMemberOAuthAuthorization, revokeGoogleCredentials } from "../../llm/inference-provider-lifecycle.js"
 import {
@@ -1599,6 +1600,12 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
           // A locking current read serializes two migrations, including a waiter after deletion.
           const [llmProvider] = await tx.select().from(LlmProviderTable)
             .where(and(eq(LlmProviderTable.id, llmProviderId), eq(LlmProviderTable.organizationId, payload.organization.id))).for("update", { noWait: true })
+            .catch((error: unknown) => {
+              if (isMigrationSourceLockConflict(error)) {
+                throw failure(409, "migration_in_progress", "This source is being changed. Refresh providers before retrying.")
+              }
+              throw error
+            })
           if (!llmProvider) throw failure(409, "migration_source_unavailable", "The source was already migrated or removed. Refresh providers before retrying.")
           if (!(isOrganizationAdmin(payload) || llmProvider.createdByOrgMembershipId === payload.currentMember.id)) throw failure(403, "forbidden")
           if (llmProvider.source !== "models_dev") throw failure(400, "unsupported_provider", "Only models.dev providers can be moved to the inference gateway.")
@@ -1677,10 +1684,6 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
           inferenceProvider: await loadSummary({ provider, currentMemberId: payload.currentMember.id, manage: true, publicBaseUrl: publicBaseUrlFor(c.req.raw) }),
         }, 201)
       } catch (error) {
-        const cause = error instanceof Error && error.cause ? error.cause : error
-        if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ER_LOCK_NOWAIT") {
-          return c.json({ error: "migration_in_progress", message: "This source is being changed. Refresh providers before retrying." }, 409)
-        }
         return respondFailure(c, error)
       }
     },
