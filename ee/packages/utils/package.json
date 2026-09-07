@@ -26,6 +26,16 @@
       "development": "./src/den-urls.ts",
       "default": "./dist/den-urls.js"
     },
+    "./inference-egress": {
+      "types": "./src/inference-egress.ts",
+      "development": "./src/inference-egress.ts",
+      "default": "./dist/inference-egress.js"
+    },
+    "./inference-credentials": {
+      "types": "./src/inference-credentials.ts",
+      "development": "./src/inference-credentials.ts",
+      "default": "./dist/inference-credentials.js"
+    },
     "./inference-bearer-key": {
       "types": "./src/inference-bearer-key.ts",
       "development": "./src/inference-bearer-key.ts",

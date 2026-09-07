@@ -5,6 +5,8 @@ export default defineConfig({
     index: "src/index.ts",
     "den-urls": "src/den-urls.ts",
     "inference-bearer-key": "src/inference-bearer-key.ts",
+    "inference-egress": "src/inference-egress.ts",
+    "inference-credentials": "src/inference-credentials.ts",
     observability: "src/observability.ts",
     typeid: "src/typeid.ts",
   },
