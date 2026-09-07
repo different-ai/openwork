@@ -88,7 +88,8 @@ test("Computer Use respects window consent, fresh observations and the person's 
     // Follow the read-only requery contract; never retry a paused session or action.
     for (let attempt = 0; ; attempt++) {
       const observed = toolState(await world.call("computer_observe", { session_id: session }));
-      if (observed.code !== "stale_observation" || attempt === 4) return observed;
+      if (observed.ok === true) return observed;
+      if (observed.code !== "stale_observation" || attempt === 4) throw new Error(`Observation failed: ${JSON.stringify(observed)}`);
       expect(observed.next).toBe("observe");
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
@@ -365,7 +366,8 @@ test("Computer Use enables workspace tools from the desktop setup page", async (
     expect(toolState(await computer.call("computer_observe", { session_id: session })).code).toBe("user_interacting");
     expect(toolState(await computer.call("computer_session_status", { session_id: session })).state).toBe("paused");
     await expect.poll(async () => toolState(await computer.call("computer_session_status", { session_id: session })).phase, { timeout: 5_000 }).toBe("requery_required");
-    expect(toolState(await computer.call("computer_observe", { session_id: session })).ok).toBe(true);
+    const refreshed = toolState(await computer.call("computer_observe", { session_id: session }));
+    expect(refreshed, JSON.stringify(refreshed)).toMatchObject({ ok: true });
     expect(await world.state()).toEqual({ count: 0, otherCount: 0, draft: "Edited by person" });
   });
   await step("Unavailable-window recovery requires a person and cannot be cleared by more input", async () => {
