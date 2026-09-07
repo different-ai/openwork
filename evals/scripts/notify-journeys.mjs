@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { appendFile, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 const escape = text => String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
@@ -48,6 +48,19 @@ export async function deliver(previous, run, report, { token, channel, teamId, r
 
 const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
 const api = path => JSON.parse(gh('api', path));
+
+export async function findStateRun(stateName, currentRunId, loadRuns, loadArtifacts) {
+  for (let page = 1; ; page++) {
+    const runs = await loadRuns(page);
+    for (const candidate of runs) {
+      if (String(candidate.id) === currentRunId) continue;
+      const artifacts = await loadArtifacts(candidate.id);
+      if (artifacts.some(artifact => artifact.name === stateName && !artifact.expired)) return candidate.id;
+    }
+    if (runs.length < 100) return undefined;
+  }
+}
+
 async function main() {
   const { workflow_run: run } = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, 'utf8'));
   const repo = process.env.GITHUB_REPOSITORY;
@@ -73,25 +86,20 @@ async function main() {
   }
   const stateName = `test-alert-state-${run.workflow_id}`;
   let previous;
-  const runs = api(`repos/${repo}/actions/workflows/e2e-test-failure-alerts.yml/runs?status=success&per_page=100`).workflow_runs;
-  for (const candidate of runs) {
-    if (String(candidate.id) === process.env.GITHUB_RUN_ID) continue;
-    const available = api(`repos/${repo}/actions/runs/${candidate.id}/artifacts?per_page=100`).artifacts;
-    if (!available.some(artifact => artifact.name === stateName && !artifact.expired)) continue;
-    gh('run', 'download', String(candidate.id), '--repo', repo, '--name', stateName, '--dir', 'previous-state');
+  const stateRun = await findStateRun(stateName, process.env.GITHUB_RUN_ID,
+    page => api(`repos/${repo}/actions/workflows/e2e-test-failure-alerts.yml/runs?status=success&per_page=100&page=${page}`).workflow_runs,
+    id => api(`repos/${repo}/actions/runs/${id}/artifacts?per_page=100`).artifacts);
+  if (stateRun !== undefined) {
+    gh('run', 'download', String(stateRun), '--repo', repo, '--name', stateName, '--dir', 'previous-state');
     previous = JSON.parse(await readFile('previous-state/state.json', 'utf8'));
-    break;
   }
   await mkdir('alert-state', { recursive: true });
   if (!process.env.SLACK_BOT_TOKEN || !process.env.SLACK_TEST_ALERT_CHANNEL_ID) {
-    // Do not mark undelivered alerts as sent. Keep last delivered state intact.
-    if (previous) await writeFile('alert-state/state.json', JSON.stringify(previous));
     await appendFile(process.env.GITHUB_STEP_SUMMARY, '## Slack setup required\n\nSet the SLACK_BOT_TOKEN secret and SLACK_TEST_ALERT_CHANNEL_ID variable, and invite the bot to that channel. No Slack message was sent.\n');
     throw new Error('Slack notification credentials are not configured');
   }
   const state = await deliver(previous, run, report, { token: process.env.SLACK_BOT_TOKEN, channel: process.env.SLACK_TEST_ALERT_CHANNEL_ID, teamId: process.env.SLACK_TEST_ALERT_TEAM_ID });
   await writeFile('alert-state/state.json', JSON.stringify(state));
   await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Team notification\n\n${report.counts.passed} passed · ${report.counts.failed} failed · ${report.counts['not tested']} not tested. Healthy runs stay quiet; repeated failures reply in the existing incident thread.\n`);
-  await rm('incoming-report', { recursive: true, force: true });
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

@@ -184,11 +184,7 @@ jobs:
           else
             MODEL="big-pickle"
           fi
-          set +e
           OPENWORK_EVAL_MODEL="${MODEL}" pnpm evals:e2e "${SPEC_SLUG}" --daytona 2>&1 | tee /tmp/daytona-e2e.log
-          cli_status="${PIPESTATUS[0]}"
-          set -e
-          exit "$cli_status"
 
       - name: Judge deferred vision claims
         id: vision
@@ -300,7 +296,7 @@ jobs:
   verdict:
     name: ${{ needs.plan.outputs.suite || 'Product journeys' }}
     needs: [plan, e2e, local-journey]
-    if: always()
+    if: always() && needs.plan.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

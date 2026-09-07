@@ -6,13 +6,28 @@ import { judgeJourneys } from './judge-journeys.mjs';
 import assert from 'node:assert/strict';
 import { catalog, selectJourneys } from './journey-catalog.mjs';
 import { aggregate, classify, markdown } from './journey-report.mjs';
-import { notification, deliver, validateReport } from './notify-journeys.mjs';
+import { notification, deliver, validateReport, findStateRun } from './notify-journeys.mjs';
 
 const summary = { command: 'evals:e2e', verdict: 'passed', passed: 1, failed: 0, skipped: 0 };
 const entry = { spec: 'permissions.e2e.test.ts', name: 'Apply permissions', critical: true, placement: 'daytona' };
 const plan = { suite: 'Full regression', entries: [entry], manual: [] };
 const run = { name: 'Product journeys', run_number: 10, run_attempt: 1, html_url: 'https://github.com/different-ai/openwork/actions/runs/10' };
 const report = status => validateReport({ entries: [{ ...entry, status }] });
+
+test('incident state survives more than 100 newer unrelated alert runs', async () => {
+  const pages = [];
+  const stateName = 'test-alert-state-42';
+  const found = await findStateRun(stateName, '200', async page => {
+    pages.push(page);
+    return page === 1 ? Array.from({ length: 100 }, (_, i) => ({ id: 200 - i })) : [{ id: 100 }, { id: 99 }];
+  }, async id => {
+    assert.notEqual(id, 200);
+    return [{ name: id === 99 || id === 100 ? stateName : 'test-alert-state-43', expired: id === 100 }];
+  });
+  assert.equal(found, 99);
+  assert.deepEqual(pages, [1, 2]);
+  assert.equal(await findStateRun(stateName, '200', async () => [], async () => []), undefined);
+});
 
 test('critical PR selection includes existing critical journeys even when only product source changes', async () => {
   const entries = await catalog();
