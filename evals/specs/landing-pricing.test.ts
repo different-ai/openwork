@@ -70,12 +70,26 @@ test("visitors can read the trust badge and access every footer link at responsi
       const bounds = footer.getBoundingClientRect();
       const iconBounds = icon.getBoundingClientRect();
       const links = [...footer.querySelectorAll("a")];
+      const brand = footer.querySelector('a[href="https://opencode.ai"]');
+      const poweredBy = brand?.parentElement?.querySelector("span");
+      if (!brand || !poweredBy) throw new Error("Powered by OpenCode missing");
+      const brandBounds = brand.getBoundingClientRect();
+      const poweredByBounds = poweredBy.getBoundingClientRect();
+      const badgeBounds = badge.getBoundingClientRect();
+      const linksBottom = Math.max(...links.filter((link) => link !== brand && link !== badge)
+        .map((link) => link.getBoundingClientRect().bottom));
       return {
         viewport: window.innerWidth,
         lines: lines.length,
         textVisible: lines.every((rect) => rect.width > 0 && rect.height > 0),
         iconWidth: iconBounds.width,
         iconHeight: iconBounds.height,
+        poweredBy: poweredBy.textContent,
+        brandInline: poweredByBounds.right <= brandBounds.left
+          && poweredByBounds.top < brandBounds.bottom && brandBounds.top < poweredByBounds.bottom,
+        brandRowBelowLinks: Math.min(poweredByBounds.top, brandBounds.top, badgeBounds.top) >= linksBottom,
+        badgeBesideBrand: badgeBounds.left >= brandBounds.right
+          && badgeBounds.top < brandBounds.bottom && brandBounds.top < badgeBounds.bottom,
         footerFits: bounds.left >= 0 && bounds.right <= window.innerWidth && footer.scrollWidth <= footer.clientWidth,
         contentFits: [...footer.querySelectorAll("*")].every((element) => {
           const rect = element.getBoundingClientRect();
@@ -91,13 +105,15 @@ test("visitors can read the trust badge and access every footer link at responsi
     expect(facts, `footer at ${width}px`).toMatchObject({
       viewport: width, lines: 1, textVisible: true, iconWidth: 14, iconHeight: 14,
       footerFits: true, contentFits: true, linksVisible: true,
+      poweredBy: "Powered by", brandInline: true, brandRowBelowLinks: true,
     });
+    if (width >= 768) expect(facts.badgeBesideBrand, `trust badge beside brand at ${width}px`).toBe(true);
     expect(facts.links).toEqual([
-      ["https://opencode.ai", ""], ["/trust", "SOC 2 Type I — view Trust Center"],
       ["/docs", "Docs"], ["/pricing", "Pricing"], ["/roadmap", "Roadmap"],
       ["/download", "Desktop"], ["https://app.openworklabs.com", "Cloud"],
       ["/dashboard", "Dashboard"], ["/enterprise", "Enterprise"], ["/contact", "Contact"],
       ["/trust", "Trust Center"], ["/privacy", "Privacy"], ["/terms", "Terms"],
+      ["https://opencode.ai", ""], ["/trust", "SOC 2 Type I — view Trust Center"],
     ]);
     evidence.recordAssertionEvidence(`Footer remains readable and complete at ${width}px`, JSON.stringify(facts), true);
   }
