@@ -2,6 +2,7 @@ import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 
 import { markTaskRunStart } from "@/app/lib/analytics";
 import { createClient } from "@/app/lib/opencode";
+import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import { shellInSession } from "@/app/lib/opencode-session";
 import { composeNativeSessionSnapshot } from "@/app/lib/opencode-session-native";
 import type { ComposerDraft, ModelRef } from "@/app/types";
@@ -127,7 +128,12 @@ async function performQueuedDraftSend(
     cacheKey: sessionId,
     runtimeKey: context.environmentRuntimeKey,
   });
-  const result = await opencodeClient.session.promptAsync({
+  // The global drainer can win the send slot even while a surface is mounted.
+  // Use the owning engine's prompt API just as the foreground sender does.
+  const promptClient = isOpencodeV2BaseUrl(context.opencodeBaseUrl)
+    ? createClientV2(context.opencodeBaseUrl, context.workspaceRoot || undefined, { token: context.openworkToken })
+    : opencodeClient;
+  const result = await promptClient.session.promptAsync({
     sessionID: sessionId,
     parts,
     model: sendModel ?? undefined,
