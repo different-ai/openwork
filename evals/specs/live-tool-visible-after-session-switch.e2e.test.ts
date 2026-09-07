@@ -310,6 +310,7 @@ test.skipIf(!runnable)(
     const promptB = `SECOND-CHAT-${runId}`;
     const replyB = `REPLY-B-${runId}`;
     const progressA = `PROGRESS-A-${runId}`;
+    const continuedProgressA = `CONTINUED-A-${runId}`;
     const progressB = `PROGRESS-B-${runId}`;
     const queuedA = [`FOLLOW-UP-A1-${runId}`, `FOLLOW-UP-A2-${runId}`];
     const queuedB = `FOLLOW-UP-B-${runId}`;
@@ -318,6 +319,7 @@ test.skipIf(!runnable)(
     const commandB = `sleep 180 && printf '%s\\n' 'TOOL-B-${runId}'`;
     const firstCommand = `sleep 45 && printf '%s\\n' '${firstMarker}'`;
     const command = `sleep 45 && printf '%s\\n' '${completionMarker}'`;
+    const continuedCommand = `sleep 30 && printf '%s\\n' 'LAST-TOOL-A-${runId}'`;
     const matchesDescription = (tool: ToolFact, description: string) =>
       evalEngine === "v2" || tool.description === description;
 
@@ -346,6 +348,15 @@ test.skipIf(!runnable)(
                   command,
                   timeout: 90_000,
                   ...(evalEngine === "v1" ? { description: toolDescription } : {}),
+                },
+              },
+              {
+                tool: shellToolName,
+                text: continuedProgressA,
+                arguments: {
+                  command: continuedCommand,
+                  timeout: 90_000,
+                  ...(evalEngine === "v1" ? { description: "Chat A continues after returning" } : {}),
                 },
               },
             ],
@@ -536,6 +547,32 @@ test.skipIf(!runnable)(
     );
     await screenshot(desktopApp);
 
+    const continuedTool = await eventually(() => readSessionFacts(desktopApp, workspaceA.workspaceId, chatA), {
+      within: 60_000,
+      intervalMs: 250,
+      label: "a new tool starts after returning to A without another navigation",
+      until: (facts) => facts.tools.some((tool) => tool.command === continuedCommand && tool.status === "running"),
+    });
+    const continuedCall = continuedTool.tools.find((tool) => tool.command === continuedCommand);
+    if (!continuedCall?.callId) throw new Error("Chat A's next live tool has no call ID");
+    expect((await eventually(() => readVisibleTool(desktopApp, chatA, continuedCall.callId), {
+      within: 10_000,
+      intervalMs: 250,
+      label: "the resumed stream renders the new tool while it runs",
+      until: (fact) => fact.visible,
+    })).visible).toBe(true);
+    const liveContinuation = await eventually(() => readTranscript(desktopApp, chatA), {
+      within: 10_000,
+      intervalMs: 250,
+      label: "the resumed stream renders new assistant progress before completion",
+      until: (fact) => fact.assistantText.includes(continuedProgressA),
+    });
+    expect(liveContinuation.assistantText).toContain(continuedProgressA);
+    expect(liveContinuation.assistantText).not.toContain(replyA);
+    expect((await readSessionFacts(desktopApp, workspaceA.workspaceId, chatA)).tools
+      .some((tool) => tool.callId === continuedCall.callId && tool.status === "running")).toBe(true);
+    await screenshot(desktopApp);
+
     const completed = await eventually(
       () => readSessionFacts(desktopApp, workspaceA.workspaceId, chatA),
       {
@@ -547,7 +584,7 @@ test.skipIf(!runnable)(
             && tool.status === "completed" && tool.command === command),
       },
     );
-    expect(completed.tools).toHaveLength(2);
+    expect(completed.tools).toHaveLength(3);
     expect(completed.tools.every((tool) => tool.status === "completed")).toBe(true);
     expect(completed.text).not.toContain(replyB);
     const continuedA = await eventually(() => readTranscript(desktopApp, chatA), {
@@ -573,7 +610,7 @@ test.skipIf(!runnable)(
     expect(drainedA.text).not.toContain(queuedReplyB);
     evidence.recordAssertionEvidence(
       "The returned transcript continues live, without duplicates or the other chat's content",
-      `${evalEngine}, ${scope}: A retained its prompt and running tool on return, then rendered exactly one new assistant reply without navigating or reloading. Both original tools completed; B's prompt, tool and reply were absent from A.`,
+      `${evalEngine}, ${scope}: A restored its prompt, assistant progress and running tool, then rendered new assistant progress and a third running tool before completion without navigating or reloading. All three tools completed and the final answer appeared exactly once; B's content was absent from A.`,
       true,
     );
     await screenshot(desktopApp);
