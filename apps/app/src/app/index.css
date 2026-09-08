@@ -432,6 +432,33 @@ select:disabled {
   cursor: not-allowed;
 }
 
+/* Native scrollbars: thin, pill-shaped, and theme-aware instead of the
+   OS default. The slate alpha tokens flip with the theme, so the thumb
+   stays a subtle translucent gray on both light and dark surfaces.
+   Elements that opt out (`no-scrollbar`, ScrollArea) are unaffected. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--slate-a6);
+  border-radius: 9999px;
+  box-shadow: inset 0 0 0 1px var(--slate-a3);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--slate-a8);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 @utility animate-spin-slow {
   animation: spin 3s linear infinite;
 }
