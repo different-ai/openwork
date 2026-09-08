@@ -4,182 +4,150 @@ import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
 import { server, test } from "@openwork/testkit";
-import { parseOrgContextPayload } from "../../ee/apps/den-web/app/(den)/_lib/den-org.ts";
+import { parseTeamAdminContext } from "./helpers/team-admin-context.ts";
+
+function record(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected object");
+  return Object.fromEntries(Object.entries(value));
+}
 
 test("SCIM projection ownership is atomic and detached manual teams reject later IdP mutations", { timeout: 180_000 }, async ({ place, evidence }) => {
   await using den = await server({ place, web: false, org: { name: "SCIM Transaction Regression", members: { target: {}, control: {} } } });
   if (!den.database) throw new Error("This MySQL lock-witness test requires an isolated local testkit database.");
-  const response = await denFetch(den.admin, "/v1/org", { headers: { authorization: `Bearer ${den.admin.token}` } });
-  const context = parseOrgContextPayload(response.body);
-  if (!context) throw new Error("Missing organization context");
+  const headers = { authorization: `Bearer ${den.admin.token}` };
+  const response = await denFetch(den.admin, "/v1/org", { headers });
+  const context = parseTeamAdminContext(response.body);
   const target = context.members.find((member) => member.user.email === den.members.target?.email);
   const control = context.members.find((member) => member.user.email === den.members.control?.email);
   if (!target?.userId || !control?.userId) throw new Error("Missing test members");
+  const login = await denFetch(den.admin, "/api/auth/sign-in/email", { method: "POST", body: JSON.stringify({ email: den.admin.email, password: den.admin.password }) });
+  const cookie = login.response.headers.get("set-cookie")?.split(";")[0];
+  if (!cookie) throw new Error("Missing cookie");
+  const privilegedHeaders = { ...headers, cookie, "x-openwork-org-id": context.organization.id };
+  const sso = await denFetch(den.admin, "/v1/sso/saml", { method: "POST", headers: privilegedHeaders, body: JSON.stringify({ issuer: `http://127.0.0.1/atomic-${Date.now()}`, domain: "atomic-scim.test", entryPoint: "https://idp.example.test/sso", cert: "test-signing-certificate", audience: den.ref.apiUrl }) });
+  expect(sso.response.status, sso.text).toBe(201);
+  const tokenResult = await denFetch(den.admin, "/v1/scim/token", { method: "POST", headers: privilegedHeaders });
+  expect(tokenResult.response.status, tokenResult.text).toBe(201);
+  const scimToken = record(tokenResult.body).scimToken;
+  if (typeof scimToken !== "string") throw new Error("Missing SCIM token");
 
-  // The child imports the real service and uses the testkit's disposable MySQL.
-  // A held source-row lock stops reconciliation at its ownership UPDATE, after
-  // the projection INSERT. MySQL's wait graph witnesses the competing org lock.
-  const run = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+  // The fixture controls only disposable MySQL locks/data. Every mutation under
+  // test crosses Den's HTTP boundary; no product modules or test runners load here.
+  const run = await promisify(execFile)(process.execPath, ["--input-type=module", "-e", `
     import assert from 'node:assert/strict';
+    import { createRequire } from 'node:module';
     import { setTimeout as delay } from 'node:timers/promises';
-    import { db } from './src/db.ts';
-    import { eq, sql } from '@openwork-ee/den-db/drizzle';
-    import { MemberTable, ScimProviderTable, ScimGroupTable, ScimGroupMemberTable, TeamTable, TeamMemberTable } from '@openwork-ee/den-db/schema';
-    import { createDenTypeId } from '@openwork-ee/utils/typeid';
-    import { createScimGroup, updateScimGroup, deleteScimGroup, reconcileScimGroupsForUser, setScimGroupMappingMode } from './src/scim-groups.ts';
-    import { deleteOrganizationScimConnection } from './src/scim.ts';
-    import { resolveOrganizationMemberAuthority } from './src/organization-team-roles.ts';
+    const { createPool } = createRequire(import.meta.resolve('@openwork/env'))('mysql2/promise');
+    const db = createPool(process.env.DATABASE_URL);
     const input = JSON.parse(process.env.SCIM_ATOMICITY_INPUT);
-    const providerId = createDenTypeId('scimProvider');
-    await db.insert(ScimProviderTable).values({ id: providerId, providerId: 'test-atomic-scim', scimToken: 'test-only', organizationId: input.orgId, groupMappingMode: 'create_teams' });
-    const [provider] = await db.select().from(ScimProviderTable).where(eq(ScimProviderTable.id, providerId));
-    const created = await createScimGroup({ provider, value: { displayName: 'Atomic Admins', members: [] } });
-    assert.equal(created.ok, true);
-    const group = created.group;
-    assert.ok(group.teamId);
-    await db.update(TeamTable).set({ grantsOrganizationAdmin: true }).where(eq(TeamTable.id, group.teamId));
-    const members = () => db.select().from(TeamMemberTable).where(eq(TeamMemberTable.teamId, group.teamId));
-    const sources = () => db.select().from(ScimGroupMemberTable).where(eq(ScimGroupMemberTable.groupId, group.id));
-    const authority = () => resolveOrganizationMemberAuthority({ organizationId: input.orgId, memberId: input.memberId });
-    const addPendingSource = async () => {
-      const id = createDenTypeId('scimGroupMember');
-      await db.insert(ScimGroupMemberTable).values({ id, groupId: group.id, providerId: provider.providerId, organizationId: input.orgId, remoteUserId: input.userId });
-      return id;
+    const http = async (path, method = 'GET', body, token = input.token) => {
+      const response = await fetch(input.apiUrl + path, { method, headers: { authorization: 'Bearer ' + token, 'x-openwork-org-id': input.orgId, origin: input.webUrl, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
+      const text = await response.text();
+      return { status: response.status, body: text ? JSON.parse(text) : null, text };
     };
-    const waitForBlocker = async (connectionId) => {
-      const deadline = Date.now() + 10_000;
+    const scim = (path, method, body) => http('/api/auth/scim/v2/Groups' + path, method, body, input.scimToken);
+    const requireStatus = (result, status = 200) => { assert.equal(result.status, status, result.text); return result.body; };
+    requireStatus(await http('/v1/scim', 'PATCH', { groupMappingMode: 'create_teams' }));
+    const group = requireStatus(await scim('', 'POST', { displayName: 'Atomic Admins', members: [] }), 201);
+    const org = () => http('/v1/org').then((result) => requireStatus(result));
+    const team = (await org()).teams.find((team) => team.name === 'Atomic Admins');
+    const approve = async (id) => requireStatus(await http('/v1/teams/' + id, 'PATCH', { grantsOrganizationAdmin: true }));
+    await approve(team.id);
+    const members = async () => (await db.execute('SELECT * FROM team_member WHERE team_id = ? ORDER BY id', [team.id]))[0];
+    const sources = async () => (await db.execute('SELECT * FROM scim_group_member WHERE group_id = ? ORDER BY id', [group.id]))[0];
+    const authority = async () => (await org()).members.find((member) => member.id === input.memberId).effectiveRole;
+    const [[provider]] = await db.execute('SELECT * FROM scim_provider WHERE organization_id = ?', [input.orgId]);
+    const sourceId = group.id.replace('scg_', 'sgm_');
+    const addPendingSource = () => db.execute('INSERT INTO scim_group_member (id, group_id, provider_id, organization_id, remote_user_id) VALUES (?, ?, ?, ?, ?)', [sourceId, group.id, provider.provider_id, input.orgId, input.userId]);
+    const patch = (operations) => scim('/' + group.id, 'PATCH', { schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'], Operations: operations });
+    const add = (value) => patch([{ op: 'add', path: 'members', value: [{ value }] }]);
+    const waitForBlocker = async (id) => {
+      const deadline = Date.now() + 10000;
       while (Date.now() < deadline) {
-        const [rows] = await db.execute(sql.raw(
-          'SELECT r.PROCESSLIST_ID AS connectionId, r.PROCESSLIST_INFO AS query FROM performance_schema.data_lock_waits w ' +
-          'JOIN performance_schema.threads r ON r.THREAD_ID = w.REQUESTING_THREAD_ID ' +
-          'JOIN performance_schema.threads b ON b.THREAD_ID = w.BLOCKING_THREAD_ID ' +
-          'WHERE b.PROCESSLIST_ID = ' + Number(connectionId)
-        ));
+        const [rows] = await db.execute('SELECT r.PROCESSLIST_ID AS connectionId, r.PROCESSLIST_INFO AS query FROM performance_schema.data_lock_waits w JOIN performance_schema.threads r ON r.THREAD_ID = w.REQUESTING_THREAD_ID JOIN performance_schema.threads b ON b.THREAD_ID = w.BLOCKING_THREAD_ID WHERE b.PROCESSLIST_ID = ?', [id]);
         if (rows.length) return rows[0];
         await delay(25);
       }
-      const [waits] = await db.execute(sql.raw('SELECT * FROM performance_schema.data_lock_waits'));
-      throw new Error('Expected blocked transaction behind connection ' + connectionId + '; waits: ' + JSON.stringify(waits));
+      throw new Error('Expected blocked transaction behind connection ' + id);
     };
-
-    const sourceId = await addPendingSource();
-    let adding;
-    let removing;
-    await db.transaction(async (sourceLock) => {
-      await sourceLock.select().from(ScimGroupMemberTable).where(eq(ScimGroupMemberTable.id, sourceId)).for('update');
-      const [[connection]] = await sourceLock.execute(sql.raw('SELECT CONNECTION_ID() AS id'));
-      adding = reconcileScimGroupsForUser({ provider, userId: input.userId }).then(() => null, (error) => error);
+    await addPendingSource();
+    const sourceLock = await db.getConnection();
+    let adding, removing;
+    try {
+      await sourceLock.beginTransaction();
+      await sourceLock.execute('SELECT id FROM scim_group_member WHERE id = ? FOR UPDATE', [sourceId]);
+      const [[connection]] = await sourceLock.execute('SELECT CONNECTION_ID() AS id');
+      adding = add(input.userId);
       const ownerUpdate = await waitForBlocker(connection.id);
       assert.match(ownerUpdate.query, /update .*scim_group_member/i);
-      assert.equal((await sources())[0].teamMemberId, null);
-      assert.deepEqual(await members(), [], 'projection INSERT must remain uncommitted while ownership UPDATE is blocked');
-      assert.equal((await authority()).role, 'member');
-      removing = updateScimGroup({ provider, groupId: group.id, operations: [{ op: 'remove', path: 'members' }] });
+      assert.equal((await sources())[0].team_member_id, null);
+      assert.deepEqual(await members(), [], 'uncommitted projection must not escape ownership transaction');
+      assert.equal(await authority(), 'member');
+      removing = patch([{ op: 'remove', path: 'members' }]);
       const removalWait = await waitForBlocker(ownerUpdate.connectionId);
-      assert.match(removalWait.query, /organization.*for update/i, 'removal must wait on the reconciler org lock, not delete the stale source');
-    });
-    assert.equal(await adding, null);
-    assert.equal((await removing).ok, true);
+      assert.match(removalWait.query, /organization.*for update/i);
+      await sourceLock.commit();
+    } finally { await sourceLock.rollback(); sourceLock.release(); }
+    requireStatus(await adding);
+    requireStatus(await removing);
     assert.deepEqual(await sources(), []);
     assert.deepEqual(await members(), []);
-    assert.equal((await authority()).role, 'member');
-
-    // Source UPDATE failure rolls back the already-executed TeamMember INSERT.
+    assert.equal(await authority(), 'member');
     await addPendingSource();
-    await db.execute(sql.raw("CREATE TRIGGER scim_source_failure BEFORE UPDATE ON scim_group_member FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected ownership failure'"));
+    await db.query("CREATE TRIGGER scim_source_failure BEFORE UPDATE ON scim_group_member FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected ownership failure'");
     try {
-      await assert.rejects(reconcileScimGroupsForUser({ provider, userId: input.userId }), (error) => error.cause?.sqlMessage === 'injected ownership failure');
+      assert.equal((await add(input.userId)).status, 500);
       assert.deepEqual(await members(), []);
-      assert.equal((await sources())[0].teamMemberId, null);
-    } finally {
-      await db.execute(sql.raw('DROP TRIGGER scim_source_failure'));
-    }
-
-    // A historical orphan projection must never be sufficient for mapped Admin.
-    const orphanId = createDenTypeId('teamMember');
-    await db.insert(TeamMemberTable).values({ id: orphanId, teamId: group.teamId, orgMembershipId: input.memberId, userId: input.userId });
-    assert.equal((await authority()).role, 'member');
-    await reconcileScimGroupsForUser({ provider, userId: input.userId });
-    assert.equal((await sources())[0].teamMemberId, orphanId);
-    assert.equal((await authority()).role, 'member,admin');
-
-    // Concurrent PATCH additions read their current membership inside the lock.
-    const patched = await Promise.all([
-      updateScimGroup({ provider, groupId: group.id, operations: [{ op: 'add', path: 'members', value: [{ value: input.userId }] }] }),
-      updateScimGroup({ provider, groupId: group.id, operations: [{ op: 'add', path: 'members', value: [{ value: input.controlUserId }] }] }),
-    ]);
-    assert.ok(patched.every((result) => result.ok));
-    assert.deepEqual((await members()).map((member) => member.orgMembershipId).sort(), [input.memberId, input.controlId].sort());
-
-    const second = await createScimGroup({ provider, value: { displayName: 'Detached Provider Team', members: [{ value: input.controlUserId }] } });
-    assert.equal(second.ok, true);
-    await setScimGroupMappingMode({ provider, mode: 'metadata_only' });
-    assert.ok((await sources()).every((source) => source.teamMemberId === null));
+      assert.equal((await sources())[0].team_member_id, null);
+    } finally { await db.query('DROP TRIGGER scim_source_failure'); }
+    const orphanId = team.id.replace('tem_', 'tmb_');
+    await db.execute('INSERT INTO team_member (id, team_id, org_membership_id, user_id) VALUES (?, ?, ?, ?)', [orphanId, team.id, input.memberId, input.userId]);
+    assert.equal(await authority(), 'member');
+    requireStatus(await add(input.userId));
+    assert.equal((await sources())[0].team_member_id, orphanId);
+    assert.equal(await authority(), 'member,admin');
+    for (const result of await Promise.all([add(input.userId), add(input.controlUserId)])) requireStatus(result);
+    assert.deepEqual((await members()).map((member) => member.org_membership_id).sort(), [input.memberId, input.controlId].sort());
+    requireStatus(await scim('', 'POST', { displayName: 'Detached Provider Team', members: [{ value: input.controlUserId }] }), 201);
+    const secondTeam = (await org()).teams.find((team) => team.name === 'Detached Provider Team');
+    requireStatus(await http('/v1/scim', 'PATCH', { groupMappingMode: 'metadata_only' }));
+    assert.ok((await sources()).every((source) => source.team_member_id === null));
     const preserved = await members();
     assert.equal(preserved.length, 2);
-    assert.equal((await authority()).role, 'member');
-    // Owner reapproval uses the real role-management route, not a fabricated role.
-    const approve = async (teamId) => {
-      const response = await fetch(input.apiUrl + '/v1/teams/' + teamId, { method: 'PATCH', headers: { authorization: 'Bearer ' + input.token, 'x-openwork-org-id': input.orgId, 'content-type': 'application/json' }, body: JSON.stringify({ grantsOrganizationAdmin: true }), signal: AbortSignal.timeout(10_000) });
-      assert.equal(response.status, 200, await response.text());
-    };
-    await approve(group.teamId);
-    await approve(second.group.teamId);
-    assert.equal((await authority()).role, 'member,admin');
-    // Deliberately keep passing the stale create_teams provider object.
-    assert.equal((await updateScimGroup({ provider, groupId: group.id, operations: [{ op: 'remove', path: 'members' }] })).ok, true);
+    assert.equal(await authority(), 'member');
+    await approve(team.id);
+    await approve(secondTeam.id);
+    requireStatus(await patch([{ op: 'remove', path: 'members' }]));
     assert.deepEqual(await sources(), []);
     assert.deepEqual(await members(), preserved);
-    assert.equal((await authority()).role, 'member,admin');
-    assert.equal((await updateScimGroup({ provider, groupId: group.id, operations: [{ op: 'add', path: 'members', value: [{ value: input.ownerUserId }] }] })).ok, true);
-    assert.equal((await sources())[0].teamMemberId, null);
-    assert.deepEqual(await members(), preserved, 'metadata-only additions cannot project new manual memberships');
-    await reconcileScimGroupsForUser({ provider, userId: input.ownerUserId });
+    assert.equal(await authority(), 'member,admin');
+    requireStatus(await add(input.ownerUserId));
+    assert.equal((await sources())[0].team_member_id, null);
     assert.deepEqual(await members(), preserved);
-    await reconcileScimGroupsForUser({ provider, userId: input.userId });
-    await setScimGroupMappingMode({ provider, mode: 'metadata_only' });
+    requireStatus(await http('/v1/scim', 'PATCH', { groupMappingMode: 'metadata_only' }));
+    assert.equal(await authority(), 'member,admin');
+    requireStatus(await scim('/' + group.id, 'DELETE'), 204);
     assert.deepEqual(await members(), preserved);
-    assert.equal((await authority()).role, 'member,admin', 'idempotent disable must not revoke manual reapproval');
-    assert.equal((await deleteScimGroup({ provider, groupId: group.id })).ok, true);
-    assert.deepEqual(await members(), preserved);
-    assert.equal((await authority()).role, 'member,admin', 'detached group deletion cannot revoke manual authority');
-    const secondMembers = await db.select().from(TeamMemberTable).where(eq(TeamMemberTable.teamId, second.group.teamId));
-    assert.equal(await deleteOrganizationScimConnection(input.orgId), true);
-    assert.deepEqual(await db.select().from(TeamMemberTable).where(eq(TeamMemberTable.teamId, second.group.teamId)), secondMembers);
-    const [manualTeam] = await db.select().from(TeamTable).where(eq(TeamTable.id, second.group.teamId));
-    assert.equal(manualTeam.grantsOrganizationAdmin, true, 'detached provider deletion cannot revoke manual reapproval');
-    assert.deepEqual(await db.select().from(ScimProviderTable).where(eq(ScimProviderTable.id, provider.id)), []);
-    const stale = await createScimGroup({ provider, value: { displayName: 'Deleted provider cannot recreate mappings' } });
-    assert.equal(stale.ok, false);
-    assert.equal(stale.status, 404);
-    await reconcileScimGroupsForUser({ provider, userId: input.userId });
-    assert.deepEqual(await db.select().from(ScimGroupTable).where(eq(ScimGroupTable.providerId, provider.providerId)), []);
-    const [directMember] = await db.select().from(MemberTable).where(eq(MemberTable.id, input.memberId));
-    assert.equal(directMember.role, 'member');
+    assert.equal(await authority(), 'member,admin');
+    const [secondMembers] = await db.execute('SELECT * FROM team_member WHERE team_id = ? ORDER BY id', [secondTeam.id]);
+    requireStatus(await http('/v1/scim', 'DELETE'), 204);
+    assert.deepEqual((await db.execute('SELECT * FROM team_member WHERE team_id = ? ORDER BY id', [secondTeam.id]))[0], secondMembers);
+    assert.equal((await org()).teams.find((team) => team.id === secondTeam.id).grantsOrganizationAdmin, true);
+    assert.equal((await scim('', 'POST', { displayName: 'Stale provider' })).status, 401);
+    assert.deepEqual((await db.execute('SELECT id FROM scim_group WHERE provider_id = ?', [provider.provider_id]))[0], []);
+    assert.equal((await org()).members.find((member) => member.id === input.memberId).role, 'member');
+    await db.end();
     console.log(JSON.stringify({ serializedRemoval: true, rollback: true, orphanDenied: true, patchUnion: true, detachedMembershipPreserved: true, detachedDeletionPreserved: true, staleProviderDenied: true }));
-    process.exit(0);
   `], {
-    cwd: fileURLToPath(new URL("../../ee/apps/den-api", import.meta.url)),
-    timeout: 60_000,
-    env: {
-      ...process.env,
-      DATABASE_URL: den.database.url,
-      DB_MODE: "mysql",
-      DATABASE_REDIS_URL: "",
-      DEN_DB_ENCRYPTION_KEY: "local-dev-db-encryption-key-please-change-1234567890",
-      BETTER_AUTH_SECRET: "local-testkit-secret-not-for-production-use!!",
-      DEN_BASE_URL: den.ref.apiUrl,
-      OPENWORK_DEV_MODE: "1",
-      SCIM_ATOMICITY_INPUT: JSON.stringify({ orgId: context.organization.id, memberId: target.id, userId: target.userId, controlId: control.id, controlUserId: control.userId, ownerUserId: context.currentMember.userId, apiUrl: den.ref.apiUrl, token: den.admin.token }),
-    },
+    cwd: fileURLToPath(new URL("..", import.meta.url)), timeout: 90_000,
+    env: { ...process.env, DATABASE_URL: den.database.url, SCIM_ATOMICITY_INPUT: JSON.stringify({ orgId: context.organization.id, memberId: target.id, userId: target.userId, controlId: control.id, controlUserId: control.userId, ownerUserId: context.currentMember.userId, apiUrl: den.ref.apiUrl, webUrl: den.ref.webUrl, token: den.admin.token, scimToken }) },
   }).catch((error: unknown) => {
     if (error instanceof Error && "stderr" in error && typeof error.stderr === "string") throw new Error(error.stderr);
     throw error;
   });
   const output = run.stdout.trim().split("\n").at(-1);
   if (!output) throw new Error("No transaction witness result");
-  const result: unknown = JSON.parse(output);
-  expect(result).toEqual({ serializedRemoval: true, rollback: true, orphanDenied: true, patchUnion: true, detachedMembershipPreserved: true, detachedDeletionPreserved: true, staleProviderDenied: true });
-  evidence.recordAssertionEvidence("SCIM reconciliation and removal share one atomic ownership transaction", "MySQL's wait graph proved removal blocked on the reconciler's org lock while source UPDATE was paused after projection INSERT. Neither uncommitted authority nor an orphan survived; an injected source-update error rolled back the projection, and a historical orphan was denied until reconciled.", true);
-  evidence.recordAssertionEvidence("Metadata-only IdP operations cannot mutate manually reapproved teams", "Disable cleared source ownership pointers without deleting memberships. Owner reapproval survived stale-provider membership removal, repeated disable, group deletion, and provider deletion. Deleted providers could not create or reconcile mappings.", true);
+  expect(JSON.parse(output)).toEqual({ serializedRemoval: true, rollback: true, orphanDenied: true, patchUnion: true, detachedMembershipPreserved: true, detachedDeletionPreserved: true, staleProviderDenied: true });
+  evidence.recordAssertionEvidence("SCIM HTTP add/remove uses one ownership transaction", "MySQL's wait graph proves removal waits on the add transaction's org lock while source UPDATE is blocked after projection INSERT. A trigger-induced ownership failure rolls back the insert, and a historical orphan grants nothing until reconciled.", true);
+  evidence.recordAssertionEvidence("Detached manual teams survive later IdP mutations", "Disable clears ownership pointers without deleting memberships. Real Owner reapproval survives IdP member removal/addition, repeated disable, group deletion and provider deletion; the deleted provider token cannot recreate mappings.", true);
 });

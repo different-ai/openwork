@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { denFetch, type DenSession } from "@openwork/behaviors";
 import { server, test } from "@openwork/testkit";
-import { getOrgAccessFlags, parseOrgContextPayload } from "../../ee/apps/den-web/app/(den)/_lib/den-org.ts";
+import { parseTeamAdminContext } from "./helpers/team-admin-context.ts";
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object");
@@ -20,6 +20,7 @@ test("team Admin grants are live, scoped, protected, and cleared across SCIM lif
   await using den = await server({
     place,
     web: false,
+    env: { DEN_AUTOMATIONS_RUNTIME_ENABLED: "true" },
     org: { name: "Team Admin Grants", members: { inherited: {}, direct: {}, superadmin: {}, control: {} } },
   });
   const owner = den.admin;
@@ -40,7 +41,7 @@ test("team Admin grants are live, scoped, protected, and cleared across SCIM lif
   const context = async (session = owner) => {
     const result = await request(session, "/v1/org");
     expect(result.response.status, result.text).toBe(200);
-    const parsed = parseOrgContextPayload(result.body);
+    const parsed = parseTeamAdminContext(result.body);
     if (!parsed) throw new Error("Invalid org context");
     return parsed;
   };
@@ -75,12 +76,18 @@ test("team Admin grants are live, scoped, protected, and cleared across SCIM lif
   const deniedCreate = await request(direct, "/v1/teams", "POST", { name: "Escalation", grantsOrganizationAdmin: true });
   expect(deniedCreate.response.status).toBe(403);
   await patchTeam(primary, { grantsOrganizationAdmin: true }, superadmin);
+  const keyed = await request(owner, "/v1/teams/by-key/admin-boundary", "PUT", { name: "Keyed Admins", memberIds: [inheritedId], grantsOrganizationAdmin: true });
+  expect(keyed.response.status, keyed.text).toBe(201);
+  expect((await request(direct, "/v1/teams/by-key/admin-boundary", "PUT", { name: "Keyed Admins", memberIds: [controlId] })).response.status).toBe(403);
+  expect((await request(direct, "/v1/teams/by-key/admin-boundary", "DELETE")).response.status).toBe(403);
+  expect((await request(owner, "/v1/teams/by-key/admin-boundary", "DELETE")).response.status).toBe(200);
   const granted = await context(inherited);
   expect(granted.currentMember.role).toBe("member,admin");
   expect(granted.currentMember.directRole).toBe("member");
   expect(granted.currentMember.adminTeams).toEqual([{ id: primary, name: "Operations" }]);
   expect(granted.members.find((member) => member.id === inheritedId)?.role).toBe("member");
-  expect(getOrgAccessFlags(granted.currentMember.role, granted.currentMember.isOwner)).toMatchObject({ isAdmin: true, canManageRoles: false, canManageScim: false, canTransferOwnership: false });
+  expect(granted.currentMember.isOwner).toBe(false);
+  expect(granted.currentMember.role.split(",")).not.toContain("super-admin");
   await canReadAdmin(inherited, 200);
   await canReadAdmin(control, 403);
   await patchTeam(primary, { memberIds: [inheritedId, directId, controlId] }, inherited, 403);
@@ -181,7 +188,7 @@ test("team Admin grants are live, scoped, protected, and cleared across SCIM lif
   await canReadAdmin(inherited, 403);
   await patchTeam(managedTeam.id, { grantsOrganizationAdmin: true });
   await canReadAdmin(inherited, 200);
-  expect(getOrgAccessFlags((await context(inherited)).currentMember.role, false).canManageRoles).toBe(false);
+  expect((await context(inherited)).currentMember.role.split(",")).not.toContain("super-admin");
   await patchTeam(managedTeam.id, { memberIds: [] }, owner, 409);
   await patchTeam(managedTeam.id, { name: "manual rename" }, owner, 409);
   expect((await request(owner, `/v1/teams/${managedTeam.id}`, "DELETE")).response.status).toBe(409);
@@ -221,33 +228,33 @@ test("team Admin grants are live, scoped, protected, and cleared across SCIM lif
 
   if (!den.database) throw new Error("The in-process background authorization check requires a fresh local testkit database.");
   await patchTeam(nextTeam.id, { grantsOrganizationAdmin: true });
-  const background = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
-    import { db } from './src/db.ts';
-    import { eq } from '@openwork-ee/den-db/drizzle';
-    import { TeamTable } from '@openwork-ee/den-db/schema';
-    import { createDenTypeId } from '@openwork-ee/utils/typeid';
-    import { resolveOrganizationMemberAuthority } from './src/organization-team-roles.ts';
-    import { validateWorkflowAutomationAction } from './src/workflows.ts';
+  const background = await promisify(execFile)(process.execPath, ["--input-type=module", "-e", `
+    import { createRequire } from 'node:module';
+    const { createConnection } = createRequire(import.meta.resolve('@openwork/env'))('mysql2/promise');
+    const db = await createConnection(process.env.DATABASE_URL);
     const input = JSON.parse(process.env.TEAM_ADMIN_TEST_INPUT);
+    await db.execute("UPDATE organization SET metadata = JSON_SET(metadata, '$.complimentaryAccess', JSON_OBJECT('openworkWeb', true)) WHERE id = ?", [input.organizationId]);
+    const suffix = input.teamId.slice(4);
     const action = { kind: 'saved_script', script: {
-      pluginId: createDenTypeId('plugin'), configObjectId: createDenTypeId('configObject'),
-      configObjectVersionId: createDenTypeId('configObjectVersion'),
+      pluginId: 'plg_' + suffix, configObjectId: 'cob_' + suffix,
+      configObjectVersionId: 'cov_' + suffix,
     }, input: {} };
-    const check = async (memberId) => {
-      const authority = await resolveOrganizationMemberAuthority({ organizationId: input.organizationId, memberId });
-      let outcome = 'unexpected_success';
-      try { await validateWorkflowAutomationAction({ organizationId: input.organizationId, ownerMemberId: memberId, action }); }
-      catch (error) { outcome = error.message; }
-      return { role: authority?.role, directRole: authority?.directRole, outcome };
+    const check = async (token) => {
+      const headers = { authorization: 'Bearer ' + token, 'x-openwork-org-id': input.organizationId, 'content-type': 'application/json' };
+      const context = await (await fetch(input.apiUrl + '/v1/org', { headers })).json();
+      const response = await fetch(input.apiUrl + '/v1/cloud-automations', { method: 'POST', headers, body: JSON.stringify({ name: 'Authorization boundary', schedule: { kind: 'once', timezone: 'UTC', at: Date.now() + 86400000 }, action }) });
+      const result = await response.json();
+      return { role: context.currentMember.role, directRole: context.currentMember.directRole, outcome: result.error };
     };
-    const granted = await check(input.memberId);
-    await db.update(TeamTable).set({ grantsOrganizationAdmin: false }).where(eq(TeamTable.id, input.teamId));
-    const revoked = await check(input.memberId);
-    const direct = await check(input.directId);
+    const granted = await check(input.memberToken);
+    await db.execute('UPDATE team SET grants_organization_admin = false WHERE id = ?', [input.teamId]);
+    const revoked = await check(input.memberToken);
+    const direct = await check(input.directToken);
+    await db.end();
     console.log(JSON.stringify({ granted, revoked, direct }));
     process.exit(0);
   `], {
-    cwd: fileURLToPath(new URL("../../ee/apps/den-api", import.meta.url)),
+    cwd: fileURLToPath(new URL("..", import.meta.url)),
     timeout: 30_000,
     env: {
       ...process.env,
@@ -258,7 +265,7 @@ test("team Admin grants are live, scoped, protected, and cleared across SCIM lif
       BETTER_AUTH_SECRET: "local-testkit-secret-not-for-production-use!!",
       DEN_BASE_URL: den.ref.apiUrl,
       OPENWORK_DEV_MODE: "1",
-      TEAM_ADMIN_TEST_INPUT: JSON.stringify({ organizationId: orgId, memberId: inheritedId, teamId: nextTeam.id, directId }),
+      TEAM_ADMIN_TEST_INPUT: JSON.stringify({ organizationId: orgId, teamId: nextTeam.id, apiUrl: den.ref.apiUrl, memberToken: inherited.token, directToken: direct.token }),
     },
   });
   const backgroundResult: unknown = JSON.parse(text(background.stdout.trim().split("\n").at(-1)));
@@ -268,5 +275,5 @@ test("team Admin grants are live, scoped, protected, and cleared across SCIM lif
     direct: { role: "admin", directRole: "admin", outcome: "automation_saved_script_version_not_found" },
   });
   await canReadAdmin(inherited, 403);
-  evidence.recordAssertionEvidence("Background workflow checks resolve current team authority", "In one server-side process, inherited Admin reaches version validation; clearing its team grant makes the next check forbidden. Direct Admin still reaches version validation without any team grant.", true);
+  evidence.recordAssertionEvidence("Workflow automation admission resolves current team authority", "The live Automation API reaches version validation for inherited Admin; clearing the team grant makes the next request forbidden. Direct Admin still reaches version validation without a team grant. No Automation is created.", true);
 });
