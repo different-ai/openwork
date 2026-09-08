@@ -117,6 +117,21 @@ test("visitors can read the trust badge and access every footer link at responsi
     ]);
     evidence.recordAssertionEvidence(`Footer remains readable and complete at ${width}px`, JSON.stringify(facts), true);
   }
+
+  await navigate(browser.client, `${origin}/enterprise`);
+  const hero = await eventually(() => evaluateOnSurface(browser, () => {
+    const section = document.querySelector<HTMLElement>("main > section");
+    if (!section) throw new Error("Enterprise hero missing");
+    return section.innerText;
+  }), {
+    within: 30_000,
+    until: (text) => typeof text === "string" && text.includes("OpenWork Enterprise"),
+  });
+  expect(hero).not.toContain("SOC 2 Type II");
+  for (const badge of ["SOC 2 Type I", "SAML SSO + SCIM", "Audit logs", "Self-host or managed", "White labeling"]) {
+    expect(hero).toContain(badge);
+  }
+  evidence.recordAssertionEvidence("Enterprise hero omits the in-progress Type II badge and retains the other badges", hero, true);
 });
 
 test("download CTAs request the detected installer once and retain the alternative downloads", async ({ evidence }) => {
