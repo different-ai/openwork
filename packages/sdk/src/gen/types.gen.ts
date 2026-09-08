@@ -191,9 +191,9 @@ export type DesktopHandoffGrantCreateBody = {
    */
   next?: string;
   /**
-   * Optional desktop URL scheme to use when building the OpenWork deep link.
+   * The registered OpenWork desktop URL scheme.
    */
-  desktopScheme?: string;
+  desktopScheme?: "openwork";
   /**
    * Optional HTTPS OpenWork Cloud web return URL. Accepted only for multi-organization Cloud instances after server-side origin validation.
    */
