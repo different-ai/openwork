@@ -1,3 +1,5 @@
+import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
+
 export type OpenWorkWebAccessSource = "subscription" | "complimentary" | null
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -24,9 +26,9 @@ export function hasOpenWorkWebComplimentaryAccess(metadata: Record<string, unkno
   return isRecord(complimentaryAccess) && complimentaryAccess.openworkWeb === true
 }
 
-export function setOpenWorkWebComplimentaryAccess(metadata: Record<string, unknown>, enabled: boolean) {
-  const nextMetadata = { ...metadata }
-  const current = isRecord(metadata.complimentaryAccess) ? metadata.complimentaryAccess : {}
+export function setOpenWorkWebComplimentaryAccess(metadata: unknown, enabled: boolean) {
+  const nextMetadata = { ...readOrganizationMetadata(metadata) }
+  const current = isRecord(nextMetadata.complimentaryAccess) ? nextMetadata.complimentaryAccess : {}
   const complimentaryAccess = { ...current }
 
   if (enabled) {

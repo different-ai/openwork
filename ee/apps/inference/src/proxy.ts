@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto"
 import { inferenceBearerKey } from "@openwork-ee/utils/inference-bearer-key"
+import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import type { Context, Hono } from "hono"
 import { env } from "./env.js"
-import type { findActiveInferenceKey as findActiveInferenceKeyFn, getOpenRouterProviderKey as getOpenRouterProviderKeyFn } from "./keys.js"
+import type { assertOrganizationManagedModelsAllowed as assertOrganizationManagedModelsAllowedFn, findActiveInferenceKey as findActiveInferenceKeyFn, getOpenRouterProviderKey as getOpenRouterProviderKeyFn } from "./keys.js"
 import type { ensureUsableBuckets as ensureUsableBucketsFn } from "./limits.js"
 import {
   buildInferencePayloadLog,
@@ -44,6 +45,10 @@ const defaultProxyDependencies: ProxyDependencies = {
     const keys = await import("./keys.js")
     return keys.findActiveInferenceKey(key)
   },
+  async assertOrganizationManagedModelsAllowed(organizationId) {
+    const keys = await import("./keys.js")
+    return keys.assertOrganizationManagedModelsAllowed(organizationId)
+  },
   async getOpenRouterProviderKey(organizationId) {
     const keys = await import("./keys.js")
     return keys.getOpenRouterProviderKey(organizationId)
@@ -61,6 +66,7 @@ const defaultProxyDependencies: ProxyDependencies = {
 
 type ProxyDependencies = {
   findActiveInferenceKey: typeof findActiveInferenceKeyFn
+  assertOrganizationManagedModelsAllowed: typeof assertOrganizationManagedModelsAllowedFn
   getOpenRouterProviderKey: typeof getOpenRouterProviderKeyFn
   ensureUsableBuckets: typeof ensureUsableBucketsFn
   fetch: typeof fetch
@@ -511,6 +517,18 @@ function localRouteRejection(path: string, method: string) {
 export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies = defaultProxyDependencies) {
   const reporter = dependencies.reporter ?? sentryInferenceReporter
 
+  async function managedModelsRejection(organizationId: string) {
+    try {
+      await dependencies.assertOrganizationManagedModelsAllowed(organizationId)
+      return null
+    } catch (error) {
+      const policyError = error instanceof ManagedModelsPolicyError
+        ? error
+        : new ManagedModelsPolicyError("managed_models_policy_unavailable")
+      return openAiError(policyError.status, policyError.code, policyError.message)
+    }
+  }
+
   async function handleApiRequest(c: Context) {
     const bearerKey = readInferenceBearerKey(c.req.raw)
     if (!bearerKey) {
@@ -523,6 +541,9 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       logProxyError("Invalid inference API key", { path: c.req.path, method: c.req.method })
       return c.json({ error: { message: "Invalid OpenWork inference API key.", type: "authentication_error", code: "invalid_api_key" } }, 401)
     }
+
+    const policyRejection = await managedModelsRejection(inferenceKey.organization_id)
+    if (policyRejection) return policyRejection
 
     if (c.req.path === modelsPath && c.req.method === "GET") {
       return c.json(listOpenAiModels())
@@ -650,7 +671,11 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         headers: sanitizeHeaders(c.req.raw, providerKey.encrypted_api_key, openworkRequestId),
         body: prepared.body,
         duplex: "half",
+        redirect: "error",
       }
+      // Re-read after every preparation await, immediately before the only dispatch.
+      const dispatchRejection = await managedModelsRejection(inferenceKey.organization_id)
+      if (dispatchRejection) return dispatchRejection
       upstream = await dependencies.fetch(upstreamUrl, upstreamInit)
     } catch (error) {
       analytics?.(false).finish("failed")

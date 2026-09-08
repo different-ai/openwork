@@ -1,6 +1,8 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
+import { assertOrganizationManagedModelsAllowed } from "../../organization-metadata.js"
 import { getInferenceStatus, setInferenceEnabled } from "../../inference.js"
 import { organizationHasActiveInferenceSubscription } from "../../stripe-billing.js"
 import { jsonValidator, orgRoleRoute } from "../../middleware/index.js"
@@ -40,6 +42,11 @@ const inferenceProviderMissingSchema = z.object({
   message: z.string(),
 }).meta({ ref: "InferenceProviderMissingError" })
 
+const managedModelsPolicyErrorSchema = z.object({
+  error: z.enum(["managed_models_disabled_for_dpa", "managed_models_policy_unavailable"]),
+  message: z.string(),
+})
+
 export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/inference",
@@ -75,7 +82,8 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
         200: jsonResponse("Inference settings updated successfully.", inferenceStatusResponseSchema),
         400: jsonResponse("The inference settings request was invalid.", z.union([invalidRequestSchema, inferenceProviderMissingSchema])),
         401: jsonResponse("The caller must be signed in to update inference settings.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can update inference settings.", forbiddenSchema),
+        403: jsonResponse("Inference settings access is denied.", z.union([forbiddenSchema, managedModelsPolicyErrorSchema])),
+        503: jsonResponse("Managed Models policy is unavailable.", managedModelsPolicyErrorSchema),
       },
     }),
     orgRoleRoute(["admin"]),
@@ -89,19 +97,20 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
       const payload = c.get("organizationContext")
       const input = c.req.valid("json")
 
-      if (input.enabled) {
-        const subscribed = await organizationHasActiveInferenceSubscription(payload.organization.id)
-        if (!subscribed) {
-          return c.json({
-            inference: {
-              ...await getInferenceStatus(payload.organization.id),
-              subscribed: false,
-            },
-          })
-        }
-      }
-
       try {
+        if (input.enabled) {
+          await assertOrganizationManagedModelsAllowed(payload.organization.id)
+          const subscribed = await organizationHasActiveInferenceSubscription(payload.organization.id)
+          if (!subscribed) {
+            return c.json({
+              inference: {
+                ...await getInferenceStatus(payload.organization.id),
+                subscribed: false,
+              },
+            })
+          }
+        }
+
         const inference = await setInferenceEnabled({
           organizationId: payload.organization.id,
           enabled: input.enabled,
@@ -109,6 +118,9 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
         })
         return c.json({ inference: { ...inference, subscribed: await organizationHasActiveInferenceSubscription(payload.organization.id) } })
       } catch (error) {
+        if (error instanceof ManagedModelsPolicyError) {
+          return c.json({ error: error.code, message: error.message }, error.status)
+        }
         if (error instanceof Error && error.message === "openrouter_management_api_key_missing") {
           return c.json({
             error: "openrouter_management_api_key_missing",

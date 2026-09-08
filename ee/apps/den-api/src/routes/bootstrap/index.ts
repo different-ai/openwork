@@ -1,4 +1,5 @@
 import { and, eq, gt, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
+import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
 import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -489,10 +490,16 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
         await tx.update(MemberTable).set({ removedAt: now }).where(eq(MemberTable.id, claim.setupMemberId))
         await tx.update(WorkspaceClaimTable).set({ status: "claimed", claimedByUserId: normalizedUserId, claimedAt: now }).where(eq(WorkspaceClaimTable.id, claim.id))
         await tx.update(WorkspaceBootstrapTable).set({ status: "claimed", claimedAt: now }).where(eq(WorkspaceBootstrapTable.id, claim.bootstrapId))
+        const metadata = readOrganizationMetadata(claim.organization.metadata)
         await tx.update(OrganizationTable).set({
           metadata: {
-            ...(claim.organization.metadata ?? {}),
-            bootstrap: { provisional: false, claimedAt: now.toISOString(), claimedByUserId: normalizedUserId },
+            ...metadata,
+            bootstrap: {
+              ...readOrganizationMetadata(metadata.bootstrap),
+              provisional: false,
+              claimedAt: now.toISOString(),
+              claimedByUserId: normalizedUserId,
+            },
           },
         }).where(eq(OrganizationTable.id, claim.organizationId))
 

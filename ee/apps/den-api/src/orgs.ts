@@ -1309,114 +1309,117 @@ export async function updateOrganizationSettings(input: {
     return null
   }
 
-  const updates: Partial<typeof OrganizationTable.$inferInsert> = {}
-  if (nextName) {
-    updates.name = nextName
-  }
-  if (input.allowedEmailDomains !== undefined) {
-    updates.allowedEmailDomains = normalizeAllowedEmailDomains(input.allowedEmailDomains).domains
-  }
-  if (input.allowedDesktopVersions !== undefined || input.requireSso !== undefined || input.brandAppName !== undefined || input.brandLogoUrl !== undefined || input.brandIconUrl !== undefined || input.brandLogoAsset !== undefined || input.brandIconAsset !== undefined || input.brandAccentColor !== undefined) {
-    const rows = await db
-      .select({ metadata: OrganizationTable.metadata })
+  return db.transaction(async (tx) => {
+    const updates: Partial<typeof OrganizationTable.$inferInsert> = {}
+    if (nextName) {
+      updates.name = nextName
+    }
+    if (input.allowedEmailDomains !== undefined) {
+      updates.allowedEmailDomains = normalizeAllowedEmailDomains(input.allowedEmailDomains).domains
+    }
+    if (input.allowedDesktopVersions !== undefined || input.requireSso !== undefined || input.brandAppName !== undefined || input.brandLogoUrl !== undefined || input.brandIconUrl !== undefined || input.brandLogoAsset !== undefined || input.brandIconAsset !== undefined || input.brandAccentColor !== undefined) {
+      const rows = await tx
+        .select({ metadata: OrganizationTable.metadata })
+        .from(OrganizationTable)
+        .where(eq(OrganizationTable.id, input.organizationId))
+        .limit(1)
+        .for("update")
+
+      const existingOrganization = rows[0]
+      if (!existingOrganization) {
+        return null
+      }
+
+      const nextMetadata: Record<string, unknown> = {
+        ...normalizeOrganizationMetadata(existingOrganization.metadata).metadata,
+      }
+
+      if (input.allowedDesktopVersions !== undefined) {
+        if (input.allowedDesktopVersions === null) {
+          delete nextMetadata.allowedDesktopVersions
+        } else {
+          nextMetadata.allowedDesktopVersions = input.allowedDesktopVersions
+        }
+      }
+
+      if (input.requireSso !== undefined) {
+        nextMetadata.requireSso = input.requireSso
+      }
+
+      if (input.brandAppName !== undefined) {
+        if (input.brandAppName === null) {
+          delete nextMetadata.brandAppName
+        } else {
+          nextMetadata.brandAppName = input.brandAppName
+        }
+      }
+
+      if (input.brandLogoUrl !== undefined) {
+        if (input.brandLogoUrl === null) {
+          delete nextMetadata.brandLogoUrl
+        } else {
+          nextMetadata.brandLogoUrl = input.brandLogoUrl
+        }
+        if (input.brandLogoAsset === undefined) {
+          delete nextMetadata.brandLogoAsset
+        }
+      }
+
+      if (input.brandIconUrl !== undefined) {
+        if (input.brandIconUrl === null) {
+          delete nextMetadata.brandIconUrl
+        } else {
+          nextMetadata.brandIconUrl = input.brandIconUrl
+        }
+        if (input.brandIconAsset === undefined) {
+          delete nextMetadata.brandIconAsset
+        }
+      }
+
+      if (input.brandLogoAsset !== undefined) {
+        if (input.brandLogoAsset === null) {
+          delete nextMetadata.brandLogoAsset
+        } else {
+          nextMetadata.brandLogoAsset = input.brandLogoAsset
+        }
+      }
+
+      if (input.brandIconAsset !== undefined) {
+        if (input.brandIconAsset === null) {
+          delete nextMetadata.brandIconAsset
+        } else {
+          nextMetadata.brandIconAsset = input.brandIconAsset
+        }
+      }
+
+      if (input.brandAccentColor !== undefined) {
+        if (input.brandAccentColor === null) {
+          delete nextMetadata.brandAccentColor
+        } else {
+          nextMetadata.brandAccentColor = input.brandAccentColor
+        }
+      }
+
+      updates.metadata = normalizeOrganizationMetadata(nextMetadata).metadata
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return null
+    }
+
+    await tx
+      .update(OrganizationTable)
+      .set(updates)
+      .where(eq(OrganizationTable.id, input.organizationId))
+
+    const rows = await tx
+      .select()
       .from(OrganizationTable)
       .where(eq(OrganizationTable.id, input.organizationId))
       .limit(1)
 
-    const existingOrganization = rows[0]
-    if (!existingOrganization) {
-      return null
-    }
-
-    const nextMetadata = {
-      ...normalizeOrganizationMetadata(existingOrganization.metadata).metadata,
-    } as Record<string, unknown>
-
-    if (input.allowedDesktopVersions !== undefined) {
-      if (input.allowedDesktopVersions === null) {
-        delete nextMetadata.allowedDesktopVersions
-      } else {
-        nextMetadata.allowedDesktopVersions = input.allowedDesktopVersions
-      }
-    }
-
-    if (input.requireSso !== undefined) {
-      nextMetadata.requireSso = input.requireSso
-    }
-
-    if (input.brandAppName !== undefined) {
-      if (input.brandAppName === null) {
-        delete nextMetadata.brandAppName
-      } else {
-        nextMetadata.brandAppName = input.brandAppName
-      }
-    }
-
-    if (input.brandLogoUrl !== undefined) {
-      if (input.brandLogoUrl === null) {
-        delete nextMetadata.brandLogoUrl
-      } else {
-        nextMetadata.brandLogoUrl = input.brandLogoUrl
-      }
-      if (input.brandLogoAsset === undefined) {
-        delete nextMetadata.brandLogoAsset
-      }
-    }
-
-    if (input.brandIconUrl !== undefined) {
-      if (input.brandIconUrl === null) {
-        delete nextMetadata.brandIconUrl
-      } else {
-        nextMetadata.brandIconUrl = input.brandIconUrl
-      }
-      if (input.brandIconAsset === undefined) {
-        delete nextMetadata.brandIconAsset
-      }
-    }
-
-    if (input.brandLogoAsset !== undefined) {
-      if (input.brandLogoAsset === null) {
-        delete nextMetadata.brandLogoAsset
-      } else {
-        nextMetadata.brandLogoAsset = input.brandLogoAsset
-      }
-    }
-
-    if (input.brandIconAsset !== undefined) {
-      if (input.brandIconAsset === null) {
-        delete nextMetadata.brandIconAsset
-      } else {
-        nextMetadata.brandIconAsset = input.brandIconAsset
-      }
-    }
-
-    if (input.brandAccentColor !== undefined) {
-      if (input.brandAccentColor === null) {
-        delete nextMetadata.brandAccentColor
-      } else {
-        nextMetadata.brandAccentColor = input.brandAccentColor
-      }
-    }
-
-    updates.metadata = normalizeOrganizationMetadata(nextMetadata).metadata
-  }
-
-  if (Object.keys(updates).length === 0) {
-    return null
-  }
-
-  await db
-    .update(OrganizationTable)
-    .set(updates)
-    .where(eq(OrganizationTable.id, input.organizationId))
-
-  const rows = await db
-    .select()
-    .from(OrganizationTable)
-    .where(eq(OrganizationTable.id, input.organizationId))
-    .limit(1)
-
-  return rows[0] ?? null
+    return rows[0] ?? null
+  })
 }
 
 export async function seedDefaultOrganizationRoles(orgId: OrgId) {

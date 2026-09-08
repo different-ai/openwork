@@ -1,4 +1,5 @@
 import * as crypto from "node:crypto";
+import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy";
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js";
@@ -1119,6 +1120,23 @@ export const auth = betterAuth({
         });
       },
       organizationHooks: {
+        beforeCreateOrganization: async ({ organization }) => {
+          let metadata: Record<string, unknown>;
+          try {
+            metadata = readOrganizationMetadata(organization.metadata);
+          } catch {
+            throw new APIError("BAD_REQUEST", { message: "Organization metadata must be a JSON object." });
+          }
+          if ("dpaSigned" in metadata) {
+            throw new APIError("FORBIDDEN", { message: "dpaSigned is reserved for internal platform administration." });
+          }
+        },
+        beforeUpdateOrganization: async ({ organization }) => {
+          // A replacement without dpaSigned can erase it just as easily as an explicit false.
+          if ("metadata" in organization) {
+            throw new APIError("FORBIDDEN", { message: "Use the Den organization settings API to update workspace configuration." });
+          }
+        },
         beforeCreateTeam: denyBetterAuthTeamMutation,
         beforeUpdateTeam: denyBetterAuthTeamMutation,
         beforeDeleteTeam: denyBetterAuthTeamMutation,
