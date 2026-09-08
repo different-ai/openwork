@@ -1,7 +1,8 @@
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { coworkerBridge, type ComputerSnapshot } from "@/lib/bridge";
+import { coworkerBridge, type ComputerPermission, type ComputerSnapshot } from "@/lib/bridge";
 import { AlertIcon, Button, ErrorNote, inputClass } from "@/ui/kit";
+import { ComputerSetup } from "@/ui/computer-setup";
 import { useActivityPopover } from "@/ui/work-popover";
 
 const NATIVE_PHASE_LABELS: Record<string, string> = {
@@ -15,12 +16,13 @@ const NATIVE_PHASE_LABELS: Record<string, string> = {
 /** Mounted only for a real private discussion, keyed by slug and native thread id. */
 export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; threadId: string; statusSlot?: HTMLElement | null }) {
   const [open, setOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
   const [snapshot, setSnapshot] = useState<ComputerSnapshot | null>(null);
   const [readError, setReadError] = useState("");
   const [actionError, setActionError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const [busy, setBusy] = useState<"allow" | "stop" | "setup" | "target" | null>(null);
+  const [busy, setBusy] = useState<"allow" | "stop" | "target" | ComputerPermission | null>(null);
   const [visible, setVisible] = useState(document.visibilityState === "visible");
   const request = useRef(0);
   const reading = useRef<number | null>(null);
@@ -58,23 +60,26 @@ export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; 
   }, []);
 
   const canStop = Boolean(snapshot && (snapshot.enabled || snapshot.session || snapshot.cleanupPending));
-  const observing = (open && visible) || canStop;
+  const observing = ((open || setupOpen) && visible) || canStop;
   useEffect(() => {
     if (!observing) return;
     void readLatest();
     const timer = window.setInterval(() => void readLatest(), 2_000);
-    return () => window.clearInterval(timer);
-  }, [observing, open, visible]);
+    const onFocus = () => void readLatest();
+    window.addEventListener("focus", onFocus);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", onFocus); };
+  }, [observing, open, setupOpen, visible]);
 
   const target = snapshot?.targets.find((item) => item.id === snapshot.targetId);
   const canSelectTarget = snapshot !== null && !canStop && !readError;
   const canAllow = canSelectTarget && snapshot?.readiness === "ready" && target?.available === true;
 
-  async function act(action: "allow" | "stop" | "setup" | "target", targetId = "") {
+  async function act(action: "allow" | "stop" | "target" | ComputerPermission, targetId = "") {
     if (changing.current || !snapshot) return;
     if (action === "allow" && !canAllow) return;
     if (action === "stop" && !canStop) return;
-    if (action === "setup" && snapshot.readiness !== "setup-required") return;
+    const permission = action === "accessibility" || action === "screenRecording" ? action : null;
+    if (permission && (canStop || readError || snapshot.targetId !== "this-mac" || !snapshot.permissions)) return;
     if (action === "target" && (!canSelectTarget || targetId === snapshot.targetId || !snapshot.targets.some((item) => item.id === targetId && item.available))) return;
     changing.current = true;
     // A read started before this explicit action must not overwrite its result.
@@ -85,8 +90,8 @@ export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; 
     let failed = false;
     try {
       let next: ComputerSnapshot;
-      if (action === "setup") {
-        await coworkerBridge.computer.setup(snapshot.targetId);
+      if (permission) {
+        await coworkerBridge.computer.setup(snapshot.targetId, permission);
         if (version !== request.current) return;
         next = await coworkerBridge.computer.snapshot(slug, threadId);
       } else if (action === "allow" || action === "target") {
@@ -188,13 +193,13 @@ export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; 
             {target ? <><dt>Placement</dt><dd className="text-snow" data-testid="coworker-computer-placement">{target.placement === "desktop" ? "This computer" : "Remote"}</dd></> : null}
             <dt>{readError && snapshot ? "Last known access" : "Access"}</dt>
             <dd className="text-snow" role="status" data-testid="coworker-computer-status">{status}</dd>
-            {snapshot ? <><dt>Readiness</dt><dd>{readiness}</dd></> : null}
+            {snapshot ? <><dt>Readiness</dt><dd data-testid="coworker-computer-readiness" data-state={snapshot.readiness}>{readiness}</dd></> : null}
           </dl>
           {snapshot?.detail ? <p>{snapshot.detail}</p> : null}
           {snapshot?.cleanupPending ? <p className="text-amber" data-testid="coworker-computer-cleanup-pending">Native cleanup is still pending. A stop is not yet confirmed.</p> : null}
           <div className="flex flex-wrap gap-2">
             {!snapshot?.enabled ? <Button type="button" variant="primary" className="text-xs" disabled={!canAllow || busy !== null} aria-busy={busy === "allow"} data-testid="coworker-computer-allow" onClick={() => void act("allow")}>Allow for this discussion</Button> : null}
-            {snapshot?.readiness === "setup-required" ? <Button type="button" className="text-xs" disabled={busy !== null} aria-busy={busy === "setup"} data-testid="coworker-computer-setup" onClick={() => void act("setup")}>Set up permissions</Button> : null}
+            {snapshot?.targetId === "this-mac" ? <Button type="button" className="text-xs" data-testid="coworker-computer-setup" onClick={() => { setOpen(false); setSetupOpen(true); }}>{snapshot.readiness === "setup-required" ? "Set up permissions" : "Setup & permissions"}</Button> : null}
             <Button type="button" variant="danger" className="text-xs" disabled={!canStop || busy !== null} aria-busy={busy === "stop"} data-testid="coworker-computer-stop" onClick={() => void act("stop")}>Stop &amp; revoke</Button>
             <Button type="button" variant="ghost" className="text-xs" disabled={refreshing || busy !== null} aria-busy={refreshing} data-testid="coworker-computer-refresh" onClick={() => void refresh()}>Check status</Button>
           </div>
@@ -217,6 +222,20 @@ export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; 
           <p><span className="font-medium text-snow">Take over</span> / <span className="font-medium text-snow">Continue</span> are in the native task panel. Leaving this discussion does not stop work.</p>
         </ComputerControlPopover>
       ) : null}
+      {setupOpen ? <ComputerSetup
+        snapshot={snapshot}
+        readError={readError}
+        actionError={actionError}
+        refreshing={refreshing}
+        busy={busy}
+        canAllow={canAllow}
+        canStop={canStop}
+        onPermission={(permission) => void act(permission)}
+        onRefresh={() => void refresh()}
+        onAllow={() => void act("allow")}
+        onStop={() => void act("stop")}
+        onClose={() => { setSetupOpen(false); anchor?.focus(); }}
+      /> : null}
     </>
   );
 }
