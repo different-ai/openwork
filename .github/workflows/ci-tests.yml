@@ -71,6 +71,18 @@ jobs:
       - name: Check journey selection, reporting, and alerts
         run: node --test evals/scripts/journey-ci.test.mjs evals/scripts/flake-report.test.mjs
 
+      - name: Start MCP OAuth regression services
+        run: pnpm dev:den:mysql
+
+      - name: Run MCP OAuth regression with database
+        env:
+          OPENWORK_EVAL_MCP_OAUTH_REQUIRED: "1"
+        run: pnpm evals:pr specs/mcp-oauth-concurrent-refresh.test.ts
+
+      - name: Stop MCP OAuth regression services
+        if: always()
+        run: pnpm dev:den:mysql:down
+
   openwork-tests-build:
     needs: classify-changes
     if: needs.classify-changes.outputs.lane == 'full'

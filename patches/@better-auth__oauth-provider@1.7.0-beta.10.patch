@@ -1,0 +1,65 @@
+diff --git a/dist/introspect-DvHp2a64.mjs b/dist/introspect-DvHp2a64.mjs
+index c901856de2f587793e31d77c8825e77f7adfaae0..f9ff558f99f5fabfa718d4785aba5e916fdf26cc 100644
+--- a/dist/introspect-DvHp2a64.mjs
++++ b/dist/introspect-DvHp2a64.mjs
+@@ -1703,6 +1703,20 @@ async function getRefreshTokenRotationReplay(ctx, refreshToken, request) {
+ 		return;
+ 	}
+ }
++// Concurrent refreshes can observe revocation before the winning request has
++// persisted its encrypted replay response. Wait briefly for that same response;
++// never rotate again or bypass the existing grace/request-binding checks.
++async function waitForRefreshTokenRotationReplay(ctx, refreshToken, request) {
++	for (let attempt = 0; attempt < 40; attempt++) {
++		const latest = await ctx.context.adapter.findOne({
++			model: "oauthRefreshToken",
++			where: [{ field: "id", value: refreshToken.id }]
++		});
++		if (!latest || !isWithinRefreshTokenReuseInterval(latest)) return;
++		if (latest.rotationReplayResponse) return getRefreshTokenRotationReplay(ctx, latest, request);
++		await new Promise((resolve) => setTimeout(resolve, 25));
++	}
++}
+ async function resolveRefreshTokenRotationReplayRequest(ctx, opts, params) {
+ 	const iat = Math.floor(Date.now() / 1e3);
+ 	const grantIssuance = await resolveResourceGrantIssuance(ctx, opts, {
+@@ -2101,7 +2115,7 @@ async function handleRefreshTokenGrant(ctx, opts) {
+ 	const client = await validateClientCredentials(ctx, opts, client_id, client_secret, requestedScopes ?? scopes, preVerified, "refresh_token", authMethod);
+ 	if (refreshToken.revoked) {
+ 		if (isWithinRefreshTokenReuseInterval(refreshToken)) {
+-			const replay = await getRefreshTokenRotationReplay(ctx, refreshToken, await resolveRefreshTokenRotationReplayRequest(ctx, opts, {
++			const replay = await waitForRefreshTokenRotationReplay(ctx, refreshToken, await resolveRefreshTokenRotationReplayRequest(ctx, opts, {
+ 				client,
+ 				refreshToken,
+ 				scopes: requestedScopes ?? scopes,
+@@ -2125,7 +2139,8 @@ async function handleRefreshTokenGrant(ctx, opts) {
+ 		error: "invalid_request"
+ 	});
+ 	const authTime = refreshToken.authTime != null ? normalizeTimestampValue(refreshToken.authTime) : void 0;
+-	return createUserTokens(ctx, opts, {
++	try {
++		return await createUserTokens(ctx, opts, {
+ 		client,
+ 		scopes: requestedScopes ?? scopes,
+ 		user,
+@@ -2137,7 +2152,19 @@ async function handleRefreshTokenGrant(ctx, opts) {
+ 		resources: resources ?? refreshToken.resources,
+ 		authTime,
+ 		requestedUserInfoClaims: refreshToken.requestedUserInfoClaims
+-	});
++		});
++	} catch (error) {
++		// The atomic rotation can lose after both requests read an active row.
++		if (!(error instanceof APIError) || error.body?.error !== "invalid_grant" || error.body?.error_description !== "invalid refresh token") throw error;
++		const replay = await waitForRefreshTokenRotationReplay(ctx, refreshToken, await resolveRefreshTokenRotationReplayRequest(ctx, opts, {
++			client,
++			refreshToken,
++			scopes: requestedScopes ?? scopes,
++			resources: resources ?? refreshToken.resources
++		}));
++		if (replay) return replayRefreshTokenRotationResponse(ctx, replay);
++		throw error;
++	}
+ }
+ //#endregion
+ //#region src/introspect.ts
