@@ -819,13 +819,18 @@ test("calendar events list accepts RFC 3339 offsets and forwards them verbatim",
   expect(googleCallCount).toBe(0)
 })
 
-test("calendar list rejects equal or reversed instants before calling Google", async () => {
+test("calendar list preserves published range forwarding and provider errors", async () => {
   for (const timeMax of ["2026-09-03T17:00:00+02:00", "2026-09-03T15:00:00Z", "2026-09-03T14:59:59Z", "2026-09-03T18:00:00+04:00"]) {
+    resetFakeGoogle()
+    forceGoogleError = true
     const query = new URLSearchParams({ timeMin: "2026-09-03T17:00:00+02:00", timeMax })
     const response = await request(`/v1/capabilities/google-workspace/calendar-events?${query}`)
-    expect(response.status).toBe(400)
-    expect(expectRecord(await response.json(), "invalid calendar range").error).toBe("invalid_request")
-    expect(googleCallCount).toBe(0)
+    expect(response.status).toBe(502)
+    expect(expectRecord(await response.json(), "calendar provider error").error).toBe("google_api_error")
+    expect(googleCallCount).toBe(1)
+    const url = new URL(expectString(lastCalendarUrl, "calendar list URL"))
+    expect(url.searchParams.get("timeMin")).toBe(query.get("timeMin"))
+    expect(url.searchParams.get("timeMax")).toBe(timeMax)
   }
 })
 

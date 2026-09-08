@@ -167,9 +167,6 @@ const calendarEventsQuerySchema = z.object({
   timeMin: z.string().datetime({ offset: true }).describe("Inclusive lower bound for event start time. RFC 3339 date-time with a UTC offset or Z, e.g. 2026-09-03T00:00:00+02:00 or 2026-09-02T22:00:00Z."),
   timeMax: z.string().datetime({ offset: true }).describe("Exclusive upper bound for event start time. RFC 3339 date-time with a UTC offset or Z, e.g. 2026-09-04T00:00:00+02:00 or 2026-09-03T22:00:00Z."),
   maxResults: z.coerce.number().int().min(1).max(100).default(25).describe("Maximum events to return, capped at 100."),
-}).refine((query) => Date.parse(query.timeMax) > Date.parse(query.timeMin), {
-  path: ["timeMax"],
-  message: "timeMax must be later than timeMin.",
 })
 
 const calendarEventParamSchema = z.object({
