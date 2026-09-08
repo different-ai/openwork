@@ -73,6 +73,27 @@ export async function removeMcpFromConfig(
   }
 }
 
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) => {
+        const text = readNonEmptyString(entry);
+        return text ? [text] : [];
+      })
+    : [];
+}
+
+/** Normalize Claude Code–style `command` string + `args` into OpenCode's `command: string[]`. */
+function mcpCommandFromConfig(config: Record<string, unknown>): string[] {
+  if (Array.isArray(config.command)) return readStringArray(config.command);
+  const command = readNonEmptyString(config.command);
+  if (!command) return [];
+  return [command, ...readStringArray(config.args)];
+}
+
 export function parseMcpServersFromContent(content: string): McpServerEntry[] {
   if (!content.trim()) return [];
 
@@ -89,12 +110,22 @@ export function parseMcpServersFromContent(content: string): McpServerEntry[] {
         return [];
       }
 
-      const config = value as McpServerConfig;
-      if (config.type !== "remote" && config.type !== "local") {
+      const raw = value as Record<string, unknown>;
+      if (raw.type !== "remote" && raw.type !== "local") {
         return [];
       }
 
-      return [{ name, config, source: "config.project" as const }];
+      if (raw.type === "local") {
+        const { args: _args, ...rest } = raw;
+        const config: McpServerConfig = {
+          ...(rest as McpServerConfig),
+          type: "local",
+          command: mcpCommandFromConfig(raw),
+        };
+        return [{ name, config, source: "config.project" as const }];
+      }
+
+      return [{ name, config: raw as McpServerConfig, source: "config.project" as const }];
     });
   } catch {
     return [];
