@@ -150,7 +150,7 @@ export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessa
       id: message.info.id,
       role: message.info.role,
       ...(typeof created === "number"
-        ? { metadata: { opencode: { created, ...(typeof completed === "number" ? { completed } : {}) } } }
+        ? { metadata: { opencode: { created, ...(message.info.role === "assistant" ? { providerID: message.info.providerID } : {}), ...(typeof completed === "number" ? { completed } : {}) } } }
         : {}),
       parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
         if (part.type === "text") {
@@ -200,7 +200,8 @@ export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessa
     const error = message.info.role === "assistant" && "error" in message.info ? message.info.error : undefined;
     if (!error) return [uiMessage];
 
-    const errorMessage = createSessionErrorUIMessage(message.info.id, presentOpencodeSessionError(error), { created });
+    const providerID = message.info.role === "assistant" ? message.info.providerID : undefined;
+    const errorMessage = createSessionErrorUIMessage(message.info.id, presentOpencodeSessionError(error, "Session failed", providerID), { created });
     return uiMessage.parts.length > 0 ? [uiMessage, errorMessage] : [errorMessage];
   });
 }

@@ -111,6 +111,15 @@ function findRouteCalls(filePath: string): RouteCall[] {
 }
 
 describe("Den API route access policies", () => {
+  test("member inference access is separate from admin inference settings", () => {
+    const routes = findRouteCalls(join(srcRoot, "routes/org/inference.ts"))
+    const access = routes.find((route) => route.call.includes('"/v1/inference/access"'))
+    expect(access?.call).toContain("orgMemberRoute()")
+    const settings = routes.filter((route) => route.call.includes('"/v1/inference"'))
+    expect(settings).toHaveLength(2)
+    for (const route of settings) expect(route.call).toContain('orgRoleRoute(["admin"])')
+  })
+
   test("every route declares an explicit access policy", () => {
     const missingPolicy = listTypeScriptFiles(srcRoot)
       .flatMap(findRouteCalls)

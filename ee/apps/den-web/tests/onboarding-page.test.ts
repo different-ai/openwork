@@ -31,10 +31,12 @@ describe("Marketplace onboarding page", () => {
   });
 
   test("checks model status without enabling models", () => {
-    expect(screen).toContain("/v1/inference");
-    expect(screen).toContain('headers: { "x-openwork-org-id": orgId }');
+    const memberAccess = read("_lib", "use-inference-access.ts");
+    expect(memberAccess).toContain("/v1/inference/access");
+    expect(memberAccess).toContain('headers: { "x-openwork-org-id": orgId }');
     expect(screen).not.toContain('method: "POST"');
-    expect(screen).toContain("Signing in does not enable models.");
+    expect(screen).toContain("Free Luna included");
+    expect(screen).toContain('modelAccess?.kind === "paid"');
     expect(screen).toContain("No model selection is required");
   });
 

@@ -2,6 +2,10 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
 import type { InferenceHandledErrorReport, InferenceReporter, InferenceRequestReport } from "../src/inference-reporting.js"
+import { freeInferenceAccess, freeInferenceWindow, inferenceAccessMode, INFERENCE_ACCESS_REASONS, INFERENCE_FREE_MODEL_ID, readFreeInferenceConfig } from "@openwork/types/den/inference"
+import { FREE_INPUT_CONTENT_MAX_BYTES, FREE_MAX_OUTPUT_TOKENS, FREE_REQUEST_MAX_BYTES, freeRequestReservation, inspectFreeRequest, prepareFreeRequest, readFreeRequest } from "../src/free-request.js"
+import { meterFreeResponse } from "../src/free-response.js"
+import type { FreeSettlement } from "../src/free-allowance.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
 process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_den"
@@ -29,6 +33,11 @@ type CapturedReports = {
 }
 
 type TestServerOptions = {
+  settleFreeInference?: typeof import("../src/free-allowance.js").settleFreeInference
+  accessMode?: ReturnType<typeof inferenceAccessMode>
+  missingUser?: boolean
+  freeConfig?: ReturnType<typeof readFreeInferenceConfig>
+  reserveFreeInference?: typeof import("../src/free-allowance.js").reserveFreeInference
   analytics?: typeof import("../src/task-analytics.js").beginModelAnalytics
   organizationId?: string
   providerKey?: { encrypted_api_key: string } | null
@@ -143,6 +152,8 @@ function createTestServer(options: TestServerOptions = {}) {
         id: "inference_key_123",
         organization_id: options.organizationId ?? "organization_123",
         org_membership_id: "member_123",
+        accessMode: options.accessMode ?? "paid",
+        user_id: options.missingUser ? null : "user_123",
       }
     },
     async getOpenRouterProviderKey(_organizationId: string) {
@@ -177,6 +188,10 @@ function createTestServer(options: TestServerOptions = {}) {
     fetch: upstreamFetch,
     analytics: options.analytics,
     reporter,
+    freeConfig: options.freeConfig ?? readFreeInferenceConfig({ INFERENCE_FREE_ENABLED: "true" }),
+    freeUpstreamApiKey: "free-provider-key",
+    reserveFreeInference: options.reserveFreeInference,
+    settleFreeInference: options.settleFreeInference,
   })
 
   return { app, upstreamRequests, calls, reports }
@@ -800,4 +815,437 @@ test("authenticates before rejecting unsupported routes", async () => {
   assert.equal(calls.ensureUsableBuckets, 0)
   assert.equal(calls.getOpenRouterProviderKey, 0)
   assert.equal(upstreamRequests.length, 0)
+})
+
+const freeConfig = readFreeInferenceConfig({ INFERENCE_FREE_ENABLED: "true" })
+const lunaBody = { model: INFERENCE_FREE_MODEL_ID, messages: [{ role: "user", content: "Hello" }] }
+function freeChat(app: Hono, body: Record<string, unknown> = lunaBody) {
+  return app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify(body) }))
+}
+
+test("ordinary free Luna reserves before forwarding and never uses paid credentials or buckets", async () => {
+  let reserved = false
+  const { app, calls } = createTestServer({
+    accessMode: "free",
+    reserveFreeInference: async (input) => {
+      assert.ok(input.requestId.startsWith("free_"))
+      assert.equal(input.keyId, "inference_key_123")
+      assert.equal(input.config.modelID, INFERENCE_FREE_MODEL_ID)
+      reserved = true
+      return { ok: true, maxOutputTokens: 17, access: freeInferenceAccess({ config: freeConfig, mode: "free" }) }
+    },
+    fetch: async (input, init) => {
+      assert.equal(reserved, true)
+      assert.equal(requestUrl(input), "https://openrouter.ai/api/v1/chat/completions")
+      assert.equal(new Headers(init?.headers).get("authorization"), "Bearer free-provider-key")
+      assert.equal(init?.redirect, "error")
+      const body = parseJsonObject(requireBodyText(readInitBody(init?.body)))
+      assert.equal(body.model, INFERENCE_FREE_MODEL_ID)
+      assert.equal(body.max_tokens, 17)
+      assert.equal(body.max_completion_tokens, undefined)
+      assert.ok(isRecord(body.trace))
+      assert.match(String(body.trace.trace_id), /^[a-f0-9]{32}$/)
+      assert.match(String(body.trace.openwork_request_id), /^free_[a-f0-9]{32}$/)
+      assert.deepEqual(body.provider, { allow_fallbacks: false, require_parameters: true, max_price: { prompt: 0.5, completion: 1.8, request: 0 } })
+      assert.deepEqual(body.transforms, [])
+      return Response.json({ ok: true }, { headers: { "x-api-key": "must-not-leak" } })
+    },
+  })
+  const response = await freeChat(app, { ...lunaBody, max_completion_tokens: 4000, reasoning: { effort: "high" } })
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get("x-api-key"), null)
+  assert.equal(calls.ensureUsableBuckets, 0)
+  assert.equal(calls.getOpenRouterProviderKey, 0)
+})
+
+test("free discovery can show upsell models but paid model execution is a non-retryable upgrade error", async () => {
+  const { app, upstreamRequests, calls } = createTestServer({ accessMode: "free" })
+  assert.equal((await app.fetch(inferenceRequest({ method: "GET", path: "/api/v1/models", headers: authHeaders() }))).status, 200)
+  const response = await freeChat(app, { ...lunaBody, model: "z-ai/glm-5.2" })
+  assert.equal(response.status, 402)
+  assert.equal(await readErrorCode(response), "managed_model_requires_upgrade")
+  assert.equal(calls.ensureUsableBuckets, 0)
+  assert.equal(upstreamRequests.length, 0)
+})
+
+test("reservation exhaustion returns reset and sanitized state without retry-after or upstream calls", async () => {
+  const now = new Date("2026-09-08T12:00:00Z")
+  const window = freeInferenceWindow(now)
+  const access = freeInferenceAccess({ config: freeConfig, mode: "free", now, bucket: { window_start_at: window.start, window_end_at: window.end, limit_amount: 100_000_000, used_amount: 100_000_000, reserved_amount: 0, blocked: false } })
+  const { app, upstreamRequests } = createTestServer({ accessMode: "free", reserveFreeInference: async () => ({ ok: false, access }) })
+  const response = await freeChat(app)
+  assert.equal(response.status, 402)
+  assert.equal(response.headers.get("retry-after"), null)
+  const body = parseJsonObject(await response.text())
+  assert.ok(isRecord(body.error))
+  assert.equal(body.error.code, "free_allowance_exhausted")
+  assert.equal(body.error.resetsAt, "2026-09-14T00:00:00.000Z")
+  assert.deepEqual(body.error.access, access)
+  assert.equal(upstreamRequests.length, 0)
+})
+
+test("paid exhaustion never falls through to the free allowance", async () => {
+  const { app, upstreamRequests } = createTestServer({ usageLimited: true, reserveFreeInference: async () => { throw new Error("must not reserve free usage") } })
+  const response = await freeChat(app)
+  assert.equal(response.status, 429)
+  assert.equal(await readErrorCode(response), "rate_limit_exceeded")
+  assert.equal(upstreamRequests.length, 0)
+})
+
+for (const options of [
+  { accessMode: "admin_disabled" }, { accessMode: "not_eligible" },
+  { accessMode: "free", missingUser: true },
+  { accessMode: "free", freeConfig: readFreeInferenceConfig({}) },
+] satisfies TestServerOptions[]) {
+  test(`free eligibility fails closed: ${JSON.stringify(options)}`, async () => {
+    const { app, upstreamRequests } = createTestServer(options)
+    assert.equal((await freeChat(app)).status, 403)
+    assert.equal(upstreamRequests.length, 0)
+  })
+}
+
+test("uncertain accounting sends nothing upstream; provider failures retain the committed hold", async () => {
+  const unavailable = createTestServer({ accessMode: "free", reserveFreeInference: async () => { throw new Error("uncertain database commit") } })
+  assert.equal((await freeChat(unavailable.app)).status, 503)
+  assert.equal(unavailable.upstreamRequests.length, 0)
+  let reservations = 0
+  const failure = createTestServer({
+    accessMode: "free",
+    reserveFreeInference: async () => {
+      reservations++
+      return { ok: true, maxOutputTokens: 1, access: freeInferenceAccess({ config: freeConfig, mode: "free" }) }
+    },
+    fetch: async () => new Response("provider-secret-error", { status: 500 }),
+  })
+  const response = await freeChat(failure.app)
+  assert.equal(response.status, 502)
+  const text = await response.text()
+  assert.ok(text.includes("reservation remains held"))
+  assert.ok(!text.includes("provider-secret-error"))
+  assert.equal(reservations, 1)
+})
+
+test("the display hold fits remaining money but one unit left still admits the full capped reply", () => {
+  const prepared = prepareFreeRequest({ ...lunaBody, max_tokens: 16384, reasoning: { effort: "max" } })
+  assert.ok(prepared.ok)
+  const pricing = prepared.pricing
+  assert.equal(pricing.maxOutputTokens, FREE_MAX_OUTPUT_TOKENS)
+  assert.equal(pricing.inputTokenPrice, 50)
+  assert.equal(pricing.outputTokenPrice, 180)
+  assert.deepEqual(freeRequestReservation(pricing, 1), { amount: 1, maxOutputTokens: FREE_MAX_OUTPUT_TOKENS })
+  assert.deepEqual(freeRequestReservation(pricing, 100), { amount: 100, maxOutputTokens: FREE_MAX_OUTPUT_TOKENS })
+  assert.equal(freeRequestReservation(pricing, 0), null)
+  assert.equal(freeRequestReservation({ ...pricing, inputTokenEstimate: NaN }, 100_000_000), null)
+  assert.equal(freeRequestReservation({ ...pricing, inputTokenEstimate: 0 }, 100_000_000), null)
+  assert.equal(freeRequestReservation({ ...pricing, outputTokenPrice: -1 }, 100_000_000), null)
+  const short = prepareFreeRequest({ ...lunaBody, max_completion_tokens: 17 })
+  assert.ok(short.ok)
+  assert.equal(short.pricing.maxOutputTokens, 17)
+})
+
+for (const unsupported of [
+  { n: 2 }, { plugins: [{ id: "web" }] }, { models: [INFERENCE_FREE_MODEL_ID] },
+  { provider: { max_price: { prompt: 999 } } }, { service_tier: "priority" },
+  { tools: [{ type: "openrouter:image_generation" }] }, { prediction: { content: "x" } },
+  { messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "https://image.invalid/test.png" } }] }] },
+  { max_tokens: 0 }, { reasoning: { max_tokens: 999_999 } }, { unknown_future_feature: true },
+  { reasoning: { mode: "pro" } },
+  { messages: [{ role: "assistant", content: "", reasoning_details: [{ type: "unknown", data: "opaque" }] }] },
+]) {
+  test(`free requests reject unbounded or per-call features: ${JSON.stringify(unsupported)}`, () => {
+    const result = prepareFreeRequest({ ...lunaBody, ...unsupported })
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.equal(result.code, "unsupported_free_inference_input")
+  })
+}
+
+test("shared config and metadata separate explicit opt-out, paid precedence and free eligibility", () => {
+  assert.ok(INFERENCE_ACCESS_REASONS.includes("free_request_in_progress"))
+  assert.equal(new Set<string>(INFERENCE_ACCESS_REASONS).has("insufficient_request_budget"), false)
+  assert.equal(readFreeInferenceConfig({}).weeklyBudgetUsd, 1)
+  assert.equal(readFreeInferenceConfig({ INFERENCE_FREE_WEEKLY_BUDGET_USD: "0" }).weeklyLimitAmount, 0)
+  for (const budget of ["-1", "NaN", "Infinity", "", "1e20"]) assert.throws(() => readFreeInferenceConfig({ INFERENCE_FREE_WEEKLY_BUDGET_USD: budget }))
+  assert.throws(() => readFreeInferenceConfig({ INFERENCE_FREE_ENABLED: "yes" }))
+  assert.throws(() => readFreeInferenceConfig({ INFERENCE_FREE_MODEL_ID: "openai/gpt-5.6-luna-pro" }))
+  assert.equal(inferenceAccessMode(null), "not_eligible")
+  assert.equal(inferenceAccessMode({ inferenceFree: { offerAllowed: true } }), "free")
+  assert.equal(inferenceAccessMode({ inferenceFree: { offerAllowed: false } }), "admin_disabled")
+  assert.equal(inferenceAccessMode({ inference: { enabled: false }, inferenceFree: { offerAllowed: true } }), "admin_disabled")
+  assert.equal(inferenceAccessMode({ inference: { enabled: true, tier: "tier1" }, inferenceFree: { offerAllowed: true } }), "paid")
+})
+
+test("weekly status is Monday UTC with no rollover and never reuses a previous window's balance", () => {
+  const sunday = new Date("2026-09-13T23:59:59.999Z")
+  const monday = new Date("2026-09-14T00:00:00.000Z")
+  const oldWindow = freeInferenceWindow(sunday)
+  assert.equal(oldWindow.start.toISOString(), "2026-09-07T00:00:00.000Z")
+  assert.equal(oldWindow.end.getTime(), monday.getTime())
+  assert.equal(freeInferenceWindow(monday).start.getTime(), monday.getTime())
+  const bucket = { window_start_at: oldWindow.start, window_end_at: oldWindow.end, limit_amount: 100_000_000, used_amount: 100_500_000, reserved_amount: 0, blocked: false }
+  assert.equal(freeInferenceAccess({ config: freeConfig, mode: "free", bucket, now: sunday }).kind, "exhausted")
+  assert.equal(freeInferenceAccess({ config: freeConfig, mode: "free", bucket, now: monday }).reason, "accounting_unavailable")
+  const newWeek = freeInferenceAccess({ config: freeConfig, mode: "free", bucket: null, now: monday })
+  assert.equal(newWeek.remainingUsd, 1)
+  assert.equal(newWeek.usedUsd, 0)
+  assert.equal(newWeek.reservedUsd, 0)
+})
+
+test("invalid and blocked accounting never exposes spendable free balance", () => {
+  const now = new Date("2026-09-08T12:00:00Z")
+  const window = freeInferenceWindow(now)
+  const bucket = { window_start_at: window.start, window_end_at: window.end, limit_amount: 100_000_000, used_amount: 10, reserved_amount: 10, blocked: false }
+  for (const invalid of [{ used_amount: -1 }, { used_amount: NaN }, { reserved_amount: -1 }, { blocked: true }]) {
+    const access = freeInferenceAccess({ config: freeConfig, mode: "free", bucket: { ...bucket, ...invalid }, now })
+    assert.equal(access.kind, "unavailable")
+    assert.equal(access.reason, "accounting_unavailable")
+  }
+})
+
+test("cancelling a free stream cannot release its reservation", async () => {
+  let held = 0
+  let cancelled = false
+  const { app } = createTestServer({
+    accessMode: "free",
+    reserveFreeInference: async () => { held++; return { ok: true, maxOutputTokens: 1, access: freeInferenceAccess({ config: freeConfig, mode: "free" }) } },
+    fetch: async () => new Response(new ReadableStream({ cancel() { cancelled = true } }), { headers: { "content-type": "text/event-stream" } }),
+  })
+  const response = await freeChat(app, { ...lunaBody, stream: true })
+  assert.equal(response.status, 200)
+  await response.body?.cancel()
+  assert.equal(cancelled, true)
+  assert.equal(held, 1)
+})
+
+test("a final admitted reply can exceed the weekly limit and subsequent retries are exhausted without upstream calls", async () => {
+  const now = new Date()
+  const window = freeInferenceWindow(now)
+  const bucket = { window_start_at: window.start, window_end_at: window.end, limit_amount: 100_000_000, used_amount: 99_999_999, reserved_amount: 0, blocked: false }
+  let upstreamCalls = 0
+  let settlements = 0
+  const access = () => freeInferenceAccess({ config: freeConfig, mode: "free", bucket, now })
+  const { app, calls } = createTestServer({
+    accessMode: "free",
+    reserveFreeInference: async ({ pricing }) => {
+      const state = access()
+      if (state.kind !== "free" || state.reason === "free_request_in_progress") return { ok: false, access: state }
+      const reservation = freeRequestReservation(pricing, bucket.limit_amount - bucket.used_amount)
+      assert.ok(reservation)
+      assert.equal(reservation.amount, 1)
+      bucket.reserved_amount = reservation.amount
+      return { ok: true, maxOutputTokens: reservation.maxOutputTokens, access: access() }
+    },
+    fetch: async (_input, init) => {
+      upstreamCalls++
+      const body = parseJsonObject(requireBodyText(readInitBody(init?.body)))
+      assert.equal(body.max_tokens, FREE_MAX_OUTPUT_TOKENS)
+      assert.equal(body.n, 1)
+      return Response.json({ id: "gen_last", model: INFERENCE_FREE_MODEL_ID, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "Reply" } }], usage: { cost: 0.008 } })
+    },
+    settleFreeInference: async (receipt) => {
+      assert.ok("costUsd" in receipt)
+      assert.equal(receipt.costUsd, 0.008)
+      assert.equal(receipt.eventId, "gen_last")
+      settlements++
+      bucket.used_amount += Math.ceil(receipt.costUsd * 100_000_000)
+      bucket.reserved_amount = 0
+      return true
+    },
+  })
+  const response = await freeChat(app)
+  assert.equal(response.status, 200)
+  await response.json()
+  assert.equal(settlements, 1)
+  assert.equal(access().kind, "exhausted")
+  assert.equal(access().reason, "free_allowance_exhausted")
+  assert.equal(access().remainingUsd, 0)
+  assert.ok(bucket.used_amount > bucket.limit_amount)
+  for (let retry = 0; retry < 2; retry++) {
+    const denied = await freeChat(app)
+    assert.equal(denied.status, 402)
+    assert.equal(await readErrorCode(denied), "free_allowance_exhausted")
+  }
+  assert.equal(upstreamCalls, 1)
+  assert.equal(calls.ensureUsableBuckets, 0)
+  assert.equal(calls.getOpenRouterProviderKey, 0)
+})
+
+test("unknown model selectors and unpriced attachments produce input errors rather than an upsell", async () => {
+  const { app, upstreamRequests } = createTestServer({ accessMode: "free" })
+  for (const body of [{ ...lunaBody, model: "unknown/unpriced" }, { ...lunaBody, messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "https://image.invalid/test" } }] }] }]) {
+    const response = await freeChat(app, body)
+    assert.equal(response.status, 400)
+    assert.equal(await readErrorCode(response), "unsupported_free_inference_input")
+  }
+  assert.equal(upstreamRequests.length, 0)
+})
+
+test("OpenCode OpenRouter wire shapes, parameterless functions and null/empty tools pass input validation unchanged", () => {
+  const body = {
+    model: INFERENCE_FREE_MODEL_ID,
+    max_tokens: 16384,
+    messages: [
+      { role: "system", content: [{ type: "text", text: "Use the supplied tools." }] },
+      { role: "user", content: "Check status." },
+      { role: "assistant", content: "", tool_calls: [{ id: "call_status", type: "function", function: { name: "status", arguments: "{}" } }], reasoning_details: [] },
+      { role: "tool", name: "status", tool_call_id: "call_status", content: "ready" },
+    ],
+    tools: [{ type: "function", function: { name: "status" } }],
+    tool_choice: "auto",
+    usage: { include: true },
+    reasoningEffort: "medium",
+    textVerbosity: "low",
+    reasoning: { effort: "high" },
+    stream: true,
+    stream_options: { include_usage: true },
+  }
+  const original = JSON.stringify(body)
+  assert.equal(inspectFreeRequest(body).ok, true)
+  assert.equal(JSON.stringify(body), original)
+  for (const tools of [null, [], [{ type: "function", function: { name: "status", parameters: {} } }]]) {
+    assert.equal(inspectFreeRequest({ ...body, tools }).ok, true)
+  }
+  assert.equal(inspectFreeRequest({ ...lunaBody, messages: [{ role: "assistant", content: null, tool_calls: null }], temperature: null, top_p: null, stop: null }).ok, true)
+  assert.equal(prepareFreeRequest({ ...body, messages: [{ role: "assistant", content: "", reasoning_details: [{ type: "reasoning.encrypted", data: "opaque", id: "rs_test", format: "openai-responses-v1" }] }] }).ok, true)
+})
+
+test("UTF-8 byte measurement includes Unicode, system and tool/schema structure, never a characters/4 heuristic", () => {
+  for (const content of ["ascii", "\u00e9", "\u304a\u8a95\u751f\u65e5", "\u{1f680}", "e\u0301", "\ud800", "\u0000"]) {
+    const body = { ...lunaBody, messages: [{ role: "system", content: "System rules" }, { role: "user", content }], tools: [{ type: "function", function: { name: "status", description: content, parameters: { type: "object", properties: { detail: { type: "string", description: content } } } } }], response_format: { type: "json_schema", json_schema: { name: "status", schema: { type: "object", properties: { result: { type: "string" } } } } } }
+    const inspected = inspectFreeRequest(body)
+    assert.ok(inspected.ok)
+    assert.equal(inspected.inputContentBytes, Buffer.byteLength(JSON.stringify({ messages: body.messages, tools: body.tools, response_format: body.response_format }), "utf8"))
+    assert.ok(inspected.inputContentBytes > Buffer.byteLength(content, "utf8"))
+    // Bytes only bound supplied content, never a complete upstream prompt.
+    const preparation = prepareFreeRequest(body)
+    assert.ok(preparation.ok)
+    assert.ok(preparation.pricing.inputTokenEstimate > inspected.inputContentBytes)
+    assert.equal(preparation.pricing.maxOutputTokens, FREE_MAX_OUTPUT_TOKENS)
+  }
+})
+
+test("free input rejects oversized content and schema overhead instead of silently trimming", async () => {
+  const overhead = Buffer.byteLength(JSON.stringify({ messages: [{ role: "user", content: "" }] }), "utf8")
+  const fitting = { ...lunaBody, messages: [{ role: "user", content: "x".repeat(FREE_INPUT_CONTENT_MAX_BYTES - overhead) }] }
+  const before = JSON.stringify(fitting)
+  const fit = inspectFreeRequest(fitting)
+  assert.ok(fit.ok)
+  assert.equal(fit.inputContentBytes, FREE_INPUT_CONTENT_MAX_BYTES)
+  const tooLarge = { ...fitting, tools: [{ type: "function", function: { name: "status" } }] }
+  const inspected = inspectFreeRequest(tooLarge)
+  assert.equal(inspected.ok, false)
+  if (!inspected.ok) assert.equal(inspected.code, "free_inference_input_too_large")
+  assert.equal(JSON.stringify(fitting), before)
+  const { app, upstreamRequests } = createTestServer({ accessMode: "free" })
+  const response = await freeChat(app, tooLarge)
+  assert.equal(response.status, 413)
+  assert.equal(await readErrorCode(response), "free_inference_input_too_large")
+  assert.equal(upstreamRequests.length, 0)
+})
+
+test("raw request limits count actual UTF-8 bytes regardless of content-length, including fragmented Unicode", async () => {
+  const text = JSON.stringify({ ...lunaBody, messages: [{ role: "user", content: "\u{1f680}\u00e9" }] })
+  const bytes = new TextEncoder().encode(text)
+  const request = new Request("https://inference.invalid", { method: "POST", body: new ReadableStream({ start(controller) { for (const byte of bytes) controller.enqueue(new Uint8Array([byte])); controller.close() } }), duplex: "half" })
+  assert.deepEqual(await readFreeRequest(request), { ok: true, value: JSON.parse(text) })
+  const tooLarge = new Request("https://inference.invalid", { method: "POST", headers: { "content-length": "1" }, body: " ".repeat(FREE_REQUEST_MAX_BYTES + 1) })
+  const result = await readFreeRequest(tooLarge)
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.code, "free_inference_request_too_large")
+  const invalid = await readFreeRequest(new Request("https://inference.invalid", { method: "POST", body: new Uint8Array([0xff]) }))
+  assert.equal(invalid.ok, false)
+  if (!invalid.ok) assert.equal(invalid.code, "invalid_json")
+})
+
+test("an estimated hold preserves entitlement and actual remaining money, and concurrent requests require manual retry", async () => {
+  const now = new Date()
+  const window = freeInferenceWindow(now)
+  const bucket = { window_start_at: window.start, window_end_at: window.end, limit_amount: 100_000_000, used_amount: 0, reserved_amount: 100_000_000, blocked: false }
+  const access = freeInferenceAccess({ config: freeConfig, mode: "free", bucket, now })
+  assert.equal(access.kind, "free")
+  assert.equal(access.reason, "free_request_in_progress")
+  assert.equal(access.remainingUsd, 1)
+  assert.equal(access.usedUsd, 0)
+  const { app, upstreamRequests, calls } = createTestServer({ accessMode: "free", reserveFreeInference: async () => ({ ok: false, access }) })
+  for (let retry = 0; retry < 2; retry++) {
+    const response = await freeChat(app)
+    assert.equal(response.status, 423)
+    assert.equal(response.headers.get("retry-after"), null)
+    const payload = parseJsonObject(await response.text())
+    assert.ok(isRecord(payload.error))
+    assert.equal(payload.error.code, "free_request_in_progress")
+    assert.equal(payload.error.retryable, false)
+    assert.ok(String(payload.error.message).includes("retry manually"))
+    assert.ok(String(payload.error.message).includes("not a request to upgrade"))
+  }
+  assert.equal(upstreamRequests.length, 0)
+  assert.equal(calls.ensureUsableBuckets, 0)
+  assert.equal(calls.getOpenRouterProviderKey, 0)
+})
+
+const responseIdentity = { requestId: "free_response", inferenceKeyId: "key", orgMembershipId: "member", requestModel: INFERENCE_FREE_MODEL_ID }
+const terminalFrame = { id: "gen_response", model: INFERENCE_FREE_MODEL_ID, choices: [{ index: 0, finish_reason: "tool_calls", delta: {} }] }
+const usageFrame = { id: "gen_response", model: INFERENCE_FREE_MODEL_ID, choices: [], usage: { cost: 0.0042 } }
+
+test("fragmented free SSE settles final actual cost exactly once before DONE, preserving original bytes", async () => {
+  const text = `data: ${JSON.stringify({ id: "gen_response", model: INFERENCE_FREE_MODEL_ID, choices: [{ index: 0, delta: { content: "\u{1f680}" }, finish_reason: null }] })}\r\n\r\ndata: ${JSON.stringify(terminalFrame)}\r\n\r\ndata: ${JSON.stringify(usageFrame)}\r\n\r\ndata: ${JSON.stringify(usageFrame)}\r\n\r\ndata: [DONE]\r\n\r\n`
+  const receipts: FreeSettlement[] = []
+  const bytes = new TextEncoder().encode(text)
+  const stream = meterFreeResponse(new ReadableStream({ start(controller) { for (const byte of bytes) controller.enqueue(new Uint8Array([byte])); controller.close() } }), {
+    streaming: true,
+    identity: responseIdentity,
+    settle: async (receipt) => { receipts.push(receipt); return true },
+  })
+  assert.ok(stream)
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  let received = ""
+  for (;;) {
+    const result = await reader.read()
+    if (result.done) break
+    received += decoder.decode(result.value, { stream: true })
+    if (received.endsWith("[DONE]\r\n\r\n")) assert.equal(receipts.length, 1)
+  }
+  received += decoder.decode()
+  assert.equal(received, text)
+  assert.deepEqual(receipts, [{ ...responseIdentity, responseModel: INFERENCE_FREE_MODEL_ID, currency: "USD", eventId: "gen_response", costUsd: 0.0042 }])
+})
+
+test("free JSON settlement requires a terminal matching model and actual cost, never a token-based estimate", async () => {
+  for (const usage of [{ cost: 0 }, { prompt_tokens: 12, completion_tokens: 3 }]) {
+    const receipts: FreeSettlement[] = []
+    const text = JSON.stringify({ ...terminalFrame, usage })
+    const stream = meterFreeResponse(new Response(text).body, { streaming: false, identity: responseIdentity, settle: async (receipt) => { receipts.push(receipt); return true } })
+    assert.equal(await new Response(stream).text(), text)
+    assert.equal(receipts.length, "cost" in usage ? 1 : 0)
+  }
+})
+
+for (const text of [
+  `data: ${JSON.stringify(terminalFrame)}\n\ndata: ${JSON.stringify(usageFrame)}\n\n`,
+  `data: ${JSON.stringify(terminalFrame)}\n\ndata: [DONE]\n\n`,
+  `data: ${JSON.stringify(usageFrame)}\n\ndata: [DONE]\n\n`,
+  `data: ${JSON.stringify(terminalFrame)}\n\ndata: ${JSON.stringify({ ...usageFrame, model: "other/model" })}\n\ndata: [DONE]\n\n`,
+  `data: ${JSON.stringify(terminalFrame)}\n\ndata: ${JSON.stringify({ ...usageFrame, id: "other_generation" })}\n\ndata: [DONE]\n\n`,
+  `data: ${JSON.stringify(terminalFrame)}\n\ndata: ${JSON.stringify({ ...usageFrame, usage: { cost: -1 } })}\n\ndata: [DONE]\n\n`,
+  `data: ${JSON.stringify(terminalFrame)}\n\ndata: ${JSON.stringify(usageFrame)}\n\ndata: {"error":{"message":"incomplete"}}\n\ndata: [DONE]\n\n`,
+  `data: ${JSON.stringify(terminalFrame)}\n\ndata: not-json\n\ndata: [DONE]\n\n`,
+  `data: ${JSON.stringify(terminalFrame)}\n\ndata: ${JSON.stringify(usageFrame)}\n\nevent: error\ndata: {"message":"incomplete"}\n\ndata: [DONE]\n\n`,
+]) {
+  test(`missing or invalid final free accounting retains the hold (${text.length} bytes, ${text.slice(-24)})`, async () => {
+    let settlements = 0
+    const stream = meterFreeResponse(new Response(text).body, { streaming: true, identity: responseIdentity, settle: async () => { settlements++; return true } })
+    assert.equal(await new Response(stream).text(), text)
+    assert.equal(settlements, 0)
+  })
+}
+
+test("cancelled free accounting and unavailable settlement retain holds without corrupting replies", async () => {
+  let settlements = 0
+  const cancelled = meterFreeResponse(new ReadableStream(), { streaming: true, identity: responseIdentity, settle: async () => { settlements++; return true } })
+  await cancelled?.cancel()
+  assert.equal(settlements, 0)
+  const text = `data: ${JSON.stringify(terminalFrame)}\n\ndata: ${JSON.stringify(usageFrame)}\n\ndata: [DONE]\n\n`
+  const failed = meterFreeResponse(new Response(text).body, { streaming: true, identity: responseIdentity, settle: async () => { settlements++; throw new Error("store unavailable") } })
+  assert.equal(await new Response(failed).text(), text)
+  assert.equal(settlements, 1)
 })

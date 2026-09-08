@@ -168,6 +168,8 @@ import { useRemoteAccessRestart } from "@/react-app/domains/workspace/remote-acc
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
 import { useRemoteWorkspaceConnectionEditor } from "@/react-app/domains/workspace/use-remote-workspace-connection-editor";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
+import { useInferenceAccess } from "@/react-app/domains/cloud/inference-access-provider";
+import { explicitModelChoiceKey, FREE_LUNA_MODEL, markExplicitModelChoice, modelSelectionUpgradeReason, shouldSelectInitialLuna } from "@/app/lib/inference-access";
 import {
   hasOpenWorkModelsAvailable,
   shouldShowOpenWorkModelsSyncing,
@@ -216,6 +218,7 @@ import { useBootOverlayVisible } from "./boot-state";
 import {
   createDenClient,
   isDenOrgAdminRole,
+  readDenBootstrapConfig,
   readDenSettings,
   type DenOrgRole,
 } from "@/app/lib/den";
@@ -253,7 +256,7 @@ import {
 import { WorkspaceProvider } from "./workspace-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { SettingsSurface } from "./settings-route";
-import { writeStoredDefaultModel } from "@/react-app/kernel/model-config";
+import { readModelPreferenceBeforeRepair, writeStoredDefaultModel } from "@/react-app/kernel/model-config";
 import {
   ensureProviderListQuery,
   getConnectedProviderItems,
@@ -370,6 +373,7 @@ export function SessionRoute() {
   const platform = usePlatform();
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
   const denAuth = useDenAuth();
+  const inference = useInferenceAccess();
   const { config: shellConfig } = useShellConfig();
   const local = useLocal();
   const automationDeploymentEnabled = useAutomationDeploymentEnabled();
@@ -900,6 +904,39 @@ export function SessionRoute() {
     providerConnectedIds,
     providers,
   });
+  const pendingLunaSetupKey = (() => {
+    if (denAuth.status !== "signed_in" || !denAuth.user || loading) return null;
+    if (workspaceSessionGroups.some((group) => group.status !== "ready")) return null;
+    // The parent owns installation cohort detection. Big Pickle is persisted
+    // during bootstrap, so an unset-preference check cannot identify setup.
+    const setupKey = `openwork.lunaSetup.v1:${JSON.stringify([readDenSettings().baseUrl, denAuth.user.id])}`;
+    try {
+      const emptyFirstTask = !selectedSessionId
+        && !Object.values(sessionsByWorkspaceId).some((sessions) => sessions.length > 0)
+        && Object.keys(useSessionModelStore.getState().bySessionId).length === 0;
+      const originalPreference = readModelPreferenceBeforeRepair({ model: local.prefs.defaultModel, variant: local.prefs.modelVariant });
+      return shouldSelectInitialLuna({
+        installationRequiresSignin: readDenBootstrapConfig().installationRequiresSignin === true,
+        signedIn: denAuth.status === "signed_in",
+        access: inference.access,
+        modelAvailable: openWorkModelsAvailable && entitledModelOptions.some((model) => model.providerID === FREE_LUNA_MODEL.providerID && model.modelID === FREE_LUNA_MODEL.modelID),
+        emptyFirstTask,
+        setupComplete: window.localStorage.getItem(setupKey) !== null,
+        explicitChoice: window.localStorage.getItem(explicitModelChoiceKey) !== null,
+        currentModel: originalPreference.model,
+        variant: originalPreference.variant,
+      }) ? setupKey : null;
+    } catch { return null; }
+  })();
+  useEffect(() => {
+    if (!pendingLunaSetupKey) return;
+    try {
+      if (window.localStorage.getItem(explicitModelChoiceKey) !== null) return;
+      // Persist before selection; storage failure must not repeatedly reset a preference.
+      window.localStorage.setItem(pendingLunaSetupKey, "complete");
+      local.setPrefs((previous) => ({ ...previous, defaultModel: FREE_LUNA_MODEL, modelVariant: null }));
+    } catch { /* Leave existing preferences alone when storage is unavailable. */ }
+  }, [local, pendingLunaSetupKey]);
   const openWorkModelsSyncing = shouldShowOpenWorkModelsSyncing({
     entitled: openWorkModelsEntitled,
     available: openWorkModelsAvailable,
@@ -935,6 +972,7 @@ export function SessionRoute() {
     return () => window.removeEventListener(openModelPickerEvent, handler);
   }, []);
   const entitledOrgDefaultModel = useMemo(() => {
+    if (pendingLunaSetupKey) return null;
     const runtimeOptions = providerListModelEntitlementOptions(
       cloudProviderList ?? providerListQuery.data,
     );
@@ -953,9 +991,10 @@ export function SessionRoute() {
     organizationAssignedModelOptions,
     providerListQuery.data,
     restrictToCloudProviders,
+    pendingLunaSetupKey,
   ]);
   useEffect(() => {
-    if (entitledOrgDefaultModel) writeStoredDefaultModel(entitledOrgDefaultModel);
+    if (entitledOrgDefaultModel) writeStoredDefaultModel(entitledOrgDefaultModel, { automaticRepair: true });
   }, [entitledOrgDefaultModel]);
   // Availability is resolved per effective model identity: the New Task
   // composer validates the global default while each conversation validates
@@ -1047,7 +1086,7 @@ export function SessionRoute() {
       autoOpenedUnavailableModelKey: autoOpenedUnavailableModelRef.current,
     })) return;
     if (!activeComposerTargetsSession && entitledOrgDefaultModel) {
-      writeStoredDefaultModel(entitledOrgDefaultModel);
+      writeStoredDefaultModel(entitledOrgDefaultModel, { automaticRepair: true });
       return;
     }
 
@@ -2284,8 +2323,10 @@ export function SessionRoute() {
       : selectedSessionId;
     const selection = activeSessionId ? getSessionModelSelection(activeSessionId) : null;
     const currentModel = selection?.model ?? local.prefs.defaultModel ?? null;
-    const next = nextFavoriteModel(useModelCollectionsStore.getState().favorites, currentModel);
+    const next = nextFavoriteModel(useModelCollectionsStore.getState().favorites.filter((model) => !modelSelectionUpgradeReason(inference.access, model)), currentModel);
     if (!next) return null;
+    if (!inference.checkSelection(next, activeSessionId ?? undefined)) return null;
+    markExplicitModelChoice();
 
     const providerModel = providerCatalog?.[next.providerID]?.[next.modelID];
     const summary = providerModel
@@ -2298,7 +2339,7 @@ export function SessionRoute() {
     useModelCollectionsStore.getState().recordRecent(next);
     local.setPrefs((previous) => ({ ...previous, defaultModel: next, modelVariant: variant }));
     return providerModel?.name ?? next.modelID;
-  }, [local, modelVariantValue, providerCatalog, selectedSessionId]);
+  }, [inference, local, modelVariantValue, providerCatalog, selectedSessionId]);
 
   const cycleFavoriteModelControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.favorite_model.cycle",
@@ -2620,6 +2661,8 @@ export function SessionRoute() {
     targetSessionId: string | null,
     behavior?: { value: string | null },
   ) => {
+    if (!inference.checkSelection(next, targetSessionId ?? undefined)) return;
+    markExplicitModelChoice();
     const explicitBehavior = behavior !== undefined;
     useModelCollectionsStore.getState().recordRecent(next);
     if (targetSessionId) {
@@ -2637,7 +2680,7 @@ export function SessionRoute() {
           : null,
     }));
     focusPromptSoon();
-  }, [local]);
+  }, [inference, local]);
 
   // Refresh the non-tab fields of the nav ref during render. The `options`
   // field is maintained by the `onSessionTabsChange` callback from SessionPage.
@@ -3674,6 +3717,7 @@ export function SessionRoute() {
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
     />
     <ModelPickerModal
+      sessionId={modelPickerSessionId ?? undefined}
       open={modelPicker.open}
       options={modelPicker.options}
       organizationModelsEmpty={organizationModelsEmpty}

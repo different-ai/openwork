@@ -108,6 +108,12 @@ export const INFERENCE_MODEL_ALIASES = {
     enabled: true,
     usageFactor: 1,
   },
+  "openai/gpt-5.6-luna": {
+    upstreamModel: "openai/gpt-5.6-luna",
+    displayName: "OpenWork: GPT-5.6 Luna",
+    enabled: true,
+    usageFactor: 1,
+  },
 } as const;
 
 export type InferenceModelAlias = keyof typeof INFERENCE_MODEL_ALIASES;
@@ -116,3 +122,127 @@ export type InferenceOrganizationMetadata = {
   enabled: true;
   tier: InferenceTier;
 };
+
+export const INFERENCE_FREE_MODEL_ID = "openai/gpt-5.6-luna";
+export const INFERENCE_FREE_ENV = {
+  enabled: "INFERENCE_FREE_ENABLED",
+  weeklyBudgetUsd: "INFERENCE_FREE_WEEKLY_BUDGET_USD",
+  modelID: "INFERENCE_FREE_MODEL_ID",
+  upstreamApiKey: "INFERENCE_FREE_UPSTREAM_API_KEY",
+} as const;
+
+export type FreeInferenceConfig = {
+  enabled: boolean;
+  weeklyBudgetUsd: number;
+  weeklyLimitAmount: number;
+  modelID: typeof INFERENCE_FREE_MODEL_ID;
+};
+
+// Both Den and inference pass their server environment. Never include credentials
+// in this return value. New models require a reviewed reservation pricing policy.
+export function readFreeInferenceConfig(environment: Record<string, string | undefined>): FreeInferenceConfig {
+  const enabled = environment[INFERENCE_FREE_ENV.enabled] ?? "false";
+  if (!["true", "false", "1", "0"].includes(enabled)) {
+    throw new Error(`${INFERENCE_FREE_ENV.enabled} must be true, false, 1, or 0`);
+  }
+  const budget = environment[INFERENCE_FREE_ENV.weeklyBudgetUsd] ?? "1";
+  const weeklyBudgetUsd = Number(budget);
+  const weeklyLimitAmount = Math.floor(weeklyBudgetUsd * INFERENCE_USAGE_CONVERSION_FACTOR);
+  if (!budget.trim() || !Number.isFinite(weeklyBudgetUsd) || weeklyBudgetUsd < 0 || !Number.isSafeInteger(weeklyLimitAmount)) {
+    throw new Error(`${INFERENCE_FREE_ENV.weeklyBudgetUsd} must be finite, nonnegative, and representable in inference units`);
+  }
+  const modelID = environment[INFERENCE_FREE_ENV.modelID] ?? INFERENCE_FREE_MODEL_ID;
+  if (modelID !== INFERENCE_FREE_MODEL_ID) {
+    throw new Error(`${INFERENCE_FREE_ENV.modelID} must be an approved free model alias`);
+  }
+  return { enabled: enabled === "true" || enabled === "1", weeklyBudgetUsd: weeklyLimitAmount / INFERENCE_USAGE_CONVERSION_FACTOR, weeklyLimitAmount, modelID };
+}
+
+// UTC Monday 00:00 inclusive to the next Monday exclusive; no rollover.
+export function freeInferenceWindow(now = new Date()) {
+  const start = new Date(now);
+  start.setUTCHours(0, 0, 0, 0);
+  start.setUTCDate(start.getUTCDate() - (start.getUTCDay() + 6) % 7);
+  return { start, end: new Date(start.getTime() + INFERENCE_WINDOW_DURATIONS_MS.weekly) };
+}
+
+export const INFERENCE_ACCESS_REASONS = [
+  "admin_disabled",
+  "not_eligible",
+  "free_disabled",
+  "accounting_unavailable",
+  "free_allowance_exhausted",
+  "free_request_in_progress",
+  "upstream_unavailable",
+] as const;
+export type InferenceAccessReason = (typeof INFERENCE_ACCESS_REASONS)[number];
+export type InferenceAccess = {
+  kind: "paid" | "free" | "exhausted" | "unavailable";
+  modelID: string | null;
+  weeklyLimitUsd: number | null;
+  usedUsd: number | null;
+  // Estimated pending cost, not settled usage or a guaranteed maximum charge.
+  reservedUsd: number | null;
+  remainingUsd: number | null;
+  resetsAt: string | null;
+  reason: InferenceAccessReason | null;
+  canUpgrade?: boolean;
+};
+
+// Den writes inferenceFree.offerAllowed explicitly, including false on admin
+// disable. Missing paid metadata alone never authorizes the free upstream key.
+export function inferenceAccessMode(metadata: Record<string, unknown> | null): "paid" | "free" | "admin_disabled" | "not_eligible" {
+  const inference = metadata?.inference;
+  const offer = metadata?.inferenceFree;
+  if (typeof inference === "object" && inference !== null && "enabled" in inference && inference.enabled === false) return "admin_disabled";
+  if (typeof inference === "object" && inference !== null && "tier" in inference) {
+    if (inference.tier === "tier1" || inference.tier === "tier2") return "paid";
+    return "not_eligible";
+  }
+  if (typeof offer === "object" && offer !== null && "offerAllowed" in offer) {
+    if (offer.offerAllowed === false) return "admin_disabled";
+    if (offer.offerAllowed === true) return "free";
+  }
+  return "not_eligible";
+}
+
+// Structural projection of InferenceFreeUsageBucketTable. Den reads the row for
+// the authenticated person's user_id and this week's window_start_at.
+export type FreeInferenceBucketState = {
+  window_start_at: Date;
+  window_end_at: Date;
+  limit_amount: number;
+  used_amount: number;
+  reserved_amount: number;
+  blocked: boolean;
+};
+
+export function freeInferenceAccess(input: {
+  config: FreeInferenceConfig;
+  mode: ReturnType<typeof inferenceAccessMode>;
+  bucket?: FreeInferenceBucketState | null;
+  now?: Date;
+}): InferenceAccess {
+  if (input.mode === "paid") return { kind: "paid", modelID: null, weeklyLimitUsd: null, usedUsd: null, reservedUsd: null, remainingUsd: null, resetsAt: null, reason: null };
+  const window = freeInferenceWindow(input.now);
+  const bucket = input.bucket;
+  const limit = bucket?.limit_amount ?? input.config.weeklyLimitAmount;
+  const used = bucket?.used_amount ?? 0;
+  const reserved = bucket?.reserved_amount ?? 0;
+  const valid = [limit, used, reserved].every((value) => Number.isSafeInteger(value) && value >= 0)
+    && (!bucket || bucket.window_start_at.getTime() === window.start.getTime() && bucket.window_end_at.getTime() === window.end.getTime());
+  const remaining = valid ? Math.max(0, limit - used) : 0;
+  const reason = input.mode !== "free" ? input.mode : !input.config.enabled ? "free_disabled" : !valid || bucket?.blocked ? "accounting_unavailable" : remaining === 0 ? "free_allowance_exhausted" : reserved > 0 ? "free_request_in_progress" : null;
+  return {
+    // A busy account retains its provider/entitlement; it is not an upgrade or
+    // provisioning failure. Admission checks the reason as well as the kind.
+    kind: reason === null || reason === "free_request_in_progress" ? "free" : reason === "free_allowance_exhausted" ? "exhausted" : "unavailable",
+    modelID: input.config.modelID,
+    weeklyLimitUsd: valid ? limit / INFERENCE_USAGE_CONVERSION_FACTOR : null,
+    usedUsd: valid ? used / INFERENCE_USAGE_CONVERSION_FACTOR : null,
+    reservedUsd: valid ? reserved / INFERENCE_USAGE_CONVERSION_FACTOR : null,
+    remainingUsd: remaining / INFERENCE_USAGE_CONVERSION_FACTOR,
+    resetsAt: window.end.toISOString(),
+    reason,
+  };
+}

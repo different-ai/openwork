@@ -2,8 +2,9 @@ import type { UIMessage } from "ai";
 
 import { safeStringify } from "../../../../app/utils";
 import { normalizeErrorText } from "../../../../lib/error-text";
+import type { InferenceUpgradeReason } from "@/app/lib/inference-access";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "free-model-limit" | "disk-full" | "database-error" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "free-model-limit" | "disk-full" | "database-error" | "inference-upgrade" | "generic";
 
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
@@ -11,7 +12,38 @@ export type OpencodeSessionErrorPresentation = {
   description: string | null;
   technicalDetails: string;
   recoveryPrompt: string | null;
+  inference?: { reason: InferenceUpgradeReason; resetsAt: string | null };
 };
+
+// Decode only structured engine envelopes, never codes mentioned in prose or
+// arbitrary provider payload fields. Bound both depth and JSON size.
+function errorRecords(value: unknown, depth = 0): unknown[] {
+  if (depth > 6) return [];
+  if (typeof value === "string") {
+    if (value.length > 65_536 || !value.trimStart().startsWith("{")) return [];
+    try { return errorRecords(JSON.parse(value), depth + 1); } catch { return []; }
+  }
+  if (!value || typeof value !== "object") return [];
+  return [value, ...["data", "cause", "error", "message"].flatMap((key) => errorRecords(recordValue(value, key), depth + 1))];
+}
+
+export function structuredInferenceError(error: unknown, providerID?: string): OpencodeSessionErrorPresentation["inference"] {
+  const records = errorRecords(error);
+  const provider = providerID ?? firstStringValue(records, ["providerID", "providerId", "provider"]);
+  if (provider !== "openwork" || firstNumberValue(records, ["statusCode", "status"]) !== 402) return undefined;
+  const body = records.flatMap((record) => errorRecords(recordValue(record, "responseBody")));
+  const reason = firstStringValue([...body, ...records], ["code", "errorCode"]);
+  if (reason !== "free_allowance_exhausted" && reason !== "managed_model_requires_upgrade") return undefined;
+  const reset = firstStringValue([...body, ...records], ["resetsAt"]);
+  return { reason, resetsAt: reset && Number.isFinite(Date.parse(reset)) ? new Date(reset).toISOString() : null };
+}
+
+export function latestAssistantProvider(messages: UIMessage[]): string | undefined {
+  const message = messages.findLast((item) => !item.id.startsWith("session-error:") && (item.role === "assistant" || item.role === "user"));
+  if (message?.role !== "assistant") return undefined;
+  const provider = recordValue(recordValue(message?.metadata, "opencode"), "providerID");
+  return typeof provider === "string" ? provider : undefined;
+}
 
 export const interruptedTaskRecoveryPrompt = [
   "Continue the interrupted task from the current state.",
@@ -192,7 +224,20 @@ function technicalErrorDetails(error: unknown, fallback: string, fields: ReturnT
   return normalizeErrorText(serialized && serialized !== "{}" ? serialized : fallback, { cap: 1_500 }).display;
 }
 
-export function presentOpencodeSessionError(error: unknown, fallback = "Session failed"): OpencodeSessionErrorPresentation {
+export function presentOpencodeSessionError(error: unknown, fallback = "Session failed", providerID?: string): OpencodeSessionErrorPresentation {
+  const inference = structuredInferenceError(error, providerID);
+  if (inference) return {
+    kind: "inference-upgrade",
+    title: inference.reason === "free_allowance_exhausted" ? "Your free Luna allowance is used up" : "This model requires OpenWork Models",
+    description: inference.reason === "free_allowance_exhausted"
+      ? "You've used this week's free allowance. Wait for the reset, upgrade, or choose another provider. Output already produced is kept."
+      : "Free access includes standard Luna. Upgrade to use this managed model, or choose another provider. Output already produced is kept.",
+    technicalDetails: `Status: 402\nProvider: openwork\nCode: ${inference.reason}`,
+    recoveryPrompt: null,
+    inference,
+  };
+  const structured = errorRecords(error)[0];
+  if (structured) error = structured;
   const fields = sessionErrorFields(error, fallback);
   const kind = sessionErrorKind(fields.name, fields.message, fields.code, fields.responseBody);
   const fallbackTitle = normalizeSessionError(fields.message ?? defaultErrorMessage(fields.name, fallback));
@@ -205,8 +250,8 @@ export function presentOpencodeSessionError(error: unknown, fallback = "Session 
   };
 }
 
-export function describeOpencodeSessionError(error: unknown, fallback = "Session failed") {
-  const presentation = presentOpencodeSessionError(error, fallback);
+export function describeOpencodeSessionError(error: unknown, fallback = "Session failed", providerID?: string) {
+  const presentation = presentOpencodeSessionError(error, fallback, providerID);
   return presentation.description
     ? `${presentation.title}\n${presentation.description}`
     : presentation.title;
@@ -222,6 +267,10 @@ export function sessionErrorPresentationFromUIMessage(message: UIMessage): Openc
     : null;
   if (!sessionError || typeof sessionError !== "object") return null;
   const candidate = sessionError as Partial<OpencodeSessionErrorPresentation>;
+  const inference = candidate.inference;
+  if (inference !== undefined && (!inference || typeof inference !== "object"
+    || (inference.reason !== "free_allowance_exhausted" && inference.reason !== "managed_model_requires_upgrade")
+    || !(inference.resetsAt === null || typeof inference.resetsAt === "string"))) return null;
   if (
     typeof candidate.kind !== "string" ||
     typeof candidate.title !== "string" ||

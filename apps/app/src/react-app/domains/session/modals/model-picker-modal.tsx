@@ -25,6 +25,8 @@ import type { ModelOption, ModelRef } from "../../../../app/types";
 import { isRecommendedModel } from "../../../../app/defaults";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { useDenAuth } from "../../cloud/den-auth-provider";
+import { InferenceAllowanceSummary, useInferenceAccess } from "../../cloud/inference-access-provider";
+import { markExplicitModelChoice } from "@/app/lib/inference-access";
 import { usePlatform } from "../../../kernel/platform";
 import {
   OPENWORK_MODELS_PROVIDER_ID,
@@ -48,13 +50,14 @@ export type ModelPickerModalProps = {
   setQuery: (value: string) => void;
   subtitle?: string;
   target: "default" | "session";
+  sessionId?: string;
   current: ModelRef;
   onSelect: (model: ModelRef) => void;
   onBehaviorChange: (model: ModelRef, value: string | null) => void;
   onToggleProvider?: (providerId: string, enabled: boolean) => void;
   onOpenSettings: () => void;
   onClose: (options?: { restorePromptFocus?: boolean }) => void;
-  /** Den entitlement present. Picker no longer upsells here; callers still pass it. */
+  /** Den entitlement present; allowance gates use member access instead. */
   openWorkModelsEntitled?: boolean;
   /** The server is waiting to reload this workspace with OpenWork Models. */
   openWorkModelsSyncing?: boolean;
@@ -117,6 +120,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
   const [refreshingOrganizationModels, setRefreshingOrganizationModels] = useState(false);
   const denAuth = useDenAuth();
+  const inference = useInferenceAccess();
   const platform = usePlatform();
   const organizationModelsSettingsUrl = props.organizationModelsSettingsUrl;
   const organizationProviderLabel = useMemo(
@@ -239,10 +243,14 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     });
   }, []);
 
-  const handleSelect = useCallback(
-    (opt: ModelOption) => props.onSelect({ providerID: opt.providerID, modelID: opt.modelID }),
-    [props.onSelect],
-  );
+  const handleSelect = (opt: ModelOption) => {
+    if (!inference.checkSelection(opt, props.sessionId)) {
+      props.onClose({ restorePromptFocus: false });
+      return;
+    }
+    markExplicitModelChoice();
+    props.onSelect({ providerID: opt.providerID, modelID: opt.modelID });
+  };
 
   const handleRefreshOrganizationModels = useCallback(async () => {
     if (!props.onRefreshOrganizationModels || refreshingOrganizationModels) return;
@@ -285,6 +293,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           <DialogDescription>
             {resolveModelPickerSubtitle(props.subtitle)}
           </DialogDescription>
+          <InferenceAllowanceSummary available={props.options.some((option) => option.providerID === "openwork")} />
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col">

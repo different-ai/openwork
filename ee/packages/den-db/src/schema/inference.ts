@@ -1,10 +1,12 @@
 import { relations } from "drizzle-orm"
 import {
   bigint,
+  boolean,
   index,
   int,
   mysqlEnum,
   mysqlTable,
+  primaryKey,
   timestamp,
   uniqueIndex,
   varchar,
@@ -15,6 +17,42 @@ import { MemberTable, OrganizationTable } from "./org"
 
 export const InferenceKeyStatus = ["active", "revoked"] as const
 export const InferenceOrgUpstreamProviderKeyStatus = ["active", "revoked"] as const
+
+// Person-scoped, immutable UTC weeks. This is deliberately separate from paid
+// organization usage: changing memberships or issuing another key adds no budget.
+export const InferenceFreeUsageBucketTable = mysqlTable("inference_free_usage_buckets", {
+  user_id: denTypeIdColumn("user", "user_id").notNull(),
+  window_start_at: timestamp("window_start_at", { fsp: 3 }).notNull(),
+  window_end_at: timestamp("window_end_at", { fsp: 3 }).notNull(),
+  limit_amount: bigint("limit_amount", { mode: "number" }).notNull(),
+  used_amount: bigint("used_amount", { mode: "number" }).notNull().default(0),
+  reserved_amount: bigint("reserved_amount", { mode: "number" }).notNull().default(0),
+  blocked: boolean("blocked").notNull().default(false),
+}, (table) => [primaryKey({ columns: [table.user_id, table.window_start_at] })])
+
+export const InferenceFreeReservationTable = mysqlTable("inference_free_reservations", {
+  request_id: varchar("request_id", { length: 64 }).notNull().primaryKey(),
+  user_id: denTypeIdColumn("user", "user_id").notNull(),
+  window_start_at: timestamp("window_start_at", { fsp: 3 }).notNull(),
+  organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
+  org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
+  inference_key_id: denTypeIdColumn("inferenceKey", "inference_key_id").notNull(),
+  model_id: varchar("model_id", { length: 255 }).notNull(),
+  upstream_model: varchar("upstream_model", { length: 255 }).notNull(),
+  reserved_amount: bigint("reserved_amount", { mode: "number" }).notNull(),
+  input_token_cap: int("input_token_cap").notNull(),
+  max_output_tokens: int("max_output_tokens").notNull(),
+  input_token_price: bigint("input_token_price", { mode: "number" }).notNull(),
+  output_token_price: bigint("output_token_price", { mode: "number" }).notNull(),
+  actual_amount: bigint("actual_amount", { mode: "number" }),
+  external_event_id: varchar("external_event_id", { length: 255 }),
+  status: mysqlEnum("status", ["held", "settled", "invalid"]).notNull().default("held"),
+  created_at: timestamps.created_at,
+  settled_at: timestamp("settled_at", { fsp: 3 }),
+}, (table) => [
+  index("inference_free_reservations_user_window").on(table.user_id, table.window_start_at),
+  uniqueIndex("inference_free_reservations_external_event").on(table.external_event_id),
+])
 
 export const InferenceKeyTable = mysqlTable(
   "inference_keys",

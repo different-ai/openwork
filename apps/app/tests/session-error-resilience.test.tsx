@@ -13,6 +13,7 @@ import { createSessionErrorUIMessage } from "../src/react-app/domains/session/sy
 import {
   presentOpencodeSessionError,
   sessionErrorPresentationFromUIMessage,
+  structuredInferenceError,
 } from "../src/react-app/domains/session/sync/session-error"
 import {
   __applySessionSyncEventForTest,
@@ -26,6 +27,26 @@ afterEach(() => {
 })
 
 describe("session error resilience", () => {
+  test.each(["free_allowance_exhausted", "managed_model_requires_upgrade"])("recognizes structured 402 %s through engine wrappers without retry", (code) => {
+    const error = { name: "APIError", data: { statusCode: 402, providerID: "openwork", responseBody: JSON.stringify({ error: { code, resetsAt: "2026-09-14T00:00:00Z" } }) } }
+    for (const wrapped of [error, JSON.stringify(error), new Error(JSON.stringify(error)), { name: "UnknownError", data: { message: JSON.stringify(error) } }, { cause: error }]) {
+      const presentation = presentOpencodeSessionError(wrapped)
+      expect(presentation.kind).toBe("inference-upgrade")
+      expect(presentation.inference).toEqual({ reason: code, resetsAt: "2026-09-14T00:00:00.000Z" })
+      expect(presentation.recoveryPrompt).toBeNull()
+      expect(presentation.description).toContain("Output already produced is kept")
+      expect(sessionErrorPresentationFromUIMessage(createSessionErrorUIMessage("turn", presentation))).toEqual(presentation)
+    }
+    for (const providerID of ["lpr_managed", "openai", "opencode"]) {
+      expect(structuredInferenceError(error, providerID)).toBeUndefined()
+      expect(presentOpencodeSessionError(error, "Session failed", providerID).kind).not.toBe("inference-upgrade")
+    }
+    expect(structuredInferenceError({ ...error, data: { ...error.data, statusCode: 429 } })).toBeUndefined()
+    expect(structuredInferenceError({ ...error, data: { ...error.data, responseBody: `Please fix ${code}` } })).toBeUndefined()
+    expect(structuredInferenceError({ ...error, data: { ...error.data, providerID: undefined } })).toBeUndefined()
+    expect(structuredInferenceError({ ...error, data: { ...error.data, responseBody: '{"error":{"code":"rate_limit_error"}}' } })).toBeUndefined()
+  })
+
   const freeTierFailure = {
     name: "APIError",
     data: {

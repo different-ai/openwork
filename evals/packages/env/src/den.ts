@@ -272,7 +272,7 @@ async function waitForAuthProbe(ref: DenRef, service: SpawnedService): Promise<v
   throw new Error(`Den auth behavioral probe failed at ${url}; expected a non-403 response. Last: ${last}. Log:\n${await logTail(service.logPath)}`);
 }
 
-async function runDbPush(databaseUrl: string): Promise<void> {
+export async function runDbPush(databaseUrl: string): Promise<void> {
   try {
     const commands = process.env.OPENWORK_EVAL_DEN_RUNTIME_PREPARED === "1"
       ? [

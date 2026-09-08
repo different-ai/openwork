@@ -1,3 +1,33 @@
+import { INFERENCE_ACCESS_REASONS, type InferenceAccess } from "@openwork/types/den/inference";
+import { z } from "zod";
+
+const usd = z.number().finite().nonnegative().nullable();
+const accessSchema: z.ZodType<InferenceAccess & { canUpgrade: boolean }> = z.object({
+  kind: z.enum(["paid", "free", "exhausted", "unavailable"]),
+  modelID: z.string().nullable(),
+  weeklyLimitUsd: usd, usedUsd: usd, reservedUsd: usd, remainingUsd: usd,
+  resetsAt: z.iso.datetime().nullable(),
+  reason: z.enum(INFERENCE_ACCESS_REASONS).nullable(),
+  canUpgrade: z.boolean(),
+});
+
+export function parseInferenceAccessPayload(payload: unknown) {
+  const parsed = z.object({ access: accessSchema }).safeParse(payload);
+  return parsed.success ? parsed.data.access : null;
+}
+
+export function freeAllowanceDescription(access: InferenceAccess | null) {
+  if (!access || (access.kind !== "free" && access.kind !== "exhausted")) return null;
+  const usd = (value: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
+  const balance = access.remainingUsd !== null && access.weeklyLimitUsd !== null
+    ? `${usd(access.remainingUsd)} of ${usd(access.weeklyLimitUsd)} remaining per person this week.` : "Weekly allowance status is unavailable.";
+  const reset = access.resetsAt && Number.isFinite(Date.parse(access.resetsAt))
+    ? ` Resets ${new Date(access.resetsAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })}.` : "";
+  const pending = access.reason === "free_request_in_progress"
+    ? ` A Luna request is running or awaiting final usage.${access.reservedUsd !== null ? ` Estimated pending cost: ${usd(access.reservedUsd)}; the final charge may differ.` : ""} Wait for it to settle before starting another free request.` : "";
+  return `Free standard Luna. ${balance}${reset}${pending}`;
+}
+
 type InferenceWindowType = "five_hour" | "weekly" | "monthly";
 
 export type InferenceUsageBucket = {
@@ -70,4 +100,3 @@ export function parseInferencePayload(payload: unknown): InferenceStatus | null 
     buckets: parseUsageBuckets(value.buckets),
   };
 }
-

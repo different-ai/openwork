@@ -1,12 +1,14 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { getInferenceStatus, setInferenceEnabled } from "../../inference.js"
+import { INFERENCE_ACCESS_REASONS } from "@openwork/types/den/inference"
+import { getInferenceStatus, getMemberInferenceAccess, repairMemberInferenceAccessIfNeeded, setInferenceEnabled } from "../../inference.js"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { organizationHasActiveInferenceSubscription } from "../../stripe-billing.js"
-import { jsonValidator, orgRoleRoute } from "../../middleware/index.js"
+import { jsonValidator, orgMemberRoute, orgRoleRoute } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
+import { ensureOrganizationAdmin, ensureOrganizationAdminRole, orgAccessFailureStatus } from "./shared.js"
 
 const inferenceSettingsSchema = z.object({
   enabled: z.boolean(),
@@ -40,7 +42,50 @@ const inferenceProviderMissingSchema = z.object({
   message: z.string(),
 }).meta({ ref: "InferenceProviderMissingError" })
 
+const inferenceAccessResponseSchema = z.object({
+  access: z.object({
+    kind: z.enum(["paid", "free", "exhausted", "unavailable"]),
+    modelID: z.string().nullable(),
+    weeklyLimitUsd: z.number().nullable(),
+    usedUsd: z.number().nullable(),
+    reservedUsd: z.number().nullable(),
+    remainingUsd: z.number().nullable(),
+    resetsAt: z.string().nullable(),
+    reason: z.enum(INFERENCE_ACCESS_REASONS).nullable(),
+    canUpgrade: z.boolean(),
+  }),
+  upgradePath: z.literal("/dashboard/billing").nullable(),
+}).meta({ ref: "InferenceAccessResponse" })
+
 export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  app.get(
+    "/v1/inference/access",
+    describeRoute({
+      tags: ["Inference"],
+      summary: "Get my managed inference access",
+      description: "Returns the signed-in joined member's access and person-wide weekly free allowance, without credentials or administrative settings.",
+      responses: {
+        200: jsonResponse("Managed inference access returned successfully.", inferenceAccessResponseSchema),
+        401: jsonResponse("Sign in to read inference access.", unauthorizedSchema),
+        403: jsonResponse("Join the organization before using inference.", forbiddenSchema),
+      },
+    }),
+    orgMemberRoute(),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      if (!payload.currentMember.joinedAt) return c.json({ error: "forbidden" }, 403)
+      const user = c.get("user")
+      if (!user) return c.json({ error: "unauthorized" }, 401)
+      await repairMemberInferenceAccessIfNeeded({ organizationId: payload.organization.id, memberId: payload.currentMember.id })
+      const access = await getMemberInferenceAccess({
+        organizationId: payload.organization.id, memberId: payload.currentMember.id, userId: normalizeDenTypeId("user", user.id),
+      })
+      const canUpgrade = ensureOrganizationAdminRole(c, "Only workspace owners and admins can upgrade.").ok
+      c.header("Cache-Control", "no-store")
+      return c.json({ access: { ...access, canUpgrade }, upgradePath: canUpgrade ? "/dashboard/billing" : null })
+    },
+  )
+
   app.get(
     "/v1/inference",
     describeRoute({

@@ -12,8 +12,10 @@ import {
   parseModelRef,
 } from "../../app/utils";
 import { normalizeModelBehaviorValue } from "../../app/lib/model-behavior";
+import { LOCAL_PREFERENCES_KEY } from "./local-preferences-storage";
 
 export const storedDefaultModelChangedEvent = "openwork.defaultModelChanged";
+const MODEL_BEFORE_REPAIR_KEY = "openwork.defaultModel.beforeRepair.v1";
 
 export type SessionChoiceOverride = {
   model?: ModelRef | null;
@@ -157,11 +159,41 @@ export function readStoredDefaultModel(): ModelRef {
   }
 }
 
-export function writeStoredDefaultModel(model: ModelRef): void {
+export function readModelPreferenceBeforeRepair(current: { model: ModelRef | null; variant: string | null }) {
+  if (typeof window === "undefined") return current;
+  try {
+    const raw = window.localStorage.getItem(MODEL_BEFORE_REPAIR_KEY);
+    const snapshot: unknown = raw ? JSON.parse(raw) : null;
+    if (!snapshot || typeof snapshot !== "object" || !hasOwn(snapshot, "model") || !hasOwn(snapshot, "variant") || !hasOwn(snapshot, "repairedModel")) return current;
+    const repaired = parseStoredModel(snapshot.repairedModel);
+    const original = parseStoredModel(snapshot.model);
+    if (!original || !repaired || repaired.providerID !== current.model?.providerID || repaired.modelID !== current.model.modelID) return current;
+    if (snapshot.variant !== null && typeof snapshot.variant !== "string") return current;
+    return { model: original, variant: current.variant ?? snapshot.variant };
+  } catch { return current; }
+}
+
+export function writeStoredDefaultModel(model: ModelRef, options: { automaticRepair?: boolean } = {}): void {
   if (typeof window === "undefined") return;
   try {
     const value = formatModelRef(model);
     if (window.localStorage.getItem(MODEL_PREF_KEY) === value) return;
+    try {
+      if (options.automaticRepair) {
+        let variant: string | null = null;
+        try {
+          const raw = window.localStorage.getItem(LOCAL_PREFERENCES_KEY);
+          const prefs: unknown = raw ? JSON.parse(raw) : null;
+          if (prefs && typeof prefs === "object" && "modelVariant" in prefs && typeof prefs.modelVariant === "string") variant = prefs.modelVariant;
+        } catch { /* Invalid optional preferences must not block default repair. */ }
+        // Keep the pre-repair preference across reloads. Catalog repair can finish
+        // before member access loads, but it is not an explicit model choice.
+        const original = readModelPreferenceBeforeRepair({ model: readStoredDefaultModel(), variant });
+        window.localStorage.setItem(MODEL_BEFORE_REPAIR_KEY, JSON.stringify({ ...original, repairedModel: model }));
+      } else {
+        window.localStorage.removeItem(MODEL_BEFORE_REPAIR_KEY);
+      }
+    } catch { /* Optional provenance must not prevent the existing default repair. */ }
     window.localStorage.setItem(MODEL_PREF_KEY, value);
     window.dispatchEvent(new Event(storedDefaultModelChangedEvent));
   } catch {

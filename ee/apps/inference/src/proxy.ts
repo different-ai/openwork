@@ -13,10 +13,17 @@ import {
 import type { InferenceReporter } from "./inference-reporting.js"
 import { listModelCatalog, resolveModelAlias } from "./model-catalog.js"
 import type { AnalyticsObserver, beginModelAnalytics } from "./task-analytics.js"
+import { freeInferenceAccess } from "@openwork/types/den/inference"
+import type { FreeInferenceConfig, InferenceAccess } from "@openwork/types/den/inference"
+import { prepareFreeRequest, readFreeRequest } from "./free-request.js"
+import type { FreeRequestPricing } from "./free-request.js"
+import type { reserveFreeInference, settleFreeInference } from "./free-allowance.js"
+import { meterFreeResponse } from "./free-response.js"
 
 type JsonObject = Record<string, unknown>
 type PreparedBody = {
   body: BodyInit | null
+  json: JsonObject
   incomingModel: string
   modelAlias: string
   upstreamModel: string | null
@@ -52,6 +59,14 @@ const defaultProxyDependencies: ProxyDependencies = {
     const limits = await import("./limits.js")
     return limits.ensureUsableBuckets(organizationId)
   },
+  async reserveFreeInference(input) {
+    const allowance = await import("./free-allowance.js")
+    return allowance.reserveFreeInference(input)
+  },
+  async settleFreeInference(input) {
+    const allowance = await import("./free-allowance.js")
+    return allowance.settleFreeInference(input)
+  },
   fetch,
   async analytics(input) {
     const { beginModelAnalytics } = await import("./task-analytics.js")
@@ -66,6 +81,10 @@ type ProxyDependencies = {
   fetch: typeof fetch
   reporter?: InferenceReporter
   analytics?: typeof beginModelAnalytics
+  freeConfig?: FreeInferenceConfig
+  freeUpstreamApiKey?: string
+  reserveFreeInference?: typeof reserveFreeInference
+  settleFreeInference?: typeof settleFreeInference
 }
 
 function readInferenceBearerKey(request: Request) {
@@ -174,6 +193,12 @@ function sanitizeHeaders(request: Request, apiKey: string, openworkRequestId: st
 
 function openAiError(status: number, code: string, message: string) {
   return Response.json({ error: { message, type: "invalid_request_error", code } }, { status })
+}
+
+function freeError(status: number, code: string, message: string, access: InferenceAccess, hasAccountingSnapshot = false) {
+  // Pre-admission errors know eligibility/reset, but have not read this person's
+  // bucket. Never present the configured default as their remaining balance.
+  return Response.json({ error: { message, type: "invalid_request_error", code, resetsAt: access.resetsAt, reason: access.reason, ...(code === "free_request_in_progress" ? { retryable: false } : {}), ...(hasAccountingSnapshot ? { access } : {}) } }, { status })
 }
 
 function logProxyError(message: string, details: Record<string, unknown>) {
@@ -470,7 +495,7 @@ async function prepareBody(request: Request, input: {
   body.user = input.orgMembershipId
   body.session_id = input.openworkRequestId
   body.trace = {
-    trace_id: input.openworkRequestId,
+    trace_id: input.openworkRequestId.replace(/^free_/, ""),
     trace_name: "OpenWork Inference",
     generation_name: model.alias,
     org_membership_id: input.orgMembershipId,
@@ -480,6 +505,7 @@ async function prepareBody(request: Request, input: {
 
   return {
     body: JSON.stringify(body),
+    json: body,
     incomingModel: requestedModel,
     modelAlias: model.alias,
     upstreamModel: model.upstreamModel,
@@ -532,7 +558,14 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       return localRouteRejection(c.req.path, c.req.method)
     }
 
-    const openworkRequestId = buildRequestId()
+    const freeConfig = dependencies.freeConfig ?? env.freeInference
+    const isFree = inferenceKey.accessMode === "free"
+    let freeAccess = freeInferenceAccess({ config: freeConfig, mode: inferenceKey.accessMode })
+    if (inferenceKey.accessMode !== "paid" && (!isFree || !inferenceKey.user_id || !freeConfig.enabled)) {
+      if (!inferenceKey.user_id) freeAccess = { ...freeAccess, kind: "unavailable", reason: "not_eligible" }
+      return freeError(403, "managed_inference_unavailable", "Managed inference is unavailable for this account.", freeAccess)
+    }
+    const openworkRequestId = `${isFree ? "free_" : ""}${buildRequestId()}`
     const incomingHeaders = sanitizeIncomingHeaders(c.req.raw.headers)
 
     if (new URL(c.req.url).search) {
@@ -566,6 +599,21 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       return openAiError(400, "unsupported_query_parameters", "OpenWork chat completions does not accept query parameters.")
     }
 
+    let freePricing: FreeRequestPricing | null = null
+    if (isFree) {
+      if (!isJsonRequest(c.req.raw)) return openAiError(415, "unsupported_media_type", "Inference requests must use a JSON Content-Type.")
+      const parsed = await readFreeRequest(c.req.raw.clone())
+      if (!parsed.ok) return freeError(parsed.status, parsed.code, parsed.message, freeAccess)
+      const json = parsed.value
+      const selectedModel = isJsonObject(json) && typeof json.model === "string" ? resolveModelAlias(json.model) : null
+      if (selectedModel && selectedModel.alias !== freeConfig.modelID) {
+        return freeError(402, "managed_model_requires_upgrade", "This managed model requires an upgrade. Free access includes standard Luna only.", freeAccess)
+      }
+      const preparation = prepareFreeRequest(json)
+      if (!preparation.ok) return freeError(preparation.status, preparation.code, preparation.message, freeAccess)
+      freePricing = preparation.pricing
+    }
+
     const prepared = await prepareBody(c.req.raw, {
       organizationId: inferenceKey.organization_id,
       orgMembershipId: inferenceKey.org_membership_id,
@@ -586,55 +634,83 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       return prepared.error
     }
 
-    const limits = await dependencies.ensureUsableBuckets(inferenceKey.organization_id)
-    if (!limits.ok) {
-      c.header("x-openwork-limit-bucket-id", limits.limitedBy)
-      c.header("x-openwork-limit-window-type", limits.windowType)
-      const limitedBucket = "limitedBucket" in limits ? limits.limitedBucket : null
-      if (limitedBucket) {
-        const retryAfter = secondsUntil(limitedBucket.windowEndAt)
-        c.header("retry-after", String(retryAfter))
-        c.header("x-ratelimit-limit-tokens", String(limitedBucket.limitAmount))
-        c.header("x-ratelimit-remaining-tokens", "0")
-        c.header("x-ratelimit-reset-tokens", `${retryAfter}s`)
+    let upstreamApiKey: string
+    if (isFree) {
+      const key = dependencies.freeUpstreamApiKey ?? env.freeUpstreamApiKey
+      if (!key || !freePricing || !dependencies.reserveFreeInference) {
+        return freeError(503, "free_inference_unavailable", "Free inference is temporarily unavailable.", { ...freeAccess, kind: "unavailable", reason: "upstream_unavailable" })
       }
-      return c.json({
-        error: {
-          message: `Rate limit reached for organization ${inferenceKey.organization_id}.`,
-          type: "tokens",
-          param: null,
-          code: "rate_limit_exceeded",
-        },
-      }, 429)
-    }
+      try {
+        const reservation = await dependencies.reserveFreeInference({ keyId: inferenceKey.id, requestId: openworkRequestId, config: freeConfig, pricing: freePricing })
+        freeAccess = reservation.access
+        if (!reservation.ok) {
+          if (freeAccess.reason === "free_request_in_progress") return freeError(423, "free_request_in_progress", "Another free Luna request is running or awaiting confirmed usage. Wait, then retry manually. This is not a request to upgrade.", freeAccess, true)
+          return freeError(freeAccess.kind === "exhausted" ? 402 : 503, freeAccess.kind === "exhausted" ? "free_allowance_exhausted" : "free_inference_unavailable",
+            freeAccess.kind === "exhausted" ? "Your weekly free Luna usage has reached its allowance. Upgrade or wait for the weekly reset." : "Free inference is temporarily unavailable.", freeAccess, true)
+        }
+        delete prepared.json.max_completion_tokens
+        prepared.json.max_tokens = reservation.maxOutputTokens
+        prepared.json.n = 1
+        prepared.json.provider = freePricing.provider
+        prepared.json.transforms = []
+        prepared.body = JSON.stringify(prepared.json)
+        upstreamApiKey = key
+      } catch {
+        return freeError(503, "free_inference_unavailable", "Free inference accounting is temporarily unavailable. No upstream request was sent.", { ...freeAccess, kind: "unavailable", reason: "accounting_unavailable" })
+      }
+    } else {
+      const limits = await dependencies.ensureUsableBuckets(inferenceKey.organization_id)
+      if (!limits.ok) {
+        c.header("x-openwork-limit-bucket-id", limits.limitedBy)
+        c.header("x-openwork-limit-window-type", limits.windowType)
+        const limitedBucket = "limitedBucket" in limits ? limits.limitedBucket : null
+        if (limitedBucket) {
+          const retryAfter = secondsUntil(limitedBucket.windowEndAt)
+          c.header("retry-after", String(retryAfter))
+          c.header("x-ratelimit-limit-tokens", String(limitedBucket.limitAmount))
+          c.header("x-ratelimit-remaining-tokens", "0")
+          c.header("x-ratelimit-reset-tokens", `${retryAfter}s`)
+        }
+        return c.json({
+          error: {
+            message: `Rate limit reached for organization ${inferenceKey.organization_id}.`,
+            type: "tokens",
+            param: null,
+            code: "rate_limit_exceeded",
+          },
+        }, 429)
+      }
 
-    const providerKey = await dependencies.getOpenRouterProviderKey(inferenceKey.organization_id)
-    if (!providerKey) {
-      logProxyError("Missing active OpenRouter provider key", {
-        path: c.req.path,
-        organizationId: inferenceKey.organization_id,
-        orgMembershipId: inferenceKey.org_membership_id,
-        inferenceKeyId: inferenceKey.id,
-        openworkRequestId,
-      })
-      reporter.handledError({
-        reason: "missing_provider_key",
-        organizationId: inferenceKey.organization_id,
-        orgMembershipId: inferenceKey.org_membership_id,
-        inferenceKeyId: inferenceKey.id,
-        openworkRequestId,
-        route: c.req.path,
-        method: c.req.method,
-        headers: incomingHeaders,
-        incomingModel: prepared.incomingModel,
-        resolvedUpstreamModel: prepared.upstreamModel,
-        status: 400,
-      })
-      return c.json({ error: { message: "No active OpenRouter provider key configured for organization.", type: "invalid_request_error", code: "missing_provider_key" } }, 400)
+      const providerKey = await dependencies.getOpenRouterProviderKey(inferenceKey.organization_id)
+      if (!providerKey) {
+        logProxyError("Missing active OpenRouter provider key", {
+          path: c.req.path,
+          organizationId: inferenceKey.organization_id,
+          orgMembershipId: inferenceKey.org_membership_id,
+          inferenceKeyId: inferenceKey.id,
+          openworkRequestId,
+        })
+        reporter.handledError({
+          reason: "missing_provider_key",
+          organizationId: inferenceKey.organization_id,
+          orgMembershipId: inferenceKey.org_membership_id,
+          inferenceKeyId: inferenceKey.id,
+          openworkRequestId,
+          route: c.req.path,
+          method: c.req.method,
+          headers: incomingHeaders,
+          incomingModel: prepared.incomingModel,
+          resolvedUpstreamModel: prepared.upstreamModel,
+          status: 400,
+        })
+        return c.json({ error: { message: "No active OpenRouter provider key configured for organization.", type: "invalid_request_error", code: "missing_provider_key" } }, 400)
+      }
+      upstreamApiKey = providerKey.encrypted_api_key
     }
 
     const upstreamPath = c.req.path.replace(/^\/api\/v1/, "")
-    const upstreamUrl = new URL(`${env.openRouterUpstreamUrl}${upstreamPath}`)
+    // A server-owned free credential is never sent to a configurable host or a redirect.
+    const upstreamUrl = new URL(`${isFree ? "https://openrouter.ai/api/v1" : env.openRouterUpstreamUrl}${upstreamPath}`)
     const startedAt = Date.now()
     // Fail closed and bound the optional analytics check; it cannot hold up
     // inference when the analytics store is unavailable.
@@ -647,13 +723,15 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     try {
       const upstreamInit: ProxyRequestInit = {
         method: c.req.method,
-        headers: sanitizeHeaders(c.req.raw, providerKey.encrypted_api_key, openworkRequestId),
+        headers: sanitizeHeaders(c.req.raw, upstreamApiKey, openworkRequestId),
         body: prepared.body,
         duplex: "half",
+        ...(isFree ? { redirect: "error", signal: c.req.raw.signal } : {}),
       }
       upstream = await dependencies.fetch(upstreamUrl, upstreamInit)
     } catch (error) {
       analytics?.(false).finish("failed")
+      if (isFree) return freeError(502, "free_inference_upstream_error", "The request did not finish. Its estimated allowance reservation remains held while usage is unconfirmed; retry manually after confirmation.", freeAccess, true)
       logProxyError("Failed to reach OpenRouter upstream", {
         openworkRequestId,
         organizationId: inferenceKey.organization_id,
@@ -684,6 +762,11 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     }
 
     if (!upstream.ok) {
+      if (isFree) {
+        analytics?.(false).finish("failed")
+        await upstream.body?.cancel()
+        return freeError(502, "free_inference_upstream_error", "The request did not finish. Its estimated allowance reservation remains held while usage is unconfirmed; retry manually after confirmation.", freeAccess, true)
+      }
       await logUpstreamError({
         upstream,
         upstreamUrl,
@@ -701,9 +784,15 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       })
     }
 
-    const headers = new Headers(upstream.headers)
+    const headers = isFree ? new Headers({ "content-type": upstream.headers.get("content-type") ?? "application/json" }) : new Headers(upstream.headers)
     headers.set("x-openwork-request-id", openworkRequestId)
-    return new Response(trackStream(upstream.body, analytics?.(upstream.headers.get("content-type")?.includes("text/event-stream") === true) ?? null, upstream.ok),
+    const streaming = upstream.headers.get("content-type")?.includes("text/event-stream") === true
+    const body = isFree && dependencies.settleFreeInference ? meterFreeResponse(upstream.body, {
+      streaming,
+      identity: { requestId: openworkRequestId, inferenceKeyId: inferenceKey.id, orgMembershipId: inferenceKey.org_membership_id, requestModel: freeConfig.modelID },
+      settle: dependencies.settleFreeInference,
+    }) : upstream.body
+    return new Response(trackStream(body, analytics?.(streaming) ?? null, upstream.ok),
       { status: upstream.status, statusText: upstream.statusText, headers })
   }
 

@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
-import { InferenceKeyTable, InferenceOrgUpstreamProviderKeyTable, MemberTable } from "@openwork-ee/den-db"
+import { InferenceKeyTable, InferenceOrgUpstreamProviderKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
+import { inferenceAccessMode } from "@openwork/types/den/inference"
 import {
   inferenceBearerKeyLookupDigests,
   type InferenceBearerKey,
@@ -17,9 +18,10 @@ export function constantTimeEquals(a: string, b: string) {
 export async function findActiveInferenceKey(key: InferenceBearerKey) {
   const keyHashes = await inferenceBearerKeyLookupDigests(key)
   const [row] = await db
-    .select({ inferenceKey: InferenceKeyTable })
+    .select({ inferenceKey: InferenceKeyTable, userId: MemberTable.userId, metadata: OrganizationTable.metadata })
     .from(InferenceKeyTable)
     .innerJoin(MemberTable, eq(InferenceKeyTable.org_membership_id, MemberTable.id))
+    .innerJoin(OrganizationTable, eq(InferenceKeyTable.organization_id, OrganizationTable.id))
     .where(and(
       inArray(InferenceKeyTable.key_hash, keyHashes),
       eq(InferenceKeyTable.status, "active"),
@@ -30,7 +32,7 @@ export async function findActiveInferenceKey(key: InferenceBearerKey) {
   if (!row) {
     return null
   }
-  return row.inferenceKey
+  return { ...row.inferenceKey, user_id: row.userId, accessMode: inferenceAccessMode(row.metadata) }
 }
 
 export async function getOpenRouterProviderKey(organizationId: string) {

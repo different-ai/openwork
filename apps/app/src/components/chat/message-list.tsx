@@ -32,7 +32,8 @@ import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { t } from "@/i18n"
 import { useOpenTargets } from "@/lib/target-provider"
 import { openTargetFromUrl } from "@/react-app/domains/session/artifacts/open-target"
-import { sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error"
+import { sessionErrorPresentationFromUIMessage, type OpencodeSessionErrorPresentation } from "@/react-app/domains/session/sync/session-error"
+import { InferenceErrorActions } from "@/react-app/domains/cloud/inference-access-provider"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
 import { EditTool } from "@/components/tools/edit"
@@ -834,6 +835,7 @@ const MessageComponent = React.memo(
           description={presentation?.description}
           resumePrompt={presentation?.recoveryPrompt}
           technicalDetails={presentation?.technicalDetails}
+          inference={presentation?.inference}
         />
       )
     }
@@ -923,6 +925,7 @@ const ReconnectingMessage = React.memo(({ lastConfirmedAt }: { lastConfirmedAt: 
 ReconnectingMessage.displayName = "ReconnectingMessage"
 
 interface ErrorMessageProps {
+  inference?: OpencodeSessionErrorPresentation["inference"]
   error: string | null
   description?: string | null
   /** Set only for interrupted runs (aborted / provider timeout) that can resume. */
@@ -993,8 +996,8 @@ function SessionErrorTechnicalDetails({ details, tone }: { details: string; tone
   )
 }
 
-function ErrorMessage({ error, description, resumePrompt, technicalDetails }: ErrorMessageProps) {
-  const { onResumeInterrupted, developerMode } = useMessageList()
+function ErrorMessage({ error, description, resumePrompt, technicalDetails, inference }: ErrorMessageProps) {
+  const { onResumeInterrupted, developerMode, sessionId } = useMessageList()
   // Status codes, provider names, and response bodies are for developers,
   // admins, and support — not the plain-language card end users see. They
   // surface only with Developer mode (Settings → Advanced), like the
@@ -1040,6 +1043,7 @@ function ErrorMessage({ error, description, resumePrompt, technicalDetails }: Er
               ) : null}
             </div>
           </div>
+          {inference ? <InferenceErrorActions {...inference} sessionId={sessionId} /> : null}
           {details ? <SessionErrorTechnicalDetails details={details} tone="card" /> : null}
         </div>
       </div>
