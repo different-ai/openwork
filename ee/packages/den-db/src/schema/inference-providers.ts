@@ -25,7 +25,7 @@ import { MemberTable, OrganizationTable } from "./org"
 import { TeamTable } from "./teams"
 
 // Gateway providers: config + credential held server-side, calls routed through
-// ee/apps/inference. Distinct from `llm_provider` (credential delivered to device).
+// ee/apps/gateway. Distinct from `llm_provider` (credential delivered to device).
 export const InferenceProviderTable = mysqlTable(
   "inference_providers",
   {

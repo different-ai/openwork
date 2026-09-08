@@ -4,7 +4,14 @@ Initial Helm chart for the OpenWork EE Den stack:
 
 - `den-api` control plane on port `8788`
 - `den-web` web app on port `3005`
-- optional `inference` service on port `8791`
+- optional OpenWork Gateway service on port `8791` (`inference.enabled`)
+
+Gateway retains the chart's `inference.*` values, secret keys, image repository,
+resource names and selectors for upgrade safety. The chart emits legacy env
+names for pinned older images; new deployments can use `GATEWAY_*` in the app's
+environment. Do not configure a separate `GATEWAY_ADMIN_TOKEN` when retention is
+enabled: use the shared `inference.retention.adminTokenSecret` reference instead.
+See [Gateway configuration and stable contracts](../../../ee/apps/gateway/README.md).
 - shared ConfigMap and Secret templating
 - optional Ingress for web and API hosts
 - pre-install/pre-upgrade migration Job scaffold
@@ -826,7 +833,7 @@ install an ingress controller.
 
 ## Config Rollouts
 
-Den API, Den Web, and inference pods include checksums for the chart-managed
+Den API, Den Web, and Gateway pods include checksums for the chart-managed
 ConfigMap and Secret. Helm upgrades that change runtime config or secrets roll
 the pods automatically so environment variables such as public origins, CORS
 origins, and database URLs are refreshed.

@@ -1,6 +1,6 @@
 {{- if and .Values.inference.enabled .Values.inference.retention.enabled }}
-{{- if hasKey .Values.inference.env "INFERENCE_ADMIN_TOKEN" }}
-{{- fail "Use inference.retention.adminTokenSecret instead of inference.env.INFERENCE_ADMIN_TOKEN when retention is enabled" }}
+{{- if or (hasKey .Values.inference.env "INFERENCE_ADMIN_TOKEN") (hasKey .Values.inference.env "GATEWAY_ADMIN_TOKEN") }}
+{{- fail "Use inference.retention.adminTokenSecret instead of inference.env.INFERENCE_ADMIN_TOKEN or inference.env.GATEWAY_ADMIN_TOKEN when retention is enabled" }}
 {{- end }}
 apiVersion: batch/v1
 kind: CronJob
@@ -41,9 +41,9 @@ spec:
                     });
                     await response.body?.cancel();
                     if (!response.ok) throw new Error();
-                    console.log("Inference retention batch completed");
+                    console.log("Gateway retention batch completed");
                   } catch {
-                    console.error("Inference retention batch failed");
+                    console.error("Gateway retention batch failed");
                     process.exitCode = 1;
                   }
               env:

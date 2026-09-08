@@ -963,7 +963,7 @@ importers:
         specifier: ^5.5.4
         version: 5.9.3
 
-  ee/apps/inference:
+  ee/apps/gateway:
     dependencies:
       '@hono/node-server':
         specifier: 2.0.12

@@ -48,7 +48,7 @@ jobs:
               per_page: 100,
             })
             const snapshotOnly = files.length === 1
-              && files[0].filename === "ee/apps/inference/src/models/base.json"
+              && files[0].filename === "ee/apps/gateway/src/models/base.json"
             const docsOnly = files.length > 0
               && files.every((file) => file.filename.startsWith("packages/docs/"))
             const lane = snapshotOnly ? "snapshot" : docsOnly ? "docs" : "full"
@@ -284,7 +284,7 @@ jobs:
           node --input-type=module <<'NODE'
           import { readFile } from "node:fs/promises"
 
-          const path = "ee/apps/inference/src/models/base.json"
+          const path = "ee/apps/gateway/src/models/base.json"
           const fail = (message) => { throw new Error(`${path}: ${message}`) }
           const isRecord = (value) => Boolean(value)
             && typeof value === "object"

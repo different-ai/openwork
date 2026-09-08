@@ -472,7 +472,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       })
     }
     const reject = (response: Response, errorCode: string, reason: string) => {
-      console.error(`[inference-gateway] ${reason}`, {
+      console.error(`[gateway] ${reason}`, {
         openworkRequestId,
         organizationId: identity.organizationId,
         orgMembershipId: identity.orgMembershipId,
@@ -608,7 +608,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       upstream = await dependencies.fetch(prepared.url, { method, headers, body: prepared.body, signal: lifetime.signal, redirect: "error" })
     } catch {
       lifetime.dispose()
-      console.error("[inference-gateway] Failed to reach provider upstream", {
+      console.error("[gateway] Failed to reach provider upstream", {
         openworkRequestId,
         organizationId: identity.organizationId,
         inferenceProviderId: provider.id,
@@ -634,7 +634,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }
 
     if (!upstream.ok) {
-      console.error("[inference-gateway] Upstream provider request failed", {
+      console.error("[gateway] Upstream provider request failed", {
         openworkRequestId,
         organizationId: identity.organizationId,
         inferenceProviderId: provider.id,

@@ -127,7 +127,7 @@ export function InferenceProvidersScreen() {
     <DashboardPageTemplate
       icon={Shield}
       title="Gateway providers"
-      description="Connect Anthropic, OpenAI, Google, Azure and other providers through the OpenWork inference gateway. Members use their OpenWork key; the provider credential stays on the server and never reaches devices."
+      description="Connect Anthropic, OpenAI, Google, Azure and other providers through OpenWork Gateway. Members use their OpenWork key; the provider credential stays on the server and never reaches devices."
       colors={["#F1F5FF", "#1D4ED8", "#60A5FA", "#A7F3D0"]}
     >
       <div className="mb-8 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">

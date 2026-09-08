@@ -48,14 +48,14 @@ export function inferenceAuth(dependencies: InferenceAuthDependencies) {
       return c.json({ error: { message: "Conflicting or malformed OpenWork credentials.", type: "authentication_error", code: "ambiguous_api_key" } }, 401)
     }
     if (!bearerKey) {
-      console.error("[inference-proxy] Missing inference API key", { path: c.req.path, method: c.req.method })
-      return c.json({ error: { message: "Missing OpenWork inference API key.", type: "authentication_error", code: "missing_api_key" } }, 401)
+      console.error("[gateway-proxy] Missing Gateway API key", { path: c.req.path, method: c.req.method })
+      return c.json({ error: { message: "Missing OpenWork Gateway API key.", type: "authentication_error", code: "missing_api_key" } }, 401)
     }
 
     const key = await dependencies.findActiveInferenceKey(bearerKey)
     if (!key) {
-      console.error("[inference-proxy] Invalid inference API key", { path: c.req.path, method: c.req.method })
-      return c.json({ error: { message: "Invalid OpenWork inference API key.", type: "authentication_error", code: "invalid_api_key" } }, 401)
+      console.error("[gateway-proxy] Invalid Gateway API key", { path: c.req.path, method: c.req.method })
+      return c.json({ error: { message: "Invalid OpenWork Gateway API key.", type: "authentication_error", code: "invalid_api_key" } }, 401)
     }
 
     c.set("inference", {

@@ -19,7 +19,7 @@ test.skipIf(!local || !mysql || !redis)(title, { timeout: 600_000 }, async ({ pl
   const databaseUrl = den.database?.url
   if (!databaseUrl || !new URL(databaseUrl).pathname.startsWith("/openwork_eval_")) throw new Error("Testkit scratch DB required")
   const child = spawn("pnpm", ["exec", "tsx", "test/google-oauth-refresh-server.ts"], {
-    cwd: `${fileURLToPath(new URL("../..", import.meta.url))}/ee/apps/inference`,
+    cwd: `${fileURLToPath(new URL("../..", import.meta.url))}/ee/apps/gateway`,
     env: { PATH: process.env.PATH, HOME: process.env.HOME, DATABASE_URL: databaseUrl, DB_MODE: "mysql",
       DEN_DB_ENCRYPTION_KEY: "local-dev-db-encryption-key-please-change-1234567890", OPENWORK_DEV_MODE: "1",
       NODE_OPTIONS: "--conditions=development", SENTRY_DSN: "", SENTRY_LOG_LEVEL: "off" },

@@ -12,16 +12,16 @@ const EnvSchema = z
     DATABASE_USERNAME: z.string().min(1).optional(),
     DATABASE_PASSWORD: z.string().optional(),
     DEN_DB_ENCRYPTION_KEY: z.string().trim().min(32),
-    INFERENCE_PROXY_BASE_URL: z.string().optional(),
+    GATEWAY_PROXY_BASE_URL: z.string().optional(),
     OPENROUTER_UPSTREAM_URL: z.string().optional(),
     INFERENCE_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1000).max(900000).default(120000),
     INFERENCE_STREAM_IDLE_MS: z.coerce.number().int().min(1000).max(900000).default(120000),
     OPENAI_REALTIME_API_KEY: z.string().optional(),
     OPENAI_API_KEY: z.string().optional(),
-    INFERENCE_ADMIN_TOKEN: z.string().optional(),
-    INFERENCE_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1000).max(24 * 60 * 60_000).default(30 * 60_000),
-    INFERENCE_WEBHOOK_SECRET: z.string().optional(),
-    INFERENCE_CREDITS_PER_DOLLAR: z.string().optional(),
+    GATEWAY_ADMIN_TOKEN: z.string().optional(),
+    GATEWAY_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1000).max(24 * 60 * 60_000).default(30 * 60_000),
+    GATEWAY_WEBHOOK_SECRET: z.string().optional(),
+    GATEWAY_CREDITS_PER_DOLLAR: z.string().optional(),
   })
   .superRefine((value, ctx) => {
     const mode =
@@ -54,6 +54,13 @@ export const isDevMode = process.env.OPENWORK_DEV_MODE === "1";
 
 const parsed = EnvSchema.parse({
   ...process.env,
+  // Deprecated INFERENCE_* aliases: an explicitly set GATEWAY_* value wins,
+  // including empty values (disable), and invalid values fail validation.
+  PORT: process.env.GATEWAY_PORT ?? process.env.PORT ?? process.env.INFERENCE_PORT,
+  GATEWAY_PROXY_BASE_URL: process.env.GATEWAY_PROXY_BASE_URL ?? process.env.INFERENCE_PROXY_BASE_URL,
+  GATEWAY_ADMIN_TOKEN: process.env.GATEWAY_ADMIN_TOKEN ?? process.env.INFERENCE_ADMIN_TOKEN,
+  GATEWAY_UPSTREAM_TIMEOUT_MS: process.env.GATEWAY_UPSTREAM_TIMEOUT_MS ?? process.env.INFERENCE_UPSTREAM_TIMEOUT_MS,
+  GATEWAY_CREDITS_PER_DOLLAR: process.env.GATEWAY_CREDITS_PER_DOLLAR ?? process.env.INFERENCE_CREDITS_PER_DOLLAR,
   DATABASE_URL:
     process.env.DATABASE_URL ??
     (isDevMode
@@ -65,8 +72,8 @@ const parsed = EnvSchema.parse({
     (isDevMode
       ? "local-dev-db-encryption-key-please-change-1234567890"
       : undefined),
-  INFERENCE_WEBHOOK_SECRET:
-    process.env.INFERENCE_WEBHOOK_SECRET ??
+  GATEWAY_WEBHOOK_SECRET:
+    process.env.GATEWAY_WEBHOOK_SECRET ?? process.env.INFERENCE_WEBHOOK_SECRET ??
     (isDevMode ? "local-dev-webhook-secret" : undefined),
 });
 
@@ -97,7 +104,7 @@ function parsePort(value: string | undefined) {
 function parseCreditsPerDollar(value: string | undefined) {
   const credits = Number(value ?? "1000000");
   if (!Number.isFinite(credits) || credits <= 0) {
-    throw new Error("INFERENCE_CREDITS_PER_DOLLAR must be a positive number");
+    throw new Error("GATEWAY_CREDITS_PER_DOLLAR must be a positive number");
   }
   return credits;
 }
@@ -114,7 +121,7 @@ const planetscale: PlanetScaleCredentials | null =
     : null;
 
 export const env = {
-  upstreamTimeoutMs: parsed.INFERENCE_UPSTREAM_TIMEOUT_MS,
+  upstreamTimeoutMs: parsed.GATEWAY_UPSTREAM_TIMEOUT_MS,
   port: parsePort(parsed.PORT),
   upstreamTimeoutMs: parsed.INFERENCE_UPSTREAM_TIMEOUT_MS,
   streamIdleMs: parsed.INFERENCE_STREAM_IDLE_MS,
@@ -124,12 +131,12 @@ export const env = {
     (parsed.DATABASE_URL ? "mysql" : "planetscale")) as DenDbMode,
   planetscale,
   dbEncryptionKey: parsed.DEN_DB_ENCRYPTION_KEY,
-  proxyBaseUrl: optionalString(parsed.INFERENCE_PROXY_BASE_URL),
+  proxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL),
   openRouterUpstreamUrl: normalizeUrl(
     parsed.OPENROUTER_UPSTREAM_URL ?? "https://openrouter.ai/api/v1",
   ),
   openAiRealtimeApiKey: optionalString(parsed.OPENAI_REALTIME_API_KEY) ?? optionalString(parsed.OPENAI_API_KEY),
-  adminToken: optionalString(parsed.INFERENCE_ADMIN_TOKEN),
-  webhookSecret: optionalString(parsed.INFERENCE_WEBHOOK_SECRET),
-  creditsPerDollar: parseCreditsPerDollar(parsed.INFERENCE_CREDITS_PER_DOLLAR),
+  adminToken: optionalString(parsed.GATEWAY_ADMIN_TOKEN),
+  webhookSecret: optionalString(parsed.GATEWAY_WEBHOOK_SECRET),
+  creditsPerDollar: parseCreditsPerDollar(parsed.GATEWAY_CREDITS_PER_DOLLAR),
 };

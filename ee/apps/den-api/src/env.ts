@@ -181,7 +181,7 @@ const EnvSchema = z.object({
   DAYTONA_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
   DEN_CKPT_INTERVAL_SECONDS: z.string().optional(),
   DEN_CKPT_KEEP: z.string().optional(),
-  INFERENCE_PROXY_BASE_URL: z.string().optional(),
+  GATEWAY_PROXY_BASE_URL: z.string().optional(),
   OPENROUTER_MANAGEMENT_API_KEY: z.string().optional(),
   OPENROUTER_WORKSPACE_ID: z.string().optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
@@ -235,7 +235,11 @@ const EnvSchema = z.object({
   }
 })
 
-const parsed = EnvSchema.parse(process.env)
+const parsed = EnvSchema.parse({
+  ...process.env,
+  // Deprecated deployment alias; an explicitly set canonical value wins.
+  GATEWAY_PROXY_BASE_URL: process.env.GATEWAY_PROXY_BASE_URL ?? process.env.INFERENCE_PROXY_BASE_URL,
+})
 
 function splitCsv(value: string | undefined) {
   return (value ?? "")
@@ -810,7 +814,7 @@ export const env = {
   dashboardsEnabled,
   corsHandledByEdge,
   openworkWebEnabled,
-  inferenceProxyBaseUrl: optionalString(parsed.INFERENCE_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
+  inferenceProxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   openRouterManagementApiKey: optionalString(parsed.OPENROUTER_MANAGEMENT_API_KEY),
   openRouterWorkspaceId: optionalString(parsed.OPENROUTER_WORKSPACE_ID),
   stripe: {

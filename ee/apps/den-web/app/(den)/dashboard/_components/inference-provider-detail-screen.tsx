@@ -20,7 +20,7 @@ import { InferenceCredentialStatusBadge } from "./inference-providers-screen";
 import { formatProviderTimestamp, getProviderDocUrl, getProviderNpmPackage } from "./llm-provider-data";
 
 export const GATEWAY_EXPLAINER =
-  "Members call this provider through the OpenWork inference gateway with their OpenWork key; the provider credential never leaves OpenWork.";
+  "Members call this provider through OpenWork Gateway with their OpenWork key; the provider credential never leaves OpenWork.";
 
 const SECTION_CLASS =
   "mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]";

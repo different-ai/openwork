@@ -34,7 +34,9 @@ test("Helm rejects a missing token reference or competing inline token", { skip:
   const missing = spawnSync(helm, args, { encoding: "utf8" })
   assert.notEqual(missing.status, 0)
   assert.match(missing.stderr, /adminTokenSecret is required/)
-  const conflicting = spawnSync(helm, [...args, "--set", "inference.retention.adminTokenSecret=accounting-secret", "--set", "inference.env.INFERENCE_ADMIN_TOKEN=fake-value"], { encoding: "utf8" })
-  assert.notEqual(conflicting.status, 0)
-  assert.match(conflicting.stderr, /Use inference.retention.adminTokenSecret/)
+  for (const key of ["GATEWAY_ADMIN_TOKEN", "INFERENCE_ADMIN_TOKEN"]) {
+    const conflicting = spawnSync(helm, [...args, "--set", "inference.retention.adminTokenSecret=accounting-secret", "--set", `inference.env.${key}=fake-value`], { encoding: "utf8" })
+    assert.notEqual(conflicting.status, 0)
+    assert.match(conflicting.stderr, /Use inference.retention.adminTokenSecret/)
+  }
 })

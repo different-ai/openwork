@@ -35,8 +35,8 @@ export function isPublicInferenceAddress(address: string): boolean {
     && !(first === 0x3fff && second < 0x1000)
 }
 
-/** Operator-owned CSV of exact origins. Never populate from provider settings. */
-export function inferenceEgressAllowedOrigins(value = process.env.INFERENCE_EGRESS_ALLOWED_ORIGINS ?? ""): ReadonlySet<string> {
+/** Operator-owned CSV; GATEWAY_* replaces the deprecated INFERENCE_* alias, never unions it. */
+export function inferenceEgressAllowedOrigins(value = process.env.GATEWAY_EGRESS_ALLOWED_ORIGINS ?? process.env.INFERENCE_EGRESS_ALLOWED_ORIGINS ?? ""): ReadonlySet<string> {
   const origins = new Set<string>()
   for (const item of value.split(",").map((entry) => entry.trim()).filter(Boolean)) {
     const url = new URL(item)

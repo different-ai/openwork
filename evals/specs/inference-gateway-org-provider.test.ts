@@ -192,7 +192,7 @@ interface InferenceApp extends AsyncDisposable {
 }
 
 async function startInferenceApp(input: { port: number; databaseUrl: string; allowedOrigin: string }): Promise<InferenceApp> {
-  const child: ChildProcess = spawn("pnpm", ["--dir", "ee/apps/inference", "exec", "tsx", "src/server.ts"], {
+  const child: ChildProcess = spawn("pnpm", ["--dir", "ee/apps/gateway", "exec", "tsx", "src/server.ts"], {
     cwd: REPO_ROOT,
     env: {
       ...process.env,

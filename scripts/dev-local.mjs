@@ -19,7 +19,7 @@ const composeFile = path.join(rootDir, "packaging", "docker", "docker-compose.we
 const composeProject = "openwork-den-local"
 
 const apiPort = process.env.DEN_API_PORT?.trim() || process.env.DEN_CONTROLLER_PORT?.trim() || "8788"
-const inferencePort = process.env.INFERENCE_PORT?.trim() || "8791"
+const gatewayPort = process.env.GATEWAY_PORT ?? process.env.INFERENCE_PORT?.trim() ?? "8791"
 const webPort = process.env.DEN_WEB_PORT?.trim() || "3005"
 const appPort = process.env.OPENWORK_APP_PORT?.trim() || process.env.PORT?.trim() || "5173"
 const extraAppPorts = (process.env.OPENWORK_EXTRA_APP_PORTS?.trim() || "5174")
@@ -172,7 +172,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 async function main() {
-  for (const [name, port] of [["den-web", webPort], ["den-api", apiPort], ["inference", inferencePort]]) {
+  for (const [name, port] of [["den-web", webPort], ["den-api", apiPort], ["gateway", gatewayPort]]) {
     const available = await canListenOnPort(Number(port))
     if (!available) {
       throw new Error(`${name} local port ${port} is already in use. Stop the existing process or rerun with a different port env override.`)
@@ -228,7 +228,7 @@ async function main() {
       "dev:local",
       "--output-logs=full",
         "--filter=@openwork-ee/den-api",
-        "--filter=@openwork-ee/inference",
+        "--filter=@openwork-ee/gateway",
         "--filter=@openwork-ee/den-web",
     ],
     {
@@ -247,8 +247,8 @@ async function main() {
         CORS_ORIGINS: process.env.CORS_ORIGINS?.trim() || webOrigins,
         DEN_API_PORT: apiPort,
         DEN_CONTROLLER_PORT: apiPort,
-        INFERENCE_PORT: inferencePort,
-        INFERENCE_PROXY_BASE_URL: process.env.INFERENCE_PROXY_BASE_URL?.trim() || `http://127.0.0.1:${inferencePort}`,
+        GATEWAY_PORT: gatewayPort,
+        GATEWAY_PROXY_BASE_URL: process.env.GATEWAY_PROXY_BASE_URL ?? process.env.INFERENCE_PROXY_BASE_URL?.trim() ?? `http://127.0.0.1:${gatewayPort}`,
         DEN_WEB_PORT: webPort,
         DEN_API_BASE: process.env.DEN_API_BASE?.trim() || `http://127.0.0.1:${apiPort}`,
         DEN_API_PUBLIC_URL: process.env.DEN_API_PUBLIC_URL?.trim() || `http://localhost:${apiPort}`,

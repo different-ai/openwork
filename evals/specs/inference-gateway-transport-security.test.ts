@@ -20,10 +20,12 @@ async function readState(url: string): Promise<FixtureState> {
   return state
 }
 
-async function fixture(config: Record<string, unknown> = {}, timeoutMs = 30_000) {
-  const child = spawn("pnpm", ["exec", "tsx", "test/helpers/transport-server.ts"], {
-    cwd: `${root}ee/apps/inference`,
-    env: { ...process.env, OPENWORK_DEV_MODE: "1", SENTRY_DSN: "", SENTRY_LOG_LEVEL: "off", NODE_OPTIONS: "--conditions=development", INFERENCE_UPSTREAM_TIMEOUT_MS: String(timeoutMs) },
+async function fixture(config: Record<string, unknown> = {}, timeoutMs = 30_000, overrides: Record<string, string> = {}) {
+  // Do not inherit operator credentials/policy into an isolated witness.
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GATEWAY_") && !key.startsWith("INFERENCE_")))
+  const child = spawn("pnpm", ["--filter", "@openwork-ee/gateway", "exec", "tsx", "test/helpers/transport-server.ts"], {
+    cwd: root,
+    env: { ...inherited, OPENWORK_DEV_MODE: "1", SENTRY_DSN: "", SENTRY_LOG_LEVEL: "off", NODE_OPTIONS: "--conditions=development", INFERENCE_UPSTREAM_TIMEOUT_MS: String(timeoutMs), ...overrides },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   })
@@ -82,11 +84,12 @@ test("native Google/Azure keys authenticate as OpenWork keys; conflicting creden
   expect(good.requests).toHaveLength(4)
   expect(good.requests[3].url).toBe("/v1/files?alt=sse")
   expect(good.requests.every((r) => r.headers.authorization === "Bearer UPSTREAM_ONLY_KEY")).toBe(true)
-  for (const headers of [
+  const conflictingHeaders: Record<string, string>[] = [
     { authorization: "Bearer ow_inf_fixture", "api-key": "other" },
     { "x-goog-api-key": "ow_inf_fixture, other" },
     { authorization: "Basic bad", "x-api-key": "ow_inf_fixture" },
-  ]) {
+  ]
+  for (const headers of conflictingHeaders) {
     const response = await f.request("/files", { body, headers: { "content-type": "application/json", ...headers } })
     expect(response.status).toBe(401)
     expect(response.headers.get("x-openwork-request-id")).toMatch(/^[a-f0-9]{32}$/)
@@ -96,6 +99,86 @@ test("native Google/Azure keys authenticate as OpenWork keys; conflicting creden
   expect(duplicateQuery.status).toBe(401)
   expect(await duplicateQuery.json()).toMatchObject({ error: { code: "ambiguous_api_key" } })
   expect((await f.state()).requests).toHaveLength(4)
+})
+
+test("Gateway keeps operator routes and old keys; new admin and webhook config replaces deprecated aliases", async () => {
+  for (const canonical of [false, true]) {
+    const overrides: Record<string, string> = {
+      INFERENCE_ADMIN_TOKEN: "legacy-admin-fixture",
+      INFERENCE_WEBHOOK_SECRET: "legacy-webhook-fixture",
+    }
+    if (canonical) {
+      overrides.GATEWAY_ADMIN_TOKEN = "canonical-admin-fixture"
+      overrides.GATEWAY_WEBHOOK_SECRET = "canonical-webhook-fixture"
+    }
+    await using f = await fixture({}, 30_000, overrides)
+    const health = await fetch(`${f.url}/health`)
+    expect(health.status).toBe(200)
+    expect(await health.json()).toEqual({ ok: true, service: "gateway" })
+    const operatorRequest = (path: string, token: string, body: string) => fetch(`${f.url}${path}`, {
+      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body,
+    })
+    const prefix = canonical ? "canonical" : "legacy"
+    // An authorized malformed body reaches validation, never executes a DB rollup.
+    const accepted = await operatorRequest("/internal/rollups/run", `${prefix}-admin-fixture`, "{")
+    expect(accepted.status).toBe(400)
+    expect(await accepted.json()).toEqual({ error: "invalid_json" })
+    expect((await operatorRequest("/internal/rollups/run", canonical ? "legacy-admin-fixture" : "wrong", "{")).status).toBe(401)
+    const webhook = await operatorRequest("/webhooks/openrouter", `${prefix}-webhook-fixture`, "{}")
+    expect(webhook.status).toBe(200)
+    expect(await webhook.json()).toEqual({ ok: true, ingested: 0, skipped: 0 })
+    expect((await operatorRequest("/webhooks/openrouter", canonical ? "legacy-webhook-fixture" : "wrong", "{}")).status).toBe(401)
+    const validKey = await f.request("/files", { body: "{}" })
+    expect(validKey.status).toBe(200)
+    await validKey.arrayBuffer()
+    const invalidKey = await f.request("/files", { body: "{}", headers: { authorization: "Bearer ow_gw_fixture" } })
+    expect(invalidKey.status).toBe(401)
+    const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
+    expect(state.rows[0]).toMatchObject({ inference_key_id: "ink_fixture", inference_provider_id: "ipr_fixture" })
+    expect(state.requests).toHaveLength(1)
+    expect(JSON.stringify(state.requests)).not.toContain("ow_inf_fixture")
+    expect(f.output).not.toMatch(/legacy-admin-fixture|canonical-admin-fixture|legacy-webhook-fixture|canonical-webhook-fixture/)
+  }
+})
+
+test("empty canonical Gateway credentials disable legacy tokens rather than silently restoring access", async () => {
+  await using f = await fixture({}, 30_000, {
+    GATEWAY_ADMIN_TOKEN: "", INFERENCE_ADMIN_TOKEN: "legacy-admin-fixture",
+    GATEWAY_WEBHOOK_SECRET: "", INFERENCE_WEBHOOK_SECRET: "legacy-webhook-fixture",
+  })
+  for (const { path, token, status } of [
+    { path: "/internal/rollups/run", token: "legacy-admin-fixture", status: 404 },
+    { path: "/webhooks/openrouter", token: "legacy-webhook-fixture", status: 503 },
+  ]) {
+    const response = await fetch(`${f.url}${path}`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body: "{}" })
+    expect(response.status).toBe(status)
+  }
+  expect((await f.state()).requests).toHaveLength(0)
+})
+
+test("Gateway timeout takes precedence and invalid canonical numbers cannot fall back to valid legacy config", async () => {
+  await using f = await fixture({ mode: "headers-hang" }, 30_000, { GATEWAY_UPSTREAM_TIMEOUT_MS: "1000" })
+  const response = await f.request()
+  expect(response.status).toBe(502)
+  await f.waitFor((s) => s.cancelled === 1)
+  await expect(fixture({}, 1000, { GATEWAY_UPSTREAM_TIMEOUT_MS: "invalid" })).rejects.toThrow(/GATEWAY_UPSTREAM_TIMEOUT_MS/)
+  await expect(fixture({}, 1000, { GATEWAY_CREDITS_PER_DOLLAR: "invalid", INFERENCE_CREDITS_PER_DOLLAR: "1000000" })).rejects.toThrow(/GATEWAY_CREDITS_PER_DOLLAR/)
+})
+
+test("Gateway egress config overrides rather than unions legacy exceptions; an empty canonical list fails closed", async () => {
+  await using allowed = await fixture({ egressAlias: "canonical" })
+  const response = await allowed.request()
+  expect(response.status).toBe(200)
+  await response.arrayBuffer()
+  expect((await allowed.state()).requests).toHaveLength(1)
+  await fetch(`${allowed.url}/__test/config`, { method: "POST", body: JSON.stringify({ egressAlias: "canonical", target: "http://127.0.0.1:1" }) })
+  const deniedLegacy = await allowed.request()
+  expect(deniedLegacy.status).toBe(502)
+  expect(await deniedLegacy.json()).toMatchObject({ error: { code: "provider_misconfigured" } })
+  expect((await allowed.state()).upstreamReads).toBe(0)
+  await using empty = await fixture({ egressAlias: "empty" })
+  expect((await empty.request()).status).toBe(502)
+  expect((await empty.state()).requests).toHaveLength(0)
 })
 
 test("credential retry yields a correlated 503 without forwarding tokens or asking the member to reconnect", async () => {
@@ -280,8 +363,8 @@ test("access logs and reporters omit query secrets, prompts and free-text transp
   const response = await f.request(`/files?arbitrary=${marker}`, { headers: { "api-key": "ow_inf_fixture", "x-extra": marker, "content-type": "application/json" }, body: JSON.stringify({ messages: [{ content: marker }] }) })
   expect(response.status).toBe(502)
   const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
-  expect(f.output).toContain("[inference-access] request")
-  expect(f.output).toContain("[inference-access] response")
+  expect(f.output).toContain("[gateway-access] request")
+  expect(f.output).toContain("[gateway-access] response")
   expect(f.output + JSON.stringify(state.reports)).not.toContain(marker)
   await using failedLog = await fixture({ logFailure: true })
   expect((await failedLog.request()).status).toBe(503)

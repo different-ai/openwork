@@ -180,7 +180,7 @@ async function createMemberInferenceKey(tx: Tx, input: { organizationId: OrgId; 
     id: createDenTypeId("inferenceKey"),
     organization_id: input.organizationId,
     org_membership_id: input.memberId,
-    name: "OpenWork Inference",
+    name: "OpenWork Gateway",
     key_hash: await inferenceBearerKeyStorageDigest(key),
     key_prefix: inferenceBearerKeyPrefix(key),
     encrypted_key: key.value,

@@ -24,7 +24,7 @@ test.skipIf(!local || !mysql)(title, { timeout: 600_000 }, async ({ place, evide
       probe.close(() => typeof address === "object" && address ? resolve(address.port) : reject(new Error("Port unavailable")));
     });
   });
-  const child = spawn("pnpm", ["--dir", "ee/apps/inference", "exec", "tsx", "test/helpers/accounting-server.ts"], {
+  const child = spawn("pnpm", ["--dir", "ee/apps/gateway", "exec", "tsx", "test/helpers/accounting-server.ts"], {
     cwd: fileURLToPath(new URL("../..", import.meta.url)),
     env: { PATH: process.env.PATH, HOME: process.env.HOME, NODE_OPTIONS: "--conditions=development",
       DATABASE_URL: databaseUrl, PORT: String(port), SENTRY_DSN: "", SENTRY_LOG_LEVEL: "off" },

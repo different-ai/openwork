@@ -179,7 +179,7 @@ function sanitizeHeaders(request: Request, apiKey: string, openworkRequestId: st
   if (env.proxyBaseUrl) {
     headers.set("http-referer", env.proxyBaseUrl)
   }
-  headers.set("x-title", "OpenWork Inference")
+  headers.set("x-title", "OpenWork Gateway")
   return headers
 }
 
@@ -188,7 +188,7 @@ function openAiError(status: number, code: string, message: string) {
 }
 
 function logProxyError(message: string, details: Record<string, unknown>) {
-  console.error(`[inference-proxy] ${message}`, details)
+  console.error(`[gateway-proxy] ${message}`, details)
 }
 
 async function logUpstreamError(input: {
@@ -465,7 +465,7 @@ async function prepareBody(request: Request, input: {
       resolvedUpstreamModel: model ? model.upstreamModel : null,
       status: 400,
     })
-    return { error: openAiError(400, "unsupported_model_selection", `OpenWork inference does not allow alternate model selection (${blockedSelection}).`), errorCode: "unsupported_model_selection", incomingModel: requestedModel, upstreamModel: model ? model.upstreamModel : null, stream }
+    return { error: openAiError(400, "unsupported_model_selection", `OpenWork Gateway does not allow alternate model selection (${blockedSelection}).`), errorCode: "unsupported_model_selection", incomingModel: requestedModel, upstreamModel: model ? model.upstreamModel : null, stream }
   }
 
   if (requestedModel === null) {
@@ -520,7 +520,7 @@ async function prepareBody(request: Request, input: {
   body.session_id = input.openworkRequestId
   const trace = {
     trace_id: input.openworkRequestId,
-    trace_name: "OpenWork Inference",
+    trace_name: "OpenWork Gateway",
     generation_name: model.alias,
     org_membership_id: input.orgMembershipId,
     inference_key_id: input.inferenceKeyId,
@@ -558,7 +558,7 @@ function localRouteRejection(path: string, method: string) {
   if (path === modelsPath) {
     return openAiError(405, "method_not_allowed", `Method ${method} is not allowed for ${path}. Use GET.`)
   }
-  return openAiError(404, "not_found", `Unsupported OpenWork inference route: ${method} ${path}.`)
+  return openAiError(404, "not_found", `Unsupported OpenWork Gateway route: ${method} ${path}.`)
 }
 
 export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies = defaultProxyDependencies) {

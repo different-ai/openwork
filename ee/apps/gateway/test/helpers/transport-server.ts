@@ -63,6 +63,7 @@ const origin = `http://127.0.0.1:${address.port}`
 process.env.INFERENCE_EGRESS_ALLOWED_ORIGINS = origin
 process.env.OPENROUTER_UPSTREAM_URL = `${origin}/v1`
 const { registerProxyRoutes } = await import("../../src/proxy.js")
+const { default: gatewayApp } = await import("../../src/app.js")
 const transport = createInferenceEgressFetch({ resolver: async () => {
   lookups++
   // Never resolve a real provider in this fixture. Mixed or rebound private
@@ -70,6 +71,10 @@ const transport = createInferenceEgressFetch({ resolver: async () => {
   return [{ address: "127.0.0.1", family: 4 }]
 } })
 const app = new Hono()
+// Exercise the actual app's operator routes without a database or live provider.
+app.get("/health", (c) => gatewayApp.fetch(c.req.raw))
+app.post("/internal/rollups/run", (c) => gatewayApp.fetch(c.req.raw))
+app.post("/webhooks/openrouter", (c) => gatewayApp.fetch(c.req.raw))
 app.use("/api/*", inferenceAccessLogger)
 app.get("/__test/state", (c) => c.json({ requests, reports, rows, cancelled, lookups, buckets, upstreamReads }))
 app.post("/__test/config", async (c) => {
@@ -77,13 +82,19 @@ app.post("/__test/config", async (c) => {
   requests.length = reports.length = rows.length = 0
   cancelled = lookups = buckets = upstreamReads = 0
   process.env.INFERENCE_EGRESS_ALLOWED_ORIGINS = config.allow === false ? "" : origin
+  if (config.egressAlias === "canonical") {
+    process.env.GATEWAY_EGRESS_ALLOWED_ORIGINS = origin
+    process.env.INFERENCE_EGRESS_ALLOWED_ORIGINS = "http://127.0.0.1:1"
+  } else if (config.egressAlias === "empty") {
+    process.env.GATEWAY_EGRESS_ALLOWED_ORIGINS = ""
+  }
   return c.json({ origin })
 })
 app.post("/__test/release", (c) => { release?.(); release = undefined; return c.json({ ok: true }) })
 registerProxyRoutes(app, {
   async findActiveInferenceKey(key) {
     if (key.value !== "ow_inf_fixture") return null
-    return { id: "ik_fixture", organization_id: "org_fixture", org_membership_id: "om_fixture" }
+    return { id: "ink_fixture", organization_id: "org_fixture", org_membership_id: "om_fixture" }
   },
   async loadOrganization(id) { return { id, metadata: config.enabled === false ? null : { inference: { enabled: true } } } },
   async getOpenRouterProviderKey() { return { encrypted_api_key: "UPSTREAM_ONLY_KEY" } },

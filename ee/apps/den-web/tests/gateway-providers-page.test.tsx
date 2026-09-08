@@ -116,7 +116,8 @@ describe("Gateway provider editor", () => {
     expect(editor).toContain('data-testid="gateway-provider-oauth-client-secret"');
     expect(editor).toContain('data-testid="gateway-provider-oauth-redirect-uri"');
     expect(editor).toContain("Create an Internal OAuth client in your Google Cloud project and add this redirect URI:");
-    expect(editor).toContain("denApiEndpoint(getOauthCallbackPath())");
+    expect(editor).toContain("{provider.oauthCallbackUrl}");
+    expect(editor).not.toContain("denApiEndpoint(getOauthCallbackPath())");
     expect(editor).toContain("provider?.hasOauthClientSecret");
     expect(editor).toContain("Leave blank to keep the current secret");
     expect(editor).toContain("supportsMemberCredentialMode(selectedProviderId)");
@@ -128,7 +129,7 @@ describe("Gateway provider editor", () => {
 describe("Gateway provider detail", () => {
   test("shows the explainer and a credentials table without values", () => {
     expect(GATEWAY_EXPLAINER).toBe(
-      "Members call this provider through the OpenWork inference gateway with their OpenWork key; the provider credential never leaves OpenWork.",
+      "Members call this provider through OpenWork Gateway with their OpenWork key; the provider credential never leaves OpenWork.",
     );
     expect(detail).toContain("Values are never shown");
     for (const header of ['header: "Holder"', 'header: "Kind"', 'header: "Status"', 'header: "Expires"']) {

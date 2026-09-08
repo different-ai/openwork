@@ -57,15 +57,15 @@ if (env.corsOrigins.length > 0) {
   );
 }
 
-app.get("/health", (c) => c.json({ ok: true, service: "inference" }));
+app.get("/health", (c) => c.json({ ok: true, service: "gateway" }));
 
 app.get("/ready", async (c) => {
   try {
     await db.execute(sql`select 1`);
-    return c.json({ ok: true, service: "inference", checks: { database: "ok" } });
+    return c.json({ ok: true, service: "gateway", checks: { database: "ok" } });
   } catch (error) {
-    console.error("[readiness] inference database check failed");
-    return c.json({ ok: false, service: "inference", checks: { database: "error" } }, 503);
+    console.error("[readiness] gateway database check failed");
+    return c.json({ ok: false, service: "gateway", checks: { database: "error" } }, 503);
   }
 });
 
@@ -86,7 +86,7 @@ app.onError((error, c) => {
   if (error instanceof z.ZodError) {
     return c.json({ error: "invalid_request" }, 400);
   }
-  console.error("[inference] internal_server_error");
+  console.error("[gateway] internal_server_error");
   sentryInferenceReporter.handledError({ reason: "internal_server_error", route: "/api/v1/*", method: c.req.method, status: 500 });
   return c.json({ error: "internal_server_error" }, 500);
 });

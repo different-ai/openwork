@@ -299,7 +299,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
         </h1>
         <p className="max-w-[720px] text-[16px] leading-8 text-gray-500">
           Pick a provider and models, store the credential once, and choose who can use it. Members call it through the
-          OpenWork inference gateway with their own OpenWork key.
+          OpenWork Gateway with their own OpenWork key.
         </p>
       </div>
 

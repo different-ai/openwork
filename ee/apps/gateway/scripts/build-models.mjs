@@ -35,4 +35,4 @@ const models = { ...base, ...openwork }
 await mkdir(path.dirname(outputPath), { recursive: true })
 await writeFile(outputPath, `${JSON.stringify(models)}\n`)
 
-console.log(`[inference] generated ${path.relative(appDir, outputPath)} (${isDevMode ? "dev" : "prod"})`)
+console.log(`[gateway] generated ${path.relative(appDir, outputPath)} (${isDevMode ? "dev" : "prod"})`)
