@@ -2,12 +2,13 @@ import { describe, expect, test } from "bun:test"
 import {
   buildDriveMultipartUpload,
   buildDriveSearchQuery,
-  buildGmailQuoteBlock,
+  buildGmailQuote,
   extractCalendarEvents,
   extractDriveFiles,
   extractDrivePermission,
   extractGmailAttachmentData,
   extractGmailMessage,
+  extractGmailThreadQuoteInput,
   truncateText,
 } from "../src/capability-sources/google-workspace-api.js"
 
@@ -15,34 +16,63 @@ function base64Url(text: string): string {
   return Buffer.from(text, "utf8").toString("base64url")
 }
 
-describe("buildGmailQuoteBlock", () => {
-  test("formats parsed dates in UTC and prefixes every line", () => {
-    expect(buildGmailQuoteBlock({
+describe("buildGmailQuote", () => {
+  test("formats parsed dates in UTC and keeps quote text separate from attribution", () => {
+    expect(buildGmailQuote({
       from: "Ada <ada@example.com>",
       date: "Thu, 16 Jul 2026 15:21:00 +0000",
       body: "First line\n> nested quote",
-    })).toBe([
-      "On Thu, 16 Jul 2026 at 15:21 UTC, Ada <ada@example.com> wrote:",
-      "> First line",
-      "> > nested quote",
-    ].join("\n"))
+    })).toEqual({
+      attribution: "On Thu, 16 Jul 2026 at 15:21 UTC, Ada <ada@example.com> wrote:",
+      body: "First line\n> nested quote",
+    })
   })
 
   test("uses raw invalid dates and omits the date header when absent", () => {
-    expect(buildGmailQuoteBlock({ from: "Ada", date: "not a date", body: "Hi" })).toBe([
-      "On not a date, Ada wrote:",
-      "> Hi",
-    ].join("\n"))
-    expect(buildGmailQuoteBlock({ from: "Ada", date: "", body: "Hi" })).toBe([
-      "Ada wrote:",
-      "> Hi",
-    ].join("\n"))
+    expect(buildGmailQuote({ from: "Ada", date: "not a date", body: "Hi" })).toEqual({
+      attribution: "On not a date, Ada wrote:",
+      body: "Hi",
+    })
+    expect(buildGmailQuote({ from: "Ada", date: "", body: "Hi" })).toEqual({
+      attribution: "Ada wrote:",
+      body: "Hi",
+    })
   })
 
   test("truncates quoted bodies and appends a trim marker", () => {
-    const quote = buildGmailQuoteBlock({ from: "Ada", date: "", body: "x".repeat(10_001) })
-    expect(quote).toContain(`> ${"x".repeat(10_000)}`)
-    expect(quote.endsWith("\n> [message trimmed]")).toBe(true)
+    const quote = buildGmailQuote({ from: "Ada", date: "", body: "x".repeat(10_001) })
+    expect(quote.body).toBe(`${"x".repeat(10_000)}\n[message trimmed]`)
+  })
+
+  test("normalizes quote line endings without changing original prose or markdown", () => {
+    expect(buildGmailQuote({ from: "Ada", date: "", body: "**Original**\r\n\r\n> nested\rlast" }).body)
+      .toBe("**Original**\n\n> nested\nlast")
+  })
+})
+
+describe("extractGmailThreadQuoteInput", () => {
+  test("prefers the last message's plain body over HTML", () => {
+    expect(extractGmailThreadQuoteInput({ messages: [{ payload: { parts: [
+      { mimeType: "text/html", body: { data: base64Url("<p>HTML</p>") } },
+      { mimeType: "text/plain", body: { data: base64Url("Plain") } },
+    ] } }] })).toEqual({ from: "", date: "", body: "Plain" })
+  })
+
+  test("uses parsed HTML text when plain text is missing or empty", () => {
+    for (const plain of [[], [{ mimeType: "text/plain", body: { data: base64Url("") } }]]) {
+      expect(extractGmailThreadQuoteInput({ messages: [{ payload: {
+        headers: [{ name: "From", value: "Ada" }, { name: "Date", value: "not a date" }],
+        parts: [...plain, { mimeType: "text/html", body: { data: base64Url('<p>Safe &amp; &lt;tag&gt;<br>Next</p><script>unsafe()</script><style>hidden</style>') } }],
+      } }] })).toEqual({ from: "Ada", date: "not a date", body: "Safe & <tag>\nNext" })
+    }
+  })
+
+  test("does not invent history from snippets or earlier messages", () => {
+    expect(extractGmailThreadQuoteInput({ messages: [] })).toBeNull()
+    expect(extractGmailThreadQuoteInput({ messages: [
+      { payload: { mimeType: "text/plain", body: { data: base64Url("Earlier") } } },
+      { snippet: "Not a full body", payload: {} },
+    ] })).toBeNull()
   })
 })
 

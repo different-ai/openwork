@@ -119,7 +119,6 @@ function healthyReport(): AgentContextDiagnosticsReport {
     connect: {
       stateStatus: "available",
       connectEnabled: true,
-      legacyGoogleWorkspaceConfigured: false,
       expectedBranch: "cloud-active",
       globalCloudMcpPresent: true,
       selectedWorkspaceCloudMcpPresent: true,
@@ -203,6 +202,8 @@ describe("AgentContextDiagnosticsReportView", () => {
     expect(html).toContain('data-testid="agent-diagnostics-mcp-sync"');
     expect(html).toContain('data-testid="agent-diagnostics-plugin-tools-unavailable"');
     expect(html).not.toContain("Settings Connect marker");
+    expect(html).not.toContain("Legacy Google Workspace configured");
+    expect(html).toContain("Cloud active");
     expect(html.match(/data-testid="agent-diagnostics-check"/g)).toHaveLength(
       AGENT_CONTEXT_DIAGNOSTIC_CHECK_IDS.length,
     );

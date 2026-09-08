@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -93,6 +93,7 @@ test("drive upload sends exact workspace bytes and server-derived Office metadat
     {
       readCloudMcp: async () => cloudMcp(),
       fetchImpl: async (url, init) => {
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer member-token");
         capturedUrl = url;
         if (!(init?.body instanceof FormData)) throw new Error("Expected multipart form");
         const file = init.body.get("file");
@@ -135,8 +136,9 @@ test.each([undefined, "google-workspace", "emc_selected"])("Gmail attachment mul
     { directory: root },
     {
       readCloudMcp: async () => cloudMcp(),
-      fetchImpl: async (_url, init) => {
-        expect(init?.headers).toEqual({ authorization: "Bearer member-token" });
+      fetchImpl: async (url, init) => {
+        expect(url).toBe("https://api.openwork.test/v1/direct-uploads/google-workspace/gmail-drafts");
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer member-token");
         if (!(init?.body instanceof FormData)) throw new Error("Expected multipart form");
         capturedFiles = init.body.getAll("file").filter((value): value is File => value instanceof File);
         const payload = init.body.get("payload");
@@ -194,6 +196,37 @@ test("direct upload rejects files above the deployed 4 MiB transport ceiling bef
     },
   )).rejects.toMatchObject({ status: 413, code: "file_too_large" });
   expect(fetchCalled).toBe(false);
+});
+
+test("direct uploads require Cloud member authorization even when local Google tokens remain on disk", async () => {
+  const root = await tempRoot();
+  await writeFile(join(root, "notes.txt"), "notes");
+  const directory = join(root, "extensions", "google-workspace");
+  await mkdir(directory, { recursive: true });
+  const vaultPath = join(directory, "oauth.dev-plaintext.json");
+  const vault = JSON.stringify({ token: { accessToken: "retired-local-token", refreshToken: "retired-refresh-token" } });
+  await writeFile(vaultPath, vault);
+  let networkCalls = 0;
+
+  for (const cloud of [null, { ...cloudMcp(), headers: {} }]) {
+    for (const action of ["drive_upload_file", "gmail_create_draft_with_attachments"]) {
+      await expect(callOpenWorkCloudUploadAction(
+        testConfig(root),
+        action,
+        { path: "notes.txt", paths: ["notes.txt"], to: "review@example.test", subject: "Review", body: "Notes" },
+        { directory: root },
+        {
+          readCloudMcp: async () => cloud,
+          fetchImpl: async () => {
+            networkCalls += 1;
+            throw new Error("Cloud authorization is required before upload");
+          },
+        },
+      )).rejects.toMatchObject({ status: 409, code: "cloud_not_connected" });
+    }
+  }
+  expect(networkCalls).toBe(0);
+  expect(await readFile(vaultPath, "utf8")).toBe(vault);
 });
 
 test("direct upload rejects aggregate attachment bytes above 4 MiB with no network calls", async () => {

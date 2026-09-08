@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MCP_QUICK_CONNECT, type McpDirectoryInfo } from "../src/app/constants";
+import { BUILT_IN_OPENWORK_EXTENSION_MANIFESTS } from "../src/app/extensions";
 import {
   matchesExtensionFilter,
   taxonomyForDirectoryEntry,
@@ -21,6 +22,7 @@ describe("extension taxonomy", () => {
 
   test("Google Workspace is not a built-in app; it arrives as an org connection", () => {
     expect(MCP_QUICK_CONNECT.some((entry) => entry.id === "google-workspace")).toBe(false);
+    expect(BUILT_IN_OPENWORK_EXTENSION_MANIFESTS.some((entry) => entry.id === "google-workspace")).toBe(false);
   });
 
   test("directory entries that are not built-in stay MCPs", () => {

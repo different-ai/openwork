@@ -859,7 +859,6 @@ export type OpenworkConnectState = {
   status: "available" | "missing" | "invalid" | "unreadable";
   connectEnabled: boolean;
   cloudMcpPresent: boolean;
-  googleWorkspace: { legacyConfigured: boolean };
 };
 
 export type OpenworkExtensionActionCall = {

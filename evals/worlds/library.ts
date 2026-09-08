@@ -420,9 +420,13 @@ export async function libraryConnectorDiscovery(seed: Seed) {
     deviceScaleFactor: 1,
     mobile: false,
   });
-  // TODO(primitive): seed.route
-  await seed.evalIn(app, browserScript((workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }, [workspace.workspaceId]));
-  return { app, organizationId, denWebUrl: den.ref.webUrl };
+  // Arrange an upgraded profile whose retired local extension was enabled.
+  await seed.evalIn(app, browserScript((workspaceId) => {
+    localStorage.setItem("openwork.extension.enabled.google-workspace", "1");
+    location.hash = "#/workspace/" + workspaceId + "/settings/general";
+    return true;
+  }, [workspace.workspaceId]));
+  return { app, workspaceId: workspace.workspaceId, organizationId, denWebUrl: den.ref.webUrl };
 }
 
 export async function librarySessionRestore(seed: Seed) {

@@ -10,14 +10,14 @@ import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, que
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { decodeFileContent } from "../../capability-sources/binary-content.js"
 import { buildGmailDraftRaw, gmailDraftUrl, gmailThreadUrl, readGmailDraftIds } from "../../capability-sources/gmail.js"
-import type { GmailDraftAttachment } from "../../capability-sources/gmail.js"
+import type { GmailDraftAttachment, GmailDraftQuote } from "../../capability-sources/gmail.js"
 import { gmailFileInputPreflight, gmailFileInputPreflightSchema } from "../../capability-sources/gmail-file-input.js"
 import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
 import { listNativeProviderUsableEntries, resolveDefaultNativeProviderCredentialId } from "../../capability-sources/native-provider-connections.js"
 import {
   buildDriveMultipartUpload,
   buildDriveSearchQuery,
-  buildGmailQuoteBlock,
+  buildGmailQuote,
   extractCalendarEvents,
   extractDriveFiles,
   extractDrivePermission,
@@ -53,13 +53,15 @@ const DIRECT_UPLOAD_MAX_FILES = 10
 const GMAIL_REPLY_SUBJECT_RE = /^\s*(re|fwd?)\s*:/i
 const GMAIL_METADATA_CONCURRENCY = 4
 
-const CONNECT_GOOGLE_ACCOUNT_MESSAGE = "Connect your Google account first: open Settings > Connect and use Connect your account on the Google Workspace row, or connect from the OpenWork Cloud dashboard."
+const CONNECT_GOOGLE_ACCOUNT_MESSAGE = "Connect your Google account first: open Settings > Library > Connections and connect the Google Workspace connection, or use OpenWork Cloud > Your Connections."
+
+const draftHeaderSchema = z.string().refine((value) => !/[\r\n]/.test(value), "Draft headers must not contain CR or LF.").trim()
 
 const draftMetadataSchema = z.object({
-  to: z.string().trim().min(3).max(320).describe("Recipient email address."),
-  cc: z.string().trim().min(3).max(1_000).optional().describe("Optional comma-separated Cc email addresses."),
-  bcc: z.string().trim().min(3).max(1_000).optional().describe("Optional comma-separated Bcc email addresses."),
-  subject: z.string().trim().min(1).max(500).describe("Draft subject line. For replies or forwards, include threadId; subjects starting with Re: or Fwd: are rejected without threadId so the draft stays on the existing conversation."),
+  to: draftHeaderSchema.min(3).max(320).describe("Recipient email address."),
+  cc: draftHeaderSchema.min(3).max(1_000).optional().describe("Optional comma-separated Cc email addresses."),
+  bcc: draftHeaderSchema.min(3).max(1_000).optional().describe("Optional comma-separated Bcc email addresses."),
+  subject: draftHeaderSchema.min(1).max(500).describe("Draft subject line. For replies or forwards, include threadId; subjects starting with Re: or Fwd: are rejected without threadId so the draft stays on the existing conversation."),
   body: z.string().min(1).max(50_000).describe("Plain-text draft body. Write plain prose with no markdown syntax, separate paragraphs with blank lines, and do not hard-wrap prose. For threaded drafts, the server appends the quoted conversation automatically; do not include quoted history."),
   threadId: z.string().trim().min(1).max(512).optional().describe("Gmail thread id to reply on. Required for replies and forwards; get it from the gmail-messages capability. When set, the draft is attached to that thread as a reply — keep the thread's subject (e.g. 'Re: …')."),
 }).strict()
@@ -77,7 +79,7 @@ const createDraftResponseSchema = z.object({
   draftId: z.string(),
   messageId: z.string().nullable(),
   draftUrl: z.string().nullable().describe("Gmail URL for the ready-to-send draft. Always share draftUrl with the user so they can open the draft in Gmail for review and send."),
-  threadUrl: z.string().nullable().describe("Gmail URL for the conversation thread when this draft is a threaded reply."),
+  threadUrl: z.string().nullable().describe("Gmail URL for the conversation thread returned by Gmail for this draft."),
   to: z.string(),
   subject: z.string(),
   threadId: z.string().nullable(),
@@ -165,6 +167,9 @@ const calendarEventsQuerySchema = z.object({
   timeMin: z.string().datetime({ offset: true }).describe("Inclusive lower bound for event start time. RFC 3339 date-time with a UTC offset or Z, e.g. 2026-09-03T00:00:00+02:00 or 2026-09-02T22:00:00Z."),
   timeMax: z.string().datetime({ offset: true }).describe("Exclusive upper bound for event start time. RFC 3339 date-time with a UTC offset or Z, e.g. 2026-09-04T00:00:00+02:00 or 2026-09-03T22:00:00Z."),
   maxResults: z.coerce.number().int().min(1).max(100).default(25).describe("Maximum events to return, capped at 100."),
+}).refine((query) => Date.parse(query.timeMax) > Date.parse(query.timeMin), {
+  path: ["timeMax"],
+  message: "timeMax must be later than timeMin.",
 })
 
 const calendarEventParamSchema = z.object({
@@ -284,7 +289,7 @@ const driveFileResponseSchema = z.object({
   ok: z.literal(true),
   file: driveFileSummarySchema.extend({
     content: z.string().nullable(),
-    contentBase64: z.string().nullable().describe("Standard base64-encoded file bytes for binary files; decode locally. Same encoding as the gmail-attachment capability's dataBase64 — it can be passed directly to the Drive upload capability's dataBase64 field."),
+    contentBase64: z.string().nullable().describe("Standard base64-encoded file bytes for binary files; decode to a workspace file. To upload, use the host's Google Workspace upload action with the workspace file path, if that action is available in the current client. There is no dataBase64 Drive upload capability."),
     encoding: z.enum(["text", "base64", "none"]),
     truncated: z.boolean(),
     contentUnavailableReason: z.enum(["file_too_large"]).nullable(),
@@ -347,7 +352,7 @@ export function missingScope(account: ConnectedAccountRow, anyOf: string[]): boo
 }
 
 function missingPermissionMessage(label: string): string {
-  return `Your connected Google account is missing the ${label} permission. An admin can enable it on the Google Workspace connector in OpenWork Cloud -> Connectors; then reconnect your account in Settings -> Extensions.`
+  return `Your connected Google account is missing the ${label} permission. An admin can enable it on the Google Workspace connector in OpenWork Cloud -> Connectors; then reconnect that Google Workspace connection in OpenWork Cloud -> Your Connections.`
 }
 
 function driveReadPermissionMessage(account: ConnectedAccountRow): string | null {
@@ -656,7 +661,7 @@ async function executeGmailDraft(
   }
 
   const headers: { name: string; value: string }[] = []
-  let draftBody = body
+  let draftQuote: GmailDraftQuote | undefined
   let quotedHistoryIncluded = false
   if (threadId) {
     const threadUrl = new URL(`${gmailApiBase()}/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}`)
@@ -683,14 +688,14 @@ async function executeGmailDraft(
     } else {
       const quote = extractGmailThreadQuoteInput(thread)
       if (quote) {
-        draftBody = `${body}\n\n${buildGmailQuoteBlock(quote)}`
+        draftQuote = buildGmailQuote(quote)
         quotedHistoryIncluded = true
       }
     }
   }
 
   const message: { raw: string; threadId?: string } = {
-    raw: buildGmailDraftRaw({ to, cc, bcc, subject, body: draftBody, headers, attachments }),
+    raw: buildGmailDraftRaw({ to, cc, bcc, subject, body, quote: draftQuote, headers, attachments }),
   }
   if (threadId) message.threadId = threadId
   const response = await googleWorkspaceApiFetch(`${gmailApiBase()}/gmail/v1/users/me/drafts`, {
@@ -709,7 +714,7 @@ async function executeGmailDraft(
     }
   }
 
-  const { draftId, messageId } = readGmailDraftIds(responseText)
+  const { draftId, messageId, threadId: returnedThreadId } = readGmailDraftIds(responseText)
   if (!draftId) {
     return { status: 502, body: { error: "google_api_error", message: "Gmail returned no draft id." } }
   }
@@ -718,10 +723,10 @@ async function executeGmailDraft(
     draftId,
     messageId,
     draftUrl: gmailDraftUrl(messageId, token.account.externalAccountId ?? undefined),
-    threadUrl: gmailThreadUrl(threadId, token.account.externalAccountId ?? undefined),
+    threadUrl: gmailThreadUrl(returnedThreadId, token.account.externalAccountId ?? undefined),
     to,
     subject,
-    threadId: threadId ?? null,
+    threadId: returnedThreadId,
     quotedHistoryIncluded,
   }
   if (attachments.length > 0) {

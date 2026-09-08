@@ -57,7 +57,7 @@ If you choose to connect Google Workspace to OpenWork, OpenWork requests only th
 
 OpenWork uses Google Workspace data only to provide the user-facing features you request, such as preparing for a meeting, reading an explicitly selected Drive file, or creating a Gmail draft. OpenWork does not sell Google user data, use Google user data for advertising, or use Google user data to train generalized AI models. OpenWork does not expose a tool to automatically send email in the initial Google Workspace integration; Gmail access is used to create drafts that you can review in Gmail.
 
-For the Desktop App, Google OAuth tokens are stored locally in the operating system's encrypted storage when available. For hosted or cloud-connected versions of OpenWork, Google OAuth tokens are stored in an encrypted token vault. You can disconnect Google Workspace from OpenWork to stop future access and remove stored OAuth credentials.
+Google Workspace connections, including those used by the Desktop App, are managed through OpenWork Cloud Connect, with Google OAuth tokens stored in an encrypted token vault. Workspace-file uploads read authorized files locally and transfer them through the Cloud backend using your connected account. You can manage or disconnect that account in OpenWork Cloud. The retired local Google Workspace integration is no longer used; removing its execution path does not delete historical local credentials, revoke Google access, or change existing Cloud connections.
 
 ### Cloud Service
 

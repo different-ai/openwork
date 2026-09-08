@@ -21,6 +21,11 @@ export type GmailDraftAttachment = {
   content: Buffer
 }
 
+export type GmailDraftQuote = {
+  attribution: string
+  body: string
+}
+
 function encodeMimeParameter(value: string): string {
   return value.replace(/[\r\n]+/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"')
 }
@@ -37,18 +42,23 @@ function draftBodyHtml(body: string): string {
   return body.split("\n").map((line) => `<div>${line.length === 0 ? "<br>" : escapeHtml(line)}</div>`).join("")
 }
 
-function alternativeMimeParts(boundary: string, body: string): string[] {
+function alternativeMimeParts(boundary: string, body: string, quote?: GmailDraftQuote): string[] {
+  const plain = quote ? `${body}\n\n${quote.attribution}\n${quote.body.split("\n").map((line) => `> ${line}`).join("\n")}` : body
+  // Only generated markup is HTML; both new prose and quoted history remain escaped text.
+  const html = draftBodyHtml(body) + (quote
+    ? `<div><br></div><div class="gmail_quote"><div dir="ltr" class="gmail_attr">${escapeHtml(quote.attribution)}</div><blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">${draftBodyHtml(quote.body)}</blockquote></div>`
+    : "")
   return [
     `--${boundary}`,
     'Content-Type: text/plain; charset="UTF-8"',
     "Content-Transfer-Encoding: base64",
     "",
-    base64MimeContent(Buffer.from(body, "utf8")),
+    base64MimeContent(Buffer.from(plain, "utf8")),
     `--${boundary}`,
     'Content-Type: text/html; charset="UTF-8"',
     "Content-Transfer-Encoding: base64",
     "",
-    base64MimeContent(Buffer.from(draftBodyHtml(body), "utf8")),
+    base64MimeContent(Buffer.from(html, "utf8")),
     `--${boundary}--`,
   ]
 }
@@ -79,25 +89,60 @@ export function encodeMimeHeaderValue(value: string): string {
   if (!hasNonAscii(value)) {
     return value
   }
-  return `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`
+  const words: string[] = []
+  let chunk = ""
+  let chunkBytes = 0
+  // 45 UTF-8 bytes become 60 base64 characters, plus the 12-character wrapper.
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, "utf8")
+    if (chunk && chunkBytes + characterBytes > 45) {
+      words.push(chunk)
+      chunk = ""
+      chunkBytes = 0
+    }
+    chunk += character
+    chunkBytes += characterBytes
+  }
+  if (chunk) words.push(chunk)
+  return words.map((word) => `=?UTF-8?B?${Buffer.from(word, "utf8").toString("base64")}?=`).join(" ")
+}
+
+function mimeHeaderLine(name: string, value: string): string {
+  if (!name || /[^\x21-\x39\x3b-\x7e]/.test(name)) throw new Error("Invalid MIME header name")
+  const sanitized = value.replace(/[\r\n]+/g, " ").trim()
+  const line = `${name}: ${name.toLowerCase() === "subject" ? encodeMimeHeaderValue(sanitized) : sanitized}`
+  const lines: string[] = []
+  let current = ""
+  // Fold only at existing whitespace, preserving quoted addresses and opaque tokens.
+  for (const word of line.split(/(?=[ \t])/)) {
+    if (current && Buffer.byteLength(current + word, "utf8") > 78) {
+      lines.push(current)
+      current = word
+    } else {
+      current += word
+    }
+  }
+  if (current) lines.push(current)
+  return lines.join("\r\n")
 }
 
 /** Tolerant reader for the Gmail drafts.create response body. */
-export function readGmailDraftIds(text: string): { draftId: string | null; messageId: string | null } {
+export function readGmailDraftIds(text: string): { draftId: string | null; messageId: string | null; threadId: string | null } {
   try {
     const parsed: unknown = JSON.parse(text)
     if (typeof parsed !== "object" || parsed === null) {
-      return { draftId: null, messageId: null }
+      return { draftId: null, messageId: null, threadId: null }
     }
     const draftId = "id" in parsed && typeof parsed.id === "string" ? parsed.id : null
     let messageId: string | null = null
-    if ("message" in parsed && typeof parsed.message === "object" && parsed.message !== null
-      && "id" in parsed.message && typeof parsed.message.id === "string") {
-      messageId = parsed.message.id
+    let threadId: string | null = null
+    if ("message" in parsed && typeof parsed.message === "object" && parsed.message !== null) {
+      if ("id" in parsed.message && typeof parsed.message.id === "string") messageId = parsed.message.id
+      if ("threadId" in parsed.message && typeof parsed.message.threadId === "string") threadId = parsed.message.threadId
     }
-    return { draftId, messageId }
+    return { draftId, messageId, threadId }
   } catch {
-    return { draftId: null, messageId: null }
+    return { draftId: null, messageId: null, threadId: null }
   }
 }
 
@@ -107,19 +152,19 @@ export function gmailDraftUrl(messageId: string | null, accountEmail?: string): 
   return `https://mail.google.com/mail/${mailbox}#drafts?compose=${encodeURIComponent(messageId)}`
 }
 
-export function gmailThreadUrl(threadId: string | undefined, accountEmail?: string): string | null {
+export function gmailThreadUrl(threadId: string | null | undefined, accountEmail?: string): string | null {
   if (!threadId) return null
   const mailbox = accountEmail ? `u/?authuser=${encodeURIComponent(accountEmail)}` : "u/0/"
   return `https://mail.google.com/mail/${mailbox}#all/${encodeURIComponent(threadId)}`
 }
 
-export function buildGmailDraftRaw(input: { to: string; cc?: string; bcc?: string; subject: string; body: string; headers?: { name: string; value: string }[]; attachments?: GmailDraftAttachment[] }): string {
+export function buildGmailDraftRaw(input: { to: string; cc?: string; bcc?: string; subject: string; body: string; quote?: GmailDraftQuote; headers?: { name: string; value: string }[]; attachments?: GmailDraftAttachment[] }): string {
   const headers = [
-    `To: ${input.to}`,
-    input.cc ? `Cc: ${input.cc}` : null,
-    input.bcc ? `Bcc: ${input.bcc}` : null,
-    `Subject: ${encodeMimeHeaderValue(input.subject)}`,
-    ...(input.headers ?? []).map((header) => `${header.name}: ${header.value}`),
+    mimeHeaderLine("To", input.to),
+    input.cc ? mimeHeaderLine("Cc", input.cc) : null,
+    input.bcc ? mimeHeaderLine("Bcc", input.bcc) : null,
+    mimeHeaderLine("Subject", input.subject),
+    ...(input.headers ?? []).map((header) => mimeHeaderLine(header.name, header.value)),
   ].filter((line) => typeof line === "string")
   const attachments = input.attachments ?? []
   const body = normalizeDraftBody(input.body)
@@ -129,7 +174,7 @@ export function buildGmailDraftRaw(input: { to: string; cc?: string; bcc?: strin
     "MIME-Version: 1.0",
     `Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`,
     "",
-    ...alternativeMimeParts(alternativeBoundary, body),
+    ...alternativeMimeParts(alternativeBoundary, body, input.quote),
     "",
   ].join("\r\n") : (() => {
     const mixedBoundary = `openwork-mixed-${randomUUID()}`
@@ -141,7 +186,7 @@ export function buildGmailDraftRaw(input: { to: string; cc?: string; bcc?: strin
       `--${mixedBoundary}`,
       `Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`,
       "",
-      ...alternativeMimeParts(alternativeBoundary, body),
+      ...alternativeMimeParts(alternativeBoundary, body, input.quote),
       ...attachments.flatMap((attachment) => [
         `--${mixedBoundary}`,
         `Content-Type: ${attachment.mimeType}; name="${encodeMimeParameter(attachment.filename)}"`,

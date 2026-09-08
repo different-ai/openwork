@@ -191,6 +191,23 @@ describe("connect state Cloud health scoping", () => {
     expect(requireRecord(second.workspace, "workspace").id).toBe("ws_b");
     expect(requireRecord(second.cloudHealth, "cloudHealth").usable).toBe(true);
 
+    const retiredCall = await fetch(`${openwork.base}/experimental/extensions/call`, {
+      method: "POST",
+      headers: { ...clientHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        extensionId: "google-workspace",
+        action: "status",
+        context: { directory: rootB },
+      }),
+    });
+    expect(retiredCall.status).toBe(200);
+    const retired = await responseRecord(retiredCall);
+    expect(retired.ok).toBe(false);
+    expect(retired.error).toBe("use_openwork_cloud");
+    expect(retired.nextAction).toEqual({ tool: "search_capabilities", arguments: { query: "Google Workspace" } });
+    expect(retired).not.toHaveProperty("connected");
+    expect(retired).not.toHaveProperty("result");
+
     const unknown = await responseRecord(await fetch(`${openwork.base}/experimental/connect/state?directory=${encodeURIComponent(join(rootA, "other"))}`, { headers: clientHeaders() }));
     expect(unknown.cloudMcpPresent).toBe(false);
     expect(unknown.cloudHealth).toBeNull();
