@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { denFetch } from "@openwork/behaviors";
 import { spec } from "@openwork/testkit";
 import { reauthPopup } from "../worlds/reauth-popup.ts";
 
@@ -117,21 +118,21 @@ test("workspace SSO verifies through a real popup and safely recovers from inter
   const skillBody = { role: "textbox", label: /Skill body/ } as const;
   await step("shared content editing reuses confirmation beyond fifteen minutes", async () => {
     await world.ageSession(20);
-    const headers = { "x-openwork-org-id": world.organizationId };
-    const renamed = await probe.api(world.den.admin, `/v1/plugins/${world.pluginId}`, {
+    const headers = { "x-openwork-org-id": world.organizationId, authorization: `Bearer ${world.den.admin.token}` };
+    const renamed = await denFetch(world.den.admin, `/v1/plugins/${world.pluginId}`, {
       method: "PATCH", headers, body: JSON.stringify({ name: "Shared editing updated" }),
     });
     expect(renamed.response.status).toBe(200);
     expect(JSON.stringify(renamed.body)).toContain("Shared editing updated");
     const accessBefore = await probe.api(world.den.admin, `/v1/plugins/${world.pluginId}/access`, { headers });
     expect(accessBefore.response.status).toBe(200);
-    const grant = await probe.api(world.den.admin, `/v1/plugins/${world.pluginId}/access`, {
+    const grant = await denFetch(world.den.admin, `/v1/plugins/${world.pluginId}/access`, {
       method: "POST", headers, body: JSON.stringify({ orgWide: true, role: "editor" }),
     });
-    const deletion = await probe.api(world.den.admin, `/v1/config-objects/${world.skillId}/delete`, {
+    const deletion = await denFetch(world.den.admin, `/v1/config-objects/${world.skillId}/delete`, {
       method: "POST", headers, body: "{}",
     });
-    const mcp = await probe.api(world.den.admin, "/v1/config-objects", {
+    const mcp = await denFetch(world.den.admin, "/v1/config-objects", {
       method: "POST", headers, body: JSON.stringify({
         type: "mcp", sourceMode: "cloud", pluginIds: [world.pluginId],
         input: { rawSourceText: '{"mcpServers":{"fixture":{"url":"https://example.test/mcp"}}}' },
