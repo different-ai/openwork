@@ -17,6 +17,7 @@ import path from "node:path";
 import { resolveCoworkerFile } from "./coworkers.mjs";
 import { ASSIGNMENT_TOOL_NAMES, SELF_TOOL_NAMES, TEAM_TOOL_NAMES } from "../src/lib/coworker-tools.ts";
 import { COMPUTER_DENY } from "./computer-control.mjs";
+import { effortForTurn, effortStopOf } from "../src/lib/effort.ts";
 
 export const WORKERS_DIR = "workers";
 export const WORKERS_REGISTRY_FILE = "workers.json";
@@ -25,6 +26,7 @@ export const WORKER_SCHEMA_VERSION = 1;
 export const MAX_LIVE_WORKERS = 3;
 /** Turns a Worker gets when nobody chose a lifespan. */
 export const DEFAULT_TURN_BUDGET = 10;
+export const THINKING_TURN_BUDGET = 2;
 export const MAX_TURN_BUDGET = 100;
 /** The coworker reviews at most once per this window; findings in between batch. */
 export const REVIEW_DEBOUNCE_MS = 60_000;
@@ -52,6 +54,46 @@ const REPORT_KINDS = new Set(["finding", "decision", "done"]);
 const WORKER_ID = /^wrk_[a-z0-9]{8,32}$/;
 const MAX_EVENTS_READ = 400;
 const MAX_FINDING_TEXT = 4_000;
+
+export function workerPurpose(value) {
+  if (value === undefined || value === "delivery") return "delivery";
+  if (value === "thinking") return value;
+  throw new Error("Worker purpose must be thinking or delivery.");
+}
+
+/** Resolve once at creation, then validate the saved choice without substituting
+ * a provider or changing effort. Read the connected native catalog, not pricing
+ * heuristics or the conversation's automatic lanes. */
+export function resolveWorkerModel(coworker, purpose, providers, snapshot = null, defaults = {}) {
+  const field = purpose === "thinking" ? "thinkingModel" : "deliveryModel";
+  const selected = coworker[field] ? { model: coworker[field], modelVariant: coworker[`${field}Variant`] } : coworker;
+  if (snapshot && (typeof snapshot.providerId !== "string" || typeof snapshot.modelId !== "string" || typeof snapshot.variant !== "string")) {
+    throw new Error("The Worker's saved model is unreadable. No replacement model was selected.");
+  }
+  let id = snapshot ? `${snapshot.providerId}/${snapshot.modelId}` : String(selected.model ?? "").trim();
+  if (!id) {
+    id = typeof defaults.model === "string" ? defaults.model.trim() : "";
+    if (!id) {
+      const entries = Object.entries(defaults.default ?? {});
+      if (entries.length !== 1 || typeof entries[0][1] !== "string" || !entries[0][1].trim()) {
+        throw new Error("The native default model could not be resolved unambiguously. Choose a model in Coworker settings; no recommendation or fallback was selected.");
+      }
+      id = `${entries[0][0]}/${entries[0][1].trim()}`;
+    }
+  }
+  const separator = id.indexOf("/");
+  if (separator <= 0 || separator === id.length - 1) throw new Error("Choose a model in Coworker settings before starting a Worker. No default or paid fallback was selected.");
+  const providerId = id.slice(0, separator);
+  const modelId = id.slice(separator + 1);
+  const model = providers.find((provider) => provider.id === providerId)?.models?.[modelId];
+  if (!model || model.status === "deprecated") throw new Error(`Worker model ${id} is unavailable from a connected provider. Restore access or choose a model for a new Worker; this Worker will not switch models.`);
+  if (model.capabilities?.toolcall !== true) throw new Error(`Worker model ${id} does not advertise tool support. Choose a tool-capable model for a new Worker.`);
+  const variants = Object.keys(model.variants ?? {}).filter((variant) => model.variants[variant]?.disabled !== true);
+  const fixedVariant = snapshot ? snapshot.variant : String(selected.modelVariant ?? "").trim();
+  if (fixedVariant && !variants.includes(fixedVariant)) throw new Error(`Worker model ${id} no longer offers thinking effort ${fixedVariant}. This Worker will not change its saved effort.`);
+  const variant = snapshot ? fixedVariant : effortForTurn({ kind: "worker-turn", stop: effortStopOf(coworker.effortPreference), fixedVariant, variants });
+  return { providerId, modelId, variant };
+}
 
 export function newWorkerId() {
   return `wrk_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
@@ -167,6 +209,10 @@ function normalizeStoredWorker(raw) {
     slug: typeof raw.slug === "string" ? raw.slug : "",
     name: typeof raw.name === "string" && raw.name ? raw.name : "Worker",
     goal: typeof raw.goal === "string" ? raw.goal : "",
+    purpose: raw.purpose === undefined ? "delivery" : raw.purpose,
+    // Keep an invalid saved snapshot visible so execution fails closed, never
+    // normalize it back into the legacy owner-model path.
+    modelSnapshot: raw.modelSnapshot ?? null,
     threadId: typeof raw.threadId === "string" ? raw.threadId : "",
     spawnedBy: SPAWNERS.has(raw.spawnedBy) ? raw.spawnedBy : "person",
     spawnedFromThreadId: typeof raw.spawnedFromThreadId === "string" ? raw.spawnedFromThreadId : "",
@@ -203,7 +249,9 @@ export async function createWorker(coworkersDir, slug, input, { now = Date.now()
   if (!name) throw new Error("A Worker needs a name.");
   if (!goal) throw new Error("A Worker needs a goal.");
   if (!SPAWNERS.has(input?.spawnedBy)) throw new Error("A Worker is started by the coworker or by the person.");
-  const lifespan = normalizeLifespan(input.lifespan, { now });
+  const purpose = workerPurpose(input.purpose);
+  const lifespan = normalizeLifespan(input.lifespan ?? (purpose === "thinking" ? { kind: "turns", max: THINKING_TURN_BUDGET } : undefined), { now });
+  if (input.spawnedBy === "coworker" && lifespan.kind === "open") throw new Error("Choose a finite turn limit or deadline. Only the person can start a Worker until stopped.");
   const previous = createQueues.get(slug) ?? Promise.resolve();
   const run = previous.catch(() => undefined).then(async () => {
     if (input.id) {
@@ -220,6 +268,8 @@ export async function createWorker(coworkersDir, slug, input, { now = Date.now()
       slug,
       name,
       goal,
+      purpose,
+      modelSnapshot: input.modelSnapshot ? structuredClone(input.modelSnapshot) : null,
       threadId: "",
       spawnedBy: input.spawnedBy,
       spawnedFromThreadId: cleanText(input.spawnedFromThreadId, 240),
@@ -357,6 +407,7 @@ export async function prepareWorkerTurn(coworkersDir, slug, id, coworkerName) {
       pendingTurn: worker.pendingTurn ?? {
         messageId: `msg_${Date.now().toString(16)}${randomUUID().replace(/-/g, "").slice(0, 20)}`,
         prompt: workerTurnPrompt({ worker, coworkerName, body }),
+        ...(worker.modelSnapshot ? { model: worker.modelSnapshot } : {}),
       },
     };
   });
@@ -495,6 +546,7 @@ export function workerTurnPrompt({ worker, coworkerName, body, now = Date.now() 
     worker.goal,
     "",
     `Lifespan: ${describeLifespanForPrompt(worker.lifespan, now)}.`,
+    `Purpose: ${worker.purpose ?? "delivery"}. Follow the Workers section of the coworker contract for the brief, evidence, and handback.`,
     `You are a Worker, not ${coworkerName}: never start, steer, or stop Workers, never set up or change assignments, and never change ${coworkerName}'s memory or soul (those tools are ${coworkerName}'s), and leave ${coworkerName}'s memory files alone.`,
     "Work in bounded steps. After each meaningful step, end your turn with a section titled \"Finding\": 2–6 sentences a person can read. If you need a decision before you can go on, end instead with a section titled \"Needs a decision\" and list the options. When the goal is met, end with a section titled \"Done\" and your final finding.",
     "",
@@ -582,6 +634,15 @@ export function workerTurnOutcome(result, transcript, messageId) {
   return { kind: "settled", report: parseWorkerReport(reply.text) };
 }
 
+/** A completion marker alone is not a brief. The supervisor still checks the
+ * referenced document and the substance before using it for delivery. */
+export function completedThinkingBrief(report) {
+  if (report?.kind !== "done") return false;
+  const brief = cleanText(report.text, MAX_FINDING_TEXT).replace(/[*`]/g, "");
+  const reference = /\bdoc:[a-z0-9][a-z0-9-]*\b|\b[\w.-]+\.(?:md|txt|pdf|docx)\b/i.test(brief);
+  return reference || ["decision", "constraints", "acceptance criteria", "open risks"].every((field) => new RegExp(`\\b${field}\\s*:[ \\t]*\\S`, "i").test(brief));
+}
+
 /**
  * What one settled (or failed) turn means for the Worker: the record patch,
  * the events to append, and whether to continue, hold, or stop. The record is
@@ -603,9 +664,21 @@ export function nextWorkerState(worker, outcome, { now = Date.now(), hasPendingS
   const events = report.kind === "none" ? [] : [{ kind: "finding", report: report.kind, text: report.text }];
   const finding = report.kind === "none" ? {} : { lastFindingAt: now };
   if (report.kind === "done") {
+    if (worker.purpose === "thinking" && !completedThinkingBrief(report)) {
+      return { patch: { status: "failed", lifespan, ...finding, error: "Incomplete: the thinking Worker reported Done without a brief or document/file reference. Delivery was not authorized." }, events, schedule: "stop" };
+    }
     return { patch: { status: "finished", lifespan, ...finding }, events, schedule: "stop" };
   }
+  if (report.kind === "decision" && worker.modelSnapshot && !hasPendingSteer) {
+    // A bounded Worker hands blockers back through the same durable completion
+    // path instead of waiting for an unavailable interactive question tool.
+    return { patch: { status: "failed", lifespan, ...finding, error: `Needs a decision: ${report.text}` }, events, schedule: "stop" };
+  }
   if (lifespanSpent(lifespan, now)) {
+    if (worker.purpose === "thinking") {
+      const error = "Incomplete: the thinking Worker reached its lifespan without a completed brief. Delivery was not authorized.";
+      return { patch: { status: "failed", lifespan, ...finding, error }, events: [...events, { kind: "status", text: error }], schedule: "stop" };
+    }
     return {
       patch: { status: "finished", lifespan, ...finding },
       events: [...events, { kind: "status", text: "Finished: reached the end of its lifespan." }],
@@ -812,17 +885,18 @@ export function workerToolCatalog() {
     },
     {
       name: "worker_spawn",
-      description: `Start a helper for one bounded goal beyond this reply. It takes steps while this Mac and app are on and reports findings for review. Give a name and goal saying what done means. Lifespan: turns, deadline, or until stopped; omit for the effort dial's budget (${DEFAULT_TURN_BUDGET} at Balanced). Use an assignment for timed or recurring checks. Never for a quick question or from inside a Worker. Tell the person what started.`,
+      description: `Start a helper for one bounded goal beyond this reply. Give a name and goal with acceptance criteria and file references. Omit lifespan for two thinking turns or the delivery effort dial's budget (${DEFAULT_TURN_BUDGET} at Balanced). Use an assignment for scheduled work. Follow the Workers contract, acknowledge, and end this turn; the result returns here.`,
       inputSchema: {
         type: "object",
         properties: {
           name: { type: "string", description: "Short and specific, e.g. \"Market scan\"." },
           goal: { type: "string", description: "What done looks like, what to watch or produce, and any limits." },
+          purpose: { type: "string", enum: ["thinking", "delivery"], description: "Thinking brief or delivery work; defaults to delivery. Uses the person's corresponding Worker model setting." },
           lifespan: {
             type: "object",
             description: "How long it lives. Omit for the default number of turns.",
             properties: {
-              kind: { type: "string", enum: ["turns", "until", "open"] },
+              kind: { type: "string", enum: ["turns", "until"] },
               turns: { type: "integer", minimum: 1, maximum: MAX_TURN_BUDGET, description: "With kind turns: how many bounded steps." },
               until: { type: "string", description: "With kind until: when it must stop, as an ISO 8601 date-time." },
             },
@@ -882,6 +956,8 @@ export function workerCard(worker, extra = {}) {
   return {
     id: worker.id,
     name: worker.name,
+    purpose: worker.purpose ?? "delivery",
+    modelSnapshot: worker.modelSnapshot ?? null,
     status: worker.status,
     waitingFor: worker.waitingFor,
     lifespan: worker.lifespan,
@@ -891,10 +967,11 @@ export function workerCard(worker, extra = {}) {
 }
 
 /** The tool's lifespan argument as the record the store keeps; missing means the default turn budget. */
-export function lifespanFromToolArgs(input, { now = Date.now() } = {}) {
-  if (input === undefined || input === null) return normalizeLifespan(undefined, { now });
+export function lifespanFromToolArgs(input, { now = Date.now(), purpose = "delivery" } = {}) {
+  const max = purpose === "thinking" ? THINKING_TURN_BUDGET : DEFAULT_TURN_BUDGET;
+  if (input === undefined || input === null) return normalizeLifespan({ kind: "turns", max }, { now });
   if (!input || typeof input !== "object") throw new Error("lifespan must be an object with a kind.");
-  if (input.kind === "turns") return normalizeLifespan({ kind: "turns", max: input.turns ?? DEFAULT_TURN_BUDGET }, { now });
+  if (input.kind === "turns") return normalizeLifespan({ kind: "turns", max: input.turns ?? max }, { now });
   if (input.kind === "until") {
     const at = typeof input.until === "string" ? Date.parse(input.until) : Number(input.until);
     if (!Number.isFinite(at)) throw new Error("With kind until, give the stop time as an ISO 8601 date-time.");
@@ -942,8 +1019,9 @@ export function createWorkerToolHandlers({ coworkersDir, spawn, steer, cancel, p
       const worker = await spawn(slug, {
         name: typeof args.name === "string" ? args.name : "",
         goal: typeof args.goal === "string" ? args.goal : "",
+        purpose: workerPurpose(args.purpose),
         // A lifespan the coworker did not choose is left to the app: the effort dial sets the default turns.
-        lifespan: args.lifespan === undefined || args.lifespan === null ? undefined : lifespanFromToolArgs(args.lifespan, { now: now() }),
+        lifespan: args.lifespan === undefined || args.lifespan === null ? undefined : lifespanFromToolArgs(args.lifespan, { now: now(), purpose: args.purpose }),
       });
       return {
         text: `Started Worker "${worker.name}" (id ${worker.id}), ${describeLifespanForPrompt(worker.lifespan, now())}. It will report a finding after each step and each finding wakes you. Now tell the person in a sentence what you started.`,

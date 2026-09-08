@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import { createCoworker } from "./coworkers.mjs";
+import { createCoworker, getCoworker, updateCoworker } from "./coworkers.mjs";
 import { createCoworkerToolsServer, handleMcpMessage } from "./coworker-tools.mjs";
 import {
   DEFAULT_TURN_BUDGET,
@@ -28,10 +28,12 @@ import {
   readWorkerEvents,
   readWorkerRegistry,
   registerWorkerThread,
+  resolveWorkerModel,
   updateWorker,
   workerThreadTitle,
   workerToolCatalog,
   workerTurnOutcome,
+  workerTurnTools,
 } from "./workers.mjs";
 
 const roots = [];
@@ -74,7 +76,7 @@ test("workers are created under the coworker home, listed newest first, capped, 
   assert.deepEqual(first.lifespan, { kind: "turns", max: DEFAULT_TURN_BUDGET, used: 0 });
   assert.equal(workerThreadTitle(first.name), "Worker: Market scan");
 
-  const second = await createWorker(coworkersDir, "scout", { name: "Inbox watch", goal: "Watch the inbox.", spawnedBy: "coworker", spawnedFromThreadId: "ses_chat", lifespan: { kind: "open" } }, { now: 2_000 });
+  const second = await createWorker(coworkersDir, "scout", { name: "Inbox watch", goal: "Watch the inbox.", spawnedBy: "person", spawnedFromThreadId: "ses_chat", lifespan: { kind: "open" } }, { now: 2_000 });
   assert.equal(second.spawnedFromThreadId, "ses_chat");
   assert.deepEqual((await listWorkers(coworkersDir, "scout")).map((worker) => worker.id), [second.id, first.id]);
 
@@ -94,6 +96,8 @@ test("workers are created under the coworker home, listed newest first, capped, 
 
   await assert.rejects(createWorker(coworkersDir, "scout", { name: "", goal: "x", spawnedBy: "person" }), /needs a name/);
   await assert.rejects(createWorker(coworkersDir, "scout", { name: "x", goal: "", spawnedBy: "person" }), /needs a goal/);
+  await assert.rejects(createWorker(coworkersDir, "scout", { name: "x", goal: "x", spawnedBy: "coworker", lifespan: { kind: "open" } }), /finite turn limit/);
+  await assert.rejects(createWorker(coworkersDir, "scout", { name: "x", goal: "x", spawnedBy: "person", purpose: "recursive" }), /purpose/);
   await assert.rejects(getWorker(coworkersDir, "scout", "wrk_../escape"), /Invalid Worker id/);
   await assert.rejects(getWorker(coworkersDir, "../scout", first.id), /Invalid coworker slug/);
 });
@@ -211,6 +215,15 @@ test("a settled turn decides whether the worker continues, holds, or stops", () 
 
   const deadline = nextWorkerState({ ...base, lifespan: { kind: "until", at: NOW - 1 } }, { kind: "settled", report: { kind: "finding", text: "x" } }, { now: NOW });
   assert.equal(deadline.patch.status, "finished");
+  const thinker = { ...base, purpose: "thinking", lifespan: { kind: "turns", max: 2, used: 1 } };
+  for (const reply of ["", "## Finding\nStill comparing workspace/brief.md", "## Done", "## Done\n**Decision:**\n**Constraints:**\n**Acceptance criteria:**\n**Open risks:**"]) {
+    const incomplete = nextWorkerState(thinker, { kind: "settled", report: parseWorkerReport(reply) }, { now: NOW });
+    assert.equal(incomplete.patch.status, "failed");
+    assert.match(incomplete.patch.error, /^Incomplete:/);
+    assert.equal(incomplete.schedule, "stop");
+  }
+  const brief = "## Done\nDecision: use A\nConstraints: local files only\nAcceptance criteria: two sources agree\nOpen risks: source freshness";
+  assert.equal(nextWorkerState(thinker, { kind: "settled", report: parseWorkerReport(brief) }, { now: NOW }).patch.status, "finished");
 
   const paused = nextWorkerState({ ...base, status: "paused" }, { kind: "settled", report: { kind: "finding", text: "x" } }, { now: NOW });
   assert.equal(paused.schedule, "hold");
@@ -232,7 +245,42 @@ test("a settled turn decides whether the worker continues, holds, or stops", () 
 
 test("steering and an admitted turn survive rereads, while pause and stop win settlement", async () => {
   const coworkersDir = await fixture();
-  const worker = await createWorker(coworkersDir, "scout", { name: "Scan", goal: "Compare sources.", spawnedBy: "person" });
+  const providers = [
+    { id: "conversation", models: { standard: { capabilities: { toolcall: true }, variants: { low: {}, high: {} } } } },
+    { id: "reasoning", models: { deep: { capabilities: { toolcall: true }, variants: { low: {}, high: {} } } } },
+    { id: "delivery", models: { fast: { capabilities: { toolcall: true }, variants: {} } } },
+  ];
+  const owner = await updateCoworker(coworkersDir, "scout", { model: "conversation/standard", modelVariant: "low", modelMode: "auto", modelChosenBy: "person", effortPreference: "light", thinkingModel: "reasoning/deep", thinkingModelVariant: "high", deliveryModel: "delivery/fast" });
+  const modelSnapshot = resolveWorkerModel(owner, "thinking", providers);
+  assert.deepEqual(modelSnapshot, { providerId: "reasoning", modelId: "deep", variant: "high" });
+  assert.deepEqual(resolveWorkerModel(owner, "delivery", providers), { providerId: "delivery", modelId: "fast", variant: "" });
+  assert.deepEqual(resolveWorkerModel({ ...owner, thinkingModel: "" }, "thinking", providers), { providerId: "conversation", modelId: "standard", variant: "low" });
+  assert.deepEqual(await getCoworker(coworkersDir, "scout"), owner, "resolving a Worker never changes the owner");
+  const worker = await createWorker(coworkersDir, "scout", { name: "Scan", goal: "Compare sources.", purpose: "thinking", modelSnapshot, spawnedBy: "person" });
+  assert.equal(worker.lifespan.max, 2);
+  const edited = await updateCoworker(coworkersDir, "scout", { model: "delivery/fast", modelVariant: "", thinkingModel: "delivery/fast", thinkingModelVariant: "", effortPreference: "all-in" });
+  assert.deepEqual(resolveWorkerModel(edited, "thinking", providers, (await getWorker(coworkersDir, "scout", worker.id)).modelSnapshot), modelSnapshot);
+  assert.throws(() => resolveWorkerModel(edited, "thinking", providers.slice(2), modelSnapshot), /unavailable.*will not switch/);
+  assert.throws(() => resolveWorkerModel(owner, "thinking", [{ id: "reasoning", models: { deep: { capabilities: { toolcall: false } } } }]), /tool support/);
+  assert.throws(() => resolveWorkerModel(owner, "thinking", [{ id: "reasoning", models: { deep: {} } }]), /tool support/);
+  assert.throws(() => resolveWorkerModel(edited, "thinking", [{ id: "reasoning", models: { deep: { capabilities: { toolcall: true }, variants: { low: {} } } } }], modelSnapshot), /saved effort/);
+  const nativeDefaults = { default: { conversation: "standard" } };
+  const nativeDefault = resolveWorkerModel({}, "delivery", providers, null, nativeDefaults);
+  assert.deepEqual(nativeDefault, { providerId: "conversation", modelId: "standard", variant: "high" });
+  assert.deepEqual(resolveWorkerModel({}, "thinking", providers, null, nativeDefaults), nativeDefault, "one model for every role is valid");
+  const configuredDefaults = { model: "reasoning/deep", default: { conversation: "standard", delivery: "fast" } };
+  assert.deepEqual(resolveWorkerModel({}, "delivery", providers, null, configuredDefaults), { providerId: "reasoning", modelId: "deep", variant: "high" }, "the configured native model takes precedence over per-provider defaults");
+  assert.deepEqual(resolveWorkerModel({}, "delivery", providers, nativeDefault, configuredDefaults), nativeDefault, "a pinned default never follows later default edits");
+  assert.throws(() => resolveWorkerModel({ thinkingModel: "reasoning/missing" }, "thinking", providers, null, nativeDefaults), /unavailable.*will not switch/);
+  assert.throws(() => resolveWorkerModel({ model: "reasoning/missing" }, "delivery", providers, null, nativeDefaults), /unavailable.*will not switch/);
+  assert.throws(() => resolveWorkerModel({}, "delivery", providers, null, { ...nativeDefaults, model: "reasoning/missing" }), /unavailable.*will not switch/);
+  assert.throws(() => resolveWorkerModel({}, "delivery", providers, null, { default: configuredDefaults.default }), /native default model.*unambiguously/);
+  assert.throws(() => resolveWorkerModel({}, "delivery", providers), /native default model.*unambiguously/);
+  assert.throws(() => resolveWorkerModel(edited, "thinking", providers, { providerId: "reasoning" }), /unreadable/);
+  const blocked = nextWorkerState(worker, { kind: "settled", report: { kind: "decision", text: "Missing acceptance criteria." } });
+  assert.equal(blocked.patch.status, "failed", "a new Worker's blocker returns to the supervisor through durable completion");
+  assert.equal(blocked.schedule, "stop");
+  for (const tool of ["task", "question", "coworker_team_consult", "coworker_worker_spawn"]) assert.equal(workerTurnTools()[tool], false);
   await updateWorker(coworkersDir, "scout", worker.id, { status: "paused" });
   await Promise.all([
     queueWorkerSteer(coworkersDir, "scout", worker.id, "Use source A.", "person"),
@@ -244,6 +292,8 @@ test("steering and an admitted turn survive rereads, while pause and stop win se
   assert.equal((await prepareWorkerTurn(coworkersDir, "scout", worker.id, "Scout")).pendingTurn, null);
   await updateWorker(coworkersDir, "scout", worker.id, { status: "waiting", waitingFor: "turn" });
   const admitted = await prepareWorkerTurn(coworkersDir, "scout", worker.id, "Scout");
+  assert.deepEqual(admitted.pendingTurn.model, modelSnapshot);
+  assert.equal(admitted.purpose, "thinking");
   assert.match(admitted.pendingTurn.prompt, /Use source A/);
   assert.match(admitted.pendingTurn.prompt, /Skip source B/);
   assert.equal(admitted.pendingSteers.length, 0);
@@ -263,9 +313,20 @@ test("steering and an admitted turn survive rereads, while pause and stop win se
   assert.equal(step.schedule, "hold");
   assert.equal(settled.lifespan.used, 1);
   assert.equal(settled.pendingSteers.length, 1);
+  await updateWorker(coworkersDir, "scout", worker.id, { status: "waiting", waitingFor: "turn" });
+  const continued = await prepareWorkerTurn(coworkersDir, "scout", worker.id, "Scout");
+  assert.deepEqual(continued.pendingTurn.model, modelSnapshot, "the next turn uses the same model and effort after settings edits");
   await updateWorker(coworkersDir, "scout", worker.id, { status: "cancelled", pendingSteers: [] });
   assert.equal((await prepareWorkerTurn(coworkersDir, "scout", worker.id, "Scout")).status, "cancelled");
   await assert.rejects(queueWorkerSteer(coworkersDir, "scout", worker.id, "One more.", "person"), /already stopped/);
+  const legacy = await createWorker(coworkersDir, "scout", { name: "Old", goal: "Keep going.", spawnedBy: "person" });
+  const legacyPath = path.join(coworkersDir, "scout", "workers", legacy.id, "worker.json");
+  const { purpose, modelSnapshot: omitted, ...oldRecord } = legacy;
+  await writeFile(legacyPath, JSON.stringify(oldRecord));
+  const oldTurn = await prepareWorkerTurn(coworkersDir, "scout", legacy.id, "Scout");
+  assert.equal(oldTurn.purpose, "delivery");
+  assert.equal(oldTurn.modelSnapshot, null);
+  assert.equal(Object.hasOwn(oldTurn.pendingTurn, "model"), false, "legacy Workers retain the existing owner-model path");
 });
 
 test("reviews run at once for the first finding, batch inside the window, and retry once after a failure", async () => {
@@ -396,13 +457,14 @@ test("the coworker starts, lists, steers, reads, and stops Workers through its o
     assert.match(empty.content[0].text, /^No live Workers/);
     assert.deepEqual(empty.structuredContent.workers, []);
 
-    const started = await call("worker_spawn", { name: "Market scan", goal: "Watch vendor prices.", lifespan: { kind: "turns", turns: 3 } });
+    const started = await call("worker_spawn", { name: "Market scan", goal: "Watch vendor prices.", purpose: "thinking", lifespan: { kind: "turns", turns: 3 } });
     assert.equal(started.isError, false);
     assert.match(started.content[0].text, /^Started Worker "Market scan" \(id wrk_[a-z0-9]+\), 3 of 3 turns left\./);
     assert.match(started.content[0].text, /tell the person in a sentence/);
     const id = started.structuredContent.worker.id;
     assert.deepEqual(calls[0], ["spawn", "scout", "Market scan", "lifespan chosen"]);
     assert.equal(started.structuredContent.worker.action, "started");
+    assert.equal(started.structuredContent.worker.purpose, "thinking");
 
     const listed = await call("workers_list", {});
     assert.match(listed.content[0].text, /Live Workers \(1 of 3\):/);

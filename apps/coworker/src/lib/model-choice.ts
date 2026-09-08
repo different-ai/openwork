@@ -12,7 +12,8 @@
  * quick exchange, the coworker's standard model for ordinary work, a reasoning
  * model for research, plans, comparisons, drafts, and code. The person's own
  * words ("quickly", "think carefully") win over the shape of the message, and
- * background work (Workers, assignments) always uses the standard model.
+ * assignments use the standard model; Workers resolve their purpose-specific
+ * choice (or inherit the standard) separately at creation.
  */
 import type { ModelChosenBy } from "./bridge.ts";
 import { recommendModel, type EngineModelCatalog, type EngineModelOption } from "./threads.ts";

@@ -101,6 +101,15 @@ export function codexSignInMode(parsed) {
   return null;
 }
 
+/** Classify only the supported stored shape, never subscription validity or token contents. */
+function opencodeCredentialKind(providerId, auth) {
+  if (!isRecord(auth)) return "unknown";
+  if (auth.type === "api" && nonEmpty(auth.key)) return "api-key";
+  if (providerId === "openai" && auth.type === "oauth" && nonEmpty(auth.access) && nonEmpty(auth.refresh)
+    && typeof auth.expires === "number" && Number.isFinite(auth.expires) && auth.expires >= 0) return "chatgpt-oauth";
+  return "unknown";
+}
+
 /** The expiry (ms since epoch) a JWT carries, or 0 when it cannot be read: the engine then refreshes first. */
 export function jwtExpiryMs(token) {
   const segments = String(token ?? "").split(".");
@@ -304,8 +313,9 @@ export async function detectLocalProviders({
     found.push({
       id: "codex",
       kind: "codex",
+      credentialKind: "chatgpt-oauth",
       label: "ChatGPT (signed in with Codex)",
-      detail: "Uses your ChatGPT subscription for coworkers on this Mac.",
+      detail: "A ChatGPT sign-in was found. Connect to check which models are available.",
       providerId: "openai",
       how: "import",
       reason: "",
@@ -314,6 +324,7 @@ export async function detectLocalProviders({
     found.push({
       id: "codex",
       kind: "codex",
+      credentialKind: "api-key",
       label: "OpenAI key (saved by Codex)",
       detail: "Uses the OpenAI key Codex keeps on this Mac.",
       providerId: "openai",
@@ -328,6 +339,7 @@ export async function detectLocalProviders({
     found.push({
       id: "claude-code",
       kind: "claude-code",
+      credentialKind: "unknown",
       label: "Claude Code credentials found",
       detail: "",
       providerId: "anthropic",
@@ -342,6 +354,7 @@ export async function detectLocalProviders({
     found.push({
       id: "copilot",
       kind: "copilot",
+      credentialKind: "unknown",
       label: "GitHub Copilot (signed in on this Mac)",
       detail: "Uses your Copilot subscription for coworkers on this Mac.",
       providerId: "github-copilot",
@@ -353,11 +366,13 @@ export async function detectLocalProviders({
   const store = await readJsonFile(opencodeAuthPath(env, homeDir));
   if (isRecord(store)) {
     for (const providerId of Object.keys(store).filter((id) => id.trim() && !isCloudManagedProviderId(id)).sort()) {
+      const credentialKind = opencodeCredentialKind(providerId, store[providerId]);
       found.push({
         id: `opencode:${providerId}`,
         kind: "opencode",
-        label: `${providerId} (connected in OpenCode)`,
-        detail: "Already available to coworkers on this Mac; OpenWork Desktop shares it.",
+        credentialKind,
+        label: credentialKind === "chatgpt-oauth" ? "ChatGPT sign-in (saved in OpenCode)" : `${providerId} (saved in OpenCode)`,
+        detail: "Saved on this Mac; availability is checked by the AI service. OpenWork Desktop shares it.",
         providerId,
         how: "in-use",
         reason: "",
@@ -372,6 +387,7 @@ export async function detectLocalProviders({
     found.push({
       id: `env:${entry.name}`,
       kind: "env",
+      credentialKind: "api-key",
       label: `${entry.label} key in your environment`,
       detail: `${entry.name} is set, so coworkers on this Mac can already use it.`,
       providerId: entry.providerId,
@@ -385,6 +401,7 @@ export async function detectLocalProviders({
     found.push({
       id: `server:${server.id}`,
       kind: "server",
+      credentialKind: "unknown",
       label: `${server.label} (running on this Mac)`,
       detail: models.length > 0
         ? `${pluralModels(models.length)} ready. Uses them for coworkers on this Mac; no account needed.`

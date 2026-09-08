@@ -26,6 +26,7 @@ const AVATAR_GLASSES: Array<{ id: AvatarGlasses; label: string }> = [
   { id: "none", label: "None" },
   { id: "sunglasses", label: "Sunglasses" },
   { id: "monocle", label: "Monocle" },
+  { id: "star", label: "Star" },
 ];
 
 export type CoworkerAvatarProps = StaticCoworkerAvatarProps & { gaze?: boolean };

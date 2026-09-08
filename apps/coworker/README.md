@@ -420,11 +420,12 @@ sentence or current revision passed.
 | Choice | Where | Inputs | Rule | Fallback | Override | Explained to the person? | Coverage / verification |
 |---|---|---|---|---|---|---|---|
 | Starting a Worker | Contract `### Which shape an answer takes` and `## Workers`; `worker_spawn`, `workerTurnTools` | The request | One bounded goal, not a schedule or quick question. Worker turns disable direct management tools and task delegation through native session permissions; the shared workspace is not a sandbox. | — | New Worker; Steer, Pause, Stop | "Started a Worker · Name" and one sentence from the coworker | `workers.test.mjs` (creation and tool handling), `open-coworker-team` (native Worker delegation), `open-coworker-turn-recovery` (native tool boundary) |
-| Its lifespan | `normalizeLifespan`; `spawnWorker` with the effort dial | The tool's `lifespan`, or nothing; the dial's stop | A number of turns (1–100), a deadline, or until stopped; when nobody chose, the dial says how much work is welcome — 6 · 8 · 10 · 14 · 20 turns from Light to All in (10 at Balanced) | Ten turns | The coworker chooses; the person steers or stops, or turns the dial | The row reads "3 of 10 turns left", "Until 4:30 PM", "Until you stop it"; the dial's line names Workers | `workers.test.mjs`, `workers.test.ts`, `effort.test.ts` |
+| Its lifespan | `normalizeLifespan`; `spawnWorker` with purpose and effort | The tool's `lifespan`, purpose, and dial stop | Thinking defaults to two turns; delivery to 6 · 8 · 10 · 14 · 20 turns from Light to All in. Delegated work needs finite turns (1–100) or a deadline; only the person can choose until stopped. | Finite purpose default | New Worker; explicit finite tool limit; steer or stop | Purpose, model and remaining turns in the Worker view | `workers.test.mjs`; native purpose-control proof pending |
+| Its model and handoff | `resolveWorkerModel`; `collaboration.request` | Purpose settings, owner model, configured catalog, completed thinking brief | Pin model/effort for each new Worker. One completed thinking brief can return to the original coworker for up to two delivery Workers. No Worker recursion. | No model substitution; blank inheritance resolves the configured native default or explains ambiguity | Coworker settings → Worker models; Same as coworker | Saved model and effort remain visible; later settings affect new Workers only | `workers.test.mjs`, `groups.test.mjs`; native multi-provider proof pending |
 | At most three live per coworker | `createWorker` | The live Workers | The fourth is refused with a sentence | — | Stop one | The tool's sentence, `workers_list` | `workers.test.mjs` |
 | When a turn runs | `admitWorkerTurn` in `electron/main.mjs` | This Mac's run limit (`maxParallelLocalRuns`, default 2) | Turns follow one another as soon as a slot is free; runs already in line go first | Queued | AI & local setup › the limit | "Waiting its turn" | `open-coworker-workers` (limit 1 → queued) |
 | Waking the coworker | `createReviewScheduler` | Findings | Per coworker, at most once a minute, as one turn in the open discussion once it is idle (up to five minutes); held without a discussion; retried once after a failure, then dropped and recorded on the Worker | Held / dropped, recorded | — | "Reviewed an update from Market scan"; "Not reviewed …" on the Worker | `workers.test.mjs`, `open-coworker-workers` |
-| Needs a decision | `nextWorkerState`; the review prompt | The Worker's report | The Worker waits; the coworker is told not to ask the person the same question; the discussion shows a lettered choice card; the answer is a steer | Waits | Steer or stop | The card and the amber "Waiting for a decision" | `workers.test.mjs` (waiting state), `workers.test.ts` (decision parsing), `open-coworker-workers-view` (the person's choice steers the Worker) |
+| Needs a decision | `nextWorkerState`; the review prompt | The Worker's report | New model-pinned Workers stop and return the blocker to the supervisor, unless steering is already pending. Legacy Workers retain the decision-wait/steer behavior. | No recursive Worker or paid upgrade | Supervisor reviews and asks the person when needed | Failure explicitly says Needs a decision; legacy wait card remains | `workers.test.mjs`; new native blocker handback proof pending |
 | Done on the first turn | `nextWorkerState` | The report | Finishes; the slot is released; one turn spent | — | — | "Done" | `workers.test.mjs` |
 | After a quit | `prepareWorkerTurn`, `recoverInterruptedWorkers` | Durable steering and pending turn | Reuse the admitted message id; do not re-execute accepted work. Decisions keep waiting; paused stays paused with its steering. | Interrupted replies may fail | Resume a paused Worker | "Checking the interrupted step before continuing after the app closed." | `workers.test.mjs`, `open-coworker-turn-recovery` |
 
@@ -736,9 +737,12 @@ pay for. One component (`ui/local-providers.tsx`; the rules in
     reported by name only; the AI service already uses them, so they appear
     under Connected as *From GEMINI_API_KEY in your environment* rather than
     with a Connect step.
-  - Providers already connected in OpenCode's shared store are listed by id.
-  A finding whose provider is connected moves out of Found; a Mac with nothing
-  to connect shows one quiet line.
+  - Providers saved in OpenCode's shared store are listed by id; supported
+    OpenAI OAuth metadata is labelled as a saved ChatGPT sign-in. Detection
+    exposes credential shape only, never token contents or subscription validity.
+  A finding whose provider is connected moves out of Found, except a detected
+  ChatGPT sign-in not used by that connection. A Mac with nothing to connect
+  shows one quiet line.
 - **Connect** does the engine's own thing, in one step: a Codex or Copilot
   sign-in is handed to the AI service as the exact credential its own sign-in
   would have stored (`PUT /auth/{provider}`), a local server becomes a provider
@@ -757,20 +761,26 @@ pay for. One component (`ui/local-providers.tsx`; the rules in
   ChatGPT subscription, even when Codex credentials are also detected.
 - **A free model is ready now** — the free provider's default model (nothing
   to set up); the default until something else is connected.
-- **Add another** — **Set up ChatGPT** opens the existing **OpenAI / ChatGPT**
-  form whenever the AI service offers its sign-in and OpenAI is not connected,
-  even with no Codex credentials or with Claude Code detected. Opening setup
-  does not authorize anything: **Sign in with ChatGPT** starts the existing
-  flow. Installing the ChatGPT app alone does not connect it to Open Coworker.
-  **Choose** lists the well-known providers the AI service offers (OpenAI / ChatGPT,
+- **Add another** — **Choose** lists the well-known providers the AI service
+  offers (OpenAI,
   Anthropic, Google, OpenRouter, GitHub Copilot, xAI, Mistral, Groq, DeepSeek)
   plus **Custom (OpenAI-compatible)**. A key provider asks for the key only;
   Custom asks for a name, the address, and an optional key, lists the models
   the server answers with before anything is saved, and lets the person pick
   one to start with. Everything derived (the compatible SDK, `/v1`, ids) stays
   under *Technical details*.
-- One line at the top recommends *Continue with OpenWork* while signed out;
-  it is dismissible for the session.
+- Evidence-led offers (`lib/model-growth.ts`) replace the generic signed-out
+  banner. **Set up ChatGPT** requires supported sign-in metadata found on this
+  Mac; a generic OAuth method or installed ChatGPT app is not detection.
+  **Explore templates** requires the current OpenAI OAuth connection with models;
+  **Explore models** can appear when only the existing free catalog is available.
+  These are navigation only, dismissed per context for the session. They never
+  select a model, import credentials or send work. Ordinary OpenAI sign-in remains
+  available manually under Add another. Replacing an existing OpenAI connection
+  requires disconnect confirmation; a saved entry requires deliberate replacement,
+  and environment keys must be removed outside the app. Zero models is not usable
+  ChatGPT evidence. Anonymous inference and no-login growth remain deferred to
+  #4621 and its rollout, not included in this alpha candidate.
 
 When nobody chose a model, `recommendModel` prefers the OpenWork account, then
 a subscription or key on this Mac, then a local model server, then the free
@@ -816,11 +826,35 @@ pro" while the turn runs (the live row keeps to its shapes), every reply
 bubble's title says which model answered, and the picker's Automatic row
 previews all three lanes ("Quick GPT-5 mini · Standard GPT-5 · Deep GPT-5 pro"). To change
 the standard model while staying Automatic, pick a model (that fixes it) and
-tap Automatic again. Assignments, responsibilities, and Workers always use the
-standard model (`localRunModel` in `main.mjs`). When a lane's model cannot
+tap Automatic again. Assignments and responsibilities use the standard model
+(`localRunModel` in `main.mjs`). Workers use the purpose-specific setting below,
+or inherit the standard model at creation. When a conversation lane's model cannot
 answer, the app steps back towards the standard model and retries the same
 message once or twice, saying so; only the standard model failing changes what
 is saved. A model the person fixed is never swapped.
+
+### Compose models around the work
+
+Coworker settings → **Worker models** has independent **Deep thinking model**
+and **Delivery model** choices, each with supported exact effort. Both default
+to **Same as coworker**. These are provider-neutral choices from the connected
+catalog, not fixed model tiers or automatic upgrades. New Workers snapshot the
+resolved provider, model and effort; existing pinned work does not change when
+settings change. Records from before this feature retain owner-model behavior.
+
+For hard ambiguity, the coworker can delegate one `thinking` Worker (two turns
+by default), receive a completed brief, then delegate at most two `delivery`
+Workers. An explicit Done plus labeled brief fields or a document/file reference
+unlocks that second phase; exhaustion and empty Done do not. This is a structural
+gate, not proof of quality or file existence: the supervisor reviews the evidence.
+Workers cannot spawn or consult; blockers return to their supervisor. Routine
+work should skip the thinker. All Workers still share their owner's workspace.
+
+A fast conversation model, a deeper thinking model, and a lighter delivery model
+are one useful recipe; using one model everywhere is equally valid. Turn limits
+are not dollar caps, and lower unit prices do not prove lower task cost. See the
+[launch exploration](../../docs/coworker-deep-thinker-launch.md) for profiles,
+local preview, measured-check limits and the remaining native journey proof.
 
 ### Dynamic effort: the dial
 
@@ -840,7 +874,8 @@ dial says. An *exact thinking effort* fixed in Coworker settings wins over the
 dial when the model offers it. The dial also nudges the lane a message takes
 (Thorough gives a quick ask a proper look, All in makes ordinary work deep,
 Light and Steady the other way) and sets a Worker's default lifespan when the
-coworker chose none (6 · 8 · 10 · 14 · 20 turns), so "work harder" reaches the
+coworker chose none for delivery (6 · 8 · 10 · 14 · 20 turns; thinking defaults to
+two), so "work harder" reaches the
 Workers. It applies on every path: a discussion turn, a group reply, a
 responsibility run, a Worker turn, and a review (`localRunModel` reads the
 model's offered efforts from the engine once per model per launch), while the

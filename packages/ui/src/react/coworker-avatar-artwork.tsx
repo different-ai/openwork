@@ -2,7 +2,7 @@ import type { Ref } from "react";
 import type { AvatarMotion } from "./coworker-avatar-motion";
 
 export type AvatarColor = "blue" | "violet" | "mint" | "orange" | "rose" | "slate" | "sand" | "sage";
-export type AvatarGlasses = "round" | "square" | "oval" | "none" | "sunglasses" | "monocle";
+export type AvatarGlasses = "round" | "square" | "oval" | "none" | "sunglasses" | "monocle" | "star";
 
 const PALETTES: Record<AvatarColor, { fill: string; edge: string; depth: string }> = {
   blue: { fill: "#b8c9f0", edge: "#91a9dc", depth: "#7389b7" },
@@ -94,12 +94,15 @@ export function StaticCoworkerAvatar({
                   </g>
                 </g>
               </g>
-              {glasses === "round" ? (
+              {glasses === "round" || glasses === "star" ? (
                 <g className="coworker-avatar__glasses" fill="none" stroke="#11151d" strokeLinecap="round" strokeWidth="5">
                   <circle cx="37.5" cy="57" r="17.5" />
                   <circle cx="82.5" cy="57" r="17.5" />
                   <path d="M57.5 57c1.25-4 3.75-4 5 0" />
                   <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
+                  {glasses === "star" ? (
+                    <path d="M100 34.5 102 38.8 106.7 39.4 103.2 42.6 104.1 47.2 100 44.9 95.9 47.2 96.8 42.6 93.3 39.4 98 38.8Z" fill="#11151d" strokeWidth="1" strokeLinejoin="round" />
+                  ) : null}
                 </g>
               ) : null}
               {glasses === "oval" ? (

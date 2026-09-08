@@ -197,6 +197,8 @@ test("updateCoworker patches profile and platform references", async () => {
   const coworkersDir = await tempCoworkersDir();
   const created = await createCoworker(coworkersDir, { name: "Ops" });
   assert.equal(created.model, "");
+  assert.equal(created.thinkingModel, "", "missing Worker choices inherit the coworker");
+  assert.equal(created.deliveryModel, "");
   const updated = await updateCoworker(coworkersDir, "ops", {
     workspaceId: "ws_local_1",
     conversationThreadId: "ses_discussion_1",
@@ -219,13 +221,17 @@ test("updateCoworker patches profile and platform references", async () => {
   assert.equal(reread.model, "anthropic/claude-haiku-4-5");
   assert.equal(reread.modelVariant, "high");
   const soul = await readCoworkerFile(coworkersDir, "ops", "soul.md");
-  const patch = { avatarColor: "sage", avatarGlasses: "monocle" };
+  const patch = { avatarColor: "sage", avatarGlasses: "star", thinkingModel: "reasoning/deep", thinkingModelVariant: "high", deliveryModel: "delivery/fast", deliveryModelVariant: "" };
   await updateCoworker(coworkersDir, "ops", patch);
-  assert.deepEqual(await getCoworker(coworkersDir, "ops"), { ...reread, ...patch });
+  assert.deepEqual(await getCoworker(coworkersDir, "ops"), { ...reread, ...patch }, "Worker choices persist without mutating the conversation model, mode, chooser or effort");
   assert.equal(await readCoworkerFile(coworkersDir, "ops", "soul.md"), soul, "appearance leaves instructions untouched");
   const cleared = await updateCoworker(coworkersDir, "ops", { model: "", modelVariant: "" });
   assert.equal(cleared.model, "");
   assert.equal(cleared.modelVariant, "");
+  assert.equal(cleared.thinkingModel, patch.thinkingModel, "conversation edits do not overwrite independent Worker choices");
+  const inherited = await updateCoworker(coworkersDir, "ops", { thinkingModel: "", thinkingModelVariant: "" });
+  assert.equal(inherited.thinkingModel, "");
+  assert.equal(inherited.deliveryModel, patch.deliveryModel);
 });
 
 test("the record says who chose the model: the app's pick may be swapped once, the person's never, and a record that never said is the person's", async () => {

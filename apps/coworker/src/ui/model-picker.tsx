@@ -64,6 +64,7 @@ export function ModelPicker({
   onConnect,
   compact = false,
   chosenBy = "",
+  forWorker = false,
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
@@ -80,6 +81,8 @@ export function ModelPicker({
   compact?: boolean;
   /** Who chose the current model; the app's own pick gets one plain line saying so and why. */
   chosenBy?: ModelChosenBy;
+  /** Worker choices are fixed snapshots, or inherit the coworker's standard model at creation. */
+  forWorker?: boolean;
 }) {
   const threads = useMemo(
     () =>
@@ -126,8 +129,9 @@ export function ModelPicker({
     void refresh();
   }, [refresh]);
 
-  const selected = catalog.models.find((option) => option.id === value);
+  const selected = catalog.models.find((option) => option.id === value && (!forWorker || (option.toolCall && option.status !== "deprecated")));
   const visible = catalog.models.filter((option) => {
+    if (forWorker && (!option.toolCall || option.status === "deprecated")) return false;
     const needle = query.trim().toLowerCase();
     if (!needle) return true;
     return `${option.providerLabel} ${option.providerId} ${option.modelLabel} ${option.modelId} ${option.family}`
@@ -179,10 +183,10 @@ export function ModelPicker({
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-xs font-semibold text-snow" data-testid="model-picker-current">
-            {automatic ? AUTOMATIC_LABEL : selected?.modelLabel || (value ? value : "Default AI model")}
+            {automatic ? AUTOMATIC_LABEL : selected?.modelLabel || (value ? value : forWorker ? "Same as coworker" : "Default AI model")}
           </span>
           <span className="mt-0.5 block truncate text-[11px] text-mist" data-testid="model-picker-current-detail">
-            {automatic ? automaticLine : selectedDescription(selected, value)}
+            {forWorker && !value ? "Uses the coworker's standard model and effort when the Worker starts." : automatic ? automaticLine : selectedDescription(selected, value)}
           </span>
         </span>
         <span className="text-xs text-mist" aria-hidden="true">{open ? "⌃" : "⌄"}</span>
@@ -213,7 +217,7 @@ export function ModelPicker({
             </Button>
           </div>
           <div className="max-h-64 overflow-y-auto p-2">
-            <button
+            {!forWorker ? <button
               type="button"
               className={`flex w-full items-start gap-2 rounded-xl px-2.5 py-2.5 text-left ${automatic ? "bg-white/8" : "hover:bg-white/5"}`}
               data-testid="model-option-automatic"
@@ -233,7 +237,7 @@ export function ModelPicker({
                   </span>
                 ) : null}
               </span>
-            </button>
+            </button> : null}
 
             <button
               type="button"
@@ -242,14 +246,14 @@ export function ModelPicker({
             >
               <StatusDot tone={!automatic && !value ? "mint" : "mist"} />
               <span>
-                <span className="block text-xs font-semibold text-snow">Default AI model</span>
-                <span className="mt-0.5 block text-[11px] text-mist">Follow the current OpenWork default, every time.</span>
+                <span className="block text-xs font-semibold text-snow">{forWorker ? "Same as coworker" : "Default AI model"}</span>
+                <span className="mt-0.5 block text-[11px] text-mist">{forWorker ? "Pin the coworker's standard model and effort when the Worker starts." : "Follow the current OpenWork default, every time."}</span>
               </span>
             </button>
 
             {value && !selected ? (
               <div className="mt-1 rounded-xl bg-amber/8 px-2.5 py-2 text-[11px] leading-relaxed text-amber" data-testid="model-unavailable">
-                Saved selection {value} is unavailable. Choose a connected AI model or use the default.
+                Saved selection {value} is unavailable. {forWorker ? "New Workers will be blocked until you choose an available model." : "Choose a connected AI model or use the default."}
               </div>
             ) : null}
 
