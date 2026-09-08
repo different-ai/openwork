@@ -1938,7 +1938,7 @@ export function SessionPage(props: SessionPageProps) {
                 "rounded-xl transition-colors hover:bg-muted hover:text-foreground",
                 panelRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
               )}
-              onClick={openArtifactRailPane}
+              onClick={panelRailActive ? closeRightPane : openArtifactRailPane}
               title={`Files (${artifactTargetCount})`}
               aria-label={`Files (${artifactTargetCount})`}
               aria-pressed={panelRailActive}
