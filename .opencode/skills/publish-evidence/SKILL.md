@@ -21,8 +21,10 @@ never reruns a test.
 
 - Show the test name and verdict, each claim's assertion evidence, the relevant
   test artifacts, the source test run, and the reproduction command.
-- Require one sticky-comment section per claimed test. If a claim has no visible
-  test-evidence section, report the PR `Incomplete`.
+- Publish one compact sticky comment linking to a report with a section for every
+  claimed test. The report must show assertion evidence and original records.
+  When the review app is not configured, keep those sections in the comment.
+  If a claim has no inspectable evidence, report the PR `Incomplete`.
 - Write the `<!-- test-evidence -->` marker. The publisher recognizes old sticky
   markers only to update comments created before the migration.
 
@@ -30,22 +32,37 @@ never reruns a test.
 
 Run checks on the final PR head after any rebase or cherry-pick. Test runs are
 bound to a commit SHA, so history rewrites require rerunning and republishing.
-After a multi-test run, publish each test run whose `gitSha` matches the PR head:
+After a multi-test run, publish the complete selection together:
 
 ```bash
-pnpm evals:e2e --publish --pr <n> --test-run <dir|name>
+pnpm evals:e2e --publish --pr <n> --all
+# Or select runs explicitly; repeat --test-run for each claimed run.
+pnpm evals:e2e --publish --pr <n> --test-run <dir|name> --test-run <dir|name>
 ```
 
-`evals:e2e --publish` judges pending visual validations in the selected test
-run, then publishes it. It publishes existing `@openwork/testkit` evidence, not legacy
-flows, and never reruns tests.
+`--all` selects stored runs matching the current PR head. Include a DocShot
+receipt with `--docshot <image.png.review.json>`. It must match that commit too.
+Names and captions provide the default report; `--title` and repeatable `--gap`
+are optional context. No separate report-writing step is required.
 
-- Omitting `--test-run` selects the most recent test run; pass it explicitly
-  when several runs exist so each test's evidence is published deliberately.
-- Publishing replaces the sticky comment with the selected test run. Confirm the
-  final comment shows the test and verdict you intend reviewers to see.
-- Exit codes: `0` published, `1` failed claims published (or publish failed),
-  `2` pending claims still need judging (set a vision key and rerun).
+Publication reads recorded evidence. It never runs tests, captures images, or
+judges pending visual claims. If visual judging is needed, use the existing
+`pnpm --dir evals evidence:judge -- --test-run <dir|name>` command explicitly.
+Pending judgments remain visible and make the evidence `Incomplete`.
+
+Set `OPENWORK_REVIEW_URL` and `BLOB_READ_WRITE_TOKEN` to publish to the private
+review app. Setup is documented in `apps/review/README.md`. Upload errors must
+be reported as publication failures, independently of the test verdict; report
+publication is not a required CI check or a release dependency.
+
+- Omitting `--test-run` selects the most recent run. Prefer explicit selection
+  or `--all` when making claims about several tests.
+- Publication updates the compact comment with the complete selected report.
+  Confirm its commit and included tests. Reference images make no pass/fail claim.
+- A successful publisher exit means published, not tests passed. Derive the PR
+  verdict from recorded results and gaps. Failed and incomplete reports are
+  useful evidence and can be published.
+- Single-run legacy publication remains available without the review app.
 
 ## Stacked PRs
 

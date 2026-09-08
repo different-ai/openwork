@@ -19,10 +19,15 @@ Run E2E tests:
 
 Without a placement flag, Daytona is used when the daytona CLI is authenticated, otherwise local.
 
-Judge then publish evidence:
-  --publish         Enter judge-then-publish mode
+Publish recorded evidence (no test reruns or model calls):
+  --publish         Publish completed evidence
   --pr <n>          Publish to pull request n
   --test-run <value> Select a test run path, directory ID, name, or latest (default: latest)
+  --all             Combine all runs matching the current PR head
+  --docshot <path>  Include a DocShot .review.json receipt (repeatable)
+  --title <text>    Report title (defaults to Change verification)
+  --gap <text>      Declare a coverage gap (repeatable)
+  --review-url <url> Override OPENWORK_REVIEW_URL
   --dry-run         Render publication output without posting
   --force           Forward force to the publisher
 
@@ -40,9 +45,9 @@ Run exit codes:
   2  A named test skipped and its result is incomplete
 
 Publish exit codes:
-  0  Judge and publisher succeeded
-  1  Failed claims were published, or publishing failed
-  2  Pending claims require judging before publication
+  0  Publisher succeeded
+  1  Publication failed
+  Visual judgments retain their recorded passed, failed, or pending state.
 `;
 
 export function consentVarsFromSource(text) {
@@ -88,10 +93,16 @@ export function parseArgs(args) {
     else if (arg === "--publish") options.publish = true;
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--force") options.force = true;
+    else if (arg === "--all") (options.reviewArgs ??= []).push(arg);
+    else if (["--docshot", "--title", "--gap", "--review-url"].includes(arg)) {
+      (options.reviewArgs ??= []).push(arg, valueAfter(args, index, arg));
+      index += 1;
+    }
     else if (arg === "--den" || arg === "--pr" || arg === "--test-run") {
       const value = valueAfter(args, index, arg);
       if (arg === "--den") options.den = value;
       else if (arg === "--pr") options.pr = value;
+      else if (options.testRun !== undefined) (options.reviewArgs ??= []).push("--test-run", value);
       else options.testRun = value;
       index += 1;
     } else if (arg.startsWith("-")) {
@@ -128,6 +139,7 @@ export function parseArgs(args) {
     if (options.testRun !== undefined) publishFlags.push("--test-run");
     if (options.dryRun) publishFlags.push("--dry-run");
     if (options.force) publishFlags.push("--force");
+    if (options.reviewArgs) publishFlags.push("review options");
     if (publishFlags.length > 0) {
       throw new Error(`${publishFlags.join(", ")} require --publish.`);
     }
@@ -287,32 +299,19 @@ function childStatus(result) {
 }
 
 function publish(options) {
-  const testRun = options.testRun ?? "latest";
-  const judge = spawnSync(process.execPath, [
-    join(evalsDir, "packages/test-evidence/bin/test-evidence-judge.mjs"),
-    "--test-run",
-    testRun,
-  ], { cwd: repoRoot, env: process.env, stdio: "inherit" });
-  const judgeStatus = childStatus(judge);
-
-  if (judgeStatus === 2 && !options.dryRun) {
-    process.stderr.write("Pending claims need OPENAI_API_KEY or ANTHROPIC_API_KEY for judging; rerun after providing one, or use --dry-run.\n");
-    return 2;
-  }
-  if (![0, 1, 2].includes(judgeStatus)) return judgeStatus;
-
   const publishArgs = [join(evalsDir, "packages/test-artifacts/bin/publish-pr.mjs")];
   if (options.pr) publishArgs.push("--pr", options.pr);
   if (options.testRun) publishArgs.push("--test-run", options.testRun);
   if (options.dryRun) publishArgs.push("--dry-run");
   if (options.force) publishArgs.push("--force");
+  if (options.reviewArgs) publishArgs.push(...options.reviewArgs);
   const published = spawnSync(process.execPath, publishArgs, {
     cwd: repoRoot,
     env: process.env,
     stdio: "inherit",
   });
   const publishStatus = childStatus(published);
-  return judgeStatus === 1 && publishStatus === 0 ? 1 : publishStatus;
+  return publishStatus;
 }
 
 function run(options) {
