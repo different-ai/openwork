@@ -11,6 +11,7 @@ import { z } from "zod";
 import { db } from "./db.js";
 import { env } from "./env.js";
 import { isSentryEnabled } from "./instrumentation.js";
+import { registerAnonymousInferenceRoutes } from "./anonymous.js";
 import { registerProxyRoutes } from "./proxy.js";
 import { registerWebhookRoutes } from "./webhooks.js";
 
@@ -97,6 +98,7 @@ if (shouldServeLocalModelCatalog) {
 }
 
 registerProxyRoutes(app);
+registerAnonymousInferenceRoutes(app);
 registerWebhookRoutes(app);
 
 app.onError((error, c) => {

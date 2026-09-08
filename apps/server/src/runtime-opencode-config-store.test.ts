@@ -264,7 +264,7 @@ describe("runtime OpenCode config store", () => {
 
       const globalRuntime = await readGlobalRuntimeOpencodeConfig(config);
       expect(globalRuntime.plugin).toEqual(["plugin-global", "plugin-a", "plugin-shared", "plugin-b"]);
-      expect(globalRuntime.disabled_providers).toEqual(["anthropic", "openai"]);
+      expect(globalRuntime.disabled_providers).toEqual(["opencode", "opencode-go", "anthropic", "openai"]);
       expect(globalRuntime.permission?.external_directory).toEqual({
         "/folders/a": "allow",
         "/folders/b": "allow",

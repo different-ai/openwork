@@ -1010,6 +1010,15 @@ function envFlagEnabled(name) {
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
+function isHostedOpenWorkBootstrap(config) {
+  try {
+    const origin = new URL(String(config?.baseUrl ?? "").trim()).origin;
+    return origin === "https://app.openworklabs.com" || origin === "https://api.openworklabs.com";
+  } catch {
+    return false;
+  }
+}
+
 const IDLE_ENGINE_INFO = Object.freeze({
   running: false,
   runtime: "direct",
@@ -1301,6 +1310,13 @@ const runtimeManager = createRuntimeManager({
         filePath: path.join(app.getPath("userData"), "local-managed-mcp-vault-key.bin"),
         loadSafeStorage: () => require("electron").safeStorage,
       }),
+  anonymousInferenceEligible: async () => {
+    const bootstrap = await workspaceStore.getDesktopBootstrapConfig();
+    return DESKTOP_DISTRIBUTION.flavor === "public"
+      && bootstrap.requireSignin !== true
+      && bootstrap.requireActivation !== true
+      && isHostedOpenWorkBootstrap(bootstrap);
+  },
 });
 const initialRunnerBootstrap = workspaceStore.readDesktopBootstrapConfigSync();
 const legacyRunnerBaseUrls = [

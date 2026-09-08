@@ -23,9 +23,8 @@ import { AttributionStep, type AttributionSource } from "../domains/onboarding/a
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import type { CreateWorkspaceOptions } from "../domains/workspace/types";
 import {
-  getOpenWorkModelsActionUrl,
   hideOpenWorkModelsPromo,
-  useOpenWorkModelsPromoEligibility,
+  useOpenWorkModelsFreeEligibility,
   markOpenWorkModelsStartupPromoShown,
 } from "../domains/cloud/openwork-models-promo";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
@@ -142,7 +141,7 @@ export function WelcomeRoute() {
   const [state, dispatch] = useReducer(welcomeReducer, initialWelcomeState);
   const [manualFolder, setManualFolder] = useState("");
   const [joinOrganizationOpen, setJoinOrganizationOpen] = useState(false);
-  const showOpenWorkModelsPromo = useOpenWorkModelsPromoEligibility();
+  const showOpenWorkModelsPromo = useOpenWorkModelsFreeEligibility();
   const denAuthTokenSnapshot = useSyncExternalStore(
     subscribeToDenSettings,
     readDenAuthTokenSnapshot,
@@ -435,10 +434,10 @@ export function WelcomeRoute() {
         <ProviderSelectionStep
           showOpenWorkModels={showOpenWorkModelsPromo}
           onOpenWorkModels={() => {
-            // Land on the OpenWork Models value-prop page when already
-            // signed in to Den; otherwise start sign-up. Previously this
-            // always opened a bare sign-up page — payment before value.
-            platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"));
+            // The public desktop provisions its free model lazily through the
+            // local server. No Cloud account, checkout, or browser handoff is
+            // required before the first task.
+            markOpenWorkModelsStartupPromoShown();
             const route = state.pendingWorkspaceId
               ? workspaceSessionRoute(state.pendingWorkspaceId, state.pendingSessionId)
               : "/session";

@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { startServer } from "./server.js";
+import { buildOpenworkRuntimeConfigObjectFromSnapshot } from "./openwork-runtime-config.js";
 import {
+  DEFAULT_ENGINE_DISABLED_PROVIDERS,
   readGlobalRuntimeOpencodeConfig,
   readRuntimeOpencodeConfig,
   writeRuntimeOpencodeConfig,
@@ -62,6 +64,26 @@ afterEach(async () => {
 });
 
 describe("runtime-config disabled providers route", () => {
+  test("defaults only an absent engine-global list and preserves an explicit empty list", async () => {
+    const root = await createTempRoot();
+    const { base, config } = await startOpenworkServer(root);
+
+    expect((await readGlobalRuntimeOpencodeConfig(config)).disabled_providers).toEqual([...DEFAULT_ENGINE_DISABLED_PROVIDERS]);
+    expect(buildOpenworkRuntimeConfigObjectFromSnapshot({}).disabled_providers).toEqual([...DEFAULT_ENGINE_DISABLED_PROVIDERS]);
+
+    const response = await fetch(`${base}/workspace/ws_1/runtime-config/disabled-providers`, {
+      method: "POST",
+      headers: clientAuth(),
+      body: JSON.stringify({ providers: [] }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ disabledProviders: [] });
+    expect((await readGlobalRuntimeOpencodeConfig(config)).disabled_providers).toEqual([]);
+    expect(buildOpenworkRuntimeConfigObjectFromSnapshot({ disabled_providers: [] }).disabled_providers).toEqual([]);
+    expect((await readRuntimeOpencodeConfig(config, "ws_1")).disabled_providers).toBeUndefined();
+  });
+
   test("writes disabled providers into the runtime store", async () => {
     const root = await createTempRoot();
     const { base, config } = await startOpenworkServer(root);

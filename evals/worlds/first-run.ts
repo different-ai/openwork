@@ -34,8 +34,10 @@ import {
   readHandoffDeepLink,
   readResolvedMarketplace,
   signIn,
+  signInDesktopAs,
   signInInBrowser,
 } from "@openwork/behaviors";
+import { anonymousInferenceWorld } from "./anonymous-inference.ts";
 
 // Transitional helpers for journeys whose product-specific mechanics do not yet
 // have spec primitives. Specs still import through their owned world module.
@@ -112,15 +114,317 @@ export async function appSmokeWorld(seed: Seed) {
 }
 
 export async function bareFirstRunWorld(seed: Seed, { place }: { place: Place }) {
+  const inference = await anonymousInferenceWorld(seed);
   const capture = process.platform === "linux" && place.kind === "local" ? await captureOpenedUrls() : null;
-  const app = capture
-    ? await desktop({ name: "first-run", host: place.host(), env: { PATH: `${capture.binDir}:${process.env.PATH ?? ""}` } })
-    : await seed.desktop({ name: "first-run", signIn: false });
+  const env = {
+    OPENWORK_FREE_INFERENCE_ORIGIN: inference.clientUrl,
+    VITE_DISABLE_OPENWORK_MODELS: "0",
+  };
+  let remoteDesktop: Awaited<ReturnType<typeof provisionDesktopSandbox>> | null = null;
+  try {
+    remoteDesktop = place.kind === "daytona"
+      ? await provisionDesktopSandbox({
+        ref: process.env.OPENWORK_EVAL_REF?.trim() || process.env.GITHUB_SHA?.trim() || "dev",
+        name: "first-run",
+        log: (line) => console.error(`[openwork/testkit] ${line}`),
+      })
+      : null;
+    if (remoteDesktop) await inference.syncRemoteSources(remoteDesktop.sandbox);
+  } catch (error) {
+    if (remoteDesktop?.created) await deleteSandboxes([remoteDesktop.sandbox]);
+    await inference[Symbol.asyncDispose]();
+    throw error;
+  }
+  const desktopHost = remoteDesktop ? daytonaSandbox(remoteDesktop.sandbox) : place.host();
+  let app: Awaited<ReturnType<Seed["desktop"]>>;
+  try {
+    app = capture
+      ? await desktop({ name: "first-run", host: place.host(), env: { ...env, PATH: `${capture.binDir}:${process.env.PATH ?? ""}` } })
+      : desktopHost
+        ? await desktop({ name: "first-run", host: desktopHost, env })
+        : await seed.desktop({ name: "first-run", signIn: false, env });
+  } catch (error) {
+    if (remoteDesktop?.created) await deleteSandboxes([remoteDesktop.sandbox]);
+    await inference[Symbol.asyncDispose]();
+    throw error;
+  }
+
+  const providerState = (surface = app) => seed.evalIn(surface, browserScript(async () => {
+    const bridge = window.__OPENWORK_ELECTRON__;
+    if (typeof bridge?.invokeDesktop !== "function") return { status: 0, exists: false, name: null, model: false, localRoute: false, localToken: false, serialized: "" };
+    const info = await bridge.invokeDesktop("openworkServerInfo");
+    if (!info.baseUrl || !info.hostToken) return { status: 0, exists: false, name: null, model: false, localRoute: false, localToken: false, serialized: "" };
+    const response = await fetch(info.baseUrl + "/runtime-config/providers", {
+      headers: { "X-OpenWork-Host-Token": info.hostToken },
+    });
+    const body: unknown = await response.json();
+    const providerMap = body && typeof body === "object" && !Array.isArray(body) && "provider" in body
+      ? body.provider
+      : null;
+    const provider = providerMap && typeof providerMap === "object" && !Array.isArray(providerMap) && "openwork-free" in providerMap
+      ? providerMap["openwork-free"]
+      : null;
+    const options = provider && typeof provider === "object" && !Array.isArray(provider) && "options" in provider
+      ? provider.options
+      : null;
+    const models = provider && typeof provider === "object" && !Array.isArray(provider) && "models" in provider
+      ? provider.models
+      : null;
+    const baseURL = options && typeof options === "object" && !Array.isArray(options) && "baseURL" in options
+      ? options.baseURL
+      : null;
+    const apiKey = options && typeof options === "object" && !Array.isArray(options) && "apiKey" in options
+      ? options.apiKey
+      : null;
+    return {
+      status: response.status,
+      exists: Boolean(provider),
+      name: provider && typeof provider === "object" && !Array.isArray(provider) && "name" in provider && typeof provider.name === "string" ? provider.name : null,
+      model: Boolean(models && typeof models === "object" && !Array.isArray(models) && "openai/gpt-5.6-luna" in models),
+      localRoute: typeof baseURL === "string" && /^http:\/\/127\.0\.0\.1:\d+\/anonymous-inference\/v1$/.test(baseURL),
+      localToken: typeof apiKey === "string" && apiKey.startsWith("owf_local_"),
+      serialized: JSON.stringify(body),
+    };
+  }, []), { awaitPromise: true });
+
+  const runtimeProviderState = () => seed.evalIn(app, browserScript(async () => {
+    const bridge = window.__OPENWORK_ELECTRON__;
+    if (typeof bridge?.invokeDesktop !== "function") throw new Error("Desktop bridge unavailable");
+    const info = await bridge.invokeDesktop("openworkServerInfo");
+    if (!info.baseUrl || !info.ownerToken) throw new Error("OpenWork server unavailable");
+    const headers = { Authorization: "Bearer " + info.ownerToken };
+    const workspacesResponse = await fetch(info.baseUrl + "/workspaces", { headers });
+    const workspaces: unknown = await workspacesResponse.json();
+    const workspaceId = workspaces && typeof workspaces === "object" && !Array.isArray(workspaces) && "activeId" in workspaces && typeof workspaces.activeId === "string"
+      ? workspaces.activeId
+      : "";
+    if (!workspaceId) throw new Error("No active workspace");
+    const [configResponse, providersResponse] = await Promise.all([
+      fetch(info.baseUrl + "/workspace/" + encodeURIComponent(workspaceId) + "/config", { headers }),
+      fetch(info.baseUrl + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/provider", { headers }),
+    ]);
+    const configBody: unknown = await configResponse.json();
+    const providersBody: unknown = await providersResponse.json();
+    const opencode = configBody && typeof configBody === "object" && !Array.isArray(configBody) && "opencode" in configBody && configBody.opencode && typeof configBody.opencode === "object" && !Array.isArray(configBody.opencode)
+      ? configBody.opencode
+      : null;
+    const disabledProviders = opencode && "disabled_providers" in opencode && Array.isArray(opencode.disabled_providers)
+      ? opencode.disabled_providers.filter((entry): entry is string => typeof entry === "string")
+      : [];
+    const providerList = providersBody && typeof providersBody === "object" && !Array.isArray(providersBody) && "data" in providersBody
+      ? providersBody.data
+      : providersBody;
+    const all = providerList && typeof providerList === "object" && !Array.isArray(providerList) && "all" in providerList && Array.isArray(providerList.all)
+      ? providerList.all
+      : [];
+    const connectedProviders = providerList && typeof providerList === "object" && !Array.isArray(providerList) && "connected" in providerList && Array.isArray(providerList.connected)
+      ? providerList.connected.filter((entry): entry is string => typeof entry === "string")
+      : [];
+    const connected = new Set(connectedProviders);
+    const selectableProviders = all.flatMap((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry) || !("id" in entry) || typeof entry.id !== "string") return [];
+      const models = "models" in entry && entry.models && typeof entry.models === "object" && !Array.isArray(entry.models)
+        ? entry.models
+        : null;
+      return connected.has(entry.id) && models && Object.keys(models).length > 0 ? [entry.id] : [];
+    });
+    return {
+      configStatus: configResponse.status,
+      providersStatus: providersResponse.status,
+      disabledProviders,
+      connectedProviders,
+      selectableProviders,
+      defaultModel: localStorage.getItem("openwork.defaultModel"),
+    };
+  }, []), { awaitPromise: true, timeoutMs: 60_000 });
+
+  const setRuntimeDisabledProviders = (providers: string[]) => seed.evalIn(app, browserScript(async (value) => {
+    const bridge = window.__OPENWORK_ELECTRON__;
+    if (typeof bridge?.invokeDesktop !== "function") throw new Error("Desktop bridge unavailable");
+    const info = await bridge.invokeDesktop("openworkServerInfo");
+    if (!info.baseUrl || !info.ownerToken) throw new Error("OpenWork server unavailable");
+    const headers = { Authorization: "Bearer " + info.ownerToken, "Content-Type": "application/json" };
+    const workspacesResponse = await fetch(info.baseUrl + "/workspaces", { headers });
+    const workspaces: unknown = await workspacesResponse.json();
+    const workspaceId = workspaces && typeof workspaces === "object" && !Array.isArray(workspaces) && "activeId" in workspaces && typeof workspaces.activeId === "string"
+      ? workspaces.activeId
+      : "";
+    if (!workspaceId) throw new Error("No active workspace");
+    const response = await fetch(info.baseUrl + "/workspace/" + encodeURIComponent(workspaceId) + "/runtime-config/disabled-providers", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ providers: value }),
+    });
+    const body: unknown = await response.json();
+    const disabledProviders = body && typeof body === "object" && !Array.isArray(body) && "disabledProviders" in body && Array.isArray(body.disabledProviders)
+      ? body.disabledProviders.filter((entry): entry is string => typeof entry === "string")
+      : [];
+    return { status: response.status, disabledProviders };
+  }, [providers]), { awaitPromise: true, timeoutMs: 60_000 });
+
   return {
     app,
     capture,
-    workspacePath: seed.tmpPath("first-run-workspace"),
-    async [Symbol.asyncDispose]() { await app[Symbol.asyncDispose](); },
+    guestWitness: () => inference.clientSnapshot(),
+    upstreamWitness: () => inference.upstreamSnapshot(),
+    providerState: () => providerState(),
+    runtimeProviderState,
+    setRuntimeDisabledProviders,
+    restartEngine: () => seed.evalIn(app, browserScript(async () => {
+      const bridge = window.__OPENWORK_ELECTRON__;
+      if (typeof bridge?.invokeDesktop !== "function") throw new Error("Desktop bridge unavailable");
+      await bridge.invokeDesktop("engineRestart", {});
+      return true;
+    }, []), { awaitPromise: true, timeoutMs: 120_000 }),
+    expireGuestToken: () => inference.expireClientToken(),
+    failGuestRequestsWith: (failure: "limit" | "capacity" | "unavailable" | null) => inference.failClientWith(failure),
+    nextGuestSession: (input: { delayMs?: number; fail?: boolean }) => inference.nextClientSession(input),
+    openedUrls: () => capture?.opened() ?? Promise.resolve([]),
+    async requestAnonymous(options: { abortAfterMs?: number; prompt?: string } = {}) {
+      return seed.evalIn(app, browserScript(async (input) => {
+        const bridge = window.__OPENWORK_ELECTRON__;
+        if (typeof bridge?.invokeDesktop !== "function") throw new Error("Desktop bridge unavailable");
+        const info = await bridge.invokeDesktop("openworkServerInfo");
+        if (!info.baseUrl || !info.hostToken) throw new Error("OpenWork server unavailable");
+        const providers = await fetch(info.baseUrl + "/runtime-config/providers", {
+          headers: { "X-OpenWork-Host-Token": info.hostToken },
+        });
+        const providerBody: unknown = await providers.json();
+        const providerMap = providerBody && typeof providerBody === "object" && !Array.isArray(providerBody) && "provider" in providerBody
+          ? providerBody.provider
+          : null;
+        const provider = providerMap && typeof providerMap === "object" && !Array.isArray(providerMap) && "openwork-free" in providerMap
+          ? providerMap["openwork-free"]
+          : null;
+        const providerOptions = provider && typeof provider === "object" && !Array.isArray(provider) && "options" in provider
+          ? provider.options
+          : null;
+        const baseURL = providerOptions && typeof providerOptions === "object" && !Array.isArray(providerOptions) && "baseURL" in providerOptions && typeof providerOptions.baseURL === "string"
+          ? providerOptions.baseURL
+          : "";
+        const apiKey = providerOptions && typeof providerOptions === "object" && !Array.isArray(providerOptions) && "apiKey" in providerOptions && typeof providerOptions.apiKey === "string"
+          ? providerOptions.apiKey
+          : "";
+        if (!baseURL || !apiKey) throw new Error("Anonymous provider unavailable");
+        const controller = new AbortController();
+        const timer = input.abortAfterMs === undefined ? null : window.setTimeout(() => controller.abort(), input.abortAfterMs);
+        try {
+          const response = await fetch(baseURL + "/chat/completions", {
+            method: "POST",
+            headers: { authorization: "Bearer " + apiKey, "content-type": "application/json" },
+            body: JSON.stringify({
+              model: "openai/gpt-5.6-luna",
+              messages: [{ role: "user", content: input.prompt ?? "Validate anonymous generation." }],
+              stream: false,
+              max_tokens: 16,
+            }),
+            signal: controller.signal,
+          });
+          const body: unknown = await response.json();
+          const error = body && typeof body === "object" && !Array.isArray(body) && "error" in body ? body.error : null;
+          const code = error && typeof error === "object" && !Array.isArray(error) && "code" in error && typeof error.code === "string" ? error.code : null;
+          return { aborted: false, status: response.status, code };
+        } catch (error) {
+          return { aborted: controller.signal.aborted, status: 0, code: error instanceof Error ? error.name : "request_failed" };
+        } finally {
+          if (timer !== null) window.clearTimeout(timer);
+        }
+      }, [options]), { awaitPromise: true });
+    },
+    async prepareExplicitByokAndSignIn() {
+      await seed.evalIn(app, browserScript(async () => {
+        const bridge = window.__OPENWORK_ELECTRON__;
+        if (typeof bridge?.invokeDesktop !== "function") throw new Error("Desktop bridge unavailable");
+        const info = await bridge.invokeDesktop("openworkServerInfo");
+        if (!info.baseUrl || !info.ownerToken) throw new Error("OpenWork server unavailable");
+        const auth = { Authorization: "Bearer " + info.ownerToken, "Content-Type": "application/json" };
+        const workspaces = await fetch(info.baseUrl + "/workspaces", { headers: auth });
+        const workspaceBody: unknown = await workspaces.json();
+        const workspaceId = workspaceBody && typeof workspaceBody === "object" && !Array.isArray(workspaceBody) && "activeId" in workspaceBody && typeof workspaceBody.activeId === "string" ? workspaceBody.activeId : "";
+        if (!workspaceId) throw new Error("No active workspace");
+        const patch = await fetch(info.baseUrl + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
+          method: "PATCH", headers: auth,
+          body: JSON.stringify({ opencode: { provider: { "byok-witness": {
+            name: "Explicit BYOK Witness", npm: "@ai-sdk/openai-compatible",
+            options: { apiKey: "byok-owned-key", baseURL: "http://127.0.0.1:9/v1" },
+            models: { "explicit/byok": { id: "explicit/byok", name: "Explicit BYOK" } },
+          } } } }),
+        });
+        if (!patch.ok) throw new Error("BYOK provider patch failed: " + patch.status);
+        localStorage.setItem("openwork.defaultModel", "byok-witness/explicit/byok");
+        window.dispatchEvent(new Event("openwork.defaultModelChanged"));
+      }, []), { awaitPromise: true });
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      await signInDesktopAs(app, inference.den.ref, inference.den.admin);
+      await go(app, "/settings/cloud-account");
+    },
+    async explicitByokState() {
+      return seed.evalIn(app, browserScript(async () => {
+        const bridge = window.__OPENWORK_ELECTRON__;
+        if (typeof bridge?.invokeDesktop !== "function") throw new Error("Desktop bridge unavailable");
+        const info = await bridge.invokeDesktop("openworkServerInfo");
+        if (!info.baseUrl || !info.hostToken || !info.ownerToken) throw new Error("OpenWork server unavailable");
+        const providers = await fetch(info.baseUrl + "/runtime-config/providers", {
+          headers: { "X-OpenWork-Host-Token": info.hostToken },
+        });
+        const providersBody: unknown = await providers.json();
+        const providerMap = providersBody && typeof providersBody === "object" && !Array.isArray(providersBody) && "provider" in providersBody
+          ? providersBody.provider
+          : null;
+        const workspacesResponse = await fetch(info.baseUrl + "/workspaces", {
+          headers: { Authorization: "Bearer " + info.ownerToken },
+        });
+        const workspacesBody: unknown = await workspacesResponse.json();
+        const workspaceId = workspacesBody && typeof workspacesBody === "object" && !Array.isArray(workspacesBody) && "activeId" in workspacesBody && typeof workspacesBody.activeId === "string"
+          ? workspacesBody.activeId
+          : "";
+        const configResponse = await fetch(info.baseUrl + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
+          headers: { Authorization: "Bearer " + info.ownerToken },
+        });
+        const configBody: unknown = await configResponse.json();
+        const opencode = configBody && typeof configBody === "object" && !Array.isArray(configBody) && "opencode" in configBody && configBody.opencode && typeof configBody.opencode === "object" && !Array.isArray(configBody.opencode)
+          ? configBody.opencode
+          : null;
+        const disabledProviders = opencode && "disabled_providers" in opencode && Array.isArray(opencode.disabled_providers)
+          ? opencode.disabled_providers.filter((entry): entry is string => typeof entry === "string")
+          : [];
+        return {
+          providerPreserved: Boolean(providerMap && typeof providerMap === "object" && !Array.isArray(providerMap) && "byok-witness" in providerMap),
+          freeProviderPreserved: Boolean(providerMap && typeof providerMap === "object" && !Array.isArray(providerMap) && "openwork-free" in providerMap),
+          defaultPreserved: localStorage.getItem("openwork.defaultModel") === "byok-witness/explicit/byok",
+          disabledProviders,
+        };
+      }, []), { awaitPromise: true });
+    },
+    async managedProviderSuppressed() {
+      const before = await inference.clientSnapshot();
+      const managed = desktopHost
+        ? await desktop({ name: "first-run-managed-suppression", host: desktopHost, env: { ...env, OPENWORK_DESKTOP_DISTRIBUTION: "cloud" } })
+        : await seed.desktop({ name: "first-run-managed-suppression", signIn: false, env: { ...env, OPENWORK_DESKTOP_DISTRIBUTION: "cloud" } });
+      try {
+        const provider = await providerState(managed);
+        const after = await inference.clientSnapshot();
+        const beforeMints = Array.isArray(before.mints) ? before.mints.length : -1;
+        const afterMints = Array.isArray(after.mints) ? after.mints.length : -1;
+        const beforeInference = Array.isArray(before.inference) ? before.inference.length : -1;
+        const afterInference = Array.isArray(after.inference) ? after.inference.length : -1;
+        return { provider, contacts: (afterMints - beforeMints) + (afterInference - beforeInference) };
+      } finally {
+        if (desktopHost) await managed[Symbol.asyncDispose]();
+      }
+    },
+    workspacePath: place.kind === "daytona" ? "/workspace/first-run-workspace" : seed.tmpPath("first-run-workspace"),
+    async [Symbol.asyncDispose]() {
+      try {
+        await app[Symbol.asyncDispose]();
+      } finally {
+        try {
+          if (remoteDesktop?.created) await deleteSandboxes([remoteDesktop.sandbox]);
+        } finally {
+          await inference[Symbol.asyncDispose]();
+        }
+      }
+    },
   };
 }
 

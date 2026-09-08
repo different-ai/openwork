@@ -32,7 +32,9 @@ export function ProviderSelectionStep({
         <PageHeader className="mb-8 text-center">
           <PageTitle>Power your first task</PageTitle>
           <PageDescription>
-            Connect a model, then try a real task in chat so you can see OpenWork work.
+            {showOpenWorkModels
+              ? "Start with OpenWork Models for free, or connect your own provider."
+              : "Connect your own model provider when you’re ready to run a task."}
           </PageDescription>
         </PageHeader>
 
@@ -40,6 +42,7 @@ export function ProviderSelectionStep({
           {showOpenWorkModels ? (
             <button
               type="button"
+              aria-label="Use OpenWork Models"
               className="flex w-full items-start gap-4 rounded-xl border border-blue-7/50 bg-blue-2/30 p-4 text-left transition-colors hover:bg-blue-3/40"
               onClick={onOpenWorkModels}
             >
@@ -49,7 +52,7 @@ export function ProviderSelectionStep({
                   Use OpenWork Models
                 </div>
                 <div className="mt-0.5 text-xs text-muted-foreground">
-                  Pay through OpenWork Cloud and skip API key setup.
+                  Continue without an account or API key. Free usage has limits.
                 </div>
               </div>
             </button>
@@ -57,6 +60,7 @@ export function ProviderSelectionStep({
 
           <button
             type="button"
+            aria-label="Bring your own API key"
             className="flex w-full items-start gap-4 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:bg-accent"
             onClick={onBringYourOwn}
           >
@@ -74,7 +78,7 @@ export function ProviderSelectionStep({
           <div className="pt-1 text-center">
             <Button variant="ghost" size="sm" onClick={onSkip}>
               <SkipForwardIcon className="mr-1.5 size-3.5" />
-              Skip and use the free model
+              {showOpenWorkModels ? "Skip for now" : "Skip model setup for now"}
             </Button>
           </div>
         </div>
