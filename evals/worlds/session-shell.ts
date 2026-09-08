@@ -1,10 +1,11 @@
-import { browserScript } from "@openwork/cdp";
+import { allocateFreePort, browserScript, evaluate, locate, type Surface, typeText } from "@openwork/cdp";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
 import { engineSessionProbe, observeSidebarExpansion, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
-import { resolveEvalEngine } from "@openwork/env";
-import type { Seed } from "@openwork/env";
+import { resolveEvalEngine, SkipError } from "@openwork/env";
+import type { Place, Seed } from "@openwork/env";
 import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
+import { startMockMcp } from "@openwork/labs";
 
 const stormProviderId = "active-session-storm-mock";
 const stormModelId = "mock-agent-workload-model";
@@ -27,6 +28,348 @@ export interface StormPlan extends ShellSession, ShellWorkspace {
   slowMarker: string;
   easyMarker: string;
   finalReply: string;
+}
+
+type InstantMetricKind = "new-task" | "user-row";
+type InstantBoundaryKind = "creation" | "prompt";
+type InstantBoundaryStage = "request" | "response";
+
+type InstantRendererState = {
+  kind: InstantMetricKind;
+  started: boolean;
+  trusted: boolean;
+  elapsedMs: number | null;
+  frames: number;
+  mutations: number;
+  consecutiveFrames: number;
+  expired: boolean;
+};
+
+declare global {
+  interface Window {
+    __instantSendMetric?: { state: InstantRendererState; stop(): void };
+  }
+}
+
+function instantDeferred() {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+/** Renderer-only timing: trusted input capture through two consecutive animation-frame samples. */
+async function observeInstantRenderer(
+  seed: Seed,
+  app: Surface,
+  workspaceId: string,
+  kind: InstantMetricKind,
+  marker = "",
+) {
+  await seed.evalIn(app, browserScript((workspaceId, kind, marker) => {
+    if (window.__instantSendMetric) throw new Error("An instant-send renderer observer is already active");
+    const state: InstantRendererState = {
+      kind, started: false, trusted: false, elapsedMs: null, frames: 0,
+      mutations: 0, consecutiveFrames: 0, expired: false,
+    };
+    let startedAt = 0;
+    let frame = 0;
+
+    const visibleInViewport = (node: HTMLElement) => {
+      const rect = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      return node.getClientRects().length > 0 && rect.width > 0 && rect.height > 0
+        && rect.right > 0 && rect.bottom > 0 && rect.left < innerWidth && rect.top < innerHeight
+        && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) > 0;
+    };
+    const surfaceRoot = () => {
+      if ((localStorage.getItem("openwork.react.activeWorkspace") ?? "") !== workspaceId) return null;
+      const sessionlessRoute = `#/workspace/${workspaceId}/session`;
+      if (location.hash === sessionlessRoute) {
+        const heading = [...document.querySelectorAll<HTMLElement>("h2")]
+          .find((candidate) => candidate.textContent?.trim() === "What do you need done?" && visibleInViewport(candidate));
+        const headingMain = heading?.closest<HTMLElement>("main") ?? null;
+        const main = headingMain && visibleInViewport(headingMain) ? headingMain
+          : [...document.querySelectorAll<HTMLElement>("main")].filter(visibleInViewport)
+              .find((candidate) => [...candidate.querySelectorAll<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"], [data-message-role]')]
+                .some(visibleInViewport)) ?? null;
+        const persistedSurfaceVisible = [...document.querySelectorAll<HTMLElement>("[data-session-surface-id]")]
+          .some(visibleInViewport);
+        return main && !persistedSurfaceVisible
+          ? { kind: "new-task", root: main, headingVisible: Boolean(heading && main.contains(heading)) }
+          : null;
+      }
+      const persistedPrefix = `#/workspace/${workspaceId}/session/`;
+      if (!location.hash.startsWith(persistedPrefix)) return null;
+      const sessionId = location.hash.slice(persistedPrefix.length);
+      if (!sessionId.startsWith("ses_") || /[/?#]/.test(sessionId)) return null;
+      const pane = [...document.querySelectorAll<HTMLElement>('[data-workbench-pane="primary"]')]
+        .find(visibleInViewport);
+      const surface = [...(pane?.querySelectorAll<HTMLElement>("[data-session-surface-id]") ?? [])]
+        .find((candidate) => candidate.dataset.sessionSurfaceId === sessionId && visibleInViewport(candidate));
+      return pane && surface ? { kind: "persisted", root: pane, headingVisible: false } : null;
+    };
+    const editor = () => surfaceRoot()?.root.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]') ?? null;
+    const ready = () => {
+      const surface = surfaceRoot();
+      if (!surface) return false;
+      if (kind === "new-task") {
+        if (surface.kind !== "new-task" || !surface.headingVisible) return false;
+        const node = editor();
+        if (!node || !node.isContentEditable || !visibleInViewport(node)
+          || !(document.activeElement === node || node.contains(document.activeElement))) return false;
+        const rect = node.getBoundingClientRect();
+        const x = Math.min(innerWidth - 1, Math.max(0, rect.left + rect.width / 2));
+        const y = Math.min(innerHeight - 1, Math.max(0, rect.top + Math.min(rect.height / 2, 24)));
+        const hit = document.elementFromPoint(x, y);
+        return hit instanceof Node && node.contains(hit);
+      }
+      const composer = editor();
+      return [...surface.root.querySelectorAll<HTMLElement>('[data-message-role="user"]')]
+        .some((row) => visibleInViewport(row) && row.innerText.includes(marker)
+          && !(composer?.contains(row) || row.contains(composer)));
+    };
+    const sample = () => {
+      if (!state.started || state.elapsedMs !== null) return;
+      state.frames += 1;
+      state.consecutiveFrames = ready() ? state.consecutiveFrames + 1 : 0;
+      if (state.consecutiveFrames >= 2) state.elapsedMs = performance.now() - startedAt;
+    };
+    const paint = () => { sample(); frame = requestAnimationFrame(paint); };
+    const capture = (event: Event) => {
+      if (state.started || !event.isTrusted) return;
+      if (kind === "new-task") {
+        const target = event.target;
+        if (event.type !== "click" || !(target instanceof Element)
+          || !target.closest(`[data-sidebar-workspace-id="${workspaceId}"] [data-workspace-new-task]`)) return;
+      } else {
+        if (!(event instanceof KeyboardEvent) || event.key !== "Enter") return;
+        const node = editor();
+        if (!node || !(event.target instanceof Node) || !(event.target === node || node.contains(event.target))) return;
+      }
+      state.started = true;
+      state.trusted = true;
+      startedAt = performance.now();
+    };
+    const eventName = kind === "new-task" ? "click" : "keydown";
+    window.addEventListener(eventName, capture, true);
+    const observer = new MutationObserver(() => { state.mutations += 1; });
+    observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
+    frame = requestAnimationFrame(paint);
+    const timer = setTimeout(() => { state.expired = true; stop(); }, 10_000);
+    function stop() {
+      clearTimeout(timer);
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+      window.removeEventListener(eventName, capture, true);
+    }
+    window.__instantSendMetric = { state, stop };
+  }, [workspaceId, kind, marker]));
+  let disposed = false;
+  return {
+    async read(): Promise<InstantRendererState> {
+      const value = await seed.evalIn(app, () => window.__instantSendMetric?.state ?? null);
+      if (!isRecord(value) || (value.kind !== "new-task" && value.kind !== "user-row")
+        || typeof value.started !== "boolean" || typeof value.trusted !== "boolean"
+        || !(value.elapsedMs === null || typeof value.elapsedMs === "number")
+        || typeof value.frames !== "number" || typeof value.mutations !== "number"
+        || typeof value.consecutiveFrames !== "number" || typeof value.expired !== "boolean") {
+        throw new Error(`Instant renderer timing state was malformed: ${JSON.stringify(value)}`);
+      }
+      return {
+        kind: value.kind,
+        started: value.started,
+        trusted: value.trusted,
+        elapsedMs: value.elapsedMs,
+        frames: value.frames,
+        mutations: value.mutations,
+        consecutiveFrames: value.consecutiveFrames,
+        expired: value.expired,
+      };
+    },
+    async [Symbol.asyncDispose]() {
+      if (disposed) return;
+      disposed = true;
+      await seed.evalIn(app, () => {
+        window.__instantSendMetric?.stop();
+        delete window.__instantSendMetric;
+      });
+    },
+  };
+}
+
+type InstantGateState = {
+  kind: InstantBoundaryKind;
+  stage: InstantBoundaryStage;
+  requestIds: Set<string>;
+  heldAt: number | null;
+  released: boolean;
+  failed: boolean;
+  expired: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+};
+
+/** Disposable CDP Fetch gate. It reports only compact counts and never request headers or bodies. */
+async function instantBoundaryController(app: Surface, workspaceId: string) {
+  const endpoint = app.client.webSocketDebuggerUrl;
+  if (!endpoint) throw new Error("Instant-send boundary observer requires the desktop CDP endpoint");
+  const baseUrl = await evaluate(app.client, async () => {
+    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+    return info?.running && info.baseUrl ? String(info.baseUrl) : "";
+  }, { awaitPromise: true });
+  if (typeof baseUrl !== "string" || !baseUrl) throw new Error("OpenWork server URL was unavailable to the boundary observer");
+  const origin = new URL(baseUrl).origin;
+  const encodedWorkspaceId = encodeURIComponent(workspaceId);
+  const sessionBases = ["workspace", "w"].map((mount) => `/${mount}/${encodedWorkspaceId}/opencode/session`);
+  const socket = new WebSocket(endpoint);
+  const ready = instantDeferred();
+  const commands = new Map<number, ReturnType<typeof instantDeferred>>();
+  const gates: InstantGateState[] = [];
+  const counts = { creation: 0, prompt: 0 };
+  let nextId = 1;
+  let disposed = false;
+  let failure: Error | undefined;
+
+  const command = async (method: string, params: Record<string, unknown> = {}) => {
+    const id = nextId++;
+    const result = instantDeferred();
+    commands.set(id, result);
+    const timer = setTimeout(() => result.reject(new Error(`Instant-send boundary command timed out: ${method}`)), 15_000);
+    try {
+      socket.send(JSON.stringify({ id, method, params }));
+      await result.promise;
+    } finally {
+      clearTimeout(timer);
+      commands.delete(id);
+    }
+  };
+  const loseConnection = () => {
+    if (disposed) return;
+    failure = new Error("Instant-send boundary observer lost its CDP connection");
+    ready.reject(failure);
+    for (const result of commands.values()) result.reject(failure);
+  };
+  const classify = (method: string, url: string): InstantBoundaryKind | null => {
+    if (method.toUpperCase() !== "POST") return null;
+    const path = new URL(url).pathname;
+    if (sessionBases.includes(path)) return "creation";
+    return sessionBases.some((base) => path.startsWith(`${base}/`) && path.endsWith("/prompt_async")) ? "prompt" : null;
+  };
+  const finishGate = async (gate: InstantGateState, fail: boolean) => {
+    if (gate.released) return;
+    gate.released = true;
+    gate.failed = fail;
+    if (gate.timer) clearTimeout(gate.timer);
+    gate.timer = null;
+    const method = fail ? "Fetch.failRequest" : gate.stage === "response" ? "Fetch.continueResponse" : "Fetch.continueRequest";
+    const interceptResponse = !fail && gate.stage === "request"
+      && gates.some((candidate) => candidate.kind === gate.kind && candidate.stage === "response" && !candidate.released);
+    await Promise.all([...gate.requestIds].map((requestId) => command(method, fail
+      ? { requestId, errorReason: "Failed" }
+      : { requestId, ...(interceptResponse ? { interceptResponse: true } : {}) })));
+  };
+
+  socket.addEventListener("open", () => ready.resolve());
+  socket.addEventListener("error", loseConnection);
+  socket.addEventListener("close", loseConnection);
+  socket.addEventListener("message", (event) => {
+    const message: unknown = JSON.parse(String(event.data));
+    if (!isRecord(message)) return;
+    if (typeof message.id === "number") {
+      const result = commands.get(message.id);
+      if ("error" in message) result?.reject(new Error("Instant-send boundary CDP command failed"));
+      else result?.resolve();
+    }
+    if (message.method !== "Fetch.requestPaused" || !isRecord(message.params)) return;
+    const params = message.params;
+    if (typeof params.requestId !== "string" || !isRecord(params.request)
+      || typeof params.request.method !== "string" || typeof params.request.url !== "string") return;
+    const stage: InstantBoundaryStage = typeof params.responseStatusCode === "number" || typeof params.responseErrorReason === "string"
+      ? "response" : "request";
+    const continueMethod = stage === "response" ? "Fetch.continueResponse" : "Fetch.continueRequest";
+    const kind = classify(params.request.method, params.request.url);
+    if (!kind) {
+      void command(continueMethod, { requestId: params.requestId }).catch((error: Error) => { failure = error; });
+      return;
+    }
+    if (stage === "request") counts[kind] += 1;
+    const gate = gates.find((candidate) => candidate.kind === kind && candidate.stage === stage && !candidate.released);
+    if (!gate) {
+      const interceptResponse = stage === "request"
+        && gates.some((candidate) => candidate.kind === kind && candidate.stage === "response" && !candidate.released);
+      void command(continueMethod, {
+        requestId: params.requestId,
+        ...(interceptResponse ? { interceptResponse: true } : {}),
+      }).catch((error: Error) => { failure = error; });
+      return;
+    }
+    gate.requestIds.add(params.requestId);
+    if (gate.heldAt === null) {
+      gate.heldAt = performance.now();
+      gate.timer = setTimeout(() => {
+        gate.expired = true;
+        void finishGate(gate, false).catch((error: Error) => { failure = error; });
+      }, 30_000);
+    }
+  });
+  const connectionTimer = setTimeout(() => ready.reject(new Error("Instant-send boundary observer could not connect")), 15_000);
+  try {
+    await ready.promise;
+    await command("Network.enable");
+    await command("Fetch.enable", {
+      patterns: sessionBases.map((path) => ({ urlPattern: `${origin}${path}*`, requestStage: "Request" })),
+    });
+  } catch (error) {
+    disposed = true;
+    socket.close();
+    throw error;
+  } finally {
+    clearTimeout(connectionTimer);
+  }
+
+  const arm = (kind: InstantBoundaryKind, stage: InstantBoundaryStage) => {
+    if (disposed) throw new Error("Instant-send boundary observer is disposed");
+    const state: InstantGateState = {
+      kind, stage, requestIds: new Set(), heldAt: null, released: false,
+      failed: false, expired: false, timer: null,
+    };
+    gates.push(state);
+    let gateDisposed = false;
+    const read = () => {
+      if (failure) throw failure;
+      return {
+        kind, stage, held: state.requestIds.size,
+        elapsedMs: state.heldAt === null ? 0 : performance.now() - state.heldAt,
+        released: state.released, failed: state.failed, expired: state.expired,
+      };
+    };
+    return {
+      read,
+      release: () => finishGate(state, false),
+      fail: () => finishGate(state, true),
+      async [Symbol.asyncDispose]() {
+        if (gateDisposed) return;
+        gateDisposed = true;
+        await finishGate(state, false);
+      },
+    };
+  };
+  return {
+    holdNext: arm,
+    read() {
+      if (failure) throw failure;
+      return { creation: counts.creation, prompt: counts.prompt };
+    },
+    async [Symbol.asyncDispose]() {
+      if (disposed) return;
+      for (const gate of gates) await finishGate(gate, false);
+      try { await command("Fetch.disable"); }
+      finally { disposed = true; socket.close(); }
+    },
+  };
 }
 
 function closeServer(server: Server): Promise<void> {
@@ -245,40 +588,265 @@ export async function sidebarWorkspaceTitles(seed: Seed) {
   return { app, shortName, longName, shortWorkspace };
 }
 
-export async function workspaceNewTask(seed: Seed) {
+export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) {
+  if (place.kind !== "local") throw new SkipError("local renderer performance contract (OPENWORK_WORLD_PLACE=local and --local)");
+  if (resolveEvalEngine() !== "v1") throw new SkipError("native v1 instant-send contract (OPENWORK_EVAL_ENGINE=v1)");
   const providerId = "new-task-mock";
   const modelId = "new-task-model";
-  const prompt = "Confirm the new task is ready";
-  const reply = "The new task is ready.";
-  const mock = seed.mock({ agentWorkloads: [{ promptMarker: prompt, finalReply: reply, steps: [] }] });
-  const den = await seed.den({ mocks: { agent: mock }, provision: false });
+  const nonce = `${Date.now().toString(36)}-${process.pid}`;
+  const lazySamples = Array.from({ length: 12 }, (_, index) => ({
+    marker: `INSTANT-LAZY-${String(index + 1).padStart(2, "0")}-${nonce}`,
+    reply: `Lazy task ${String(index + 1).padStart(2, "0")} completed ${nonce}.`,
+  }));
+  const existingSamples = Array.from({ length: 12 }, (_, index) => ({
+    marker: `INSTANT-EXISTING-${String(index + 1).padStart(2, "0")}-${nonce}`,
+    reply: `Existing task ${String(index + 1).padStart(2, "0")} completed ${nonce}.`,
+  }));
+  const navigation = { marker: `INSTANT-NAVIGATION-A-${nonce}`, reply: `Navigation task completed ${nonce}.` };
+  const responseHold = { marker: `INSTANT-RESPONSE-HOLD-${nonce}`, reply: `Response hold completed ${nonce}.` };
+  const workloads = [...lazySamples, ...existingSamples, navigation, responseHold]
+    .map(({ marker, reply }) => ({ promptMarker: marker, latestUserTurn: true, finalReply: reply, steps: [] }));
+  await using setup = new AsyncDisposableStack();
+  const mock = setup.use(await startMockMcp({ port: await allocateFreePort(), agentWorkloads: workloads }));
   const app = await seed.desktop({ name: "workspace-new-task", model: `${providerId}/${modelId}` });
   const workspacePath = seed.tmpPath(`openwork-workspace-new-task-long-name-${Date.now()}`);
   const workspace = await seed.workspace(app, workspacePath, { create: true });
   await configureWorkspaceProvider(seed, app, [workspace.workspaceId], {
-    providerId, modelId, modelName: "New task model", baseUrl: `${den.mocks.agent.url}/v1`,
+    providerId, modelId, modelName: "New task model", baseUrl: `${mock.url}/v1`,
   });
   const selectedModel = await selectModel(app, modelId);
   if (!selectedModel.selected) throw new Error("The mock task model was not selected.");
-  const sessions = await seed.sessions(app, ["Existing task"]);
-  // TODO(primitive): seed.networkFault should delay and observe renderer requests.
-  // Keep real session creation behind a slow transport boundary. Opening the
-  // composer must not reach this boundary; submitting must reach it only once.
-  await seed.evalIn(app, () => {
-    window.__newTaskRequests = [];
-    const originalFetch = window.fetch;
-    window.fetch = async function (...args) {
-      const request = args[0];
-      const url = request instanceof Request ? request.url : String(request);
-      const method = args[1]?.method ?? (request instanceof Request ? request.method : "GET");
-      if (method.toUpperCase() === "POST" && new URL(url, location.href).pathname.endsWith("/session")) {
-        window.__newTaskRequests.push(url);
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-      }
-      return originalFetch.apply(this, args);
-    };
+  const [unrelated, existing] = await seed.sessions(app, ["Unrelated populated task", "Existing populated task"]);
+  if (!unrelated || !existing) throw new Error("Instant-send world did not create both real v1 sessions.");
+
+  const serverInfo = await seed.evalIn(app, async () => {
+    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+    return info?.running && info.baseUrl
+      ? { baseUrl: String(info.baseUrl), token: String(info.ownerToken ?? info.clientToken ?? "") }
+      : null;
+  }, { awaitPromise: true, timeoutMs: 30_000 });
+  if (!isRecord(serverInfo) || typeof serverInfo.baseUrl !== "string" || typeof serverInfo.token !== "string" || !serverInfo.token) {
+    throw new Error("Instant-send world could not reach the real local v1 engine.");
+  }
+  const serverUrl = serverInfo.baseUrl;
+  const serverToken = serverInfo.token;
+  const engine = engineSessionProbe({
+    engine: "v1",
+    surface: app,
+    workspaceId: workspace.workspaceId,
   });
-  return { app, workspace, workspacePath, sessions, prompt, reply };
+  const existingHistory = `EXISTING-HISTORY-${nonce}`;
+  const unrelatedHistory = `UNRELATED-HISTORY-${nonce}`;
+  const persistUserMessage = async (sessionId: string, text: string) => {
+    const base = serverUrl.replace(/\/+$/, "");
+    const response = await fetch(`${base}/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode/session/${encodeURIComponent(sessionId)}/message`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${serverToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        noReply: true,
+        model: { providerID: providerId, modelID: modelId },
+        parts: [{ type: "text", text }],
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error(`Real v1 history setup returned HTTP ${response.status}`);
+  };
+  await persistUserMessage(unrelated.sessionId, unrelatedHistory);
+  await persistUserMessage(existing.sessionId, existingHistory);
+  await waitFor(app, browserScript((marker, workspaceId, sessionId) => {
+    if ((localStorage.getItem("openwork.react.activeWorkspace") ?? "") !== workspaceId
+      || location.hash !== `#/workspace/${workspaceId}/session/${sessionId}`) return false;
+    const pane = document.querySelector<HTMLElement>('[data-workbench-pane="primary"]');
+    const surface = [...(pane?.querySelectorAll<HTMLElement>("[data-session-surface-id]") ?? [])]
+      .find((candidate) => candidate.dataset.sessionSurfaceId === sessionId);
+    return [...(surface?.querySelectorAll<HTMLElement>('[data-message-role="user"]') ?? [])]
+      .some((row) => row.innerText.includes(marker));
+  }, [existingHistory, workspace.workspaceId, existing.sessionId]), {
+    timeoutMs: 30_000,
+    label: "existing populated task is visible before performance sampling",
+  });
+
+  const boundary = await instantBoundaryController(app, workspace.workspaceId);
+  const sessionIds = async () => {
+    const result = await engine.list();
+    if (!result.ok) throw new Error(`Real v1 session inventory returned HTTP ${result.status}`);
+    return result.data.map((session) => session.id).sort();
+  };
+  const sanitizedDiagnosticText = (value: string) => value
+    .replace(/https?:\/\/[^\s"'<>]+/gi, "[url]")
+    .replace(/\bBearer\s+[^\s"'<>]+/gi, "Bearer [redacted]")
+    .replace(/\b(ownerToken|clientToken|token)\b\s*[=:]\s*[^\s,;]+/gi, "$1=[redacted]")
+    .replace(/[\r\n\t]+/g, " ")
+    .slice(0, 240);
+  const sanitizedErrorField = (value: unknown, field: "name" | "message") => {
+    const pending: unknown[] = [value];
+    for (let index = 0; index < pending.length && index < 8; index += 1) {
+      const candidate = pending[index];
+      if (field === "message" && typeof candidate === "string" && candidate) return sanitizedDiagnosticText(candidate);
+      if (Array.isArray(candidate)) {
+        pending.push(...candidate);
+        continue;
+      }
+      if (!isRecord(candidate)) continue;
+      const fieldNames = field === "name" ? ["name", "code", "error"] : ["message", "detail", "error"];
+      for (const fieldName of fieldNames) {
+        const direct = candidate[fieldName];
+        if (typeof direct !== "string" || !direct) continue;
+        return sanitizedDiagnosticText(direct);
+      }
+      for (const key of ["error", "data", "cause", "validation", "issues", "errors"]) {
+        if (key in candidate) pending.push(candidate[key]);
+      }
+    }
+    return "unavailable";
+  };
+  const messageFacts = async (sessionId: string, marker: string) => {
+    const result = await engine.messages(sessionId, 100).catch((error: unknown) => {
+      const errorName = sanitizedErrorField(error, "name");
+      const errorMessage = sanitizedErrorField(error, "message");
+      throw new Error(`Real v1 messages read failed for session ${sessionId}: error name=${errorName}; message=${errorMessage}`);
+    });
+    if (!result.ok) {
+      const errorName = sanitizedErrorField(result.body, "name");
+      const errorMessage = sanitizedErrorField(result.body, "message");
+      throw new Error(`Real v1 messages read failed for session ${sessionId}: HTTP ${result.status}; validation/error name=${errorName}; message=${errorMessage}`);
+    }
+    const texts = result.data.map((message) => message.parts.map((part) => part.text).join("\n"));
+    const matching = marker ? texts.filter((text) => text.includes(marker)) : [];
+    return {
+      messages: texts.length,
+      markerCount: matching.length,
+      markerOccurrences: marker ? matching.reduce((total, text) => total + text.split(marker).length - 1, 0) : 0,
+    };
+  };
+  const readInstantComposer = () => seed.evalIn(app, browserScript((workspaceId) => {
+    const visible = (node: HTMLElement) => {
+      const rect = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      return node.getClientRects().length > 0 && rect.width > 0 && rect.height > 0
+        && rect.right > 0 && rect.bottom > 0 && rect.left < innerWidth && rect.top < innerHeight
+        && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) > 0;
+    };
+    if ((localStorage.getItem("openwork.react.activeWorkspace") ?? "") !== workspaceId) {
+      return { rootKind: "", focused: false, editable: false, text: "" };
+    }
+    let root: HTMLElement | null = null;
+    let rootKind = "";
+    const sessionlessRoute = `#/workspace/${workspaceId}/session`;
+    if (location.hash === sessionlessRoute) {
+      const heading = [...document.querySelectorAll<HTMLElement>("h2")]
+        .find((candidate) => candidate.textContent?.trim() === "What do you need done?" && visible(candidate));
+      const headingMain = heading?.closest<HTMLElement>("main") ?? null;
+      const main = headingMain && visible(headingMain) ? headingMain
+        : [...document.querySelectorAll<HTMLElement>("main")].filter(visible)
+            .find((candidate) => [...candidate.querySelectorAll<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"], [data-message-role]')]
+              .some(visible)) ?? null;
+      const persistedSurfaceVisible = [...document.querySelectorAll<HTMLElement>("[data-session-surface-id]")].some(visible);
+      if (main && !persistedSurfaceVisible) { root = main; rootKind = "new-task"; }
+    } else {
+      const persistedPrefix = `#/workspace/${workspaceId}/session/`;
+      const sessionId = location.hash.startsWith(persistedPrefix) ? location.hash.slice(persistedPrefix.length) : "";
+      if (sessionId.startsWith("ses_") && !/[/?#]/.test(sessionId)) {
+        const pane = [...document.querySelectorAll<HTMLElement>('[data-workbench-pane="primary"]')].find(visible) ?? null;
+        const surface = [...(pane?.querySelectorAll<HTMLElement>("[data-session-surface-id]") ?? [])]
+          .find((candidate) => candidate.dataset.sessionSurfaceId === sessionId && visible(candidate));
+        if (pane && surface) { root = pane; rootKind = "persisted"; }
+      }
+    }
+    const editor = root?.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]') ?? null;
+    return {
+      rootKind,
+      focused: Boolean(editor && (document.activeElement === editor || editor.contains(document.activeElement))),
+      editable: Boolean(editor?.isContentEditable && visible(editor)),
+      text: editor?.innerText ?? "",
+    };
+  }, [workspace.workspaceId]));
+  const insertFocusedText = async (text: string) => {
+    const before = await readInstantComposer();
+    if (!isRecord(before) || (before.rootKind !== "new-task" && before.rootKind !== "persisted")
+      || before.focused !== true || before.editable !== true || typeof before.text !== "string") {
+      throw new Error(`Focused composer was unavailable for native insertText: ${JSON.stringify(before)}`);
+    }
+    await typeText(app, text);
+    const deadline = Date.now() + 5_000;
+    let after = await readInstantComposer();
+    while (Date.now() < deadline && !after.text.endsWith(text)) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      after = await readInstantComposer();
+    }
+    if (!after.text.endsWith(text)) throw new Error("Focused composer did not retain native insertText");
+    return { beforeText: before.text, afterText: after.text };
+  };
+  const accessibleRunTaskReady = async () => {
+    const located = await locate(app, { role: "button", label: "Run task" });
+    if (!located.visible || !located.hitTestOk) return false;
+    return seed.evalIn(app, browserScript((x, y, workspaceId) => {
+      const hit = document.elementFromPoint(x, y);
+      const button = hit instanceof Element ? hit.closest("button") : null;
+      const visible = (node: HTMLElement) => {
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return node.getClientRects().length > 0 && rect.width > 0 && rect.height > 0
+          && rect.right > 0 && rect.bottom > 0 && rect.left < innerWidth && rect.top < innerHeight
+          && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) > 0;
+      };
+      if ((localStorage.getItem("openwork.react.activeWorkspace") ?? "") !== workspaceId) return false;
+      let root: HTMLElement | null = null;
+      const sessionlessRoute = `#/workspace/${workspaceId}/session`;
+      if (location.hash === sessionlessRoute) {
+        const heading = [...document.querySelectorAll<HTMLElement>("h2")]
+          .find((candidate) => candidate.textContent?.trim() === "What do you need done?" && visible(candidate));
+        const headingMain = heading?.closest<HTMLElement>("main") ?? null;
+        const main = headingMain && visible(headingMain) ? headingMain
+          : [...document.querySelectorAll<HTMLElement>("main")].filter(visible)
+              .find((candidate) => [...candidate.querySelectorAll<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"], [data-message-role]')]
+                .some(visible)) ?? null;
+        const persistedSurfaceVisible = [...document.querySelectorAll<HTMLElement>("[data-session-surface-id]")].some(visible);
+        if (main && !persistedSurfaceVisible) root = main;
+      } else {
+        const persistedPrefix = `#/workspace/${workspaceId}/session/`;
+        const sessionId = location.hash.startsWith(persistedPrefix) ? location.hash.slice(persistedPrefix.length) : "";
+        if (sessionId.startsWith("ses_") && !/[/?#]/.test(sessionId)) {
+          const pane = [...document.querySelectorAll<HTMLElement>('[data-workbench-pane="primary"]')].find(visible) ?? null;
+          const surface = [...(pane?.querySelectorAll<HTMLElement>("[data-session-surface-id]") ?? [])]
+            .find((candidate) => candidate.dataset.sessionSurfaceId === sessionId && visible(candidate));
+          if (pane && surface) root = pane;
+        }
+      }
+      return button instanceof HTMLButtonElement && !button.disabled
+        && Boolean(root?.contains(button));
+    }, [located.center.x, located.center.y, workspace.workspaceId]));
+  };
+
+  const resources = setup.move();
+  return {
+    app,
+    workspace,
+    workspacePath,
+    existing,
+    unrelated,
+    existingHistory,
+    unrelatedHistory,
+    lazySamples,
+    existingSamples,
+    navigation,
+    responseHold,
+    failure: {
+      creationA: `INSTANT-CREATE-FAIL-A-${nonce}`,
+      creationB: `INSTANT-CREATE-FAIL-B-${nonce}`,
+      promptA: `INSTANT-PROMPT-FAIL-A-${nonce}`,
+      promptB: `INSTANT-PROMPT-FAIL-B-${nonce}`,
+      pendingB: `INSTANT-PENDING-DRAFT-B-${nonce}`,
+      navigationB: `INSTANT-NAVIGATION-DRAFT-B-${nonce}`,
+    },
+    boundary,
+    sessionIds,
+    messageFacts,
+    insertFocusedText,
+    accessibleRunTaskReady,
+    observeRenderer: (kind: InstantMetricKind, marker = "") => observeInstantRenderer(seed, app, workspace.workspaceId, kind, marker),
+    [Symbol.asyncDispose]: () => resources.disposeAsync(),
+  };
 }
 
 export async function pinnedSessions(seed: Seed) {
