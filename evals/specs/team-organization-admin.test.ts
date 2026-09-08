@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { denFetch, type DenSession } from "@openwork/behaviors";
 import { server, test } from "@openwork/testkit";
 import { parseTeamAdminContext } from "./helpers/team-admin-context.ts";
+import { enableScimFixtureSso } from "./helpers/scim-fixture.ts";
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object");
@@ -168,6 +169,7 @@ test("team Admin grants are live, scoped, protected, and cleared across SCIM lif
   const ownerHeaders = { authorization: `Bearer ${owner.token}`, cookie: ownerCookie, "x-openwork-org-id": orgId };
   const sso = await denFetch(owner, "/v1/sso/saml", { method: "POST", headers: ownerHeaders, body: JSON.stringify({ issuer: `http://127.0.0.1/team-admin-${Date.now()}`, domain: "team-scim.test", entryPoint: "https://okta.example.test/sso", cert: "test-signing-certificate", audience: den.ref.apiUrl }) });
   expect(sso.response.status, sso.text).toBe(201);
+  await enableScimFixtureSso(den.database, orgId);
   const tokenResult = await denFetch(owner, "/v1/scim/token", { method: "POST", headers: ownerHeaders });
   expect(tokenResult.response.status, tokenResult.text).toBe(201);
   const token = text(record(tokenResult.body).scimToken);

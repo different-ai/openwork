@@ -2,6 +2,7 @@ import { expect } from "vitest";
 import { denFetch, signIn } from "@openwork/behaviors";
 import { eventually, inviteMember, needs, server, test, unmetNeeds } from "@openwork/testkit";
 import type { TestNeeds } from "@openwork/testkit";
+import { enableScimFixtureSso } from "./helpers/scim-fixture.ts";
 
 const requirements: TestNeeds = {
   optIn: ["OPENWORK_EVAL_E2E_TESTS"],
@@ -136,7 +137,9 @@ test(title, { timeout: 1_800_000 }, async ({ evidence, place }) => {
     throw new Error(`SSO prerequisite failed: HTTP ${sso.response.status} ${sso.text.slice(0, 500)}`);
   }
 
-  const ssoConnection = isRecord(sso.body) && isRecord(sso.body.connection) ? sso.body.connection : null;
+  await enableScimFixtureSso(den.database, organizationId);
+  const enabledSso = await denFetch(den.ref, "/v1/sso", { headers: adminHeaders });
+  const ssoConnection = isRecord(enabledSso.body) && isRecord(enabledSso.body.connection) ? enabledSso.body.connection : null;
   expect(ssoConnection?.domainVerified).toBe(true);
   expect(stringField(ssoConnection, "status")).toBe("enabled");
   const acsUrl = stringField(ssoConnection, "acsUrl");

@@ -5,6 +5,7 @@ import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
 import { server, test } from "@openwork/testkit";
 import { parseTeamAdminContext } from "./helpers/team-admin-context.ts";
+import { enableScimFixtureSso } from "./helpers/scim-fixture.ts";
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected object");
@@ -26,6 +27,7 @@ test("SCIM projection ownership is atomic and detached manual teams reject later
   const privilegedHeaders = { ...headers, cookie, "x-openwork-org-id": context.organization.id };
   const sso = await denFetch(den.admin, "/v1/sso/saml", { method: "POST", headers: privilegedHeaders, body: JSON.stringify({ issuer: `http://127.0.0.1/atomic-${Date.now()}`, domain: "atomic-scim.test", entryPoint: "https://idp.example.test/sso", cert: "test-signing-certificate", audience: den.ref.apiUrl }) });
   expect(sso.response.status, sso.text).toBe(201);
+  await enableScimFixtureSso(den.database, context.organization.id);
   const tokenResult = await denFetch(den.admin, "/v1/scim/token", { method: "POST", headers: privilegedHeaders });
   expect(tokenResult.response.status, tokenResult.text).toBe(201);
   const scimToken = record(tokenResult.body).scimToken;
