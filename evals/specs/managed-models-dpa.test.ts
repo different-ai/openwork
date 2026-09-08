@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { createDenClient } from "@openwork/sdk";
 import { createHmac } from "node:crypto";
 import { spec } from "@openwork/testkit";
 import { denFetch } from "@openwork/behaviors";
@@ -47,9 +48,13 @@ test("DPA policy blocks warm managed keys without revoking customer-owned models
     return { status: response.status, body: record(await response.json()) };
   };
   const adminPath = `/v1/admin/organizations/${world.orgId}/dpa`;
+  const sdk = createDenClient({ baseUrl: world.den.ref.apiUrl, token: admin.token, orgId: world.orgId });
   const setDpa = async (dpaSigned: boolean, reason: string) => {
-    const response = await api(adminPath, "PATCH", { dpaSigned, reason });
-    expect(response.response.status, response.text).toBe(200);
+    const response = await sdk.patchV1AdminOrganizationsByOrganizationIdDpa(
+      { organizationId: world.orgId, dpaSigned, reason }, { signal: AbortSignal.timeout(30_000) },
+    );
+    expect(response.response.status, JSON.stringify(response.error)).toBe(200);
+    expect(response.data).toEqual({ ok: true, organization: { id: world.orgId, dpaSigned } });
   };
   const blocked = async (extra: Record<string, unknown> = {}, headers: Record<string, string> = {}, status = 403) => {
     const before = await calls();
@@ -241,6 +246,16 @@ test("DPA policy blocks warm managed keys without revoking customer-owned models
   expect(list(unset.audits)[1]).toMatchObject({ actorUserId, payload: { previousDpaSigned: true, dpaSigned: false, reason: "boundary approved unset" } });
   expect((await complete()).status).toBe(200);
   evidence.recordAssertionEvidence("Approved unset restores the original key and records the transition", "The warm key returned 200 with explicit false; datastore audit identifies the approving actor, previous true, new false and reason.", true);
+  const memberSdk = createDenClient({ baseUrl: world.den.ref.apiUrl, token: teammate.token, orgId: world.orgId });
+  const forbiddenSdk = await memberSdk.patchV1AdminOrganizationsByOrganizationIdDpa(
+    { organizationId: world.orgId, dpaSigned: true, reason: "SDK unauthorized mutation" },
+    { signal: AbortSignal.timeout(30_000) },
+  );
+  expect(forbiddenSdk.response.status).toBe(403);
+  expect(forbiddenSdk.data).toBeUndefined();
+  expect(record((await fixture()).metadata).dpaSigned).toBe(false);
+  expect((await fixture()).audits).toEqual(unset.audits);
+  evidence.recordAssertionEvidence("Generated SDK carries the DPA body and preserves admin authorization", "Generated typed set/unset calls send the flag and reason and return the declared success body, verified against persisted metadata and audit transitions. A workspace admin using the same generated method receives 403 with no mutation or new audit.", true);
 
   await fixture("audit-failure");
   try {

@@ -18,6 +18,26 @@ export type DenApiReadinessResponse = {
   };
 };
 
+export type InvalidRequestError = {
+  error: "invalid_request";
+  details: Array<{
+    message: string;
+    path?: Array<string | number>;
+    [key: string]: unknown | string | Array<string | number> | undefined;
+  }>;
+  capability?: string;
+};
+
+export type UnauthorizedError = {
+  error: "unauthorized";
+};
+
+export type ForbiddenError = {
+  error: "forbidden" | "reauth";
+  reason?: string;
+  message?: string;
+};
+
 export type AdminPageInfo = {
   total: number;
   limit: number;
@@ -40,26 +60,6 @@ export type AdminUsersPageResponse = {
     billingUnavailableUsers: number | null;
   };
   generatedAt: string;
-};
-
-export type InvalidRequestError = {
-  error: "invalid_request";
-  details: Array<{
-    message: string;
-    path?: Array<string | number>;
-    [key: string]: unknown | string | Array<string | number> | undefined;
-  }>;
-  capability?: string;
-};
-
-export type UnauthorizedError = {
-  error: "unauthorized";
-};
-
-export type ForbiddenError = {
-  error: "forbidden" | "reauth";
-  reason?: string;
-  message?: string;
 };
 
 export type AdminOrganizationsPageResponse = {
@@ -3779,6 +3779,7 @@ export type TeamResponse = {
     updatedAt: string;
     memberIds: Array<string>;
     managedByScim: boolean;
+    grantsOrganizationAdmin: boolean;
   };
 };
 
@@ -4222,6 +4223,74 @@ export type PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses = {
    */
   200: unknown;
 };
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaData = {
+  body: {
+    dpaSigned: boolean;
+    reason: string;
+  };
+  path: {
+    organizationId: string;
+  };
+  query?: never;
+  url: "/v1/admin/organizations/{organizationId}/dpa";
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaErrors = {
+  /**
+   * Invalid DPA decision or organization identifier.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: "invalid_request";
+        message: string;
+      };
+  /**
+   * Authentication is required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Platform administrator access is required.
+   */
+  403: ForbiddenError;
+  /**
+   * Organization not found.
+   */
+  404: {
+    error: "not_found";
+    message: string;
+  };
+  /**
+   * Organization metadata could not be read.
+   */
+  503: {
+    error: "managed_models_policy_unavailable";
+    message: string;
+  };
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaError =
+  PatchV1AdminOrganizationsByOrganizationIdDpaErrors[keyof PatchV1AdminOrganizationsByOrganizationIdDpaErrors];
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaResponses = {
+  /**
+   * DPA decision recorded.
+   */
+  200: {
+    ok: true;
+    organization: {
+      /**
+       * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      dpaSigned: boolean;
+    };
+  };
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaResponse =
+  PatchV1AdminOrganizationsByOrganizationIdDpaResponses[keyof PatchV1AdminOrganizationsByOrganizationIdDpaResponses];
 
 export type PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessData = {
   body?: never;
@@ -10454,9 +10523,21 @@ export type PatchV1InferenceErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can update inference settings.
+   * Inference settings access is denied.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "managed_models_disabled_for_dpa" | "managed_models_policy_unavailable";
+        message: string;
+      };
+  /**
+   * Managed Models policy is unavailable.
+   */
+  503: {
+    error: "managed_models_disabled_for_dpa" | "managed_models_policy_unavailable";
+    message: string;
+  };
 };
 
 export type PatchV1InferenceError = PatchV1InferenceErrors[keyof PatchV1InferenceErrors];
@@ -19206,6 +19287,7 @@ export type PutV1TeamsByKeyByExternalKeyData = {
   body: {
     name: string;
     memberIds?: Array<string>;
+    grantsOrganizationAdmin?: boolean;
   };
   path: {
     externalKey: string;
@@ -19333,6 +19415,7 @@ export type PatchV1TeamsByTeamIdData = {
   body: {
     name?: string;
     memberIds?: Array<string>;
+    grantsOrganizationAdmin?: boolean;
   };
   path: {
     /**
@@ -19378,6 +19461,7 @@ export type PostV1TeamsData = {
   body: {
     name: string;
     memberIds?: Array<string>;
+    grantsOrganizationAdmin?: boolean;
   };
   path?: never;
   query?: never;

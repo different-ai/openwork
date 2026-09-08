@@ -35,7 +35,7 @@ import { z } from "zod"
 import { cache } from "../../cache.js"
 import { db } from "../../db.js"
 import { parseOrganizationPlan, type PlanTier } from "../../entitlements.js"
-import { adminRoute, queryValidator } from "../../middleware/index.js"
+import { adminRoute, jsonValidator, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
@@ -1655,12 +1655,30 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
 
   app.patch(
     "/v1/admin/organizations/:organizationId/dpa",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Record an organization DPA decision",
+      description: "Allowlisted platform administrators only. Atomically updates the reserved metadata flag and records the authenticated actor and reason in the audit trail.",
+      responses: {
+        200: jsonResponse("DPA decision recorded.", z.object({
+          ok: z.literal(true),
+          organization: z.object({ id: denTypeIdSchema("organization"), dpaSigned: z.boolean() }),
+        })),
+        400: jsonResponse("Invalid DPA decision or organization identifier.", z.union([
+          invalidRequestSchema, z.object({ error: z.literal("invalid_request"), message: z.string() }),
+        ])),
+        401: jsonResponse("Authentication is required.", unauthorizedSchema),
+        403: jsonResponse("Platform administrator access is required.", forbiddenSchema),
+        404: jsonResponse("Organization not found.", z.object({ error: z.literal("not_found"), message: z.string() })),
+        503: jsonResponse("Organization metadata could not be read.", z.object({
+          error: z.literal("managed_models_policy_unavailable"), message: z.string(),
+        })),
+      },
+    }),
     adminRoute(),
+    jsonValidator(updateOrganizationDpaSchema),
     async (c) => {
-      const body = updateOrganizationDpaSchema.safeParse(await c.req.json().catch(() => null))
-      if (!body.success) {
-        return c.json({ error: "invalid_request", message: body.error.issues[0]?.message ?? "Invalid organization DPA request." }, 400)
-      }
+      const body = c.req.valid("json")
       const organizationId = c.req.param("organizationId")
       if (!isOrganizationId(organizationId)) {
         return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
@@ -1689,12 +1707,12 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
           action: ORGANIZATION_AUDIT_ACTIONS.dpaSignedUpdated,
           payload: {
             previousDpaSigned: typeof metadata.dpaSigned === "boolean" ? metadata.dpaSigned : null,
-            dpaSigned: body.data.dpaSigned,
-            reason: body.data.reason,
+            dpaSigned: body.dpaSigned,
+            reason: body.reason,
           },
         })
         await tx.update(OrganizationTable)
-          .set({ metadata: { ...metadata, dpaSigned: body.data.dpaSigned } })
+          .set({ metadata: { ...metadata, dpaSigned: body.dpaSigned } })
           .where(eq(OrganizationTable.id, organizationId))
         await tx.insert(AuditEventTable).values(auditEvent)
         return { auditEvent }
@@ -1707,7 +1725,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         return c.json({ error: error.code, message: error.message }, error.status)
       }
       logOrganizationAuditEvent(result.auditEvent)
-      return c.json({ ok: true, organization: { id: organizationId, dpaSigned: body.data.dpaSigned } })
+      return c.json({ ok: true, organization: { id: organizationId, dpaSigned: body.dpaSigned } })
     },
   )
 

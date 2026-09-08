@@ -498,6 +498,9 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
               ...readOrganizationMetadata(metadata.bootstrap),
               provisional: false,
               claimedAt: now.toISOString(),
+              // Preserve existing claim attribution: this is the authenticated
+              // account's internal ID stored at runtime, not a customer identity
+              // embedded in public source or fixtures.
               claimedByUserId: normalizedUserId,
             },
           },

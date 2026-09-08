@@ -374,6 +374,8 @@ import type {
   MintAutomationRunnerTokenResponses,
   PatchApiAuthScimV2GroupsByGroupIdResponses,
   PatchApiAuthScimV2UsersByUserIdResponses,
+  PatchV1AdminOrganizationsByOrganizationIdDpaErrors,
+  PatchV1AdminOrganizationsByOrganizationIdDpaResponses,
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses,
   PatchV1AdminOrganizationsByOrganizationIdPlanResponses,
   PatchV1CapabilitiesGoogleWorkspaceCalendarEventByEventIdErrors,
@@ -854,6 +856,47 @@ export class DenClient extends HeyApiClient {
       url: "/v1/admin/organizations/{organizationId}/free-seats",
       ...options,
       ...params,
+    });
+  }
+
+  /**
+   * Record an organization DPA decision
+   *
+   * Allowlisted platform administrators only. Atomically updates the reserved metadata flag and records the authenticated actor and reason in the audit trail.
+   */
+  public patchV1AdminOrganizationsByOrganizationIdDpa<ThrowOnError extends boolean = false>(
+    parameters: {
+      organizationId: string;
+      dpaSigned?: boolean;
+      reason?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "organizationId" },
+            { in: "body", key: "dpaSigned" },
+            { in: "body", key: "reason" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1AdminOrganizationsByOrganizationIdDpaResponses,
+      PatchV1AdminOrganizationsByOrganizationIdDpaErrors,
+      ThrowOnError
+    >({
+      url: "/v1/admin/organizations/{organizationId}/dpa",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 
@@ -10133,6 +10176,7 @@ export class DenClient extends HeyApiClient {
       externalKey: string;
       name?: string;
       memberIds?: Array<string>;
+      grantsOrganizationAdmin?: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10144,6 +10188,7 @@ export class DenClient extends HeyApiClient {
             { in: "path", key: "externalKey" },
             { in: "body", key: "name" },
             { in: "body", key: "memberIds" },
+            { in: "body", key: "grantsOrganizationAdmin" },
           ],
         },
       ],
@@ -10214,6 +10259,7 @@ export class DenClient extends HeyApiClient {
       teamId: string;
       name?: string;
       memberIds?: Array<string>;
+      grantsOrganizationAdmin?: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10225,6 +10271,7 @@ export class DenClient extends HeyApiClient {
             { in: "path", key: "teamId" },
             { in: "body", key: "name" },
             { in: "body", key: "memberIds" },
+            { in: "body", key: "grantsOrganizationAdmin" },
           ],
         },
       ],
@@ -10254,6 +10301,7 @@ export class DenClient extends HeyApiClient {
     parameters?: {
       name?: string;
       memberIds?: Array<string>;
+      grantsOrganizationAdmin?: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10264,6 +10312,7 @@ export class DenClient extends HeyApiClient {
           args: [
             { in: "body", key: "name" },
             { in: "body", key: "memberIds" },
+            { in: "body", key: "grantsOrganizationAdmin" },
           ],
         },
       ],
