@@ -49,7 +49,8 @@ export class WebContentsView {
       once(event, handler) { listeners.set(event, handler); },
       emit(event, ...args) { listeners.get(event)?.(null, ...args); },
       setWindowOpenHandler() {},
-      isDestroyed() { return false; },
+      destroyed: false,
+      isDestroyed() { return this.destroyed; },
       getURL() { return this.url; },
       getTitle() { return ""; },
       isLoading() { return false; },
@@ -57,7 +58,7 @@ export class WebContentsView {
       canGoForward() { return false; },
       loadURL(url) { this.url = url; return Promise.resolve(); },
       focus() {},
-      close() {},
+      close() { this.destroyed = true; this.emit("destroyed"); },
     };
   }
   setBounds(bounds) { this.bounds = bounds; }
@@ -334,6 +335,65 @@ test("closing a conversation's last tab tells only that conversation its panel i
   assert.equal(onScreen(), aView, "A keeps browsing");
   assert.deepEqual(messages("openwork:browser:panel-closed"), [{ ownerSessionId: "B" }]);
   assert.deepEqual(invoke("openwork:browser:state").tabs.map((tab) => tab.ownerSessionId), ["A"]);
+});
+
+test("capacity refuses allocation without replacing existing tabs and closing frees a slot", async () => {
+  const { invoke, views } = createPanel();
+  const limit = invoke("openwork:browser:state").tabLimit;
+  assert.equal(limit, 12);
+  for (let i = 0; i < limit; i++) invoke("openwork:browser:createTab", "about:blank", `owner-${i}`);
+  const before = invoke("openwork:browser:state");
+  assert.throws(() => invoke("openwork:browser:createTab", "about:blank", "overflow"), /12 browser tabs open.*Close.*try again/);
+  await assert.rejects(invoke("openwork:browser:openUrl", "https://example.com"), /12 browser tabs open/);
+  assert.equal(views().length, limit, "rejection allocates no native view");
+  assert.deepEqual(invoke("openwork:browser:state").tabs, before.tabs);
+  invoke("openwork:browser:closeTab", before.tabs[0].id);
+  assert.equal(views()[0].webContents.isDestroyed(), true);
+  invoke("openwork:browser:createTab", "about:blank", "retry");
+  assert.equal(invoke("openwork:browser:state").tabs.length, limit);
+});
+
+test("owner cleanup is exact and idempotent and releases only an empty background host", async () => {
+  const { invoke, views, messages } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  invoke("openwork:browser:createTab", "about:blank", "A");
+  invoke("openwork:browser:createTab", "about:blank", null);
+  const b = invoke("openwork:browser:createTab", "about:blank", "B");
+  const c = invoke("openwork:browser:createTab", "about:blank", "C");
+  await flush();
+  for (const invalid of [undefined, null, "", "   ", 1]) assert.deepEqual(invoke("openwork:browser:closeSessionTabs", invalid), []);
+  assert.deepEqual(invoke("openwork:browser:closeSessionTabs", "B"), [b.tabId]);
+  assert.deepEqual(invoke("openwork:browser:closeSessionTabs", "B"), []);
+  assert.equal(views()[2].webContents.isDestroyed(), true);
+  assert.equal(invoke("openwork:browser:state").backgroundWindowCount, 1, "C still uses the hidden host");
+  assert.deepEqual(invoke("openwork:browser:closeSessionTabs", "C"), [c.tabId]);
+  assert.equal(invoke("openwork:browser:state").backgroundWindowCount, 0);
+  assert.deepEqual(invoke("openwork:browser:state").tabs.map(tab => tab.ownerSessionId), ["A", null]);
+  assert.ok(views().slice(0, 2).every(view => !view.webContents.isDestroyed()));
+  assert.deepEqual(messages("openwork:browser:panel-closed"), [{ ownerSessionId: "B" }, { ownerSessionId: "C" }]);
+  invoke("openwork:browser:closeAllTabs");
+  assert.ok(views().every(view => view.webContents.isDestroyed()));
+});
+
+test("external target destruction releases owner state and the empty hidden host", async () => {
+  const { invoke, views } = createPanel();
+  invoke("openwork:browser:createTab", "about:blank", "B");
+  await flush();
+  views()[0].webContents.close();
+  assert.deepEqual(invoke("openwork:browser:state").tabs, []);
+  assert.equal(invoke("openwork:browser:state").backgroundWindowCount, 0);
+});
+
+test("failed target discovery rolls back its allocation while another owner's page survives", async () => {
+  const { invoke, views } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  invoke("openwork:browser:createTab", "about:blank", "A");
+  const before = invoke("openwork:browser:state");
+  await assert.rejects(invoke("openwork:browser:openUrl", "https://example.com", "builtin", { sessionId: "B" }), /Could not resolve/);
+  assert.deepEqual(invoke("openwork:browser:state").tabs, before.tabs);
+  assert.equal(invoke("openwork:browser:state").backgroundWindowCount, 0);
+  assert.equal(views()[1].webContents.isDestroyed(), true);
+  assert.equal(views()[0].webContents.isDestroyed(), false);
 });
 
 test("tabs created without a conversation stay shared and behave as before", async () => {

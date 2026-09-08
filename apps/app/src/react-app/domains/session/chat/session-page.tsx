@@ -81,6 +81,7 @@ import { resolveCollectibleOpenTarget } from "../artifacts/resolve-open-target";
 import type { OpenTargetOptions } from "@/lib/target-provider";
 import { SidePanel } from "../panel/side-panel";
 import { getSidePanelSessionKey } from "../panel/side-panel-session";
+import { useCreateTab } from "../panel/use-side-panel-tabs";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
@@ -651,6 +652,7 @@ export function SessionPage(props: SessionPageProps) {
     if (/^wss?:\/\//i.test(target.value)) return target.value.replace(/^ws:/i, "http:").replace(/^wss:/i, "https:");
     return target.value;
   }, []);
+  const createBrowserTab = useCreateTab();
   const openTargetForRuntime = useCallback((runtime: {
     client: OpenworkServerClient | null;
     runtimeWorkspaceId: string | null;
@@ -662,7 +664,7 @@ export function SessionPage(props: SessionPageProps) {
       if (isElectronRuntime()) {
         const ownerSessionId = sourceSessionId ?? props.selectedSessionId ?? null;
         openOwnerSidePanel(ownerSessionId);
-        void window.__OPENWORK_ELECTRON__?.browser?.createTab?.(url, ownerSessionId);
+        void createBrowserTab(url, ownerSessionId);
       } else {
         window.open(url, "_blank", "noopener,noreferrer");
       }
@@ -734,7 +736,7 @@ export function SessionPage(props: SessionPageProps) {
     }
 
     openFileTarget(target);
-  }, [activePanelTab?.id, browserUrlForTarget, openOwnerSidePanel, openTab, props.selectedSessionId, setCurrentSidePanel]);
+  }, [activePanelTab?.id, browserUrlForTarget, createBrowserTab, openOwnerSidePanel, openTab, props.selectedSessionId, setCurrentSidePanel]);
   const openTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     openTargetForRuntime({
       client: props.openworkServerClient,

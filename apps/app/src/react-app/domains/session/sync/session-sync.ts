@@ -3,6 +3,7 @@ import { create } from "zustand";
 import type { FilePart, Part, PermissionRequest, PermissionV2Request, QuestionRequest, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { getReactQueryClient } from "../../../infra/query-client";
+import { closeSessionBrowserTabs } from "@/app/lib/desktop";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
 import { observeModelsTaskEvent } from "@/app/lib/models-task-analytics";
@@ -844,6 +845,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "session.deleted") {
     const props = (event.properties ?? {}) as { sessionID?: string; info?: { id?: string } };
     const sessionId = props.sessionID ?? props.info?.id ?? "";
+    if (sessionId) void closeSessionBrowserTabs(sessionId);
     if (sessionId) entry.titleRecovery?.resolve(sessionId);
     if (sessionId) useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
     if (sessionId) useWorkbenchStore.getState().closeTab({ workspaceId, sessionId });

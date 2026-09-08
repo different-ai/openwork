@@ -1,5 +1,6 @@
 import type { Message, Part, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
+import { closeSessionBrowserTabs } from "./desktop";
 import { createClient, unwrap, type FieldsResult } from "./opencode";
 import { createClientV2, isOpencodeV2BaseUrl } from "./opencode-v2-adapter";
 import type { OpenworkSessionSnapshot } from "./openwork-server";
@@ -101,5 +102,7 @@ export async function deleteNativeSession(
   dependencies?: NativeSessionDependencies,
 ) {
   const result = await sessionOperations(endpoint, dependencies).delete(sessionId, options);
-  return unwrapSessionResult(result, "session_not_found");
+  const deleted = unwrapSessionResult(result, "session_not_found");
+  if (deleted) void closeSessionBrowserTabs(sessionId);
+  return deleted;
 }

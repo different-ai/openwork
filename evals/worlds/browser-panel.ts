@@ -2,7 +2,7 @@ import { browserScript, browserSource } from "@openwork/cdp";
 import { control } from "@openwork/behaviors";
 import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets, navigate } from "@openwork/cdp";
 import type { AttachedSurface, CdpClient, Surface } from "@openwork/cdp";
-import type { Seed } from "@openwork/env";
+import { resolveEvalEngine, type Seed } from "@openwork/env";
 
 export interface BuiltinBrowserTab {
   tabId: string;
@@ -32,6 +32,8 @@ export interface BrowserState {
   activeTabId: string | null;
   visibleSessionId: string | null;
   visibleWindowCount: number;
+  tabLimit: number;
+  backgroundWindowCount: number;
   backgroundWindowVisible: boolean;
   tabs: BrowserTabState[];
   nativeViews: Array<{
@@ -75,10 +77,15 @@ function parseBrowserState(value: unknown): BrowserState {
   if (typeof value.visibleWindowCount !== "number" || typeof value.backgroundWindowVisible !== "boolean") {
     throw new Error("The desktop bridge did not report native window visibility.");
   }
+  if (typeof value.tabLimit !== "number" || typeof value.backgroundWindowCount !== "number") {
+    throw new Error("The desktop bridge did not report browser capacity and background host count.");
+  }
   return {
     activeTabId: typeof value.activeTabId === "string" ? value.activeTabId : null,
     visibleSessionId: typeof value.visibleSessionId === "string" ? value.visibleSessionId : null,
     visibleWindowCount: value.visibleWindowCount,
+    tabLimit: value.tabLimit,
+    backgroundWindowCount: value.backgroundWindowCount,
     backgroundWindowVisible: value.backgroundWindowVisible,
     nativeViews: value.nativeViews.map((view) => {
       if (!isRecord(view) || typeof view.attached !== "boolean" || typeof view.aboveApp !== "boolean"
@@ -173,6 +180,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
     app,
     workspace,
     session,
+    sessionApiBase: `/workspace/${encodeURIComponent(workspace.workspaceId)}/${resolveEvalEngine() === "v2" ? "opencode2/api" : "opencode"}/session`,
 
     /** Persist a real transcript link and an attached file without invoking a model. */
     async seedTranscriptLink(sessionId: string) {
@@ -298,8 +306,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
      * reaches the UI command bus stamped with that conversation as its origin,
      * exactly as the OpenWork bridge stamps `openwork_execute` calls.
      */
-    async openTabAs(name: string, ownerSessionId: string): Promise<OpenedTab> {
-      const url = `${origin}/?viewport-probe=${encodeURIComponent(name)}`;
+    async openTabAs(name: string, ownerSessionId: string, url = `${origin}/?viewport-probe=${encodeURIComponent(name)}`): Promise<OpenedTab> {
       const result = await seed.evalIn(
         app,
         browserScript((value) => (window.__openworkControl.command(value)), [{
@@ -422,6 +429,14 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
       ));
     },
 
+    /** Exclude the menu document, but include popups, hidden hosts, and all built-in pages. */
+    async pageTargets() {
+      return (await listTargets(app.handle.cdpUrl))
+        .filter(target => target.type === "page" && !/\/overlay\.html(?:[?#]|$)/.test(target.url))
+        .map(({ id, url }) => ({ id, url }))
+        .sort((a, b) => a.id.localeCompare(b.id));
+    },
+
     /** Resolve a user-opened tab without opening or selecting another page. */
     async tabHandle(tab: BrowserTabState): Promise<BuiltinBrowserTab> {
       const targets = (await listTargets(app.handle.cdpUrl)).filter((target) => target.type === "page" && target.url === tab.url);
@@ -447,7 +462,10 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
         await navigate(client, INPUT_PROBE_PAGE);
         const deadline = Date.now() + 15_000;
         while (Date.now() < deadline) {
-          if ((await evaluate(client, () => (document.title))) === "input-probe") return;
+          if (await evaluate(client, () => (document.readyState === "complete"
+            && document.title === "input-probe"
+            && Boolean(document.getElementById("hit") && document.getElementById("field"))
+            && typeof window.__clicks === "number"))) return;
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
         throw new Error("The input probe page did not load in the built-in browser tab.");
@@ -566,14 +584,6 @@ export async function transcriptLinkWorld(seed: Seed, world: Awaited<ReturnType<
 
     async readClipboard() {
       return evaluate(app.client, () => (navigator.clipboard.readText()), { awaitPromise: true });
-    },
-
-    /** Exclude the menu document, but include popups and all built-in pages. */
-    async pageTargets() {
-      return (await listTargets(app.handle.cdpUrl))
-        .filter(target => target.type === "page" && !/\/overlay\.html(?:[?#]|$)/.test(target.url))
-        .map(({ id, url }) => ({ id, url }))
-        .sort((a, b) => a.id.localeCompare(b.id));
     },
 
     /** Attach to the real WebContentsView, never invoke its choice/close bridge. */

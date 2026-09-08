@@ -15,6 +15,7 @@ import { useDragControls } from "motion/react";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { PanelTab, PanelTabClose, PanelTabItem, PanelTabList } from "@/components/panel-tabs";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/sonner";
 import {
   InputGroup,
   InputGroupAddon,
@@ -187,7 +188,9 @@ function BrowserPanelContent({
   }, [tab.id, tab.url]);
 
   const navigate = React.useCallback(() => {
-    void getElectronBrowser()?.navigate?.(urlInput);
+    void getElectronBrowser()?.navigate?.(urlInput).catch((error: unknown) => {
+      toast.error(error instanceof Error ? error.message : String(error));
+    });
   }, [urlInput]);
 
   const back = React.useCallback(() => {
@@ -274,7 +277,9 @@ function BrowserPanelContent({
         // Naming the conversation lets the native browser put that
         // conversation's tabs on screen and keep every other conversation's
         // tabs silently in the background.
-        browser.show?.(bounds, sessionId);
+        void browser.show?.(bounds, sessionId).catch((error: unknown) => {
+          toast.error(error instanceof Error ? error.message : String(error));
+        });
         shownRef.current = true;
         lastBoundsRef.current = bounds;
         return;

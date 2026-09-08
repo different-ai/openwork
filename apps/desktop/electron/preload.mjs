@@ -196,6 +196,7 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     createTab(url, sessionId) { return ipcRenderer.invoke("openwork:browser:createTab", url, sessionId); },
     closeTab(tabId) { return ipcRenderer.invoke("openwork:browser:closeTab", tabId); },
     closeAllTabs() { return ipcRenderer.invoke("openwork:browser:closeAllTabs"); },
+    closeSessionTabs(sessionId) { return ipcRenderer.invoke("openwork:browser:closeSessionTabs", sessionId); },
     selectTab(tabId) { return ipcRenderer.invoke("openwork:browser:selectTab", tabId); },
     reorderTabs(tabIds) { return ipcRenderer.invoke("openwork:browser:reorderTabs", tabIds); },
     listTabs() { return ipcRenderer.invoke("openwork:browser:listTabs"); },

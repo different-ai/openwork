@@ -20,6 +20,10 @@ const BROWSER_DEFAULT_URL = "about:blank";
 // URL a user-initiated new tab (the "+" button / opening the browser panel)
 // lands on. The agent's programmatic path keeps BROWSER_DEFAULT_URL.
 const BROWSER_NEW_TAB_URL = "https://www.google.com";
+// Bound native page allocation across conversations. Refuse new work rather
+// than evicting a live document (unsaved input and CDP handles cannot be restored
+// from a URL). This is a tab bound, not a Chromium process or memory limit.
+const MAX_BROWSER_TABS = 12;
 const BROWSER_TARGET_RESOLVE_TIMEOUT_MS = 2500;
 const BROWSER_TARGET_RESOLVE_INTERVAL_MS = 80;
 const MENU_OVERLAY_HTML = "overlay.html";
@@ -185,18 +189,25 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     // a queued about:blank navigation would abort this awaited load with
     // ERR_ABORTED and fail the agent's request before the page ever opens.
     const tab = createBrowserTab("about:blank", { select: true, initializeBlank: false, ownerSessionId });
-    await tab.view.webContents.loadURL(browserTargetMarkerUrl(tab.tabId));
-    const targetId = await resolveBrowserCdpTargetId(tab.tabId);
-    await tab.view.webContents.loadURL(url);
-    return {
-      provider: "builtin",
-      browser_url: cdpBrowserUrl(),
-      target_id: targetId,
-      tab_id: tab.tabId,
-      url,
-      owner_session_id: registry.ownerOf(tab.tabId),
-      visible: registry.surfacingFor(tab.tabId) === "foreground",
-    };
+    try {
+      await tab.view.webContents.loadURL(browserTargetMarkerUrl(tab.tabId));
+      const targetId = await resolveBrowserCdpTargetId(tab.tabId);
+      await tab.view.webContents.loadURL(url);
+      return {
+        provider: "builtin",
+        browser_url: cdpBrowserUrl(),
+        target_id: targetId,
+        tab_id: tab.tabId,
+        url,
+        owner_session_id: registry.ownerOf(tab.tabId),
+        visible: registry.surfacingFor(tab.tabId) === "foreground",
+      };
+    } catch (error) {
+      // No usable handle was returned. Retries must not retain unreachable
+      // pages after marker discovery or navigation fails.
+      closeBrowserTab(tab.tabId);
+      throw error;
+    }
   }
 
   function getBrowserTab(tabId = registry.onScreenTabId()) {
@@ -506,12 +517,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
             const browser = request.browsers.find(({ id }) => `browser:${id}` === payload.itemId);
             await browser.open(request.url);
           }
-        } catch {
+        } catch (error) {
           const mainWindow = window();
           if (mainWindow && !mainWindow.isDestroyed()) {
             await dialog.showMessageBox(mainWindow, {
               type: "error", message: "Could not open this link",
-              detail: "Your browser may be unavailable, or your organization may restrict this destination. You can copy the link address instead.",
+              detail: error instanceof Error ? error.message : "Your browser may be unavailable, or your organization may restrict this destination. You can copy the link address instead.",
             });
           }
         }
@@ -600,6 +611,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   });
 
   function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, ownerSessionId = null } = {}) {
+    // Check synchronously before creating a WebContentsView, including pending
+    // opens, popups, transcript links and the tab-strip button.
+    if (browserTabs.size >= MAX_BROWSER_TABS) {
+      throw new Error(`OpenWork has ${MAX_BROWSER_TABS} browser tabs open. Close an unused browser tab in any conversation, then try again.`);
+    }
     installPolicyRequestHook();
     const tabId = createBrowserTabId();
     const view = new WebContentsView({
@@ -685,9 +701,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     view.webContents.on("did-stop-loading", () => sendBrowserState());
     view.webContents.on("focus", () => resetViewportEmulation(view));
     view.webContents.once("destroyed", () => {
-      browserTabs.delete(tabId);
-      registry.remove(tabId);
-      sendBrowserState();
+      // CDP Target.closeTarget and page-initiated close bypass our tab-strip
+      // handler; they must release the native parent and owner state too.
+      closeBrowserTab(tabId);
     });
     if (registry.surfacingFor(tabId) === "background") {
       // Silent: the owner is not on screen. Keep the page real while unseen.
@@ -742,6 +758,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return backgroundWindow;
   }
 
+  function releaseEmptyBackgroundWindow() {
+    if (!backgroundWindow) return;
+    if (!backgroundWindow.isDestroyed() && backgroundWindow.contentView.children.length > 0) return;
+    if (!backgroundWindow.isDestroyed()) backgroundWindow.destroy();
+    backgroundWindow = null;
+  }
+
   // A tab whose conversation is not on screen must still behave like a real
   // page for the agent driving it: lay out at a real viewport, accept typing as
   // a focused page, and paint so CDP screenshots work. Park it in a never-shown
@@ -793,6 +816,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (registry.surfacingFor(tab.tabId) === "background") enterBackgroundMode(tab);
       else exitBackgroundMode(tab);
     }
+    releaseEmptyBackgroundWindow();
   }
 
   function setVisibleSession(sessionId) {
@@ -926,30 +950,29 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (removed && !removed.ownerHasTabs) {
       sendToRenderer("openwork:browser:panel-closed", { ownerSessionId: removed.tab.ownerSessionId });
     }
-    try { tab.view.webContents.close(); } catch { /* already destroyed */ }
+    try {
+      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close({ waitForBeforeUnload: false });
+    } catch { /* already destroyed */ }
+    releaseEmptyBackgroundWindow();
     sendBrowserState();
     return tabId;
   }
 
   function closeAllBrowserTabs() {
     const closedTabIds = registry.list().map((tab) => tab.tabId);
-    if (closedTabIds.length === 0) return [];
-    hideMenuOverlay();
-    const tabsToClose = closedTabIds
-      .map((tabId) => browserTabs.get(tabId))
-      .filter(Boolean);
-    const owners = new Set(closedTabIds.map((tabId) => registry.ownerOf(tabId)));
-    for (const tab of tabsToClose) tab.background = false;
-    hideBrowserView();
-    browserTabs.clear();
-    registry.clear();
-    for (const tab of tabsToClose) {
-      try { tab.view.webContents.close(); } catch { /* already destroyed */ }
-    }
-    for (const ownerSessionId of owners) {
-      sendToRenderer("openwork:browser:panel-closed", { ownerSessionId });
-    }
-    sendBrowserState();
+    for (const tabId of closedTabIds) closeBrowserTab(tabId);
+    return closedTabIds;
+  }
+
+  function closeSessionBrowserTabs(sessionId) {
+    // Missing/malformed ownership must never become a request to close shared
+    // tabs or the currently visible conversation.
+    const ownerSessionId = normalizeSessionId(sessionId);
+    if (!ownerSessionId) return [];
+    const closedTabIds = registry.list()
+      .filter((tab) => tab.ownerSessionId === ownerSessionId)
+      .map((tab) => tab.tabId);
+    for (const tabId of closedTabIds) closeBrowserTab(tabId);
     return closedTabIds;
   }
 
@@ -1060,6 +1083,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     ipcMain.handle("openwork:browser:state", () => ({
       ...browserStatePayload(),
       nativeViews: browserNativeViews(),
+      tabLimit: MAX_BROWSER_TABS,
+      backgroundWindowCount: Number(Boolean(backgroundWindow && !backgroundWindow.isDestroyed())),
       backgroundWindowVisible: Boolean(backgroundWindow && !backgroundWindow.isDestroyed() && backgroundWindow.isVisible()),
       visibleWindowCount: BrowserWindow.getAllWindows().filter((host) => host.isVisible()).length,
     }));
@@ -1071,6 +1096,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     });
     ipcMain.handle("openwork:browser:closeTab", (_event, tabId) => closeBrowserTab(tabId == null ? undefined : String(tabId)));
     ipcMain.handle("openwork:browser:closeAllTabs", () => closeAllBrowserTabs());
+    ipcMain.handle("openwork:browser:closeSessionTabs", (_event, sessionId) => closeSessionBrowserTabs(sessionId));
     ipcMain.handle("openwork:browser:selectTab", (_event, tabId) => {
       const tab = selectBrowserTab(String(tabId ?? ""));
       resetViewportEmulation(tab.view);
