@@ -18,9 +18,7 @@ const expectedChoices = [
   "Skill",
   "Command",
   "Agent",
-  "Plugin",
-  "Organization MCP",
-  "Workspace MCP",
+  "Local MCP",
   "Connection",
 ];
 const expectedConnectorCues = [
@@ -191,7 +189,7 @@ test(title, async ({ evidence, place }) => {
   expect(picker.lightTileBackgrounds).toEqual(expectedConnectorCues.map(() => "rgb(255, 255, 255)"));
   expect(picker.darkTileBackgrounds).toEqual(expectedConnectorCues.map(() => "rgb(255, 255, 255)"));
   evidence.recordAssertionEvidence(
-    "Add to your Library is one responsive seven-choice surface with recognizable hosted-service cues",
+    "Add to your Library is one responsive five-choice surface with recognizable hosted-service cues",
     `At 820×760 the picker rendered ${JSON.stringify(picker)}.`,
     JSON.stringify(picker.choices) === JSON.stringify(expectedChoices)
       && picker.radioGroups === 1
@@ -218,7 +216,7 @@ test(title, async ({ evidence, place }) => {
   {
     const shot = await screenshot(desktop);
     const seen = await validate(shot, [
-      "The Add to your Library dialog presents Skill, Command, Agent, Plugin, Organization MCP, Workspace MCP, and Connection as one continuous selection surface",
+      "The Add to your Library dialog presents Skill, Command, Agent, Local MCP, and Connection as one continuous selection surface",
       "The Connection choice visibly includes a compact row of recognizable service marks for Notion, Slack, Google Workspace, Microsoft 365, and Linear",
       "The dialog has no separate WHAT ARE YOU MAKING or OR CONNECT SOMETHING sections",
       "The dialog, descriptions, connector marks, Cancel button, and Continue button fit within the desktop viewport without clipping",
@@ -263,7 +261,7 @@ test(title, async ({ evidence, place }) => {
       "The Add to your Library dialog is visibly rendered in a dark theme",
       "Connection is the selected choice and remains in the same continuous list as the OpenWork creation and MCP choices",
       "The Connection choice visibly includes recognizable marks for Notion, Slack, Google Workspace, Microsoft 365, and Linear",
-      "The dark-theme dialog, all seven choices, descriptions, connector marks, Cancel button, and Continue button fit within the desktop viewport without clipping",
+      "The dark-theme dialog, all five choices, descriptions, connector marks, Cancel button, and Continue button fit within the desktop viewport without clipping",
     ]);
     expect(seen.ok, seen.why).toBe(true);
   } finally {

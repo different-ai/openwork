@@ -8,9 +8,9 @@ const pickerSource = readFileSync(
 );
 
 describe("Add to your Library picker presentation", () => {
-  test("renders all seven choices in one responsive selection surface", () => {
+  test("renders all five choices in one responsive selection surface", () => {
     expect(pickerSource.match(/role="radiogroup"/g)).toHaveLength(1);
-    expect(pickerSource).toContain('"skill",\n  "command",\n  "agent",\n  "plugin",\n  "mcp",\n  "workspace-mcp",\n  "connection"');
+    expect(pickerSource).toContain('"skill",\n  "command",\n  "agent",\n  "workspace-mcp",\n  "connection"');
     expect(pickerSource).not.toContain("function KindSection");
     expect(pickerSource).not.toContain('t("extensions.add_picker_make")');
     expect(pickerSource).not.toContain('t("extensions.add_picker_connect")');

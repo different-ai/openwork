@@ -690,7 +690,7 @@ export default {
   "extensions.kind_plugin_hint": "Skills, commands and servers bundled together.",
   "extensions.kind_mcp": "Organization MCP",
   "extensions.kind_mcp_hint": "Add a remote MCP server to your organization Library.",
-  "extensions.kind_workspace_mcp": "Workspace MCP",
+  "extensions.kind_workspace_mcp": "Local MCP",
   "extensions.kind_workspace_mcp_hint": "Connect an MCP server in this workspace.",
   "extensions.kind_connection": "Connection",
   "extensions.kind_connection_hint": "Browse hosted services and manage setup for this organization in OpenWork Den.",
