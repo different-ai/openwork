@@ -94,6 +94,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   const submittingRef = useRef(false);
   const draftRevisionRef = useRef(0);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
+  const [pendingAttachmentNames, setPendingAttachmentNames] = useState<string[]>([]);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [failedSubmission, setFailedSubmission] = useState<{ text: string; attachments: ComposerAttachment[]; pastedText: PastedTextChip[] } | null>(null);
   const draftRef = useRef(props.draft);
@@ -259,6 +260,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     const resolved = resolvePastedTextPlaceholders(originalDraft, pastedText);
     const saved = { text: originalDraft, attachments, pastedText };
     setPendingPrompt(resolved.replace(/\[attachment [^\]]+\]/g, ""));
+    setPendingAttachmentNames(attachments.map((attachment) => attachment.name));
     setSubmissionError(null);
     props.onDraftChange("");
     draftRef.current = "";
@@ -276,6 +278,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       }
       setSubmissionError(error instanceof Error ? error.message : "Could not create the conversation. Try again.");
       setPendingPrompt(null);
+      setPendingAttachmentNames([]);
       submittingRef.current = false;
     }
   };
@@ -287,7 +290,17 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
 
   return (
     <>
-    {pendingPrompt !== null ? <div className="mb-4 whitespace-pre-wrap rounded-xl bg-muted px-4 py-3 text-sm" data-message-role="user">{pendingPrompt}</div> : null}
+    {pendingPrompt !== null ? <div className="mb-4 whitespace-pre-wrap rounded-xl bg-muted px-4 py-3 text-sm" data-message-role="user">
+      {pendingPrompt}
+      {pendingAttachmentNames.length > 0 ? <div role="status" className="mt-2 flex flex-wrap gap-2">
+        {pendingAttachmentNames.map((name, index) => (
+          <span key={index} className="inline-flex max-w-full items-center gap-2 rounded-xl border border-border/70 px-2 py-1 text-xs text-muted-foreground" data-attachment-status="preparing">
+            <span className="truncate" title={name}>{name}</span>
+            <span className="shrink-0">Preparing attachment...</span>
+          </span>
+        ))}
+      </div> : null}
+    </div> : null}
     {submissionError ? <div role="alert" className="mb-2 text-sm text-red-11">{submissionError}</div> : null}
     {failedSubmission ? <button type="button" disabled={Boolean(props.draft || attachments.length)} className="mb-2 text-sm disabled:opacity-50" onClick={() => {
       props.onDraftChange(failedSubmission.text);
