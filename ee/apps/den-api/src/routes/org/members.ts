@@ -189,6 +189,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
       removedByOrgMemberId: payload.currentMember.id,
     })
     if (!removed.ok) {
+      if (removed.error === "forbidden") return c.json({ error: removed.error, message: removed.message }, 403)
       if (removed.error === "member_not_found") {
         return c.json({ error: removed.error, message: removed.message }, 404)
       }

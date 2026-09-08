@@ -6,6 +6,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
 import { db } from "../../db.js"
+import { invitationHasAdminTeam, withOrganizationTeamMutation } from "../../organization-team-roles.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
@@ -15,7 +16,7 @@ import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationM
 import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { buildInvitationLink, createInvitationId, createInvitationToken, ensureInviteManager, idParamSchema, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
+import { buildInvitationLink, createInvitationId, createInvitationToken, ensureInviteManager, ensureOrganizationSuperAdmin, idParamSchema, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
 
 const inviteMemberSchema = z.object({
   email: z.string().email(),
@@ -174,6 +175,10 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       }
 
       if (existingInvitation) {
+        if (await invitationHasAdminTeam(tx, existingInvitation)) {
+          const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage invitations with Admin team access.")
+          if (!permission.ok) return { status: "team_forbidden" as const, response: permission.response }
+        }
         const refreshRole = validateInvitationRefreshRole({
           existingRole: existingInvitation.role,
           availableRoles,
@@ -274,6 +279,9 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         error: "member_exists",
         message: "That email address is already a member of this organization.",
       }, 409)
+    }
+    if (invitationWrite.status === "team_forbidden") {
+      return c.json(invitationWrite.response, 403)
     }
     if (invitationWrite.status === "role_error") {
       const validation = invitationWrite.validation
@@ -399,13 +407,15 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       return c.json({ error: "invitation_not_found" }, 404)
     }
 
-    const cancellation = await db.transaction(async (tx) => {
+    const cancellation = await withOrganizationTeamMutation(payload.organization.id, async (tx) => {
       const invitationRows = await tx
         .select({
           id: InvitationTable.id,
           email: InvitationTable.email,
           role: InvitationTable.role,
           status: InvitationTable.status,
+          organizationId: InvitationTable.organizationId,
+          teamId: InvitationTable.teamId,
         })
         .from(InvitationTable)
         .where(and(eq(InvitationTable.id, invitationId), eq(InvitationTable.organizationId, payload.organization.id)))
@@ -416,6 +426,10 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       }
       if (invitation.status !== "pending") {
         return { status: "not_pending" as const, invitation }
+      }
+      if (await invitationHasAdminTeam(tx, invitation)) {
+        const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can cancel invitations with Admin team access.")
+        if (!permission.ok) return { status: "team_forbidden" as const, response: permission.response }
       }
 
       const invitedMemberRows = await tx
@@ -438,6 +452,9 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
 
     if (cancellation.status === "not_found") {
       return c.json({ error: "invitation_not_found" }, 404)
+    }
+    if (cancellation.status === "team_forbidden") {
+      return c.json(cancellation.response, 403)
     }
 
     if (cancellation.status === "not_pending") {

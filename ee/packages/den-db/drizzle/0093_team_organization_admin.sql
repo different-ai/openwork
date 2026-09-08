@@ -1,0 +1,1 @@
+ALTER TABLE `team` ADD `grants_organization_admin` boolean DEFAULT false NOT NULL;

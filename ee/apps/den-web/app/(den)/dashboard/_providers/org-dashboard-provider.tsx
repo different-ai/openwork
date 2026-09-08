@@ -49,7 +49,7 @@ type OrgDashboardContextValue = {
   removeMember: (memberId: string) => Promise<void>;
   transferOwnership: (memberId: string) => Promise<void>;
   createTeam: (input: { name: string; memberIds: string[] }) => Promise<void>;
-  updateTeam: (teamId: string, input: { name?: string; memberIds?: string[] }) => Promise<void>;
+  updateTeam: (teamId: string, input: { name?: string; memberIds?: string[]; grantsOrganizationAdmin?: boolean }) => Promise<void>;
   deleteTeam: (teamId: string) => Promise<void>;
   createRole: (input: { roleName: string; permission: Record<string, string[]> }) => Promise<void>;
   updateRole: (roleId: string, input: { roleName?: string; permission?: Record<string, string[]> }) => Promise<void>;
@@ -784,7 +784,7 @@ export function OrgDashboardProvider({
     });
   }
 
-  async function updateTeam(teamId: string, input: { name?: string; memberIds?: string[] }) {
+  async function updateTeam(teamId: string, input: { name?: string; memberIds?: string[]; grantsOrganizationAdmin?: boolean }) {
     if (!getCurrentAccess().canManageTeams) {
       throw new Error("Only workspace admins can manage teams.");
     }

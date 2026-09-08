@@ -19,6 +19,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { isScimManagedTeam } from "../../scim-groups.js"
+import { withOrganizationTeamMutation } from "../../organization-team-roles.js"
 import {
   jsonValidator,
   orgRoleRoute,
@@ -28,6 +29,7 @@ import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, 
 import type { OrgRouteVariables } from "./shared.js"
 import {
   ensureTeamManager,
+  ensureOrganizationSuperAdmin,
   idParamSchema,
   orgAccessFailureStatus,
 } from "./shared.js"
@@ -35,13 +37,15 @@ import {
 const createTeamSchema = z.object({
   name: z.string().trim().min(1).max(255),
   memberIds: z.array(denTypeIdSchema("member")).optional().default([]),
+  grantsOrganizationAdmin: z.boolean().optional(),
 })
 
 const updateTeamSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
   memberIds: z.array(denTypeIdSchema("member")).optional(),
+  grantsOrganizationAdmin: z.boolean().optional(),
 }).superRefine((value, ctx) => {
-  if (value.name === undefined && value.memberIds === undefined) {
+  if (value.name === undefined && value.memberIds === undefined && value.grantsOrganizationAdmin === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["name"],
@@ -65,6 +69,7 @@ const teamResponseSchema = z.object({
     updatedAt: z.string().datetime(),
       memberIds: z.array(denTypeIdSchema("member")),
       managedByScim: z.boolean(),
+      grantsOrganizationAdmin: z.boolean(),
   }),
 }).meta({ ref: "TeamResponse" })
 
@@ -79,12 +84,12 @@ function parseMemberIds(memberIds: string[]) {
 async function ensureMembersBelongToOrganization(input: {
   organizationId: typeof TeamTable.$inferSelect.organizationId
   memberIds: MemberId[]
-}) {
+}, database: Pick<typeof db, "select"> = db) {
   if (input.memberIds.length === 0) {
     return true
   }
 
-  const rows = await db
+  const rows = await database
     .select({ id: MemberTable.id })
     .from(MemberTable)
     .where(and(eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
@@ -94,9 +99,14 @@ async function ensureMembersBelongToOrganization(input: {
 }
 
 async function createTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof createTeamSchema>, externalKey?: string) {
+  return withOrganizationTeamMutation(payload.organization.id, async (tx) => {
   const permission = ensureTeamManager(c)
   if (!permission.ok) {
     return c.json(permission.response, orgAccessFailureStatus(permission.response))
+  }
+  if (input.grantsOrganizationAdmin !== undefined) {
+    const rolePermission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can designate an Admin team.")
+    if (!rolePermission.ok) return c.json(rolePermission.response, orgAccessFailureStatus(rolePermission.response))
   }
 
   let memberIds: MemberId[]
@@ -109,12 +119,12 @@ async function createTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   const membersBelongToOrg = await ensureMembersBelongToOrganization({
     organizationId: payload.organization.id,
     memberIds,
-  })
+  }, tx)
   if (!membersBelongToOrg) {
     return c.json({ error: "member_not_found" }, 404)
   }
 
-  const existingTeam = await db
+  const existingTeam = await tx
     .select({ id: TeamTable.id })
     .from(TeamTable)
     .where(and(eq(TeamTable.organizationId, payload.organization.id), eq(TeamTable.name, input.name)))
@@ -127,12 +137,12 @@ async function createTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   const teamId = createDenTypeId("team")
   const now = new Date()
 
-  await db.transaction(async (tx) => {
     await tx.insert(TeamTable).values({
       externalKey,
       id: teamId,
       name: input.name,
       organizationId: payload.organization.id,
+      grantsOrganizationAdmin: input.grantsOrganizationAdmin ?? false,
       createdAt: now,
       updatedAt: now,
     })
@@ -147,7 +157,6 @@ async function createTeam(c: ResourceActionContext, payload: ResourceOrganizatio
         })),
       )
     }
-  })
 
   return c.json({
     team: {
@@ -159,11 +168,14 @@ async function createTeam(c: ResourceActionContext, payload: ResourceOrganizatio
       updatedAt: now,
       memberIds,
       managedByScim: false,
+      grantsOrganizationAdmin: input.grantsOrganizationAdmin ?? false,
     },
   }, 201)
+  })
 }
 
 async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof updateTeamSchema>) {
+  return withOrganizationTeamMutation(payload.organization.id, async (tx) => {
   const permission = ensureTeamManager(c)
   if (!permission.ok) {
     return c.json(permission.response, orgAccessFailureStatus(permission.response))
@@ -176,7 +188,7 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     return c.json({ error: "team_not_found" }, 404)
   }
 
-  const teamRows = await db
+  const teamRows = await tx
     .select()
     .from(TeamTable)
     .where(and(eq(TeamTable.id, teamId), eq(TeamTable.organizationId, payload.organization.id)))
@@ -186,8 +198,13 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   if (!team) {
     return c.json({ error: "team_not_found" }, 404)
   }
-  if (await isScimManagedTeam({ organizationId: payload.organization.id, teamId: team.id })) {
+  const managedByScim = await isScimManagedTeam({ organizationId: payload.organization.id, teamId: team.id }, tx)
+  if (managedByScim && (input.name !== undefined || input.memberIds !== undefined)) {
     return c.json({ error: "scim_managed_team", message: "Manage this team through the SCIM identity provider." }, 409)
+  }
+  if (input.grantsOrganizationAdmin !== undefined || (team.grantsOrganizationAdmin && input.memberIds !== undefined)) {
+    const rolePermission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage Admin team grants and membership.")
+    if (!rolePermission.ok) return c.json(rolePermission.response, orgAccessFailureStatus(rolePermission.response))
   }
 
   let memberIds: MemberId[] | undefined
@@ -201,14 +218,14 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     const membersBelongToOrg = await ensureMembersBelongToOrganization({
       organizationId: payload.organization.id,
       memberIds,
-    })
+    }, tx)
     if (!membersBelongToOrg) {
       return c.json({ error: "member_not_found" }, 404)
     }
   }
 
   const nextName = input.name ?? team.name
-  const duplicate = await db
+  const duplicate = await tx
     .select({ id: TeamTable.id })
     .from(TeamTable)
     .where(and(eq(TeamTable.organizationId, payload.organization.id), eq(TeamTable.name, nextName)))
@@ -219,14 +236,13 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   }
 
   const updatedAt = new Date()
-  const responseMemberIds = memberIds ?? (await db
+  const responseMemberIds = memberIds ?? (await tx
     .select({ id: TeamMemberTable.orgMembershipId })
     .from(TeamMemberTable)
     .where(eq(TeamMemberTable.teamId, team.id)))
     .map((row) => row.id)
 
-  await db.transaction(async (tx) => {
-    await tx.update(TeamTable).set({ name: nextName, updatedAt }).where(eq(TeamTable.id, team.id))
+    await tx.update(TeamTable).set({ name: nextName, updatedAt, grantsOrganizationAdmin: input.grantsOrganizationAdmin }).where(eq(TeamTable.id, team.id))
 
     if (memberIds) {
       await tx.delete(TeamMemberTable).where(eq(TeamMemberTable.teamId, team.id))
@@ -241,7 +257,6 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
         )
       }
     }
-  })
 
   return c.json({
     team: {
@@ -249,12 +264,15 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
       name: nextName,
       updatedAt,
       memberIds: responseMemberIds,
-      managedByScim: false,
+      managedByScim,
+      grantsOrganizationAdmin: input.grantsOrganizationAdmin ?? team.grantsOrganizationAdmin,
     },
+  })
   })
 }
 
 async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
+  return withOrganizationTeamMutation(payload.organization.id, async (tx) => {
   const permission = ensureTeamManager(c)
   if (!permission.ok) {
     return c.json(permission.response, orgAccessFailureStatus(permission.response))
@@ -267,7 +285,7 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     return c.json({ error: "team_not_found" }, 404)
   }
 
-  const teamRows = await db
+  const teamRows = await tx
     .select()
     .from(TeamTable)
     .where(and(eq(TeamTable.id, teamId), eq(TeamTable.organizationId, payload.organization.id)))
@@ -277,11 +295,14 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   if (!team) {
     return c.json({ error: "team_not_found" }, 404)
   }
-  if (await isScimManagedTeam({ organizationId: payload.organization.id, teamId: team.id })) {
+  if (await isScimManagedTeam({ organizationId: payload.organization.id, teamId: team.id }, tx)) {
     return c.json({ error: "scim_managed_team", message: "Disable SCIM team mapping before deleting this team." }, 409)
   }
+  if (team.grantsOrganizationAdmin) {
+    const rolePermission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can delete Admin teams.")
+    if (!rolePermission.ok) return c.json(rolePermission.response, orgAccessFailureStatus(rolePermission.response))
+  }
 
-  await db.transaction(async (tx) => {
     const removedAt = new Date()
 
     await tx
@@ -316,9 +337,9 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
 
     await tx.delete(TeamMemberTable).where(eq(TeamMemberTable.teamId, team.id))
     await tx.delete(TeamTable).where(eq(TeamTable.id, team.id))
-  })
 
   return c.body(null, 204)
+  })
 }
 
 export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {

@@ -9,6 +9,7 @@ import {
   MemberTable,
   OrganizationRoleTable,
   OrganizationTable,
+  ScimGroupMemberTable,
   ScimProviderTable,
   ScimUserTombstoneTable,
   SsoConnectionTable,
@@ -32,6 +33,7 @@ import {
 } from "./organization-member-guards.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { getScimManagedTeamIds } from "./scim-groups.js"
+import { effectiveOrganizationRole, listOrganizationAdminTeamGrants, withOrganizationTeamMutation, type OrganizationAdminTeam } from "./organization-team-roles.js"
 import {
   DEFAULT_ORGANIZATION_LIMITS,
   normalizeOrganizationMetadata,
@@ -45,7 +47,7 @@ import {
   type OrganizationPermissionRecord,
 } from "./organization-access.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "./desktop-policies.js"
-import { isProtectedOrganizationRoleName, shouldRevokeSessionsForRoleChange } from "./organization-role-hierarchy.js"
+import { isProtectedOrganizationRoleName, organizationRoleValueSatisfies, shouldRevokeSessionsForRoleChange } from "./organization-role-hierarchy.js"
 import { appLogger } from "./observability/logger.js"
 import { isSingleOrgOwnerEmailEligible, resolveSingleOrgMembershipRole } from "./single-org-policy.js"
 
@@ -76,7 +78,7 @@ type MemberLifecycleValidationFailure = Extract<MemberLifecycleValidation, { ok:
 
 type MemberMutationFailure = {
   ok: false
-  error: "member_not_found" | MemberLifecycleValidationFailure["error"]
+  error: "member_not_found" | "forbidden" | MemberLifecycleValidationFailure["error"]
   message: string
 }
 
@@ -148,7 +150,10 @@ export type UserOrgSummary = {
   slug: string
   logo: string | null
   metadata: string | null
+  allowedEmailDomains: AllowedEmailDomains
   role: string
+  directRole: string
+  adminTeams: OrganizationAdminTeam[]
   orgMemberId: string
   membershipId: string
   memberCount: number
@@ -171,6 +176,8 @@ export type OrganizationContext = {
     id: MemberId
     userId: UserId
     role: string
+    directRole: string
+    adminTeams: OrganizationAdminTeam[]
     createdAt: Date
     joinedAt: Date | null
     isOwner: boolean
@@ -180,6 +187,8 @@ export type OrganizationContext = {
     userId: UserId | null
     inviteId: InvitationRow["id"] | null
     role: string
+    effectiveRole: string
+    adminTeams: OrganizationAdminTeam[]
     createdAt: Date
     joinedAt: Date | null
     isOwner: boolean
@@ -215,6 +224,7 @@ export type OrganizationContext = {
     updatedAt: Date
     memberIds: MemberId[]
     managedByScim: boolean
+    grantsOrganizationAdmin: boolean
   }>
 }
 
@@ -718,7 +728,7 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
   }
 
   const availableRoles = await listAssignableRoles(invitation.organizationId)
-  return db.transaction(async (tx) => {
+  return withOrganizationTeamMutation(invitation.organizationId, async (tx) => {
     const lockedInvitations = await tx
       .select()
       .from(InvitationTable)
@@ -861,7 +871,7 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
 
     if (currentInvitation.teamId) {
       const teams = await tx
-        .select({ id: TeamTable.id })
+        .select({ id: TeamTable.id, grantsOrganizationAdmin: TeamTable.grantsOrganizationAdmin })
         .from(TeamTable)
         .where(and(
           eq(TeamTable.id, currentInvitation.teamId),
@@ -876,7 +886,15 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
           .where(and(eq(TeamMemberTable.teamId, currentInvitation.teamId), eq(TeamMemberTable.orgMembershipId, member.id)))
           .limit(1)
 
-        if (!existingTeamMember[0]) {
+        const inviters = currentInvitation.orgMemberId ? await tx.select({ role: MemberTable.role })
+          .from(MemberTable).where(and(
+            eq(MemberTable.id, currentInvitation.orgMemberId),
+            eq(MemberTable.organizationId, currentInvitation.organizationId),
+            isNull(MemberTable.removedAt),
+          )).limit(1) : []
+        const mayAssignTeam = !teams[0].grantsOrganizationAdmin || (inviters[0] && organizationRoleValueSatisfies({ roleValue: inviters[0].role, requiredRole: "super-admin" }))
+        const scimTeams = await getScimManagedTeamIds(currentInvitation.organizationId, tx)
+        if (!existingTeamMember[0] && mayAssignTeam && !scimTeams.has(teams[0].id)) {
           await tx.insert(TeamMemberTable).values({
             id: createDenTypeId("teamMember"),
             teamId: currentInvitation.teamId,
@@ -1460,20 +1478,26 @@ export async function listUserOrgs(userId: UserId) {
     }
   }
 
-  return memberships.map((row) => ({
-    id: row.organization.id,
-    name: row.organization.name,
-    slug: row.organization.slug,
-    logo: row.organization.logo,
-    allowedEmailDomains: normalizeStoredAllowedEmailDomains(row.organization.allowedEmailDomains),
-    metadata: serializeMemberFacingOrganizationMetadata(row.organization.metadata),
-    role: row.role,
-    orgMemberId: row.membershipId,
-    membershipId: row.membershipId,
-    memberCount: memberCounts.get(row.organization.id) ?? 0,
-    createdAt: row.organization.createdAt,
-    updatedAt: row.organization.updatedAt,
-  })) satisfies UserOrgSummary[]
+  return Promise.all(memberships.map(async (row) => {
+    const grants = await listOrganizationAdminTeamGrants(row.organization.id)
+    const adminTeams = grants.filter((grant) => grant.memberId === row.membershipId).map(({ id, name }) => ({ id, name }))
+    return {
+      id: row.organization.id,
+      name: row.organization.name,
+      slug: row.organization.slug,
+      logo: row.organization.logo,
+      allowedEmailDomains: normalizeStoredAllowedEmailDomains(row.organization.allowedEmailDomains),
+      metadata: serializeMemberFacingOrganizationMetadata(row.organization.metadata),
+      role: effectiveOrganizationRole(row.role, adminTeams),
+      directRole: row.role,
+      adminTeams,
+      orgMemberId: row.membershipId,
+      membershipId: row.membershipId,
+      memberCount: memberCounts.get(row.organization.id) ?? 0,
+      createdAt: row.organization.createdAt,
+      updatedAt: row.organization.updatedAt,
+    } satisfies UserOrgSummary
+  }))
 }
 
 export async function resolveUserOrganizations(input: {
@@ -1567,6 +1591,11 @@ export async function getOrganizationContextForUser(input: {
     .orderBy(asc(OrganizationRoleTable.createdAt))
 
   const teams = await listOrganizationTeams(organization.id)
+  const adminGrants = await listOrganizationAdminTeamGrants(organization.id)
+  const adminTeamsFor = (memberId: MemberId) => adminGrants
+    .filter((grant) => grant.memberId === memberId)
+    .map(({ id, name }) => ({ id, name }))
+  const currentAdminTeams = adminTeamsFor(currentMember.id)
 
   return {
     organization: {
@@ -1582,12 +1611,17 @@ export async function getOrganizationContextForUser(input: {
     currentMember: {
       id: currentMember.id,
       userId: currentMember.userId,
-      role: currentMember.role,
+      role: effectiveOrganizationRole(currentMember.role, currentAdminTeams),
+      directRole: currentMember.role,
+      adminTeams: currentAdminTeams,
       createdAt: currentMember.createdAt,
       joinedAt: currentMember.joinedAt,
       isOwner: roleIncludesOwner(currentMember.role),
     },
-    members,
+    members: members.map((member) => {
+      const adminTeams = adminTeamsFor(member.id)
+      return { ...member, adminTeams, effectiveRole: effectiveOrganizationRole(member.role, adminTeams) }
+    }),
     invitations,
     roles: [
       {
@@ -1624,6 +1658,7 @@ async function listOrganizationTeams(organizationId: OrgId) {
         name: TeamTable.name,
         createdAt: TeamTable.createdAt,
         updatedAt: TeamTable.updatedAt,
+        grantsOrganizationAdmin: TeamTable.grantsOrganizationAdmin,
       })
       .from(TeamTable)
       .where(eq(TeamTable.organizationId, organizationId))
@@ -1969,7 +2004,7 @@ export async function removeOrganizationMember(input: {
   memberId: MemberRow["id"]
   removedByOrgMemberId?: MemberRow["id"]
 }): Promise<MemberMutationResult> {
-  const removed = await db.transaction(async (tx): Promise<MemberMutationResult> => {
+  const removed = await withOrganizationTeamMutation(input.organizationId, async (tx): Promise<MemberMutationResult> => {
     const activeRows = await tx
       .select({ member: MemberTable, userId: AuthUserTable.id })
       .from(MemberTable)
@@ -1996,6 +2031,17 @@ export async function removeOrganizationMember(input: {
 
     const member = memberRow.member
 
+    if (input.removedByOrgMemberId) {
+      const adminTeams = await tx.select({ id: TeamTable.id }).from(TeamTable)
+        .innerJoin(TeamMemberTable, eq(TeamMemberTable.teamId, TeamTable.id))
+        .where(and(eq(TeamTable.organizationId, input.organizationId), eq(TeamTable.grantsOrganizationAdmin, true), eq(TeamMemberTable.orgMembershipId, member.id)))
+        .limit(1)
+      const actor = activeRows.find((row) => row.member.id === input.removedByOrgMemberId)
+      if (adminTeams.length > 0 && (!actor || !organizationRoleValueSatisfies({ roleValue: actor.member.role, requiredRole: "super-admin" }))) {
+        return { ok: false, error: "forbidden", message: "Only workspace owners and super-admins can remove members with Admin team access." }
+      }
+    }
+
     await tx
       .delete(ConnectedAccountTable)
       .where(and(
@@ -2013,6 +2059,10 @@ export async function removeOrganizationMember(input: {
     await tx
       .delete(TeamMemberTable)
       .where(eq(TeamMemberTable.orgMembershipId, member.id))
+
+    await tx.update(ScimGroupMemberTable)
+      .set({ userId: null, orgMembershipId: null, teamMemberId: null, updatedAt: new Date() })
+      .where(and(eq(ScimGroupMemberTable.organizationId, input.organizationId), eq(ScimGroupMemberTable.orgMembershipId, member.id)))
 
     await tx
       .delete(LlmProviderAccessTable)
