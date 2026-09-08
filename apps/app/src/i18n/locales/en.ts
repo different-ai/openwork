@@ -1810,7 +1810,7 @@ export default {
   "settings.update_keep_working": "Keep working",
   "settings.update_restart_confirm_action": "Restart & update",
   "settings.update_restart_now_title": "Restart {appName}?",
-  "settings.update_restart_now_message": "{appName} will close and reopen with the latest version. Running tasks will be interrupted. You can keep working and the update will install when you quit.",
+  "settings.update_restart_now_message": "{appName} will close and reopen with the latest version. Eligible running tasks resume gradually after restart; tasks waiting for input or with an uncertain outcome stay paused. You can keep working and the update will install when you quit.",
   "settings.update_install_button": "Install & restart",
   "settings.update_install_failed": "Couldn't install the update",
   "settings.update_last_checked": "Last checked {time}",

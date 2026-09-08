@@ -1,4 +1,5 @@
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
+import { createTaskRecovery, setTaskRecovery } from "./task-recovery.js";
 import { managedPolicyActionSchema } from "./managed-policy-rules.js";
 import { readFile, realpath, writeFile, rm, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
@@ -713,6 +714,7 @@ function isPromptAsyncProxyRequest(method: string, proxyPath: string) {
 }
 
 export async function startServer(config: ServerConfig): Promise<ServeResult> {
+  let taskRecovery: Awaited<ReturnType<typeof createTaskRecovery>> | undefined;
   const approvals = new ApprovalService(config.approval);
   const uiControl = new UiControlMailbox();
   const reloadEvents = new ReloadEventStore();
@@ -843,7 +845,9 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           await assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, mount.restPath);
           proxyService = "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
-          const response = await proxyOpencodeRequest({ config, request, url, workspace, proxyPath: mount.restPath });
+          const send = () => proxyOpencodeRequest({ config, request, url, workspace, proxyPath: mount.restPath,
+            recoverySignal: taskRecovery?.owns(request) ? request.signal : undefined });
+          const response = taskRecovery ? await taskRecovery.forward(workspace, "v1", mount.restPath, request, send) : await send();
           return finalize(response);
         } catch (error) {
           const requestCanceled = isExpectedRequestCancellation(error, request.signal);
@@ -877,14 +881,16 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           // Reconcile through v2's runtime MCP API before the next call. The
           // ordinary connection routes remain authoritative; v1 is untouched.
           await engineV2Preview.syncWorkspaceMcp(workspace.id, workspace.path);
-          const response = await proxyOpencodeV2Request({
+          const send = () => proxyOpencodeV2Request({
             config,
             request,
             url,
             workspace,
             proxyPath: mount.restPath,
             connection,
+            recoverySignal: taskRecovery?.owns(request) ? request.signal : undefined,
           });
+          const response = taskRecovery ? await taskRecovery.forward(workspace, "v2", mount.restPath, request, send) : await send();
           return finalize(response);
         } catch (error) {
           const requestCanceled = isExpectedRequestCancellation(error, request.signal);
@@ -949,7 +955,8 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           if (workspace) {
             await assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, url.pathname);
           }
-          const response = await proxyOpencodeRequest({ config, request, url, workspace });
+          const send = () => proxyOpencodeRequest({ config, request, url, workspace });
+          const response = taskRecovery && workspace ? await taskRecovery.forward(workspace, "v1", url.pathname, request, send) : await send();
           return finalize(response);
         } catch (error) {
           const requestCanceled = isExpectedRequestCancellation(error, request.signal);
@@ -1032,11 +1039,17 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
 
   let server: ServeResult;
   try {
+    if (config.resumeInterruptedTasks && !config.readOnly) {
+      taskRecovery = await createTaskRecovery(config, async (request) => serverOptions.fetch(request),
+        () => managedDesktopPolicy(config).assert("sync"));
+      setTaskRecovery(config, taskRecovery);
+    }
     server = await serve({
       ...serverOptions,
       idleTimeout: 120,
     });
   } catch (error) {
+    await taskRecovery?.stop().catch(() => undefined);
     captureServerException(error, { method: "START", route: "startServer" });
     cloudProviderSync.stop();
     await engineV2Preview.stop().catch(() => undefined);
@@ -1082,6 +1095,8 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   return {
     ...server,
     stop: async () => {
+      let recoveryError: unknown;
+      try { await taskRecovery?.stop(); } catch (error) { recoveryError = error; }
       managedDesktopPolicy(config).onChange = undefined;
       cloudProviderSync.stop();
       await engineV2Preview.stop().catch(() => undefined);
@@ -1091,6 +1106,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
       watcherHandle.close();
       reloadBaselineRefreshers.delete(config);
       await server.stop();
+      if (recoveryError) throw recoveryError;
     },
   };
 }
@@ -1110,6 +1126,7 @@ async function proxyOpencodeV2Request(input: {
   workspace: WorkspaceInfo;
   proxyPath: string;
   connection: { url: string; username: string; password: string };
+  recoverySignal?: AbortSignal;
 }): Promise<Response> {
   const method = input.request.method.toUpperCase();
   if (method !== "GET" && method !== "HEAD") ensureWritable(input.config);
@@ -1224,7 +1241,7 @@ async function proxyOpencodeV2Request(input: {
     headers.delete("content-length");
     headers.set("content-type", "application/json");
   }
-  const response = await loopbackFetch(target.toString(), { method, headers, body });
+  const response = await loopbackFetch(target.toString(), { method, headers, body, signal: input.recoverySignal });
   if (method === "GET" && /^\/api\/provider(?:\/|$)/.test(decodeURIComponent(forwardedPath)) && response.ok) {
     // Provider.Info includes request settings/headers, which may contain the
     // mirrored server-owned key. Clients only need public catalog metadata.
@@ -1447,6 +1464,7 @@ export async function proxyOpencodeRequest(input: {
   url: URL;
   workspace?: WorkspaceInfo;
   proxyPath?: string;
+  recoverySignal?: AbortSignal;
 }) {
   const workspace = input.workspace;
   const proxyPath = input.proxyPath ?? input.url.pathname;
@@ -1572,7 +1590,7 @@ export async function proxyOpencodeRequest(input: {
   const forward = async () => {
     let response: Response;
     try {
-      response = await loopbackFetch(targetUrl, { method, headers, body });
+      response = await loopbackFetch(targetUrl, { method, headers, body, signal: input.recoverySignal });
       enginePoolForConfig(input.config)?.reportRequestSuccess(baseUrl);
     } catch (error) {
       if (workspace) enginePoolForConfig(input.config)?.reportRequestFailure(baseUrl, error, workspace);
@@ -1586,7 +1604,7 @@ export async function proxyOpencodeRequest(input: {
       try {
         fallbackResponse = await loopbackFetch(
           buildOpencodeProxyUrl(route.fallback.baseUrl, proxyPath, search),
-          { method, headers: fallbackHeaders, body },
+          { method, headers: fallbackHeaders, body, signal: input.recoverySignal },
         );
       } catch (error) {
         if (workspace) enginePoolForConfig(input.config)?.reportRequestFailure(route.fallback.baseUrl, error, workspace);

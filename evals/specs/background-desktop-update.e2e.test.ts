@@ -40,6 +40,7 @@ test("updates download outside Settings and offer a persistent, optional restart
   await user.click("Restart to update");
   await user.notSee({ text: "Ready when you are." });
   await user.see({ text: "Restart OpenWork?" });
+  await user.see({ text: /Eligible running tasks resume gradually after restart/ });
   await user.click("Keep working");
   await user.notSee({ text: "Restart OpenWork?" });
   expect(await world.snapshot()).toMatchObject({ installs: 0 });

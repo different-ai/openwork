@@ -23,6 +23,44 @@ The server logs the client token and host token on boot when they are auto-gener
 
 Add `--verbose` to print resolved config details on startup. Use `--version` to print the server version and exit.
 
+## Desktop task recovery
+
+The desktop enables `resumeInterruptedTasks` when embedding a server that owns
+its local engines. Standalone servers, attached engines, remote workspaces, and
+read-only servers do not opt in. Recovery works with both OpenCode v1 and v2 and
+does not depend on an open conversation tab.
+
+The `desktop_task_recovery` table in the existing runtime SQLite database stores
+up to 1,000 task identities, their workspace path, original engine, last observed
+user turn, and recovery phase. It stores no prompts, transcripts, or credentials.
+Only tasks admitted after this feature is enabled are tracked; old unfinished
+conversations are not swept or resumed retroactively.
+
+On quit or update, a final checkpoint runs before engine teardown with two task
+snapshots in flight and a 10-second budget. On restart, the coordinator checks two task
+snapshots every two seconds and admits at most one continuation every two seconds,
+with at most two recovered tasks active. Already-active native runs are observed,
+not re-prompted, and native active work also limits new recovery admissions.
+
+Completed, archived, manually stopped, approval/question-blocked, and active
+delegated work are excluded. New manual work invalidates the old recovery intent.
+Missing workspaces, changed directories, unavailable policy, and unverified
+snapshots never authorize a send. V1 requires the original user turn and model
+in its recent 100-message snapshot; v2 keeps the session's native model. A
+continuation asks to inspect completed effects first, not rerun the original prompt.
+
+A send is claimed durably before admission. Lost acknowledgements are never
+blindly retried, even after another restart. Crash recovery requires an observed
+running task and a still-unfinished matching turn; unexplained aborts stay stopped.
+Tasks whose admission or shutdown checkpoint cannot be confirmed remain manual.
+This prevents duplicate recovery admissions, not exactly-once execution of external
+tools; uncertain earlier effects must be inspected or clarified before continuing.
+
+Desktop Automation and remote-command requests opt out with
+`x-openwork-task-recovery: off`; their existing execution ownership is unchanged.
+Runtime journey verification for actual Electron restarts on both engines remains
+separate from the focused coordinator and mocked-proxy tests.
+
 ## Config file
 
 Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CONFIG` or `--config`).
