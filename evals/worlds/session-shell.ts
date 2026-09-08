@@ -1,4 +1,4 @@
-import { allocateFreePort, browserScript, evaluate, locate, type Surface, typeText } from "@openwork/cdp";
+import { allocateFreePort, browserScript, clickAt, evaluate, hoverAt, type Point, type Surface, typeText } from "@openwork/cdp";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
 import { engineSessionProbe, observeSidebarExpansion, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
@@ -212,6 +212,8 @@ type InstantGateState = {
   timer: ReturnType<typeof setTimeout> | null;
 };
 
+const INSTANT_BOUNDARY_REJECTION_MESSAGE = "The request was rejected before admission.";
+
 /** Disposable CDP Fetch gate. It reports only compact counts and never request headers or bodies. */
 async function instantBoundaryController(app: Surface, workspaceId: string) {
   const endpoint = app.client.webSocketDebuggerUrl;
@@ -224,6 +226,7 @@ async function instantBoundaryController(app: Surface, workspaceId: string) {
   const origin = new URL(baseUrl).origin;
   const encodedWorkspaceId = encodeURIComponent(workspaceId);
   const sessionBases = ["workspace", "w"].map((mount) => `/${mount}/${encodedWorkspaceId}/opencode/session`);
+  const fetchPatterns = sessionBases.map((path) => ({ urlPattern: `${origin}${path}*`, requestStage: "Request" }));
   const socket = new WebSocket(endpoint);
   const ready = instantDeferred();
   const commands = new Map<number, ReturnType<typeof instantDeferred>>();
@@ -231,6 +234,8 @@ async function instantBoundaryController(app: Surface, workspaceId: string) {
   const counts = { creation: 0, prompt: 0 };
   let nextId = 1;
   let disposed = false;
+  let fetchEnabled = false;
+  let cleanupPromise: Promise<void> | null = null;
   let failure: Error | undefined;
 
   const command = async (method: string, params: Record<string, unknown> = {}) => {
@@ -264,11 +269,17 @@ async function instantBoundaryController(app: Surface, workspaceId: string) {
     gate.failed = fail;
     if (gate.timer) clearTimeout(gate.timer);
     gate.timer = null;
-    const method = fail ? "Fetch.failRequest" : gate.stage === "response" ? "Fetch.continueResponse" : "Fetch.continueRequest";
+    const method = fail ? "Fetch.fulfillRequest" : gate.stage === "response" ? "Fetch.continueResponse" : "Fetch.continueRequest";
     const interceptResponse = !fail && gate.stage === "request"
       && gates.some((candidate) => candidate.kind === gate.kind && candidate.stage === "response" && !candidate.released);
     await Promise.all([...gate.requestIds].map((requestId) => command(method, fail
-      ? { requestId, errorReason: "Failed" }
+      ? {
+          requestId,
+          responseCode: 400,
+          responsePhrase: "Bad Request",
+          responseHeaders: [{ name: "Content-Type", value: "application/json" }],
+          body: Buffer.from(JSON.stringify({ error: { message: INSTANT_BOUNDARY_REJECTION_MESSAGE } }), "utf8").toString("base64"),
+        }
       : { requestId, ...(interceptResponse ? { interceptResponse: true } : {}) })));
   };
 
@@ -319,9 +330,8 @@ async function instantBoundaryController(app: Surface, workspaceId: string) {
   try {
     await ready.promise;
     await command("Network.enable");
-    await command("Fetch.enable", {
-      patterns: sessionBases.map((path) => ({ urlPattern: `${origin}${path}*`, requestStage: "Request" })),
-    });
+    await command("Fetch.enable", { patterns: fetchPatterns });
+    fetchEnabled = true;
   } catch (error) {
     disposed = true;
     socket.close();
@@ -363,11 +373,38 @@ async function instantBoundaryController(app: Surface, workspaceId: string) {
       if (failure) throw failure;
       return { creation: counts.creation, prompt: counts.prompt };
     },
+    async suspend() {
+      if (disposed) throw new Error("Instant-send boundary observer is disposed");
+      if (failure) throw failure;
+      const activelyHeld = gates.filter((gate) => !gate.released && gate.requestIds.size > 0);
+      if (activelyHeld.length > 0) {
+        throw new Error(`Instant-send boundary observer cannot suspend with ${activelyHeld.length} actively held gate(s)`);
+      }
+      if (!fetchEnabled) return;
+      await command("Fetch.disable");
+      fetchEnabled = false;
+    },
+    async resume() {
+      if (disposed) throw new Error("Instant-send boundary observer is disposed");
+      if (failure) throw failure;
+      if (fetchEnabled) return;
+      await command("Fetch.enable", { patterns: fetchPatterns });
+      fetchEnabled = true;
+    },
     async [Symbol.asyncDispose]() {
-      if (disposed) return;
-      for (const gate of gates) await finishGate(gate, false);
-      try { await command("Fetch.disable"); }
-      finally { disposed = true; socket.close(); }
+      if (cleanupPromise) return cleanupPromise;
+      cleanupPromise = (async () => {
+        if (disposed) return;
+        try {
+          for (const gate of gates) await finishGate(gate, false);
+          if (fetchEnabled) await command("Fetch.disable");
+        } finally {
+          fetchEnabled = false;
+          disposed = true;
+          socket.close();
+        }
+      })();
+      return cleanupPromise;
     },
   };
 }
@@ -719,6 +756,25 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
       markerOccurrences: marker ? matching.reduce((total, text) => total + text.split(marker).length - 1, 0) : 0,
     };
   };
+  const providerRequestCount = async (promptMarker: string) => (await mock.agentRequests({ promptMarker }))
+    .filter((request) => request.promptMarker === promptMarker && request.kind !== "utility").length;
+  const visibleMessageFacts = (sessionId: string, role: "user" | "assistant", marker: string) => seed.evalIn(app, browserScript((sessionId, role, marker) => {
+    const visible = (node: HTMLElement) => {
+      const rect = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      return node.getClientRects().length > 0 && rect.width > 0 && rect.height > 0
+        && rect.right > 0 && rect.bottom > 0 && rect.left < innerWidth && rect.top < innerHeight
+        && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) > 0;
+    };
+    const surfaces = [...document.querySelectorAll<HTMLElement>("[data-session-surface-id]")]
+      .filter((surface) => surface.dataset.sessionSurfaceId === sessionId && visible(surface));
+    const rows = surfaces.flatMap((surface) => [...surface.querySelectorAll<HTMLElement>("[data-message-role]")])
+      .filter((row) => row.dataset.messageRole === role && visible(row) && row.innerText.includes(marker));
+    return {
+      rowCount: rows.length,
+      markerOccurrences: marker ? rows.reduce((total, row) => total + row.innerText.split(marker).length - 1, 0) : 0,
+    };
+  }, [sessionId, role, marker]));
   const readInstantComposer = () => seed.evalIn(app, browserScript((workspaceId) => {
     const visible = (node: HTMLElement) => {
       const rect = node.getBoundingClientRect();
@@ -777,12 +833,135 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
     if (!after.text.endsWith(text)) throw new Error("Focused composer did not retain native insertText");
     return { beforeText: before.text, afterText: after.text };
   };
-  const accessibleRunTaskReady = async () => {
-    const located = await locate(app, { role: "button", label: "Run task" });
-    if (!located.visible || !located.hitTestOk) return false;
-    return seed.evalIn(app, browserScript((x, y, workspaceId) => {
-      const hit = document.elementFromPoint(x, y);
-      const button = hit instanceof Element ? hit.closest("button") : null;
+  const newTaskGeometry = (point: Point) => seed.evalIn(app, browserScript((workspaceId, x, y) => {
+    const matchingWorkspaces = [...document.querySelectorAll<HTMLElement>(`[data-sidebar-workspace-id="${workspaceId}"]`)];
+    const matchingPlusNodes = matchingWorkspaces.flatMap((candidate) => [...candidate.querySelectorAll<HTMLElement>("[data-workspace-new-task]")]);
+    const matchingHeaderNodes = new Set(matchingPlusNodes.map((candidate) => candidate.closest<HTMLElement>("[data-workspace-actions]")?.parentElement).filter((candidate) => candidate !== null));
+    const workspace = matchingWorkspaces[0] ?? null;
+    const plus = workspace?.querySelector<HTMLElement>("[data-workspace-new-task]") ?? null;
+    const actions = plus?.closest<HTMLElement>("[data-workspace-actions]") ?? null;
+    const header = actions?.parentElement ?? null;
+    const actionsStyle = actions ? getComputedStyle(actions) : null;
+    const correctWorkspace = Boolean(workspace && plus?.closest("[data-sidebar-workspace-id]") === workspace);
+    const rect = plus?.getBoundingClientRect() ?? null;
+    let hiddenBy = "";
+    let current: Element | null = plus ?? null;
+    while (current instanceof Element && !hiddenBy) {
+      const style = getComputedStyle(current);
+      if (style.display === "none" || style.visibility !== "visible" || Number(style.opacity) <= 0) {
+        hiddenBy = `${current.tagName.toLowerCase()}:${style.display}/${style.visibility}/${style.opacity}`;
+      }
+      current = current.parentElement;
+    }
+    const centerX = rect ? rect.left + rect.width / 2 : 0;
+    const centerY = rect ? rect.top + rect.height / 2 : 0;
+    const centered = Math.abs(centerX - x) < 0.5 && Math.abs(centerY - y) < 0.5;
+    const inViewport = x >= 0 && y >= 0 && x < innerWidth && y < innerHeight;
+    const hit = inViewport ? document.elementFromPoint(x, y) : null;
+    const hitPlus = Boolean(plus && hit instanceof Node && plus.contains(hit));
+    return {
+      ready: Boolean(correctWorkspace && plus && rect && rect.width > 0 && rect.height > 0
+        && !hiddenBy && centered && inViewport && hitPlus),
+      found: Boolean(plus),
+      point: [Math.round(x), Math.round(y)],
+      center: [Math.round(centerX), Math.round(centerY)],
+      centerX,
+      centerY,
+      rect: rect ? [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)] : [],
+      correctWorkspace,
+      hiddenBy,
+      hitPlus,
+      headerHover: header?.matches(":hover") ?? false,
+      plusHover: plus?.matches(":hover") ?? false,
+      hoverHover: matchMedia("(hover: hover)").matches,
+      anyHoverHover: matchMedia("(any-hover: hover)").matches,
+      pointerFine: matchMedia("(pointer: fine)").matches,
+      maxTouchPoints: navigator.maxTouchPoints,
+      documentHasFocus: document.hasFocus(),
+      actionsClassName: actions?.className ?? "",
+      headerClassName: header?.className ?? "",
+      actionsOpacity: actionsStyle?.opacity ?? "",
+      actionsTransitionDuration: actionsStyle?.transitionDuration ?? "",
+      multipleMatchingPlus: matchingPlusNodes.length > 1,
+      multipleMatchingHeaders: matchingHeaderNodes.size > 1,
+      covering: hitPlus || !(hit instanceof Element) ? "" : hit.tagName.toLowerCase(),
+    };
+  }, [workspace.workspaceId, point.x, point.y]));
+  const prepareWorkspaceNewTask = async (): Promise<Point> => {
+    const deadline = Date.now() + 5_000;
+    const reset = await seed.evalIn(app, browserScript((workspaceId) => {
+      const workspace = document.querySelector<HTMLElement>(`[data-sidebar-workspace-id="${workspaceId}"]`);
+      const plus = workspace?.querySelector<HTMLElement>("[data-workspace-new-task]") ?? null;
+      const header = plus?.closest<HTMLElement>("[data-workspace-actions]")?.parentElement ?? null;
+      if (!workspace || !plus || !header || plus.closest("[data-sidebar-workspace-id]") !== workspace) {
+        return { ready: false, point: [0, 0], plus: [], header: [], hitHeader: false, x: 0, y: 0 };
+      }
+      let rect = plus.getBoundingClientRect();
+      if (rect.left < 0 || rect.top < 0 || rect.right > innerWidth || rect.bottom > innerHeight) {
+        plus.scrollIntoView({ block: "nearest", inline: "nearest" });
+        rect = plus.getBoundingClientRect();
+      }
+      const headerRect = header.getBoundingClientRect();
+      const left = Math.max(0, headerRect.left);
+      const right = Math.min(innerWidth, headerRect.right);
+      const top = Math.max(0, headerRect.top);
+      const bottom = Math.min(innerHeight, headerRect.bottom);
+      const x = left + Math.min(8, Math.max(1, (right - left) / 4));
+      const y = top + (bottom - top) / 2;
+      let headerVisible = true;
+      let current: Element | null = header;
+      while (current instanceof Element && headerVisible) {
+        const style = getComputedStyle(current);
+        headerVisible = style.display !== "none" && style.visibility === "visible" && Number(style.opacity) > 0;
+        current = current.parentElement;
+      }
+      const hit = x >= 0 && y >= 0 && x < innerWidth && y < innerHeight ? document.elementFromPoint(x, y) : null;
+      const hitHeader = hit instanceof Node && header.contains(hit) && !plus.contains(hit);
+      const plusX = rect.left + rect.width / 2;
+      const plusY = rect.top + rect.height / 2;
+      const different = Math.abs(x - plusX) >= 1 || Math.abs(y - plusY) >= 1;
+      return {
+        ready: headerVisible && right > left && bottom > top && hitHeader && different,
+        point: [Math.round(x), Math.round(y)],
+        plus: [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)],
+        header: [Math.round(headerRect.x), Math.round(headerRect.y), Math.round(headerRect.width), Math.round(headerRect.height)],
+        hitHeader,
+        x,
+        y,
+      };
+    }, [workspace.workspaceId]));
+    if (!reset.ready || !Number.isFinite(reset.x) || !Number.isFinite(reset.y)) {
+      throw new Error(`New task header reset point was unavailable before click: ${JSON.stringify(reset)}`);
+    }
+    await hoverAt(app, { x: reset.x, y: reset.y });
+    let readiness = await newTaskGeometry({ x: reset.x, y: reset.y });
+    while (!readiness.headerHover && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      readiness = await newTaskGeometry({ x: reset.x, y: reset.y });
+    }
+    if (!readiness.headerHover || !readiness.correctWorkspace
+      || !Number.isFinite(readiness.centerX) || !Number.isFinite(readiness.centerY)) {
+      throw new Error(`New task header did not rearm hover before click: ${JSON.stringify(readiness)}`);
+    }
+    let point: Point = { x: readiness.centerX, y: readiness.centerY };
+    await hoverAt(app, point);
+    readiness = await newTaskGeometry(point);
+    while (!readiness.ready && Date.now() < deadline) {
+      if (readiness.correctWorkspace && Number.isFinite(readiness.centerX) && Number.isFinite(readiness.centerY)
+        && (Math.abs(readiness.centerX - point.x) >= 0.5 || Math.abs(readiness.centerY - point.y) >= 0.5)) {
+        point = { x: readiness.centerX, y: readiness.centerY };
+        await hoverAt(app, point);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      readiness = await newTaskGeometry(point);
+    }
+    if (!readiness.ready) {
+      throw new Error(`New task plus was not ready before click: ${JSON.stringify(readiness)}`);
+    }
+    return point;
+  };
+  const clickWorkspaceNewTask = (point: Point) => clickAt(app, point);
+  const accessibleRunTaskReady = async (expectedText: string) => seed.evalIn(app, browserScript((workspaceId, expectedText) => {
       const visible = (node: HTMLElement) => {
         const rect = node.getBoundingClientRect();
         const style = getComputedStyle(node);
@@ -790,8 +969,11 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
           && rect.right > 0 && rect.bottom > 0 && rect.left < innerWidth && rect.top < innerHeight
           && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) > 0;
       };
-      if ((localStorage.getItem("openwork.react.activeWorkspace") ?? "") !== workspaceId) return false;
+      if ((localStorage.getItem("openwork.react.activeWorkspace") ?? "") !== workspaceId) {
+        return { ready: false, rootKind: "", composerText: "", focusedEditor: false, buttonFound: false, buttonDisabled: null, buttonHit: false };
+      }
       let root: HTMLElement | null = null;
+      let rootKind = "";
       const sessionlessRoute = `#/workspace/${workspaceId}/session`;
       if (location.hash === sessionlessRoute) {
         const heading = [...document.querySelectorAll<HTMLElement>("h2")]
@@ -802,7 +984,7 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
               .find((candidate) => [...candidate.querySelectorAll<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"], [data-message-role]')]
                 .some(visible)) ?? null;
         const persistedSurfaceVisible = [...document.querySelectorAll<HTMLElement>("[data-session-surface-id]")].some(visible);
-        if (main && !persistedSurfaceVisible) root = main;
+        if (main && !persistedSurfaceVisible) { root = main; rootKind = "new-task"; }
       } else {
         const persistedPrefix = `#/workspace/${workspaceId}/session/`;
         const sessionId = location.hash.startsWith(persistedPrefix) ? location.hash.slice(persistedPrefix.length) : "";
@@ -810,13 +992,29 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
           const pane = [...document.querySelectorAll<HTMLElement>('[data-workbench-pane="primary"]')].find(visible) ?? null;
           const surface = [...(pane?.querySelectorAll<HTMLElement>("[data-session-surface-id]") ?? [])]
             .find((candidate) => candidate.dataset.sessionSurfaceId === sessionId && visible(candidate));
-          if (pane && surface) root = pane;
+          if (pane && surface) { root = pane; rootKind = "persisted"; }
         }
       }
-      return button instanceof HTMLButtonElement && !button.disabled
-        && Boolean(root?.contains(button));
-    }, [located.center.x, located.center.y, workspace.workspaceId]));
-  };
+      const editor = [...(root?.querySelectorAll<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]') ?? [])]
+        .find(visible) ?? null;
+      const button = [...(root?.querySelectorAll<HTMLButtonElement>('button[aria-label="Run task"]') ?? [])]
+        .find(visible) ?? null;
+      const rect = button?.getBoundingClientRect() ?? null;
+      const hit = rect ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) : null;
+      const buttonHit = Boolean(button && hit instanceof Node && button.contains(hit));
+      const focusedEditor = Boolean(editor && (document.activeElement === editor || editor.contains(document.activeElement)));
+      const composerText = editor?.innerText ?? "";
+      return {
+        ready: Boolean(root && editor?.isContentEditable && visible(editor) && focusedEditor
+          && composerText === expectedText && button && !button.disabled && buttonHit),
+        rootKind,
+        composerText,
+        focusedEditor,
+        buttonFound: Boolean(button),
+        buttonDisabled: button?.disabled ?? null,
+        buttonHit,
+      };
+    }, [workspace.workspaceId, expectedText]));
 
   const resources = setup.move();
   return {
@@ -842,7 +1040,11 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
     boundary,
     sessionIds,
     messageFacts,
+    providerRequestCount,
+    visibleMessageFacts,
     insertFocusedText,
+    prepareWorkspaceNewTask,
+    clickWorkspaceNewTask,
     accessibleRunTaskReady,
     observeRenderer: (kind: InstantMetricKind, marker = "") => observeInstantRenderer(seed, app, workspace.workspaceId, kind, marker),
     [Symbol.asyncDispose]: () => resources.disposeAsync(),

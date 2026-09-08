@@ -62,7 +62,7 @@ import {
 } from "@/components/ui/resizable";
 import { ShareWorkspaceModal } from "../../workspace/share-workspace-modal";
 import { SessionEmptyHero } from "./session-empty-hero";
-import type { NewTaskComposerContext } from "./new-task-composer";
+import type { NewTaskComposerContext, NewTaskComposerHandoff } from "./new-task-composer";
 import type { SessionCloudMcpMaintenanceState } from "../../connections/use-session-mcp-maintenance";
 import { OwDotTicker } from "../../../shell/dot-ticker";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
@@ -159,7 +159,12 @@ export type SessionPageSidebarProps = {
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
   onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
-  onCreateTaskWithPrompt?: (workspaceId: string, prompt: string, attachments?: ComposerAttachment[]) => Promise<void>;
+  onCreateTaskWithPrompt?: (
+    workspaceId: string,
+    prompt: string,
+    attachments?: ComposerAttachment[],
+    handoff?: NewTaskComposerHandoff,
+  ) => Promise<void>;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
@@ -1903,8 +1908,8 @@ export function SessionPage(props: SessionPageProps) {
                     <div className="flex flex-1 items-center justify-center py-16">
                       <SessionEmptyHero
                         providerCount={providerCount}
-                        onRunTask={(prompt, attachments) =>
-                          props.sidebar.onCreateTaskWithPrompt?.(props.selectedWorkspaceId, prompt, attachments)
+                        onRunTask={(prompt, attachments, handoff) =>
+                          props.sidebar.onCreateTaskWithPrompt?.(props.selectedWorkspaceId, prompt, attachments, handoff)
                         }
                         onOpenProviderAuth={props.onOpenProviderAuth}
                         composer={props.newTaskComposer}

@@ -24,6 +24,16 @@ export type ComposerSessionState = {
   revertMessageId: string | null;
 };
 
+export function snapshotComposerSessionState(state: ComposerSessionState): ComposerSessionState {
+  return {
+    draft: state.draft,
+    attachments: state.attachments.map((attachment) => ({ ...attachment })),
+    mentions: { ...state.mentions },
+    pasteParts: state.pasteParts.map((part) => ({ ...part })),
+    revertMessageId: state.revertMessageId,
+  };
+}
+
 export type ComposerStateStore = {
   failedDrafts: Record<string, ComposerSessionState[]>;
   pendingMessages: Record<string, { draft: ComposerDraft & { messageId: string }; previousMessageIds: string[] }[]>;

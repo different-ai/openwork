@@ -10,6 +10,10 @@ import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import type { ComposerAttachment, ComposerDraft } from "../src/app/types";
 import type { CloudMcpSubmissionResult } from "../src/react-app/domains/connections/cloud-mcp-submit-readiness";
+import type {
+  NewTaskComposerContext,
+  NewTaskComposerHandoff,
+} from "../src/react-app/domains/session/chat/new-task-composer";
 
 const workspaceId = "workspace-focus-continuity";
 const sessionId = "session-focus-continuity";
@@ -34,6 +38,29 @@ function createSnapshot(status: SessionStatus, updated: number): OpenworkSession
     }],
     todos: [],
     status,
+  };
+}
+
+function newTaskComposerContext(draftOwnerKey: string): NewTaskComposerContext {
+  return {
+    client: null,
+    workspaceId: null,
+    draftOwnerKey,
+    selectedModel: { providerID: "test", modelID: "test-model" },
+    modelPickerOpen: false,
+    onModelPickerOpenChange: () => {},
+    onModelChange: () => {},
+    modelVariantLabel: "Default",
+    modelVariant: null,
+    onModelVariantChange: () => {},
+    agentLabel: "OpenWork",
+    selectedAgent: null,
+    listAgents: async () => [],
+    onSelectAgent: () => {},
+    listCommands: async () => [],
+    searchFiles: async () => [],
+    isRemoteWorkspace: false,
+    isSandboxWorkspace: false,
   };
 }
 
@@ -270,6 +297,11 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
       restore?.click();
     });
     expect(editor.textContent).toBe(draft);
+    const restoredRun = container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]');
+    expect(container.textContent).toContain("Submission unavailable");
+    expect(restoredRun?.disabled).toBe(false);
+    expect(sentDrafts).toHaveLength(1);
+    expect(editor.textContent).toBe(draft);
 
     submission = Promise.withResolvers<CloudMcpSubmissionResult>();
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss error"]')?.click());
@@ -278,7 +310,7 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
     expect(editor.textContent).toBe(draft);
 
     submission = Promise.withResolvers<CloudMcpSubmissionResult>();
-    const { markComposerAutoSend } = await import("../src/react-app/domains/session/surface/composer-auto-send");
+    const { composerAutoSendScopeKey, markComposerAutoSend } = await import("../src/react-app/domains/session/surface/composer-auto-send");
     await act(async () => {
       markComposerAutoSend(sessionId);
       useComposerStateStore.getState().setDraft(sessionId, "First message auto-send");
@@ -344,15 +376,60 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
     expect(editor.textContent).toBe("Newer uncertain draft");
     expect(sentDrafts).toHaveLength(4);
 
+    submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    const submittedComposer = {
+      draft: "First [pasted text handoff]",
+      attachments: [],
+      mentions: {},
+      pasteParts: [{ id: "submitted-paste", label: "handoff", text: "submitted body", lines: 1 }],
+      revertMessageId: null,
+    };
+    const continuationComposer = {
+      draft: "Continuation B",
+      attachments: [],
+      mentions: {},
+      pasteParts: [{ id: "continuation-paste", label: "handoff", text: "wrong continuation metadata", lines: 1 }],
+      revertMessageId: null,
+    };
+    await act(async () => {
+      markComposerAutoSend(sessionId, {
+        scopeKey: composerAutoSendScopeKey({
+          draftScope: "local",
+          opencodeBaseUrl: "http://127.0.0.1:1/opencode",
+          workspaceId,
+          sessionId,
+        }),
+        composer: submittedComposer,
+      });
+      useComposerStateStore.setState((state) => ({
+        sessions: { ...state.sessions, [sessionId]: continuationComposer },
+      }));
+    });
+    await waitFor(() => sentDrafts.length === 5, "scoped first-message auto-send");
+    expect(sentDrafts[4]?.resolvedText).toBe("First submitted body");
+    expect(editor.textContent).toBe("Continuation B");
+    expect(useComposerStateStore.getState().sessions[sessionId]).toBe(continuationComposer);
+    await act(async () => submission.reject(new Error("Scoped submission unavailable")));
+    expect(editor.textContent).toBe("Continuation B");
+    expect(useComposerStateStore.getState().sessions[sessionId]).toBe(continuationComposer);
+    expect(Object.values(useComposerStateStore.getState().failedDrafts).flat().map((item) => item.draft)).toEqual([
+      "First [pasted text handoff]",
+    ]);
+
     const { NewTaskComposer } = await import("../src/react-app/domains/session/chat/new-task-composer");
     let creation = Promise.withResolvers<void>();
     let creations = 0;
+    let capturedHandoff: NewTaskComposerHandoff | null = null;
     let updateHeroDraft = (_text: string) => {};
+    let updateDraftOwner = (_owner: string) => {};
     function Hero() {
       const [text, setText] = useState("First hero message");
+      const [draftOwner, setDraftOwner] = useState("owner-a");
       updateHeroDraft = setText;
-      return <NewTaskComposer draft={text} onDraftChange={setText} busy={false} context={null} onRunTask={() => {
+      updateDraftOwner = setDraftOwner;
+      return <NewTaskComposer draft={text} onDraftChange={setText} busy={false} context={newTaskComposerContext(draftOwner)} onRunTask={(_resolved, _attachments, handoff) => {
         creations++;
+        capturedHandoff = handoff ?? null;
         return creation.promise;
       }} />;
     }
@@ -362,6 +439,7 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("");
     expect(container.querySelector('[data-message-role="user"]')?.textContent).toBe("First hero message");
     await act(async () => updateHeroDraft("Newer hero draft"));
+    expect(capturedHandoff?.getContinuation().draft).toBe("Newer hero draft");
     await act(async () => creation.reject(new Error("Session creation failed")));
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Newer hero draft");
     expect(container.textContent).toContain("Session creation failed");
@@ -387,6 +465,29 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
     await act(async () => creation.reject(new Error("Image session creation failed")));
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toContain("First hero message");
     expect(container.querySelector('[data-attachment-id]')).not.toBeNull();
+
+    await act(async () => updateDraftOwner("owner-b"));
+    await waitFor(
+      () => container.querySelector('[data-lexical-editor="true"]')?.textContent === "",
+      "the next draft owner to start empty after attachment recovery",
+    );
+    creation = Promise.withResolvers<void>();
+    await act(async () => updateHeroDraft("Owner B submission"));
+    await act(async () => send());
+    expect(creations).toBe(3);
+    const ownerBHandoff = capturedHandoff;
+    if (!ownerBHandoff) throw new Error("Expected the owner B handoff");
+    await act(async () => updateHeroDraft("Owner B continuation"));
+    expect(ownerBHandoff.getContinuation().draft).toBe("Owner B continuation");
+    await act(async () => updateDraftOwner("owner-c"));
+    await waitFor(
+      () => container.querySelector('[data-lexical-editor="true"]')?.textContent === "",
+      "the new draft owner to start empty",
+    );
+    await act(async () => updateHeroDraft("Foreign owner draft"));
+    expect(ownerBHandoff.getContinuation().draft).toBe("Owner B continuation");
+    await act(async () => creation.resolve());
+    expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Foreign owner draft");
   } finally {
     await act(async () => root.unmount());
     resetQueuedDrainForTests();

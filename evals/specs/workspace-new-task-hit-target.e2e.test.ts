@@ -69,7 +69,6 @@ function timingReport(samples: readonly TimingSample[]) {
 
 test("workspace New task is instantly typable and every v1 send paints before engine work", async ({ world, user, agent, probe, step, evidence }) => {
   await using faults = world.boundary;
-  const workspaceName = world.workspacePath.split("/").at(-1) ?? world.workspacePath;
   const newTaskSamples: TimingSample[] = [];
   const lazySendSamples: TimingSample[] = [];
   const existingSendSamples: TimingSample[] = [];
@@ -91,21 +90,6 @@ test("workspace New task is instantly typable and every v1 send paints before en
     exactAfterReload: false,
   };
 
-  const sessionTarget = async (sessionId: string): Promise<{ role: "button"; label: string; nth: number }> => {
-    const target = await probe.eventually(() => probe.eval(browserScript((sessionId) => {
-      const row = document.querySelector<HTMLElement>(`[data-session-tab-id="${sessionId}"]`);
-      row?.scrollIntoView({ block: "center" });
-      const label = row?.getAttribute("aria-label") ?? "";
-      const candidates = [...document.querySelectorAll<HTMLElement>('button, [role="button"]')]
-        .filter((node) => node.getAttribute("aria-label") === label);
-      return { label, nth: row ? candidates.indexOf(row) : -1 };
-    }, [sessionId])), {
-      within: 15_000,
-      label: `session ${sessionId} has a native sidebar target`,
-      until: (value) => value.label.length > 0 && value.nth >= 0,
-    });
-    return { role: "button", label: target.label, nth: target.nth };
-  };
   const activeSessionId = () => probe.eval(browserScript((workspaceId) => {
     if ((localStorage.getItem("openwork.react.activeWorkspace") ?? "") !== workspaceId) return "";
     const persistedPrefix = `#/workspace/${workspaceId}/session/`;
@@ -125,7 +109,8 @@ test("workspace New task is instantly typable and every v1 send paints before en
     return ownsRoute ? sessionId : "";
   }, [world.workspace.workspaceId]));
   const openSession = async (session: { sessionId: string }) => {
-    if (await activeSessionId() !== session.sessionId) await user.click(await sessionTarget(session.sessionId));
+    // Untimed setup navigation uses the client boundary; pointer navigation is a separate journey.
+    if (await activeSessionId() !== session.sessionId) await agent.run("session.open", { sessionId: session.sessionId });
     await probe.eventually(activeSessionId, {
       within: 30_000,
       label: `session ${session.sessionId} owns the primary pane`,
@@ -172,10 +157,11 @@ test("workspace New task is instantly typable and every v1 send paints before en
     const rows = [...(root?.querySelectorAll<HTMLElement>('[data-message-role="user"]') ?? [])]
       .filter((row) => visible(row) && row.innerText.includes(marker)
         && !(editor && (editor.contains(row) || row.contains(editor))));
+    const rawComposerText = editor?.innerText ?? "";
     return {
       rowCount: rows.length,
       markerOccurrences: marker ? rows.reduce((total, row) => total + row.innerText.split(marker).length - 1, 0) : 0,
-      composerText: editor?.innerText ?? "",
+      composerText: /^\s*$/.test(rawComposerText) ? "" : rawComposerText,
       composerEditable: Boolean(editor?.isContentEditable),
       focusedEditor: Boolean(editor && (document.activeElement === editor || editor.contains(document.activeElement))),
       sessionId: root?.querySelector<HTMLElement>("[data-session-surface-id]")?.dataset.sessionSurfaceId ?? "",
@@ -215,11 +201,11 @@ test("workspace New task is instantly typable and every v1 send paints before en
     }
     return root?.innerText.includes(text) ?? false;
   }, [text, world.workspace.workspaceId]));
-  const accessibleRunTask = () => probe.eventually(() => world.accessibleRunTaskReady(), {
+  const accessibleRunTask = (expectedText: string, label: string) => probe.eventually(() => world.accessibleRunTaskReady(expectedText), {
     within: 15_000,
-    label: "the current pane exposes an enabled, native-accessible Run task control",
-    until: (ready) => ready,
-  }).then(() => true, () => false);
+    label,
+    until: (state) => state.ready,
+  });
   const waitReply = (reply: string) => probe.eventually(() => surfaceContains(reply), {
     within: 60_000,
     label: `the deterministic v1 reply ${reply.slice(0, 32)} is visible`,
@@ -277,20 +263,19 @@ test("workspace New task is instantly typable and every v1 send paints before en
   let diagnosticError: string | null = null;
 
   try {
-    await user.hover({ role: "button", label: workspaceName });
+    const initialNewTaskPoint = await world.prepareWorkspaceNewTask();
     await step("the plus remains the topmost hit target over the long workspace name", async () => {
-      const hit = await probe.eval(browserScript((workspaceId) => {
+      const hit = await probe.eval(browserScript((workspaceId, x, y) => {
         const plus = document.querySelector<HTMLElement>(`[data-sidebar-workspace-id="${workspaceId}"] [data-workspace-new-task]`);
         if (!(plus instanceof HTMLElement)) return { hitPlus: false, hitTitle: false, tag: "" };
-        const rect = plus.getBoundingClientRect();
-        const node = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        const node = document.elementFromPoint(x, y);
         const title = plus.closest("[data-workspace-actions]")?.parentElement?.querySelector<HTMLElement>(".ow-fade-truncate");
         return {
           hitPlus: plus.contains(node),
           hitTitle: Boolean(title && node instanceof Node && title.contains(node)),
           tag: node instanceof Element ? node.tagName.toLowerCase() : "",
         };
-      }, [world.workspace.workspaceId]));
+      }, [world.workspace.workspaceId, initialNewTaskPoint.x, initialNewTaskPoint.y]));
       if (!isRecord(hit)) throw new Error(`New task plus returned malformed hit facts: ${JSON.stringify(hit)}`);
       expect(hit.hitPlus).toBe(true);
       expect(hit.hitTitle).toBe(false);
@@ -312,9 +297,9 @@ test("workspace New task is instantly typable and every v1 send paints before en
         const serverBeforeOpen = await world.sessionIds();
         const agentBeforeOpen = (await agent.list()).map((session) => session.sessionId).sort();
         const requestsBeforeOpen = readFaults();
-        await user.hover({ role: "button", label: workspaceName });
+        const newTaskPoint = await world.prepareWorkspaceNewTask();
         const readyObserver = await world.observeRenderer("new-task");
-        await user.click({ role: "button", label: `New session · ${workspaceName}` });
+        await world.clickWorkspaceNewTask(newTaskPoint);
         const readySample = sample(index + 1, await readyObserver.read(), { exact: false, typedWithoutClick: false });
         newTaskSamples.push(readySample);
         pendingMeasurement.current = { observer: readyObserver, sample: readySample };
@@ -325,11 +310,24 @@ test("workspace New task is instantly typable and every v1 send paints before en
         const serverAfterOpen = await world.sessionIds();
         const agentAfterOpen = (await agent.list()).map((session) => session.sessionId).sort();
         const requestsAfterOpen = readFaults();
-        const openingStayedLazy = JSON.stringify(serverAfterOpen) === JSON.stringify(serverBeforeOpen)
-          && JSON.stringify(agentAfterOpen) === JSON.stringify(agentBeforeOpen)
-          && requestsAfterOpen.creation === requestsBeforeOpen.creation
-          && requestsAfterOpen.prompt === requestsBeforeOpen.prompt
-          && !(await probe.hash()).includes("/session/ses_");
+        const routeAfterOpen = await probe.hash();
+        const openingSubfacts = {
+          backendInventoryUnchanged: JSON.stringify(serverAfterOpen) === JSON.stringify(serverBeforeOpen),
+          cachedIdsRetained: agentBeforeOpen.every((sessionId) => agentAfterOpen.includes(sessionId)),
+          cachedIdsAuthoritative: [...agentBeforeOpen, ...agentAfterOpen]
+            .every((sessionId) => serverBeforeOpen.includes(sessionId)),
+          zeroCreationPosts: requestsAfterOpen.creation === requestsBeforeOpen.creation,
+          zeroPromptPosts: requestsAfterOpen.prompt === requestsBeforeOpen.prompt,
+          sessionlessRoute: !routeAfterOpen.includes("/session/ses_"),
+        };
+        const openingStayedLazy = Object.values(openingSubfacts).every(Boolean);
+        if (!openingStayedLazy) {
+          evidence.recordAssertionEvidence(
+            `Lazy New task sample ${index + 1} opening invariants`,
+            JSON.stringify({ index: index + 1, ...openingSubfacts, serverBeforeOpen, serverAfterOpen, agentBeforeOpen, agentAfterOpen, requestsBeforeOpen, requestsAfterOpen, routeAfterOpen }),
+            false,
+          );
+        }
         if (index === 0) await user.see({ text: "What do you need done?" });
         const typed = await world.insertFocusedText(scenario.marker);
         typingDiagnostics.push({ index: index + 1, beforeText: typed.beforeText, afterText: typed.afterText });
@@ -338,6 +336,7 @@ test("workspace New task is instantly typable and every v1 send paints before en
         readySample.exact = openingStayedLazy;
         readySample.typedWithoutClick = typedWithoutClick;
 
+        await accessibleRunTask(scenario.marker, `lazy sample ${index + 1} exposes an enabled Run task control for its typed payload`);
         const requestBeforeSend = readFaults();
         const createGate = faults.holdNext("creation", "request");
         const promptGate = faults.holdNext("prompt", "request");
@@ -407,12 +406,22 @@ test("workspace New task is instantly typable and every v1 send paints before en
           const draftAfterSuccess = await visibleFacts(world.failure.pendingB);
           negatives.successDraftB = successDraftTyped && draftAfterSuccess.composerText === world.failure.pendingB;
           negatives.rapidDuplicateEnter = exact && createGate.read().held === 1 && promptGate.read().held === 1;
+          const beforeReload = {
+            providerRequestCount: await world.providerRequestCount(scenario.marker),
+            sessionIds: await world.sessionIds(),
+            nativeUser: await world.messageFacts(createdSessionId, scenario.marker),
+            nativeReply: await world.messageFacts(createdSessionId, scenario.reply),
+            visibleUser: await world.visibleMessageFacts(createdSessionId, "user", scenario.marker),
+            visibleReply: await world.visibleMessageFacts(createdSessionId, "assistant", scenario.reply),
+          };
+          await faults.suspend();
           await user.reload();
           await probe.eventually(activeSessionId, {
             within: 30_000,
             label: "the first lazy session remains selected after reload",
             until: (sessionId) => sessionId === createdSessionId,
           });
+          await faults.resume();
           const reloaded = await visibleFacts(scenario.marker);
           const afterReloadRequests = readFaults();
           const reloadedBackend = await probe.eventually(() => world.messageFacts(createdSessionId, scenario.marker), {
@@ -420,14 +429,52 @@ test("workspace New task is instantly typable and every v1 send paints before en
             label: `reloaded v1 transcript ${createdSessionId} is readable with exactly one marker`,
             until: (facts) => facts.markerCount === 1 && facts.markerOccurrences === 1,
           });
+          const afterReload = {
+            providerRequestCount: await world.providerRequestCount(scenario.marker),
+            sessionIds: await world.sessionIds(),
+            nativeReply: await world.messageFacts(createdSessionId, scenario.reply),
+            visibleUser: await world.visibleMessageFacts(createdSessionId, "user", scenario.marker),
+            visibleReply: await world.visibleMessageFacts(createdSessionId, "assistant", scenario.reply),
+          };
           negatives.exactAfterReload = reloaded.rowCount === 1
             && reloaded.markerOccurrences === 1
             && afterReloadRequests.creation - requestBeforeSend.creation === 1
             && afterReloadRequests.prompt - requestBeforeSend.prompt === 1
-            && reloadedBackend.markerCount === 1 && reloadedBackend.markerOccurrences === 1;
+            && beforeReload.providerRequestCount === 1
+            && afterReload.providerRequestCount === beforeReload.providerRequestCount
+            && JSON.stringify(afterReload.sessionIds) === JSON.stringify(beforeReload.sessionIds)
+            && beforeReload.nativeUser.markerCount === 1 && beforeReload.nativeUser.markerOccurrences === 1
+            && beforeReload.nativeReply.markerCount === 1 && beforeReload.nativeReply.markerOccurrences === 1
+            && beforeReload.visibleUser.rowCount === 1 && beforeReload.visibleUser.markerOccurrences === 1
+            && beforeReload.visibleReply.rowCount === 1 && beforeReload.visibleReply.markerOccurrences === 1
+            && reloadedBackend.markerCount === 1 && reloadedBackend.markerOccurrences === 1
+            && afterReload.nativeReply.markerCount === 1 && afterReload.nativeReply.markerOccurrences === 1
+            && afterReload.visibleUser.rowCount === 1 && afterReload.visibleUser.markerOccurrences === 1
+            && afterReload.visibleReply.rowCount === 1 && afterReload.visibleReply.markerOccurrences === 1;
         }
       }
     });
+
+    const newTaskTiming = timingReport(newTaskSamples);
+    const newTaskFailureIndices = newTaskSamples.filter((entry) => entry.elapsedMs === null
+      || entry.elapsedMs >= newTaskLimitMs || !entry.trusted || entry.consecutiveFrames < 2
+      || !entry.exact || !entry.typedWithoutClick).map((entry) => entry.index);
+    evidence.recordAssertionEvidence(
+      "Twelve New task clicks expose a focused, unobstructed composer within 500 ms",
+      JSON.stringify({ metric: "trusted click to second consecutive qualifying animation frame", limitMs: newTaskLimitMs, count: newTaskTiming.count, expectedCount: sampleCount, p50Ms: newTaskTiming.p50Ms, p95Ms: newTaskTiming.p95Ms, maxMs: newTaskTiming.maxMs, failureIndices: newTaskFailureIndices }),
+      newTaskTiming.count === sampleCount && newTaskFailureIndices.length === 0,
+    );
+    const lazyTiming = timingReport(lazySendSamples);
+    const lazyFailureIndices = lazySendSamples.filter((entry) => entry.elapsedMs === null
+      || entry.elapsedMs >= sendLimitMs || !entry.trusted || entry.consecutiveFrames < 2 || !entry.beforeEngine
+      || entry.firstHoldMs < boundaryHoldMs || entry.secondHoldMs < boundaryHoldMs
+      || entry.firstHeldCount !== 1 || entry.secondHeldCount !== 1 || !entry.exact || !entry.typedWithoutClick)
+      .map((entry) => entry.index);
+    evidence.recordAssertionEvidence(
+      "Twelve lazy first sends paint before engine work within 100 ms",
+      JSON.stringify({ metric: "trusted Enter to second consecutive visible-row frame before held engine requests", limitMs: sendLimitMs, count: lazyTiming.count, expectedCount: sampleCount, p50Ms: lazyTiming.p50Ms, p95Ms: lazyTiming.p95Ms, maxMs: lazyTiming.maxMs, failureIndices: lazyFailureIndices }),
+      lazyTiming.count === sampleCount && lazyFailureIndices.length === 0,
+    );
 
     await step("twelve existing-session sends paint before each real prompt request", async () => {
       await openSession(world.existing);
@@ -435,6 +482,7 @@ test("workspace New task is instantly typable and every v1 send paints before en
         const scenario = world.existingSamples[index];
         if (!scenario) throw new Error(`Missing existing-session sample ${index + 1}`);
         await user.type({ placeholder: "Describe your task..." }, scenario.marker, { replace: true, verify: true });
+        await accessibleRunTask(scenario.marker, `existing sample ${index + 1} exposes an enabled Run task control for its typed payload`);
         const requestBefore = readFaults();
         const inventoryBefore = await world.sessionIds();
         const promptGate = faults.holdNext("prompt", "request");
@@ -469,44 +517,150 @@ test("workspace New task is instantly typable and every v1 send paints before en
       }
     });
 
-    await step("creation and prompt failures preserve submitted work and the next draft", async () => {
+    const existingTiming = timingReport(existingSendSamples);
+    const existingFailureIndices = existingSendSamples.filter((entry) => entry.elapsedMs === null
+      || entry.elapsedMs >= sendLimitMs || !entry.trusted || entry.consecutiveFrames < 2 || !entry.beforeEngine
+      || entry.firstHoldMs < boundaryHoldMs || entry.firstHeldCount !== 1 || !entry.exact)
+      .map((entry) => entry.index);
+    evidence.recordAssertionEvidence(
+      "Twelve existing-session sends paint before engine work within 100 ms",
+      JSON.stringify({ metric: "trusted Enter to second consecutive visible-row frame before held engine request", limitMs: sendLimitMs, count: existingTiming.count, expectedCount: sampleCount, p50Ms: existingTiming.p50Ms, p95Ms: existingTiming.p95Ms, maxMs: existingTiming.maxMs, failureIndices: existingFailureIndices }),
+      existingTiming.count === sampleCount && existingFailureIndices.length === 0,
+    );
+
+    const creationRestoreLabel = "Clear the current draft to restore the unsent message";
+    const existingRestoreLabel = "Restore unsent message";
+    const originalFailureMessage = "The request was rejected before admission.";
+    const recoveryUiFacts = (restoreLabel: string, expectedFailureText: string) => probe.eval(browserScript((workspaceId, restoreLabel, expectedFailureText) => {
+      const visible = (node: HTMLElement) => {
+        const rect = node.getBoundingClientRect();
+        let ancestor: HTMLElement | null = node;
+        while (ancestor) {
+          const style = getComputedStyle(ancestor);
+          if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+          ancestor = ancestor.parentElement;
+        }
+        return node.getClientRects().length > 0 && rect.width > 0 && rect.height > 0
+          && rect.right > 0 && rect.bottom > 0 && rect.left < innerWidth && rect.top < innerHeight;
+      };
+      let root: HTMLElement | null = null;
+      const sessionlessRoute = `#/workspace/${workspaceId}/session`;
+      if ((localStorage.getItem("openwork.react.activeWorkspace") ?? "") === workspaceId) {
+        if (location.hash === sessionlessRoute) {
+          const heading = [...document.querySelectorAll<HTMLElement>("h2")]
+            .find((candidate) => candidate.textContent?.trim() === "What do you need done?" && visible(candidate));
+          const main = heading?.closest<HTMLElement>("main") ?? null;
+          const persistedSurfaceVisible = [...document.querySelectorAll<HTMLElement>("[data-session-surface-id]")].some(visible);
+          if (main && visible(main) && !persistedSurfaceVisible) root = main;
+        } else {
+          const persistedPrefix = `#/workspace/${workspaceId}/session/`;
+          const sessionId = location.hash.startsWith(persistedPrefix) ? location.hash.slice(persistedPrefix.length) : "";
+          const pane = [...document.querySelectorAll<HTMLElement>('[data-workbench-pane="primary"]')].find(visible) ?? null;
+          const surface = [...(pane?.querySelectorAll<HTMLElement>("[data-session-surface-id]") ?? [])]
+            .find((candidate) => candidate.dataset.sessionSurfaceId === sessionId && visible(candidate));
+          if (sessionId.startsWith("ses_") && !/[/?#]/.test(sessionId) && pane && surface) root = pane;
+        }
+      }
+      const alerts = [...(root?.querySelectorAll<HTMLElement>('[role="alert"]') ?? [])]
+        .filter(visible).map((alert) => alert.innerText.trim()).filter(Boolean);
+      const inlineFailures = [...(root?.querySelectorAll<Element>("*") ?? [])]
+        .filter((candidate): candidate is HTMLElement => candidate instanceof HTMLElement
+          && candidate.innerText.trim() === expectedFailureText && visible(candidate)
+          && !candidate.closest('[contenteditable="true"][data-lexical-editor="true"], [data-message-role="user"]')
+          && ![...candidate.querySelectorAll<Element>("*")]
+            .some((descendant) => descendant instanceof HTMLElement
+              && descendant.innerText.trim() === expectedFailureText && visible(descendant)))
+        .map((candidate) => candidate.innerText.trim());
+      const restore = [...(root?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+        .find((button) => button.innerText.trim() === restoreLabel && visible(button)) ?? null;
+      return {
+        failureMessage: [...new Set([...alerts, ...inlineFailures])].join(" | "),
+        restoreVisible: Boolean(restore),
+        restoreDisabled: restore?.disabled ?? null,
+      };
+    }, [world.workspace.workspaceId, restoreLabel, expectedFailureText]));
+
+    await step("creation and prompt failures preserve submitted work and the next draft through explicit recovery", async () => {
       await openSession(world.existing);
       const beforeCreationFailure = await world.sessionIds();
       const creationRequestsBefore = readFaults();
-      await user.hover({ role: "button", label: workspaceName });
-      await user.click({ role: "button", label: `New session · ${workspaceName}` });
+      const newTaskPoint = await world.prepareWorkspaceNewTask();
+      await world.clickWorkspaceNewTask(newTaskPoint);
       await probe.eventually(() => visibleFacts(""), {
         within: 10_000,
         label: "failed-creation composer is focused",
         until: (facts) => facts.focusedEditor,
       });
       await world.insertFocusedText(world.failure.creationA);
+      await accessibleRunTask(world.failure.creationA, "the failed-creation payload has an enabled Run task control before Enter");
       const creationGate = faults.holdNext("creation", "request");
       const creationRow = await world.observeRenderer("user-row", world.failure.creationA);
       await user.press("Enter");
       await waitHeld(creationGate);
       await world.insertFocusedText(world.failure.creationB);
       await creationGate.fail();
-      const creationRunTask = await accessibleRunTask();
-      const creationFacts = await probe.eventually(() => visibleFacts(world.failure.creationA), {
+      const creationFailure = await probe.eventually(async () => ({
+        composer: await visibleFacts(world.failure.creationA),
+        recovery: await recoveryUiFacts(creationRestoreLabel, originalFailureMessage),
+      }), {
         within: 15_000,
-        label: "creation failure keeps the current pane editable with draft B",
-        until: (facts) => facts.composerEditable && occurrences(facts.composerText, world.failure.creationB) === 1,
-      }).catch(() => visibleFacts(world.failure.creationA));
+        label: "creation failure preserves editable draft B, the original failure, and a guarded restore action",
+        until: (state) => state.composer.composerEditable
+          && state.composer.composerText === world.failure.creationB
+          && state.recovery.failureMessage.includes(originalFailureMessage)
+          && state.recovery.restoreVisible && state.recovery.restoreDisabled === true,
+      });
+      const creationRequestsAtFailure = readFaults();
+      await user.click({ placeholder: "Describe your task..." });
+      await user.press(world.app.handle.hostKind !== "daytona" && process.platform === "darwin" ? "Meta+A" : "Control+A");
+      await user.press("Backspace");
+      await probe.eventually(async () => ({
+        composer: await visibleFacts(world.failure.creationA),
+        recovery: await recoveryUiFacts(creationRestoreLabel, originalFailureMessage),
+      }), {
+        within: 10_000,
+        label: "clearing new-task draft B by keyboard enables its restore action",
+        until: (state) => state.composer.composerText === ""
+          && state.recovery.restoreVisible && state.recovery.restoreDisabled === false,
+      });
+      await user.click({ role: "button", label: creationRestoreLabel });
+      const creationRestored = await probe.eventually(async () => ({
+        composer: await visibleFacts(world.failure.creationA),
+        recovery: await recoveryUiFacts(creationRestoreLabel, originalFailureMessage),
+      }), {
+        within: 10_000,
+        label: "the real new-task restore action restores exactly failed payload A",
+        until: (state) => state.composer.composerEditable
+          && state.composer.composerText === world.failure.creationA
+          && state.composer.rowCount === 0 && state.composer.markerOccurrences === 0
+          && !state.recovery.restoreVisible,
+      });
       const afterCreationFailure = await world.sessionIds();
       const creationRequestsAfter = readFaults();
-      negatives.creationFailureComposerReady = creationRunTask && creationFacts.composerEditable;
-      negatives.creationFailureARecoverable = (creationFacts.rowCount === 1 && creationFacts.markerOccurrences === 1)
-        || occurrences(creationFacts.composerText, world.failure.creationA) === 1;
-      negatives.creationFailureDraftBSurvives = occurrences(creationFacts.composerText, world.failure.creationB) === 1;
-      negatives.creationFailureNoFallbackSession = !creationFacts.route.includes("/session/ses_")
+      negatives.creationFailureComposerReady = creationFailure.composer.composerEditable
+        && creationFailure.recovery.failureMessage.includes(originalFailureMessage)
+        && creationFailure.recovery.restoreVisible && creationFailure.recovery.restoreDisabled === true;
+      negatives.creationFailureARecoverable = creationRestored.composer.composerText === world.failure.creationA
+        && creationRestored.composer.rowCount === 0 && creationRestored.composer.markerOccurrences === 0
+        && !creationRestored.recovery.restoreVisible
+        && creationRequestsAfter.creation === creationRequestsAtFailure.creation
+        && creationRequestsAfter.prompt === creationRequestsAtFailure.prompt;
+      negatives.creationFailureDraftBSurvives = creationFailure.composer.composerText === world.failure.creationB;
+      negatives.creationFailureNoFallbackSession = !creationRestored.composer.route.includes("/session/ses_")
         && JSON.stringify(afterCreationFailure) === JSON.stringify(beforeCreationFailure)
         && creationRequestsAfter.creation - creationRequestsBefore.creation === 1
         && creationRequestsAfter.prompt === creationRequestsBefore.prompt;
+      evidence.recordAssertionEvidence(
+        "Failed new-task creation preserves draft B and restores exact payload A only after explicit recovery",
+        JSON.stringify({ failureMessage: creationFailure.recovery.failureMessage, restoreDisabledWithDraftB: creationFailure.recovery.restoreDisabled, requestsBefore: creationRequestsBefore, requestsAtFailure: creationRequestsAtFailure, requestsAfterRestore: creationRequestsAfter }),
+        negatives.creationFailureComposerReady && negatives.creationFailureARecoverable
+          && negatives.creationFailureDraftBSurvives && negatives.creationFailureNoFallbackSession,
+      );
       await creationRow[Symbol.asyncDispose]();
 
       await openSession(world.existing);
       await user.type({ placeholder: "Describe your task..." }, world.failure.promptA, { replace: true, verify: true });
+      await accessibleRunTask(world.failure.promptA, "the failed-prompt payload has an enabled Run task control before Enter");
       const beforePromptFailure = await world.sessionIds();
       const promptRequestsBefore = readFaults();
       const promptGate = faults.holdNext("prompt", "request");
@@ -515,24 +669,70 @@ test("workspace New task is instantly typable and every v1 send paints before en
       await waitHeld(promptGate);
       await world.insertFocusedText(world.failure.promptB);
       await promptGate.fail();
-      const promptRunTask = await accessibleRunTask();
-      const promptFacts = await probe.eventually(() => visibleFacts(world.failure.promptA), {
+      const promptFailure = await probe.eventually(async () => ({
+        composer: await visibleFacts(world.failure.promptA),
+        recovery: await recoveryUiFacts(existingRestoreLabel, originalFailureMessage),
+      }), {
         within: 15_000,
-        label: "prompt failure keeps the current pane editable with draft B",
-        until: (facts) => facts.composerEditable && occurrences(facts.composerText, world.failure.promptB) === 1,
-      }).catch(() => visibleFacts(world.failure.promptA));
+        label: "prompt failure preserves editable draft B, the original failure, and a guarded restore action",
+        until: (state) => state.composer.composerEditable
+          && state.composer.composerText === world.failure.promptB
+          && state.recovery.failureMessage.includes(originalFailureMessage)
+          && state.recovery.restoreVisible && state.recovery.restoreDisabled === true,
+      });
+      const promptRequestsAtFailure = readFaults();
+      await user.click({ placeholder: "Describe your task..." });
+      await user.press(world.app.handle.hostKind !== "daytona" && process.platform === "darwin" ? "Meta+A" : "Control+A");
+      await user.press("Backspace");
+      await probe.eventually(async () => ({
+        composer: await visibleFacts(world.failure.promptA),
+        recovery: await recoveryUiFacts(existingRestoreLabel, originalFailureMessage),
+      }), {
+        within: 10_000,
+        label: "clearing existing-session draft B by keyboard enables its restore action",
+        until: (state) => state.composer.composerText === ""
+          && state.recovery.restoreVisible && state.recovery.restoreDisabled === false,
+      });
+      await user.click({ role: "button", label: existingRestoreLabel });
+      const promptRestored = await probe.eventually(async () => ({
+        composer: await visibleFacts(world.failure.promptA),
+        recovery: await recoveryUiFacts(existingRestoreLabel, originalFailureMessage),
+      }), {
+        within: 10_000,
+        label: "the real existing-session restore action restores exactly failed payload A",
+        until: (state) => state.composer.composerEditable
+          && state.composer.composerText === world.failure.promptA
+          && state.composer.rowCount === 0 && state.composer.markerOccurrences === 0
+          && !state.recovery.restoreVisible,
+      });
+      const recoveredRunTask = await accessibleRunTask(
+        world.failure.promptA,
+        "the existing-session composer returns to enabled Run task after explicit recovery",
+      );
       const promptBackend = await world.messageFacts(world.existing.sessionId, world.failure.promptA);
       const afterPromptFailure = await world.sessionIds();
       const promptRequestsAfter = readFaults();
-      negatives.promptFailureComposerReady = promptRunTask && promptFacts.composerEditable;
-      negatives.promptFailureARecoverable = (promptFacts.rowCount === 1 && promptFacts.markerOccurrences === 1)
-        || occurrences(promptFacts.composerText, world.failure.promptA) === 1;
-      negatives.promptFailureDraftBSurvives = occurrences(promptFacts.composerText, world.failure.promptB) === 1;
-      negatives.promptFailureNoFallbackSession = promptFacts.sessionId === world.existing.sessionId
+      negatives.promptFailureComposerReady = promptFailure.composer.composerEditable
+        && promptFailure.recovery.failureMessage.includes(originalFailureMessage)
+        && promptFailure.recovery.restoreVisible && promptFailure.recovery.restoreDisabled === true
+        && recoveredRunTask.ready;
+      negatives.promptFailureARecoverable = promptRestored.composer.composerText === world.failure.promptA
+        && promptRestored.composer.rowCount === 0 && promptRestored.composer.markerOccurrences === 0
+        && !promptRestored.recovery.restoreVisible
+        && promptRequestsAfter.creation === promptRequestsAtFailure.creation
+        && promptRequestsAfter.prompt === promptRequestsAtFailure.prompt;
+      negatives.promptFailureDraftBSurvives = promptFailure.composer.composerText === world.failure.promptB;
+      negatives.promptFailureNoFallbackSession = promptRestored.composer.sessionId === world.existing.sessionId
         && promptBackend.markerCount === 0 && promptBackend.markerOccurrences === 0
         && JSON.stringify(afterPromptFailure) === JSON.stringify(beforePromptFailure)
         && promptRequestsAfter.prompt - promptRequestsBefore.prompt === 1
         && promptRequestsAfter.creation === promptRequestsBefore.creation;
+      evidence.recordAssertionEvidence(
+        "Failed existing-session prompt preserves draft B and restores exact payload A without retry",
+        JSON.stringify({ failureMessage: promptFailure.recovery.failureMessage, restoreDisabledWithDraftB: promptFailure.recovery.restoreDisabled, requestsBefore: promptRequestsBefore, requestsAtFailure: promptRequestsAtFailure, requestsAfterRestore: promptRequestsAfter }),
+        negatives.promptFailureComposerReady && negatives.promptFailureARecoverable
+          && negatives.promptFailureDraftBSurvives && negatives.promptFailureNoFallbackSession,
+      );
       await promptRow[Symbol.asyncDispose]();
     });
 
@@ -604,12 +804,22 @@ test("workspace New task is instantly typable and every v1 send paints before en
       await waitRenderer(rowObserver);
       await rowObserver[Symbol.asyncDispose]();
       const beforeReload = await visibleFacts(world.responseHold.marker);
+      const beforeReloadProof = {
+        providerRequestCount: await world.providerRequestCount(world.responseHold.marker),
+        sessionIds: await world.sessionIds(),
+        nativeUser: await world.messageFacts(world.existing.sessionId, world.responseHold.marker),
+        nativeReply: await world.messageFacts(world.existing.sessionId, world.responseHold.reply),
+        visibleUser: await world.visibleMessageFacts(world.existing.sessionId, "user", world.responseHold.marker),
+        visibleReply: await world.visibleMessageFacts(world.existing.sessionId, "assistant", world.responseHold.reply),
+      };
+      await faults.suspend();
       await user.reload();
       await probe.eventually(activeSessionId, {
         within: 30_000,
         label: "response-stage session remains selected after reload",
         until: (sessionId) => sessionId === world.existing.sessionId,
       });
+      await faults.resume();
       const afterReload = await probe.eventually(() => visibleFacts(world.responseHold.marker), {
         within: 30_000,
         label: "reloaded SSE-reconciled row remains exactly once",
@@ -617,13 +827,28 @@ test("workspace New task is instantly typable and every v1 send paints before en
       });
       const backend = await world.messageFacts(world.existing.sessionId, world.responseHold.marker);
       const replyBackend = await world.messageFacts(world.existing.sessionId, world.responseHold.reply);
+      const afterReloadProof = {
+        providerRequestCount: await world.providerRequestCount(world.responseHold.marker),
+        sessionIds: await world.sessionIds(),
+        visibleUser: await world.visibleMessageFacts(world.existing.sessionId, "user", world.responseHold.marker),
+        visibleReply: await world.visibleMessageFacts(world.existing.sessionId, "assistant", world.responseHold.reply),
+      };
       const requestsAfter = readFaults();
       negatives.responseSseReconciliation = sseBeforeResponse
         && responseHeld.elapsedMs >= boundaryHoldMs
         && beforeReload.rowCount === 1 && beforeReload.markerOccurrences === 1
         && afterReload.rowCount === 1 && afterReload.markerOccurrences === 1
+        && beforeReloadProof.providerRequestCount === 1
+        && afterReloadProof.providerRequestCount === beforeReloadProof.providerRequestCount
+        && JSON.stringify(afterReloadProof.sessionIds) === JSON.stringify(beforeReloadProof.sessionIds)
+        && beforeReloadProof.nativeUser.markerCount === 1 && beforeReloadProof.nativeUser.markerOccurrences === 1
+        && beforeReloadProof.nativeReply.markerCount === 1 && beforeReloadProof.nativeReply.markerOccurrences === 1
+        && beforeReloadProof.visibleUser.rowCount === 1 && beforeReloadProof.visibleUser.markerOccurrences === 1
+        && beforeReloadProof.visibleReply.rowCount === 1 && beforeReloadProof.visibleReply.markerOccurrences === 1
         && backend.markerCount === 1 && backend.markerOccurrences === 1
         && replyBackend.markerCount === 1 && replyBackend.markerOccurrences === 1
+        && afterReloadProof.visibleUser.rowCount === 1 && afterReloadProof.visibleUser.markerOccurrences === 1
+        && afterReloadProof.visibleReply.rowCount === 1 && afterReloadProof.visibleReply.markerOccurrences === 1
         && requestsAfter.prompt - requestsBefore.prompt === 1
         && requestsAfter.creation === requestsBefore.creation
         && JSON.stringify(await world.sessionIds()) === JSON.stringify(inventoryBefore);
@@ -643,16 +868,6 @@ test("workspace New task is instantly typable and every v1 send paints before en
     const negativePass = Object.values(negatives).every(Boolean);
     const expansionPass = expandedAfter === expandedBefore;
 
-    evidence.recordAssertionEvidence(
-      "Twelve New task clicks expose a focused, unobstructed composer within 500 ms",
-      JSON.stringify({ definition: "trusted click capture to the second consecutive requestAnimationFrame that sees the exact sessionless workspace route, visible new-task heading, no old primary-pane session surface, and the focused viewport-intersecting center-hit-testable editor; CDP polling roundtrip excluded; this is a conservative frame opportunity, not a literal pixel-presentation timestamp", limitMs: newTaskLimitMs, report: timingReport(newTaskSamples) }),
-      newTaskPass,
-    );
-    evidence.recordAssertionEvidence(
-      "Twelve lazy and twelve existing-session sends expose their visible user row within 100 ms before v1 engine work",
-      JSON.stringify({ definition: "trusted Enter keydown capture to the second consecutive requestAnimationFrame that sees the marker in a viewport-intersecting data-message-role=user row outside the composer; CDP polling roundtrip excluded", limitMs: sendLimitMs, lazy: timingReport(lazySendSamples), existing: timingReport(existingSendSamples) }),
-      lazySendPass && existingSendPass,
-    );
     evidence.recordAssertionEvidence(
       "Held, failed, navigated, SSE-reconciled, and reloaded sends remain singular and preserve drafts",
       JSON.stringify({ negatives, expansionUnchanged: expansionPass }),
@@ -692,18 +907,37 @@ test("workspace New task is instantly typable and every v1 send paints before en
     }
     try { lastFaultCounts = faults.read(); } catch {}
     evidence.recordAssertionEvidence(
-      "Instant-send partial and final diagnostics retain every attempted sample",
+      "Instant-send run diagnostics retain the terminal state without combining timing payloads",
       JSON.stringify({
         completed: journeyCompleted,
         error: diagnosticError,
         faultCounts: lastFaultCounts,
         typing: typingDiagnostics,
         negatives,
-        newTask: timingReport(newTaskSamples),
-        lazy: timingReport(lazySendSamples),
-        existing: timingReport(existingSendSamples),
       }),
       journeyCompleted,
+    );
+    evidence.recordAssertionEvidence(
+      "Raw New task timing samples are retained, including any pending partial sample",
+      JSON.stringify(timingReport(newTaskSamples)),
+      newTaskSamples.length === sampleCount && newTaskSamples.every((entry) => entry.elapsedMs !== null
+        && entry.elapsedMs < newTaskLimitMs && entry.trusted && entry.consecutiveFrames >= 2
+        && entry.exact && entry.typedWithoutClick),
+    );
+    evidence.recordAssertionEvidence(
+      "Raw lazy-send timing samples are retained, including any pending partial sample",
+      JSON.stringify(timingReport(lazySendSamples)),
+      lazySendSamples.length === sampleCount && lazySendSamples.every((entry) => entry.elapsedMs !== null
+        && entry.elapsedMs < sendLimitMs && entry.trusted && entry.consecutiveFrames >= 2 && entry.beforeEngine
+        && entry.firstHoldMs >= boundaryHoldMs && entry.secondHoldMs >= boundaryHoldMs
+        && entry.firstHeldCount === 1 && entry.secondHeldCount === 1 && entry.exact && entry.typedWithoutClick),
+    );
+    evidence.recordAssertionEvidence(
+      "Raw existing-send timing samples are retained, including any pending partial sample",
+      JSON.stringify(timingReport(existingSendSamples)),
+      existingSendSamples.length === sampleCount && existingSendSamples.every((entry) => entry.elapsedMs !== null
+        && entry.elapsedMs < sendLimitMs && entry.trusted && entry.consecutiveFrames >= 2 && entry.beforeEngine
+        && entry.firstHoldMs >= boundaryHoldMs && entry.firstHeldCount === 1 && entry.exact),
     );
   }
 });

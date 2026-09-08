@@ -109,7 +109,10 @@ import { DashboardPage } from "@/react-app/domains/dashboard/dashboard-page";
 import { useDashboardDeploymentAvailability } from "@/react-app/domains/dashboard/dashboard-availability";
 import { useAutomationDeploymentEnabled } from "@/react-app/domains/automations/automation-availability";
 import { automationsStateChangedEvent } from "@/react-app/domains/automations/automation-events";
-import type { NewTaskComposerContext } from "@/react-app/domains/session/chat/new-task-composer";
+import type {
+  NewTaskComposerContext,
+  NewTaskComposerHandoff,
+} from "@/react-app/domains/session/chat/new-task-composer";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
@@ -136,7 +139,10 @@ import {
   useModelCollectionsStore,
 } from "@/react-app/domains/session/models/model-collections-store";
 import { openModelPickerEvent, openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
-import { markComposerAutoSend } from "@/react-app/domains/session/surface/composer-auto-send";
+import {
+  composerAutoSendScopeKey,
+  markComposerAutoSend,
+} from "@/react-app/domains/session/surface/composer-auto-send";
 import { sendWithRevertRollback } from "@/react-app/domains/session/surface/safe-edit-resend";
 import { assertQueuedSendCurrent, getQueuedSendGeneration } from "@/react-app/domains/session/surface/queued-drain-machine";
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
@@ -208,6 +214,8 @@ import {
 } from "@/react-app/domains/session/sync/draft-store";
 import {
   claimComposerSessionDraftScope,
+  persistableComposerDraftText,
+  snapshotComposerSessionState,
   useComposerStateStore,
 } from "@/react-app/domains/session/surface/composer-state-store";
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
@@ -355,6 +363,14 @@ function singlePickedDirectory(selection: string | string[] | null) {
       : null;
 }
 
+function focusedWorkbenchPaneOwner() {
+  const workbench = useWorkbenchStore.getState();
+  const focused = workbench.focusedPane === "secondary" ? workbench.secondary : workbench.primary;
+  return focused
+    ? JSON.stringify([workbench.focusedPane, focused.workspaceId, focused.sessionId])
+    : null;
+}
+
 export function SessionRoute() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -497,6 +513,29 @@ export function SessionRoute() {
     onServerSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
     onHostInfo: setOpenworkServerHostInfoState,
   });
+  const routeNavigationRef = useRef({ locationKey: location.key, generation: 0 });
+  if (routeNavigationRef.current.locationKey !== location.key) {
+    routeNavigationRef.current = {
+      locationKey: location.key,
+      generation: routeNavigationRef.current.generation + 1,
+    };
+  }
+  const selectedConversationRef = useRef({
+    workspaceId: selectedWorkspaceId,
+    sessionId: selectedSessionId,
+    draftScope: sessionDraftScope,
+    location: `${location.pathname}${location.search}`,
+    locationKey: location.key,
+    navigationGeneration: routeNavigationRef.current.generation,
+  });
+  selectedConversationRef.current = {
+    workspaceId: selectedWorkspaceId,
+    sessionId: selectedSessionId,
+    draftScope: sessionDraftScope,
+    location: `${location.pathname}${location.search}`,
+    locationKey: location.key,
+    navigationGeneration: routeNavigationRef.current.generation,
+  };
   const archiveDisabledReason = isOpencodeV2BaseUrl(opencodeBaseUrl) ? V2_SESSION_ARCHIVE_UNAVAILABLE : undefined;
   // The dashboard is user-scoped while MCP servers are workspace-scoped: the
   // selected workspace's runtime is primary, and every other available one is
@@ -1869,6 +1908,11 @@ export function SessionRoute() {
     return {
       client,
       workspaceId: selectedWorkspaceId || null,
+      draftOwnerKey: JSON.stringify([
+        sessionDraftScope,
+        selectedWorkspaceEndpoint?.opencodeBaseUrl ?? null,
+        selectedWorkspaceId || null,
+      ]),
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
       modelOptions: organizationAssignedModelOptions,
       modelUnavailable: selectedModelUnavailable,
@@ -1952,8 +1996,10 @@ export function SessionRoute() {
     selectedAgent,
     selectedModelUnavailable,
     selectedWorkspace,
+    selectedWorkspaceEndpoint,
     selectedWorkspaceId,
     selectedWorkspaceRoot,
+    sessionDraftScope,
     sessionProviderAuthStore,
     setSelectedAgent,
   ]);
@@ -3420,44 +3466,90 @@ export function SessionRoute() {
         onCreateSplitTaskInWorkspace: (workspaceId) => {
           void handleCreateSplitTaskInWorkspace(workspaceId);
         },
-        onCreateTaskWithPrompt: async (workspaceId, prompt, attachments) => {
+        onCreateTaskWithPrompt: async (
+          workspaceId,
+          prompt,
+          attachments,
+          handoff?: NewTaskComposerHandoff,
+        ) => {
+          const navigationOwner = {
+            ...selectedConversationRef.current,
+            paneOwner: focusedWorkbenchPaneOwner(),
+          };
           const workspace = workspaces.find((item) => item.id === workspaceId);
           if (!workspace) throw new Error("Workspace is unavailable. Try again.");
           const endpoint = endpointForWorkspace(workspace);
           if (!endpoint?.token) throw new Error("Workspace is disconnected. Reconnect and try again.");
           const session = await createRouteSession(endpoint, workspace.path?.trim() || undefined);
+          const continuation = handoff
+            ? snapshotComposerSessionState(handoff.getContinuation())
+            : null;
           if (workspaceId === selectedWorkspaceId) {
             void refreshCloudProviderSync("new_chat");
           }
           const firstTaskPrompt = prompt.trim();
           if (firstTaskPrompt || attachments?.length) {
             const firstTaskAttachments = attachments ?? [];
-            // Attachment chips only survive in-memory (File objects), so the
-            // persisted fallback draft drops their tokens.
-            saveSessionDraft(sessionDraftScope, workspaceId, session.id, { text: firstTaskPrompt.replace(/\[attachment [^\]]+\]/g, "").trim(), mode: "prompt" });
-            claimComposerSessionDraftScope(
-              session.id,
-              sessionDraftScopeKey(sessionDraftScope, workspaceId, session.id),
-            );
-            // The composer reads its draft from the composer state store,
-            // not the persisted draft store — seed both.
-            useComposerStateStore.getState().setDraft(session.id, firstTaskPrompt);
-            if (firstTaskAttachments.length) {
-              useComposerStateStore.getState().setAttachments(session.id, firstTaskAttachments);
+            const destinationScopeKey = sessionDraftScopeKey(sessionDraftScope, workspaceId, session.id);
+            if (handoff && continuation) {
+              // The source composer remains live while session creation is in
+              // flight. Seed its latest continuation in the destination, but
+              // send the immutable submitted snapshot through the scoped mark.
+              saveSessionDraft(sessionDraftScope, workspaceId, session.id, {
+                text: persistableComposerDraftText(continuation.draft),
+                mode: "prompt",
+              });
+              claimComposerSessionDraftScope(session.id, destinationScopeKey);
+              useComposerStateStore.setState((state) => ({
+                sessions: {
+                  ...state.sessions,
+                  [session.id]: continuation,
+                },
+              }));
+              markComposerAutoSend(session.id, {
+                scopeKey: composerAutoSendScopeKey({
+                  draftScope: sessionDraftScope,
+                  opencodeBaseUrl: endpoint.opencodeBaseUrl,
+                  workspaceId,
+                  sessionId: session.id,
+                }),
+                composer: handoff.submitted,
+              });
+            } else {
+              // Attachment chips only survive in-memory (File objects), so the
+              // persisted fallback draft drops their tokens.
+              saveSessionDraft(sessionDraftScope, workspaceId, session.id, { text: firstTaskPrompt.replace(/\[attachment [^\]]+\]/g, "").trim(), mode: "prompt" });
+              claimComposerSessionDraftScope(session.id, destinationScopeKey);
+              // The composer reads its draft from the composer state store,
+              // not the persisted draft store — seed both.
+              useComposerStateStore.getState().setDraft(session.id, firstTaskPrompt);
+              if (firstTaskAttachments.length) {
+                useComposerStateStore.getState().setAttachments(session.id, firstTaskAttachments);
+              }
+              // Legacy callers still seed the submitted draft directly.
+              markComposerAutoSend(session.id);
             }
-            // One-step run: the session surface sends the seeded draft itself.
-            markComposerAutoSend(session.id);
           }
-          writeActiveWorkspaceId(workspaceId || null);
-          writeLastSessionFor(workspaceId, session.id);
           rememberPendingCreatedSession(workspaceId, session.id);
           applyLastUsedModelToSession(session.id);
           setSessionsByWorkspaceId((current) => ({
             ...current,
             [workspaceId]: mergeWorkspaceRouteSession(current[workspaceId] ?? [], session),
           }));
-          navigateToWorkspaceSession(workspaceId, session.id);
-          focusPromptSoon();
+          const stillOwnsNavigation = navigationOwner.workspaceId === workspaceId
+            && selectedConversationRef.current.workspaceId === navigationOwner.workspaceId
+            && selectedConversationRef.current.sessionId === navigationOwner.sessionId
+            && selectedConversationRef.current.draftScope === navigationOwner.draftScope
+            && selectedConversationRef.current.location === navigationOwner.location
+            && selectedConversationRef.current.locationKey === navigationOwner.locationKey
+            && selectedConversationRef.current.navigationGeneration === navigationOwner.navigationGeneration
+            && focusedWorkbenchPaneOwner() === navigationOwner.paneOwner;
+          if (stillOwnsNavigation) {
+            writeActiveWorkspaceId(workspaceId || null);
+            writeLastSessionFor(workspaceId, session.id);
+            navigateToWorkspaceSession(workspaceId, session.id);
+            focusPromptSoon();
+          }
         },
         onOpenRenameWorkspace: handleOpenRenameWorkspace,
         onShareWorkspace: handleShareWorkspace,
