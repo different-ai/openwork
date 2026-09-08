@@ -2,8 +2,10 @@ import { chmod, mkdtemp, readFile, rm } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { expect, onTestFinished } from "vitest";
-import { denFetch, signIn } from "@openwork/behaviors";
+import { clickButton, denFetch, signIn } from "@openwork/behaviors";
+import type { DenSession } from "@openwork/behaviors";
 import {
   app,
   control,
@@ -50,6 +52,112 @@ const title = !e2eTestsEnabled
 
 const ORG_A = "Handoff Atomic A";
 const ORG_B = "Handoff Atomic B";
+const LOCAL_SERVER_STABILITY_MS = 3_000;
+
+type LocalServerResponse = { status: number; body: unknown };
+type LocalServerIdentity = {
+  managedPolicy: LocalServerResponse;
+  providerSync: LocalServerResponse;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function localServerResponse(value: unknown, path: string): LocalServerResponse {
+  if (!isRecord(value) || typeof value.status !== "number" || !("body" in value)) {
+    throw new Error(`Invalid local-server response for ${path}: ${JSON.stringify(value)}`);
+  }
+  return { status: value.status, body: value.body };
+}
+
+/** Read-only, secret-free proof through the renderer's authenticated local-server boundary. */
+async function readLocalServerIdentity(surface: Surface): Promise<LocalServerIdentity> {
+  const value = await evalIn(surface, async () => {
+    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+    if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
+    const request = async (path: string) => {
+      const response = await fetch(String(info.baseUrl).replace(/\/+$/, "") + path, {
+        headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
+        redirect: "error",
+        signal: AbortSignal.timeout(15_000),
+      });
+      const text = await response.text();
+      let body: unknown = text;
+      try { body = text ? JSON.parse(text) : null; } catch {}
+      return { status: response.status, body };
+    };
+    const [managedPolicy, providerSync] = await Promise.all([
+      request("/managed-policy"),
+      request("/cloud-provider-sync/status"),
+    ]);
+    return { managedPolicy, providerSync };
+  }, { awaitPromise: true, timeoutMs: 30_000 });
+  if (!isRecord(value)) throw new Error(`Invalid local-server identity response: ${JSON.stringify(value)}`);
+  return {
+    managedPolicy: localServerResponse(value.managedPolicy, "/managed-policy"),
+    providerSync: localServerResponse(value.providerSync, "/cloud-provider-sync/status"),
+  };
+}
+
+function isUsableLocalIdentity(identity: LocalServerIdentity, allowAlphaUpdates: boolean): boolean {
+  return identity.managedPolicy.status === 200
+    && isRecord(identity.managedPolicy.body)
+    && isRecord(identity.managedPolicy.body.policy)
+    && identity.managedPolicy.body.policy.allowAlphaUpdates === allowAlphaUpdates
+    && identity.providerSync.status === 200
+    && isRecord(identity.providerSync.body)
+    && identity.providerSync.body.hasSession === true;
+}
+
+function isSignedOutLocalIdentity(identity: LocalServerIdentity): boolean {
+  return identity.managedPolicy.status === 403
+    && isRecord(identity.managedPolicy.body)
+    && identity.managedPolicy.body.code === "policy_unavailable"
+    && identity.providerSync.status === 200
+    && isRecord(identity.providerSync.body)
+    && identity.providerSync.body.hasSession === false;
+}
+
+async function observeStableLocalIdentity(
+  surface: Surface,
+  allowAlphaUpdates: boolean,
+): Promise<LocalServerIdentity[]> {
+  const identities: LocalServerIdentity[] = [];
+  const deadline = Date.now() + LOCAL_SERVER_STABILITY_MS;
+  do {
+    identities.push(await readLocalServerIdentity(surface));
+    await delay(500);
+  } while (Date.now() < deadline);
+  expect(
+    identities.every((identity) => isUsableLocalIdentity(identity, allowAlphaUpdates)),
+    `Expected stable local-server identity with allowAlphaUpdates=${allowAlphaUpdates}: ${JSON.stringify(identities)}`,
+  ).toBe(true);
+  return identities;
+}
+
+async function setDefaultPolicyMarker(session: DenSession, allowAlphaUpdates: boolean): Promise<void> {
+  const headers = { authorization: `Bearer ${session.token}` };
+  const list = await denFetch(session, "/v1/desktop-policies", { headers });
+  const policies = isRecord(list.body) && Array.isArray(list.body.desktopPolicies)
+    ? list.body.desktopPolicies.filter(isRecord)
+    : [];
+  const current = policies.find((policy) => policy.isDefault === true);
+  if (!list.response.ok || !current || typeof current.id !== "string" || !isRecord(current.policy)) {
+    throw new Error(`Default desktop policy setup failed with HTTP ${list.response.status}.`);
+  }
+  const update = await denFetch(session, `/v1/desktop-policies/${encodeURIComponent(current.id)}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({
+      policyName: typeof current.policyName === "string" ? current.policyName : "Default desktop policy",
+      policy: { ...current.policy, allowAlphaUpdates },
+    }),
+  });
+  if (!update.response.ok) {
+    throw new Error(`Desktop policy marker update failed with HTTP ${update.response.status}: ${update.text}`);
+  }
+}
 
 const EVENT_RECORDER = () => {
   if (!window.__handoffProofEvents) {
@@ -137,6 +245,8 @@ test.skipIf(!e2eTestsEnabled || !localPlacement || !mysqlOpen)(
         },
       },
     });
+    await setDefaultPolicyMarker(denA.admin, false);
+    await setDefaultPolicyMarker(denB.admin, true);
 
     const profileDir = await mkdtemp(join(tmpdir(), "openwork-handoff-atomic-"));
     onTestFinished(async () => {
@@ -146,15 +256,22 @@ test.skipIf(!e2eTestsEnabled || !localPlacement || !mysqlOpen)(
 
     let desktop: App | null = await app({ den: denA, as: "admin", place, profileDir });
     try {
+      const runningDesktop = desktop;
       // The boot sign-in is itself a same-origin handoff through the same
       // transaction — its success proves same-origin handoffs still work.
       const stateA = await readDenClientState(desktop);
       expect(stateA.authTokenPresent).toBe(true);
       expect(stateA.activeOrgName).toBe(ORG_A);
       expect(await readEnrollmentOrigin(desktop)).toBe(sessionOriginKey(denA.ref.webUrl));
+      const initialServerA = await eventually(() => readLocalServerIdentity(runningDesktop), {
+        within: 60_000,
+        label: "local server using A policy and provider-sync session",
+        until: (identity) => isUsableLocalIdentity(identity, false),
+      });
+      expect(isUsableLocalIdentity(initialServerA, false)).toBe(true);
       evidence.recordAssertionEvidence(
-        "Same-origin handoff enrolled control plane A",
-        `The app signed in to ${ORG_A} with the enrollment origin stamped to A.`,
+        "Same-origin handoff enrolled usable control plane A state in the app and local server",
+        `The app signed in to ${ORG_A}; /managed-policy returned A's false alpha-update marker and /cloud-provider-sync/status reported hasSession=true.`,
         true,
       );
 
@@ -190,9 +307,10 @@ test.skipIf(!e2eTestsEnabled || !localPlacement || !mysqlOpen)(
       const eventsAfterFailure = await readSessionEvents(desktop);
       expect(eventsAfterFailure).toContain("error");
       expect(eventsAfterFailure).not.toContain("success");
+      const serverSamplesAfterFailure = await observeStableLocalIdentity(runningDesktop, false);
       evidence.recordAssertionEvidence(
-        "Bootstrap persistence failure left the complete A enrollment active",
-        "With bootstrap writes failing, the B handoff was rejected: the bootstrap file, token, organization, and enrollment origin all still belong to A, and no success state was published.",
+        "Bootstrap persistence failure left the complete A enrollment and local-server identity active",
+        `With bootstrap writes failing, the B handoff was rejected and ${serverSamplesAfterFailure.length} local-server samples over ${LOCAL_SERVER_STABILITY_MS}ms kept A's policy marker and provider-sync session; no B success was published.`,
         true,
       );
 
@@ -206,7 +324,7 @@ test.skipIf(!e2eTestsEnabled || !localPlacement || !mysqlOpen)(
         { grant: freshGrant, baseUrl: denB.ref.webUrl },
         { timeoutMs: 60_000 },
       );
-      const stateB = await eventually(() => readDenClientState(desktop as App), {
+      const stateB = await eventually(() => readDenClientState(runningDesktop), {
         within: 60_000,
         label: "committed B enrollment",
         until: (state) => state.activeOrgName === ORG_B,
@@ -217,9 +335,15 @@ test.skipIf(!e2eTestsEnabled || !localPlacement || !mysqlOpen)(
       expect(await readBootstrapFileBaseUrl(profileDir)).toBe(normalizedUrl(denB.ref.webUrl));
       const eventsAfterCommit = await readSessionEvents(desktop);
       expect(eventsAfterCommit).toContain("success");
+      const committedServerB = await eventually(() => readLocalServerIdentity(runningDesktop), {
+        within: 60_000,
+        label: "local server switched to B policy and provider-sync session",
+        until: (identity) => isUsableLocalIdentity(identity, true),
+      });
+      expect(isUsableLocalIdentity(committedServerB, true)).toBe(true);
       evidence.recordAssertionEvidence(
-        "The retried handoff committed B atomically",
-        `Origin (bootstrap file), credential, organization (${ORG_B}), and enrollment marker switched to B together.`,
+        "The retried handoff committed B atomically in the app and local server",
+        `Origin (bootstrap file), credential, organization (${ORG_B}), enrollment marker, managed policy, and provider-sync session switched to B together.`,
         true,
       );
 
@@ -240,9 +364,10 @@ test.skipIf(!e2eTestsEnabled || !localPlacement || !mysqlOpen)(
       const stateAfterReplay = await readDenClientState(desktop);
       expect(stateAfterReplay.activeOrgName).toBe(ORG_B);
       expect(stateAfterReplay.authTokenPresent).toBe(true);
+      const serverSamplesAfterReplay = await observeStableLocalIdentity(runningDesktop, true);
       evidence.recordAssertionEvidence(
-        "A consumed one-time grant cannot be replayed",
-        "Re-exchanging the spent grant failed and the committed B enrollment was untouched.",
+        "A consumed one-time grant cannot disturb the committed B identity",
+        `Re-exchanging the spent grant failed while ${serverSamplesAfterReplay.length} local-server samples over ${LOCAL_SERVER_STABILITY_MS}ms kept B's policy marker and provider-sync session.`,
         true,
       );
 
@@ -367,6 +492,35 @@ test.skipIf(!e2eTestsEnabled || !localPlacement || !mysqlOpen)(
         evidence.recordAssertionEvidence(
           "An authenticated desktop handoff supplies a default owned organization only when membership is missing",
           "The fresh account had no organizations before handoff; desktop sign-in resolved one owned organization, a second handoff reused it, consumed grants remained unusable, and the existing organization's memberships and pending invitation were unchanged. The newcomer could not access the invited organization without accepting.",
+          true,
+        );
+
+        const localServerBeforeSignOut = await eventually(() => readLocalServerIdentity(restarted), {
+          within: 60_000,
+          label: "B local-server identity ready before explicit sign-out",
+          until: (identity) => isUsableLocalIdentity(identity, true),
+        });
+        expect(isUsableLocalIdentity(localServerBeforeSignOut, true)).toBe(true);
+        // `settings.panel.open` is the registered product navigation action;
+        // the final mutation is the real Account page's Sign out button.
+        await control(restarted, "settings.panel.open", { panel: "cloud-account" });
+        await clickButton(restarted, "Sign out", { timeoutMs: 60_000 });
+        const signedOut = await eventually(async () => {
+          const [client, localServer] = await Promise.all([
+            readDenClientState(restarted),
+            readLocalServerIdentity(restarted),
+          ]);
+          return { client, localServer };
+        }, {
+          within: 60_000,
+          label: "explicit sign-out cleared the local-server Den session",
+          until: ({ client, localServer }) => !client.authTokenPresent && isSignedOutLocalIdentity(localServer),
+        });
+        expect(signedOut.client.authTokenPresent).toBe(false);
+        expect(isSignedOutLocalIdentity(signedOut.localServer)).toBe(true);
+        evidence.recordAssertionEvidence(
+          "Explicit sign-out clears account-scoped local-server state without removing stored restrictions",
+          `The renderer credential is absent, provider sync reports hasSession=false, and /managed-policy returns 403 policy_unavailable because the last managed restrictions remain stored but cannot be used without a verified identity.`,
           true,
         );
       } finally {
