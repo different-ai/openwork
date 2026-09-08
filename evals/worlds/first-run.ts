@@ -189,6 +189,9 @@ export async function installationFirstRunWorld(seed: Seed, { place }: { place: 
   const workspacePath = join(profileDir, "existing-workspace");
   const env = {
     ...setup.env,
+    // This public-profile journey selects the existing mock-backed OpenCode
+    // provider; real native free gateway/version coverage is deferred.
+    ...(cohort === "new" ? { OPENWORK_DISABLE_FREE_INFERENCE: "1" } : {}),
     // LocalStorage belongs to the renderer origin, not just Electron userData.
     // Keep Vite's origin stable while the caller-owned profile is relaunched.
     ...(place.kind === "local" ? { PORT: String(await allocateFreePort()) } : {}),
@@ -242,7 +245,9 @@ export async function installationFirstRunWorld(seed: Seed, { place }: { place: 
         });
       }, [proxy.ref]), { awaitPromise: true });
       await app.client.send("Page.reload");
-      await waitForBehavior(app, () => location.hash === "#/signin" && document.body.innerText.includes("Sign in"), { timeoutMs: 60_000, label: "fresh sign-in gate" });
+      await waitForBehavior(app, () => /^#\/workspace\/[^/]+\/session$/.test(location.hash)
+        && Boolean(document.querySelector('[contenteditable="true"][data-lexical-editor="true"]')),
+      { timeoutMs: 60_000, label: "fresh signed-out workspace composer" });
     }
     return {
       ...setup, app, proxy, workspacePath, bootstrap, resetAuthFaults,

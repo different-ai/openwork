@@ -282,3 +282,107 @@ export const inferenceOrgUsageBucket = InferenceOrgUsageBucketTable
 export const inferenceOrgUpstreamProviderKey = InferenceOrgUpstreamProviderKeyTable
 export const inferenceUsageLedgerEntry = InferenceUsageLedgerEntryTable
 export const inferenceUsageLedgerBucketCharge = InferenceUsageLedgerBucketChargeTable
+
+// Anonymous-only definitions reused from #4621 (401267fc), appended without
+// replacing the member-free ledger. Installation buckets now use UTC weeks.
+export const AnonymousInferenceScopes = ["installation", "ip", "global"] as const
+export const AnonymousInferenceUsageWindows = ["daily", "monthly", "weekly"] as const
+export const AnonymousInferenceRateKinds = ["session", "request"] as const
+export const AnonymousInferenceReservationStatuses = ["active", "settled", "retained"] as const
+
+export const AnonymousInferenceControlTable = mysqlTable(
+  "anonymous_inference_control",
+  {
+    id: varchar("id", { length: 64 }).notNull().primaryKey(),
+    blocked: boolean("blocked").notNull().default(false),
+    blocked_at: timestamp("blocked_at", { fsp: 3 }),
+    block_reason: varchar("block_reason", { length: 64 }),
+    ...timestamps,
+  },
+)
+
+export const AnonymousInferenceUsageBucketTable = mysqlTable(
+  "anonymous_inference_usage_buckets",
+  {
+    id: varchar("id", { length: 64 }).notNull().primaryKey(),
+    scope: mysqlEnum("scope", AnonymousInferenceScopes).notNull(),
+    identity_hash: varchar("identity_hash", { length: 64 }).notNull(),
+    window_type: mysqlEnum("window_type", AnonymousInferenceUsageWindows).notNull(),
+    window_start_at: timestamp("window_start_at", { fsp: 3 }).notNull(),
+    window_end_at: timestamp("window_end_at", { fsp: 3 }).notNull(),
+    limit_micro_usd: bigint("limit_micro_usd", { mode: "number" }).notNull(),
+    used_micro_usd: bigint("used_micro_usd", { mode: "number" }).notNull().default(0),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("anonymous_inference_usage_bucket_identity_window").on(table.scope, table.identity_hash, table.window_type, table.window_start_at),
+    index("anonymous_inference_usage_bucket_window_end").on(table.window_end_at),
+  ],
+)
+
+export const AnonymousInferenceRateBucketTable = mysqlTable(
+  "anonymous_inference_rate_buckets",
+  {
+    id: varchar("id", { length: 64 }).notNull().primaryKey(),
+    kind: mysqlEnum("kind", AnonymousInferenceRateKinds).notNull(),
+    scope: mysqlEnum("scope", AnonymousInferenceScopes).notNull(),
+    identity_hash: varchar("identity_hash", { length: 64 }).notNull(),
+    window_start_at: timestamp("window_start_at", { fsp: 3 }).notNull(),
+    window_end_at: timestamp("window_end_at", { fsp: 3 }).notNull(),
+    limit_amount: bigint("limit_amount", { mode: "number" }).notNull(),
+    used_amount: bigint("used_amount", { mode: "number" }).notNull().default(0),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("anonymous_inference_rate_bucket_identity_window").on(table.kind, table.scope, table.identity_hash, table.window_start_at),
+    index("anonymous_inference_rate_bucket_window_end").on(table.window_end_at),
+  ],
+)
+
+export const AnonymousInferenceReservationTable = mysqlTable(
+  "anonymous_inference_reservations",
+  {
+    id: varchar("id", { length: 64 }).notNull().primaryKey(),
+    installation_hash: varchar("installation_hash", { length: 64 }).notNull(),
+    ip_hash: varchar("ip_hash", { length: 64 }).notNull(),
+    status: mysqlEnum("status", AnonymousInferenceReservationStatuses).notNull().default("active"),
+    reserved_micro_usd: bigint("reserved_micro_usd", { mode: "number" }).notNull(),
+    settled_micro_usd: bigint("settled_micro_usd", { mode: "number" }),
+    lease_expires_at: timestamp("lease_expires_at", { fsp: 3 }).notNull(),
+    released_at: timestamp("released_at", { fsp: 3 }),
+    ...timestamps,
+  },
+  (table) => [
+    index("anonymous_inference_reservation_active_installation").on(table.status, table.installation_hash, table.lease_expires_at),
+    index("anonymous_inference_reservation_active_lease").on(table.status, table.lease_expires_at),
+  ],
+)
+
+export const AnonymousInferenceReservationChargeTable = mysqlTable(
+  "anonymous_inference_reservation_charges",
+  {
+    id: varchar("id", { length: 64 }).notNull().primaryKey(),
+    reservation_id: varchar("reservation_id", { length: 64 }).notNull(),
+    bucket_id: varchar("bucket_id", { length: 64 }).notNull(),
+    reserved_micro_usd: bigint("reserved_micro_usd", { mode: "number" }).notNull(),
+    settled_micro_usd: bigint("settled_micro_usd", { mode: "number" }),
+    created_at: timestamps.created_at,
+  },
+  (table) => [
+    uniqueIndex("anonymous_inference_reservation_charge_bucket").on(table.reservation_id, table.bucket_id),
+    index("anonymous_inference_reservation_charge_bucket_id").on(table.bucket_id),
+  ],
+)
+
+// The primary key binds a key thumbprint and nonce across every free route and
+// service replica. Expires only after the signed timestamp cannot be accepted.
+export const DesktopFreeProofNonceTable = mysqlTable("desktop_free_proof_nonces", {
+  id: varchar("id", { length: 64 }).notNull().primaryKey(),
+  expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+}, (table) => [index("desktop_free_proof_nonce_expiry").on(table.expires_at)])
+
+export const anonymousInferenceControl = AnonymousInferenceControlTable
+export const anonymousInferenceUsageBucket = AnonymousInferenceUsageBucketTable
+export const anonymousInferenceRateBucket = AnonymousInferenceRateBucketTable
+export const anonymousInferenceReservation = AnonymousInferenceReservationTable
+export const anonymousInferenceReservationCharge = AnonymousInferenceReservationChargeTable

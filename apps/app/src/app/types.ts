@@ -9,6 +9,10 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 import type { createClient } from "./lib/opencode";
 import type { OpencodeConfigFile, WorkspaceInfo } from "./lib/desktop-types";
+import type { CloudMcpSubmissionResult } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
+import type { DesktopFreeSubmissionBlock } from "./lib/inference-access";
+
+export type ComposerSubmissionResult = CloudMcpSubmissionResult | DesktopFreeSubmissionBlock;
 
 export type Client = ReturnType<typeof createClient>;
 

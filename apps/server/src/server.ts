@@ -90,6 +90,7 @@ import {
 import { serve, type ServeResult } from "./serve-node.js";
 import { serveStaticUi } from "./static-ui.js";
 import { externalFetch, loopbackFetch } from "./server-fetch.js";
+import { AnonymousInferenceService } from "./anonymous-inference.js";
 import { registerCoreRoutes } from "./routes/core.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
@@ -778,10 +779,14 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     },
     logger: toManagedProviderAuthLogger(logger),
   });
+  const anonymousInference = new AnonymousInferenceService(config, logger);
   managedDesktopPolicy(config).onChange = () => {
     // Sign-in can precede the first workspace. Its future engine reads the
     // persisted policy at startup; there is no running workspace to reload.
     if (config.workspaces.length > 0) cloudProviderSync.markReloadPending();
+    void anonymousInference.initialize(config.port).then((changed) => {
+      if (changed && config.workspaces.length > 0) cloudProviderSync.markReloadPending();
+    }).catch(() => undefined);
   };
   const engineV2Preview = createEngineV2Preview({ config, env, deferStart: true });
   const routes = createRoutes(
@@ -794,6 +799,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     logger,
     cloudProviderSync,
     engineV2Preview,
+    anonymousInference,
   );
 
   const serverOptions: {
@@ -851,6 +857,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
           await assertDesktopTaskAccess(config, request, mount.restPath);
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
+          await anonymousInference.assertTaskAccess(request, mount.restPath);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
           await assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, mount.restPath);
           proxyService = "opencode";
@@ -879,6 +886,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
           await assertDesktopTaskAccess(config, request, mount.restPath);
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
+          await anonymousInference.assertTaskAccess(request, mount.restPath);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
           const connection = engineV2Preview.connection();
           if (!connection) {
@@ -958,6 +966,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
           await assertDesktopTaskAccess(config, request, url.pathname);
           await managedDesktopPolicy(config).assertRequest(request, url.pathname, true);
+          await anonymousInference.assertTaskAccess(request, url.pathname);
           proxyService = "opencode";
           const workspace = config.workspaces[0];
           if (workspace) {
@@ -1053,6 +1062,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   } catch (error) {
     captureServerException(error, { method: "START", route: "startServer" });
     cloudProviderSync.stop();
+    anonymousInference.stop();
     await engineV2Preview.stop().catch(() => undefined);
     engineInstanceReaper.close();
     clearEngineInstanceReaperForConfig(config);
@@ -1071,6 +1081,20 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         error: error instanceof Error ? error.message : "unknown",
       });
     }
+  }
+  try {
+    await anonymousInference.initialize(server.port);
+  } catch (error) {
+    anonymousInference.stop();
+    cloudProviderSync.stop();
+    await engineV2Preview.stop().catch(() => undefined);
+    engineInstanceReaper.close();
+    clearEngineInstanceReaperForConfig(config);
+    invalidateEngineMcpServerState(config, engineMcpServerState);
+    watcherHandle.close();
+    reloadBaselineRefreshers.delete(config);
+    await Promise.resolve(server.stop()).catch(() => undefined);
+    throw error;
   }
   // Policy hooks must receive the listener that actually bound, including
   // ephemeral ports and retries after a port collision.
@@ -1098,6 +1122,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     stop: async () => {
       managedDesktopPolicy(config).onChange = undefined;
       cloudProviderSync.stop();
+      anonymousInference.stop();
       await engineV2Preview.stop().catch(() => undefined);
       engineInstanceReaper.close();
       clearEngineInstanceReaperForConfig(config);
@@ -2255,8 +2280,23 @@ function createRoutes(
   logger: ServerLogger,
   cloudProviderSync: CloudProviderSync,
   engineV2Preview: EngineV2Preview,
+  anonymousInference: AnonymousInferenceService,
 ): Route[] {
   const routes: Route[] = [];
+  addRoute(routes, "GET", "/anonymous-inference/status", "client", async () =>
+    jsonResponse(await anonymousInference.status()));
+  addRoute(routes, "POST", "/anonymous-inference/preflight", "client", async (ctx) => {
+    requireClientScope(ctx, "owner");
+    return jsonResponse(await anonymousInference.status(true));
+  });
+  // The engine receives only this process's opaque local credential. These
+  // routes authenticate it internally, never an Origin or User-Agent header.
+  addRoute(routes, "GET", "/anonymous-inference/v1/models", "none", (ctx) =>
+    anonymousInference.handle(ctx.request, "models"));
+  addRoute(routes, "POST", "/anonymous-inference/v1/models", "none", (ctx) =>
+    anonymousInference.handle(ctx.request, "models"));
+  addRoute(routes, "POST", "/anonymous-inference/v1/chat/completions", "none", (ctx) =>
+    anonymousInference.handle(ctx.request, "chat/completions"));
   // A rollover-capable pool can apply this immediately without disposing
   // the generation that owns live sessions. Legacy/external engines keep
   // the established busy deferral.

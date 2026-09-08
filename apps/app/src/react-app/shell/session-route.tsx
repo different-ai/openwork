@@ -50,6 +50,7 @@ import {
 import type {
   ComposerAttachment,
   ComposerDraft,
+  ComposerSubmissionResult,
   ModelOption,
   ModelRef,
   SlashCommandOption,
@@ -162,14 +163,14 @@ import { useSessionMcpMaintenance } from "@/react-app/domains/connections/use-se
 import { useCloudMcpSubmitReadiness } from "@/react-app/domains/connections/use-cloud-mcp-submit-readiness";
 import {
   IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE,
-  type CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { useRemoteAccessRestart } from "@/react-app/domains/workspace/remote-access-restart";
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
 import { useRemoteWorkspaceConnectionEditor } from "@/react-app/domains/workspace/use-remote-workspace-connection-editor";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
-import { useInferenceAccess } from "@/react-app/domains/cloud/inference-access-provider";
-import { explicitModelChoiceKey, FREE_LUNA_MODEL, markExplicitModelChoice, modelSelectionUpgradeReason, shouldSelectInitialLuna } from "@/app/lib/inference-access";
+import { useDesktopFreeEndpoint, useInferenceAccess } from "@/react-app/domains/cloud/inference-access-provider";
+import { explicitModelChoiceKey, DESKTOP_FREE_LUNA_MODEL, desktopFreeStatusFromError, isDesktopFreeModel, markExplicitModelChoice, modelPickerView, modelSelectionUpgradeReason, preflightDesktopFreeSubmission, shouldSelectInitialLuna } from "@/app/lib/inference-access";
+import { notifyDesktopFreeBlocked } from "./notifications";
 import {
   hasOpenWorkModelsAvailable,
   shouldShowOpenWorkModelsSyncing,
@@ -218,7 +219,6 @@ import { useBootOverlayVisible } from "./boot-state";
 import {
   createDenClient,
   isDenOrgAdminRole,
-  readDenBootstrapConfig,
   readDenSettings,
   type DenOrgRole,
 } from "@/app/lib/den";
@@ -500,6 +500,9 @@ export function SessionRoute() {
     onServerSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
     onHostInfo: setOpenworkServerHostInfoState,
   });
+  const focusedSecondary = useWorkbenchStore((state) => state.focusedPane === "secondary" ? state.secondary : null);
+  const desktopFreeEndpointKey = useDesktopFreeEndpoint(focusedSecondary
+    ? endpointForWorkspace(workspaces.find((workspace) => workspace.id === focusedSecondary.workspaceId)) : selectedWorkspaceEndpoint);
   const archiveDisabledReason = isOpencodeV2BaseUrl(opencodeBaseUrl) ? V2_SESSION_ARCHIVE_UNAVAILABLE : undefined;
   // The dashboard is user-scoped while MCP servers are workspace-scoped: the
   // selected workspace's runtime is primary, and every other available one is
@@ -905,21 +908,18 @@ export function SessionRoute() {
     providers,
   });
   const pendingLunaSetupKey = (() => {
-    if (denAuth.status !== "signed_in" || !denAuth.user || loading) return null;
+    if (loading || !inference.desktopFreeEnabled || inference.desktopFreeEndpointKey !== desktopFreeEndpointKey) return null;
     if (workspaceSessionGroups.some((group) => group.status !== "ready")) return null;
-    // The parent owns installation cohort detection. Big Pickle is persisted
-    // during bootstrap, so an unset-preference check cannot identify setup.
-    const setupKey = `openwork.lunaSetup.v1:${JSON.stringify([readDenSettings().baseUrl, denAuth.user.id])}`;
+    const setupKey = "openwork.desktopFreeLunaSetup.v1";
     try {
       const emptyFirstTask = !selectedSessionId
         && !Object.values(sessionsByWorkspaceId).some((sessions) => sessions.length > 0)
         && Object.keys(useSessionModelStore.getState().bySessionId).length === 0;
       const originalPreference = readModelPreferenceBeforeRepair({ model: local.prefs.defaultModel, variant: local.prefs.modelVariant });
       return shouldSelectInitialLuna({
-        installationRequiresSignin: readDenBootstrapConfig().installationRequiresSignin === true,
-        signedIn: denAuth.status === "signed_in",
-        access: inference.access,
-        modelAvailable: openWorkModelsAvailable && entitledModelOptions.some((model) => model.providerID === FREE_LUNA_MODEL.providerID && model.modelID === FREE_LUNA_MODEL.modelID),
+        eligible: inference.desktopFreeEnabled && inference.access?.kind !== "paid",
+        status: inference.desktopFree,
+        modelAvailable: entitledModelOptions.some(isDesktopFreeModel),
         emptyFirstTask,
         setupComplete: window.localStorage.getItem(setupKey) !== null,
         explicitChoice: window.localStorage.getItem(explicitModelChoiceKey) !== null,
@@ -934,7 +934,7 @@ export function SessionRoute() {
       if (window.localStorage.getItem(explicitModelChoiceKey) !== null) return;
       // Persist before selection; storage failure must not repeatedly reset a preference.
       window.localStorage.setItem(pendingLunaSetupKey, "complete");
-      local.setPrefs((previous) => ({ ...previous, defaultModel: FREE_LUNA_MODEL, modelVariant: null }));
+      local.setPrefs((previous) => ({ ...previous, defaultModel: DESKTOP_FREE_LUNA_MODEL, modelVariant: null }));
     } catch { /* Leave existing preferences alone when storage is unavailable. */ }
   }, [local, pendingLunaSetupKey]);
   const openWorkModelsSyncing = shouldShowOpenWorkModelsSyncing({
@@ -1261,6 +1261,40 @@ export function SessionRoute() {
 
   const extensionsMainOpen = /^\/(?:workspace\/[^/]+\/)?extensions(?:\/|$)/.test(location.pathname);
 
+  const submissionContext = useRef({ selectedSessionId, selectedWorkspaceId, opencodeClient, defaultModel: local.prefs.defaultModel, modelVariantValue, endpointForWorkspace, workspaces, locationKey: location.key, denSessionVersion });
+  submissionContext.current = { selectedSessionId, selectedWorkspaceId, opencodeClient, defaultModel: local.prefs.defaultModel, modelVariantValue, endpointForWorkspace, workspaces, locationKey: location.key, denSessionVersion };
+  const submissionMounted = useRef(true);
+  useEffect(() => {
+    submissionMounted.current = true;
+    return () => { submissionMounted.current = false; };
+  }, []);
+  const prepareFreeSubmission = useCallback((endpoint: ResolvedWorkspaceEndpoint | null, workspaceId: string, sessionId: string, model: ModelRef | null | undefined, variant: string | null | undefined) => {
+    const captured = submissionContext.current;
+    const identity = readDenSettings();
+    const focused = useWorkbenchStore.getState();
+    const isCurrent = () => {
+      const current = submissionContext.current;
+      const settings = readDenSettings();
+      const workbench = useWorkbenchStore.getState();
+      const currentEndpoint = current.endpointForWorkspace(current.workspaces.find((workspace) => workspace.id === workspaceId));
+      const selection = getSessionModelSelection(sessionId);
+      const currentModel = selection?.model ?? current.defaultModel;
+      const currentVariant = selection ? selection.variant : current.modelVariantValue;
+      return submissionMounted.current && captured.selectedSessionId === current.selectedSessionId
+        && captured.selectedWorkspaceId === current.selectedWorkspaceId && captured.opencodeClient === current.opencodeClient
+        && captured.locationKey === current.locationKey && captured.denSessionVersion === current.denSessionVersion
+        && focused.focusedPane === workbench.focusedPane && focused.secondary?.sessionId === workbench.secondary?.sessionId
+        && identity.authToken === settings.authToken && identity.activeOrgId === settings.activeOrgId && identity.baseUrl === settings.baseUrl
+        && currentEndpoint?.baseUrl === endpoint?.baseUrl && currentEndpoint?.token === endpoint?.token && currentEndpoint?.workspaceId === endpoint?.workspaceId
+        && currentModel?.providerID === model?.providerID && currentModel?.modelID === model?.modelID && (currentVariant ?? null) === (variant ?? null);
+    };
+    const onBlocked = (status: NonNullable<ReturnType<typeof desktopFreeStatusFromError>>) => {
+      notifyDesktopFreeBlocked(status, workspaceId);
+      if (status.state === "exhausted") inference.showUpgrade("free_allowance_exhausted", sessionId, model ?? undefined);
+    };
+    return { isCurrent, onBlocked, preflight: () => preflightDesktopFreeSubmission({ model, client: endpoint?.client ?? null, isCurrent, onBlocked }) };
+  }, [inference]);
+
   const surfaceProps = useMemo(() => {
     if (!client || !selectedWorkspaceId || !selectedSessionId || !opencodeBaseUrl || !token || !opencodeClient) {
       return null;
@@ -1338,7 +1372,7 @@ export function SessionRoute() {
           openSettings: handleOpenSettings,
         });
       },
-      onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
+      onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<ComposerSubmissionResult> => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
         const text = (draft.resolvedText ?? draft.text).trim();
@@ -1350,6 +1384,9 @@ export function SessionRoute() {
         const sessionModelSelection = getSessionModelSelection(targetSessionId);
         const sendModel = sessionModelSelection?.model ?? local.prefs.defaultModel;
         const sendVariant = sessionModelSelection ? sessionModelSelection.variant : modelVariantValue;
+        const freeSubmission = prepareFreeSubmission(selectedWorkspaceEndpoint, selectedWorkspaceId, targetSessionId, sendModel, sendVariant);
+        const freeBlock = await freeSubmission.preflight();
+        if (freeBlock) return freeBlock;
         // Send-time validation targets the exact provider/model identity this
         // conversation displays and will submit — not the global default.
         if (resolveModelAvailability(sendModel ?? null).status === "unavailable") {
@@ -1361,6 +1398,7 @@ export function SessionRoute() {
           // message, including tasks that do not use connected services.
           skipGate: true,
           send: async () => {
+            if (isDesktopFreeModel(sendModel) && !freeSubmission.isCurrent()) throw new Error("Submission context changed");
             await sendWithRevertRollback({
               revertMessageId: draft.revertMessageId,
               abort: () => abortSessionSafe(opencodeClient, targetSessionId, selectedWorkspaceRoot || undefined, {
@@ -1417,6 +1455,7 @@ export function SessionRoute() {
                     sessionID: targetSessionId,
                     command: draft.command.name,
                     arguments: draft.command.arguments,
+                    ...(sendModel && isDesktopFreeModel(sendModel) ? { model: `${sendModel.providerID}/${sendModel.modelID}` } : {}),
                   });
                   if (result.error) {
                     throw new Error(serializeSDKError(result.error));
@@ -1430,6 +1469,7 @@ export function SessionRoute() {
                   cacheKey: targetSessionId,
                   runtimeKey: environmentRuntimeKey,
                 });
+                if (isDesktopFreeModel(sendModel) && !freeSubmission.isCurrent()) throw new Error("Submission context changed");
                 const result = await opencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
                   parts,
@@ -1457,6 +1497,12 @@ export function SessionRoute() {
               onUnrevertError: (error) => console.warn("[edit-resend] rollback failed", error),
             });
           },
+        }).catch((error): ComposerSubmissionResult => {
+          if (isDesktopFreeModel(sendModel) && !freeSubmission.isCurrent()) return { outcome: "cancelled", reason: "context_changed" };
+          const status = isDesktopFreeModel(sendModel) ? desktopFreeStatusFromError(error) : null;
+          if (!status) throw error;
+          freeSubmission.onBlocked(status);
+          return { outcome: "blocked", reason: "desktop-free-access", status };
         });
       },
       cloudMcpSubmissionState,
@@ -1563,6 +1609,8 @@ export function SessionRoute() {
     };
   }, [
     client,
+    prepareFreeSubmission,
+    selectedWorkspaceEndpoint,
     modelPicker.compactOpen,
     handleOpenExtensions,
     handleOpenSettings,
@@ -1684,7 +1732,7 @@ export function SessionRoute() {
       isSandboxWorkspace: isSandboxWorkspace(workspace),
       environmentRuntimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
       onApplyEnvironmentChanges: undefined,
-      onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
+      onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<ComposerSubmissionResult> => {
         const targetSessionId = sessionId.trim() || session.sessionId;
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!targetSessionId || (!text && draft.attachments.length === 0)) {
@@ -1693,9 +1741,13 @@ export function SessionRoute() {
         const sessionModelSelection = getSessionModelSelection(targetSessionId);
         const sendModel = sessionModelSelection?.model ?? local.prefs.defaultModel;
         const sendVariant = sessionModelSelection ? sessionModelSelection.variant : modelVariantValue;
+        const freeSubmission = prepareFreeSubmission(endpoint, workspace.id, targetSessionId, sendModel, sendVariant);
+        const freeBlock = await freeSubmission.preflight();
+        if (freeBlock) return freeBlock;
         return submitWithCloudMcpReadiness({
           skipGate: true,
           send: async () => {
+            if (isDesktopFreeModel(sendModel) && !freeSubmission.isCurrent()) throw new Error("Submission context changed");
             await sendWithRevertRollback({
               revertMessageId: draft.revertMessageId,
               abort: () => abortSessionSafe(workspaceOpencodeClient, targetSessionId, workspaceRoot || undefined, {
@@ -1740,6 +1792,7 @@ export function SessionRoute() {
                     sessionID: targetSessionId,
                     command: draft.command.name,
                     arguments: draft.command.arguments,
+                    ...(sendModel && isDesktopFreeModel(sendModel) ? { model: `${sendModel.providerID}/${sendModel.modelID}` } : {}),
                   });
                   if (result.error) throw new Error(serializeSDKError(result.error));
                   return;
@@ -1750,6 +1803,7 @@ export function SessionRoute() {
                   cacheKey: targetSessionId,
                   runtimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
                 });
+                if (isDesktopFreeModel(sendModel) && !freeSubmission.isCurrent()) throw new Error("Submission context changed");
                 const result = await workspaceOpencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
                   parts,
@@ -1773,6 +1827,12 @@ export function SessionRoute() {
               onUnrevertError: (error) => console.warn("[edit-resend] rollback failed", error),
             });
           },
+        }).catch((error): ComposerSubmissionResult => {
+          if (isDesktopFreeModel(sendModel) && !freeSubmission.isCurrent()) return { outcome: "cancelled", reason: "context_changed" };
+          const status = isDesktopFreeModel(sendModel) ? desktopFreeStatusFromError(error) : null;
+          if (!status) throw error;
+          freeSubmission.onBlocked(status);
+          return { outcome: "blocked", reason: "desktop-free-access", status };
         });
       },
       onRevertToMessage: async (messageId: string, sessionId: string) => {
@@ -1840,6 +1900,7 @@ export function SessionRoute() {
   }, [
     client,
     endpointForWorkspace,
+    prepareFreeSubmission,
     engineReloadVersion,
     environmentRuntimeKey,
     errorsByWorkspaceId,
@@ -2323,7 +2384,8 @@ export function SessionRoute() {
       : selectedSessionId;
     const selection = activeSessionId ? getSessionModelSelection(activeSessionId) : null;
     const currentModel = selection?.model ?? local.prefs.defaultModel ?? null;
-    const next = nextFavoriteModel(useModelCollectionsStore.getState().favorites.filter((model) => !modelSelectionUpgradeReason(inference.access, model)), currentModel);
+    const visible = modelPickerView(modelPicker.options, { access: inference.access, signedIn: denAuth.isSignedIn, target: "session", desktopFree: inference.desktopFreeEnabled }).options;
+    const next = nextFavoriteModel(useModelCollectionsStore.getState().favorites.filter((model) => visible.some((option) => !option.disabled && option.providerID === model.providerID && option.modelID === model.modelID) && !modelSelectionUpgradeReason(inference.access, model)), currentModel);
     if (!next) return null;
     if (!inference.checkSelection(next, activeSessionId ?? undefined)) return null;
     markExplicitModelChoice();
@@ -2339,7 +2401,7 @@ export function SessionRoute() {
     useModelCollectionsStore.getState().recordRecent(next);
     local.setPrefs((previous) => ({ ...previous, defaultModel: next, modelVariant: variant }));
     return providerModel?.name ?? next.modelID;
-  }, [inference, local, modelVariantValue, providerCatalog, selectedSessionId]);
+  }, [inference, local, modelVariantValue, providerCatalog, selectedSessionId, modelPicker.options, denAuth.isSignedIn]);
 
   const cycleFavoriteModelControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.favorite_model.cycle",

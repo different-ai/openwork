@@ -1,5 +1,6 @@
 import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
 import { z } from "zod"
+import { createHash } from "node:crypto"
 import models from "./models/openwork-models.json" with { type: "json" }
 
 export const FREE_REQUEST_MAX_BYTES = 128 * 1024
@@ -84,10 +85,11 @@ export function inspectFreeRequest(value: unknown): FreeRequestInspection {
   return { ok: true, inputContentBytes, request }
 }
 
-export async function readFreeRequest(request: Request): Promise<{ ok: true; value: unknown } | FreeRequestError> {
+export async function readFreeRequest(request: Request): Promise<{ ok: true; value: unknown; bodyHash: string } | FreeRequestError> {
   const reader = request.body?.getReader()
   if (!reader) return { ok: false, status: 400, code: "invalid_json", message: "A JSON request body is required." }
   const decoder = new TextDecoder("utf-8", { fatal: true })
+  const hash = createHash("sha256")
   let bytes = 0
   let text = ""
   try {
@@ -99,10 +101,11 @@ export async function readFreeRequest(request: Request): Promise<{ ok: true; val
         void reader.cancel().catch(() => {})
         return { ok: false, status: 413, code: "free_inference_request_too_large", message: `Free inference requests are limited to ${FREE_REQUEST_MAX_BYTES} bytes. Nothing was trimmed or sent.` }
       }
+      hash.update(chunk.value)
       text += decoder.decode(chunk.value, { stream: true })
     }
     text += decoder.decode()
-    return { ok: true, value: JSON.parse(text) }
+    return { ok: true, value: JSON.parse(text), bodyHash: hash.digest("hex") }
   } catch {
     void reader.cancel().catch(() => {})
     return { ok: false, status: 400, code: "invalid_json", message: "The request must contain valid UTF-8 JSON." }

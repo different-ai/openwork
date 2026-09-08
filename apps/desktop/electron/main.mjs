@@ -22,7 +22,8 @@ import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@ope
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./runtime.mjs";
-import { registerUpdaterIpc } from "./updater.mjs";
+import { registerUpdaterIpc, resolveAppVersion } from "./updater.mjs";
+import { createDesktopFreeSigner, desktopFreeBootstrapEligible } from "./desktop-free-signer.mjs";
 import {
   checkComputerUsePermissions,
   getComputerUseMcpCommand,
@@ -37,7 +38,7 @@ import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserLoginSync } from "./browser-login-sync.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
-import { createInstallationSession, initializeInstallationAccess } from "./installation-access.mjs";
+import { createInstallationSession } from "./installation-access.mjs";
 import {
   buildNukeManifest,
   executeNukeFreshStart,
@@ -150,8 +151,8 @@ const userDataPath = BLANK_SLATE_LAUNCH.userDataPath ?? resolveUserDataPath({
   appIdentifier: APP_IDENTIFIER,
   userDataOverride: process.env.OPENWORK_ELECTRON_USERDATA,
 });
-const requiredInstallation = initializeInstallationAccess({ userDataPath, env: process.env, homeDir: os.homedir() });
-const installationRequiresSignin = DESKTOP_DISTRIBUTION.flavor === "public" && requiredInstallation;
+// Retain the bootstrap wire field, but never read or rewrite old cohort markers.
+const installationRequiresSignin = false;
 app.setPath("userData", userDataPath);
 await initOpenworkSentry({ app, distribution: DESKTOP_DISTRIBUTION, packageMetadata: desktopPackageMetadata });
 if (BLANK_SLATE_LAUNCH.enabled || process.env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
@@ -1299,9 +1300,16 @@ const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
-  authorizeTask: installationRequiresSignin
-    ? async () => (await installationSession.verify()).status === "signed_in"
-    : undefined,
+  anonymousInference: {
+    desktop: createDesktopFreeSigner({
+      filePath: path.join(app.getPath("userData"), "desktop-free-identity.v1.bin"),
+      loadSafeStorage: () => require("electron").safeStorage,
+      appVersion: resolveAppVersion(app),
+      platform: process.platform,
+      arch: process.arch,
+      isEligible: () => desktopFreeBootstrapEligible(DESKTOP_DISTRIBUTION, workspaceStore.readDesktopBootstrapConfigSync()),
+    }),
+  },
   // When OPENWORK_ENCRYPTION_KEY is set, skip the safeStorage provider so it does not shadow the documented env override used by CI/headless/enterprise.
   localManagedMcpVaultKey: process.env.OPENWORK_ENCRYPTION_KEY?.trim()
     ? undefined
@@ -2864,7 +2872,7 @@ or use: pnpm dev:worktree`);
     await workspaceStore.migrateLegacyElectronWorkspaceStateIfNeeded();
     // Public first launch uses the same folder as the chat-first composer.
     // Provision it before the renderer and runtime read the workspace list.
-    const firstLaunchWorkspaceFailure = DESKTOP_DISTRIBUTION.flavor === "public" && (installationRequiresSignin || (!bootstrapConfig.fromFile && !bootstrapConfig.requireSignin)) && !desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)
+    const firstLaunchWorkspaceFailure = DESKTOP_DISTRIBUTION.flavor === "public" && !bootstrapConfig.requireSignin && !desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)
       ? await workspaceStore.bootstrapFirstLaunchWorkspace()
       : null;
     if (firstLaunchWorkspaceFailure) {

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { desktopFreeAccessStatusSchema, desktopFreeNotice, desktopFreeStatusFromError, unavailableDesktopFreeStatus } from "../src/app/lib/inference-access";
 import {
   isAlphaChannelAllowedByDesktopConfig,
   isAlphaUpdateAllowed,
@@ -14,6 +15,29 @@ const metadata = {
   latestAppVersion: "0.17.24",
   publishedDesktopVersions: ["0.17.22", "0.17.23", "0.17.24"],
 };
+
+test("free Luna update notices require a confirmed version denial and preserve the pre-send draft promise", () => {
+  const update = desktopFreeStatusFromError({ error: { code: "desktop_update_required", currentVersion: "1.0.0", minimumVersion: "1.0.1" } })!;
+  expect(desktopFreeNotice(update).title).toBe("Update OpenWork to use free Luna");
+  expect(desktopFreeNotice(update).body).toContain("Current version: 1.0.0. Required version: 1.0.1.");
+  expect(desktopFreeNotice(update).body).toContain("Your message has not been sent. Your draft is unchanged.");
+  expect(desktopFreeNotice(update, false).body).not.toContain("Your message has not been sent");
+  expect(desktopFreeNotice(unavailableDesktopFreeStatus()).title).toBe("Free Luna temporarily unavailable");
+  const capacity = desktopFreeStatusFromError({ error: { code: "anonymous_capacity_exceeded" } })!;
+  expect(capacity.state).toBe("unavailable");
+  expect(desktopFreeNotice(capacity).title).toBe("Free Luna temporarily unavailable");
+  expect(desktopFreeStatusFromError("Please mention desktop_update_required")).toBeNull();
+  expect(desktopFreeAccessStatusSchema.safeParse({ ...unavailableDesktopFreeStatus(), state: "ready" }).success).toBe(false);
+});
+
+test("a reservation that cannot fit is not labeled as all spent", () => {
+  const notice = desktopFreeNotice({ ...unavailableDesktopFreeStatus(), state: "exhausted", code: "anonymous_reservation_does_not_fit",
+    allowance: { limitUsd: 1, usedUsd: 0.2, remainingUsd: 0.8, reservedUsd: 0, resetsAt: "2026-09-14T00:00:00Z" } });
+  expect(notice.title).not.toContain("used up");
+  expect(notice.body).toContain("USD 1 per week per installation");
+  expect(notice.body).toContain("Estimated remaining: $0.80");
+  expect(notice.body).toContain("Resets");
+});
 
 describe("alpha desktop update policy", () => {
   test("keeps alpha available when the policy is missing or enabled", () => {

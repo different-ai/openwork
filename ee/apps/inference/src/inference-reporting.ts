@@ -62,6 +62,8 @@ const exactCredentialFields = new Set([
   "key",
   "apikey",
   "xapikey",
+  "xopenworkdesktopproof",
+  "xopenworkdesktoptoken",
   "providerkey",
   "privatekey",
   "clientkey",

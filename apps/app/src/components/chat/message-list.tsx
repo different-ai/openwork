@@ -33,7 +33,7 @@ import { t } from "@/i18n"
 import { useOpenTargets } from "@/lib/target-provider"
 import { openTargetFromUrl } from "@/react-app/domains/session/artifacts/open-target"
 import { sessionErrorPresentationFromUIMessage, type OpencodeSessionErrorPresentation } from "@/react-app/domains/session/sync/session-error"
-import { InferenceErrorActions } from "@/react-app/domains/cloud/inference-access-provider"
+import { DesktopFreeErrorActions, InferenceErrorActions } from "@/react-app/domains/cloud/inference-access-provider"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
 import { EditTool } from "@/components/tools/edit"
@@ -836,6 +836,7 @@ const MessageComponent = React.memo(
           resumePrompt={presentation?.recoveryPrompt}
           technicalDetails={presentation?.technicalDetails}
           inference={presentation?.inference}
+          desktopFree={presentation?.desktopFree}
         />
       )
     }
@@ -925,6 +926,7 @@ const ReconnectingMessage = React.memo(({ lastConfirmedAt }: { lastConfirmedAt: 
 ReconnectingMessage.displayName = "ReconnectingMessage"
 
 interface ErrorMessageProps {
+  desktopFree?: OpencodeSessionErrorPresentation["desktopFree"]
   inference?: OpencodeSessionErrorPresentation["inference"]
   error: string | null
   description?: string | null
@@ -996,8 +998,8 @@ function SessionErrorTechnicalDetails({ details, tone }: { details: string; tone
   )
 }
 
-function ErrorMessage({ error, description, resumePrompt, technicalDetails, inference }: ErrorMessageProps) {
-  const { onResumeInterrupted, developerMode, sessionId } = useMessageList()
+function ErrorMessage({ error, description, resumePrompt, technicalDetails, inference, desktopFree }: ErrorMessageProps) {
+  const { onResumeInterrupted, developerMode, sessionId, workspaceId } = useMessageList()
   // Status codes, provider names, and response bodies are for developers,
   // admins, and support — not the plain-language card end users see. They
   // surface only with Developer mode (Settings → Advanced), like the
@@ -1044,6 +1046,7 @@ function ErrorMessage({ error, description, resumePrompt, technicalDetails, infe
             </div>
           </div>
           {inference ? <InferenceErrorActions {...inference} sessionId={sessionId} /> : null}
+          {desktopFree ? <DesktopFreeErrorActions status={desktopFree} sessionId={sessionId} workspaceId={workspaceId} /> : null}
           {details ? <SessionErrorTechnicalDetails details={details} tone="card" /> : null}
         </div>
       </div>

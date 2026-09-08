@@ -1,4 +1,5 @@
 import type { McpStatusMap } from "../types";
+import { desktopFreeAccessStatusSchema } from "./inference-access";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
 import {
   agentContextDiagnosticsReportSchema,
@@ -1582,6 +1583,8 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
   return {
     baseUrl,
+    desktopFreeStatus: async () => desktopFreeAccessStatusSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/status", { token, timeoutMs: 15_000 })),
+    desktopFreePreflight: async () => desktopFreeAccessStatusSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preflight", { token, method: "POST", timeoutMs: 15_000 })),
     token,
     health: () =>
       requestJson<{ ok: boolean; version: string; uptimeMs: number }>(baseUrl, "/health", { token, hostToken, timeoutMs: timeouts.health }),

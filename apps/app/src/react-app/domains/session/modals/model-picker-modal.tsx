@@ -24,7 +24,7 @@ import { modelEquals, resolveProviderDisplayName } from "../../../../app/utils";
 import type { ModelOption, ModelRef } from "../../../../app/types";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { useDenAuth } from "../../cloud/den-auth-provider";
-import { InferenceAllowanceSummary, OwnProviderAction, useInferenceAccess } from "../../cloud/inference-access-provider";
+import { DesktopFreeModelOffers, InferenceAllowanceSummary, OwnProviderAction, useInferenceAccess } from "../../cloud/inference-access-provider";
 import { managedModelAccessLabel, managedModelRecommendation, managedModelRecommendations, markExplicitModelChoice, modelPickerView, modelSelectionUpgradeReason } from "@/app/lib/inference-access";
 import { modelRefKey, nextFavoriteModel, useModelCollectionsStore } from "../models/model-collections-store";
 import { isFavoriteModelShortcut } from "@/react-app/shell/favorite-model-shortcut";
@@ -124,8 +124,8 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   const inference = useInferenceAccess();
   const favorites = useModelCollectionsStore((state) => state.favorites);
   const { options, managedOnly } = useMemo(() => modelPickerView(props.options, {
-    access: inference.access, signedIn: denAuth.isSignedIn, target: props.target,
-  }), [props.options, inference.access, denAuth.isSignedIn, props.target]);
+    access: inference.access, signedIn: denAuth.isSignedIn, target: props.target, desktopFree: inference.desktopFreeEnabled,
+  }), [props.options, inference.access, inference.desktopFreeEnabled, denAuth.isSignedIn, props.target]);
   const requested = inference.pickerRequest?.sessionId === props.sessionId
     && (!managedOnly || inference.pickerRequest?.model.providerID === "openwork") ? inference.pickerRequest?.model : undefined;
   const platform = usePlatform();
@@ -237,7 +237,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     for (const group of providerGroups) {
       if (group.isCloud) queueExpand(group.id);
     }
-    const openwork = providerGroups.find((group) => group.id === OPENWORK_MODELS_PROVIDER_ID);
+    const openwork = providerGroups.find((group) => group.id === OPENWORK_MODELS_PROVIDER_ID || group.id === "openwork-free");
     if (openwork) queueExpand(openwork.id);
     if (toExpand.length === 0) return;
     for (const id of toExpand) autoExpandedRef.current.add(id);
@@ -318,7 +318,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           <DialogDescription>
             {resolveModelPickerSubtitle(props.subtitle)}
           </DialogDescription>
-          <InferenceAllowanceSummary available={options.some((option) => option.providerID === "openwork")} />
+          <InferenceAllowanceSummary available={inference.desktopFreeEnabled || options.some((option) => option.providerID === "openwork")} />
           {requested ? <p role="status" className="text-sm text-muted-foreground" data-testid="requested-model-ready">Select {managedModelRecommendation(inference.access, requested)?.displayName ?? requested.title ?? requested.modelID} to use it. Your model and draft are unchanged.</p> : null}
         </DialogHeader>
 
@@ -355,6 +355,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
 
           {/* Content */}
           <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 -mr-1">
+            <DesktopFreeModelOffers query={props.query} sessionId={props.sessionId} currentModel={props.current} onBeforeOpen={() => props.onClose({ restorePromptFocus: false })} />
             {emptyState ? (
               <div className="space-y-3 rounded-2xl border border-dls-border bg-dls-hover/30 px-4 py-6 text-center">
                 <div className="text-sm text-dls-secondary">

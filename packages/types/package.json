@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./desktop-free-access": {
+      "types": "./src/desktop-free-access.ts",
+      "development": "./src/desktop-free-access.ts",
+      "default": "./src/desktop-free-access.ts"
+    },
     ".": {
       "types": "./src/index.ts",
       "development": "./src/index.ts",

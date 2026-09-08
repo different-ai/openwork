@@ -8,7 +8,8 @@ declare const expect: (value: unknown) => {
 
 import { DEFAULT_DEN_BASE_URL, HOSTED_DEFAULT_DEN_BASE_URL, setDenBootstrapConfig } from "../../../app/lib/den";
 import { INFERENCE_ACCESS_REASONS, type InferenceAccess } from "@openwork/types/den/inference";
-import { FREE_LUNA_MODEL, inferenceAccessSchema, managedModelAccessLabel, managedModelRecommendation, managedModelRecommendations, modelPickerView, modelSelectionUpgradeReason, pendingInferenceUsageLabel, shouldSelectInitialLuna } from "../../../app/lib/inference-access";
+import { FREE_LUNA_MODEL, inferenceAccessSchema, managedModelAccessLabel, managedModelRecommendation, managedModelRecommendations, modelPickerView, modelSelectionUpgradeReason, pendingInferenceUsageLabel, shouldSelectInitialLuna, unavailableDesktopFreeStatus } from "../../../app/lib/inference-access";
+import type { DesktopFreeAccessStatus } from "@openwork/types/desktop-free-access";
 import type { ModelOption } from "../../../app/types";
 import { nextFavoriteModel } from "../session/models/model-collections-store";
 import {
@@ -120,20 +121,20 @@ describe("member allowance model decisions", () => {
     expect(modelSelectionUpgradeReason(null, FREE_LUNA_MODEL)).toBe(null);
   });
 
-  test("selects Luna once for verified first setup, despite the automatic Big Pickle preference", () => {
+  test("selects native free Luna once for ready first setup, despite the automatic Big Pickle preference", () => {
+    const status: DesktopFreeAccessStatus = { ...unavailableDesktopFreeStatus(), state: "ready", minimumVersion: "1.0.0" };
     const first = {
-      installationRequiresSignin: true, signedIn: true, access: freeAccess, modelAvailable: true,
+      eligible: true, status, modelAvailable: true,
       emptyFirstTask: true, setupComplete: false, explicitChoice: false,
       currentModel: { providerID: "opencode", modelID: "big-pickle" }, variant: null,
     };
     expect(shouldSelectInitialLuna(first)).toBe(true);
     for (const change of [
-      { installationRequiresSignin: false }, { signedIn: false }, { modelAvailable: false },
+      { eligible: false }, { modelAvailable: false },
       { emptyFirstTask: false }, { setupComplete: true }, { explicitChoice: true },
       { currentModel: { providerID: "openwork", modelID: "minimax/minimax-m3" } },
       { currentModel: { providerID: "lpr_byok", modelID: "openai/gpt-5.6-luna" } },
-      { access: null }, { access: { ...freeAccess, kind: "paid" as const } },
-      { access: { ...freeAccess, kind: "unavailable" as const } },
+      { status: null }, { status: unavailableDesktopFreeStatus() }, { variant: "high" },
     ]) expect(shouldSelectInitialLuna({ ...first, ...change })).toBe(false);
   });
 

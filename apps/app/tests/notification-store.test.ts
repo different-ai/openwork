@@ -21,7 +21,7 @@ Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
 });
 
-const { useNotificationStore } = await import("../src/react-app/kernel/notification-store");
+const { useNotificationStore, notificationSettingsPath, PERSISTED_NOTIFICATION_STORE_KEY } = await import("../src/react-app/kernel/notification-store");
 
 function reset() {
   useNotificationStore.setState({ notifications: [] });
@@ -116,5 +116,22 @@ describe("notification store", () => {
     const notifications = useNotificationStore.getState().notifications;
     expect(notifications).toHaveLength(100);
     expect(notifications[0].title).toBe("Entry 109");
+  });
+
+  test("retains the Updates navigation action and validates persisted panels", async () => {
+    const action = { type: "open-settings", panel: "updates", workspaceId: "workspace / one" } as const;
+    useNotificationStore.getState().add({ kind: "update", title: "Update OpenWork to use free Luna", action, actionLabel: "Update" });
+    const persisted = storage.get(PERSISTED_NOTIFICATION_STORE_KEY)!;
+    useNotificationStore.setState({ notifications: [] });
+    storage.set(PERSISTED_NOTIFICATION_STORE_KEY, persisted);
+    await useNotificationStore.persist.rehydrate();
+    expect(useNotificationStore.getState().notifications[0].action).toEqual(action);
+    expect(notificationSettingsPath(action)).toBe("/workspace/workspace%20%2F%20one/settings/updates");
+    expect(notificationSettingsPath({ type: "open-settings", panel: "updates" })).toBe("/settings/updates");
+    for (const bad of [{ ...action, panel: "checkForUpdates" }, { ...action, workspaceId: 12 }]) {
+      storage.set(PERSISTED_NOTIFICATION_STORE_KEY, JSON.stringify({ state: { notifications: [{ ...useNotificationStore.getState().notifications[0], action: bad }] }, version: 0 }));
+      await useNotificationStore.persist.rehydrate();
+      expect(useNotificationStore.getState().notifications[0].action).toBeUndefined();
+    }
   });
 });

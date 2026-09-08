@@ -67,101 +67,75 @@ test("an existing empty profile keeps optional sign-in and its free starter defa
 
 const fresh = spec.world(installationFirstRunWorld);
 
-fresh("a new installation requires verified sign-in for UI and automated tasks across logout and restart", async ({ world, user, agent, probe, step }) => {
-  await step("A genuinely fresh signed-out profile makes zero generation calls", async () => {
-    expect(await world.bootstrap()).toEqual({ requireSignin: false, installationRequiresSignin: true });
-    await user.see({ role: "button", text: "Sign in to OpenWork" });
-    await user.notSee("composer");
+// This exercises optional public sign-in with a mock-backed explicit provider,
+// not native free Luna. Its gateway/allowance/version runtime journey is deferred.
+// Explicit Enterprise bootstrap requireSignin remains a separate enforced policy.
+fresh("a new public profile runs an explicitly selected fixture model while signed out and preserves it across restart", async ({ world, user, probe, step }) => {
+  await step("The fresh signed-out profile opens the normal composer without a mandatory gate", async () => {
+    expect(await world.bootstrap()).toEqual({ requireSignin: false, installationRequiresSignin: false });
+    await user.see("composer", { editable: true, text: "", timeoutMs: 180_000 });
+    await user.see("Run task");
+    await user.see({ testId: "account-status-menu" }, { text: /Sign in/ });
+    await user.notSee({ role: "button", text: "Sign in to OpenWork" });
     await user.notSee("Use Without Cloud");
-    await user.notSee("Run task");
     expect(await probe.storage("openwork.den.authToken")).toBeNull();
-    await agent.run("route.session");
-    await user.notSee("composer");
-    await expect(agent.run("session.create_task", { prompt: world.prompt })).rejects.toThrow("Unknown action: session.create_task");
-    const attempt = await agent.desktopApi("/opencode/session", { method: "POST", body: { title: "Blocked task" } });
-    expect(attempt).toMatchObject({ status: 403, body: { code: "signin_required" } });
+    expect(await probe.storage("openwork.den.activeOrgId")).toBeNull();
     expect(await world.mock.agentRequests()).toEqual([]);
   });
 
-  const { grant, proxy } = world;
-  if (!grant || !proxy) throw new Error("Fresh installation requires its isolated Den grant and fault proxy.");
-  await step("A successful handoff unlocks the prepared empty workspace", async () => {
-    const persisted = await world.bootstrapPersistence();
-    expect(persisted.hasApiBaseUrl).toBe(false);
-    await agent.run("auth.exchange-grant", { grant, baseUrl: proxy.ref.webUrl });
-    await user.see("composer", { editable: true, text: "", timeoutMs: 180_000 });
-    expect(await world.bootstrapPersistence()).toEqual(persisted);
-    const verifications = (await proxy.requestLog()).filter((request) => request.path === "/api/den/v1/me");
-    expect(verifications.some((request) => request.status === 200 && !request.faulted)).toBe(true);
-    expect(verifications.some((request) => request.status >= 300 && request.status < 400)).toBe(false);
+  const composer = await probe.composer();
+  const workspaceId = /^#\/workspace\/([^/]+)\/session$/.exec(composer.route)?.[1];
+  if (!workspaceId) throw new Error(`Expected the empty workspace route, received ${composer.route}`);
+
+  await step("The default local workspace is prepared without creating a blank task", async () => {
+    const workspaces = await probe.desktopApi("/workspaces");
+    expect(workspaces.status).toBe(200);
+    expect(workspaces.body).toMatchObject({
+      activeId: workspaceId,
+      items: [{ id: workspaceId, workspaceType: "local", path: expect.stringMatching(/[/\\]OpenWork Chat$/) }],
+    });
+    const sessions = await probe.desktopApi(`/workspace/${workspaceId}/opencode/session`);
+    expect(sessions.status).toBe(200);
+    expect(sessions.body).toEqual([]);
+    expect(composer.userMessageCount).toBe(0);
+    expect(composer.assistantMessageCount).toBe(0);
+  });
+
+  await step("An explicit OpenCode fixture selection runs without signing in", async () => {
+    await user.click("Change model");
+    await user.click({ testId: "model-option-opencode-big-pickle" });
+    expect(await probe.storage("openwork.modelChoice.explicit")).toBe("1");
+    expect(await probe.storage("openwork.defaultModel")).toBe("opencode/big-pickle");
     await user.type("composer", world.prompt);
     await probe.eventually(async () => (await probe.composer()).runTaskEnabled, {
-      within: 30_000, label: "verified first task ready", until: (ready) => ready,
+      within: 30_000, label: "signed-out fixture task ready", until: (ready) => ready,
     });
+    expect(await world.mock.agentRequests({ promptMarker: world.prompt })).toEqual([]);
     await user.click("Run task");
     await user.see({ text: world.reply }, { timeoutMs: 180_000 });
-    expect((await world.mock.agentRequests({ promptMarker: world.prompt, atLeast: 1 })).length).toBeGreaterThan(0);
-    expect(await world.bootstrap()).toEqual({ requireSignin: false, installationRequiresSignin: true });
+    const requests = await world.mock.agentRequests({ promptMarker: world.prompt, atLeast: 1 });
+    expect(requests.some((request) => request.kind === "final" && request.model === "big-pickle")).toBe(true);
+    expect(await probe.storage("openwork.den.authToken")).toBeNull();
+    await user.notSee({ text: /Error from provider|Something went wrong/ });
   });
 
-  const completedRequests = (await world.mock.agentRequests()).length;
   const route = await probe.hash();
-  const match = /^#\/workspace\/([^/]+)\/session\/([^/]+)$/.exec(route);
-  if (!match) throw new Error(`Expected a completed task route: ${route}`);
-  const [, workspaceId, sessionId] = match;
-  const prompt = { parts: [{ type: "text", text: world.prompt }], model: { providerID: "opencode", modelID: "big-pickle" } };
-
-  await step("Offline restart retains the token but cannot run work until verified", async () => {
-    const token = await probe.storage("openwork.den.authToken");
-    await proxy.faults.status("/api/den/v1/me", 503, { times: 100 });
+  expect(route).toMatch(new RegExp(`^#/workspace/${workspaceId}/session/[^/]+$`));
+  const completedReplies = (await world.mock.agentRequests({ promptMarker: world.prompt })).filter((request) => request.kind === "final").length;
+  await step("Signed-out restart restores the selected workspace, conversation, and explicit model without resubmitting", async () => {
     const restarted = await world.relaunch();
-    await user.on(restarted).see({ role: "button", text: "Sign in to OpenWork" }, { timeoutMs: 60_000 });
-    await user.on(restarted).notSee("composer");
-    expect(await probe.on(restarted).storage("openwork.den.authToken")).toBe(token);
-    expect(await agent.on(restarted).desktopApi(`/workspace/${workspaceId}/opencode/session/${sessionId}/prompt_async`, { method: "POST", body: prompt }))
-      .toMatchObject({ status: 403, body: { code: "signin_required" } });
-    expect((await world.mock.agentRequests()).length).toBe(completedRequests);
-    await world.resetAuthFaults();
-    await user.on(restarted).click("Refresh");
-    await user.on(restarted).see("composer", { editable: true, timeoutMs: 90_000 });
-    for (const code of ["session_expired", "session_revoked"]) {
-      await step(`${code} blocks admission immediately and relocks the idle renderer`, async () => {
-        await proxy.faults.status("/api/den/v1/me", 401, { times: 100, body: { error: "unauthorized" } });
-        expect(await agent.on(restarted).desktopApi(`/workspace/${workspaceId}/opencode/session/${sessionId}/prompt_async`, { method: "POST", body: prompt }))
-          .toMatchObject({ status: 403, body: { code: "signin_required" } });
-        await user.on(restarted).see({ role: "button", text: "Sign in to OpenWork" }, { timeoutMs: 45_000 });
-        expect(await probe.on(restarted).storage("openwork.den.authToken")).toBeNull();
-        expect((await world.mock.agentRequests()).length).toBe(completedRequests);
-        await world.resetAuthFaults();
-        await agent.on(restarted).run("auth.exchange-grant", { grant: await world.issueGrant(), baseUrl: proxy.ref.webUrl });
-        await user.on(restarted).see("composer", { editable: true, timeoutMs: 90_000 });
-      });
-    }
-    await user.on(restarted).click({ testId: "account-status-menu" });
-    await user.on(restarted).click({ role: "menuitem", text: "Log out" });
-    await user.on(restarted).see({ role: "button", text: "Sign in to OpenWork" }, { timeoutMs: 30_000 });
-    await user.on(restarted).notSee("Use Without Cloud");
-    await user.on(restarted).notSee("composer");
+    await user.on(restarted).see("composer", { editable: true, timeoutMs: 180_000 });
+    await user.on(restarted).see({ text: world.reply }, { timeoutMs: 60_000 });
+    await user.on(restarted).see({ testId: "account-status-menu" }, { text: /Sign in/ });
+    await user.on(restarted).notSee({ role: "button", text: "Sign in to OpenWork" });
+    expect(await probe.on(restarted).hash()).toBe(route);
+    expect(await probe.on(restarted).storage("openwork.defaultModel")).toBe("opencode/big-pickle");
+    expect(await probe.on(restarted).storage("openwork.modelChoice.explicit")).toBe("1");
     expect(await probe.on(restarted).storage("openwork.den.authToken")).toBeNull();
-    for (const path of [
-      `/workspace/${workspaceId}/opencode/session/${sessionId}/prompt_async`,
-      `/workspace/${workspaceId}/opencode2/session/${sessionId}/message`,
-      `/w/${workspaceId}/opencode/session/${sessionId}/command`,
-      `/opencode/session/${sessionId}/summarize`,
-    ]) {
-      expect(await agent.on(restarted).desktopApi(path, { method: "POST", body: prompt }))
-        .toMatchObject({ status: 403, body: { code: "signin_required" } });
-    }
-  });
-
-  await step("Signed-out restart remains locked and does not generate", async () => {
-    const restarted = await world.relaunch();
-    await user.on(restarted).see({ role: "button", text: "Sign in to OpenWork" });
-    await user.on(restarted).notSee("composer");
-    expect(await world.bootstrap()).toEqual({ requireSignin: false, installationRequiresSignin: true });
-    expect(await agent.on(restarted).desktopApi("/opencode/session", { method: "POST", body: {} }))
-      .toMatchObject({ status: 403, body: { code: "signin_required" } });
-    expect((await world.mock.agentRequests()).length).toBe(completedRequests);
+    expect(await probe.on(restarted).storage("openwork.den.activeOrgId")).toBeNull();
+    expect(await world.bootstrap()).toEqual({ requireSignin: false, installationRequiresSignin: false });
+    expect((await probe.on(restarted).desktopApi("/workspaces")).body).toMatchObject({ activeId: workspaceId });
+    expect((await world.mock.agentRequests({ promptMarker: world.prompt })).filter((request) => request.kind === "final").length).toBe(completedReplies);
   });
 });
 

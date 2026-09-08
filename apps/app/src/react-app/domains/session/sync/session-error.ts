@@ -3,8 +3,10 @@ import type { UIMessage } from "ai";
 import { safeStringify } from "../../../../app/utils";
 import { normalizeErrorText } from "../../../../lib/error-text";
 import type { InferenceUpgradeReason } from "@/app/lib/inference-access";
+import { desktopFreeAccessStatusSchema, desktopFreeNotice, desktopFreeStatusFromError } from "@/app/lib/inference-access";
+import type { DesktopFreeAccessStatus } from "@openwork/types/desktop-free-access";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "free-model-limit" | "disk-full" | "database-error" | "inference-upgrade" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "free-model-limit" | "disk-full" | "database-error" | "inference-upgrade" | "desktop-free-access" | "generic";
 
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
@@ -13,6 +15,7 @@ export type OpencodeSessionErrorPresentation = {
   technicalDetails: string;
   recoveryPrompt: string | null;
   inference?: { reason: InferenceUpgradeReason; resetsAt: string | null };
+  desktopFree?: DesktopFreeAccessStatus;
 };
 
 // Decode only structured engine envelopes, never codes mentioned in prose or
@@ -225,6 +228,14 @@ function technicalErrorDetails(error: unknown, fallback: string, fields: ReturnT
 }
 
 export function presentOpencodeSessionError(error: unknown, fallback = "Session failed", providerID?: string): OpencodeSessionErrorPresentation {
+  const provider = providerID ?? firstStringValue(errorRecords(error), ["providerID", "providerId", "provider"]);
+  const desktopFree = provider === "openwork-free" ? desktopFreeStatusFromError(error) : null;
+  if (desktopFree) {
+    const notice = desktopFreeNotice(desktopFree, false);
+    return { kind: "desktop-free-access", title: notice.title, description: notice.body,
+      technicalDetails: `Provider: openwork-free\nCode: ${desktopFree.code ?? "unavailable"}`,
+      recoveryPrompt: null, desktopFree };
+  }
   const inference = structuredInferenceError(error, providerID);
   if (inference) return {
     kind: "inference-upgrade",
@@ -267,6 +278,7 @@ export function sessionErrorPresentationFromUIMessage(message: UIMessage): Openc
     : null;
   if (!sessionError || typeof sessionError !== "object") return null;
   const candidate = sessionError as Partial<OpencodeSessionErrorPresentation>;
+  if (candidate.desktopFree !== undefined && !desktopFreeAccessStatusSchema.safeParse(candidate.desktopFree).success) return null;
   const inference = candidate.inference;
   if (inference !== undefined && (!inference || typeof inference !== "object"
     || (inference.reason !== "free_allowance_exhausted" && inference.reason !== "managed_model_requires_upgrade")

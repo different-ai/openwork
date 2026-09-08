@@ -1,17 +1,23 @@
-import { createContext, use, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, use, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { InferenceAccess } from "@openwork/types/den/inference";
+import { z } from "zod";
+import type { DesktopFreeAccessStatus } from "@openwork/types/desktop-free-access";
 import type { ModelOption, ModelRef } from "@/app/types";
-import { createDenClient, readDenSettings } from "@/app/lib/den";
+import { createDenClient, readDenBootstrapConfig, readDenSettings } from "@/app/lib/den";
+import { isDesktopRuntime } from "@/app/utils";
+import { createOpenworkServerClient } from "@/app/lib/openwork-server";
+import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { newProvidersEvent } from "@/app/lib/provider-events";
-import { allowanceResetLabel, formatAllowanceUsd, inferenceAccessRefreshEvent, managedModelRecommendation, modelSelectionUpgradeReason, pendingInferenceUsageLabel, type InferenceUpgradeReason } from "@/app/lib/inference-access";
+import { allowanceResetLabel, formatAllowanceUsd, inferenceAccessRefreshEvent, isDesktopFreeModel, managedModelRecommendation, modelSelectionUpgradeReason, pendingInferenceUsageLabel, unavailableDesktopFreeStatus, type InferenceUpgradeReason } from "@/app/lib/inference-access";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { openModelPickerEvent, openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
 import { useDenAuth } from "./den-auth-provider";
 import { useCheckDesktopRestriction } from "./desktop-config-provider";
-import { getOpenWorkModelsActionUrl } from "./openwork-models-promo";
+import { getOpenWorkModelsActionUrl, useOpenWorkModelsPromoEligibility } from "./openwork-models-promo";
+import { notificationSettingsPath } from "@/react-app/kernel/notification-store";
 
 type Access = InferenceAccess & { canUpgrade: boolean };
 type RequestedModel = ModelRef & { title?: string };
@@ -26,12 +32,27 @@ type Upgrade = {
 };
 const InferenceAccessContext = createContext<{
   access: Access | null;
+  desktopFree: DesktopFreeAccessStatus | null;
+  desktopFreeEnabled: boolean;
+  desktopFreeEndpointKey: string | null;
+  setDesktopFreeEndpointKey: (key: string | null) => void;
   pickerRequest: PickerRequest | null;
   checkSelection: (model: RequestedModel, sessionId?: string, availableModels?: readonly ModelOption[], currentModel?: ModelRef) => boolean;
   showUpgrade: (reason: InferenceUpgradeReason, sessionId?: string, model?: RequestedModel, availableModels?: readonly ModelOption[], currentModel?: ModelRef) => void;
-}>({ access: null, pickerRequest: null, checkSelection: () => true, showUpgrade: () => undefined });
+}>({ access: null, desktopFree: null, desktopFreeEnabled: false, desktopFreeEndpointKey: null, setDesktopFreeEndpointKey: () => undefined, pickerRequest: null, checkSelection: () => true, showUpgrade: () => undefined });
 
 export function useInferenceAccess() { return use(InferenceAccessContext); }
+
+export function useDesktopFreeEndpoint(endpoint: ResolvedWorkspaceEndpoint | null) {
+  const { setDesktopFreeEndpointKey } = useInferenceAccess();
+  // In-memory only: token changes invalidate status even at an unchanged URL.
+  const key = endpoint && !endpoint.isRemote ? JSON.stringify([endpoint.baseUrl, endpoint.token, endpoint.workspaceId]) : null;
+  useLayoutEffect(() => {
+    setDesktopFreeEndpointKey(key);
+    return () => setDesktopFreeEndpointKey(null);
+  }, [key, setDesktopFreeEndpointKey]);
+  return key;
+}
 
 export function InferenceAccessProvider({ children }: { children: ReactNode }) {
   const auth = useDenAuth();
@@ -40,17 +61,57 @@ export function InferenceAccessProvider({ children }: { children: ReactNode }) {
   const [result, setResult] = useState<{ scope: string; access: Access } | null>(null);
   const [upgrade, setUpgrade] = useState<Upgrade | null>(null);
   const [pickerRequest, setPickerRequest] = useState<PickerRequest | null>(null);
+  const [desktopFreeEndpointKey, setDesktopFreeEndpointKey] = useState<string | null>(null);
+  const [freeResult, setFreeResult] = useState<{ scope: string; status: DesktopFreeAccessStatus } | null>(null);
+  const hostedEligible = useOpenWorkModelsPromoEligibility();
+  const checkRestriction = useCheckDesktopRestriction();
+  const bootstrap = readDenBootstrapConfig();
+  const desktopFreeEnabled = isDesktopRuntime() && hostedEligible && desktopFreeEndpointKey !== null
+    && !bootstrap.prepared && !checkRestriction({ restriction: "allowCustomProviders" });
   const epoch = useRef(0);
   const settings = readDenSettings();
   const identity = auth.verifiedIdentity;
   const scope = auth.status === "signed_in" && identity && identity.organizationId === settings.activeOrgId
     ? JSON.stringify([settings.baseUrl, identity.principalId, identity.organizationId, revision]) : null;
   const access = scope && result?.scope === scope ? result.access : null;
+  const freeScope = desktopFreeEnabled ? JSON.stringify([desktopFreeEndpointKey, settings.baseUrl, auth.status, identity, revision]) : null;
+  const desktopFree = freeScope && freeResult?.scope === freeScope ? freeResult.status : null;
+  const dialogScope = scope ?? freeScope;
+
+  useEffect(() => {
+    setFreeResult(null);
+    setUpgrade(null);
+    setPickerRequest(null);
+    if (!freeScope || !desktopFreeEndpointKey) return;
+    const [baseUrl, token] = z.tuple([z.string(), z.string(), z.string()]).parse(JSON.parse(desktopFreeEndpointKey));
+    const client = createOpenworkServerClient({ baseUrl, token });
+    let active = true;
+    let pending = false;
+    const refresh = async () => {
+      if (pending) return;
+      pending = true;
+      const status = await client.desktopFreeStatus().catch(() => unavailableDesktopFreeStatus());
+      pending = false;
+      if (active) setFreeResult({ scope: freeScope, status });
+    };
+    const onRefresh = () => { void refresh(); };
+    void refresh();
+    window.addEventListener("focus", onRefresh);
+    window.addEventListener(inferenceAccessRefreshEvent, onRefresh);
+    window.addEventListener(newProvidersEvent, onRefresh);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", onRefresh);
+      window.removeEventListener(inferenceAccessRefreshEvent, onRefresh);
+      window.removeEventListener(newProvidersEvent, onRefresh);
+    };
+  }, [freeScope, desktopFreeEndpointKey]);
 
   useEffect(() => {
     const clear = () => {
       epoch.current += 1;
       setResult(null);
+      setFreeResult(null);
       setUpgrade(null);
       setPickerRequest(null);
       setRevision((value) => value + 1);
@@ -125,9 +186,9 @@ export function InferenceAccessProvider({ children }: { children: ReactNode }) {
   }, [scope]);
 
   const showUpgrade = (reason: InferenceUpgradeReason, sessionId?: string, model?: RequestedModel, availableModels?: readonly ModelOption[], currentModel?: ModelRef) => {
-    if (!scope) return;
-    const freeModel = availableModels?.find((option) => !option.disabled && option.providerID === "openwork" && option.modelID === access?.modelID);
-    setUpgrade({ reason, sessionId, model, currentModel, freeModel, scope });
+    if (!dialogScope) return;
+    const freeModel = availableModels?.find((option) => !option.disabled && (desktopFreeEnabled ? isDesktopFreeModel(option) : option.providerID === "openwork" && option.modelID === access?.modelID));
+    setUpgrade({ reason, sessionId, model, currentModel, freeModel, scope: dialogScope });
     setPickerRequest(null);
     window.dispatchEvent(new Event(inferenceAccessRefreshEvent));
   };
@@ -140,34 +201,36 @@ export function InferenceAccessProvider({ children }: { children: ReactNode }) {
     showUpgrade(reason, sessionId, model, availableModels, currentModel);
     return false;
   };
-  const activeUpgrade = upgrade?.scope === scope ? upgrade : null;
-  const recommendation = activeUpgrade?.model ? managedModelRecommendation(access, activeUpgrade.model) : undefined;
+  const activeUpgrade = upgrade?.scope === dialogScope ? upgrade : null;
+  const recommendation = activeUpgrade?.model ? managedModelRecommendation(access, activeUpgrade.model)
+    ?? desktopFree?.catalog?.find((item) => item.modelID === activeUpgrade.model?.modelID) : undefined;
   const modelName = recommendation?.displayName ?? activeUpgrade?.model?.title ?? activeUpgrade?.model?.modelID;
-  const eligible = Boolean(activeUpgrade?.model && access && (access.kind === "paid"
+  const eligible = Boolean(activeUpgrade?.model && access && !isDesktopFreeModel(activeUpgrade.model) && (access.kind === "paid"
     || (access.kind === "free" && activeUpgrade.model.modelID === access.modelID)));
   const keepingLuna = access?.kind === "free" && activeUpgrade?.currentModel && activeUpgrade.freeModel
     && activeUpgrade.currentModel.providerID === activeUpgrade.freeModel.providerID
     && activeUpgrade.currentModel.modelID === activeUpgrade.freeModel.modelID;
   const openRequestedPicker = (model: RequestedModel) => {
-    if (!scope || !activeUpgrade) return;
+    if (!dialogScope || !activeUpgrade) return;
     // Re-enter the real picker, not a captured callback whose session may have changed.
-    setPickerRequest({ model, sessionId: activeUpgrade.sessionId, scope });
+    setPickerRequest({ model, sessionId: activeUpgrade.sessionId, scope: dialogScope });
     setUpgrade(null);
     window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { sessionId: activeUpgrade.sessionId } }));
   };
-  const reset = allowanceResetLabel(access?.resetsAt);
+  const anonymousAllowance = desktopFreeEnabled && (access?.kind !== "paid" || isDesktopFreeModel(activeUpgrade?.model));
+  const reset = allowanceResetLabel(anonymousAllowance ? desktopFree?.allowance?.resetsAt : access?.resetsAt);
   return (
-    <InferenceAccessContext value={{ access, pickerRequest: pickerRequest?.scope === scope ? pickerRequest : null, checkSelection, showUpgrade }}>
+    <InferenceAccessContext value={{ access, desktopFree, desktopFreeEnabled, desktopFreeEndpointKey, setDesktopFreeEndpointKey, pickerRequest: pickerRequest?.scope === dialogScope ? pickerRequest : null, checkSelection, showUpgrade }}>
       {children}
       <Dialog open={activeUpgrade !== null} onOpenChange={(open) => { if (!open) setUpgrade(null); }}>
         <DialogContent className="sm:max-w-md" data-testid="inference-upgrade-dialog">
           <DialogHeader>
             <DialogTitle>{eligible ? `${modelName} is ready to use` : activeUpgrade?.reason === "free_allowance_exhausted"
-              ? "Your free Luna allowance is used up" : modelName ? `Unlock ${modelName}` : "Upgrade your model access"}</DialogTitle>
+              ? "Free Luna allowance reached" : modelName ? `Unlock ${modelName}` : "Upgrade your model access"}</DialogTitle>
             <DialogDescription>
               {eligible ? "Return to the model picker to confirm your selection. No task will run automatically."
                 : activeUpgrade?.reason === "free_allowance_exhausted"
-                 ? `You've used this week's free allowance.${reset ? ` Resets ${reset}.` : " Check your allowance again after the weekly reset."}`
+                  ? `${anonymousAllowance ? "Free Luna includes USD 1 per week per installation. This request cannot fit the available allowance, including safety holds." : "You've used this week's free allowance."}${reset ? ` Resets ${reset}.` : " Check your allowance again after the weekly reset."}`
                  : recommendation?.summary || "This model is available with a paid OpenWork plan. Free access includes standard Luna."}
               {" Your selected model and draft have not changed."}
             </DialogDescription>
@@ -187,7 +250,8 @@ export function InferenceAccessProvider({ children }: { children: ReactNode }) {
             </Button> : null}
             {eligible && activeUpgrade?.model ? <Button data-testid="inference-use-model" onClick={() => {
               if (activeUpgrade.model) openRequestedPicker(activeUpgrade.model);
-            }}>Use {modelName}</Button> : !eligible && access?.canUpgrade === true ? <Button data-testid="inference-view-upgrade" onClick={() => platform.openLink(getOpenWorkModelsActionUrl(true))}>View upgrade</Button> : null}
+            }}>Use {modelName}</Button> : !eligible && !auth.isSignedIn ? <Button data-testid="inference-signin-upgrade" onClick={() => platform.openLink(getOpenWorkModelsActionUrl(false))}>Sign in to Upgrade</Button>
+              : !eligible && access?.canUpgrade === true ? <Button data-testid="inference-view-upgrade" onClick={() => platform.openLink(getOpenWorkModelsActionUrl(true))}>View upgrade</Button> : null}
           </DialogFooter>
           <OwnProviderAction onBeforeOpen={() => setUpgrade(null)} />
         </DialogContent>
@@ -212,7 +276,15 @@ export function OwnProviderAction({ onBeforeOpen }: { onBeforeOpen?: () => void 
 }
 
 export function InferenceAllowanceSummary({ available = true, className = "" }: { available?: boolean; className?: string }) {
-  const { access } = useInferenceAccess();
+  const { access, desktopFree, desktopFreeEnabled } = useInferenceAccess();
+  if (available && desktopFreeEnabled) {
+    const reset = allowanceResetLabel(desktopFree?.allowance?.resetsAt);
+    return <p className={`text-xs text-muted-foreground ${className}`} data-testid="inference-allowance">
+      Free Luna: USD 1 per week per installation.
+      {desktopFree?.allowance ? ` Estimated remaining: ${formatAllowanceUsd(desktopFree.allowance.remainingUsd)} (includes safety holds).` : ""}
+      {reset ? ` Resets ${reset}.` : ""}
+    </p>;
+  }
   if (!available || !access || (access.kind !== "free" && access.kind !== "exhausted")) return null;
   const reset = allowanceResetLabel(access.resetsAt);
   const pending = pendingInferenceUsageLabel(access);
@@ -221,6 +293,34 @@ export function InferenceAllowanceSummary({ available = true, className = "" }: 
     {reset ? ` Resets ${reset}.` : ""}
     {pending ? ` ${pending}` : ""}
   </p>;
+}
+
+/** Catalog offers are presentation only, never engine options or favorites. */
+export function DesktopFreeModelOffers({ query = "", sessionId, currentModel, onBeforeOpen }: {
+  query?: string; sessionId?: string; currentModel?: ModelRef; onBeforeOpen?: () => void;
+}) {
+  const { access, desktopFree, desktopFreeEnabled, showUpgrade } = useInferenceAccess();
+  if (!desktopFreeEnabled || access?.kind === "paid") return null;
+  const offers = desktopFree?.catalog?.filter((item) => item.modelID !== desktopFree.modelID
+    && [item.displayName, item.providerName, item.modelID, item.summary, ...item.capabilities].some((text) => text.toLowerCase().includes(query.trim().toLowerCase()))) ?? [];
+  return offers.length ? <div className="space-y-1 p-2" data-testid="desktop-free-model-offers">
+    {offers.sort((a, b) => a.rank - b.rank).map((item) => <div key={item.modelID} className="flex items-center gap-3 rounded-lg border border-border p-3">
+      <div className="min-w-0 flex-1"><p className="text-sm font-medium">{item.displayName}</p><p className="text-xs text-muted-foreground">{item.summary}</p></div>
+      <Button size="sm" variant="outline" onClick={() => {
+        onBeforeOpen?.();
+        showUpgrade("managed_model_requires_upgrade", sessionId, { providerID: "openwork", modelID: item.modelID, title: item.displayName }, undefined, currentModel);
+      }}>Upgrade</Button>
+    </div>)}
+  </div> : null;
+}
+
+export function DesktopFreeErrorActions({ status, workspaceId, sessionId }: { status: DesktopFreeAccessStatus; workspaceId: string; sessionId: string }) {
+  const { showUpgrade } = useInferenceAccess();
+  if (status.state === "update_required") return <Button size="sm" onClick={() => {
+    window.location.hash = notificationSettingsPath({ type: "open-settings", panel: "updates", workspaceId });
+  }}>Update</Button>;
+  if (status.state === "exhausted") return <Button size="sm" onClick={() => showUpgrade("free_allowance_exhausted", sessionId, { providerID: status.providerID, modelID: status.modelID })}>Upgrade options</Button>;
+  return null;
 }
 
 export function InferenceErrorActions({ reason, resetsAt, sessionId, onOpenModelPicker, requestedModel }: {
