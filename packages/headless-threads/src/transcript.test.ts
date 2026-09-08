@@ -4,7 +4,7 @@ import { hasAssistantReplySince, toTranscript } from "./transcript.js";
 import type { HeadlessThreadMessage, HeadlessThreadSnapshot } from "./types.js";
 
 function message(input: Partial<HeadlessThreadMessage> & { id: string; role: string }): HeadlessThreadMessage {
-  return { parentId: null, createdAt: null, error: null, usage: null, parts: [], ...input };
+  return { parentId: null, createdAt: null, completedAt: null, error: null, usage: null, model: null, parts: [], ...input };
 }
 
 function snapshot(messages: HeadlessThreadMessage[]): HeadlessThreadSnapshot {
@@ -27,9 +27,20 @@ describe("toTranscript", () => {
           id: "msg_2",
           role: "assistant",
           createdAt: 200,
+          model: { providerId: "anthropic", modelId: "claude-sonnet-5" },
+          usage: { inputTokens: 120, outputTokens: 9, reasoningTokens: 40, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0.001 },
           parts: [
             { id: "prt_2", type: "reasoning", text: "check the policy" },
-            { id: "prt_3", type: "tool", tool: "read", callId: "call_1", toolStatus: "completed" },
+            {
+              id: "prt_3",
+              type: "tool",
+              tool: "read",
+              callId: "call_1",
+              toolStatus: "completed",
+              toolInput: { filePath: "/workspace/brief.md" },
+              toolOutput: "brief",
+              toolMetadata: { openworkMcpApp: { content: [{ type: "text", text: "brief" }] } },
+            },
             { id: "prt_4", type: "text", text: "Because " },
             { id: "prt_5", type: "text", text: "the window closed." },
           ],
@@ -38,17 +49,33 @@ describe("toTranscript", () => {
     );
 
     expect(transcript.messages).toEqual([
-      { id: "msg_1", role: "user", createdAt: null, text: "Why?", reasoning: "", toolCalls: [] },
+      { id: "msg_1", role: "user", parentId: null, createdAt: null, completedAt: null, error: null, text: "Why?", reasoning: "", model: null, usage: null, toolCalls: [] },
       {
         id: "msg_2",
         role: "assistant",
+        parentId: null,
         createdAt: 200,
+        completedAt: null,
+        error: null,
         text: "Because the window closed.",
         reasoning: "check the policy",
-        toolCalls: [{ partId: "prt_3", name: "read", callId: "call_1", status: "completed" }],
+        model: { providerId: "anthropic", modelId: "claude-sonnet-5" },
+        usage: { inputTokens: 120, outputTokens: 9, reasoningTokens: 40, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0.001 },
+        toolCalls: [{
+          partId: "prt_3",
+          name: "read",
+          callId: "call_1",
+          status: "completed",
+          input: { filePath: "/workspace/brief.md" },
+          output: "brief",
+          error: null,
+          metadata: { openworkMcpApp: { content: [{ type: "text", text: "brief" }] } },
+        }],
       },
     ]);
     expect(transcript.finalAssistantText).toBe("Because the window closed.");
+    // The thread total still sums what each reply reported.
+    expect(transcript.usage.reasoningTokens).toBe(40);
   });
 
   test("drops synthetic and ignored parts the app also hides", () => {

@@ -13,8 +13,8 @@ import {
 } from "../app/(den)/_lib/desktop-handoff";
 import { SETUP_CONTINUATION_KEY, parseSetupContinuation, type SetupContinuation } from "../app/(den)/_lib/setup-continuation";
 
-test("preserves the complete OpenWork desktop handoff URL", () => {
-  const openworkUrl = "openwork://den-auth?grant=one-time-code&denBaseUrl=https%3A%2F%2Fapi.example.test";
+test.each(["openwork", "opencoworker"])("preserves the complete %s desktop handoff URL", (scheme) => {
+  const openworkUrl = `${scheme}://den-auth?grant=one-time-code&denBaseUrl=https%3A%2F%2Fapi.example.test`;
   const payload = { grant: "one-time-code", openworkUrl };
 
   expect(getDesktopHandoffOpenworkUrl(payload)).toBe(openworkUrl);
@@ -39,8 +39,8 @@ test("rejects missing and malformed desktop handoffs", () => {
   expect(getDesktopGrant(null)).toBeNull();
 });
 
-test("restores only fresh tab-scoped setup with a user and a known route", () => {
-  const pending = { userId: "user-1", desktopScheme: "openwork", setup: { organizationId: "org-1", route: "/dashboard/onboarding/tools" }, at: Date.now() };
+test.each(["openwork", "opencoworker"])("restores only fresh tab-scoped %s setup with a user and a known route", (desktopScheme) => {
+  const pending = { userId: "user-1", desktopScheme, setup: { organizationId: "org-1", route: "/dashboard/onboarding/tools" }, at: Date.now() };
   expect(parseSetupContinuation(JSON.stringify(pending))).toEqual(pending);
   expect(parseSetupContinuation(JSON.stringify({ ...pending, setup: null, userId: null }))).toMatchObject({ userId: null, setup: null });
   for (const invalid of [
@@ -50,6 +50,8 @@ test("restores only fresh tab-scoped setup with a user and a known route", () =>
     { ...pending, setup: { organizationId: "org-1", route: "https://outside.test" } },
     { ...pending, desktopScheme: "openwork://" },
     { ...pending, desktopScheme: "untrusted-app" },
+    { ...pending, desktopScheme: "opencoworker-untrusted" },
+    { ...pending, desktopScheme: "https" },
     { ...pending, setup: { route: "/dashboard/onboarding" } },
   ]) expect(parseSetupContinuation(JSON.stringify(invalid))).toBeNull();
   expect(parseSetupContinuation("not json")).toBeNull();
@@ -67,9 +69,12 @@ async function withFlow(options: {
   config?: Promise<runtime.DenWebRuntimeConfig>;
   stored?: SetupContinuation;
   desktop?: boolean;
-  reply?: (path: string) => Promise<{ status?: number; payload: unknown }>;
+  desktopScheme?: string;
+  reply?: (path: string, init?: RequestInit) => Promise<{ status?: number; payload: unknown }>;
 }, check: (fixture: { state: () => ReturnType<typeof useDenFlow>; paths: string[]; opened: string[]; submit: () => void }) => Promise<void>) {
-  GlobalRegistrator.register({ url: `https://app.example.test/${options.desktop === false ? "" : "?desktopAuth=1"}` });
+  const url = new URL(`https://app.example.test/${options.desktop === false ? "" : "?desktopAuth=1"}`);
+  if (options.desktopScheme !== undefined) url.searchParams.set("desktopScheme", options.desktopScheme);
+  GlobalRegistrator.register({ url: url.toString() });
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
   if (options.stored) sessionStorage.setItem(SETUP_CONTINUATION_KEY, JSON.stringify(options.stored));
   const paths: string[] = [];
@@ -78,9 +83,9 @@ async function withFlow(options: {
   spyOn(navigation, "useRouter").mockReturnValue({ push() {}, replace() {}, refresh() {}, back() {}, forward() {}, prefetch: async () => {} });
   spyOn(runtime, "getRuntimeConfig").mockImplementation(() => options.config ?? Promise.resolve({ ...runtime.EMPTY_RUNTIME_CONFIG, orgMode: "multi_org" }));
   spyOn(window.location, "assign").mockImplementation((url) => { opened.push(String(url)); });
-  spyOn(requests, "requestJson").mockImplementation(async (path) => {
+  spyOn(requests, "requestJson").mockImplementation(async (path, init) => {
     paths.push(path);
-    const reply = options.reply ? await options.reply(path) : { payload: path === "/v1/me" ? { user: account } : path === "/v1/me/orgs" ? directory : {} };
+    const reply = options.reply ? await options.reply(path, init) : { payload: path === "/v1/me" ? { user: account } : path === "/v1/me/orgs" ? directory : {} };
     return { response: Response.json(reply.payload, { status: reply.status ?? 200 }), payload: reply.payload };
   });
   let current: ReturnType<typeof useDenFlow> | null = null;
@@ -135,13 +140,56 @@ test("sign-out invalidates an in-flight session response and clears the tab cont
   });
 });
 
-test("a different authenticated user cannot inherit an earlier user's setup or desktop return", async () => {
-  await withFlow({ stored: { userId: "old-user", desktopScheme: "openwork", setup: { organizationId: "old-org", route: "/dashboard/onboarding/tools" }, at: Date.now() } }, async ({ state, paths }) => {
+test.each(["openwork", "opencoworker"] satisfies NonNullable<SetupContinuation["desktopScheme"]>[])("a different authenticated user cannot inherit an earlier user's %s setup or desktop return", async (desktopScheme) => {
+  await withFlow({ desktop: false, stored: { userId: "old-user", desktopScheme, setup: { organizationId: "old-org", route: "/dashboard/onboarding/tools" }, at: Date.now() } }, async ({ state, paths }) => {
     expect(state().user?.id).toBe(account.id);
     expect(state().setupPending).toBe(false);
     expect(state().desktopAuthRequested).toBe(false);
     expect(sessionStorage.getItem(SETUP_CONTINUATION_KEY)).toBeNull();
     expect(paths).not.toContain("/api/auth/desktop-handoff");
+  });
+});
+
+test.each(["openwork", "opencoworker"] satisfies NonNullable<SetupContinuation["desktopScheme"]>[])("restored %s setup returns only after completion for its organization", async (desktopScheme) => {
+  const setup = { organizationId: "org-1", route: "/dashboard/onboarding/tools" };
+  const openworkUrl = `${desktopScheme}://den-auth?grant=test-grant&denBaseUrl=https%3A%2F%2Fapi.example.test`;
+  await withFlow({ desktop: false, stored: { userId: account.id, desktopScheme, setup, at: Date.now() }, reply: async (path, init) => {
+    if (path === "/api/auth/desktop-handoff") {
+      expect(JSON.parse(String(init?.body))).toEqual({ desktopScheme });
+      return { payload: { grant: "test-grant", openworkUrl } };
+    }
+    if (path === "/v1/me/active-organization") expect(JSON.parse(String(init?.body))).toEqual({ organizationId: "org-1" });
+    return { payload: path === "/v1/me" ? { user: account } : path === "/v1/me/orgs" ? directory : {} };
+  } }, async ({ state, paths, opened }) => {
+    expect(state().setupPending).toBe(true);
+    expect(await state().resolveUserLandingRoute()).toBe(setup.route);
+    expect(parseSetupContinuation(sessionStorage.getItem(SETUP_CONTINUATION_KEY))?.desktopScheme).toBe(desktopScheme);
+    await act(async () => state().retryDesktopAuthHandoff());
+    await act(async () => { expect(await state().completeSetup("other-org")).toBe(false); });
+    expect(paths).not.toContain("/api/auth/desktop-handoff");
+    expect(opened).toEqual([]);
+    await act(async () => { expect(await state().completeSetup("org-1")).toBe(true); });
+    expect(paths.indexOf("/v1/me/active-organization")).toBeLessThan(paths.indexOf("/api/auth/desktop-handoff"));
+    expect(opened).toEqual([openworkUrl]);
+    expect(sessionStorage.getItem(SETUP_CONTINUATION_KEY)).toBeNull();
+  });
+});
+
+test.each([
+  ["openwork", "openwork"],
+  ["opencoworker", "opencoworker"],
+  ["untrusted-app", "openwork"],
+])("sign-in URL scheme %s returns through the approved %s destination", async (requested, expected) => {
+  let handoffBody: unknown;
+  await withFlow({ desktopScheme: requested, reply: async (path, init) => {
+    if (path === "/api/auth/desktop-handoff") {
+      handoffBody = JSON.parse(String(init?.body));
+      return { payload: { grant: "test-grant", openworkUrl: `${expected}://den-auth?grant=test-grant` } };
+    }
+    return { payload: path === "/v1/me" ? { user: account } : path === "/v1/me/orgs" ? directory : {} };
+  } }, async ({ opened }) => {
+    expect(handoffBody).toEqual({ desktopScheme: expected });
+    expect(opened).toEqual([`${expected}://den-auth?grant=test-grant`]);
   });
 });
 
