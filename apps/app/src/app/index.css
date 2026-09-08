@@ -211,6 +211,29 @@ body {
   background: transparent !important;
 }
 
+/* Table rendering improvements for sidebar and narrow containers */
+.markdown-content table {
+  table-layout: auto;
+  min-width: 100%;
+}
+
+.markdown-content table th,
+.markdown-content table td {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  max-width: 300px;
+  min-width: min-content;
+}
+
+.markdown-content table thead tr:first-child th {
+  border-top-width: 1px;
+}
+
+/* Ensure table wrapper scrolls horizontally when needed */
+.markdown-content div:has(> table) {
+  max-width: 100%;
+}
+
 .markdown-content [data-openwork-code-block] .shiki {
   background: transparent !important;
 }
