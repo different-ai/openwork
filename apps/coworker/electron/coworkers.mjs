@@ -37,7 +37,7 @@ const MEMORY_INDEX_FILE = path.join("memory", "index.md");
 const LONG_TERM_DIR = path.join("memory", "long-term");
 const WORKSPACE_DIR = "workspace";
 const AVATAR_COLORS = new Set(["blue", "violet", "mint", "orange", "rose", "slate", "sand", "sage"]);
-const AVATAR_GLASSES = new Set(["round", "square", "oval", "none", "sunglasses", "monocle"]);
+const AVATAR_GLASSES = new Set(["round", "square", "oval", "none", "sunglasses", "monocle", "star"]);
 // Mirrors PERSONALITIES in src/lib/personalities.ts; the renderer owns the sayings, the store owns the choice.
 const PERSONALITIES = new Set([
   "none",
@@ -166,7 +166,7 @@ ${mission || "Help with the work I am given, and own it over time."}
  * regenerate on the next launch (`repairCoworkerContract`); soul and memory are
  * never touched by that repair.
  */
-export const AGENTS_CONTRACT_VERSION = 10;
+export const AGENTS_CONTRACT_VERSION = 11;
 const AGENTS_CONTRACT_MARKER = /<!-- open-coworker-contract: (\d+) -->/;
 
 export function agentsTemplate({ name }) {
@@ -327,37 +327,34 @@ name to replace it, empty text to clear.
 
 ## Workers
 
-Complex or long work goes to a Worker so that I stay in the conversation: a
-reply of mine that runs for minutes leaves the person waiting, while a Worker
-runs beside us and I keep answering. A Worker (see *Which shape an answer
-takes*: one goal with an end, not on a clock — anything likely to take more
-than a couple of minutes or a handful of tool steps, or that the person may
-want to discuss while it runs) gets a short name, a goal that says what done
-looks like, and a lifespan: a number of turns (ten when I say nothing), a
-deadline, or until stopped. Its turns follow one another as soon as this Mac
-has room, so it is for work in steps, not for a check that should repeat on a
-clock. Then I tell the person in a sentence what I started. At most three
-Workers run at once; \`workers_list\` shows them. Open Coworker keeps the
-\`## Now\` line for each Worker itself — started, its latest finding, waiting for
-a decision, cleared when it ends — so I do not write a second one.
+Clear ordinary work stays with me: no thinker. A goal needing minutes or
+several steps may use a Worker beside the conversation while this app is open.
+Scheduled work is an assignment, not a Worker.
 
-- I give the Worker tool a structured continuation: the original objective,
-  relevant references, actions already completed, and what to do with its result.
-  This is a work brief, never private reasoning. I acknowledge the request and
-  end my turn; I never poll or keep a tool call open waiting for a Worker.
-- Completion resumes me once in the conversation that requested the work,
-  even if the person is elsewhere. I read the result and act:
-  \`worker_steer\` to correct course or answer a decision it is waiting for,
-  \`worker_cancel\` only when the goal is met or the person asked. A Worker
-  the person started is theirs: I never stop it unless they ask. A decision
-  only the person can make, I ask them.
-- A quick question never gets a Worker, and I never start a Worker from inside
-  a Worker.
-- The person can see, steer, pause, and stop my Workers in the Workers view;
-  I follow their lead, using \`worker_pause\` or \`worker_resume\` when asked in
-  chat. Pause lets the current step finish; Stop is permanent. Workers run
-  while this app is open. Check findings before claiming progress: a spent
-  lifespan does not prove the goal is met.
+- Choose purpose \`thinking\` only for hard ambiguity: at most one brief per task
+  with decision, constraints, acceptance criteria, and open risks. Otherwise use
+  \`delivery\`. After the brief, at most two delivery Workers can implement it.
+  Finish with \`Done\` and the brief's labeled fields or a document/file reference.
+- Delivery uses the compact brief and file references, never full transcripts
+  or private reasoning. Use existing document tools for substantive work.
+  Return evidence and concise completion to the original coworker. A spent
+  lifespan is not proof of completion; never invent speed or savings claims.
+- Give \`worker_spawn\` a name, bounded goal, and structured continuation:
+  original objective, references, completed actions, and how to use the result.
+  Acknowledge in one sentence and END this turn; never poll or wait in a tool.
+  Results resume me in the originating conversation, regardless of navigation.
+- Models follow the person's settings, with no paid fallback or upgrade. Default
+  limits: two thinking turns; delivery uses the effort dial (ten at Balanced).
+  Only the person may choose until stopped. At most three live Workers;
+  \`workers_list\` shows them. The app owns their memory notes; do not duplicate.
+- A Worker never spawns, consults, uses the question tool, or manages memory,
+  soul, or configuration. Report blockers as \`Needs a decision\` to the
+  supervisor, not another Worker. New Workers stop and hand blockers back.
+  Shared workspace access is not filesystem isolation or a dollar cap.
+- I use \`worker_steer\` for live work, \`worker_pause\`/\`worker_resume\` when asked,
+  and \`worker_cancel\` only when done or asked. Pause finishes the current step;
+  Stop is permanent. Never stop a person-started Worker unless asked. Ask the
+  person for decisions only they can make.
 
 ## My team
 
@@ -559,6 +556,10 @@ async function readCoworkerRecord(coworkersDir, slug) {
     model: typeof data.model === "string" ? data.model.trim() : "",
     /** Optional reasoning/behavior variant for the preferred model. */
     modelVariant: typeof data.modelVariant === "string" ? data.modelVariant.trim() : "",
+    thinkingModel: typeof data.thinkingModel === "string" ? data.thinkingModel.trim() : "",
+    thinkingModelVariant: typeof data.thinkingModelVariant === "string" ? data.thinkingModelVariant.trim() : "",
+    deliveryModel: typeof data.deliveryModel === "string" ? data.deliveryModel.trim() : "",
+    deliveryModelVariant: typeof data.deliveryModelVariant === "string" ? data.deliveryModelVariant.trim() : "",
     /** "app" when Open Coworker picked the model by itself (it may be swapped once when it fails); "person" or "" otherwise (never swapped). */
     modelChosenBy: modelChosenByOf(data.modelChosenBy),
     /** `auto`: a quick, standard, or deep model per message around `model`; `fixed`: `model` every time. */
@@ -704,6 +705,9 @@ export async function updateCoworker(coworkersDir, slug, patch) {
     data.model = patch.model.trim();
   }
   if (typeof patch?.modelVariant === "string") data.modelVariant = patch.modelVariant.trim();
+  for (const field of ["thinkingModel", "thinkingModelVariant", "deliveryModel", "deliveryModelVariant"]) {
+    if (typeof patch?.[field] === "string") data[field] = patch[field].trim();
+  }
   if (typeof patch?.modelChosenBy === "string") data.modelChosenBy = modelChosenByOf(patch.modelChosenBy);
   if (patch?.modelMode === "auto" || patch?.modelMode === "fixed") data.modelMode = patch.modelMode;
   if (typeof patch?.effortPreference === "string") data.effortPreference = effortStopOf(patch.effortPreference);

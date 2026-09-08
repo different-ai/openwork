@@ -11,6 +11,8 @@ export type WorkerLifespan =
   | { kind: "open" };
 
 export type WorkerStatus = "starting" | "running" | "waiting" | "paused" | "finished" | "cancelled" | "failed";
+export type WorkerPurpose = "thinking" | "delivery";
+export type WorkerModelSnapshot = { providerId: string; modelId: string; variant: string };
 
 export type WorkerSummary = {
   schemaVersion: 1;
@@ -18,6 +20,9 @@ export type WorkerSummary = {
   slug: string;
   name: string;
   goal: string;
+  /** Records predating purpose-specific models remain delivery Workers on the owner model. */
+  purpose?: WorkerPurpose;
+  modelSnapshot?: WorkerModelSnapshot | null;
   /** The Worker's native thread; empty until its first turn was accepted. */
   threadId: string;
   spawnedBy: "coworker" | "person";

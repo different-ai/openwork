@@ -4,6 +4,7 @@ import path from "node:path";
 import { isRunning, toTranscript } from "@openwork/headless-threads";
 import { hasPendingInteractions, stalledRetry } from "../src/lib/threads.ts";
 import { assertComputerToolContext, COMPUTER_DENY, COMPUTER_STOP_GUIDANCE } from "./computer-control.mjs";
+import { completedThinkingBrief, workerPurpose } from "./workers.mjs";
 
 const terminal = new Set(["succeeded", "failed", "cancelled"]);
 const text = (value, max = 4000) => typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -647,7 +648,24 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
         if (state.tasks[id]) return state.tasks[id];
         const parent = state.tasks[entry.taskId];
         if (!runnable(state, state.executions[entry.id])) throw new Error("The originating turn has stopped.");
-        if (entry.continuation || parent.depth >= 2 || parent.dependencies.length >= 3) throw new Error("This task reached its collaboration limit. Finish with the available results or ask the person for a new task.");
+        const purpose = kind === "worker" ? workerPurpose(input.purpose) : undefined;
+        const dependencies = parent.dependencies.map((id) => state.tasks[id]);
+        const thinker = dependencies.find((task) => task.kind === "worker" && task.input?.purpose === "thinking");
+        if (purpose === "thinking" && (parent.depth !== 0 || dependencies.length > 0)) throw new Error("Use at most one thinking brief, before delivery, for this original task.");
+        if (purpose === "delivery" && thinker && (thinker.state !== "succeeded" || thinker.briefReady !== true)) throw new Error("Delivery requires a completed thinking brief. An exhausted or empty result does not authorize delivery; review it in this conversation.");
+        if (kind === "worker" && input.lifespan?.kind === "open") throw new Error("A delegated Worker needs a finite turn limit or deadline.");
+        // The only second delegation phase is delivery from one successful
+        // thinking brief. The original coworker owns it; Workers never delegate.
+        const current = state.executions[entry.id];
+        const deliveryHandoff = entry.continuation && purpose === "delivery" && parent.depth === 0
+          && (current.deliveryHandoff || (dependencies.length === 1 && thinker?.state === "succeeded" && thinker.briefReady === true));
+        if ((entry.continuation && !deliveryHandoff) || parent.depth >= 2 || dependencies.length >= 3) throw new Error("This task reached its collaboration limit. Finish with the available results or ask the person for a new task.");
+        if (deliveryHandoff && !current.deliveryHandoff) {
+          current.deliveryHandoff = true;
+          parent.generation += 1;
+          parent.continuationId = null;
+          parent.followUpRequested = true;
+        }
         const to = kind === "consultation" ? text(input.to, 64) : entry.owner.slug;
         if (kind === "consultation" && parent.lineage.includes(to)) throw new Error("A consultation cannot ask itself or a coworker already waiting in this chain.");
         const objective = text(input.objective || input.question || input.goal);
@@ -656,7 +674,7 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
         parent.refs = (input.continuation?.refs ?? []).filter((value) => typeof value === "string").slice(0, 8).map((value) => text(value, 300));
         parent.completedActions = (input.continuation?.completedActions ?? []).filter((value) => typeof value === "string").slice(0, 8).map((value) => text(value, 300));
         parent.resumeInstructions = text(input.continuation?.resumeInstructions) || parent.resumeInstructions;
-        const task = { id, kind, parentId: parent.id, origin: entry.owner, owner: entry.owner, state: "requested", dependencies: [], executionId: null, depth: parent.depth + 1, lineage: [...parent.lineage, to], to, objective, refs: [], completedActions: [], resumeInstructions: "Answer the focused question using the requested results.", label: text(kind === "worker" ? input.name : `Question for ${to}`, 100), input: { ...input, question: text(input.question), context: text(input.context, 2000) }, workerId: kind === "worker" ? `wrk_${keyFor(id)}` : null, createdAt: now(), deadline: now() + dependencyTimeoutMs, result: "", error: "", continuationId: null, generation: 0 };
+        const task = { id, kind, parentId: parent.id, origin: entry.owner, owner: entry.owner, state: "requested", dependencies: [], executionId: null, depth: parent.depth + 1, lineage: [...parent.lineage, to], to, objective, refs: [], completedActions: [], resumeInstructions: "Answer the focused question using the requested results.", label: text(kind === "worker" ? input.name : `Question for ${to}`, 100), input: { ...input, ...(purpose ? { purpose } : {}), question: text(input.question), context: text(input.context, 2000) }, workerId: kind === "worker" ? `wrk_${keyFor(id)}` : null, createdAt: now(), deadline: now() + dependencyTimeoutMs, result: "", error: "", continuationId: null, generation: 0 };
         state.tasks[id] = task;
         parent.dependencies.push(id);
         return task;
@@ -683,8 +701,11 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
         if (last) child.result = text(last.text, 12_000);
         if (worker.status === "waiting" && worker.waitingFor === "decision") child.state = "waiting-person";
         if (["finished", "failed", "cancelled"].includes(worker.status)) {
+          if (child.input?.purpose === "thinking") child.briefReady = worker.status === "finished" && completedThinkingBrief({ kind: last?.report, text: last?.text });
           child.state = worker.status === "finished" ? "succeeded" : worker.status;
+          if (child.input?.purpose === "thinking" && worker.status === "finished" && !child.briefReady) child.state = "failed";
           child.error = text(worker.error || (worker.status === "cancelled" ? "The Worker was stopped." : ""), 1000);
+          if (child.input?.purpose === "thinking" && child.state === "failed" && !child.error) child.error = "Incomplete: no completed thinking brief was returned. Delivery was not authorized.";
           advance(state, state.tasks[child.parentId]);
         }
       });
@@ -700,7 +721,7 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
         const childId = collaborationId(id, "worker");
         parent.dependencies = [childId];
         parent.state = "waiting";
-        state.tasks[childId] = { id: childId, kind: "worker", label: worker.name, state: "waiting", owner, origin: owner, parentId: id, workerId: worker.id, dependencies: [], executionId: null, deadline: now() + dependencyTimeoutMs, createdAt: now(), result: "", error: "" };
+        state.tasks[childId] = { id: childId, kind: "worker", label: worker.name, input: { purpose: worker.purpose ?? "delivery" }, state: "waiting", owner, origin: owner, parentId: id, workerId: worker.id, dependencies: [], executionId: null, deadline: now() + dependencyTimeoutMs, createdAt: now(), result: "", error: "" };
       });
       wake();
     },
