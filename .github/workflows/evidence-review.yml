@@ -8,6 +8,7 @@ on:
       - apps/review/**
       - packages/review/**
       - evals/packages/test-artifacts/**
+      - evals/packages/test-evidence/src/vitest.ts
       - evals/bin/evals.mjs
       - evals/docs-shots/run.ts
       - evals/specs/evidence-review.test.ts
