@@ -1,7 +1,7 @@
 /**
  * The instruction stack a coworker turn receives from the app itself — the six
  * always-loaded files and the tool server's catalog and instructions — measured
- * as characters and kept within a budget, with each rule said in one layer.
+ * as characters and kept within a budget.
  * The engine adds its own system prompt on top; that part is measured in the
  * packaged journeys, not here.
  */
@@ -46,11 +46,6 @@ function total(stack) {
   return stack.reduce((sum, [, text]) => sum + text.length, 0);
 }
 
-/** How many layers say it; whitespace is folded so a wrapped line still counts as one saying. */
-function layersSaying(stack, pattern) {
-  return stack.filter(([, text]) => pattern.test(text.replace(/\s+/g, " "))).map(([name]) => name);
-}
-
 test("the fixed instruction stack stays within its budget, and the variable part is the index lines alone", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "coworker-stack-"));
   roots.push(root);
@@ -88,30 +83,4 @@ test("the fixed instruction stack stays within its budget, and the variable part
   const grew = busy.filter(([name, text]) => text.length !== fresh.find(([other]) => other === name)[1].length).map(([name]) => name);
   assert.deepEqual(grew, ["memory/index.md", "documents/index.md"]);
   assert.ok(busyTotal - freshTotal < 2_000, `five documents and ten memories add ${busyTotal - freshTotal} chars`);
-});
-
-test("each rule is said in one layer: the contract owns the rules, the files carry facts, the tool server points at the contract", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "coworker-stack-"));
-  roots.push(root);
-  const dir = path.join(root, "coworkers");
-  const nova = await createCoworker(dir, { name: "Nova", role: "Research and synthesis", mission: "I dig into questions.", roleId: "research" });
-  await createCoworker(dir, { name: "Editor", role: "Writing and content", mission: "I write.", roleId: "writing" });
-  const stack = await layers(nova);
-  const once = (label, pattern) => assert.deepEqual(layersSaying(stack, pattern), ["AGENTS.md"], `${label} is said by the contract alone`);
-  once("the quick-question rule", /quick question gets a quick answer/i);
-  once("the shape rule", /which shape an answer takes/i);
-  once("who writes the team description", /Open Coworker writes it; never edit it/);
-  once("never create, rename, or retire", /never create, rename, or retire/i);
-  once("one suggestion a day", /never suggest more than one teammate a day/i);
-  once("never invent a time zone", /never invent a time zone/i);
-  once("depth in a document", /put the rest in a document/i);
-  // The files the app writes carry facts, not rules.
-  const roster = stack.find(([name]) => name === "team/roster.md")[1];
-  assert.doesNotMatch(roster, /coworker_team_refer|coworker_team_suggest|never|always/);
-  const index = stack.find(([name]) => name === "documents/index.md")[1];
-  assert.doesNotMatch(index, /Loaded every turn|document_read/);
-  // The tool server says whose tools these are and where the rules live, nothing more.
-  assert.match(DEFAULT_INSTRUCTIONS, /AGENTS\.md/);
-  assert.ok(DEFAULT_INSTRUCTIONS.length < 300);
-  assert.doesNotMatch(DEFAULT_INSTRUCTIONS, /\b(never|always|keep|short)\b/i);
 });

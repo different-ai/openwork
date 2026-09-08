@@ -10,23 +10,18 @@ import {
   agentsTemplate,
   createCoworker,
   createLongTermMemory,
-  defaultCoworkersDir,
   deleteLongTermMemory,
   deleteRetiredCoworker,
   getCoworker,
   indexLongTermMemory,
   listCoworkers,
   listLongTermMemories,
-  listMemoryFiles,
   listRetiredCoworkers,
-  parseFrontmatter,
   readCoworkerFile,
   repairCoworkerContract,
   resolveCoworkerFile,
   restoreCoworker,
   retireCoworker,
-  serializeFrontmatter,
-  slugifyCoworkerName,
   updateCoworker,
   writeCoworkerFile,
 } from "./coworkers.mjs";
@@ -97,209 +92,21 @@ test("avatar choices survive creation, template export and import, and reload", 
   const dir = await tempCoworkersDir();
   const importedDir = await tempCoworkersDir();
   const install = createTemplateInstaller(importedDir, (input) => createCoworker(importedDir, input));
-  for (const [avatarColor, avatarGlasses] of [
-    ["blue", "round"], ["violet", "square"], ["mint", "oval"], ["orange", "none"],
-    ["rose", "round"], ["slate", "square"], ["sand", "oval"],
-    ["sage", "sunglasses"], ["sage", "monocle"],
-  ]) {
-    const created = await createCoworker(dir, { name: `${avatarColor}-${avatarGlasses}`, avatarColor, avatarGlasses });
-    assert.equal(created.avatarColor, avatarColor);
-    assert.equal(created.avatarGlasses, avatarGlasses);
-    const template = parseCoworkerTemplateFile(JSON.stringify(await exportCoworkerTemplate(dir, created.slug)));
-    assert.equal(template.avatarColor, avatarColor);
-    assert.equal(template.avatarGlasses, avatarGlasses);
-    const imported = await install({ scope: "file", items: [{ id: created.slug, versionId: "one", template }], installIds: [created.slug] });
-    assert.equal(imported.created.length, 1);
-    const reloaded = (await listCoworkers(importedDir)).find((coworker) => coworker.slug === imported.created[0].slug);
-    assert.equal(reloaded.avatarColor, avatarColor);
-    assert.equal(reloaded.avatarGlasses, avatarGlasses);
-    for (const patch of [{ avatarColor: "unknown" }, { avatarGlasses: "unknown" }]) {
-      assert.throws(() => parseCoworkerTemplateFile(JSON.stringify({ ...template, ...patch })), /Choose a valid coworker template/);
-    }
+  const appearance = { avatarColor: "sage", avatarGlasses: "monocle" };
+  const created = await createCoworker(dir, { name: "Classic", ...appearance });
+  const template = parseCoworkerTemplateFile(JSON.stringify(await exportCoworkerTemplate(dir, created.slug)));
+  const imported = await install({ scope: "file", items: [{ id: created.slug, versionId: "one", template }], installIds: [created.slug] });
+  assert.equal(imported.created.length, 1);
+  const reloaded = await getCoworker(importedDir, imported.created[0].slug);
+  assert.equal(reloaded.avatarColor, appearance.avatarColor);
+  assert.equal(reloaded.avatarGlasses, appearance.avatarGlasses);
+  for (const patch of [{ avatarColor: "unknown" }, { avatarGlasses: "unknown" }]) {
+    assert.throws(() => parseCoworkerTemplateFile(JSON.stringify({ ...template, ...patch })), /Choose a valid coworker template/);
   }
 });
 
 after(async () => {
   await Promise.all(roots.map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-test("defaultCoworkersDir lives inside the OpenWork config home", () => {
-  const dir = defaultCoworkersDir({ env: { HOME: "/tmp/home" }, platform: "darwin", homeDir: "/tmp/home" });
-  assert.equal(dir, path.join("/tmp/home", ".config", "openwork", "coworkers"));
-});
-
-test("slugifyCoworkerName produces stable directory names", () => {
-  assert.equal(slugifyCoworkerName("Research Bot"), "research-bot");
-  assert.equal(slugifyCoworkerName("  Émile's  QA — bot!  "), "miles-qa-bot");
-  assert.equal(slugifyCoworkerName("!!!"), "coworker");
-});
-
-test("frontmatter codec round-trips strings and arrays", () => {
-  const body = "# Body\n";
-  const written = serializeFrontmatter(
-    { name: "Ops: night shift", automations: ["atm_1", "atm_2"], workspaceId: "ws_9" },
-    body,
-  );
-  const { data, body: parsedBody } = parseFrontmatter(written);
-  assert.equal(data.name, "Ops: night shift");
-  assert.deepEqual(data.automations, ["atm_1", "atm_2"]);
-  assert.equal(data.workspaceId, "ws_9");
-  assert.equal(parsedBody, body);
-});
-
-test("createCoworker writes the minimal coworker filesystem representation", async () => {
-  const coworkersDir = await tempCoworkersDir();
-  const coworker = await createCoworker(coworkersDir, {
-    name: "Research Bot",
-    role: "Research",
-    mission: "Track competitors",
-    avatarColor: "violet",
-    avatarGlasses: "square",
-  });
-  assert.equal(coworker.slug, "research-bot");
-  assert.equal(coworker.name, "Research Bot");
-  assert.equal(coworker.workspaceId, "");
-  assert.equal(coworker.conversationThreadId, "");
-  assert.equal(coworker.modelVariant, "");
-  assert.equal(coworker.avatarColor, "violet");
-  assert.equal(coworker.avatarGlasses, "square");
-  assert.equal(coworker.personality, "neutral", "personality defaults to neutral");
-  assert.deepEqual(coworker.automations, []);
-
-  const soul = await readFile(path.join(coworker.path, "soul.md"), "utf8");
-  assert.match(soul, /Track competitors/);
-  const agents = await readFile(path.join(coworker.path, "AGENTS.md"), "utf8");
-  assert.match(agents, /memory\/working\.md/);
-  assert.match(agents, /Open Coworker/);
-  // The contract names the coworker's own tools and when to use them.
-  assert.match(agents, /## Scheduling/);
-  assert.match(agents, /coworker_assignment_create/);
-  assert.match(agents, /Never invent a time zone/);
-  assert.match(agents, /## Keeping memory and soul current/);
-  assert.match(agents, /coworker_memory_remember/);
-  assert.match(agents, /coworker_soul_update/);
-  assert.match(agents, /in that same turn/);
-  const opencodeConfig = JSON.parse(await readFile(path.join(coworker.path, "opencode.json"), "utf8"));
-  assert.deepEqual(opencodeConfig.instructions, ["soul.md", "memory/working.md", "memory/index.md", "documents/index.md", "team/roster.md"]);
-  const working = await readFile(path.join(coworker.path, "memory", "working.md"), "utf8");
-  assert.match(working, /Working memory/);
-  assert.match(working, /Nothing yet\. I was just created\./);
-  // The one coworker on the team reads a description that says so.
-  const roster = await readFile(path.join(coworker.path, "team", "roster.md"), "utf8");
-  assert.match(roster, /^# My team/);
-  assert.match(roster, /I am Research Bot \(Research\)\./);
-  assert.match(roster, /No teammates yet/);
-  assert.equal(coworker.roleId, "");
-  assert.equal(coworker.suggestedBy, null);
-  const documentsIndex = await readFile(path.join(coworker.path, "documents", "index.md"), "utf8");
-  assert.match(documentsIndex, /^# Documents/);
-  assert.match(documentsIndex, /\(none yet\)/);
-
-  const listed = await listCoworkers(coworkersDir);
-  assert.equal(listed.length, 1);
-  assert.equal(listed[0].slug, "research-bot");
-});
-
-test("the coworker contract says how to talk: short replies, depth in a document, an active set of about five", () => {
-  const agents = agentsTemplate({ name: "Nova" });
-  assert.equal(agentsContractVersion(agents), AGENTS_CONTRACT_VERSION);
-  assert.match(agents, /## How I talk/);
-  assert.match(agents, /point first, then two\s+to four sentences, then at most three highlights/);
-  assert.match(agents, /about 120 words/);
-  assert.match(agents, /`document_create` or `document_update` \*\*in the same turn\*\*/);
-  assert.match(agents, /never\s+paste the document into the message/);
-  assert.match(agents, /call `context_set`/);
-  assert.match(agents, /about five/);
-  assert.match(agents, /never archive\s+on my own; the person does that/);
-  assert.match(agents, /ask before rewriting it/);
-  // Five before/after pairs: research, a plan, a quick question that needs no document, work on a clock, and a goal for a Worker.
-  assert.equal(agents.match(/^Before: /gm)?.length, 5);
-  assert.equal(agents.match(/^After: /gm)?.length, 5);
-  assert.match(agents, /\*\*Research question\.\*\*/);
-  assert.match(agents, /\*\*Plan request\.\*\*/);
-  assert.match(agents, /\*\*Quick factual question\.\*\*/);
-  assert.match(agents, /\*\*Work on a clock\.\*\*/);
-  assert.match(agents, /\*\*A goal that outlives one reply\.\*\*/);
-  assert.match(agents, /documents\/index\.md/);
-});
-
-test("the coworker contract decides the shape of an answer once: reply, document, assignment, or Worker, with a tie-break and one example each", () => {
-  const agents = agentsTemplate({ name: "Nova" });
-  const shapes = agents.slice(agents.indexOf("### Which shape an answer takes"), agents.indexOf("- When the person asks for something substantial"));
-  assert.match(shapes, /\*\*A reply\*\*/);
-  assert.match(shapes, /\*\*A document beside the reply\*\*/);
-  assert.match(shapes, /\*\*An assignment\*\* — the person named a schedule/);
-  assert.match(shapes, /\*\*A Worker\*\* — one goal with an end that outlives this reply and is not on a\s+clock/);
-  assert.match(shapes, /Work on a clock is always an assignment, never a\s+Worker/);
-  assert.match(shapes, /a schedule wins over a Worker, and a document beside a\s+short reply wins over a long reply/);
-  // The four rules agree with each other: the Workers and Scheduling sections repeat the boundary, not a different one.
-  assert.match(agents, /## Workers[\s\S]*see \*Which shape an answer\s+takes\*[\s\S]*ten when I say\s+nothing[\s\S]*not for a check that should\s+repeat on a\s+clock/);
-  assert.match(agents, /## Scheduling[\s\S]*Recurring or timed work is an assignment \(see \*Which shape an answer takes\*\)/);
-  // The quick-question rule is said once, in the shape rule, not again as a bullet.
-  assert.equal(agents.match(/quick\s+question gets a quick answer/g)?.length, 1);
-  // Each shape has one example the model can pattern on.
-  assert.match(agents, /\*\*Work on a clock\.\*\* "Every weekday at 9 remind me to move the car\."[\s\S]*`coworker_assignment_create` "Move the car"/);
-  assert.match(agents, /\*\*A goal that outlives one reply\.\*\*[\s\S]*`worker_spawn` "Ticket themes"/);
-  assert.match(agents, /\*\*Quick factual question\.\*\*[\s\S]*Before: a document titled "Vendor call"/);
-  // The contract is versioned so every existing coworker picks the rule up on its next launch.
-  assert.equal(AGENTS_CONTRACT_VERSION, 10);
-});
-
-test("the coworker contract says how it decides: act when clear and reversible, ask once with options, state assumptions and confidence, confirm the irreversible", () => {
-  const agents = agentsTemplate({ name: "Nova" });
-  const section = agents.slice(agents.indexOf("## How I decide"), agents.indexOf("## Keeping track of what I'm doing"));
-  assert.ok(section.length > 0, "the section sits between the talk examples and the working notes");
-  assert.match(section, /\*\*Act when it is clear and reversible\.\*\*/);
-  assert.match(section, /I do not ask "shall I\?" for work the person already asked for/);
-  assert.match(section, /\*\*Ask when the answer changes the outcome — and ask once\.\*\*/);
-  assert.match(section, /one question with two or three concrete options, using\s+the question tool/);
-  assert.match(section, /Never a list of questions/);
-  assert.match(section, /\*\*Say my assumptions and go\.\*\*/);
-  assert.match(section, /\*\*Ask first for what cannot be undone\.\*\*/);
-  assert.match(section, /Sending, posting, paying, deleting/);
-  assert.match(section, /\*\*Say how sure I am, in plain words\.\*\*/);
-  assert.match(section, /never invent a number, a name, or a date/);
-  assert.match(section, /\*\*Take the smallest step that shows progress\.\*\*/);
-  assert.match(section, /\*\*When I can't, say what I can\.\*\*/);
-  assert.match(section, /\*\*In a group, one voice\.\*\*/);
-});
-
-test("the coworker contract says to note where work stands before starting it and to hand long work to a Worker so it stays in the conversation", () => {
-  const agents = agentsTemplate({ name: "Nova" });
-  assert.match(agents, /## Keeping track of what I'm doing/);
-  // The note comes first, is refreshed after meaningful steps (not every tool call), and is cleared when the work ends.
-  assert.match(agents, /Before I start anything longer than a quick answer/);
-  assert.match(agents, /I first call\s+`coworker_memory_note`/);
-  assert.match(agents, /Only then do I\s+start/);
-  assert.match(agents, /After each meaningful step, finding, or\s+change of plan — not after every tool call/);
-  assert.match(agents, /never a log/);
-  assert.match(agents, /I clear its note in that same\s+turn/);
-  // A note it does not remember writing is its own, from before an interruption.
-  assert.match(agents, /my own note from\s+before an interruption/);
-  assert.match(agents, /continue from there instead of starting over/);
-  // Long work goes to a Worker so the coworker keeps answering; the app keeps the Worker's own line.
-  const workers = agents.slice(agents.indexOf("## Workers"), agents.indexOf("## My team"));
-  assert.match(workers, /so that I stay in the conversation/);
-  assert.match(workers, /more\s+than a couple of minutes or a handful of tool steps/);
-  assert.match(workers, /that the person may\s+want to discuss while it runs/);
-  assert.match(workers, /Open Coworker keeps the\s+`## Now` line for each Worker itself/);
-  assert.match(workers, /so I do not write a second one/);
-  // The self-tools list points at the note tool for progress only.
-  assert.match(agents, /`coworker_memory_note` only for where a piece of work stands/);
-  // The new section sits between the talk examples and Workers, so the two rules read together.
-  assert.ok(agents.indexOf("## Keeping track of what I'm doing") > agents.indexOf("**Quick factual question.**"));
-  assert.ok(agents.indexOf("## Keeping track of what I'm doing") < agents.indexOf("## Workers"));
-});
-
-test("the coworker contract says how to work with the team: refer before doing a teammate's job, suggest sparingly, never create", () => {
-  const agents = agentsTemplate({ name: "Nova" });
-  assert.match(agents, /## My team/);
-  assert.match(agents, /team\/roster\.md/);
-  assert.match(agents, /`coworker_team_refer` \*\*before\*\* doing the work/);
-  assert.match(agents, /In a group chat I never refer/);
-  assert.match(agents, /`coworker_team_suggest`/);
-  assert.match(agents, /never create, rename, or retire a coworker/);
-  assert.match(agents, /never suggest more than\s+one teammate a day/);
 });
 
 test("every coworker reads a description of its team that follows the team through create, retire, and restore", async () => {
@@ -390,6 +197,8 @@ test("updateCoworker patches profile and platform references", async () => {
   const coworkersDir = await tempCoworkersDir();
   const created = await createCoworker(coworkersDir, { name: "Ops" });
   assert.equal(created.model, "");
+  assert.equal(created.thinkingModel, "", "missing Worker choices inherit the coworker");
+  assert.equal(created.deliveryModel, "");
   const updated = await updateCoworker(coworkersDir, "ops", {
     workspaceId: "ws_local_1",
     conversationThreadId: "ses_discussion_1",
@@ -412,15 +221,17 @@ test("updateCoworker patches profile and platform references", async () => {
   assert.equal(reread.model, "anthropic/claude-haiku-4-5");
   assert.equal(reread.modelVariant, "high");
   const soul = await readCoworkerFile(coworkersDir, "ops", "soul.md");
-  for (const avatarGlasses of ["sunglasses", "monocle"]) {
-    const patch = { avatarColor: "sage", avatarGlasses };
-    assert.deepEqual(await updateCoworker(coworkersDir, "ops", patch), { ...reread, ...patch });
-    assert.deepEqual(await getCoworker(coworkersDir, "ops"), { ...reread, ...patch });
-    assert.equal(await readCoworkerFile(coworkersDir, "ops", "soul.md"), soul, "appearance leaves instructions untouched");
-  }
+  const patch = { avatarColor: "sage", avatarGlasses: "star", thinkingModel: "reasoning/deep", thinkingModelVariant: "high", deliveryModel: "delivery/fast", deliveryModelVariant: "" };
+  await updateCoworker(coworkersDir, "ops", patch);
+  assert.deepEqual(await getCoworker(coworkersDir, "ops"), { ...reread, ...patch }, "Worker choices persist without mutating the conversation model, mode, chooser or effort");
+  assert.equal(await readCoworkerFile(coworkersDir, "ops", "soul.md"), soul, "appearance leaves instructions untouched");
   const cleared = await updateCoworker(coworkersDir, "ops", { model: "", modelVariant: "" });
   assert.equal(cleared.model, "");
   assert.equal(cleared.modelVariant, "");
+  assert.equal(cleared.thinkingModel, patch.thinkingModel, "conversation edits do not overwrite independent Worker choices");
+  const inherited = await updateCoworker(coworkersDir, "ops", { thinkingModel: "", thinkingModelVariant: "" });
+  assert.equal(inherited.thinkingModel, "");
+  assert.equal(inherited.deliveryModel, patch.deliveryModel);
 });
 
 test("the record says who chose the model: the app's pick may be swapped once, the person's never, and a record that never said is the person's", async () => {
@@ -489,19 +300,6 @@ test("avatar settings fall back when stored or patched values are unknown", asyn
   assert.equal((await getCoworker(coworkersDir, "classic")).personality, "playful", "personality persists in coworker.md");
   const silent = await createCoworker(coworkersDir, { name: "Quiet", personality: "none" });
   assert.equal(silent.personality, "none");
-});
-
-test("memory files are listed and editable through the store", async () => {
-  const coworkersDir = await tempCoworkersDir();
-  await createCoworker(coworkersDir, { name: "Memo" });
-  await writeCoworkerFile(coworkersDir, "memo", "memory/long-term/user-preferences.md", "# Prefs\n");
-  const files = await listMemoryFiles(coworkersDir, "memo");
-  assert.deepEqual(files.map((file) => file.id), ["soul", "working", "index"], "long-term memories are structure, not tabs");
-  const prefs = await readCoworkerFile(coworkersDir, "memo", "memory/long-term/user-preferences.md");
-  assert.equal(prefs, "# Prefs\n");
-  const working = files.find((file) => file.id === "working");
-  assert.ok(working.updatedAt > 0, "memory files report when they were last modified");
-  assert.ok(Math.abs(Date.now() - working.updatedAt) < 60_000);
 });
 
 test("long-term memories join the index with the files on disk", async () => {

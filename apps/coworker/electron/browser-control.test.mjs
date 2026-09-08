@@ -31,18 +31,25 @@ function fixture(options = {}) {
   const controls = [];
   const policies = [];
   const requests = [];
+  const captures = [];
   const controller = new AbortController();
   const emit = () => events("openwork:browser:state", { activeTabIdByOwner: { ...active }, tabs: all.map((tab) => ({ id: tab.tabId, ownerSessionId: tab.ownerId, url: tab.url, status: tab.status })) });
   const panel = {
-    async createBrowser({ ownerId, url, inBackground }) {
+    async createBrowser({ ownerId, url, inBackground, signal, shouldPreserveOnAbort }) {
       const tab = { ownerId, tabId: `tab-${++sequence}`, targetId: `target-${sequence}`, browserUrl: "http://127.0.0.1:9222", url, title: url, status: "ready", canGoBack: true, canGoForward: true };
       all.push(tab);
       if (!inBackground) active[ownerId] = tab.tabId;
       if (ownerId === visible && !inBackground) shown = panelVisible;
       if (ownerId === visible && !inBackground) events("openwork:browser:panel-opened", { ownerSessionId: ownerId });
       emit();
-      await options.opening?.();
+      await options.opening?.({ tab, signal, shouldPreserveOnAbort });
       return tab;
+    },
+    async captureBrowserThumbnail({ ownerId, tabId, size }) {
+      assert.ok(all.some((tab) => tab.ownerId === ownerId && tab.tabId === tabId));
+      captures.push({ ownerId, tabId, size });
+      await options.capture?.();
+      return { mimeType: "image/jpeg", imageBase64: "/9j/", width: size === "watch" ? 1280 : 480, height: size === "watch" ? 900 : 300, capturedAt: 1234, url: "https://private.example/", cookie: "not-for-renderer" };
     },
     listBrowsers: (ownerId) => all.filter((tab) => tab.ownerId === ownerId),
     closeBrowser({ ownerId, tabId, targetId }) {
@@ -55,31 +62,42 @@ function fixture(options = {}) {
     },
     selectBrowser({ ownerId, tabId }) { assert.ok(all.some((tab) => tab.ownerId === ownerId && tab.tabId === tabId)); active[ownerId] = tabId; emit(); },
     setVisibleSession(ownerId) { visible = ownerId; },
+    setPresentation(value) { controls.push({ presentation: value }); },
     hide() { shown = false; panelVisible = false; controls.push("hide"); },
     show(bounds) { panelVisible = true; shown = Boolean(active[visible]); controls.push({ bounds }); },
     navigate(url) { controls.push({ url }); },
+    async stopBrowser(target) { controls.push({ stop: target }); await options.stop?.(target); },
     back() { controls.push("back"); }, forward() { controls.push("forward"); }, reload() { controls.push("reload"); },
     destroy() { all = []; visible = null; shown = false; },
   };
   const broker = createBrowserControl({
-    createPanel(input) { events = input.onEvent; assert.equal(input.popupDisposition({}), "embedded"); return panel; },
+    createPanel(input) { events = input.onEvent; options.host = input; assert.equal(input.popupDisposition({}), "embedded"); return panel; },
     panelOptions: {},
+    handoffMs: options.handoffMs,
     discussionFor: options.discussionFor ?? (async (slug, threadId) => {
       if (threadId === "worker") throw new Error("Not a saved private discussion.");
       return { workspaceId: `workspace-${slug}`, directory: `/workspace/${slug}` };
     }),
     resolveContext: async (slug, context, expected) => {
       requests.push({ slug, context, expected });
-      return { entry: { workspaceId: `workspace-${slug}` }, signal: controller.signal, assertActive() { controller.signal.throwIfAborted(); } };
+      return { entry: { id: options.executionId ?? `execution-${slug}-${context.sessionID}`, workspaceId: `workspace-${slug}` }, signal: controller.signal, assertActive() { controller.signal.throwIfAborted(); } };
     },
-    checkPolicy: async (input) => { policies.push(input); if (options.denied) throw new Error("Policy denied."); },
+    checkPolicy: async (input) => { policies.push(input); if (options.denied) throw new Error("Policy denied."); await options.policy?.(); },
     runTool: async (name, args, context) => { dispatched.push({ name, args, context }); return options.runTool ? options.runTool(name, args, context) : "Page receipt"; },
   });
   let callNumber = 0;
   const call = (operation, args = {}, slug = "scout", threadId = "one") => ({ slug, payload: { name: `coworker_browser_${operation}`, args, context: { sessionID: threadId, messageID: "assistant", callID: `call-${++callNumber}`, directory: `/workspace/${slug}` } } });
   const execute = ({ slug, payload }) => broker.execute(slug, payload);
   const open = async (slug = "scout", threadId = "one", extra = {}) => JSON.parse(await execute(call("open", { url: "https://example.com/", ...extra }, slug, threadId)));
-  return { broker, call, execute, open, dispatched, controls, policies, requests, panel, controller, emit, get visible() { return visible; }, get shown() { return shown; }, get tabs() { return all; } };
+  const paused = async (viewId = "one") => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const control = broker.read({ viewId }).control;
+      if (control.state === "human" && control.phase === "ready") return control;
+      await new Promise(setImmediate);
+    }
+    assert.fail("Browser handoff did not pause");
+  };
+  return { broker, call, execute, open, paused, captures, dispatched, controls, policies, requests, panel, controller, emit, get visible() { return visible; }, get shown() { return shown; }, get tabs() { return all; } };
 }
 
 test("browser authority is the exact running native tool and person-request discussion", () => {
@@ -136,7 +154,8 @@ test("one host keeps background opens and UI state with their workspace/native-s
   await f.broker.bind({ slug: "scout", threadId: "one", viewId: "visible-one" });
   const owner = f.visible;
   const first = await f.open();
-  assert.equal(f.broker.read({ viewId: "visible-one" }).requested, true);
+  assert.equal(f.broker.read({ viewId: "visible-one" }).requested, false);
+  assert.equal(f.visible, null, "collapsed pages are parked, not selected as native foreground views");
   await f.broker.command({ viewId: "visible-one", action: "request", open: false });
   await f.open("scout", "two");
   await f.open("other", "one");
@@ -151,6 +170,172 @@ test("one host keeps background opens and UI state with their workspace/native-s
   const list = JSON.parse(await f.execute(f.call("tabs")));
   assert.equal(list.length, 2);
   assert.ok(list.every((tab) => tab.browser_url === first.browser_url));
+});
+
+test("thumbnails are view/owner scoped, image-only, receipt-neutral and suppressed during takeover", async () => {
+  const options = {};
+  const f = fixture(options);
+  await f.broker.bind({ slug: "scout", threadId: "one", viewId: "one" });
+  const tab = await f.open();
+  const other = await f.open("scout", "two");
+  const handle = { browser_url: tab.browser_url, target_id: tab.target_id };
+  const { snapshot_id } = JSON.parse(await f.execute(f.call("snapshot", handle)));
+  const thumbnail = await f.broker.thumbnail({ viewId: "one", tabId: tab.tab_id });
+  assert.deepEqual(thumbnail, { tabId: tab.tab_id, generation: 1, mimeType: "image/jpeg", imageBase64: "/9j/", width: 480, height: 300, capturedAt: 1234 });
+  assert.doesNotMatch(JSON.stringify(thumbnail), /url|cookie|target|owner|private|9222/i);
+  assert.equal(f.visible, null);
+  await assert.rejects(f.broker.thumbnail({ viewId: "one", tabId: other.tab_id }), /owned browser tab/);
+  await assert.rejects(f.broker.thumbnail({ viewId: "stale", tabId: tab.tab_id }), /no longer selected/);
+  assert.equal(f.captures.length, 1);
+  await f.execute(f.call("click", { ...handle, uid: 2, snapshot_id }));
+  options.denied = true;
+  await assert.rejects(f.broker.thumbnail({ viewId: "one", tabId: tab.tab_id }), /could not be captured/);
+  assert.equal(f.captures.length, 1);
+  options.denied = false;
+  await f.broker.command({ viewId: "one", action: "takeover", tabId: tab.tab_id });
+  assert.equal(await f.broker.thumbnail({ viewId: "one", tabId: tab.tab_id }), null);
+  assert.equal(f.captures.length, 1);
+});
+
+test("late thumbnail policy/capture cannot leak across binding, navigation, selection or handoff changes", async () => {
+  for (const boundary of ["policy", "capture"]) for (const change of ["binding", "navigation", "loading", "selection", "close", "takeover", "presentation", "hide"]) {
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const options = {};
+    const f = fixture(options);
+    await f.broker.bind({ slug: "scout", threadId: "one", viewId: "one" });
+    const first = await f.open();
+    const second = await f.open();
+    await f.broker.command({ viewId: "one", action: "select", tabId: first.tab_id });
+    options[boundary] = async () => { entered.resolve(); await release.promise; };
+    const reading = f.broker.thumbnail({ viewId: "one", tabId: first.tab_id });
+    await entered.promise;
+    assert.equal(await f.broker.thumbnail({ viewId: "one", tabId: first.tab_id, size: "watch" }), null, "only one capture may be in flight");
+    if (change === "binding") await f.broker.bind({ slug: "scout", threadId: "two", viewId: "one" });
+    if (change === "navigation") { f.tabs[0].url = "https://example.com/changed"; f.emit(); }
+    if (change === "loading") { f.tabs[0].status = "loading"; f.emit(); f.tabs[0].status = "ready"; f.emit(); }
+    if (change === "selection") await f.broker.command({ viewId: "one", action: "select", tabId: second.tab_id });
+    if (change === "close") f.panel.closeBrowser({ ownerId: f.tabs[0].ownerId, tabId: first.tab_id });
+    if (change === "hide") await f.broker.command({ viewId: "one", action: "hide" });
+    if (change === "presentation") {
+      await f.broker.command({ viewId: "one", action: "present", mode: "hidden" });
+      await f.broker.command({ viewId: "one", action: "present", mode: "floating" });
+    }
+    if (change === "takeover") {
+      const { control } = await f.broker.command({ viewId: "one", action: "takeover", tabId: first.tab_id });
+      assert.equal(control.phase, "pausing");
+      await f.broker.command({ viewId: "one", action: "present", mode: "fullscreen" });
+      await f.broker.command({ viewId: "one", action: "bounds", bounds: { x: 0, y: 0, width: 900, height: 700 } });
+      assert.equal(f.shown, false);
+      await assert.rejects(f.broker.command({ viewId: "one", action: "resume", handoffId: control.handoffId }), /still pausing/);
+      const exited = await f.broker.command({ viewId: "one", action: "exit-fullscreen" });
+      assert.equal(exited.presentation.mode, "floating");
+      assert.equal(exited.control.phase, "pausing");
+      release.resolve();
+      assert.equal(await reading, null);
+      await f.paused();
+      await f.broker.command({ viewId: "one", action: "resume", handoffId: control.handoffId });
+    }
+    release.resolve();
+    assert.equal(await reading, null, `${boundary}: ${change}`);
+    assert.equal(f.captures.length, boundary === "policy" ? 0 : 1);
+  }
+});
+
+test("takeover aborts inflight and queued work across an owner, including eval, without stopping another owner", async () => {
+  for (const operation of ["fill", "eval", "navigate", "navigate-uncertain"]) {
+    const navigating = operation.startsWith("navigate");
+    const providerOperation = navigating ? "navigate" : operation;
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const stopping = Promise.withResolvers();
+    const stopped = Promise.withResolvers();
+    let supplied;
+    const f = fixture({ stop: async (target) => {
+      assert.deepEqual(target, { ownerId: f.tabs[0].ownerId, tabId: f.tabs[0].tabId, targetId: f.tabs[0].targetId });
+      stopping.resolve(); await stopped.promise;
+      if (operation === "navigate-uncertain") throw new Error("Native stop uncertain");
+    }, runTool: async (name, _args, context) => {
+      if (name === `browser_${providerOperation}`) { supplied = context.abort; entered.resolve(); await release.promise; context.abort.throwIfAborted(); }
+      return "Page receipt";
+    } });
+    await f.broker.bind({ slug: "scout", threadId: "one", viewId: "one" });
+    const tab = await f.open();
+    const sibling = await f.open();
+    const other = await f.open("scout", "two");
+    const handle = { browser_url: tab.browser_url, target_id: tab.target_id };
+    const { snapshot_id } = JSON.parse(await f.execute(f.call("snapshot", handle)));
+    const request = f.call(providerOperation, { ...handle, ...(navigating ? { url: "https://example.com/next" } : operation === "fill" ? { snapshot_id, uid: 2, value: "text" } : { expression: "document.title" }) });
+    const running = assert.rejects(f.execute(request), /person has browser control/);
+    await entered.promise;
+    const duplicate = assert.rejects(f.execute(request), /person has browser control/);
+    const select = f.panel.selectBrowser;
+    f.panel.selectBrowser = (input) => {
+      assert.equal(supplied.aborted, true, "pause input before selecting the handoff target");
+      assert.equal(f.broker.read({ viewId: "one" }).control.state, "human");
+      assert.equal(input.tabId, tab.tab_id);
+      return select(input);
+    };
+    const queued = assert.rejects(f.execute(f.call("snapshot", handle)), /person has browser control|control changed/);
+    await new Promise(setImmediate);
+    const { control } = await f.broker.command({ viewId: "one", action: "takeover", tabId: tab.tab_id });
+    assert.equal(control.phase, "pausing");
+    await f.broker.command({ viewId: "one", action: "present", mode: "fullscreen" });
+    await f.broker.command({ viewId: "one", action: "bounds", bounds: { x: 0, y: 0, width: 1200, height: 800 } });
+    assert.equal(f.visible, null);
+    assert.equal(f.shown, false);
+    assert.equal(supplied.aborted, true);
+    await assert.rejects(f.execute(f.call("snapshot", { browser_url: sibling.browser_url, target_id: sibling.target_id })), /person has browser control/);
+    assert.equal(await f.execute(f.call("screenshot", { browser_url: other.browser_url, target_id: other.target_id }, "scout", "two")), "Page receipt");
+    await f.broker.execute(request.slug, { ...request.payload, cancel: true });
+    await assert.rejects(f.broker.command({ viewId: "one", action: "resume", handoffId: control.handoffId }), /still pausing/);
+    await Promise.all([running, duplicate, queued]);
+    assert.equal(f.broker.read({ viewId: "one" }).control.phase, "pausing", "bounded cancellation replies are not evidence of cleanup");
+    release.resolve();
+    await Promise.all([running, queued]);
+    if (navigating) {
+      await stopping.promise;
+      assert.equal(f.broker.read({ viewId: "one" }).control.phase, "pausing");
+      assert.equal(f.shown, false);
+      stopped.resolve();
+      if (operation === "navigate-uncertain") {
+        await new Promise(setImmediate);
+        assert.equal(f.broker.read({ viewId: "one" }).control.phase, "pausing");
+        await assert.rejects(f.broker.command({ viewId: "one", action: "resume", handoffId: control.handoffId }), /still pausing/);
+        continue;
+      }
+    }
+    await f.paused();
+    assert.equal(f.shown, true);
+    await f.broker.command({ viewId: "one", action: "resume", handoffId: control.handoffId });
+    assert.equal(f.visible, null);
+    assert.match(await f.execute(request), /Do not replay/);
+    assert.deepEqual(f.dispatched.map(({ name }) => name), ["browser_snapshot", `browser_${providerOperation}`, "browser_screenshot"]);
+  }
+});
+
+test("cancelled, expired, closed or replaced-execution handoffs never resume or replay themselves", async () => {
+  for (const stop of ["tool", "turn", "timeout", "close", "execution"]) {
+    const options = { handoffMs: stop === "timeout" ? 20 : 120_000 };
+    const f = fixture(options);
+    await f.broker.bind({ slug: "scout", threadId: "one", viewId: "one" });
+    const tab = await f.open();
+    const request = f.call("handoff", { browser_url: tab.browser_url, target_id: tab.target_id, reason: "sign-in" });
+    const waiting = assert.rejects(f.execute(request), /cancelled|timeout|closed|execution changed/i);
+    const control = await f.paused();
+    if (stop === "tool") await f.broker.execute(request.slug, { ...request.payload, cancel: true });
+    if (stop === "turn") f.controller.abort(new Error("Turn cancelled"));
+    if (stop === "timeout") await new Promise((resolve) => setTimeout(resolve, 30));
+    if (stop === "close") await f.broker.command({ viewId: "one", action: "close", tabId: tab.tab_id });
+    if (stop === "execution") {
+      options.executionId = "replacement-execution";
+      await f.broker.command({ viewId: "one", action: "resume", handoffId: control.handoffId });
+    }
+    await waiting;
+    assert.equal(f.broker.read({ viewId: "one" }).control.state, stop === "execution" ? "automation" : "human");
+    assert.equal(f.dispatched.length, 0);
+    assert.match(await f.execute(request), /Do not replay/);
+  }
 });
 
 test("all reused page tools require exact owned endpoint AND target", async () => {
@@ -222,11 +407,16 @@ test("host URL/loading changes and native navigation controls invalidate snapsho
   await f.broker.bind({ slug: "scout", threadId: "one", viewId: "one" });
   const tab = await f.open();
   const handle = { browser_url: tab.browser_url, target_id: tab.target_id };
+  const manual = async (command) => {
+    const { control } = await f.broker.command({ viewId: "one", action: "takeover", tabId: tab.tab_id });
+    await f.broker.command({ viewId: "one", ...command });
+    await f.broker.command({ viewId: "one", action: "resume", handoffId: control.handoffId });
+  };
   for (const change of [
     async () => { f.tabs[0].status = "loading"; f.emit(); f.tabs[0].status = "ready"; f.emit(); },
     async () => { f.tabs[0].url = "https://example.com/other"; f.emit(); f.tabs[0].url = tab.url; f.emit(); },
-    ...["reload", "back", "forward"].map((action) => () => f.broker.command({ viewId: "one", action })),
-    () => f.broker.command({ viewId: "one", action: "navigate", url: "https://example.com/next" }),
+    ...["reload", "back", "forward"].map((action) => () => manual({ action })),
+    () => manual({ action: "navigate", url: "https://example.com/next" }),
     () => f.execute(f.call("navigate", { ...handle, url: "https://example.com/next" })),
     () => f.execute(f.call("eval", { ...handle, expression: "document.body.textContent = 'changed'" })),
   ]) {
@@ -235,7 +425,7 @@ test("host URL/loading changes and native navigation controls invalidate snapsho
     await assert.rejects(f.execute(f.call("click", { ...handle, uid: 2, snapshot_id })), /snapshot_id is stale/);
   }
   const { snapshot_id } = JSON.parse(await f.execute(f.call("snapshot", handle)));
-  await f.broker.command({ viewId: "one", action: "close", tabId: tab.tab_id });
+  await manual({ action: "close", tabId: tab.tab_id });
   await assert.rejects(f.execute(f.call("click", { ...handle, uid: 2, snapshot_id })), /not owned/);
   assert.equal(f.dispatched.filter(({ name }) => name === "browser_click").length, 0);
 });
@@ -386,6 +576,10 @@ test("UI controls are view-scoped and old cleanup cannot hide the next discussio
   const f = fixture();
   await f.broker.bind({ slug: "scout", threadId: "one", viewId: "one" });
   const first = await f.open();
+  for (const command of [{ action: "navigate", url: "https://example.com/" }, { action: "open", url: "https://example.com/" }, { action: "close", tabId: first.tab_id }, ...["back", "forward", "reload"].map((action) => ({ action }))]) {
+    await assert.rejects(f.broker.command({ viewId: "one", ...command }), /Take over/);
+  }
+  await f.broker.command({ viewId: "one", action: "takeover", tabId: first.tab_id });
   await f.broker.command({ viewId: "one", action: "request", open: true });
   await f.broker.command({ viewId: "one", action: "bounds", bounds: { x: 20, y: 150, width: 600, height: 300 } });
   assert.equal(f.shown, true);
@@ -409,26 +603,20 @@ test("UI controls are view-scoped and old cleanup cannot hide the next discussio
 test("the actual panel bounds effect re-shows a tab opened after closing the last tab at unchanged bounds", async () => {
   const f = fixture();
   await f.open();
+  await f.broker.bind({ slug: "scout", threadId: "one", viewId: "one" });
+  await f.broker.command({ viewId: "one", action: "takeover", tabId: f.tabs[0].tabId });
+  await f.broker.command({ viewId: "one", action: "present", mode: "side" });
   const hooks = [];
   const effects = [];
   const frames = new Map();
-  const intervals = new Map();
   const mutations = new Set();
   let cursor = 0;
   let serial = 0;
-  let dirty = true;
-  let nodes = [];
-  const viewport = { getBoundingClientRect: () => ({ x: 20, y: 100, width: 600, height: 300, right: 620, bottom: 400 }) };
-  // Execute the component's real effect/dependency lifecycle without a native
+  const viewport = { closest: () => null, getBoundingClientRect: () => ({ x: 20, y: 100, width: 600, height: 300, right: 620, bottom: 400 }) };
+  // Execute the hook's real effect/dependency lifecycle without a native
   // page or DOM service. The parent journey owns real React/Electron proof.
   const react = {
-    useState(initial) {
-      const index = cursor++;
-      hooks[index] ??= { value: initial };
-      return [hooks[index].value, (next) => { hooks[index].value = typeof next === "function" ? next(hooks[index].value) : next; dirty = true; }];
-    },
-    useRef(initial) { const index = cursor++; hooks[index] ??= { current: initial }; return hooks[index]; },
-    useEffect(run, dependencies) {
+    useLayoutEffect(run, dependencies) {
       const index = cursor++;
       const previous = hooks[index];
       if (previous && dependencies.every((value, position) => Object.is(value, previous.dependencies[position]))) return;
@@ -437,63 +625,63 @@ test("the actual panel bounds effect re-shows a tab opened after closing the las
       effects.push(() => { previous?.cleanup?.(); next.cleanup = run(); });
     },
   };
-  const jsx = (type, props) => {
-    if (props.ref && props["data-testid"] === "coworker-browser-viewport") props.ref.current = viewport;
-    const node = { type, props }; nodes.push(node); return node;
-  };
   const bridge = { browser: {
-    bind: async (slug, threadId, viewId) => { await f.broker.bind({ slug, threadId, viewId }); return f.broker.command({ viewId, action: "request", open: true }); },
-    detach: (viewId) => Promise.resolve(f.broker.detach({ viewId })),
-    read: (viewId) => Promise.resolve(f.broker.read({ viewId })),
     command: (viewId, command) => f.broker.command({ ...command, viewId }),
   } };
-  const modules = { react, "react-dom": { createPortal: (node) => node }, "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "fragment" }, "@/lib/bridge": { coworkerBridge: bridge }, "@/ui/kit": { Button: "button", ErrorNote: "note" } };
-  const source = await readFile(new URL("../src/ui/browser-panel.tsx", import.meta.url), "utf8");
+  const modules = { react, "@/lib/bridge": { coworkerBridge: bridge } };
+  const source = await readFile(new URL("../src/ui/use-discussion-browser.ts", import.meta.url), "utf8");
   const { code } = await transform(source, { loader: "tsx", format: "cjs", jsx: "automatic", target: "node22" });
   const module = { exports: {} };
-  const window = { innerWidth: 1200, innerHeight: 800, setInterval: (fn) => { intervals.set(++serial, fn); return serial; }, clearInterval: (id) => intervals.delete(id), requestAnimationFrame: (fn) => { frames.set(++serial, fn); return serial; }, cancelAnimationFrame: (id) => frames.delete(id), addEventListener() {}, removeEventListener() {} };
+  const window = { innerWidth: 1200, innerHeight: 800, requestAnimationFrame: (fn) => { frames.set(++serial, fn); return serial; }, cancelAnimationFrame: (id) => frames.delete(id), addEventListener() {}, removeEventListener() {} };
   const document = { body: {}, hidden: false, querySelectorAll: () => [], addEventListener() {}, removeEventListener() {} };
   class ResizeObserver { constructor(fn) { this.fn = fn; } observe() { this.fn(); } disconnect() {} }
   class MutationObserver { constructor(fn) { this.fn = fn; } observe() { mutations.add(this.fn); } disconnect() { mutations.delete(this.fn); } }
   new Function("require", "module", "exports", "window", "document", "ResizeObserver", "MutationObserver", code)((name) => { assert.ok(modules[name], name); return modules[name]; }, module, module.exports, window, document, ResizeObserver, MutationObserver);
-  async function flush() {
+  async function flush(viewId = "one", active = true) {
+    cursor = 0;
+    const state = f.broker.read({ viewId });
+    module.exports.useBrowserViewport(viewId, viewport, state.requested, active, state.activeTabId, state.control.phase, state.presentation.mode);
     for (let turn = 0; turn < 30; turn++) {
-      if (dirty) {
-        dirty = false; cursor = 0; nodes = [];
-        module.exports.DiscussionBrowser({ slug: "scout", threadId: "one", actionsSlot: {} });
-        for (const notify of mutations) notify();
-      }
       for (const effect of effects.splice(0)) effect();
       const next = [...frames.values()]; frames.clear();
       for (const frame of next) frame();
       await new Promise(setImmediate);
-      if (!dirty && !effects.length && !frames.size) return;
+      if (!effects.length && !frames.size) return;
     }
     assert.fail("Panel effects did not settle");
   }
   try {
     await flush();
     assert.equal(f.shown, true);
-    nodes.find((node) => node.props["aria-label"] === "Close https://example.com/").props.onClick();
+    await f.broker.command({ viewId: "one", action: "close", tabId: f.tabs[0].tabId });
     await flush();
     assert.equal(f.tabs.length, 0);
     assert.equal(f.shown, false);
-    await f.open();
-    for (const poll of intervals.values()) poll();
+    const currentView = "one";
+    await f.broker.command({ viewId: currentView, action: "open", url: "https://example.com/" });
     await flush();
     assert.equal(f.shown, true);
     // Closing and replacing between polls keeps the count at one; the new
     // active ID must also reset the bounds effect.
     const current = f.tabs[0];
-    await f.execute(f.call("close", { browser_url: current.browserUrl, target_id: current.targetId }));
-    await f.open();
-    assert.equal(f.shown, false);
-    for (const poll of intervals.values()) poll();
+    await f.broker.command({ viewId: currentView, action: "close", tabId: current.tabId });
+    await f.broker.command({ viewId: currentView, action: "open", url: "https://example.com/" });
     await flush();
     assert.equal(f.shown, true);
     const bounds = f.controls.filter((control) => control.bounds).map((control) => control.bounds);
     assert.ok(bounds.length >= 2);
     assert.ok(bounds.every((value) => JSON.stringify(value) === JSON.stringify(bounds[0])));
+    const oldCleanup = hooks[0].cleanup;
+    await f.broker.bind({ slug: "scout", threadId: "two", viewId: "two" });
+    await f.broker.command({ viewId: "two", action: "open", url: "https://example.com/other" });
+    await f.broker.command({ viewId: "two", action: "present", mode: "side" });
+    await flush("two");
+    assert.equal(f.shown, true);
+    oldCleanup();
+    await new Promise(setImmediate);
+    assert.equal(f.shown, true, "old effect cleanup cannot hide the next binding");
+    await flush("two", false);
+    assert.equal(f.shown, false, "inactive workspaces detach native content");
   } finally { for (const hook of hooks) hook?.cleanup?.(); }
 });
 
@@ -510,7 +698,7 @@ test("a late bind cannot select a discussion after its unmount", async () => {
   assert.equal(f.visible, owner);
 });
 
-test("installed wrapper disables unrestricted tools, preserves config and never accepts a model slug", async () => {
+test("installed wrapper disables unrestricted tools and preserves config without duplicate registration", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "coworker-browser-"));
   try {
     await writeFile(path.join(directory, "opencode.json"), JSON.stringify({ plugin: ["existing"], tools: { read: false }, permission: { edit: "ask" } }));
@@ -523,9 +711,6 @@ test("installed wrapper disables unrestricted tools, preserves config and never 
     assert.equal(config.tools.browser_eval, false);
     assert.deepEqual(config.permission, { edit: "ask" });
     assert.equal(await readFile(path.join(directory, ".opencode", "coworker-browser.js"), "utf8"), BROWSER_PLUGIN);
-    assert.match(BROWSER_PLUGIN, /input\.tool\.startsWith\("browser_"\)/);
-    assert.match(BROWSER_PLUGIN, /context\.sessionID/);
-    assert.doesNotMatch(BROWSER_PLUGIN, /args\.slug|selectedThread|conversationThreadId|browser_list:|target_id:.*optional/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -542,6 +727,9 @@ test("native plugin hook rejects originals and stamps the actual engine identity
   assert.equal(z.object(plugin.tool.coworker_browser_snapshot.args).safeParse({ browser_url: args.browser_url }).success, false);
   assert.equal(z.object(plugin.tool.coworker_browser_click.args).safeParse({ ...args, uid: 2 }).success, false);
   assert.equal(z.object(plugin.tool.coworker_browser_fill.args).safeParse({ ...args, uid: 2, value: "text", snapshot_id: "receipt" }).success, true);
+  assert.equal(z.object(plugin.tool.coworker_browser_handoff.args).safeParse({ ...args, reason: "sign-in" }).success, true);
+  assert.equal(z.object(plugin.tool.coworker_browser_handoff.args).safeParse({ ...args, reason: "resume" }).success, false);
+  assert.equal(plugin.tool.coworker_browser_resume, undefined);
   await plugin["tool.execute.before"]({ tool: "coworker_browser_snapshot", sessionID: "native-session", callID: "hook-call" }, { args });
   assert.equal(await plugin.tool.coworker_browser_snapshot.execute(args, { sessionID: "native-session", messageID: "native-message", directory: "/workspace/scout", abort: new AbortController().signal }), "Page receipt");
   assert.deepEqual(JSON.parse(sent[0].body), { name: "coworker_browser_snapshot", args, context: { sessionID: "native-session", messageID: "native-message", callID: "hook-call", directory: "/workspace/scout" } });

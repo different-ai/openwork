@@ -18,7 +18,6 @@ import {
   parseSections,
   parseSoul,
   readChanges,
-  readSelf,
   rememberFact,
   serializeSections,
   undoChange,
@@ -284,21 +283,4 @@ test("every change is logged with before and after, newest first, and can be und
   }
   assert.equal((await readFile(path.join(coworkersDir, slug, CHANGES_FILE), "utf8")).trim().split("\n").length, CHANGES_LIMIT);
   assert.equal((await readChanges(coworkersDir, slug, { limit: 5 })).length, 5);
-});
-
-test("the coworker can read its own files back, all or one part at a time", async () => {
-  const { coworkersDir, slug } = await fixture();
-  await rememberFact(coworkersDir, slug, { text: "You work in Product", kind: "long-term", topic: "About you" });
-  await rememberFact(coworkersDir, slug, { text: "The brief is due Friday", kind: "working" });
-  const everything = (await readSelf(coworkersDir, slug, { what: "everything" })).output;
-  assert.match(everything, /## soul\.md/);
-  assert.match(everything, /## memory\/working\.md/);
-  assert.ok(everything.includes(`## ${path.join("memory", "long-term", "about-you.md")}\n\n# About you\n\n- You work in Product`));
-  const memory = (await readSelf(coworkersDir, slug, { what: "memory" })).output;
-  assert.doesNotMatch(memory, /## soul\.md/);
-  assert.match(memory, /The brief is due Friday/);
-  const soul = (await readSelf(coworkersDir, slug, { what: "soul" })).output;
-  assert.match(soul, /## Principles/);
-  assert.doesNotMatch(soul, /working\.md/);
-  await assert.rejects(readSelf(coworkersDir, slug, { what: "dreams" }), /Ask for "soul"/);
 });

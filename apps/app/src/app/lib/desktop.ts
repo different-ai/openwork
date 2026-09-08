@@ -259,6 +259,7 @@ declare global {
         createTab?: (url?: string, sessionId?: string | null) => Promise<{ tabId: string }>;
         closeTab?: (tabId: string) => Promise<string | null>;
         closeAllTabs?: () => Promise<string[]>;
+        closeSessionTabs?: (sessionId: string) => Promise<string[]>;
         selectTab?: (tabId: string) => Promise<string>;
         reorderTabs?: (tabIds: string[]) => Promise<BrowserPanelTab[]>;
         listTabs?: () => Promise<BrowserPanelTab[]>;
@@ -294,6 +295,15 @@ declare global {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+export async function closeSessionBrowserTabs(sessionId: string): Promise<void> {
+  if (typeof window === "undefined" || !sessionId.trim()) return;
+  try {
+    await window.__OPENWORK_ELECTRON__?.browser?.closeSessionTabs?.(sessionId);
+  } catch {
+    // Cleanup is idempotent and must not undo a confirmed session deletion.
+  }
+}
 
 async function invokeElectronHelper<C extends DesktopCommandName>(
   command: C,

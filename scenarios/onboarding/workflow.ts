@@ -114,33 +114,27 @@ export async function onboarding(ctx: OnboardingContext) {
     await read("/v1/mcp-connections?scope=manageable", orgId),
     "connections",
   );
-  await step("Continue to download", async () => {
+  await step("Review optional models", async () => {
     await user.click({ role: "button", label: "Continue" });
     await user.see(
-      { role: "link", text: "Download for Linux" },
+      { text: "Your workspace is ready" },
       { timeoutMs: 90_000 },
     );
   });
 
-  const film = world.film;
-  if (!film)
-    throw new Error("The onboarding world must capture browser downloads");
-  await step("Download OpenWork", () =>
-    user.click({ role: "link", text: "Download for Linux" }),
-  );
-  const completed = await step("Download completes", () =>
-    probe.eventually(
-      () => film.downloads.find((event) => event.state === "completed"),
-      { within: 180_000, label: "installer completed", until: Boolean },
-    ),
-  );
+  await user.notSee({ testId: "download-openwork-card" });
+  await step("Complete setup", async () => {
+    await user.click({ role: "button", label: "Complete setup" });
+    await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 90_000 });
+    await user.notSee({ testId: "den-onboarding-shell" });
+  });
   return {
     organizationsBefore,
     organizations,
     invitations,
     emails,
     connections,
-    completed,
-    downloads: film.downloads,
+    completedPath: await world.pathname(),
+    downloads: world.film?.downloads ?? [],
   };
 }

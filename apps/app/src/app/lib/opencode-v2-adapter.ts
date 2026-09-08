@@ -784,25 +784,6 @@ function failedToolPart(
   };
 }
 
-function sessionErrorEvent(sessionID: string, error: unknown): OpencodeEvent {
-  return {
-    type: "session.error",
-    properties: {
-      sessionID,
-      error: { name: "UnknownError", data: { message: errorMessage(error) } },
-    },
-  };
-}
-
-function terminalEvents(sessionID: string, error?: unknown): OpencodeEvent[] {
-  const events: OpencodeEvent[] = error === undefined ? [] : [sessionErrorEvent(sessionID, error)];
-  events.push(
-    { type: "session.status", properties: { sessionID, status: { type: "idle" } } },
-    { type: "session.idle", properties: { sessionID } },
-  );
-  return events;
-}
-
 export function createV2EventTranslationState(): V2EventTranslationState {
   return {
     streams: new Map(),
@@ -850,9 +831,31 @@ export function translateV2Event(
       : null;
   }
 
-  if (type === "session.execution.started") {
+  if (type.startsWith("session.execution.")) {
     if (!sessionID) return null;
-    return [{ type: "session.status", properties: { sessionID, status: { type: "busy" } } }];
+    return [{ type, properties: {
+      ...properties, sequence: readNumber(value.durable, "seq"),
+      ...(type === "session.execution.failed" ? {
+        error: { name: "UnknownError", data: { message: errorMessage(properties.error) } },
+      } : {}),
+    } }];
+  }
+
+  if (type === "session.retry.scheduled") {
+    const attempt = readNumber(properties, "attempt");
+    const next = readNumber(properties, "at");
+    if (!sessionID || attempt === undefined || next === undefined) return null;
+    return [{ type: "session.status", properties: {
+      sessionID,
+      sequence: readNumber(value.durable, "seq"),
+      status: { type: "retry", attempt, message: errorMessage(properties.error), next },
+    } }];
+  }
+
+  if (type === "session.step.started") {
+    return sessionID ? [{ type: "session.execution.progress", properties: {
+      sessionID, sequence: readNumber(value.durable, "seq"),
+    } }] : null;
   }
 
   const kind = type.startsWith("session.reasoning.") || type.startsWith("session.next.reasoning.") ? "reasoning" : "text";
@@ -1029,17 +1032,6 @@ export function translateV2Event(
     return [{ type: "message.part.updated", properties: { part } }];
   }
 
-  if (
-    type === "session.execution.succeeded" ||
-    type === "session.execution.interrupted"
-  ) {
-    return sessionID ? terminalEvents(sessionID) : null;
-  }
-
-  if (type === "session.execution.failed") {
-    return sessionID ? terminalEvents(sessionID, properties.error ?? properties) : null;
-  }
-
   if (type === "permission.asked" || type === "permission.v2.asked") {
     const permission = mapV2Permission(properties);
     return permission ? [{ type: "permission.asked", properties: permission }] : null;
@@ -1108,74 +1100,143 @@ export function translateV2Event(
   return null;
 }
 
-async function* translateV2Events(
+function translateV2Events(
   response: Response,
   signal: AbortSignal | undefined,
   fetchSession: (sessionID: string, signal: AbortSignal) => Promise<Session | null>,
   directory?: string,
 ): AsyncGenerator<OpencodeEvent> {
-  if (!response.body) return;
-  const reader = response.body.getReader();
+  const reader = response.body?.getReader();
   const decoder = new TextDecoder();
   const state = createV2EventTranslationState();
   const discoveredForks = new Set<string>();
-  let buffer = "";
-  try {
-    while (!signal?.aborted) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      buffer += decoder.decode(chunk.value, { stream: true });
-      const lines = buffer.split(/\r?\n/);
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.startsWith("data:")) continue;
-        const text = line.slice("data:".length).trim();
-        if (!text) continue;
-        let event: unknown;
-        try {
-          event = JSON.parse(text);
-          if (typeof event === "string") event = JSON.parse(event);
-        } catch {
-          continue;
-        }
-        const eventDirectory = isRecord(event) ? readString(readRecord(event, "location") ?? {}, "directory") : undefined;
-        if (directory && (!eventDirectory || normalizeDirectoryPath(directory) !== normalizeDirectoryPath(eventDirectory))) continue;
-        if (isRecord(event) && event.type === "session.forked") {
-          const sessionID = readSessionID(eventProperties(event));
-          if (!sessionID || discoveredForks.has(sessionID)) continue;
-          // Fork events contain ancestry, not a session. In particular their
-          // parentID must not turn the new root conversation into a task child.
-          const timeout = AbortSignal.timeout(2_000);
-          const lookupSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
-          let onAbort = () => {};
-          const aborted = new Promise<null>((resolve) => {
-            onAbort = () => resolve(null);
-            lookupSignal.addEventListener("abort", onAbort, { once: true });
-            if (lookupSignal.aborted) onAbort();
-          });
-          try {
-            // Desktop IPC may not cancel its transport; still bound SSE delay.
-            const info = await Promise.race([fetchSession(sessionID, lookupSignal), aborted]);
-            if (lookupSignal.aborted || !info || info.id !== sessionID || !info.directory) continue;
-            if (eventDirectory && normalizeDirectoryPath(info.directory) !== normalizeDirectoryPath(eventDirectory)) continue;
-            discoveredForks.add(sessionID);
-            yield { type: "session.created", properties: { info } };
-          } catch {
-            // Deleted sessions and unavailable lookups must not end the SSE
-            // stream. A replay or the normal list refresh can discover it later.
-          } finally {
-            lookupSignal.removeEventListener("abort", onAbort);
-          }
-          continue;
-        }
-        const translated = translateV2Event(event, state);
-        if (!translated) continue;
-        for (const item of translated) yield item;
-      }
+  const lookups = new Map<string, AbortController>();
+  const discoveries: Session[] = [];
+  const reads: ({ chunk: ReadableStreamReadResult<Uint8Array> } | { error: unknown })[] = [];
+  let reading = false;
+  let ended = !reader;
+  let stopped = false;
+  let wake: (() => void) | undefined;
+  const notify = () => { wake?.(); wake = undefined; };
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    signal?.removeEventListener("abort", stop);
+    for (const lookup of lookups.values()) lookup.abort();
+    lookups.clear();
+    discoveries.length = 0;
+    reads.length = 0;
+    void reader?.cancel().catch(() => {});
+    reader?.releaseLock();
+    notify();
+  };
+  signal?.addEventListener("abort", stop, { once: true });
+  if (signal?.aborted) stop();
+
+  const discover = async (sessionID: string, eventDirectory: string | undefined) => {
+    const lookup = new AbortController();
+    lookups.set(sessionID, lookup);
+    const timeout = setTimeout(() => lookup.abort(), 2_000);
+    let onAbort = () => {};
+    const aborted = new Promise<null>((resolve) => {
+      onAbort = () => resolve(null);
+      lookup.signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      // IPC may ignore cancellation; bound discovery without holding up SSE.
+      const info = await Promise.race([fetchSession(sessionID, lookup.signal), aborted]);
+      if (lookup.signal.aborted || !info || info.id !== sessionID || !info.directory) return;
+      if (eventDirectory && normalizeDirectoryPath(info.directory) !== normalizeDirectoryPath(eventDirectory)) return;
+      discoveredForks.add(sessionID);
+      discoveries.push(info);
+    } catch {
+      // A later replay can retry deleted sessions and unavailable lookups.
+    } finally {
+      clearTimeout(timeout);
+      lookup.signal.removeEventListener("abort", onAbort);
+      lookups.delete(sessionID);
+      notify();
     }
-  } finally {
-    reader.releaseLock();
-  }
+  };
+
+  let buffer = "";
+  const stream = (async function* (): AsyncGenerator<OpencodeEvent> {
+    try {
+      while (!stopped) {
+        const discovery = discoveries.shift();
+        if (discovery) { yield { type: "session.created", properties: { info: discovery } }; continue; }
+        const read = reads.shift();
+        if (!read) {
+          if (ended && lookups.size === 0) break;
+          if (!ended && !reading && reader) {
+            reading = true;
+            // One handler per read and one replaceable waiter, not a race that
+            // keeps attaching listeners to a held lookup on every SSE chunk.
+            void reader.read().then(
+              (chunk) => { if (!stopped) reads.push({ chunk }); notify(); },
+              (error: unknown) => { if (!stopped) reads.push({ error }); notify(); },
+            );
+          }
+          await new Promise<void>((resolve) => { wake = resolve; });
+          continue;
+        }
+        reading = false;
+        if ("error" in read) throw read.error;
+        const { chunk } = read;
+        if (chunk.done) { ended = true; continue; }
+        buffer += decoder.decode(chunk.value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (stopped) return;
+          if (!line.startsWith("data:")) continue;
+          const text = line.slice("data:".length).trim();
+          if (!text) continue;
+          let event: unknown;
+          try {
+            event = JSON.parse(text);
+            if (typeof event === "string") event = JSON.parse(event);
+          } catch {
+            continue;
+          }
+          const eventDirectory = isRecord(event) ? readString(readRecord(event, "location") ?? {}, "directory") : undefined;
+          if (directory && (!eventDirectory || normalizeDirectoryPath(directory) !== normalizeDirectoryPath(eventDirectory))) continue;
+          if (isRecord(event) && event.type === "session.forked") {
+            const sessionID = readSessionID(eventProperties(event));
+            if (!sessionID || discoveredForks.has(sessionID) || lookups.has(sessionID)) continue;
+            // Fork events contain ancestry, not a session. In particular their
+            // parentID must not turn the new root conversation into a task child.
+            void discover(sessionID, eventDirectory);
+            continue;
+          }
+          const translated = translateV2Event(event, state);
+          if (!translated) continue;
+          for (const item of translated) {
+            if (stopped) return;
+            if (item.type === "session.deleted") {
+              const sessionID = readString(item.properties, "sessionID");
+              if (sessionID) {
+                lookups.get(sessionID)?.abort();
+                // Neither a completed lookup nor a stale fork replay may
+                // recreate a session after its deletion has been emitted.
+                discoveredForks.add(sessionID);
+                const index = discoveries.findIndex((info) => info.id === sessionID);
+                if (index !== -1) discoveries.splice(index, 1);
+              }
+            }
+            yield item;
+          }
+        }
+      }
+    } finally {
+      stop();
+    }
+  })();
+  // Async-generator return normally queues behind next(), which may be waiting
+  // on a quiet SSE connection. Cancel first so it can enter its finally block.
+  const returnStream = stream.return.bind(stream);
+  stream.return = (value) => { stop(); return returnStream(value); };
+  return stream;
 }
 
 function createWebFetch(auth: { token?: string }): typeof globalThis.fetch {
@@ -1242,6 +1303,12 @@ export function isOpencodeV2BaseUrl(baseUrl: string): boolean {
   } catch {
     return baseUrl.replace(/\/+$/, "").endsWith("/opencode2");
   }
+}
+
+const v2Clients = new WeakSet<ReturnType<typeof createClient>>();
+
+export function isOpencodeV2Client(client: ReturnType<typeof createClient>): boolean {
+  return v2Clients.has(client);
 }
 
 export function createClientV2(
@@ -1549,7 +1616,12 @@ export function createClientV2(
         {},
         options?.signal,
       );
-      return result.response.ok ? successfulResult(result, true) : failedResult(result);
+      if (!result.response.ok) return failedResult(result);
+      const data = responseData(result.payload);
+      if (!isRecord(data) || typeof data.interrupted !== "boolean") {
+        return failedResult({ ...result, payload: { name: "InvalidV2InterruptResponse" } });
+      }
+      return successfulResult(result, data.interrupted);
     },
     update: async (
       parameters: SessionUpdateParameters,
@@ -1725,6 +1797,7 @@ export function createClientV2(
   Object.assign(compatibilityClient.find, adapter.find);
   Object.assign(compatibilityClient.mcp, adapter.mcp);
   Object.assign(compatibilityClient.event, adapter.event);
+  v2Clients.add(compatibilityClient);
   return compatibilityClient;
 }
 

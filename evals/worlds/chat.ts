@@ -1,13 +1,20 @@
-import { browserScript } from "@openwork/cdp";
+import { browserScript, reattachSurface } from "@openwork/cdp";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
 import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
-import { resolveEvalEngine, type Seed } from "@openwork/env";
+import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
 import type { MockAgentWorkload } from "@openwork/labs";
+import { chatContinuity } from "./chat-continuity.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
+
+declare global {
+  interface Window {
+    __openworkSubmissionFault?: { attempts: number; release: () => void };
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -270,6 +277,7 @@ export async function delegatedQuestionHandoff(seed: Seed) {
     answer: "Unrelated outline",
     alternative: "Unrelated checklist",
   };
+  const followup = { prompt: "Leave the delegated task stopped and prepare a fresh summary", reply: "Fresh summary finished after stopping the child." };
   const base = await splitPaneQuestions(seed, "delegated-question-handoff", [
     {
       promptMarker: rootPrompt, latestUserTurn: true,
@@ -291,6 +299,7 @@ export async function delegatedQuestionHandoff(seed: Seed) {
         ],
       }] } }],
     })),
+    { promptMarker: followup.prompt, latestUserTurn: true, finalReply: followup.reply, steps: [] },
   ], {
     permission: { question: "allow", task: "allow" },
     // Both engines deny questions for general by default; v2 migrates task to subagent.
@@ -298,7 +307,100 @@ export async function delegatedQuestionHandoff(seed: Seed) {
   });
   const root = await seedSessionRetry(seed, base.app, { title: "Delegated question parent" });
   const other = await seedSessionRetry(seed, base.app, { title: "Unrelated question root" });
-  return { ...base, engine, delegationTool, root: { ...root, prompt: rootPrompt }, child, unrelated: { ...other, ...unrelated } };
+  return { ...base, engine, delegationTool, followup, root: { ...root, prompt: rootPrompt }, child, unrelated: { ...other, ...unrelated } };
+}
+
+/** Real native permissions and a provider retry, without synthetic UI events. */
+export async function permissionStopRecovery(seed: Seed) {
+  const engine = resolveEvalEngine();
+  const retry = { prompt: "Prepare the retry reliability summary", reply: "Retry recovery finished." };
+  const stopped = { prompt: "Inspect the stopped permission workspace", command: "printf STOP_PERMISSION_WITNESS" };
+  const other = { prompt: "Inspect the other permission workspace", command: "printf OTHER_PERMISSION_WITNESS" };
+  const followup = { prompt: "Continue with a fresh summary instead", reply: "Fresh work finished after stop." };
+  const base = await splitPaneQuestions(seed, "permission-stop-recovery", [
+    { promptMarker: retry.prompt, latestUserTurn: true, rateLimitAttempts: 1, finalReply: retry.reply, steps: [] },
+    ...[stopped, other].map((item): MockAgentWorkload => ({
+      promptMarker: item.prompt, latestUserTurn: true, finalReply: "Permission work finished.",
+      steps: [{ tool: engine === "v2" ? "shell" : "bash", arguments: {
+        command: item.command, description: "Inspect the permission workspace", timeout: 30_000,
+      } }],
+    })),
+    { promptMarker: followup.prompt, latestUserTurn: true, finalReply: followup.reply, steps: [] },
+  ], { permission: { bash: "ask" } });
+  const stoppedSession = await seedSessionRetry(seed, base.app, { title: "Stop permission task" });
+  const otherSession = await seedSessionRetry(seed, base.app, { title: "Keep permission task" });
+  return { ...base, engine, retry, followup, stopped: { ...stopped, ...stoppedSession }, other: { ...other, ...otherSession } };
+}
+
+/** Synthetic release/model responses, but real Electron quit, engine teardown, and relaunch. */
+export async function restartUpdateTaskWorld(seed: Seed) {
+  const engine = resolveEvalEngine();
+  const active = { prompt: "Prepare the restart continuity report", title: "Continue after update" };
+  const stopped = { prompt: "Prepare the cancelled continuity report", title: "Keep stopped after update" };
+  const completed = { prompt: "Prepare the completed continuity report", title: "Keep completed after update", reply: "The completed report is ready." };
+  const recovery = { marker: "Continue the interrupted task", reply: "The interrupted report continued after restart." };
+  const base = await splitPaneQuestions(seed, "restart-update-task", [
+    ...[active, stopped].map((task): MockAgentWorkload => ({
+      promptMarker: task.prompt, latestUserTurn: true, finalReply: "The original turn finished without restarting.",
+      steps: [{ tool: engine === "v2" ? "shell" : "bash", arguments: {
+        command: "sleep 120", description: "Wait for the report input", timeout: 180_000,
+      } }],
+    })),
+    { promptMarker: completed.prompt, latestUserTurn: true, finalReply: completed.reply, steps: [] },
+    { promptMarker: recovery.marker, latestUserTurn: true, finalReply: recovery.reply, steps: [] },
+  ], { permission: { bash: "allow" } });
+  const activeSession = await seedSessionRetry(seed, base.app, { title: active.title });
+  const stoppedSession = await seedSessionRetry(seed, base.app, { title: stopped.title });
+  const completedSession = await seedSessionRetry(seed, base.app, { title: completed.title });
+  const originalTimeOrigin = await evalIn(base.app, () => performance.timeOrigin);
+  await seed.evalIn(base.app, () => {
+    const currentVersion = "0.18.0";
+    window.__openworkReadDesktopVersionMetadataEval = () => ({
+      minAppVersion: "0.1.0", latestAppVersion: "9.9.9", publishedDesktopVersions: ["9.9.9"],
+    });
+    window.__openworkUpdaterEvalBridge = {
+      getChannel: async () => ({ channel: "stable", currentVersion }),
+      setChannel: async (channel) => ({ channel, currentVersion }),
+      check: async () => ({ available: true, channel: "stable", currentVersion, latestVersion: "9.9.9" }),
+      download: async () => ({ ok: true }),
+      // Do not replace a binary in a journey. Unlike the download-only fixture,
+      // confirmation goes through real main-process app.relaunch()/app.quit().
+      installAndRestart: async () => {
+        await window.__OPENWORK_ELECTRON__.shell.relaunch();
+        return { ok: true };
+      },
+      onDownloadProgress: () => () => {},
+    };
+  });
+  return {
+    ...base, engine, recovery,
+    active: { ...active, ...activeSession }, stopped: { ...stopped, ...stoppedSession }, completed: { ...completed, ...completedSession },
+    async reconnectAfterRestart() {
+      const deadline = Date.now() + 90_000;
+      while (Date.now() < deadline) {
+        try {
+          await reattachSurface(base.app, { timeoutMs: 3_000 });
+          const origin = await evalIn(base.app, () => performance.timeOrigin, { timeoutMs: 3_000 });
+          if (origin !== originalTimeOrigin) return { originalTimeOrigin, timeOrigin: origin };
+        } catch { /* The old renderer and CDP socket disappear during quit. */ }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      throw new Error("Update confirmation did not relaunch the Electron renderer");
+    },
+    async [Symbol.asyncDispose]() {
+      // The original seed owns the profile and processes; close the relaunched
+      // browser before its normal fixture cleanup removes that profile.
+      await base.app.client.send("Browser.close").catch(() => undefined);
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const alive = await fetch(`${base.app.handle.cdpUrl}/json/version`, { signal: AbortSignal.timeout(1_000) })
+          .then((response) => response.ok, () => false);
+        if (!alive) return;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      throw new Error("Relaunched Electron did not close before profile cleanup");
+    },
+  };
 }
 
 export async function newSplitPrimary(seed: Seed) {
@@ -360,7 +462,7 @@ export async function newSplitPrimary(seed: Seed) {
     });
     return response.json();
   }, { awaitPromise: true, timeoutMs: 15_000 });
-  return { app, workspace, session, splitFacts, agentContextViaServer, primaryPrompt, secondaryPrompt, switchSession, switchPrompt, primaryQuestionPrompt, secondaryQuestionPrompt, contextPrompt };
+  return { app, workspace, session, continuity: chatContinuity(app, workspace.workspaceId), splitFacts, agentContextViaServer, primaryPrompt, secondaryPrompt, switchSession, switchPrompt, primaryQuestionPrompt, secondaryQuestionPrompt, contextPrompt };
 }
 
 export async function shimmerChat(seed: Seed) {
@@ -618,6 +720,75 @@ export async function renderCycle(seed: Seed) {
   }
 }
 
+export async function streamedToolHistory(seed: Seed) {
+  if (resolveEvalEngine() !== "v1") throw new SkipError("native v1 transcript history (OPENWORK_EVAL_ENGINE=v1)");
+  const providerId = "streamed-history-mock";
+  const modelId = "streamed-history-model";
+  const prompt = "Continue the history review and report the latest tool result.";
+  const opening = "History review is advancing.";
+  const middle = "The next review section is arriving.";
+  const closing = "History review is complete.";
+  const answer = [opening, "Earlier work remains available. ".repeat(16), middle,
+    "The current answer continues to grow. ".repeat(20), closing].join("\n\n");
+  const history = Array.from({ length: 150 }, (_, index) => `Settled history ${String(index + 1).padStart(3, "0")}.`);
+  const toolNames = Array.from({ length: 20 }, (_, index) => `history-tool-${String(index + 1).padStart(2, "0")}`);
+  const latestTool = "latest-tool-result";
+  // The complete URL exists only in output, not in the tool input or final reply.
+  const command = (name: string) => `printf '%s%s/%s\\n' 'http://' '127.0.0.1:43123' '${name}'`;
+  const mock = seed.mock({ agentWorkloads: [{
+    promptMarker: prompt, latestUserTurn: true, finalReply: answer, finalReplyChunkSize: 2,
+    steps: [{ tool: "bash", arguments: { command: command(latestTool), description: "Read the latest history result" } }],
+  }] });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const app = await seed.desktop({ name: "streamed-tool-history", den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("streamed-tool-history"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    permission: { bash: "allow" },
+    provider: { [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Streamed history mock",
+      options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-streamed-history" },
+      models: { [modelId]: { name: "Streamed history model" } },
+    } },
+  });
+  const neighbor = await seedSessionRetry(seed, app, { title: "Unrelated history review" });
+  const session = await seedSessionRetry(seed, app, { title: "Long tool history" });
+  const historyPath = `/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode/session/${encodeURIComponent(session.sessionId)}/message`;
+  // Persist through native HTTP boundaries while the real SSE subscriber builds
+  // its cache. Never inject renderer messages or import the merge implementation.
+  await seed.evalIn(app, browserScript(async (historyPath, history, commands, providerId, modelId) => {
+    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+    const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" };
+    const deadline = Date.now() + 150000;
+    const post = async (path: string, body: unknown) => {
+      if (Date.now() >= deadline) throw new Error("Native history arrangement exceeded 150 seconds");
+      const response = await fetch(base + path, {
+        method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(30000),
+      });
+      if (!response.ok) throw new Error("Native history arrangement failed: " + response.status);
+      return response.json();
+    };
+    for (const text of history) {
+      await post(historyPath, { noReply: true, model: { providerID: providerId, modelID: modelId }, parts: [{ type: "text", text }] });
+      // Wait for each native event to reach the transcript, including the oldest
+      // entries that will no longer fit in a later bounded snapshot.
+      const visibleDeadline = Math.min(deadline, Date.now() + 10000);
+      while (![...document.querySelectorAll<HTMLElement>('[data-message-role="user"]')].some(node => node.innerText.includes(text))) {
+        if (Date.now() >= visibleDeadline) throw new Error("Native history event did not render: " + text);
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    }
+    for (const command of commands) {
+      const result = await post(historyPath.replace(/\/message$/, "/shell"), {
+        agent: "build", model: { providerID: providerId, modelID: modelId }, command,
+      });
+      if (!Array.isArray(result.parts) || !result.parts.some((part: { type?: string; state?: { status?: string } }) => part.type === "tool" && part.state?.status === "completed")) {
+        throw new Error("Native shell history did not complete");
+      }
+    }
+  }, [historyPath, history, toolNames.map(command), providerId, modelId]), { awaitPromise: true, timeoutMs: 185_000 });
+  return { app, workspace, session, neighbor, historyPath, history, toolNames, latestTool, prompt, opening, middle, closing };
+}
+
 export const streamedMarkdownMarker = "STREAM_MARKDOWN_ANSWER";
 export const streamedMarkdownReasoning = "Preparing the formatted response.";
 /** A multi-block answer: heading, prose, list, table, fenced code, closing prose. */
@@ -705,6 +876,35 @@ export async function streamedMarkdown(seed: Seed) {
   if (ready !== true) throw new Error(`Selected ${engine} engine was not ready for the streaming journey`);
   const session = await seedSessionRetry(seed, app);
   return { app, den, workspace, session,
+    async holdNextSubmission() {
+      await seed.evalIn(app, () => {
+        const originalFetch = window.fetch;
+        const fault = { attempts: 0, release: () => {} };
+        window.__openworkSubmissionFault = fault;
+        window.fetch = async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+          if (method === "POST" && /\/session\/[^/]+\/(prompt_async|prompt)(\?|$)/.test(url)) {
+            fault.attempts++;
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, 30_000);
+              fault.release = () => { clearTimeout(timer); resolve(); };
+            });
+            window.fetch = originalFetch;
+            return new Response(JSON.stringify({ name: "SubmissionUnavailable", message: "Submission unavailable" }), {
+              status: 503, headers: { "content-type": "application/json" },
+            });
+          }
+          return originalFetch(input, init);
+        };
+      });
+    },
+    async submissionAttempts() {
+      return seed.evalIn(app, () => window.__openworkSubmissionFault?.attempts ?? 0);
+    },
+    async rejectSubmission() {
+      await seed.evalIn(app, () => window.__openworkSubmissionFault?.release());
+    },
     async videoState(play = false) {
       return seed.evalIn(app, browserScript(async (play) => {
         const video = document.querySelector<HTMLVideoElement>('video[data-openwork-video-path="clip.mp4"]');
@@ -1292,6 +1492,121 @@ export async function sessionErrorCard(seed: Seed) {
   };
 }
 
+export async function sessionSubmitErrorIsolation(seed: Seed) {
+  const promptB = "Summarize the second task independently.";
+  const replyB = "The second task completed independently.";
+  const base = await splitPaneQuestions(seed, "session-submit-error-isolation", [
+    { promptMarker: promptB, latestUserTurn: true, finalReply: replyB, steps: [] },
+  ]);
+  const sessionB = await seedSessionRetry(seed, base.app, { title: "Independent task B" });
+  const sessionA = await seedSessionRetry(seed, base.app, { title: "Storage failure task A" });
+  const endpoint = base.app.client.webSocketDebuggerUrl;
+  if (!endpoint) throw new Error("Submit fault requires the desktop CDP endpoint");
+  const origin = await evalIn(base.app, () => "http://127.0.0.1:" + localStorage.getItem("openwork.server.port"));
+  const paths = (id: string) => ["workspace", "w"].flatMap(mount => ["opencode", "opencode2/api"].map(engine =>
+    `/${mount}/${encodeURIComponent(base.workspace.workspaceId)}/${engine}/session/${encodeURIComponent(id)}/prompt_async`));
+  const pathsA = paths(sessionA.sessionId);
+  const pathsB = paths(sessionB.sessionId);
+  const socket = new WebSocket(endpoint);
+  const ready = Promise.withResolvers<void>();
+  const commands = new Map<number, ReturnType<typeof Promise.withResolvers<void>>>();
+  const held = new Map<string, string>();
+  const finished = new Set<string>();
+  const requests: { sessionId: string; body: string }[] = [];
+  let nextId = 1;
+  let disposed = false;
+  let failure: Error | undefined;
+  const command = async (method: string, params = {}) => {
+    const id = nextId++;
+    const result = Promise.withResolvers<void>();
+    commands.set(id, result);
+    const timer = setTimeout(() => result.reject(new Error(`Submit fault timed out: ${method}`)), 15_000);
+    try { socket.send(JSON.stringify({ id, method, params })); await result.promise; }
+    finally { clearTimeout(timer); commands.delete(id); }
+  };
+  const fail = (error = new Error("Submit fault lost its CDP connection")) => {
+    if (disposed) return;
+    failure = error;
+    ready.reject(error);
+    for (const result of commands.values()) result.reject(error);
+  };
+  socket.addEventListener("open", () => ready.resolve());
+  socket.addEventListener("error", () => fail());
+  socket.addEventListener("close", () => fail());
+  socket.addEventListener("message", event => {
+    const message: unknown = JSON.parse(String(event.data));
+    if (!isRecord(message)) return;
+    if (typeof message.id === "number") {
+      const result = commands.get(message.id);
+      if (message.error) result?.reject(new Error("Submit fault CDP command failed"));
+      else result?.resolve();
+    }
+    const params = message.params;
+    if (!isRecord(params) || typeof params.requestId !== "string") return;
+    if (message.method === "Network.loadingFinished") finished.add(params.requestId);
+    if (message.method !== "Fetch.requestPaused") return;
+    const request = params.request;
+    const path = isRecord(request) && typeof request.url === "string" ? new URL(request.url).pathname : "";
+    if (isRecord(request) && request.method === "POST" && (pathsA.includes(path) || pathsB.includes(path))) {
+      requests.push({ sessionId: pathsA.includes(path) ? sessionA.sessionId : sessionB.sessionId,
+        body: typeof request.postData === "string" ? request.postData : "" });
+      if (pathsA.includes(path)) {
+        if (typeof params.networkId !== "string") { fail(new Error("Submit fault has no network request ID")); return; }
+        held.set(params.requestId, params.networkId);
+        return;
+      }
+    }
+    void command("Fetch.continueRequest", { requestId: params.requestId }).catch(fail);
+  });
+  const timer = setTimeout(() => ready.reject(new Error("Submit fault could not connect")), 15_000);
+  try {
+    await ready.promise;
+    await command("Network.enable");
+    await command("Fetch.enable", { patterns: [...pathsA, ...pathsB].map(path => ({ urlPattern: origin + path + "*", requestStage: "Request" })) });
+  } catch (error) { disposed = true; socket.close(); throw error; }
+  finally { clearTimeout(timer); }
+  return {
+    ...base, sessionA, sessionB, promptB, replyB,
+    readSubmissions() {
+      if (failure) throw failure;
+      return { requests: [...requests], held: held.size, finished: [...held.values()].filter(id => finished.has(id)).length };
+    },
+    async failHeldSubmissions() {
+      if (failure) throw failure;
+      const pending = [...held].filter(([, id]) => !finished.has(id));
+      if (!pending.length) throw new Error("No submit request is held");
+      // A real SDK response, not a seeded presentation: the storage code exists
+      // only in the upstream response body, not in the top-level message.
+      const body = Buffer.from(JSON.stringify({ name: "APIError", data: {
+        message: "Connected service could not save the task output", statusCode: 507,
+        responseBody: JSON.stringify({ error: { code: "EDQUOT", message: "Connected service storage quota exceeded" } }),
+      } })).toString("base64");
+      await Promise.all(pending.map(([requestId]) => command("Fetch.fulfillRequest", {
+        requestId, responseCode: 507, responseHeaders: [
+          { name: "content-type", value: "application/json" },
+          { name: "access-control-allow-origin", value: "*" },
+        ], body,
+      })));
+    },
+    async selectedSurface() {
+      return evalIn(base.app, () => {
+        const surface = document.querySelector<HTMLElement>('[data-workbench-pane="primary"] [data-session-surface-id]');
+        const run = surface?.querySelector<HTMLButtonElement>('button[aria-label="Run task"]');
+        return { sessionId: surface?.dataset.sessionSurfaceId ?? "", runEnabled: Boolean(run && !run.disabled) };
+      });
+    },
+    async settleResponse() {
+      // Network completion precedes the SDK promise chain and React's commit.
+      await evalIn(base.app, () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+        { awaitPromise: true, timeoutMs: 5_000 });
+    },
+    async [Symbol.asyncDispose]() {
+      try { if (socket.readyState === WebSocket.OPEN) await command("Fetch.disable"); }
+      finally { disposed = true; socket.close(); }
+    },
+  };
+}
+
 export async function snapshotFailure(seed: Seed) {
   const app = await seed.desktop({ name: "composer-snapshot-failure" });
   const workspace = await seed.workspace(app, seed.tmpPath("composer-snapshot-failure"));
@@ -1320,7 +1635,7 @@ export async function taskActivity(seed: Seed) {
   const app = await seed.desktop({ name: "task-activity-shimmer" });
   const workspace = await seed.workspace(app, seed.tmpPath("task-activity-shimmer"));
   const session = await seedSessionRetry(seed, app);
-  await arrangeControl(seed, app, "eval.task_activity.seed");
+  await arrangeControl(seed, app, "eval.task_activity.seed", { withFollowup: true });
   return { app, workspace, session };
 }
 

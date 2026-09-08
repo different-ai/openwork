@@ -1,7 +1,7 @@
 import { browserScript } from "@openwork/cdp";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
-import { engineSessionProbe, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
+import { engineSessionProbe, observeSidebarExpansion, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
 import { resolveEvalEngine } from "@openwork/env";
 import type { Seed } from "@openwork/env";
 import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
@@ -197,6 +197,43 @@ export async function sidebarOverflow(seed: Seed) {
   const workspace = await seed.workspace(app, workspacePath);
   const sessions = await seed.sessions(app, [longTitle]);
   return { app, workspace, workspacePath, sessions, longTitle };
+}
+
+export async function sidebarExpansion(seed: Seed, mode: "workspace" | "group" | "ungrouped") {
+  const app = await seed.desktop({ name: `sidebar-${mode}-expansion` });
+  await app.client.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 600, deviceScaleFactor: 1, mobile: false });
+  const workspace = await seed.workspace(app, seed.tmpPath(`sidebar-${mode}`));
+  const sessions = await seed.sessions(app, Array.from({ length: 20 }, (_, index) => `Expansion task ${String(index + 1).padStart(2, "0")}`));
+  const [neighbor] = await seed.sessions(app, ["Neighbor task"]);
+  if (!neighbor) throw new Error("Sidebar expansion neighbor was not created");
+  const groups = mode === "workspace" ? [] : [
+    ...(mode === "group" ? [{ id: "grp_expansion", label: "Expansion group" }] : []),
+    { id: "grp_neighbor", label: "Neighbor group" },
+  ];
+  const assignments = mode === "workspace" ? {} : Object.fromEntries([
+    ...sessions.flatMap(session => mode === "group" ? [[session.sessionId, "grp_expansion"]] : []),
+    [neighbor.sessionId, "grp_neighbor"],
+  ]);
+  // Persist real group state and manual order before reload; no component/store imports.
+  await seed.evalIn(app, browserScript(async (workspaceId, groups, assignments, ids) => {
+    const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    if (!info?.baseUrl) throw new Error("Sidebar seed needs the local server");
+    const response = await fetch(`${info.baseUrl.replace(/\/+$/, "")}/workspace/${encodeURIComponent(workspaceId)}/session-groups`, {
+      method: "PUT", headers: { Authorization: `Bearer ${info.ownerToken ?? info.clientToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ state: { groups, assignments } }), signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error(`Sidebar group seed failed: ${response.status}`);
+    localStorage.setItem("openwork.react.sessionManagement", JSON.stringify({ state: {
+      pinnedIds: [], unreadIds: [], orderByWorkspace: { [workspaceId]: ids },
+      groupsByWorkspace: { [workspaceId]: { groups, assignments, collapsedGroupIds: [] } },
+    }, version: 0 }));
+  }, [workspace.workspaceId, groups, assignments, [...sessions.map(session => session.sessionId), neighbor.sessionId]]));
+  await app.client.send("Page.reload");
+  await waitFor(app, () => Boolean(document.querySelector('[data-sidebar-session-id]')) && Boolean(window.__openworkControl), {
+    timeoutMs: 60_000, label: "sidebar expansion fixture reloaded",
+  });
+  const observation = await observeSidebarExpansion(app);
+  return { app, workspace, sessions, neighbor, observation, [Symbol.asyncDispose]: () => observation[Symbol.asyncDispose]() };
 }
 
 export async function sidebarWorkspaceTitles(seed: Seed) {
@@ -497,19 +534,45 @@ export async function externalSessionVisibility(seed: Seed) {
     other,
     homePath,
     engine: resolveEvalEngine(),
-    async observeSessionRequests(workspaceId: string) {
+    async observeSessionRequests(workspaceId: string, holdMetadataExcept?: readonly string[]) {
       const debuggerUrl = app.client.webSocketDebuggerUrl;
       if (!debuggerUrl) throw new Error("Session request witness needs a desktop CDP endpoint");
       const socket = new WebSocket(debuggerUrl);
       const ready = Promise.withResolvers<void>();
-      const requests: { method: string; path: string }[] = [];
+      const requests: { method: string; path: string; requestId: string; startedAt: number }[] = [];
       const prefixes = ["workspace", "w"].map((mount) => `/${mount}/${encodeURIComponent(workspaceId)}/opencode2/api/session`);
+      const ended = new Set<string>();
+      const commands = new Map<number, ReturnType<typeof Promise.withResolvers<void>>>();
+      let nextCommandId = 2;
+      let held: { requestId: string; networkId: string; sessionId: string; startedAt: number } | undefined;
+      let released = false;
+      let holdTimeout: ReturnType<typeof setTimeout> | undefined;
       let failure: Error | undefined;
       let disposed = false;
+      const command = async (method: string, params = {}) => {
+        const id = nextCommandId++;
+        const result = Promise.withResolvers<void>();
+        commands.set(id, result);
+        const timeout = setTimeout(() => result.reject(new Error(`Session request witness timed out: ${method}`)), 15_000);
+        try {
+          socket.send(JSON.stringify({ id, method, params }));
+          await result.promise;
+        } finally {
+          clearTimeout(timeout);
+          commands.delete(id);
+        }
+      };
+      const releaseMetadata = async () => {
+        if (!held || released) return;
+        released = true;
+        clearTimeout(holdTimeout);
+        await command("Fetch.continueRequest", { requestId: held.requestId });
+      };
       const fail = () => {
         if (disposed) return;
         failure = new Error("Session request witness lost its CDP connection");
         ready.reject(failure);
+        for (const result of commands.values()) result.reject(failure);
       };
       const timeout = setTimeout(() => ready.reject(new Error("Session request witness did not become ready")), 15_000);
       socket.addEventListener("open", () => socket.send(JSON.stringify({ id: 1, method: "Network.enable" })));
@@ -522,17 +585,47 @@ export async function externalSessionVisibility(seed: Seed) {
           if (message.error) ready.reject(new Error("Session request witness could not enable Network events"));
           else ready.resolve();
         }
-        if (message.method !== "Network.requestWillBeSent" || !isRecord(message.params)) return;
+        const result = typeof message.id === "number" ? commands.get(message.id) : undefined;
+        if (result) {
+          if (message.error) result.reject(new Error(`Session request witness CDP command ${message.id} failed`));
+          else result.resolve();
+        }
+        if (!isRecord(message.params)) return;
+        if (["Network.responseReceived", "Network.loadingFinished", "Network.loadingFailed"].includes(String(message.method))
+          && typeof message.params.requestId === "string") ended.add(message.params.requestId);
+        if (message.method === "Fetch.requestPaused" && typeof message.params.requestId === "string") {
+          const request = message.params.request;
+          const networkId = message.params.networkId;
+          const network = requests.find((item) => item.requestId === networkId);
+          const prefix = network && prefixes.find((prefix) => network.path.startsWith(`${prefix}/`));
+          const sessionId = prefix && network?.path.slice(prefix.length + 1);
+          // One-shot hold; source reads and non-metadata traffic pass through.
+          if (!held && holdMetadataExcept && isRecord(request) && request.method === "GET"
+            && network && sessionId && !sessionId.includes("/") && !holdMetadataExcept.includes(decodeURIComponent(sessionId))) {
+            held = { requestId: message.params.requestId, networkId: network.requestId, sessionId: decodeURIComponent(sessionId), startedAt: network.startedAt };
+            // Fail closed at 1.5s, leaving headroom below the adapter's 2s abort.
+            holdTimeout = setTimeout(() => void releaseMetadata().catch((error: Error) => { failure = error; }),
+              Math.max(0, 1_500 - (performance.now() - held.startedAt)));
+          } else {
+            void command("Fetch.continueRequest", { requestId: message.params.requestId }).catch((error: Error) => { failure = error; });
+          }
+          return;
+        }
+        if (message.method !== "Network.requestWillBeSent") return;
         const request = message.params.request;
         if (!isRecord(request) || typeof request.url !== "string" || typeof request.method !== "string") return;
         const url = new URL(request.url);
         const path = url.pathname.replace(/\/+$/, "");
         if (url.origin !== serverUrl.origin || !prefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) return;
-        // Retain only method/path: headers and request bodies may contain secrets.
-        requests.push({ method: request.method, path });
+        if (typeof message.params.requestId !== "string") return;
+        // Retain only identity/timing/method/path, never headers or bodies.
+        requests.push({ method: request.method, path, requestId: message.params.requestId, startedAt: performance.now() });
       });
       try {
         await ready.promise;
+        if (holdMetadataExcept) await command("Fetch.enable", {
+          patterns: prefixes.map((prefix) => ({ urlPattern: `${serverUrl.origin}${prefix}/*`, requestStage: "Request" })),
+        });
       } catch (error) {
         disposed = true;
         socket.close();
@@ -546,11 +639,22 @@ export async function externalSessionVisibility(seed: Seed) {
           return {
             lists: requests.filter((request) => request.method === "GET" && prefixes.includes(request.path)).length,
             reads: requests.filter((request) => request.method === "GET").map((request) => request.path),
+            held: held ? {
+              sessionId: held.sessionId,
+              elapsedMs: performance.now() - held.startedAt,
+              pending: !released && !ended.has(held.networkId),
+            } : null,
           };
         },
+        releaseMetadata,
         async [Symbol.asyncDispose]() {
-          disposed = true;
-          socket.close();
+          clearTimeout(holdTimeout);
+          try {
+            if (holdMetadataExcept) await command("Fetch.disable");
+          } finally {
+            disposed = true;
+            socket.close();
+          }
         },
       };
     },

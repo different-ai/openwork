@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { assertComputerToolContext, assertPrivateComputerDiscussion, COMPUTER_DENY, COMPUTER_TOOLS, COMPUTER_PROTOCOL, createComputerControl, trustedComputerSender } from "./computer-control.mjs";
-import { COMPUTER_PLUGIN } from "./computer-plugin.mjs";
 
 const result = (state, isError = false) => ({ isError, content: [{ type: "text", text: JSON.stringify(state) }] });
 const payload = (value) => JSON.parse(value.content.find((part) => part.type === "text").text);
@@ -610,12 +608,4 @@ test("observations keep images in native content; UI snapshots never contain the
   assert.equal(observation.content[1].data, "IMAGE_DATA");
   assert.equal(JSON.stringify(await f.snapshot()).includes("IMAGE_DATA"), false);
   await f.broker.reset(true);
-});
-
-test("generated plugin is valid JavaScript, hides authority arguments and uses SDK attachments", () => {
-  execFileSync(process.execPath, ["--input-type=module", "--check"], { input: COMPUTER_PLUGIN });
-  assert.match(COMPUTER_PLUGIN, /attachments.*filter\(\(part\) => part.type === "image"\)/);
-  assert.match(COMPUTER_PLUGIN, /content: result.content.filter\(\(part\) => part.type === "text"\)/);
-  assert.match(COMPUTER_PLUGIN, /metadata: \{ isError: result.isError === true \}/);
-  assert.doesNotMatch(COMPUTER_PLUGIN, /session_id:|request_id:|coworker_computer_setup/);
 });

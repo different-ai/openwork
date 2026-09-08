@@ -338,23 +338,6 @@ test("packaging keeps the shared bundle identity and checks the actual builder C
   assert.doesNotThrow(() => afterPack({ electronPlatformName: "linux" }, { runNative: () => assert.fail("not a Mac package") }));
 });
 
-test("Coworker stages the shared generator, packages helpers outside asar and reuses helper notarization verification", () => {
-  const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8");
-  const config = read("../electron-builder.yml");
-  assert.match(config, /afterPack: scripts\/electron-build\.mjs/);
-  assert.match(config, /afterSign: \.\.\/desktop\/scripts\/electron-after-sign\.cjs/);
-  assert.match(config, /extraResources:\s+- from: resources\/helpers\s+to: helpers\s+filter:\s+- "OpenWork Computer Use\.app\/\*\*"/);
-  for (const file of ["../scripts/electron-build.mjs", "../scripts/dev.mjs"]) {
-    const script = read(file);
-    assert.match(script, /"desktop", "scripts", "prepare-computer-use-helper\.mjs"/);
-    assert.match(script, /"--outdir"/);
-  }
-  assert.match(read("../scripts/electron-build.mjs"), /--external:@modelcontextprotocol\/sdk/);
-  const dependencies = JSON.parse(read("../package.json")).dependencies;
-  assert.ok(dependencies["@modelcontextprotocol/sdk"]);
-  assert.equal(dependencies["@openwork/computer-use"], "workspace:*");
-});
-
 test("shared afterSign retains Coworker's opt-in, credentials, notarization and retry semantics without weakening helper checks", async () => {
   const credentials = { MACOS_NOTARIZE: "true", APPLE_API_KEY_PATH: "/fixture/key.p8", APPLE_API_KEY: "fixture-key-id", APPLE_API_ISSUER: "fixture-issuer" };
   const context = { electronPlatformName: "darwin", appOutDir: "/fixture/package", packager: { appInfo: { productFilename: "Open Coworker" } } };

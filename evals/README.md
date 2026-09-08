@@ -207,6 +207,11 @@ and accepts a string or regular expression. Clicks require center-point hit
 testing; `{ hitTest: false }` is a last resort for an intentionally covered
 target and still performs a trusted CDP click at that element's center.
 
+`probe.dom(selector)` reads a fixed DOM snapshot: matching elements in document
+order with text, focus and rectangles, plus viewport/document widths. It never
+returns input values or accepts executable callbacks. Use it for geometry and
+focus assertions after trusted `user.press("Tab")` actions, rather than raw eval.
+
 Worlds can arrange a shaped Den connection with `seed.denLink(den, options)`;
 the returned link is fixture-owned. `probe.connectState(app)` reads the
 testkit's normalized desktop Connect state without exposing the raw helper to a

@@ -43,7 +43,7 @@ import { ensureOrganizationAdminRole, ensureOrganizationSuperAdmin, orgAccessFai
 
 const createOrganizationSchema = z.object({
   name: z.string().trim().min(2).max(120),
-})
+}).strict()
 
 const updateOrganizationSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
@@ -54,7 +54,7 @@ const updateOrganizationSchema = z.object({
   brandLogoUrl: z.string().url().max(2048).nullable().optional(),
   brandIconUrl: z.string().url().max(2048).nullable().optional(),
   brandAccentColor: z.string().trim().min(1).max(32).nullable().optional(),
-}).refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.brandAppName !== undefined || value.brandLogoUrl !== undefined || value.brandIconUrl !== undefined || value.brandAccentColor !== undefined, {
+}).strict().refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.brandAppName !== undefined || value.brandLogoUrl !== undefined || value.brandIconUrl !== undefined || value.brandAccentColor !== undefined, {
   message: "Provide at least one organization field to update.",
 })
 

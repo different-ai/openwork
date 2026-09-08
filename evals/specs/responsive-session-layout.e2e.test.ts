@@ -130,6 +130,31 @@ test.skipIf(!runnable)(
     }
 
     await openSessionRoute(app, workspaceId, primary.sessionId);
+    await setViewport(app, { width: 1440, height: 844, deviceScaleFactor: 1 });
+    for (const open of [true, false, true, false]) {
+      const clicked = await evalIn(app, () => {
+        const button = document.querySelector<HTMLButtonElement>('aside button[aria-label^="Files ("]');
+        if (!button) return false;
+        button.click();
+        return true;
+      });
+      expect(clicked).toBe(true);
+      await waitFor(app, browserScript((open, sessionId) => {
+        const button = document.querySelector<HTMLButtonElement>('aside button[aria-label^="Files ("]');
+        const panel = document.querySelector<HTMLButtonElement>('button[aria-label="Close panel"]');
+        return button?.getAttribute("aria-pressed") === String(open)
+          && Boolean(panel && panel.getBoundingClientRect().width > 0) === open
+          && Boolean(document.querySelector(`[data-session-surface-id="${sessionId}"]`));
+      }, [open, primary.sessionId]), {
+        timeoutMs: 15_000,
+        label: `Files rail toggles panel ${open ? "open" : "closed"} without replacing the chat`,
+      });
+    }
+    evidence.recordAssertionEvidence(
+      "Files rail opens, hides, and reopens the empty panel without replacing the chat",
+      "Repeated rail clicks matched the pressed state and panel visibility; the primary chat remained mounted.",
+      true,
+    );
     await openSessionInSplit(app, workspaceId, secondary.sessionId);
     await waitFor(app, browserScript((sessionId) => (Boolean(document.querySelector<HTMLElement>(
       `[data-workbench-pane="secondary"] [data-session-surface-id="${sessionId}"]`

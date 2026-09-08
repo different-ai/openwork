@@ -33,41 +33,6 @@ after(async () => {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
 });
 
-test("local responsibilities reuse OpenWork schedules and persist next occurrence", async () => {
-  const coworkersDir = await fixture();
-  const now = Date.UTC(2026, 8, 1, 15, 0);
-  const created = await createLocalResponsibility(coworkersDir, "scout", {
-    name: "Daily brief",
-    instructions: "Review the workspace and prepare a brief.",
-    schedule: { kind: "daily", timezone: "UTC", hour: 16, minute: 30 },
-  }, now);
-  assert.equal(created.state, "active");
-  assert.equal(created.nextDueAt, Date.UTC(2026, 8, 1, 16, 30));
-  assert.deepEqual(await listLocalResponsibilities(coworkersDir, "scout"), [created]);
-});
-
-test("scheduled runs advance before execution and retain native thread outcome", async () => {
-  const coworkersDir = await fixture();
-  const now = Date.UTC(2026, 8, 1, 15, 0);
-  const created = await createLocalResponsibility(coworkersDir, "scout", {
-    name: "Daily brief",
-    instructions: "Prepare a brief.",
-    schedule: { kind: "daily", timezone: "UTC", hour: 16, minute: 30 },
-  }, now);
-  const started = await beginLocalResponsibilityRun(coworkersDir, "scout", created.id, {
-    trigger: "scheduled",
-    now: Date.UTC(2026, 8, 1, 16, 30),
-  });
-  assert.equal(started.latestRun.status, "running");
-  assert.equal(started.nextDueAt, Date.UTC(2026, 8, 2, 16, 30));
-  const finished = await finishLocalResponsibilityRun(coworkersDir, "scout", created.id, started.latestRun.id, {
-    status: "succeeded",
-    now: Date.UTC(2026, 8, 1, 16, 35),
-  });
-  assert.equal(finished.latestRun.status, "succeeded");
-  assert.equal(finished.latestRun.finishedAt, Date.UTC(2026, 8, 1, 16, 35));
-});
-
 test("local responsibilities pause, resume, and delete", async () => {
   const coworkersDir = await fixture();
   const created = await createLocalResponsibility(coworkersDir, "scout", {

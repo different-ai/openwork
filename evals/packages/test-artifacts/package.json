@@ -8,6 +8,10 @@
       "types": "./src/index.ts",
       "development": "./src/index.ts",
       "default": "./src/index.ts"
-    }
+    },
+    "./review": "./src/review.ts"
+  },
+  "dependencies": {
+    "@openwork/review": "link:../../../packages/review"
   }
 }

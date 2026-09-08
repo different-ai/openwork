@@ -2325,13 +2325,15 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     lastWorkspaceKey = currentWorkspaceKey();
     if (typeof window !== "undefined") {
       const handleDenSessionUpdate = (event: Event) => {
+        const detail = (event as CustomEvent<DenSessionUpdatedDetail>).detail;
+        if (detail?.status !== "success" && detail?.status !== "signed_out") return;
+
         cloudOrgProvidersGeneration += 1;
         cloudOrgProvidersLoadKey = "";
         cloudOrgProvidersInFlightKey = "";
         cloudOrgProvidersInFlight = null;
-        const detail = (event as CustomEvent<DenSessionUpdatedDetail>).detail;
 
-        if (detail?.status === "success") {
+        if (detail.status === "success") {
           mutateState((current) => ({
             ...current,
             cloudOrgProviders: [],
@@ -2343,11 +2345,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           void refreshCloudOrgProviders({ force: true }).catch(() => undefined);
           void pushDenSession().then(() => runCloudProviderSync("sign_in"));
         } else {
-          const logoutProviderIds = detail?.status === "signed_out"
-            ? [...new Set(options.providerConnectedIds())].filter(
-              (providerId) => providerId.trim().toLowerCase() !== DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID,
-            )
-            : [];
+          const logoutProviderIds = [...new Set(options.providerConnectedIds())].filter(
+            (providerId) => providerId.trim().toLowerCase() !== DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID,
+          );
           // Account-scoped catalog state must disappear synchronously. Config
           // and credential cleanup continues below without leaving stale
           // models visible while those best-effort operations finish.
@@ -2378,12 +2378,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
               // but a running OpenCode child retains its spawn environment.
               // Explicit desktop sign-out must replace that process so an
               // account-scoped provider cannot remain connected in the UI.
-              if (detail?.status === "signed_out" && isDesktopRuntime()) {
+              if (isDesktopRuntime()) {
                 await engineRestart({}).catch(() => undefined);
               }
             })();
           }
-          // Sign-out or error: remove all cloud-imported providers from the workspace
+          // Sign-out: remove all cloud-imported providers from the workspace
           // Capture the full import records BEFORE clearing state
           const importedProviders = { ...state.importedCloudProviders };
           const importedIds = Object.keys(importedProviders);

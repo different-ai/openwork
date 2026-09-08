@@ -17,7 +17,6 @@ import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
   ConfigObjectVersionTable,
-  MemberTable,
   PluginAccessGrantTable,
   PluginConfigObjectTable,
   PluginTable,
@@ -26,6 +25,7 @@ import {
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { codemodeCodeDigest, parseCodemodeToolCalls } from "./workflow-runs.js"
 import { db } from "./db.js"
+import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js"
 import { parseCodemodeScriptPayload, validateCodemodeScriptInput } from "./mcp/codemode-script-object.js"
 import type { BuiltCodemodeTools } from "./mcp/codemode-tools.js"
 import { executeWorkflow } from "./mcp/workflow-service.js"
@@ -571,12 +571,7 @@ export async function validateWorkflowAutomationAction(input: {
   const pluginId = normalizeDenTypeId("plugin", input.action.script.pluginId)
   const configObjectId = normalizeDenTypeId("configObject", input.action.script.configObjectId)
   const configObjectVersionId = normalizeDenTypeId("configObjectVersion", input.action.script.configObjectVersionId)
-  const members = await db.select({ role: MemberTable.role }).from(MemberTable).where(and(
-    eq(MemberTable.id, ownerMemberId),
-    eq(MemberTable.organizationId, organizationId),
-    isNull(MemberTable.removedAt),
-  )).limit(1)
-  const member = members[0]
+  const member = await resolveOrganizationMemberAuthority({ organizationId, memberId: ownerMemberId })
   if (!member) throw new Error("automation_owner_inactive")
   if (!memberHasRole(member.role, "admin")) {
     const [teams, configObjectGrants, pluginGrants] = await Promise.all([

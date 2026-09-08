@@ -1,3 +1,4 @@
+import type { McpStatusMap } from "../types";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
 import {
   agentContextDiagnosticsReportSchema,
@@ -1975,6 +1976,8 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${workspaceId}/mcp`,
         { token, hostToken },
       ),
+    getMcpStatus: (workspaceId: string) =>
+      requestJson<McpStatusMap>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode/mcp`, { token, hostToken }),
     listMcpApps: (workspaceId: string) =>
       requestJson<{ servers: OpenworkMcpAppCatalogServer[] }>(
         baseUrl,

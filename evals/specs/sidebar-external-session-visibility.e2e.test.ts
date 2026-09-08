@@ -156,7 +156,7 @@ test("sessions created outside the window appear in a non-selected workspace's s
   if (world.engine === "v2") {
     await step("an external native fork appears live without refetching or changing its source", async () => {
       await sleep(EMPTY_LIST_RETRY_SETTLE_MS);
-      await using requests = await world.observeSessionRequests(otherId);
+      await using requests = await world.observeSessionRequests(otherId, sessionIds(await world.route(), otherId));
       // Positive control: prove the witness sees the real desktop list transport.
       await agent.run("workspace.reload_sessions", { workspaceId: otherId });
       await probe.eventually(() => requests.snapshot().lists, {
@@ -169,7 +169,31 @@ test("sessions created outside the window appear in a non-selected workspace's s
       });
       const listsBeforeFork = requests.snapshot().lists;
       await using events = await world.observeWorkspaceEvents(otherId);
-      const fork = await world.forkSessionOutsideWindow(otherId, selectedId);
+      const unrelatedTitle = "External session while fork metadata is pending";
+      // Do not spend the hold window waiting for the source-history checks.
+      const [fork, unrelatedId] = await Promise.all([
+        world.forkSessionOutsideWindow(otherId, selectedId),
+        (async () => {
+          const held = await probe.eventually(() => requests.snapshot().held, {
+            within: 30_000, intervalMs: 10, label: "fork metadata GET held before creating an unrelated session",
+            until: (held) => held !== null,
+          });
+          expect(held?.pending).toBe(true);
+          const unrelatedId = await world.createSessionOutsideWindow(otherId, unrelatedTitle);
+          await user.see({ text: unrelatedTitle }, { timeoutMs: 1_500 });
+          const duringHold = await world.route();
+          const pending = requests.snapshot().held;
+          expect(pending?.pending).toBe(true);
+          expect(pending?.elapsedMs).toBeLessThan(1_500);
+          expect(sessionIds(duringHold, otherId)).toContain(unrelatedId);
+          expect(sessionIds(duringHold, otherId)).not.toContain(held?.sessionId);
+          expect(sessionIds(duringHold, homeId)).toEqual(homeSessionsBefore);
+          expect(duringHold.selectedWorkspaceId).toBe(otherId);
+          await requests.releaseMetadata();
+          return unrelatedId;
+        })(),
+      ]);
+      expect(requests.snapshot().held?.sessionId).toBe(fork.id);
       expect(fork.title).toBe(`${selectedTitle} (fork #1)`);
       expect(fork.sourceAfter).toEqual(fork.sourceBefore);
       const afterFork = await probe.eventually(() => world.route(), {
@@ -185,22 +209,31 @@ test("sessions created outside the window appear in a non-selected workspace's s
       await user.see({ text: selectedTitle });
       const nativeEvents = await probe.eventually(() => events.snapshot(), {
         within: 15_000, intervalMs: 250, label: "native fork event observed",
-        until: (text) => text.includes(fork.id),
+        until: (text) => text.includes(fork.id) && text.includes(unrelatedId),
       });
       const payloads = nativeEvents.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => JSON.parse(line.slice(5)));
       expect(payloads).toEqual(expect.arrayContaining([expect.objectContaining({
         type: "session.forked", data: expect.objectContaining({ sessionID: fork.id, parentID: selectedId }),
       })]));
-      expect(payloads).not.toEqual(expect.arrayContaining([expect.objectContaining({ type: "session.created" })]));
+      // The only native creation is the unrelated session, never the fork.
+      expect(payloads.filter((event) => event.type === "session.created")).toEqual([
+        expect.objectContaining({ data: expect.objectContaining({ sessionID: unrelatedId }) }),
+      ]);
       await probe.eventually(() => requests.snapshot().reads, {
         within: 15_000, intervalMs: 250, label: "desktop fetches the fork session directly",
         until: (paths) => paths.some((path) => path.endsWith(`/api/session/${fork.id}`)),
       });
       await sleep(STALE_OBSERVATION_MS);
       expect(requests.snapshot().lists).toBe(listsBeforeFork);
+      expect(sessionIds(await world.route(), otherId).filter((id) => id === fork.id)).toHaveLength(1);
+      evidence.recordAssertionEvidence(
+        "an unrelated native session event reaches the sidebar before fork metadata completes",
+        "The unrelated session was created after CDP paused the fork's exact metadata GET. Its sidebar row became visible within 1500ms of that GET while it remained held, with no Network response, completion, or failure event; the fork was still absent. Releasing the lookup then surfaced the fork exactly once.",
+        true,
+      );
       evidence.recordAssertionEvidence(
         "external v2 forks appear once with the authoritative title, without refetching or changing the source or another workspace",
-        "A CDP request witness detected the deliberate session-list reload before the fork, then the direct GET for the fork with no additional list requests through visibility and a quiet window. The native stream emitted session.forked, not session.created. Its new identity appeared as a visible root conversation while the source metadata, exported history, source title, workspace selection, and other workspace list remained unchanged.",
+        "A CDP request witness detected the deliberate session-list reload before the fork, then the direct GET for the fork with no additional list requests through visibility and a quiet window. The native stream emitted session.forked for the fork and session.created only for the unrelated session. The fork's new identity appeared as a visible root conversation while the source metadata, exported history, source title, workspace selection, and other workspace list remained unchanged.",
         true,
       );
     });

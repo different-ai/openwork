@@ -121,6 +121,7 @@ import { noteProgress, readChanges, trackChange, undoChange, writeTrackedFile } 
 import { SETTINGS_FILE, readSettings, scheduleGuardrails, updateSettings } from "./settings.mjs";
 import {
   RECOVERED_STATUS,
+  THINKING_TURN_BUDGET,
   appendWorkerEvent,
   createWorker,
   createWorkerToolHandlers,
@@ -135,8 +136,10 @@ import {
   readWorkerEvents,
   readWorkerRegistry,
   registerWorkerThread,
+  resolveWorkerModel,
   updateWorker,
   workerProgressNote,
+  workerPurpose,
   workerThreadTitle,
   workerToolCatalog,
   workerTurnTools,
@@ -1018,8 +1021,8 @@ function workerKey(slug, id) {
   return `${slug}:${id}`;
 }
 
-/** A thread client in the coworker's workspace, on its own model at the effort the dial gives this kind of turn; throws when AI is unavailable here. */
-async function readyWorkerClient(coworker, kind = "worker-turn") {
+/** Saved Worker choices never inherit a later edit to the coworker's model. */
+async function readyWorkerClient(coworker, worker = null) {
   const handle = await ensurePlatformServer();
   if (!handle.managedOpencode) throw new Error(engineError || "AI is unavailable on this Mac");
   if (!coworker.workspaceId) throw new Error("This coworker's workspace is not ready yet.");
@@ -1027,8 +1030,25 @@ async function readyWorkerClient(coworker, kind = "worker-turn") {
     baseUrl: handle.url,
     workspaceId: coworker.workspaceId,
     token: ownerToken,
-    defaultModel: await localRunModel(coworker, kind),
+    defaultModel: worker?.modelSnapshot ?? await localRunModel(coworker, "worker-turn"),
   });
+}
+
+async function workerModelProviders(coworker, readDefault = false) {
+  const handle = await ensurePlatformServer();
+  if (!handle.managedOpencode) throw new Error(engineError || "AI is unavailable on this Mac");
+  const payload = await fetchJson(`${handle.url}/workspace/${encodeURIComponent(coworker.workspaceId)}/opencode/config/providers`, {
+    headers: { Authorization: `Bearer ${ownerToken}` },
+  });
+  if (!Array.isArray(payload?.providers)) throw new Error("Worker model availability could not be checked. No fallback was selected.");
+  if (!readDefault) return payload;
+  let config;
+  try {
+    config = await fetchJson(`${handle.url}/workspace/${encodeURIComponent(coworker.workspaceId)}/opencode/config`, { headers: { Authorization: `Bearer ${ownerToken}` } });
+  } catch {
+    throw new Error("The configured native default model could not be read. Choose a Worker model or restore the AI service; no fallback was selected.");
+  }
+  return { ...payload, model: config?.model };
 }
 
 /**
@@ -1045,13 +1065,23 @@ async function syncWorkerNote(slug, worker, finding = null) {
 }
 
 async function spawnWorker(slug, input, spawnedBy) {
+  if (input.id) {
+    const existing = await getWorker(coworkersDir, slug, input.id).catch((error) => { if (error.code !== "ENOENT") throw error; return null; });
+    if (existing) {
+      if (!isWorkerFinished(existing)) void admitWorkerTurn(slug, existing.id);
+      return existing;
+    }
+  }
   const coworker = await getCoworker(coworkersDir, slug);
   if (!coworker.workspaceId) throw new Error("This coworker's workspace is not ready yet.");
-  // Nobody chose a lifespan: the effort dial says how much work is welcome (6 … 20 turns; 10 at Balanced).
+  const purpose = workerPurpose(input.purpose);
   const lifespan = input.lifespan === undefined || input.lifespan === null
-    ? { kind: "turns", max: workerTurnsFor(effortStopOf(coworker.effortPreference)), used: 0 }
+    ? { kind: "turns", max: purpose === "thinking" ? THINKING_TURN_BUDGET : workerTurnsFor(effortStopOf(coworker.effortPreference)), used: 0 }
     : input.lifespan;
-  const worker = await createWorker(coworkersDir, slug, { ...input, lifespan, spawnedBy });
+  const configured = purpose === "thinking" ? coworker.thinkingModel : coworker.deliveryModel;
+  const catalog = await workerModelProviders(coworker, !configured && !coworker.model);
+  const modelSnapshot = resolveWorkerModel(coworker, purpose, catalog.providers, null, catalog);
+  const worker = await createWorker(coworkersDir, slug, { ...input, purpose, modelSnapshot, lifespan, spawnedBy });
   if (spawnedBy === "person" && worker.spawnedFromThreadId) await collaboration.attachWorker(worker, await privateOwner(slug, worker.spawnedFromThreadId));
   await appendWorkerEvent(coworkersDir, slug, worker.id, {
     kind: "status",
@@ -1104,6 +1134,11 @@ async function executeWorkerTurn(slug, id, { onStarted }) {
         return;
       }
       if (lifespanSpent(worker.lifespan)) {
+        if (worker.purpose === "thinking") {
+          await settleWorkerTurn(slug, id, { kind: "settled", report: { kind: "none", text: "" } });
+          onStarted();
+          return;
+        }
         const finished = await updateWorker(coworkersDir, slug, id, { status: "finished" });
         await appendWorkerEvent(coworkersDir, slug, id, { kind: "status", text: "Finished: reached the end of its lifespan." });
         await syncWorkerNote(slug, finished);
@@ -1126,7 +1161,11 @@ async function executeWorkerTurn(slug, id, { onStarted }) {
     let client;
     let threadId = worker.threadId;
     try {
-      client = await readyWorkerClient(coworker);
+      client = await readyWorkerClient(coworker, worker);
+      // Accepted recovery only observes the old turn, even if access was since
+      // revoked. Every new send validates the pinned choice before any inference.
+      const present = threadId && (await client.getThreadSnapshot(threadId, { signal: controller.signal })).messages.some((message) => message.id === worker.pendingTurn.messageId && message.role === "user");
+      if (worker.modelSnapshot && !present) resolveWorkerModel(coworker, worker.purpose, (await workerModelProviders(coworker)).providers, worker.modelSnapshot);
       if (!threadId) {
         // Link an empty thread before admitting work. A quit or stop during
         // creation cannot leave an executing thread without a Worker record.
@@ -1238,7 +1277,7 @@ async function cancelWorker(slug, id, reason, by) {
     controller.abort();
     if (worker.threadId) {
       const coworker = await getCoworker(coworkersDir, slug).catch(() => null);
-      if (coworker) await readyWorkerClient(coworker).then((client) => client.abortThread(worker.threadId)).catch(() => undefined);
+      if (coworker) await readyWorkerClient(coworker, worker).then((client) => client.abortThread(worker.threadId)).catch(() => undefined);
     }
   }
   return updated;
@@ -1472,7 +1511,7 @@ async function ensureToolsServer() {
         if (!target) throw new Error("Choose a teammate from the team roster.");
         return collaboration.request(trusted, "consultation", { ...args, to: target.slug });
       }
-      if (name === "worker_spawn") return collaboration.request(trusted, "worker", { ...args, lifespan: args.lifespan ? lifespanFromToolArgs(args.lifespan) : undefined });
+      if (name === "worker_spawn") return collaboration.request(trusted, "worker", { ...args, lifespan: args.lifespan ? lifespanFromToolArgs(args.lifespan, { purpose: args.purpose }) : undefined });
       throw new Error("Unknown collaboration tool.");
     },
     handlers: {
@@ -1597,7 +1636,17 @@ async function listPreparedCoworkers() {
 }
 
 /** The silent facilitator's hidden workspace, registered on first use; never listed as a coworker. */
-async function ensureCoordinatorWorkspace() {
+let coordinatorPreparation = null;
+function ensureCoordinatorWorkspace() {
+  // Startup, provider discovery and group routing can arrive together. They
+  // must share initialization rather than race on config writes/registration.
+  if (!coordinatorPreparation) {
+    coordinatorPreparation = prepareCoordinatorWorkspace().finally(() => { coordinatorPreparation = null; });
+  }
+  return coordinatorPreparation;
+}
+
+async function prepareCoordinatorWorkspace() {
   await ensurePlatformServer();
   const coordinator = await ensureCoordinatorHome(coworkersDir);
   await installProgressPlugin(coordinator);
@@ -2057,6 +2106,7 @@ const commands = {
   "browser.bind": (input) => browserControl.bind(input),
   "browser.detach": (input) => browserControl.detach(input),
   "browser.read": (input) => browserControl.read(input),
+  "browser.thumbnail": (input) => browserControl.thumbnail(input),
   "browser.command": (input) => browserControl.command(input),
   "computer.snapshot": (input) => computerControl.snapshot(input),
   "computer.configure": (input) => computerControl.configure(input),
@@ -2383,8 +2433,8 @@ const commands = {
   // steers, pauses, and stops them here; the coworker does the same through its tools.
   "workers.list": async ({ slug }) => listWorkers(coworkersDir, slug),
   "workers.get": async ({ slug, id }) => getWorker(coworkersDir, slug, id),
-  "workers.spawn": async ({ slug, name, goal, lifespan, spawnedFromThreadId }) =>
-    spawnWorker(slug, { name, goal, lifespan, spawnedFromThreadId }, "person"),
+  "workers.spawn": async ({ slug, name, goal, purpose, lifespan, spawnedFromThreadId }) =>
+    spawnWorker(slug, { name, goal, purpose, lifespan, spawnedFromThreadId }, "person"),
   "workers.steer": async ({ slug, id, text }) => steerWorker(slug, id, text, "person"),
   "workers.cancel": async ({ slug, id, reason }) => cancelWorker(slug, id, reason, "person"),
   "workers.pause": async ({ slug, id }) => pauseWorker(slug, id),
@@ -2527,6 +2577,9 @@ async function createMainWindow() {
     if (isMainFrame) { deepLinkListenerReady = false; browserControl.hideWindow(); }
   });
   window.on("close", () => browserControl.hideWindow());
+  window.webContents.on("render-process-gone", () => { deepLinkListenerReady = false; browserControl.hideWindow(); });
+  window.webContents.on("destroyed", () => browserControl.hideWindow());
+  window.on("unresponsive", () => browserControl.hideWindow());
   window.on("closed", () => {
     if (mainWindow === window) mainWindow = null;
     deepLinkListenerReady = false;

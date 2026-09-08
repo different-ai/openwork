@@ -18,7 +18,7 @@ registerRoot(() => (
           "Use onboarding/render.mjs with a completed capture directory",
         );
       return {
-        durationInFrames: Math.ceil((props.recording.durationSeconds + 8) * 30),
+        durationInFrames: Math.ceil((props.recording.durationSeconds + 2) * 30),
       };
     }}
   />

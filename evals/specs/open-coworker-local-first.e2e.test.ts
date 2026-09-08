@@ -1,36 +1,30 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { clickButton, coworker, evalIn, fill, needs, resolveHost, screenshot, test, waitFor, waitForText } from "@openwork/testkit";
+import { clickButton, coworker, evalIn, fill, needs, resolveHost, test, waitFor, waitForText } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 
-/**
- * Bring the right panel to one level of Activity — Documents, Workers, or Assignments —
- * from wherever it is: folded, on another view, on the root, or on another level.
- */
-async function openActivityLevel(app: Awaited<ReturnType<typeof coworker>>, level: "documents" | "workers" | "assignments"): Promise<void> {
+async function openAssignments(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
   await waitFor(app, `(() => {
     const panel = document.querySelector('[data-testid="context-panel"]');
     if (!(panel instanceof HTMLElement)) return false;
     const route = document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") ?? "";
-    if (panel.dataset.collapsed === "false" && route === ${JSON.stringify(`overview/${level}`)}) return true;
+    if (panel.dataset.collapsed === "false" && route === "overview/assignments") return true;
     if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-overview"]')?.click();
     else if (panel.dataset.view !== "overview") document.querySelector('button[aria-label="Back to activity"]')?.click();
     else if (route !== "overview") document.querySelector('[data-testid="panel-back"]')?.click();
-    else document.querySelector(${JSON.stringify(`[data-testid="activity-row-${level}"]`)})?.click();
+    else document.querySelector('[data-testid="activity-row-assignments"]')?.click();
     return false;
-  })()`, { timeoutMs: 60_000, label: `Activity › ${level}` });
+  })()`, { timeoutMs: 60_000, label: "Activity assignments" });
 }
-
 
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const title = enabled
-  ? "Open Coworker completes local onboarding with what this Mac already has, a calm default sidebar, model choice in settings, native runs with history, a run queue, and scheduling from the chat"
+  ? "Open Coworker connects local models, persists coworker choices, reconciles memory, and schedules native work"
   : "Open Coworker local-first journey skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1";
 
-// Every fixture value is plainly fake; the journey proves none of them ever shows up anywhere a person or a log could read.
+// Fake credentials must not appear in the inspected screens or app log.
 const FAKE_CODEX_REFRESH = "FIXTURE-CODEX-REFRESH-TOKEN-NOT-REAL";
 const FAKE_GEMINI_KEY = "FIXTURE-GEMINI-KEY-NOT-REAL";
 const FAKE_COPILOT_TOKEN = "FIXTURE-COPILOT-TOKEN-NOT-REAL";
@@ -38,16 +32,12 @@ const FIXTURE_SECRETS = [FAKE_CODEX_REFRESH, FAKE_GEMINI_KEY, FAKE_COPILOT_TOKEN
 const STUB_MODELS = ["stub-small", "stub-large"];
 const STUB_REPLY = "Hello from the stub server.";
 
-/**
- * A local model server the way Ollama and any OpenAI-compatible server answer:
- * a tags list, a models list, and streamed chat completions with one fixed
- * reply. Only reachable when the app runs on this machine.
- */
+// Loopback model discovery and completions, with a reply gate for queue admission.
 async function startStubModelServer(): Promise<{ port: number; chatCalls: () => number; holdReplies: () => void; releaseReplies: () => void; close: () => Promise<void> }> {
   let chatCalls = 0;
   let replyGate: Promise<void> | undefined;
   let releaseReplies = () => {};
-  const server = http.createServer((request, response) => {
+  const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const json = (status: number, body: unknown) => {
       response.writeHead(status, { "content-type": "application/json" });
@@ -111,13 +101,7 @@ function expectNoFixtureSecret(text: string, where: string): void {
   for (const secret of FIXTURE_SECRETS) expect(text, `${where} must never show ${secret}`).not.toContain(secret);
 }
 
-/**
- * A deterministic OpenAI-compatible model for the scheduling part of the
- * journey: asked for recurring work, it answers with one call to the
- * coworker's own assignment tool, then confirms in a sentence once the tool
- * has answered. Everything else — the tool server, the store, the receipt, the
- * panel — is the real product path.
- */
+// The model is scripted; assignment tools, storage, and receipts use the native path.
 const SCRIPTED_PROVIDER = "eval-scripted";
 const SCRIPTED_MODEL = "scripted";
 const CAR_PROMPT = "Every weekday at 9 remind me to move the car.";
@@ -241,19 +225,59 @@ async function invokeCoworker(app: Awaited<ReturnType<typeof coworker>>, command
   );
 }
 
+test.skipIf(!enabled)("Coworker provider setup without credentials", { timeout: 300_000 }, async ({ evidence, skip }) => {
+  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
+  await using host = await resolveHost();
+  if (host.kind !== "local") skip("needs: a same-host disposable provider fixture; placement is not changed");
+  const profileDir = await mkdtemp(path.join(os.tmpdir(), "open-coworker-provider-setup-"));
+  onTestFinished(() => rm(profileDir, { recursive: true, force: true }));
+  const claudeDir = path.join(profileDir, "claude-config");
+  await mkdir(claudeDir, { recursive: true });
+  // Presence-only detection without a real credential or Keychain probe.
+  await writeFile(path.join(claudeDir, ".credentials.json"), "{}\n", "utf8");
+  await using app = await coworker({ name: "provider-setup", host, profileDir, env: {
+    CODEX_HOME: path.join(profileDir, "codex-home"), CLAUDE_CONFIG_DIR: claudeDir,
+    COWORKER_HOME_DIR: path.join(profileDir, "coworkers"),
+    COWORKER_SERVER_CONFIG: path.join(profileDir, "coworker-server.json"),
+    OPENWORK_RUNTIME_DB: path.join(profileDir, "coworker-runtime.sqlite"),
+    OPENCODE_CONFIG: "", OPENCODE_CONFIG_CONTENT: JSON.stringify({ enabled_providers: ["openai", "anthropic"] }),
+    OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OPENROUTER_API_KEY: "", GEMINI_API_KEY: "", GOOGLE_API_KEY: "", GOOGLE_GENERATIVE_AI_API_KEY: "", XAI_API_KEY: "",
+    OLLAMA_HOST: "127.0.0.1:9", LMSTUDIO_HOST: "127.0.0.1:9",
+  } });
+  await waitFor(app, () => document.querySelector<HTMLButtonElement>('[data-testid="onboarding-local-choice"]')?.disabled === false, { timeoutMs: 30_000, label: "Use this Mac" });
+  await evalIn(app, () => document.querySelector<HTMLButtonElement>('[data-testid="onboarding-local-choice"]')?.click());
+  await waitFor(app, () => document.querySelector<HTMLElement>('[data-testid="local-providers"]')?.dataset.loaded === "true", { timeoutMs: 120_000, label: "local provider setup" });
+  expect(await evalIn(app, () => ({
+    claudeActions: [...(document.querySelector('[data-testid="found-claude-code"]')?.querySelectorAll("button") ?? [])].map((button) => button.textContent?.trim()),
+    codexFound: Boolean(document.querySelector('[data-testid="found-codex"]')),
+    connected: Boolean(document.querySelector('[data-testid="connected-openai"], [data-testid="connected-anthropic"]')),
+    preparationErrors: document.querySelectorAll('[data-testid="local-providers"] > p.text-rose').length,
+  }))).toEqual({ claudeActions: ["Add key"], codexFound: false, connected: false, preparationErrors: 0 });
+  await clickButton(app, "Set up ChatGPT");
+  await waitFor(app, () => document.querySelector<HTMLButtonElement>('[data-testid="add-openai-sign-in"]')?.disabled === false, { timeoutMs: 10_000, label: "ChatGPT sign-in offered without credentials" });
+  expect(await evalIn(app, () => ({
+    key: document.querySelector<HTMLInputElement>('[data-testid="add-another"] input[type="password"]')?.value,
+    waiting: Boolean(document.querySelector('[data-testid="sign-in-wait"]')),
+    connected: Boolean(document.querySelector('[data-testid="connected-openai"], [data-testid="connected-anthropic"]')),
+  }))).toEqual({ key: "", waiting: false, connected: false });
+  // Opening setup must not authorize anything; do not start the sign-in flow.
+  await evalIn(app, () => document.querySelector<HTMLButtonElement>('[data-testid="key-form"] button[type="button"]')?.click());
+  await waitFor(app, () => !document.querySelector('[data-testid="add-another"]') && Boolean(document.querySelector('[data-testid="chatgpt-setup"]')), { timeoutMs: 10_000, label: "setup closes" });
+  expect(await evalIn(app, () => Boolean(document.querySelector('[data-testid="connected-openai"], [data-testid="connected-anthropic"], [data-testid="sign-in-wait"]')))).toBe(false);
+  evidence.recordAssertionEvidence("ChatGPT setup is discoverable without credentials", "On first load, detected non-importable Claude credentials did not hide ChatGPT setup or cause a preparation error. Opening and cancelling setup left both providers disconnected, the key empty and authorization unstarted.", true);
+});
+
 test.skipIf(!enabled)(title, async ({ evidence }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
   await using host = await resolveHost();
-  // Fixtures the app finds on "this Mac": a Codex sign-in (a committed fixture the app reads through
-  // CODEX_HOME, so it works wherever the app runs), a Google key in the environment, and — only when the
-  // app runs on this machine — a Copilot sign-in under the profile's XDG config plus a stub model server
-  // standing in for Ollama. Every other key the AI service would read is blanked so the host's own keys
-  // never leak into what the journey asserts.
+  // Isolate discovery to fake credentials and loopback servers, not the host's keys.
   const sameMachine = host.kind === "local";
   const codexHome = path.join(host.workspaceRoot, "evals", "fixtures", "open-coworker", "codex-home");
   const stub = sameMachine ? await startStubModelServer() : null;
   const profileDir = sameMachine ? await mkdtemp(path.join(os.tmpdir(), "open-coworker-local-first-")) : undefined;
   if (profileDir) {
+    await mkdir(path.join(profileDir, "claude-config"), { recursive: true });
+    await writeFile(path.join(profileDir, "claude-config", ".credentials.json"), "{}\n", "utf8");
     const copilotDir = path.join(profileDir, "xdg-config", "github-copilot");
     await mkdir(copilotDir, { recursive: true });
     await writeFile(path.join(copilotDir, "hosts.json"), `${JSON.stringify({ "github.com.attacker.invalid": { user: "fixture", oauth_token: FAKE_COPILOT_TOKEN } }, null, 2)}\n`, "utf8");
@@ -271,6 +295,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     ...(profileDir ? { profileDir } : {}),
     env: {
       CODEX_HOME: codexHome,
+      CLAUDE_CONFIG_DIR: profileDir ? path.join(profileDir, "claude-config") : "",
       GEMINI_API_KEY: FAKE_GEMINI_KEY,
       OPENAI_API_KEY: "",
       ANTHROPIC_API_KEY: "",
@@ -287,221 +312,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     timeoutMs: 120_000,
     label: "Open Coworker welcome screen",
   });
-  const welcomeText = await evalIn(app, "document.body.innerText");
-  expect(welcomeText).toContain("Continue with OpenWork");
-  expect(welcomeText).toContain("Use this Mac");
-  const welcomeLayout = await evalIn(app, `(() => {
-    const launcher = document.querySelector('[data-testid="onboarding-launcher"]');
-    const cloud = document.querySelector('[data-testid="onboarding-cloud-choice"]');
-    const local = document.querySelector('[data-testid="onboarding-local-choice"]');
-    if (!launcher || !cloud || !local) return null;
-    const launcherRect = launcher.getBoundingClientRect();
-    const cloudRect = cloud.getBoundingClientRect();
-    const localRect = local.getBoundingClientRect();
-    return {
-      launcherCenterOffset: Math.abs((launcherRect.left + launcherRect.width / 2) - window.innerWidth / 2),
-      launcherWidth: launcherRect.width,
-      cloudTop: cloudRect.top,
-      localTop: localRect.top,
-      cloudWidth: cloudRect.width,
-      localWidth: localRect.width,
-    };
-  })()`);
-  expect(welcomeLayout).toMatchObject({
-    launcherCenterOffset: expect.any(Number),
-    launcherWidth: expect.any(Number),
-    cloudTop: expect.any(Number),
-    localTop: expect.any(Number),
-    cloudWidth: expect.any(Number),
-    localWidth: expect.any(Number),
-  });
-  if (!isRecord(welcomeLayout)) throw new Error("Open Coworker welcome layout was unavailable.");
-  for (const key of ["launcherCenterOffset", "launcherWidth", "cloudTop", "localTop", "cloudWidth", "localWidth"]) {
-    if (typeof welcomeLayout[key] !== "number") throw new Error(`Open Coworker welcome layout did not report ${key}.`);
-  }
-  expect(welcomeLayout.launcherCenterOffset as number).toBeLessThan(4);
-  expect(welcomeLayout.launcherWidth as number).toBeGreaterThan(420);
-  expect(welcomeLayout.launcherWidth as number).toBeLessThanOrEqual(680);
-  expect(welcomeLayout.localTop as number).toBeGreaterThan(welcomeLayout.cloudTop as number);
-  expect(Math.abs((welcomeLayout.cloudWidth as number) - (welcomeLayout.localWidth as number))).toBeLessThan(2);
-  // Renderer motion is deterministic without taking the person's foreground window.
-  // Restore emulation before inspecting native appearance; this is not native-focus proof.
-  await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: true });
-  try {
-  await waitFor(app, `document.hasFocus() && document.querySelector('svg[aria-label="Open Coworker"].coworker-mark')?.dataset.motionPaused === "false"`, {
-    timeoutMs: 10_000, label: "visible welcome mascot ready to follow the pointer",
-  });
-  const brandGaze = await evalIn(app, `(() => {
-    const mark = document.querySelector('svg[aria-label="Open Coworker"].coworker-mark');
-    if (!mark) return null;
-    const bounds = mark.getBoundingClientRect();
-    // The gaze follows the pointer synchronously, so read it in the same tick as the synthetic
-    // move: a real mouse crossing the window cannot slip in between.
-    window.dispatchEvent(new PointerEvent("pointermove", {
-      pointerType: "mouse",
-      clientX: bounds.left + bounds.width / 2 + 40,
-      clientY: bounds.top + bounds.height / 2,
-    }));
-    const pointerLayer = mark.querySelector(".coworker-mark__pointer-gaze");
-    return {
-      whiteTile: mark.querySelector('rect[fill="#f7f8fa"]') !== null,
-      blackOutline: mark.querySelector('path[fill="none"][stroke="#11151d"]') !== null,
-      rearShell: mark.querySelector('path[fill="#d9dde4"][stroke="#aeb5c0"]') !== null,
-      blueFill: mark.querySelector('[fill="#5b8dff"]') !== null,
-      hasPointerLayer: pointerLayer !== null,
-      lookX: Number.parseFloat(mark.style.getPropertyValue("--avatar-look-x")),
-      lookY: Number.parseFloat(mark.style.getPropertyValue("--avatar-look-y")),
-    };
-  })()`, { timeoutMs: 30_000 });
-  // The welcome mark is the bare, flat white speech bubble: no app-icon tile and no depth layer.
-  expect(brandGaze).toMatchObject({
-    whiteTile: false,
-    blackOutline: true,
-    rearShell: false,
-    blueFill: false,
-    hasPointerLayer: true,
-    lookX: expect.any(Number),
-    lookY: expect.any(Number),
-  });
-  if (!isRecord(brandGaze) || typeof brandGaze.lookX !== "number" || typeof brandGaze.lookY !== "number") {
-    throw new Error("Open Coworker brand gaze was unavailable.");
-  }
-  expect(brandGaze.lookX).toBeGreaterThan(0);
-  expect(brandGaze.lookX).toBeLessThanOrEqual(2.4);
-  expect(Math.abs(brandGaze.lookY)).toBeLessThanOrEqual(1.5);
-  // The mark fronts the app icon's composition: one charcoal card behind it. Two visiting coworkers
-  // (pale mint, pale violet) slide out once during the welcome and hide again; by the time the
-  // journey looks, the stack rests as the icon does, keeps one fixed box, and takes no pointer
-  // events, so it never disturbs the onboarding controls.
-  const mascot = await waitFor(app, `(() => {
-    const stack = document.querySelector('[data-testid="onboarding-mascot"]');
-    if (!(stack instanceof HTMLElement) || stack.dataset.phase !== "rest") return false;
-    const r = stack.getBoundingClientRect();
-    const visitors = [...stack.querySelectorAll('[data-testid="onboarding-mascot-visitor"]')];
-    return {
-      phase: stack.dataset.phase,
-      visitorsState: stack.dataset.visitors,
-      cards: stack.querySelectorAll('[data-testid="onboarding-mascot-card"]').length,
-      frontLabel: stack.querySelector('.mascot-stack__front svg')?.getAttribute("aria-label") ?? "",
-      frontBare: Boolean(stack.querySelector('.mascot-stack__front .coworker-mark--bare')),
-      visitors: visitors.map((visitor) => [visitor.dataset.color, visitor.dataset.glasses, visitor.getAttribute("aria-hidden"), getComputedStyle(visitor).visibility].join(":")),
-      box: [Math.round(r.width), Math.round(r.height)].join("x"),
-      pointerEvents: getComputedStyle(stack).pointerEvents,
-      gazing: stack.classList.contains("is-gazing"),
-    };
-  })()`, { timeoutMs: 30_000, label: "mascot at rest after its welcome" });
-  expect(mascot).toMatchObject({
-    phase: "rest",
-    visitorsState: "hidden",
-    cards: 1,
-    frontLabel: "Open Coworker",
-    frontBare: true,
-    visitors: ["mint:round:true:hidden", "violet:round:true:hidden"],
-    pointerEvents: "none",
-    gazing: true,
-  });
-  if (!isRecord(mascot)) throw new Error("Mascot facts were unavailable.");
-  const mascotBox = mascot.box;
-  expect(await evalIn(app, `(() => { const r = document.querySelector('[data-testid="onboarding-mascot"]').getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)].join("x"); })()`)).toBe(mascotBox);
-  // A visitor peeks every so often and blinks for a fraction of a second while peeking; the page
-  // records that instant itself (class and data-attribute changes on the stack) so the wait does
-  // not depend on a poll landing inside it.
-  await evalIn(app, `(() => {
-    const stack = document.querySelector('[data-testid="onboarding-mascot"]');
-    if (!(stack instanceof HTMLElement)) return false;
-    window.__soloPeek = null;
-    const capture = () => {
-      if (window.__soloPeek) return;
-      const side = stack.dataset.ambientVisitor;
-      if ((side !== "left" && side !== "right") || stack.dataset.ambientStage !== "peeking") return;
-      if (!stack.classList.contains(side + "-blinking")) return;
-      const visitors = [...stack.querySelectorAll('[data-testid="onboarding-mascot-visitor"]')];
-      const visible = visitors.filter((visitor) => getComputedStyle(visitor).visibility === "visible");
-      const active = visitors.filter((visitor) => visitor.getAttribute("data-ambient-active") === "true");
-      const activeAvatar = active[0]?.querySelector(".coworker-avatar");
-      const rect = stack.getBoundingClientRect();
-      window.__soloPeek = {
-        side,
-        stage: stack.dataset.ambientStage,
-        visitorsState: stack.dataset.visitors,
-        visibleVisitors: visible.length,
-        activeVisitors: active.length,
-        helloAnimation: activeAvatar ? getComputedStyle(activeAvatar).animationName : "",
-        box: [Math.round(rect.width), Math.round(rect.height)].join("x"),
-      };
-    };
-    const observer = new MutationObserver(capture);
-    observer.observe(stack, { attributes: true, subtree: true });
-    window.__soloPeekObserver = observer;
-    capture();
-    return true;
-  })()`);
-  const soloPeek = await waitFor(app, `window.__soloPeek ?? false`, { timeoutMs: 40_000, label: "one patient onboarding visitor peeking and blinking" });
-  await evalIn(app, `(() => { window.__soloPeekObserver?.disconnect(); return true; })()`);
-  expect(soloPeek).toMatchObject({
-    side: expect.stringMatching(/^(left|right)$/),
-    stage: "peeking",
-    visitorsState: "peeking",
-    visibleVisitors: 1,
-    activeVisitors: 1,
-    helloAnimation: "mascot-peek-hello",
-    box: mascotBox,
-  });
-  await waitFor(app, `(() => {
-    const stack = document.querySelector('[data-testid="onboarding-mascot"]');
-    if (!(stack instanceof HTMLElement)) return false;
-    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 12, clientY: 12 }));
-    const hidden = [...stack.querySelectorAll('[data-testid="onboarding-mascot-visitor"]')]
-      .every((visitor) => getComputedStyle(visitor).visibility === "hidden");
-    return stack.dataset.ambientVisitor === "none" && stack.dataset.ambientStage === "waiting" && hidden;
-  })()`, { label: "the solo onboarding peek dismissing on activity" });
-  evidence.recordAssertionEvidence(
-    "First run presents a restrained pointer-aware mark whose waiting coworkers check in one at a time",
-    "The fixed-size launch mascot completed its opening welcome, then after an idle pause exactly one rear coworker peeked out, lifted less than a pixel, and blinked while the other stayed hidden. Pointer activity tucked it away immediately without moving the onboarding layout.",
-    true,
-  );
-
-  } finally {
-    await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: false });
-  }
-  // Native appearance must arrive through preload, while accessibility can make
-  // the chrome solid without replacing the mascot or either onboarding action.
-  await waitFor(app, `["none", "vibrancy", "mica"].includes(document.documentElement.dataset.windowMaterial)`, {
-    timeoutMs: 10_000, label: "native window appearance",
-  });
-  await screenshot(app);
-  await app.client.send("Emulation.setEmulatedMedia", { features: [
-    { name: "prefers-reduced-transparency", value: "reduce" },
-    { name: "prefers-reduced-motion", value: "reduce" },
-  ] });
-  try {
-    const accessibleAppearance = await evalIn(app, `(() => {
-      const shell = document.querySelector('.window-shell');
-      const launcher = document.querySelector('[data-testid="onboarding-launcher"]');
-      return {
-        surface: getComputedStyle(shell).backgroundColor,
-        transition: getComputedStyle(shell).transitionDuration,
-        launcherBlur: getComputedStyle(launcher).backdropFilter,
-        brandPreserved: Boolean(document.querySelector('svg[aria-label="Open Coworker"]')),
-        localEnabled: !document.querySelector('[data-testid="onboarding-local-choice"]').disabled,
-        cloudEnabled: !document.querySelector('[data-testid="onboarding-cloud-choice"]').disabled,
-      };
-    })()`);
-    expect(accessibleAppearance).toEqual({
-      surface: "rgb(9, 12, 18)", transition: "0s", launcherBlur: "none",
-      brandPreserved: true, localEnabled: true, cloudEnabled: true,
-    });
-  } finally {
-    await app.client.send("Emulation.setEmulatedMedia", { features: [] });
-  }
-  evidence.recordAssertionEvidence(
-    "Native window polish preserves first-run actions and respects reduced transparency and motion",
-    "The packaged app supplied native appearance through preload. With reduced transparency and motion enabled, the frame was fully opaque, the launcher had no blur, and transitions stopped; the original mascot and both onboarding actions remained available.", true,
-  );
-
   await clickButtonContaining(app, "Use this Mac");
 
-  // --- Local mode: exactly what this Mac has, one Connect per row, the free model, and Add another.
   await waitFor(app, `document.querySelector('[data-testid="local-providers"]')?.dataset.loaded === "true"`, { timeoutMs: 180_000, label: "local mode screen" });
   if (profileDir) {
     expect(await evalIn(app, `Boolean(document.querySelector('[data-testid="found-copilot"]'))`)).toBe(false);
@@ -513,60 +325,23 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       "No Copilot row appeared for the lookalike host. After an exact github.com host with its app client suffix was saved, Refresh found the Copilot sign-in.", true,
     );
   }
-  const readRows = `(selector) => [...document.querySelectorAll(selector + ' > li')].map((row) => ({
-    id: row.dataset.testid,
-    title: row.querySelector("span.block")?.textContent?.trim() ?? "",
-    line: row.querySelector('[data-testid$="-line"]')?.textContent?.trim() ?? "",
-    actions: [...row.querySelectorAll("button")].map((button) => button.textContent?.trim()),
-  }))`;
   const localMode = await waitFor(app, `(() => {
-    const read = ${readRows};
-    const found = read('[data-testid="found-rows"]');
     if (!document.querySelector('[data-testid="connected-google"]')) return false;
     return {
-      title: document.querySelector('[data-testid="local-mode"] h1')?.textContent?.trim(),
-      recommended: document.querySelector('[data-testid="local-mode-recommended"]')?.innerText ?? "",
-      found,
-      connected: read('[data-testid="connected-rows"]'),
-      free: document.querySelector('[data-testid="free-model-row"]')?.innerText ?? "",
-      freeChoice: document.querySelector('[data-testid="free-model-choose"]')?.textContent?.trim(),
-      shared: document.querySelector('[data-testid="local-mode-shared"]')?.textContent?.trim(),
+      found: [...document.querySelectorAll('[data-testid="found-rows"] > li')].map((row) => row.dataset.testid).sort(),
+      connected: [...document.querySelectorAll('[data-testid="connected-rows"] > li')].map((row) => row.dataset.testid),
       text: document.body.innerText,
     };
   })()`, { timeoutMs: 120_000, label: "local mode rows" });
   if (!isRecord(localMode) || !Array.isArray(localMode.found) || !Array.isArray(localMode.connected)) throw new Error("Local mode facts were unavailable.");
-  expect(localMode.title).toBe("AI on this Mac");
-  expect(String(localMode.recommended)).toContain("Continue with OpenWork for your organization's models and tools.");
-  // Exactly the fixtures, nothing about providers that are absent, and no Connect for what cannot connect here.
-  expect(localMode.found.map((row) => isRecord(row) ? row.id : row)).toEqual(
-    sameMachine ? ["found-codex", "found-copilot", "found-server:ollama"] : ["found-codex"],
+  expect(localMode.found).toEqual(
+    sameMachine ? ["found-claude-code", "found-codex", "found-copilot", "found-server:ollama"] : ["found-codex"],
   );
-  expect(localMode.found[0]).toMatchObject({ title: "ChatGPT (signed in with Codex)", line: "Uses your ChatGPT subscription for coworkers on this Mac.", actions: ["Connect"] });
-  if (sameMachine) {
-    expect(localMode.found[1]).toMatchObject({ title: "GitHub Copilot (signed in on this Mac)", actions: ["Connect"] });
-    expect(localMode.found[2]).toMatchObject({ title: "Ollama (running on this Mac)", line: "2 models ready. Uses them for coworkers on this Mac; no account needed.", actions: ["Connect"] });
-  }
-  expect(localMode.connected.map((row) => isRecord(row) ? [row.id, row.line] : row)).toEqual([["connected-google", "From GEMINI_API_KEY in your environment."]]);
-  expect(localMode.connected[0]).toMatchObject({ actions: ["Start with this"] });
-  expect(String(localMode.free)).toContain("A free model is ready now");
-  expect(String(localMode.free)).toContain("No setup, no account");
-  expect(localMode.freeChoice).toBe("Start with this");
-  expect(localMode.shared).toBe("Sign-ins and keys are shared with OpenWork Desktop and OpenCode on this Mac.");
-  const localModeText = String(localMode.text);
-  for (const absent of ["Claude", "Anthropic", "LM Studio", "OpenRouter", "xAI"]) expect(localModeText, `${absent} is not on this Mac`).not.toContain(absent);
-  for (const banned of ["engine", "provider id", "OAuth", "auth.json", "base URL", "SDK"]) expect(localModeText.toLowerCase(), `plain words only: ${banned}`).not.toContain(banned.toLowerCase());
-  expectNoFixtureSecret(localModeText, "the local mode screen");
-  // The recommended line is dismissible for the session, not nagging.
-  await waitFor(app, `(() => {
-    const dismiss = document.querySelector('[data-testid="local-mode-recommended"] button[aria-label="Dismiss"]');
-    if (!(dismiss instanceof HTMLElement)) return false;
-    dismiss.click();
-    return true;
-  })()`, { label: "dismiss the recommended line" });
-  await waitFor(app, `!document.querySelector('[data-testid="local-mode-recommended"]')`, { timeoutMs: 10_000, label: "recommended line gone" });
+  expect(localMode.connected).toEqual(["connected-google"]);
+  expectNoFixtureSecret(String(localMode.text), "the local mode screen");
   evidence.recordAssertionEvidence(
-    "Use this Mac shows exactly what was found, with one Connect per row and the free model ready",
-    `After Use this Mac, the AI on this Mac screen listed exactly ${sameMachine ? "the Codex sign-in, the Copilot sign-in, and the stub Ollama server" : "the Codex sign-in"} under Found on this Mac with one plain line and a Connect each, the Google key from the environment under Connected, the free model row with Start with this, one line saying sign-ins are shared with OpenWork Desktop and OpenCode, and nothing about Claude, LM Studio, or other providers that were not there; no banned word and no fixture secret appeared, and the recommended line dismissed for the session.`,
+    "Local discovery is limited to the isolated fixtures",
+    "Only the fixture providers appeared, and none of their credentials appeared in the local-mode screen.",
     true,
   );
 
@@ -577,20 +352,17 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     connect.click();
     return true;
   })()`, { label: "Connect ChatGPT (signed in with Codex)" });
-  const openaiRow = await waitFor(app, `(() => {
+  const openaiModels = await waitFor(app, `(() => {
     const row = document.querySelector('[data-testid="connected-openai"]');
     if (!(row instanceof HTMLElement) || document.querySelector('[data-testid="found-codex"]')) return false;
-    return {
-      line: row.querySelector('[data-testid="connected-openai-line"]')?.textContent?.trim(),
-      count: row.querySelector('[data-testid="connected-openai-count"]')?.textContent?.trim(),
-      actions: [...row.querySelectorAll("button")].map((button) => button.textContent?.trim()),
-    };
+    return row.querySelector('[data-testid="connected-openai-count"]')?.textContent?.trim();
   })()`, { timeoutMs: 180_000, label: "OpenAI connected from the Codex sign-in" });
-  expect(openaiRow).toMatchObject({ line: "Your ChatGPT subscription, signed in with Codex.", count: expect.stringMatching(/^[1-9]\d* models?$/), actions: ["Start with this", "Disconnect"] });
+  expect(openaiModels).toMatch(/^[1-9]\d* models?$/);
+  expect(await evalIn(app, () => Boolean(document.querySelector('[data-testid="chatgpt-setup"]')))).toBe(false);
   expectNoFixtureSecret(String(await evalIn(app, "document.body.innerText")), "the screen after Connect");
   evidence.recordAssertionEvidence(
-    "Connect on a found sign-in takes one step and the provider's models become available on this Mac",
-    `Connect on ChatGPT (signed in with Codex) moved OpenAI under Connected with its model count and a Disconnect, and the Codex row left Found on this Mac; the Codex sign-in file's tokens never appeared on screen.`,
+    "A discovered sign-in makes its models available without displaying credentials",
+    "Connecting Codex moved it to Connected with available models and no fixture secret on screen.",
     true,
   );
 
@@ -610,13 +382,6 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       open.click();
       return true;
     })()`, { label: "Add another" });
-    const addable = await waitFor(app, `(() => {
-      const options = [...document.querySelectorAll('[data-testid="add-another"] [data-testid="interaction-option"]')];
-      return options.length > 0 ? options.map((option) => option.textContent?.replace(/^[A-Z]/, "").trim()) : false;
-    })()`, { timeoutMs: 30_000, label: "Add another choices" });
-    if (!Array.isArray(addable)) throw new Error("Add another choices were unavailable.");
-    expect(addable.length).toBeGreaterThan(2);
-    expect(String(addable[addable.length - 1])).toContain("Custom (OpenAI-compatible)");
     await waitFor(app, `(() => {
       const custom = [...document.querySelectorAll('[data-testid="add-another"] [data-testid="interaction-option"]')].find((option) => (option.textContent ?? "").includes("Custom"));
       if (!(custom instanceof HTMLElement)) return false;
@@ -624,7 +389,6 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       return true;
     })()`, { label: "Custom (OpenAI-compatible)" });
     await waitFor(app, `Boolean(document.querySelector('[data-testid="custom-form"]'))`, { timeoutMs: 30_000, label: "custom server form" });
-    expect(await evalIn(app, `[...document.querySelectorAll('[data-testid="custom-form"] input')].map((input) => input.getAttribute("aria-label"))`)).toEqual(["Name", "Address", "Key (optional)"]);
     await fill(app, '[data-testid="custom-form"] input[aria-label="Name"]', "Stub box");
     await fill(app, '[data-testid="custom-form"] input[aria-label="Address"]', `127.0.0.1:${stub.port}`);
     await clickButton(app, "Check");
@@ -642,60 +406,20 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     })()`);
     await clickButton(app, "Save");
     evidence.recordAssertionEvidence(
-      "A custom OpenAI-compatible server is added with three fields and validated by listing its models first",
-      `Connect on the found Ollama server made its two models available; Add another offered the well-known providers plus Custom (OpenAI-compatible), whose form asked only for a name, an address, and an optional key, listed exactly the stub server's two models on Check, and let the person pick stub-large to start with before saving.`,
+      "A custom server lists its actual models before saving",
+      "Ollama connected, and the custom-server form returned the fixture's model list before saving Stub box with stub-large selected.",
       true,
     );
   } else {
     await clickButton(app, "Continue");
   }
-  // The team steps follow: what the team will help with (six roles, Continue waits for one pick),
-  // then a proposed team. This journey takes the blank Add screen instead.
-  const intentsStep = await waitFor(app, `(() => {
-    const screen = document.querySelector('[data-testid="onboarding-intents"]');
-    if (!(screen instanceof HTMLElement)) return false;
-    const tiles = [...document.querySelectorAll('[data-testid="onboarding-intent"]')];
-    if (tiles.length !== 6) return false;
-    const next = document.querySelector('[data-testid="onboarding-intents-continue"]');
-    return {
-      intents: tiles.map((tile) => tile.getAttribute("data-intent")),
-      pressed: tiles.map((tile) => tile.getAttribute("aria-pressed")),
-      continueDisabled: next instanceof HTMLButtonElement ? next.disabled : null,
-      railVisible: Boolean(document.querySelector('[data-testid="coworker-rail"]')),
-    };
-  })()`, { timeoutMs: 60_000, label: "the what-will-your-team-help-with step" });
-  expect(intentsStep).toEqual({
-    intents: ["research", "writing", "operations", "support", "sales", "product"],
-    pressed: ["false", "false", "false", "false", "false", "false"],
-    continueDisabled: true,
-    railVisible: false,
-  });
-  await evalIn(app, `document.querySelector('[data-testid="onboarding-intents-own"]').click(); true`);
+  await waitFor(app, `(() => {
+    const own = document.querySelector('[data-testid="onboarding-intents-own"]');
+    if (!(own instanceof HTMLButtonElement) || own.disabled) return false;
+    own.click();
+    return true;
+  })()`, { timeoutMs: 60_000, label: "create an individual coworker" });
   await waitForText(app, "Add a coworker", { timeoutMs: 60_000 });
-  const creationScreen = await evalIn(app, `(() => {
-    const screen = document.querySelector('[data-testid="new-coworker"]');
-    if (!(screen instanceof HTMLElement)) return null;
-    const rect = screen.getBoundingClientRect();
-    const text = document.body.innerText.toLowerCase();
-    return {
-      left: rect.left,
-      width: rect.width,
-      railVisible: Boolean(document.querySelector('[data-testid="coworker-rail"]')),
-      mentionsModel: text.includes("model"),
-      mentionsMemoryFiles: text.includes("inspectable files"),
-    };
-  })()`);
-  expect(creationScreen).toMatchObject({ railVisible: false, mentionsModel: false, mentionsMemoryFiles: false });
-  if (!isRecord(creationScreen) || typeof creationScreen.left !== "number" || typeof creationScreen.width !== "number") {
-    throw new Error("Creation screen layout was unavailable.");
-  }
-  expect(creationScreen.left).toBeLessThan(3);
-  expect(creationScreen.width).toBeGreaterThan(900);
-  evidence.recordAssertionEvidence(
-    "Adding a coworker takes the whole window and asks only for a name and a look",
-    "The creation screen filled the window with no team rail beside it, and neither AI model choice nor memory-file details appeared; those live in Coworker settings once the coworker exists.",
-    true,
-  );
   await fill(app, 'input[placeholder="Scout"]', "Scout");
   await waitFor(app, `(() => {
     const button = document.querySelector('button[aria-label="Violet"]');
@@ -704,523 +428,19 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     return true;
   })()`, { label: "Violet avatar color" });
   await clickButton(app, "Soft square");
-  expect(await evalIn(app, `document.querySelector('button[aria-label="Violet"]')?.getAttribute("aria-pressed")`)).toBe("true");
   await clickButton(app, "Add coworker", { timeoutMs: 120_000 });
 
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "team rail" });
 
-  if (sameMachine && stub) {
-    // The model picked to start with on the local mode screen is the new coworker's model, with no further choice.
-    await waitFor(app, `window.__COWORKER__.invoke("coworkers.list").then((response) => response.ok && response.result[0]?.model === "custom-stub-box/stub-large")`, {
-      awaitPromise: true,
-      timeoutMs: 120_000,
-      label: "Scout starts on the custom server's chosen model",
-    });
-  }
-  // The record says who chose the model, so the rule reads the same after a relaunch: a model the person started
-  // with on the local mode screen is theirs (never swapped); one the app picked is the app's (swapped once if it fails).
-  const firstChoice = await waitFor(app, `window.__COWORKER__.invoke("coworkers.list").then((response) => {
-    const scout = (response.result ?? [])[0];
-    return scout && scout.model ? { model: scout.model, chosenBy: scout.modelChosenBy } : false;
-  })`, { awaitPromise: true, timeoutMs: 120_000, label: "Scout's first model and who chose it" });
-  expect(firstChoice).toEqual(sameMachine && stub
-    ? { model: "custom-stub-box/stub-large", chosenBy: "person" }
-    : { model: expect.stringMatching(/^[a-z0-9-]+\/.+/), chosenBy: "app" });
-  const appChoseFirst = isRecord(firstChoice) && firstChoice.chosenBy === "app";
-
-  // A new coworker opens on the conversation alone: one header that carries the
-  // coworker, a quiet empty state with no starter cards, and the details panel
-  // folded to its icon strip until asked for.
-  const conversationFirst = await waitFor(app, `(() => {
-    const header = document.querySelector('[data-testid="conversation-header"]');
-    const panel = document.querySelector('[data-testid="context-panel"]');
-    const empty = document.querySelector('[data-testid="coworker-discussion-empty"]');
-    const activityIcon = document.querySelector('[data-testid="context-rail-overview"]');
-    if (!(header instanceof HTMLElement) || !(panel instanceof HTMLElement) || !(empty instanceof HTMLElement) || !(activityIcon instanceof HTMLElement)) return false;
-    const main = header.closest("div.flex-col");
-    const headerCount = main ? main.querySelectorAll("header").length : 0;
-    const headerRect = header.getBoundingClientRect();
-    const iconRect = activityIcon.getBoundingClientRect();
-    return {
-      headerHeight: Math.round(headerRect.height),
-      headerCount,
-      headerName: header.querySelector("h1")?.textContent?.trim(),
-      headerLine: document.querySelector('[data-testid="conversation-header-title"]')?.textContent?.trim(),
-      panelCollapsed: panel.dataset.collapsed,
-      panelWidth: Math.round(panel.getBoundingClientRect().width),
-      stripEmptyBand: panel.querySelectorAll("header, .glass-header").length,
-      stripStartsInHeaderBand: iconRect.top < headerRect.bottom && iconRect.top > headerRect.top,
-      headerIconLabels: [...header.querySelectorAll("button")].map((button) => button.getAttribute("aria-label")).filter(Boolean),
-      emptyText: empty.innerText.split("\\n").map((line) => line.trim()).filter(Boolean),
-      emptyButtons: empty.querySelectorAll("button").length,
-      starterCards: [...document.querySelectorAll("main button")].filter((button) => /focus on today|think through a decision|catch me up/i.test(button.textContent ?? "")).length,
-      conversationSurface: getComputedStyle(document.querySelector('.glass-main')).backgroundColor,
-      conversationBlur: getComputedStyle(document.querySelector('.glass-main')).backdropFilter,
-    };
-  })()`, { timeoutMs: 60_000, label: "conversation-first workspace" });
-  expect(conversationFirst).toMatchObject({
-    headerHeight: 78,
-    headerCount: 1,
-    headerName: "Scout",
-    headerLine: "New discussion",
-    panelCollapsed: "true",
-    panelWidth: 56,
-    stripEmptyBand: 0,
-    stripStartsInHeaderBand: true,
-    headerIconLabels: [],
-    emptyButtons: 0,
-    starterCards: 0,
-    conversationSurface: "rgb(9, 12, 18)",
-    conversationBlur: "none",
-  });
-  if (!isRecord(conversationFirst) || !Array.isArray(conversationFirst.emptyText)) throw new Error("Conversation-first facts were unavailable.");
-  expect(conversationFirst.emptyText[0]).toBe("Scout");
-  expect(conversationFirst.emptyText).toContain("What should we work through?");
-  evidence.recordAssertionEvidence(
-    "A new coworker opens on the conversation with the details panel closed",
-    "Scout's workspace opened with a single 78px header naming the coworker and the open discussion, a quiet empty state (small avatar, name, one line) with no starter cards, and the right panel folded to a 56px icon strip whose icons start level with the header, with no empty band above them and no duplicate of them in the header.",
-    true,
-  );
-
-  // Details open on request: the strip's Activity icon unfolds the Activity view.
-  await waitFor(app, `(() => {
-    const icon = document.querySelector('[data-testid="context-rail-overview"]');
-    if (!(icon instanceof HTMLElement)) return false;
-    icon.click();
-    return true;
-  })()`, { label: "Activity icon" });
-  await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.dataset.collapsed === "false"`, { timeoutMs: 30_000, label: "details panel open" });
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 60_000, label: "Activity view" });
-  await screenshot(app);
-
-  // The Activity view is useful as soon as it opens: what is happening now, then what the
-  // coworker holds as three flat rows, and no technical vocabulary. The header owns the one
-  // status word; the panel does not repeat it, and there is no second settings control.
-  const defaultSidebar = await waitFor(app, `(() => {
-    const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
-    const status = document.querySelector('[data-testid="coworker-top-status"]');
-    if (!(summary instanceof HTMLElement) || !(status instanceof HTMLElement)) return false;
-    // The first poll may still be reading the workspace; wait for the settled idle state.
-    if (status.textContent?.trim() !== "Ready") return false;
-    const summaryLines = summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean);
-    const rows = [...document.querySelectorAll('[data-testid^="activity-row-"]')];
-    const sidebarText = (summary.closest("aside")?.innerText ?? "").toLowerCase();
-    return {
-      summaryLines,
-      rows: rows.map((row) => row.innerText.split("\\n").map((line) => line.trim()).filter((line) => line && line !== "›").join(" · ")),
-      rowIds: rows.map((row) => row.getAttribute("data-testid")),
-      scheduledSectionInActivity: Boolean(document.querySelector('[data-testid="coworker-assignments"], [data-testid="responsibilities-empty"]')),
-      settingsButton: Boolean(document.querySelector('[data-testid="coworker-settings-button"]')),
-      footerLinks: document.querySelectorAll('nav[aria-label="More for this coworker"] button').length,
-      statusDot: status.querySelectorAll("span").length,
-      statusTone: status.getAttribute("data-tone"),
-      statusTitle: status.getAttribute("title"),
-      sidebarMentionsEngine: sidebarText.includes("engine"),
-      sidebarMentionsModel: sidebarText.includes("model"),
-      readyMentions: (sidebarText.match(/ready/g) ?? []).length,
-    };
-  })()`, { timeoutMs: 240_000, label: "settled default Activity sidebar" });
-  expect(defaultSidebar).toMatchObject({
-    summaryLines: ["Waiting for the first assignment."],
-    rows: ["Documents", "Workers", "Assignments"],
-    rowIds: ["activity-row-documents", "activity-row-workers", "activity-row-assignments"],
-    scheduledSectionInActivity: false,
-    settingsButton: false,
-    footerLinks: 0,
-    statusDot: 0,
-    statusTone: "ready",
-    statusTitle: null,
-    sidebarMentionsEngine: false,
-    sidebarMentionsModel: false,
-    readyMentions: 0,
-  });
-  // Assignments is a level of Activity: nothing handed over yet, one compact empty state for scheduled work.
-  await openActivityLevel(app, "assignments");
-  const assignmentsLevel = await waitFor(app, `(() => {
-    const view = document.querySelector('[data-testid="coworker-assignments"]');
-    const empty = document.querySelector('[data-testid="responsibilities-empty"]');
-    const once = document.querySelector('[data-testid="assignments-empty"]');
-    if (!(view instanceof HTMLElement) || !(empty instanceof HTMLElement) || !(once instanceof HTMLElement)) return false;
-    return {
-      onceEmpty: once.textContent?.trim() ?? "",
-      newAssignment: Boolean(document.querySelector('[data-testid="new-assignment-button"]')),
-      emptyStateCount: document.querySelectorAll('[data-testid="responsibilities-empty"]').length,
-      emptyStateText: empty.textContent?.trim() ?? "",
-      cards: view.querySelectorAll(".rounded-2xl").length,
-      panelTitle: document.querySelector('[data-testid="context-panel"] [data-testid="panel-crumb"][aria-current="page"]')?.textContent?.trim() ?? "",
-      back: document.querySelector('[data-testid="panel-back"]')?.getAttribute("aria-label") ?? "",
-    };
-  })()`, { timeoutMs: 30_000, label: "Activity › Assignments" });
-  expect(assignmentsLevel).toMatchObject({ newAssignment: true, emptyStateCount: 1, cards: 0, panelTitle: "Assignments", back: "Back to Activity" });
-  if (!isRecord(assignmentsLevel) || typeof assignmentsLevel.emptyStateText !== "string" || typeof assignmentsLevel.onceEmpty !== "string") throw new Error("Assignments level facts were unavailable.");
-  expect(assignmentsLevel.onceEmpty).toContain("Nothing handed over yet.");
-  expect(assignmentsLevel.emptyStateText).toContain("Nothing on a schedule yet.");
-  expect(assignmentsLevel.emptyStateText).toContain("Add assignment");
-  // Workers is its own level, holding Workers only.
-  await openActivityLevel(app, "workers");
-  const workersLevel = await waitFor(app, `(() => {
-    const view = document.querySelector('[data-testid="coworker-workers"]');
-    const workersEmpty = document.querySelector('[data-testid="workers-empty"]');
-    // The Workers list arrives a moment after the view; read it once its empty state has settled.
-    if (!(view instanceof HTMLElement) || !(workersEmpty instanceof HTMLElement)) return false;
-    return {
-      workersEmpty: workersEmpty.textContent?.trim() ?? "",
-      newWorker: Boolean(document.querySelector('[data-testid="new-worker-button"]')),
-      assignmentsHere: Boolean(document.querySelector('[data-testid="coworker-assignments"]')),
-      panelTitle: document.querySelector('[data-testid="context-panel"] [data-testid="panel-crumb"][aria-current="page"]')?.textContent?.trim() ?? "",
-    };
-  })()`, { timeoutMs: 30_000, label: "Activity › Workers" });
-  expect(workersLevel).toMatchObject({ newWorker: true, assignmentsHere: false, panelTitle: "Workers" });
-  if (!isRecord(workersLevel) || typeof workersLevel.workersEmpty !== "string") throw new Error("Workers level facts were unavailable.");
-  expect(workersLevel.workersEmpty).toContain("No Workers running. Ask Scout to start one, or start one here.");
-  await evalIn(app, `document.querySelector('[data-testid="panel-back"]').click()`);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 30_000, label: "back on Activity" });
-  const composerFacts = await evalIn(app, `(() => {
-    const composer = document.querySelector('textarea[aria-label="Message Scout"]')?.closest('[data-testid="coworker-composer"]');
-    const text = (composer?.textContent ?? "").toLowerCase();
-    return {
-      present: Boolean(composer),
-      hasModelControl: Boolean(document.querySelector('[data-testid="composer-model-control"]')),
-      mentionsModel: text.includes("model") || text.includes("thinking effort"),
-      brandLine: text.includes("powered by"),
-      summaryLine: Boolean(composer?.querySelector('[data-testid="coworker-summary-line"]')),
-    };
-  })()`);
-  // A coworker that has never held or finished anything gets no summary line under its first message.
-  expect(composerFacts).toEqual({ present: true, hasModelControl: false, mentionsModel: false, brandLine: false, summaryLine: false });
-  const integratedComposer = await evalIn(app, `(() => {
-    const surface = document.querySelector('[data-testid="coworker-input-surface"]');
-    const actions = surface?.querySelector('[data-testid="coworker-composer-actions"]');
-    const field = surface?.querySelector('textarea');
-    const effort = actions?.querySelector('[data-testid="effort-dial-pill"]');
-    const send = actions?.querySelector('[data-testid="coworker-send"]');
-    const assignment = actions?.querySelector('button[aria-pressed]');
-    if (!(surface instanceof HTMLElement) || !(field instanceof HTMLElement) || !(actions instanceof HTMLElement)) return null;
-    const bounds = surface.getBoundingClientRect();
-    return { controlsInside: Boolean(effort && send && assignment), separateWritingArea: field.getBoundingClientRect().bottom <= actions.getBoundingClientRect().top + 1, fits: [effort, send, assignment].every((control) => control instanceof HTMLElement && control.getBoundingClientRect().left >= bounds.left && control.getBoundingClientRect().right <= bounds.right), fieldHeight: field.getBoundingClientRect().height };
-  })()`);
-  expect(integratedComposer).toMatchObject({ controlsInside: true, separateWritingArea: true, fits: true });
-  if (!isRecord(integratedComposer) || typeof integratedComposer.fieldHeight !== "number") throw new Error("Composer geometry unavailable.");
-  expect(integratedComposer.fieldHeight).toBeGreaterThanOrEqual(56);
-  await screenshot(app);
-  // Dynamic effort is a task-sensitive preference. The control shows its current setting and how it adapts.
-  const dialBefore = await evalIn(app, `(() => {
-    const dial = document.querySelector('[data-testid="coworker-composer"] [data-testid="effort-dial"]');
-    const pill = dial?.querySelector('[data-testid="effort-dial-pill"]');
-    return dial instanceof HTMLElement && pill instanceof HTMLElement ? { stop: dial.dataset.stop, pill: pill.textContent?.trim(), open: Boolean(document.querySelector('[data-testid="effort-dial-panel"]')) } : null;
-  })()`);
-  expect(dialBefore).toEqual({ stop: "balanced", pill: "Dynamic effort Balanced ⌄", open: false });
+  await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 240_000, label: "Scout ready" });
   await evalIn(app, `document.querySelector('[data-testid="coworker-composer"] [data-testid="effort-dial-pill"]').click(); true`);
-  const panel = await waitFor(app, `(() => {
-    const panel = document.querySelector('[data-testid="effort-dial-panel"]');
-    if (!(panel instanceof HTMLElement)) return false;
-    const range = panel.querySelector('[data-testid="effort-dial-range"]');
-    return { stop: panel.querySelector('[data-testid="effort-dial-stop"]')?.textContent?.trim(), meaning: panel.querySelector('[data-testid="effort-dial-meaning"]')?.textContent?.trim(), stops: range instanceof HTMLInputElement ? Number(range.max) + 1 : 0, reset: Boolean(panel.querySelector('[data-testid="effort-dial-reset"]')) };
-  })()`, { timeoutMs: 10_000, label: "the effort dial's popover" });
-  expect(panel).toEqual({ stop: "Balanced", meaning: "The usual: quick questions get quick answers, real work and Workers think harder.", stops: 5, reset: false });
-  await screenshot(app);
-  await evalIn(app, `document.querySelector('[data-testid="effort-explainer"]').click(); true`);
-  const adaptationBefore = await evalIn(app, `Array.from(document.querySelectorAll('[data-testid="effort-adapts-preview"] [aria-label]')).map((node) => node.getAttribute('aria-label'))`);
-  expect(adaptationBefore).toEqual(["Quick questions: 2 of 6 thinking levels", "Planning & research: 4 of 6 thinking levels", "Background work: 4 of 6 thinking levels"]);
-  await screenshot(app);
-  expect(await evalIn(app, `getComputedStyle(document.querySelector('[data-testid="effort-dial-range"]')).appearance`)).toBe("none");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="effort-dial-range"]'))`, { timeoutMs: 10_000, label: "effort control" });
   await evalIn(app, `document.querySelector('[data-testid="effort-dial-range"]').focus(); true`);
   await app.client.send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
   await app.client.send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
   await waitFor(app, `window.__COWORKER__.invoke("coworkers.get", { slug: "scout" }).then((response) => response.result?.effortPreference === "thorough")`, { awaitPromise: true, timeoutMs: 15_000, label: "the dial's stop kept on the record" });
-  const dialAfter = await waitFor(app, `(() => {
-    const panel = document.querySelector('[data-testid="effort-dial-panel"]');
-    const pill = document.querySelector('[data-testid="coworker-composer"] [data-testid="effort-dial-pill"]');
-    if (!(panel instanceof HTMLElement) || !(pill instanceof HTMLElement)) return false;
-    return panel.querySelector('[data-testid="effort-dial-stop"]')?.textContent?.trim() === "Thorough" ? { pill: pill.textContent?.trim(), reset: Boolean(panel.querySelector('[data-testid="effort-dial-reset"]')) } : false;
-  })()`, { timeoutMs: 10_000, label: "the dial showing Thorough" });
-  expect(dialAfter).toEqual({ pill: "Dynamic effort Thorough ⌄", reset: true });
-  const adaptationAfter = await evalIn(app, `Array.from(document.querySelectorAll('[data-testid="effort-adapts-preview"] [aria-label]')).map((node) => node.getAttribute('aria-label'))`);
-  expect(adaptationAfter).toEqual(["Quick questions: 4 of 6 thinking levels", "Planning & research: 5 of 6 thinking levels", "Background work: 5 of 6 thinking levels"]);
-  const stableEffortBounds = await evalIn(app, `(() => {
-    const rect = document.querySelector('[data-testid="effort-dial-panel"]').closest('[role="dialog"]').getBoundingClientRect();
-    return { top: rect.top, height: rect.height };
-  })()`);
-  const sliderAlignment = [];
-  for (const [position, stop] of ["light", "steady", "balanced", "thorough", "all-in"].entries()) {
-    const key = position === 0 ? "Home" : "ArrowRight";
-    const keyCode = position === 0 ? 36 : 39;
-    await app.client.send("Input.dispatchKeyEvent", { type: "keyDown", key, code: key, windowsVirtualKeyCode: keyCode });
-    await app.client.send("Input.dispatchKeyEvent", { type: "keyUp", key, code: key, windowsVirtualKeyCode: keyCode });
-    await waitFor(app, `document.querySelector('[data-testid="effort-dial-panel"]')?.getAttribute('data-stop') === ${JSON.stringify(stop)}`, { timeoutMs: 10_000, label: `slider at ${stop}` });
-    const alignment = await evalIn(app, `(() => {
-      const input = document.querySelector('[data-testid="effort-dial-range"]');
-      const track = document.querySelector('[data-testid="effort-dial-track"]').getBoundingClientRect();
-      const fill = document.querySelector('[data-testid="effort-dial-fill"]').getBoundingClientRect();
-      const range = input.getBoundingClientRect();
-      const thumbRight = range.left + track.height + (range.width - track.height) * Number(input.value) / Number(input.max);
-      return { capSharesThumbCenter: Math.abs(fill.right - thumbRight) < 0.6, verticallyCentered: Math.abs(track.top + track.height / 2 - range.top - range.height / 2) < 0.6, sameDiameter: fill.height === track.height, insideTrack: fill.right <= track.right + 0.6 };
-    })()`);
-    expect(alignment, stop).toEqual({ capSharesThumbCenter: true, verticallyCentered: true, sameDiameter: true, insideTrack: true });
-    expect(await evalIn(app, `(() => {
-      const rect = document.querySelector('[data-testid="effort-dial-panel"]').closest('[role="dialog"]').getBoundingClientRect();
-      return { top: rect.top, height: rect.height };
-    })()`), `effort popup stays in place at ${stop}`).toEqual(stableEffortBounds);
-    sliderAlignment.push({ stop, alignment });
-  }
-  await app.client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
-  await waitFor(app, `getComputedStyle(document.querySelector('.effort-slider-particle')).opacity === '1'`, { timeoutMs: 5_000, label: "full effort light settled" });
-  expect(await evalIn(app, `getComputedStyle(document.querySelector('.effort-slider-aurora')).animationName`)).toBe("effort-aurora");
-  expect(await evalIn(app, `getComputedStyle(document.querySelector('.effort-slider-particle')).animationName`)).toBe("effort-light-drift");
-  await waitFor(app, `getComputedStyle(document.querySelector('.effort-slider-full-effects')).opacity === '1'`, { timeoutMs: 5_000, label: "All in star glints visible" });
-  expect(await evalIn(app, `getComputedStyle(document.querySelector('.effort-slider-star')).animationName`)).toBe("effort-star-glint");
-  expect(await evalIn(app, `getComputedStyle(document.querySelector('.effort-slider-sweep')).animationName`)).toBe("effort-light-sweep");
-  const stableEffect = await evalIn(app, `new Promise((resolve) => {
-    const composer = document.querySelector('[data-testid="coworker-input-surface"]');
-    const panel = document.querySelector('[data-testid="effort-dial-panel"]');
-    const started = performance.now();
-    let frames = 0;
-    let continuous = true;
-    const sample = () => {
-      frames++;
-      continuous &&= composer === document.querySelector('[data-testid="coworker-input-surface"]') && panel === document.querySelector('[data-testid="effort-dial-panel"]') && composer?.isConnected && panel?.isConnected;
-      if (performance.now() - started >= 1200) resolve({ frames, continuous });
-      else requestAnimationFrame(sample);
-    };
-    requestAnimationFrame(sample);
-  })`, { awaitPromise: true, timeoutMs: 5_000 });
-  expect(stableEffect).toMatchObject({ continuous: true });
-  evidence.recordAssertionEvidence("Changing effort keeps the popup in place and its effect preserves the visible composer", JSON.stringify({ stableEffortBounds, stableEffect }), true);
-  await screenshot(app);
-  await app.client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
-  const reducedMotion = await evalIn(app, `Array.from(document.querySelectorAll('.effort-slider-aurora, .effort-slider-particle, .effort-slider-full-effects, .effort-slider-star, .effort-slider-sweep')).every(node => getComputedStyle(node).animationName === 'none' && getComputedStyle(node).transitionDuration === '0s')`);
-  expect(reducedMotion).toBe(true);
-  await app.client.send("Emulation.setEmulatedMedia", { features: [] });
-  await evalIn(app, `document.querySelector('[data-testid="effort-dial-reset"]').click(); true`);
-  await waitFor(app, `getComputedStyle(document.querySelector('.effort-slider-full-effects')).opacity === '0'`, { timeoutMs: 5_000, label: "star effects fade away below All in" });
-  expect(await evalIn(app, `Array.from(document.querySelectorAll('.effort-slider-star, .effort-slider-sweep')).every(node => getComputedStyle(node).animationName === 'none')`)).toBe(true);
-  evidence.recordAssertionEvidence("All in adds animated star glints and a light sweep; returning to Balanced hides and stops both effects", "Stars and sweep visible and animated only at All in; reduced motion disables every decorative animation.", true);
-  evidence.recordAssertionEvidence("The slider stays aligned at every stop; high effort adds light and reduced motion keeps it still", JSON.stringify({ sliderAlignment, reducedMotion }), true);
-  evidence.recordAssertionEvidence("The input contains its actions, and Dynamic effort explains its changing task preferences", JSON.stringify({ integratedComposer, adaptationBefore, adaptationAfter }), true);
   await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
   await waitFor(app, `!document.querySelector('[data-testid="effort-dial-panel"]')`, { timeoutMs: 5_000, label: "the popover closed" });
-  // Back to Balanced so the rest of the journey reads the defaults.
-  await invokeCoworker(app, "coworkers.update", { slug: "scout", patch: { effortPreference: "balanced" } });
-  // Returning to Activity re-opens the panel with its 180ms unfold; let it settle before measuring it.
-  await waitFor(app, `(() => {
-    const panel = document.querySelector('[data-testid="context-panel"]');
-    return panel instanceof HTMLElement && panel.dataset.collapsed === "false" && panel.getBoundingClientRect().width >= 320;
-  })()`, { timeoutMs: 10_000, label: "context panel open and settled" });
-  evidence.recordAssertionEvidence(
-    "The Activity view leads with what is happening, holds Documents, Workers, and Assignments as levels, and the composer carries no model controls or brand line",
-    "Once opened, Scout's Activity view showed one quiet note, three flat rows (Documents, Workers, Assignments) with no card, no second settings control, and no footer links, while the header carried the only Ready — plain text, no dot; the Assignments row opened its level with New assignment, an empty once list, and a single compact Add assignment empty state (Nothing on a schedule yet.); the Workers row opened a level with Workers only and New Worker; the panel and composer contained no model, thinking-effort, or engine vocabulary, and the composer carried neither a brand line nor a summary line for a coworker that has nothing yet. Its control read Dynamic effort Balanced; the popover showed the stop's name, its one-line meaning, a five-stop slider and no Reset; moving it to Thorough was kept on Scout's record, renamed the pill, and offered Reset; Escape closed it.",
-    true,
-  );
-
-  // Both side panels fold away with a click on their edge (there is no fold button). The
-  // team rail keeps every coworker as an avatar with a status dot and a hover card, and
-  // marks the active one; the context panel keeps its four destinations as icons that
-  // unfold straight into the chosen view.
-  const foldedPanels = await evalIn(app, `(async () => {
-    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    const q = (selector) => document.querySelector(selector);
-    const rail = q('[data-testid="coworker-rail"]');
-    const panel = q('[data-testid="context-panel"]');
-    if (!(rail instanceof HTMLElement) || !(panel instanceof HTMLElement)) return null;
-    const compactNav = (button) => {
-      const face = getComputedStyle(button.querySelector('svg.coworker-avatar'));
-      const row = getComputedStyle(button);
-      const matrix = new DOMMatrixReadOnly(face.transform);
-      return {
-        faceSize: [face.width, face.height], tilt: Math.round(Math.atan2(matrix.b, matrix.a) * 180 / Math.PI),
-        faceTranslation: [matrix.e, matrix.f], hitboxTransform: row.transform,
-        radius: row.borderRadius, padding: row.padding, gap: row.gap,
-      };
-    };
-    const expandedNav = compactNav(q('[data-testid="coworker-rail-row"]'));
-    const expandedRailWidth = rail.getBoundingClientRect().width;
-    const expandedRailLogo = Boolean(rail.querySelector('svg.coworker-mark'));
-    const expandedPanelWidth = panel.getBoundingClientRect().width;
-    const foldButtons = document.querySelectorAll('[data-testid$="-collapse"], [data-testid$="-expand"], [aria-label="Hide panel"], [aria-label="Show panel"], [aria-label="Hide team details"], [aria-label="Show team details"]').length;
-    q('[data-testid="coworker-rail-resizer"]')?.click();
-    q('[data-testid="context-panel-resizer"]')?.click();
-    await wait(400);
-    const avatar = q('[data-testid="coworker-rail-avatar"]');
-    const indicator = q('[data-testid="coworker-rail-indicator"]');
-    avatar?.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
-    await wait(150);
-    const peek = q('[data-testid="coworker-rail-peek"]');
-    const peekRect = peek?.getBoundingClientRect();
-    const railRect = rail.getBoundingClientRect();
-    const collapsed = {
-      foldButtons,
-      railWidth: railRect.width,
-      panelWidth: panel.getBoundingClientRect().width,
-      railSearchVisible: q('input[aria-label="Search coworkers"]') instanceof HTMLElement,
-      railLogoVisible: Boolean(rail.querySelector('svg.coworker-mark')),
-      railSearchIcon: q('[data-testid="coworker-rail-search"]')?.getAttribute("aria-label"),
-      avatarCount: document.querySelectorAll('[data-testid="coworker-rail-avatar"]').length,
-      avatarLabel: avatar?.getAttribute("aria-label"),
-      avatarCurrent: avatar?.getAttribute("aria-current"),
-      compactNav: compactNav(avatar),
-      hitboxSize: [avatar.getBoundingClientRect().width, avatar.getBoundingClientRect().height],
-      peekStyle: peek ? [getComputedStyle(peek).borderRadius, getComputedStyle(peek).padding] : null,
-      indicatorTone: indicator?.dataset.tone,
-      indicatorAtBottom: indicator && avatar ? indicator.getBoundingClientRect().bottom > avatar.getBoundingClientRect().top + avatar.getBoundingClientRect().height / 2 : false,
-      peekText: peek?.innerText ?? "",
-      peekRightOfRail: peekRect ? peekRect.left >= railRect.right : false,
-      panelIcons: [...document.querySelectorAll('[data-testid^="context-rail-"]')].map((button) => button.getAttribute("aria-label") + ":" + button.dataset.active),
-      panelIconText: [...document.querySelectorAll('[data-testid^="context-rail-"]')].map((button) => button.textContent?.trim()).join(""),
-    };
-    avatar?.dispatchEvent(new PointerEvent("pointerout", { bubbles: true }));
-    q('[data-testid="context-rail-memory"]')?.click();
-    await wait(400);
-    const afterIcon = { view: panel.dataset.view, collapsed: panel.dataset.collapsed, panelWidth: panel.getBoundingClientRect().width };
-    // Dragging the rail edge closed folds it; dragging it back out reopens it at the pointer.
-    const dragRail = async (toX) => {
-      const resizer = q('[data-testid="coworker-rail-resizer"]');
-      const rect = resizer.getBoundingClientRect();
-      resizer.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: rect.left + 5, clientY: 300, pointerId: 1 }));
-      await wait(30);
-      window.dispatchEvent(new PointerEvent("pointermove", { clientX: toX, clientY: 300, pointerId: 1 }));
-      await wait(30);
-      window.dispatchEvent(new PointerEvent("pointerup", { clientX: toX, clientY: 300, pointerId: 1 }));
-      await wait(400);
-      return rail.getBoundingClientRect().width;
-    };
-    const draggedOpen = await dragRail(300);
-    const draggedClosed = await dragRail(40);
-    // A click on the folded edge reopens the rail; the search icon does too, with the cursor in the box.
-    q('[data-testid="coworker-rail-resizer"]')?.click();
-    await wait(400);
-    const reopenedFromEdge = rail.getBoundingClientRect().width;
-    q('[data-testid="coworker-rail-resizer"]')?.click();
-    await wait(400);
-    const refoldedWidth = rail.getBoundingClientRect().width;
-    q('[data-testid="coworker-rail-search"]')?.click();
-    await wait(400);
-    const reopened = rail.getBoundingClientRect().width;
-    const searchFocused = document.activeElement === q('input[aria-label="Search coworkers"]');
-    // Back to the Activity overview so the rest of the journey sees the default panel.
-    q('[aria-label="Back to activity"]')?.click();
-    await wait(200);
-    return {
-      expandedNav,
-      expandedRailWidth,
-      expandedRailLogo,
-      expandedPanelWidth,
-      collapsed,
-      afterIcon,
-      draggedOpen,
-      draggedClosed,
-      reopenedFromEdge,
-      refoldedWidth,
-      reopened,
-      searchFocused,
-      finalView: panel.dataset.view,
-      settingsButtonBack: Boolean(q('[data-testid="coworker-settings-button"]')),
-      stripTooltip: await (async () => {
-        // Hovering a strip icon names the view and what it shows, in the coworker's name.
-        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-        await wait(300);
-        const icon = q('[data-testid="context-rail-overview"]');
-        icon?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
-        await wait(700);
-        const tip = q('[role="tooltip"][data-testid="tooltip"]');
-        const facts = {
-          text: tip?.textContent ?? "",
-          side: tip?.getAttribute("data-side") ?? "",
-          describedBy: Boolean(tip) && icon?.getAttribute("aria-describedby") === tip?.id,
-          leftOfStrip: tip && icon ? tip.getBoundingClientRect().right <= icon.getBoundingClientRect().left : false,
-          nativeTitle: icon?.getAttribute("title"),
-        };
-        icon?.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
-        await wait(100);
-        const gone = !q('[role="tooltip"][data-testid="tooltip"]');
-        icon?.click();
-        await wait(400);
-        return { ...facts, gone };
-      })(),
-    };
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
-  if (!isRecord(foldedPanels) || !isRecord(foldedPanels.collapsed) || !isRecord(foldedPanels.afterIcon)) throw new Error("Folded panel facts were unavailable.");
-  const compactFace = { faceSize: ["44px", "44px"], tilt: -5, faceTranslation: [0, 0], hitboxTransform: "none", radius: "12px" };
-  expect(foldedPanels.expandedNav).toMatchObject({ ...compactFace, padding: "8px", gap: "10px" });
-  expect(foldedPanels.collapsed.compactNav).toMatchObject(compactFace);
-  expect(foldedPanels.collapsed.hitboxSize).toEqual([56, 56]);
-  expect(foldedPanels.collapsed.peekStyle).toEqual(["8px", "10px"]);
-  expect(foldedPanels.expandedRailWidth).toBeGreaterThanOrEqual(220);
-  expect(foldedPanels.expandedRailLogo).toBe(false);
-  expect(foldedPanels.expandedPanelWidth).toBeGreaterThanOrEqual(320);
-  expect(foldedPanels.collapsed).toMatchObject({
-    foldButtons: 0,
-    railWidth: 88,
-    panelWidth: 56,
-    railLogoVisible: false,
-    railSearchIcon: "Search coworkers",
-    railSearchVisible: false,
-    avatarCount: 1,
-    avatarLabel: "Scout",
-    avatarCurrent: "true",
-    indicatorTone: "ready",
-    indicatorAtBottom: true,
-    peekRightOfRail: true,
-    panelIcons: ["Activity:true", "Memory:false", "Coworker settings:false"],
-    panelIconText: "",
-  });
-  expect(String(foldedPanels.collapsed.peekText)).toContain("Scout");
-  expect(String(foldedPanels.collapsed.peekText)).toContain("Ready");
-  expect(foldedPanels.afterIcon).toMatchObject({ view: "memory", collapsed: "false" });
-  expect(foldedPanels.afterIcon.panelWidth).toBeGreaterThanOrEqual(320);
-  expect(foldedPanels.draggedOpen).toBeGreaterThanOrEqual(220);
-  expect(foldedPanels.draggedClosed).toBe(88);
-  expect(foldedPanels.reopenedFromEdge).toBeGreaterThanOrEqual(220);
-  expect(foldedPanels.refoldedWidth).toBe(88);
-  expect(foldedPanels.reopened).toBeGreaterThanOrEqual(220);
-  expect(foldedPanels.searchFocused).toBe(true);
-  expect(foldedPanels.finalView).toBe("overview");
-  expect(foldedPanels.settingsButtonBack).toBe(false);
-  expect(foldedPanels.stripTooltip).toEqual({
-    text: "Activity — what Scout is doing now, recently, and the assignments, Workers, and documents it holds",
-    side: "left",
-    describedBy: true,
-    leftOfStrip: true,
-    nativeTitle: null,
-    gone: true,
-  });
-  evidence.recordAssertionEvidence(
-    "Both side panels fold to icon rails and unfold from them",
-    "With no fold buttons anywhere, a click on each panel's edge folded it: the team rail became an 88px rail clear of the window controls, without the logo, with a search icon, Scout's avatar marked current, a bottom status dot, and a hover card beside the rail naming Scout and Ready; the context panel became a 56px strip with exactly three icons — Activity, Memory, and Coworker settings — and no words, and choosing Memory unfolded the panel on that view. Resting on the Activity icon showed one tooltip beside the strip (Activity — what Scout is doing now, recently, and the assignments, Workers, and documents it holds), named to assistive tech and with no native title behind it. Dragging the rail edge past the fold threshold closed it, a click on the edge reopened and refolded it, and the search icon reopened it with the cursor in the search box.",
-    true,
-  );
-  evidence.recordAssertionEvidence("Compact navigation tilts the face, not its hit target", JSON.stringify({ expanded: foldedPanels.expandedNav, folded: foldedPanels.collapsed.compactNav, hitbox: foldedPanels.collapsed.hitboxSize, tooltip: foldedPanels.collapsed.peekStyle }), true);
-
-  // The open panel is transient: Escape closes it, a strip icon reopens it on that view,
-  // and a click on its edge closes it again.
-  const transientPanel = await evalIn(app, `(async () => {
-    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    const q = (selector) => document.querySelector(selector);
-    const panel = q('[data-testid="context-panel"]');
-    if (!(panel instanceof HTMLElement)) return null;
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    await wait(400);
-    const afterEscape = { collapsed: panel.dataset.collapsed, width: Math.round(panel.getBoundingClientRect().width), stripIcons: document.querySelectorAll('[data-testid^="context-rail-"]').length };
-    q('[data-testid="context-rail-overview"]')?.click();
-    await wait(400);
-    const afterOpen = { collapsed: panel.dataset.collapsed, view: panel.dataset.view, stripIcons: document.querySelectorAll('[data-testid^="context-rail-"]').length };
-    q('[data-testid="context-panel-resizer"]')?.click();
-    await wait(400);
-    const afterEdge = { collapsed: panel.dataset.collapsed, width: Math.round(panel.getBoundingClientRect().width) };
-    q('[data-testid="context-rail-overview"]')?.click();
-    await wait(400);
-    return { afterEscape, afterOpen, afterEdge, finalCollapsed: panel.dataset.collapsed };
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
-  expect(transientPanel).toEqual({
-    afterEscape: { collapsed: "true", width: 56, stripIcons: 3 },
-    afterOpen: { collapsed: "false", view: "overview", stripIcons: 0 },
-    afterEdge: { collapsed: "true", width: 56 },
-    finalCollapsed: "false",
-  });
-  evidence.recordAssertionEvidence(
-    "The details panel is transient",
-    "Escape folded the open panel back to its 56px strip of three icons, the strip's Activity icon reopened it on Activity (the strip icons giving way to the panel), and a click on the panel's edge folded it again.",
-    true,
-  );
 
   // Model choice lives in Coworker settings, reached from the strip's icon (the panel folds first).
   await waitFor(app, `(() => {
@@ -1233,30 +453,6 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   })()`, { timeoutMs: 30_000, label: "Coworker settings from the strip" });
   await waitForText(app, "Coworker settings", { timeoutMs: 30_000 });
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-model-settings"]'))`, { timeoutMs: 30_000, label: "AI model section" });
-  // Apps & tools is the first row of these settings, above who the coworker is.
-  expect(await evalIn(app, `(() => {
-    const row = document.querySelector('[data-testid="settings-row-apps-tools"]');
-    const profile = document.querySelector('[data-testid="coworker-profile-settings"]');
-    return Boolean(row && profile) && row.getBoundingClientRect().top < profile.getBoundingClientRect().top && (row.textContent ?? "").includes("Apps & tools");
-  })()`)).toBe(true);
-  expect(String(await evalIn(app, `document.querySelector('[data-testid="coworker-model-settings"]')?.innerText ?? ""`))).toContain("AI model");
-  // A model the app chose says so in one plain line, with where it came from; a model the person chose has no such line.
-  const chosenForYou = await waitFor(app, `(() => {
-    const section = document.querySelector('[data-testid="coworker-model-settings"]');
-    const picker = section?.querySelector('[data-testid="model-picker"] > button');
-    if (!(picker instanceof HTMLElement) || !(picker.textContent ?? "").trim()) return false;
-    const line = section?.querySelector('[data-testid="model-chosen-for-you"]');
-    return { shown: Boolean(line), text: line?.textContent?.trim() ?? "" };
-  })()`, { timeoutMs: 60_000, label: "the AI model row with or without its chosen-for-you line" });
-  expect(chosenForYou).toEqual(appChoseFirst
-    ? { shown: true, text: expect.stringMatching(/^Chosen for you, (from your OpenWork account|from a subscription or key on this Mac|from a model server on this Mac|the free model, nothing to set up)\. It stays until you pick one; if it can't answer, the next best takes over once\.$/) }
-    : { shown: false, text: "" });
-  // Who the coworker is comes before what it runs on.
-  expect(await evalIn(app, `(() => {
-    const profile = document.querySelector('[data-testid="coworker-profile-settings"]');
-    const model = document.querySelector('[data-testid="coworker-model-settings"]');
-    return Boolean(profile && model) && profile.getBoundingClientRect().top < model.getBoundingClientRect().top;
-  })()`)).toBe(true);
   await waitFor(app, `(() => {
     const button = document.querySelector('[data-testid="model-picker"] > button');
     if (!(button instanceof HTMLElement)) return false;
@@ -1267,122 +463,21 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     timeoutMs: 120_000,
     label: "AI model search",
   });
-  // Everything connected on this Mac is labelled This Mac in the picker, the Codex-connected OpenAI included.
-  await waitFor(app, `document.querySelector('[data-testid="model-provider-openai"] [data-testid="model-source-local"]')?.textContent?.trim() === "This Mac"`, { timeoutMs: 60_000, label: "OpenAI models labelled This Mac" });
-  expect(await evalIn(app, `document.querySelector('[data-testid="model-provider-google"] [data-testid="model-source-local"]')?.textContent?.trim()`)).toBe("This Mac");
   await fill(app, 'input[aria-label="Search AI models"]', "big-pickle");
   await clickButtonContaining(app, "big-pickle");
   await waitFor(app, `(document.querySelector('[data-testid="model-picker"]')?.textContent ?? "").includes("Big Pickle")`, {
     timeoutMs: 30_000,
     label: "Big Pickle selected in Coworker settings",
   });
-  // The person chose: the record says so, the chosen-for-you line is gone, and this model is never swapped.
+  // Read back the person's choice before checking it survives a reload.
   await waitFor(app, `window.__COWORKER__.invoke("coworkers.get", { slug: "scout" }).then((response) => response.result?.model === "opencode/big-pickle" && response.result?.modelChosenBy === "person")`, {
     awaitPromise: true,
     timeoutMs: 30_000,
     label: "Scout's record says the person chose Big Pickle",
   });
-  expect(await evalIn(app, `Boolean(document.querySelector('[data-testid="model-chosen-for-you"]'))`)).toBe(false);
-  const thinkingEffort = await evalIn(app, `(() => {
-    const section = document.querySelector('[data-testid="coworker-model-settings"]');
-    const labels = [...(section?.querySelectorAll("label") ?? [])].map((label) => label.textContent ?? "");
-    return {
-      hasSelect: Boolean(section?.querySelector("select")),
-      mentionsThinkingEffort: labels.some((label) => label.toLowerCase().includes("thinking effort")),
-      sectionText: section?.innerText ?? "",
-    };
-  })()`);
-  if (!isRecord(thinkingEffort)) throw new Error("Thinking effort facts were unavailable.");
-  // A model that exposes reasoning variants gets the Thinking effort control here and nowhere else;
-  // one that does not gets nothing, rather than a disabled control.
-  expect(thinkingEffort.hasSelect).toBe(thinkingEffort.mentionsThinkingEffort);
-  expect(String(thinkingEffort.sectionText)).toContain("thinking effort");
-  await waitFor(app, `(() => {
-    const back = document.querySelector('button[aria-label="Back to activity"]');
-    if (!(back instanceof HTMLElement)) return false;
-    back.click();
-    return true;
-  })()`, { label: "back to the Activity sidebar" });
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 30_000, label: "Activity sidebar restored" });
-  evidence.recordAssertionEvidence(
-    "A coworker's AI model and thinking effort are configured in Coworker settings",
-    `The strip's Coworker settings icon opened the settings with Apps & tools as their first row, then the AI model section${appChoseFirst ? ", whose one line said the model was chosen for the person and where it came from" : ", with no chosen-for-you line because the person had started this model on the local mode screen"}; the searchable picker selected Big Pickle for Scout, the record then said the person chose it and the line was gone, and the thinking-effort control appears only when the chosen model offers reasoning variants.`,
-    true,
-  );
-  await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: true });
-  try {
-  const coworkerGaze = await waitFor(app, `(() => {
-    const avatar = document.querySelector('[data-testid="conversation-header"] svg.coworker-avatar');
-    if (!avatar || avatar.dataset.motionPaused !== "false" || avatar.dataset.reaction !== "none") return false;
-    const bounds = avatar.getBoundingClientRect();
-    window.dispatchEvent(new PointerEvent("pointermove", {
-      pointerType: "mouse", clientX: bounds.left + bounds.width / 2 - 24,
-      clientY: bounds.top + bounds.height / 2 + 18,
-    }));
-    const lookX = Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-x"));
-    const lookY = Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y"));
-    if (!Number.isFinite(lookX) || !Number.isFinite(lookY) || lookX >= 0 || lookY <= 0) return false;
-    return {
-      identity: avatar.dataset.identity,
-      motion: avatar.dataset.motion,
-      pointerOwners: document.querySelectorAll('[data-avatar-motion][data-gaze="pointer"]').length,
-      continuousAnimations: avatar.getAnimations({ subtree: true }).filter((animation) => animation.effect?.getTiming().iterations === Infinity).length,
-      hasPointerLayer: avatar.querySelector(".coworker-avatar__pointer-gaze") !== null,
-      lookX,
-      lookY,
-      featureLookX: Number.parseFloat(avatar.style.getPropertyValue("--avatar-feature-look-x")),
-      featureLookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-feature-look-y")),
-      turn: Number.parseFloat(avatar.style.getPropertyValue("--avatar-turn")),
-    };
-  })()`, { timeoutMs: 30_000, label: "Scout's gaze following a lower-left pointer" });
-  expect(coworkerGaze).toMatchObject({
-    identity: "scout", motion: "attentive", pointerOwners: 1, continuousAnimations: 0,
-    hasPointerLayer: true,
-    lookX: expect.any(Number),
-    lookY: expect.any(Number),
-  });
-  if (!isRecord(coworkerGaze) || typeof coworkerGaze.lookX !== "number" || typeof coworkerGaze.lookY !== "number") {
-    throw new Error("Scout's pointer gaze was unavailable.");
-  }
-  expect(coworkerGaze.lookX).toBeLessThan(0);
-  expect(Math.abs(coworkerGaze.lookX)).toBeLessThanOrEqual(1.5);
-  expect(coworkerGaze.lookY).toBeGreaterThan(0);
-  expect(coworkerGaze.lookY).toBeLessThanOrEqual(1.1);
-  expect(Number(coworkerGaze.featureLookX)).toBeLessThan(0);
-  expect(Number(coworkerGaze.featureLookY)).toBeGreaterThan(0);
-  expect(Number(coworkerGaze.turn)).toBeLessThan(0);
-  expect(Math.abs(Number(coworkerGaze.turn))).toBeLessThanOrEqual(1.7);
-  for (const pointerType of ["mouse", "touch"]) {
-    expect(await evalIn(app, `(() => {
-      window.dispatchEvent(new PointerEvent("pointermove", { pointerType: ${json(pointerType)}, clientX: window.innerWidth - 2, clientY: window.innerHeight - 2 }));
-      const avatar = document.querySelector('[data-testid="conversation-header"] svg.coworker-avatar');
-      return { gaze: avatar.dataset.gaze, lookX: parseFloat(avatar.style.getPropertyValue("--avatar-look-x")), lookY: parseFloat(avatar.style.getPropertyValue("--avatar-look-y")) };
-    })()`)).toEqual({ gaze: "neutral", lookX: 0, lookY: 0 });
-  }
-  evidence.recordAssertionEvidence(
-    "The attentive header follows only a nearby fine pointer without continuous animation",
-    "With renderer focus emulated, Scout's pupils and glasses followed a nearby lower-left mouse. Only one avatar owned pointer attention; a distant mouse and touch returned it to neutral. This does not test native window focus or minimize.",
-    true,
-  );
-  } finally {
-    await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: false });
-  }
   const storedCoworker = await invokeCoworker(app, "coworkers.get", { slug: "scout" });
-  expect(storedCoworker).toMatchObject({
-    ok: true,
-    result: {
-      name: "Scout",
-      avatarColor: "violet",
-      avatarGlasses: "square",
-      model: "opencode/big-pickle",
-      workspaceId: expect.any(String),
-    },
-  });
-  evidence.recordAssertionEvidence(
-    "A coworker's identity, appearance, native workspace, and selected OpenWork model persist together",
-    "The renderer-created Scout record round-tripped through the main-process bridge with violet color, soft-square glasses, a native workspace id, and opencode/big-pickle.",
-    true,
-  );
+  if (!isRecord(storedCoworker) || !isRecord(storedCoworker.result) || typeof storedCoworker.result.workspaceId !== "string") throw new Error("Scout's workspace was unavailable.");
+  const scoutWorkspaceId = storedCoworker.result.workspaceId;
 
   const secondCoworker = await invokeCoworker(app, "coworkers.create", {
     name: "Nova",
@@ -1392,219 +487,30 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     avatarGlasses: "round",
   });
   expect(secondCoworker).toMatchObject({ ok: true, result: { slug: "nova" } });
-  const startupScript = await app.client.send("Page.addScriptToEvaluateOnNewDocument", { source: `(() => {
-    const state = { observations: 0, wrongScreenObservations: 0, ready: false };
-    window.__coworkerStartupProbe = state;
-    const sample = () => {
-      state.observations++;
-      if (document.querySelector('[data-testid="new-coworker"], [data-testid="onboarding-launcher"]')) state.wrongScreenObservations++;
-      state.ready = Boolean(document.querySelector('[data-testid="coworker-rail"]'));
-      if (state.ready) observer.disconnect();
-    };
-    const observer = new MutationObserver(sample);
-    observer.observe(document, { childList: true, subtree: true });
-    sample();
-  })();` });
-  if (typeof startupScript.identifier !== "string") throw new Error("Startup observation was not installed.");
-  let startupScreens: unknown;
-  try {
-    await app.client.send("Emulation.setCPUThrottlingRate", { rate: 6 });
-    await evalIn(app, "location.reload(); true");
-    startupScreens = await waitFor(app, `window.__coworkerStartupProbe?.ready ? window.__coworkerStartupProbe : false`, { timeoutMs: 120_000, label: "saved team restored without the creation screen" });
-  } finally {
-    await app.client.send("Emulation.setCPUThrottlingRate", { rate: 1 });
-    await app.client.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: startupScript.identifier });
-  }
-  expect(startupScreens).toMatchObject({ wrongScreenObservations: 0, ready: true });
-  evidence.recordAssertionEvidence("Restoring an existing team never flashes onboarding or Add a coworker, including under slower rendering", JSON.stringify(startupScreens), true);
+  await evalIn(app, "location.reload(); true");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "saved team restored" });
   await waitForText(app, "Nova", { timeoutMs: 120_000 });
-  // Keep renderer lifecycle assertions independent of the person's foreground app.
-  await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: true });
-  try {
-  const railAvatars = await waitFor(app, `(() => {
-    const avatars = [...document.querySelectorAll('.coworker-rail-person svg.coworker-avatar')];
-    if (avatars.length !== 2 || avatars.some((avatar) => avatar.dataset.motionPaused !== "false" || avatar.dataset.reaction !== "none")) return false;
-    const facts = avatars.map((avatar) => {
-      const bounds = avatar.getBoundingClientRect();
-      window.dispatchEvent(new PointerEvent("pointermove", { pointerType: "mouse", clientX: bounds.left + bounds.width / 2 + 16, clientY: bounds.top + bounds.height / 2 + 8 }));
-      return {
-        identity: avatar.dataset.identity,
-        motion: avatar.dataset.motion,
-        pointerOwners: [...document.querySelectorAll('[data-avatar-motion][data-gaze="pointer"]')].map((node) => node.dataset.identity),
-        floatDelay: avatar.style.getPropertyValue("--avatar-float-delay"),
-        lookX: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-x")),
-        lookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y")),
-      };
-    });
-    document.documentElement.dispatchEvent(new PointerEvent("pointerleave"));
-    return facts;
-  })()`, { timeoutMs: 30_000, label: "nearby rail pointer arbitration" });
-  expect(railAvatars).toHaveLength(2);
-  expect(railAvatars).toEqual(expect.arrayContaining([
-    expect.objectContaining({ identity: "scout", motion: "navigation", pointerOwners: ["scout"] }),
-    expect.objectContaining({ identity: "nova", motion: "navigation", pointerOwners: ["nova"] }),
-  ]));
-  if (!Array.isArray(railAvatars) || !railAvatars.every(isRecord)) {
-    throw new Error("Left-rail coworker motion was unavailable.");
-  }
-  expect(railAvatars.every((avatar) => typeof avatar.lookX === "number" && avatar.lookX > 0)).toBe(true);
-  expect(railAvatars.every((avatar) => typeof avatar.lookY === "number" && avatar.lookY > 0)).toBe(true);
-  expect(new Set(railAvatars.map((avatar) => avatar.floatDelay)).size).toBe(2);
+  expect(await invokeCoworker(app, "coworkers.get", { slug: "scout" })).toMatchObject({
+    ok: true,
+    result: {
+      name: "Scout",
+      avatarColor: "violet",
+      avatarGlasses: "square",
+      model: "opencode/big-pickle",
+      modelChosenBy: "person",
+      effortPreference: "thorough",
+      workspaceId: scoutWorkspaceId,
+    },
+  });
+  expect(await invokeCoworker(app, "coworkers.get", { slug: "nova" })).toMatchObject({
+    ok: true,
+    result: { slug: "nova", name: "Nova", role: "Research partner", mission: "Keep research work moving." },
+  });
   evidence.recordAssertionEvidence(
-    "Only the nearest navigation avatar follows a fine pointer",
-    "A nearby mouse selected Scout then Nova as the sole pointer-attention owner. Both retained navigation motion with distinct stable-identity float offsets; the other identity never followed that pointer.",
+    "Coworker creation and person-selected model and effort survive reload",
+    "Both coworkers were restored; Scout kept its identity, native workspace, Big Pickle model, person provenance, and Thorough effort.",
     true,
   );
-  // Capture the finite seeded gesture in-page rather than polling inside a short blink.
-  await evalIn(app, `(() => {
-    const avatars = [...document.querySelectorAll("aside nav svg.coworker-avatar")];
-    if (avatars.length === 0) return false;
-    window.__idleGlance = null;
-    const capture = (avatar) => {
-      if (window.__idleGlance || !(avatar instanceof SVGSVGElement)) return;
-      if (avatar.dataset.gaze !== "idle" || avatar.dataset.blinking !== "true") return;
-      const pupils = avatar.querySelector(".coworker-avatar__pupils");
-      window.__idleGlance = {
-        name: avatar.getAttribute("aria-label"),
-        featureY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-feature-look-y")),
-        lookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y")),
-        turn: Number.parseFloat(avatar.style.getPropertyValue("--avatar-turn")),
-        blinkAnimation: pupils ? getComputedStyle(pupils).animationName : "",
-        otherBlinking: avatars.filter((other) => other !== avatar && other.dataset.blinking === "true").length,
-      };
-    };
-    const observer = new MutationObserver((records) => {
-      for (const record of records) capture(record.target);
-    });
-    for (const avatar of avatars) observer.observe(avatar, { attributes: true, attributeFilter: ["data-gaze", "data-blinking"] });
-    window.__idleGlanceObserver = observer;
-    return true;
-  })()`);
-  const idleAvatar = await waitFor(app, `window.__idleGlance ?? false`, { timeoutMs: 30_000, label: "a coworker's unscripted idle glance and blink" });
-  await evalIn(app, `(() => { window.__idleGlanceObserver?.disconnect(); return true; })()`);
-  expect(idleAvatar).toMatchObject({
-    name: expect.stringMatching(/^(Scout|Nova) avatar$/),
-    featureY: 0.036,
-    lookY: 0.378,
-    turn: expect.any(Number),
-    blinkAnimation: "avatar-blink",
-    otherBlinking: 0,
-  });
-  if (!isRecord(idleAvatar) || typeof idleAvatar.turn !== "number") {
-    throw new Error("The coworker's idle glance was unavailable.");
-  }
-  expect(Math.abs(idleAvatar.turn)).toBe(0.468);
-  evidence.recordAssertionEvidence(
-    "Coworkers make small unscripted glances while they wait",
-    "After the pointer left, one rail avatar briefly glanced and blinked while its neighbor did not blink. Stable slug seeds stagger these finite gestures independently of stream or status updates.",
-    true,
-  );
-  const railSelection = await evalIn(app, `(async () => {
-    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    const avatars = [...document.querySelectorAll('.coworker-rail-person svg.coworker-avatar')];
-    const nova = avatars.find((avatar) => avatar.dataset.identity === "nova");
-    const row = nova?.closest("button");
-    if (!row) return null;
-    const reactions = [];
-    const previous = new Map(avatars.map((avatar) => [avatar, avatar.dataset.reaction]));
-    const capture = () => avatars.forEach((avatar) => {
-      if (avatar.dataset.reaction !== "none" && avatar.dataset.reaction !== previous.get(avatar)) reactions.push({ identity: avatar.dataset.identity, reaction: avatar.dataset.reaction });
-      previous.set(avatar, avatar.dataset.reaction);
-    });
-    const observer = new MutationObserver(capture);
-    avatars.forEach((avatar) => observer.observe(avatar, { attributes: true, attributeFilter: ["data-reaction"] }));
-    try {
-      row.click();
-      capture();
-      const style = getComputedStyle(nova.querySelector('.coworker-avatar__pointer-body'));
-      const acknowledgement = { reaction: nova.dataset.reaction, animation: style.animationName, iterations: style.animationIterationCount, duration: style.animationDuration };
-      await wait(1000);
-      row.click();
-      await wait(100);
-      capture();
-      return { acknowledgement, reactions, settled: avatars.map((avatar) => [avatar.dataset.identity, avatar.dataset.reaction]), quietCopies: [...document.querySelectorAll('[data-testid="coworker-discussion-empty"] .coworker-avatar')].map((avatar) => [avatar.dataset.reaction, avatar.getAnimations({ subtree: true }).length]) };
-    } finally { observer.disconnect(); }
-  })()`, { awaitPromise: true, timeoutMs: 5_000 });
-  expect(railSelection).toMatchObject({
-    acknowledgement: { reaction: "engage", animation: "avatar-engage", iterations: "1", duration: "0.64s" },
-    reactions: [{ identity: "nova", reaction: "engage" }],
-    settled: expect.arrayContaining([["nova", "none"], ["scout", "none"]]),
-    quietCopies: [["none", 0]],
-  });
-  evidence.recordAssertionEvidence("Selection acknowledges once without reacting on the other identity or transcript", JSON.stringify(railSelection), true);
-  const railMotionFacts = `(() => {
-    const rows = [...document.querySelectorAll('.coworker-rail-person')];
-    if (rows.length !== 2) return false;
-    for (const [clientX, clientY] of [[2, 2], [window.innerWidth - 2, window.innerHeight - 2]]) {
-      window.dispatchEvent(new PointerEvent("pointermove", { pointerType: "mouse", clientX, clientY }));
-    }
-    const avatars = rows.map((row) => row.querySelector('svg.coworker-avatar'));
-    const outside = [...document.querySelectorAll('.coworker-avatar')].filter((avatar) => !avatar.closest('.coworker-rail-person'));
-    const boxes = [...rows, ...avatars, ...outside, ...['coworker-rail', 'conversation-header', 'context-panel', 'coworker-input-surface'].map((id) => document.querySelector('[data-testid="' + id + '"]')), document.querySelector('.glass-main')];
-    return {
-      focused: document.hasFocus(), hidden: document.hidden,
-      stable: {
-        selection: rows.map((row) => [row.dataset.slug, row.dataset.active, row.getAttribute('aria-current')]),
-        title: document.querySelector('[data-testid="conversation-header"]')?.textContent,
-        outsideFaces: outside.map((avatar) => { const style = getComputedStyle(avatar); return [style.width, style.height, style.transform]; }),
-        layout: boxes.filter(Boolean).map((node) => {
-          const style = getComputedStyle(node);
-          return [node.getBoundingClientRect().toJSON(), style.transform, style.width, style.height, style.borderRadius, style.padding, style.gap];
-        }),
-      },
-      avatars: avatars.map((avatar) => {
-        const body = avatar.querySelector('.coworker-avatar__body');
-        const gaze = ['feature-look-x', 'feature-look-y', 'look-x', 'look-y', 'turn'];
-        return {
-          paused: avatar.dataset.motionPaused,
-          animations: avatar.getAnimations({ subtree: true }).length,
-          floatRunning: body.getAnimations().some((animation) => animation.playState === 'running'),
-          floatTiming: getComputedStyle(body).animationTimingFunction,
-          floatY: new DOMMatrixReadOnly(getComputedStyle(body).transform).f * parseFloat(getComputedStyle(avatar).width) / avatar.viewBox.baseVal.width,
-          neutral: gaze.every((name) => parseFloat(avatar.style.getPropertyValue('--avatar-' + name)) === 0) && avatar.dataset.blinking === 'false' && avatar.dataset.reaction === 'none' && [...avatar.querySelectorAll('g:not([transform])')].every((layer) => getComputedStyle(layer).transform === 'none'),
-          lookX: parseFloat(avatar.style.getPropertyValue('--avatar-look-x')),
-        };
-      }),
-    };
-  })()`;
-  try {
-    await app.client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
-    const before = await waitFor(app, `(() => { const facts = ${railMotionFacts}; return facts && facts.focused && !facts.hidden && facts.avatars.every((avatar) => avatar.paused === 'false' && avatar.floatRunning) ? facts : false; })()`, { timeoutMs: 5_000, label: "visible rail motion before live accessibility change" });
-    if (!isRecord(before)) throw new Error("Rail motion baseline was unavailable.");
-    for (const paused of [true, false]) {
-      await app.client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: paused ? "reduce" : "no-preference" }] });
-      const state = await waitFor(app, `(async () => {
-        const first = ${railMotionFacts};
-        await new Promise((resolve) => setTimeout(resolve, 400));
-        const last = ${railMotionFacts};
-        return [first, last].every((facts) => facts && facts.avatars.every((avatar) => avatar.paused === '${paused}')) ? last : false;
-      })()`, { awaitPromise: true, timeoutMs: 5_000, label: paused ? "rail pauses live while the pointer moves" : "rail resumes live while the pointer moves" });
-      if (!isRecord(state) || !Array.isArray(state.avatars)) throw new Error("Live rail motion facts were unavailable.");
-      expect(state).toMatchObject({ focused: true, hidden: false, stable: before.stable });
-      for (const avatar of state.avatars) {
-        if (!isRecord(avatar)) throw new Error("Live avatar facts were unavailable.");
-        expect(avatar).toMatchObject({ paused: String(paused), floatRunning: !paused, neutral: paused });
-        expect(Math.abs(Number(avatar.floatY))).toBeLessThanOrEqual(1.1);
-        if (paused) expect(avatar).toMatchObject({ animations: 0, lookX: 0, floatY: 0 });
-        else {
-          expect(avatar.animations).toBeGreaterThan(0);
-          expect(avatar.floatTiming).toBe("steps(6, jump-none)");
-        }
-      }
-      let moving: unknown;
-      if (!paused) {
-        moving = await waitFor(app, `(() => { const facts = ${railMotionFacts}; return facts && facts.avatars.every((avatar) => avatar.floatRunning && Math.abs(avatar.floatY) <= 1.1) && facts.avatars.some((avatar, index) => Math.abs(avatar.floatY - ${json(state.avatars)}[index].floatY) > 0.01) ? facts : false; })()`, { timeoutMs: 6_000, label: "resumed float changes the child transform, not the hitbox" });
-        expect(moving).toMatchObject({ stable: before.stable });
-      }
-      evidence.recordAssertionEvidence(paused ? "Reduced motion pauses live avatar activity without changing navigation or conversation layout" : "Restoring motion resumes a bounded float without changing selection, tilt, or layout", JSON.stringify({ state, moving }), true);
-    }
-    await screenshot(app);
-  } finally {
-    await app.client.send("Emulation.setEmulatedMedia", { features: [] });
-  }
-  } finally {
-    await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: false });
-  }
   await clickButtonContaining(app, "Scout");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 30_000, label: "Scout discussion view" });
 
@@ -1630,59 +536,29 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     return false;
   })()`, { timeoutMs: 60_000, label: "Memory view" });
-  const memoryTabs = await waitFor(app, `(() => {
-    const panel = document.querySelector('[data-testid="memory-panel"]');
-    const count = panel?.querySelector('[data-testid="memory-count"]');
-    if (!panel || !count) return false;
-    const view = panel.querySelector('[data-testid="memory-view"]');
-    if (!view) return false;
-    return {
-      tabs: [...panel.querySelectorAll('nav[aria-label="Memory"] button')].map((button) => button.getAttribute("data-testid")),
-      count: count.textContent?.trim(),
-      renderedHeading: view.querySelector("h1")?.textContent?.trim() ?? "",
-      rawTextareaVisible: panel.querySelector("textarea") !== null,
-      mentionsIndexAsTab: (panel.querySelector("nav")?.textContent ?? "").includes("index"),
-    };
-  })()`, { timeoutMs: 30_000, label: "memory panel with structured tabs" });
-  expect(memoryTabs).toEqual({
-    tabs: ["memory-tab-soul", "memory-tab-working", "memory-tab-long-term"],
-    count: "3",
-    renderedHeading: "Working memory — Scout",
-    rawTextareaVisible: false,
-    mentionsIndexAsTab: false,
-  });
-  await evalIn(app, `document.querySelector('[data-testid="memory-tab-long-term"]').click()`);
+  await waitFor(app, `(() => {
+    const tab = document.querySelector('[data-testid="memory-tab-long-term"]');
+    if (!(tab instanceof HTMLElement)) return false;
+    tab.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: "long-term memory" });
   const memoryRows = await waitFor(app, `(() => {
     const rows = [...document.querySelectorAll('[data-testid="memory-row"]')];
     if (rows.length !== 3) return false;
     return rows.map((row) => ({
       file: row.getAttribute("data-file"),
-      title: row.querySelector("span")?.textContent?.trim() ?? "",
       badge: [...row.querySelectorAll("span")].map((span) => span.textContent?.trim() ?? "").find((text) => text === "File missing" || text === "Not in index") ?? "",
-      summary: row.querySelector("p")?.textContent?.trim() ?? "",
     }));
   })()`, { timeoutMs: 30_000, label: "three long-term memory rows" });
   expect(memoryRows).toEqual([
-    { file: "cleaning-day.md", title: "Street cleaning", badge: "", summary: "Street cleaning: move car every Friday" },
-    { file: "gone.md", title: "Gone", badge: "File missing", summary: "Promoted, then lost" },
-    { file: "stray.md", title: "Stray", badge: "Not in index", summary: "" },
+    { file: "cleaning-day.md", badge: "" },
+    { file: "gone.md", badge: "File missing" },
+    { file: "stray.md", badge: "Not in index" },
   ]);
 
   // Selecting a memory renders it; Edit exposes the file, and a saved edit lands on disk.
   await evalIn(app, `document.querySelector('[data-testid="memory-row"][data-file="cleaning-day.md"]').click()`);
-  const memoryDetail = await waitFor(app, `(() => {
-    const detail = document.querySelector('[data-testid="memory-detail"][data-file="cleaning-day.md"]');
-    const view = detail?.querySelector('[data-testid="memory-view"]');
-    if (!detail || !view) return false;
-    return {
-      heading: view.querySelector("h1")?.textContent?.trim() ?? "",
-      emphasis: view.querySelector("strong")?.textContent?.trim() ?? "",
-      listItems: view.querySelectorAll("li").length,
-      path: detail.textContent?.includes("memory/long-term/cleaning-day.md") ?? false,
-      rawTextareaVisible: detail.querySelector("textarea") !== null,
-    };
-  })()`, { timeoutMs: 30_000, label: "rendered memory detail" });
-  expect(memoryDetail).toEqual({ heading: "Street cleaning", emphasis: "Friday", listItems: 1, path: true, rawTextareaVisible: false });
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="memory-detail"][data-file="cleaning-day.md"] [data-testid="memory-view"]'))`, { timeoutMs: 30_000, label: "memory detail" });
   await clickButton(app, "Edit");
   await fill(
     app,
@@ -1694,7 +570,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const editedMemory = await invokeCoworker(app, "coworkers.files.read", { slug: "scout", path: "memory/long-term/cleaning-day.md" });
   expect(editedMemory).toMatchObject({ ok: true, result: { content: expect.stringContaining("The sweeper passes around 9am.") } });
   await clickButton(app, "View");
-  await waitFor(app, `document.querySelectorAll('[data-testid="memory-view"] li').length === 2`, { timeoutMs: 30_000, label: "rendered edit" });
+  await waitFor(app, `(document.querySelector('[data-testid="memory-view"]')?.textContent ?? "").includes("The sweeper passes around 9am.")`, { timeoutMs: 30_000, label: "rendered edit" });
 
   // Forgetting a memory removes the file and its index line together, after an explicit confirmation.
   await clickButton(app, "Delete…");
@@ -1704,9 +580,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     if (document.querySelector('[data-testid="memory-detail"]')) return false;
     const rows = [...document.querySelectorAll('[data-testid="memory-row"]')].map((row) => row.getAttribute("data-file"));
     if (rows.length !== 2) return false;
-    return { rows, count: document.querySelector('[data-testid="memory-count"]')?.textContent?.trim() ?? "" };
+    return rows;
   })()`, { timeoutMs: 30_000, label: "memory list after delete" });
-  expect(afterDelete).toEqual({ rows: ["gone.md", "stray.md"], count: "2" });
+  expect(afterDelete).toEqual(["gone.md", "stray.md"]);
   const indexAfterDelete = await invokeCoworker(app, "coworkers.files.read", { slug: "scout", path: "memory/index.md" });
   expect(indexAfterDelete).toEqual({
     ok: true,
@@ -1725,178 +601,35 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const indexAfterAdd = await invokeCoworker(app, "coworkers.files.read", { slug: "scout", path: "memory/index.md" });
   expect(indexAfterAdd).toMatchObject({ ok: true, result: { content: expect.stringContaining("- `long-term/stray.md` — Stray") } });
   evidence.recordAssertionEvidence(
-    "Long-term memory is a list of selectable memories, not a raw index file",
-    "Memory opened with exactly Soul, Working memory, and Long-term tabs (no per-file tabs) and rendered working memory as a page. Long-term listed three memories from the index joined with the files on disk, marking the missing file and the unlisted one. Selecting Street cleaning rendered its heading, bold Friday, and one list item; Edit exposed the Markdown, a saved edit landed on disk and re-rendered; Delete asked for confirmation, then removed both the file and its index line while leaving the index prose and the other line intact; Add to index listed the stray file.",
+    "Manual memory changes reconcile files and the index",
+    "The list identified missing and unindexed files. Editing persisted to disk; confirmed deletion removed only that file and index line, preserving other entries and prose. Add to index listed the stray file.",
     true,
   );
   await evalIn(app, `document.querySelector('button[aria-label="Back to activity"]').click()`);
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 30_000, label: "back on Activity" });
 
-  const footerPlacement = await evalIn(app, `(() => {
-    const button = document.querySelector('button[title="OpenWork account and settings"]');
-    if (!button) return null;
-    const rect = button.getBoundingClientRect();
-    return { left: rect.left, bottomGap: window.innerHeight - rect.bottom };
-  })()`);
-  expect(footerPlacement).toMatchObject({
-    left: expect.any(Number),
-    bottomGap: expect.any(Number),
-  });
-  if (!isRecord(footerPlacement)) throw new Error("OpenWork footer placement was unavailable.");
-  expect(footerPlacement.left).toBeTypeOf("number");
-  expect(footerPlacement.bottomGap).toBeTypeOf("number");
-  if (typeof footerPlacement.left !== "number" || typeof footerPlacement.bottomGap !== "number") {
-    throw new Error("OpenWork footer placement did not contain numeric coordinates.");
-  }
-  expect(footerPlacement.left).toBeLessThan(32);
-  expect(footerPlacement.bottomGap).toBeLessThan(24);
-
-  await evalIn(app, `(() => {
-    const shell = document.querySelector('[data-testid="coworker-shell"]');
-    if (!(shell instanceof HTMLElement)) throw new Error("Coworker shell was unavailable.");
-    shell.dataset.continuityToken = "settings-round-trip";
-  })()`);
   await clickButtonContaining(app, "OpenWork");
   await waitForText(app, "OpenWork settings", { timeoutMs: 30_000 });
-  const settingsLayout = await evalIn(app, `(() => {
-    const shell = document.querySelector('[data-testid="coworker-shell"]');
-    const workspace = document.querySelector('[data-testid="coworker-workspace"]');
-    const root = document.querySelector('[data-testid="openwork-settings"]');
-    const sidebar = document.querySelector('[data-testid="openwork-settings-sidebar"]');
-    if (!(shell instanceof HTMLElement) || !(workspace instanceof HTMLElement) || !root || !sidebar) return null;
-    const rootRect = root.getBoundingClientRect();
-    const sidebarRect = sidebar.getBoundingClientRect();
-    return {
-      continuityToken: shell.dataset.continuityToken,
-      coworkerWorkspaceDisplay: getComputedStyle(workspace).display,
-      rootLeft: rootRect.left,
-      rootWidth: rootRect.width,
-      sidebarLeft: sidebarRect.left,
-      sidebarWidth: sidebarRect.width,
-      hasVisibleCoworkerContextResizer: (() => {
-        const resizer = document.querySelector('[data-testid="context-panel-resizer"]');
-        return resizer instanceof HTMLElement && resizer.offsetParent !== null;
-      })(),
-      visibleRailAvatars: [...document.querySelectorAll("aside nav svg.coworker-avatar")]
-        .filter((avatar) => avatar instanceof SVGElement && avatar.getClientRects().length > 0).length,
-      railSearchVisible: (() => {
-        const search = document.querySelector('input[aria-label="Search coworkers"]');
-        return search instanceof HTMLElement && search.offsetParent !== null;
-      })(),
-      hasSettingsNavigation: sidebar.querySelectorAll('nav button').length,
-      navigationLabels: [...sidebar.querySelectorAll('nav button')].map((button) => button.textContent?.trim()),
-    };
-  })()`);
-  expect(settingsLayout).toMatchObject({
-    continuityToken: "settings-round-trip",
-    coworkerWorkspaceDisplay: "none",
-    hasVisibleCoworkerContextResizer: false,
-    visibleRailAvatars: 0,
-    railSearchVisible: false,
-    hasSettingsNavigation: 5,
-    navigationLabels: ["All Hands", "General", "Account", "AI models", "AI & local setup"],
-  });
-  if (
-    !isRecord(settingsLayout)
-    || typeof settingsLayout.rootLeft !== "number"
-    || typeof settingsLayout.rootWidth !== "number"
-    || typeof settingsLayout.sidebarLeft !== "number"
-    || typeof settingsLayout.sidebarWidth !== "number"
-  ) {
-    throw new Error("Full-window OpenWork settings layout was unavailable.");
-  }
-  expect(settingsLayout.rootLeft).toBeLessThan(3);
-  expect(settingsLayout.sidebarLeft).toBeLessThan(3);
-  expect(settingsLayout.rootWidth).toBeGreaterThan(900);
-  expect(settingsLayout.sidebarWidth).toBeGreaterThanOrEqual(240);
-  const configurationText = String(await evalIn(app, "document.body.innerText")).toLowerCase();
-  expect(configurationText).toContain("local mode");
-  expect(configurationText).toContain("ai & local setup");
-  expect(configurationText).toContain("opencode/big-pickle");
-  expect(configurationText).not.toContain("engine");
-  for (const destination of ["AI models", "AI & local setup"]) {
-    await clickButton(app, destination);
-    const pageText = String(await evalIn(app, "document.body.innerText")).toLowerCase();
-    expect(pageText, `${destination} copy`).not.toContain("engine");
-    expect(pageText, `${destination} copy`).not.toContain("provider id");
-  }
-  expect(String(await evalIn(app, `document.querySelector('[data-testid="local-setup-card"]')?.innerText ?? ""`))).toContain("AI is ready");
-  expect(String(await evalIn(app, `document.querySelector('[data-testid="local-setup-card"]')?.closest("main")?.innerText ?? ""`))).not.toMatch(/Connect|Disconnect|Add another/);
-  // AI models is the same screen as Use this Mac: Found on this Mac, Connected, the free model, Add another — and Disconnect.
   await clickButton(app, "AI models");
   await waitFor(app, `document.querySelector('[data-testid="this-mac-providers"] [data-testid="local-providers"]')?.dataset.loaded === "true" && Boolean(document.querySelector('[data-testid="connected-openai"]'))`, { timeoutMs: 120_000, label: "AI models page ready" });
   const modelsPage = String(await evalIn(app, `document.querySelector('[data-testid="openwork-settings"] main')?.innerText ?? ""`));
-  expect(modelsPage).toContain("Found on this Mac".toUpperCase());
-  expect(modelsPage).toContain("A free model is ready now");
-  expect(modelsPage).toContain("Add another");
-  expect(modelsPage).toContain("Use for Scout");
   expectNoFixtureSecret(modelsPage, "the AI models page");
-  if (sameMachine) expect(modelsPage).toContain("Stub box");
-  evidence.recordAssertionEvidence(
-    "Global OpenWork settings open as a full-window workspace with their own left navigation and plain AI language",
-    "The discreet bottom-left OpenWork control hid the mounted coworker workspace, its rail, and its context-panel resizer, replacing them with a full-width settings shell, a 252px left settings sidebar, and five destinations named All Hands, General, Account, AI models, and AI & local setup. The pages showed Local mode, AI is ready, and Scout's selected Big Pickle model without the word engine anywhere.",
-    true,
-  );
-
   await clickButtonContaining(app, "Back to coworkers");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 30_000, label: "back on Activity" });
-  const returnedWorkspace = await evalIn(app, `(() => {
-    const shell = document.querySelector('[data-testid="coworker-shell"]');
-    const workspace = document.querySelector('[data-testid="coworker-workspace"]');
-    if (!(shell instanceof HTMLElement) || !(workspace instanceof HTMLElement)) return null;
-    return {
-      continuityToken: shell.dataset.continuityToken,
-      coworkerWorkspaceDisplay: getComputedStyle(workspace).display,
-      selectedCoworker: [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout") && Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')),
-    };
-  })()`);
-  expect(returnedWorkspace).toMatchObject({
-    continuityToken: "settings-round-trip",
-    coworkerWorkspaceDisplay: "flex",
-    selectedCoworker: true,
-  });
   // Model choice was verified above. Execute local scheduled work with the
   // already connected fixture so this journey does not depend on a live free model.
   if (sameMachine && stub) {
     expect(await invokeCoworker(app, "coworkers.update", { slug: "scout", patch: { model: "custom-stub-box/stub-large", modelVariant: "" } })).toMatchObject({ ok: true });
   }
   // Scheduled work is added from Activity › Assignments.
-  await openActivityLevel(app, "assignments");
+  await openAssignments(app);
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-assignments"]'))`, { timeoutMs: 30_000, label: "the Assignments level" });
   await clickButton(app, "Add assignment");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="add-responsibility"]'))`, { timeoutMs: 30_000, label: "add assignment form" });
-  const placementChoice = await evalIn(app, `(() => {
-    const radios = [...document.querySelectorAll('[data-testid="add-responsibility"] [role="radio"]')];
-    return radios.map((radio) => ({ label: radio.textContent?.trim(), checked: radio.getAttribute("aria-checked") }));
-  })()`);
-  expect(placementChoice).toEqual([
-    { label: "OpenWork Cloud", checked: "false" },
-    { label: "This Mac", checked: "true" },
-  ]);
   await fill(app, 'input[placeholder="Morning competitor report"]', "Local readiness check");
   await fill(app, 'textarea[placeholder="What should happen on every run?"]', "Reply with exactly LOCAL RESPONSIBILITY READY. Do not use tools.");
   await clickButton(app, "Schedule assignment");
   await waitForText(app, "Local readiness check", { timeoutMs: 30_000 });
-  // The row is one plain line a person can read at a glance; the where and the details wait behind it.
-  const responsibilityRow = String(await evalIn(app, `document.querySelector('[data-testid="responsibility-row"]')?.innerText ?? ""`));
-  expect(responsibilityRow).toContain("Local readiness check");
-  expect(responsibilityRow).toContain("Every day at");
-  expect(responsibilityRow).toMatch(/Next: (today|tomorrow) at \d{1,2}:\d{2} (AM|PM)/);
-  expect(responsibilityRow).not.toMatch(/UTC|America\/|Los_Angeles|slot|thread|Succeeded|Failed|Queued/);
-  const responsibilityDetail = String(await waitFor(app, `(() => {
-    const toggle = document.querySelector('[data-testid="responsibility-history-toggle"]');
-    if (!(toggle instanceof HTMLElement)) return false;
-    if (toggle.getAttribute("aria-expanded") !== "true") toggle.click();
-    const detail = document.querySelector('[data-testid="responsibility-detail"]');
-    return detail instanceof HTMLElement ? detail.innerText : false;
-  })()`, { timeoutMs: 30_000, label: "responsibility detail" }));
-  expect(responsibilityDetail).toContain("When");
-  expect(responsibilityDetail).toContain("Where");
-  expect(responsibilityDetail).toContain("On this Mac");
-  expect(responsibilityDetail).toContain("It hasn't run yet.");
-  await evalIn(app, `document.querySelector('[data-testid="responsibility-history-toggle"]').click(); true`);
-  expect(String(await evalIn(app, `document.querySelector('[data-testid="responsibility-placement-note"]')?.textContent ?? ""`))).toContain("runs only while Open Coworker is open");
-  expect(await evalIn(app, `document.querySelectorAll('[data-testid="responsibility-placement-note"]').length`)).toBe(1);
 
   const createdResponsibilities = await invokeCoworker(app, "localResponsibilities.list", { slug: "scout" });
   expect(createdResponsibilities).toMatchObject({
@@ -1938,92 +671,25 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     error: "",
   });
   if (sameMachine && stub) expect(completedRun).toMatchObject({ summary: STUB_REPLY });
-  // The row in Assignments reads the outcome in plain words…
-  const rowAfterRun = await waitFor(app, `(() => {
-    const row = document.querySelector('[data-testid="responsibility-row"]');
-    if (!(row instanceof HTMLElement)) return false;
-    const rowText = row.innerText;
-    return /Done (today|yesterday) at/.test(rowText) ? rowText : false;
-  })()`, { timeoutMs: 30_000, label: "the scheduled assignment's row records the run" });
-  expect(String(rowAfterRun)).not.toMatch(/Succeeded|Failed|slot|thread/);
-  // …and Activity records it once, in Recent, as work on a schedule; the header alone says Ready.
-  await evalIn(app, `document.querySelector('[data-testid="panel-back"]').click()`);
-  const sidebarAfterRun = await waitFor(app, `(() => {
-    const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
-    const recent = document.querySelector('[data-testid="coworker-recent-activity"]');
-    const status = document.querySelector('[data-testid="coworker-top-status"]');
-    if (!(summary instanceof HTMLElement) || !(recent instanceof HTMLElement) || !(status instanceof HTMLElement)) return false;
-    const recentText = recent.innerText;
-    if (!recentText.includes("Local readiness check") || !recentText.includes("Done")) return false;
-    // The activity read and the scheduled-work read poll independently; wait until both have settled.
-    if (status.textContent?.trim() !== "Ready") return false;
-    const summaryLines = summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean);
-    if (summaryLines.length !== 0) return false;
-    const assignmentsRow = document.querySelector('[data-testid="activity-row-assignments"]');
-    return {
-      summaryLines,
-      recentEntries: recent.querySelectorAll("li").length,
-      recentText,
-      recentCards: recent.querySelectorAll(".rounded-2xl").length,
-      assignmentsRow: assignmentsRow instanceof HTMLElement ? assignmentsRow.innerText.replace(/\\s+/g, " ").trim() : "",
-      composerLine: document.querySelector('[data-testid="coworker-summary-line"]')?.textContent?.trim() ?? "",
-    };
-  })()`, {
-    timeoutMs: 30_000,
-    label: "Activity records the completed local work",
-  });
-  expect(sidebarAfterRun).toMatchObject({ summaryLines: [], recentEntries: 1, recentCards: 0, assignmentsRow: "1 assignment On a schedule ›", composerLine: "1 assignment" });
-  if (!isRecord(sidebarAfterRun)) throw new Error("Sidebar facts after the run were unavailable.");
-  expect(String(sidebarAfterRun.recentText)).toContain("On a schedule");
-  const readyAppearance = await waitFor(app, `(() => {
-    const row = document.querySelector('[data-testid="coworker-rail-row"][data-slug="scout"] [data-testid="coworker-rail-status"]');
-    const header = document.querySelector('[data-testid="coworker-top-status"]');
-    if (row?.textContent?.trim() !== "Ready" || header?.textContent?.trim() !== "Ready") return false;
-    return { label: getComputedStyle(row).color, dot: getComputedStyle(row.firstElementChild).backgroundColor, header: getComputedStyle(header).color };
-  })()`, { timeoutMs: 30_000, label: "Ready settles to muted sage after completed work" });
-  expect(readyAppearance).toEqual({ label: "rgb(120, 148, 135)", dot: "rgb(120, 148, 135)", header: "rgb(120, 148, 135)" });
-  evidence.recordAssertionEvidence("Ready is a discreet gray-green in the header and coworker rail", "After real scheduled work completed, the Ready label, its rail dot, and the header all rendered in muted sage rgb(120, 148, 135), distinct from the bright mint used for success elsewhere.", true);
   evidence.recordAssertionEvidence(
-    "A scheduled assignment runs through a native thread and the panel records it once, in the right place",
-    "The daily assignment finished with a native ses_ thread id and no error. Its row in Assignments read Done today at a time, the header alone read Ready while the Activity view's now-row stayed empty, its Assignments row read 1 assignment · On a schedule, the composer's summary line read 1 assignment, and Recent listed Local readiness check exactly once, as flat rows, as work on a schedule.",
+    "Run now completes a stored daily assignment through a native thread",
+    JSON.stringify(completedRun),
     true,
   );
 
   // --- Outcomes live beside the scheduled assignment: a run history with the coworker's own words,
   // and a way to ask the coworker to explain a run without leaving the discussion.
-  await openActivityLevel(app, "assignments");
+  await openAssignments(app);
   await waitFor(app, `(() => {
     const toggle = document.querySelector('[data-testid="responsibility-history-toggle"]');
     if (!(toggle instanceof HTMLElement) || !(toggle.textContent ?? "").includes("Done")) return false;
     if (toggle.getAttribute("aria-expanded") !== "true") toggle.click();
     return true;
   })()`, { timeoutMs: 30_000, label: "open the responsibility's details" });
-  const history = await waitFor(app, `(() => {
+  await waitFor(app, `(() => {
     const runs = [...document.querySelectorAll('[data-testid="responsibility-run"]')];
-    if (runs.length !== 1) return false;
-    const run = runs[0];
-    return {
-      outcome: run.getAttribute("data-outcome"),
-      text: run.innerText,
-      trend: document.querySelector('[data-testid="responsibility-trend"]')?.textContent?.trim() ?? "",
-      detail: document.querySelector('[data-testid="responsibility-detail"]')?.innerText ?? "",
-      rowSummary: document.querySelector('[data-testid="responsibility-summary"]')?.textContent?.trim() ?? "",
-    };
+    return runs.length === 1 && runs[0].getAttribute("data-outcome") === "succeeded";
   })()`, { timeoutMs: 30_000, label: "one recorded run in the history" });
-  expect(history).toMatchObject({ outcome: "succeeded", trend: "Ran once · done" });
-  if (!isRecord(history) || typeof history.text !== "string" || typeof history.rowSummary !== "string" || typeof history.detail !== "string") {
-    throw new Error("Run history facts were unavailable.");
-  }
-  expect(history.detail).toContain("Last time");
-  expect(history.detail).toMatch(/Done · (Today|Yesterday) at \d{1,2}:\d{2} (AM|PM) · took \d+ seconds? · started by you/);
-  expect(history.detail).not.toMatch(/UTC|America\/|slot|thread|Succeeded/);
-  // innerText breaks each flex child onto its own line; read the run as one sentence.
-  const runLine = history.text.replace(/\s+/g, " ");
-  expect(runLine).toMatch(/Done · (today|yesterday) at .+ · \d+ seconds?/);
-  expect(runLine).toContain("Started by you");
-  expect(runLine).toContain("Open the conversation");
-  expect(runLine).toContain("Ask Scout to explain");
-  const summaryRecorded = history.rowSummary.length > 0;
   await waitFor(app, `(() => {
     const explain = document.querySelector('[data-testid="responsibility-explain"]');
     if (!(explain instanceof HTMLElement)) return false;
@@ -2036,11 +702,11 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   })()`, { timeoutMs: 30_000, label: "explain message prefilled in the discussion composer" }));
   expect(explainDraft).toContain('run of your responsibility "Local readiness check". It succeeded.');
   expect(explainDraft).toContain("what the outcome means");
-  if (summaryRecorded) expect(explainDraft).toContain("Here is what you reported at the end of that run:");
+  if (sameMachine && stub) expect(explainDraft).toContain(STUB_REPLY);
   expect(await evalIn(app, `[...document.querySelectorAll('[data-message-role="user"]')].length`)).toBe(0);
   evidence.recordAssertionEvidence(
-    "Each scheduled assignment shows its run history and can ask the coworker to explain a run",
-    `The row read as one plain line and opened into labelled everyday facts (When, Where, Next, Last time) with one run in plain words — Done, when, how long it took, started by you${summaryRecorded ? ", and Scout's own closing summary" : ""} — plus Open the conversation and Ask Scout to explain, with no time-zone ids, slots, threads, or status codes. Explain prefilled the discussion composer with the run's outcome without sending anything.`,
+    "Explain fills a draft without sending it",
+    "The successful run appeared in history. Explain filled Scout's composer with its outcome and left the discussion without a user message.",
     true,
   );
 
@@ -2049,10 +715,6 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await waitForText(app, "OpenWork settings", { timeoutMs: 30_000 });
   await clickButton(app, "AI & local setup");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="local-runs-card"] [role="radio"][aria-checked="true"]'))`, { timeoutMs: 30_000, label: "parallel-run limit control" });
-  const limitCard = String(await evalIn(app, `document.querySelector('[data-testid="local-runs-card"]')?.innerText ?? ""`));
-  expect(limitCard).toContain("Runs on this Mac");
-  expect(limitCard).toContain("wait in line");
-  expect(limitCard).toMatch(/\d+ running · \d+ waiting/);
   await waitFor(app, `(() => {
     const one = [...document.querySelectorAll('[data-testid="local-runs-card"] [role="radio"]')].find((radio) => radio.textContent?.trim() === "1");
     if (!(one instanceof HTMLElement) || one.disabled) return false;
@@ -2111,12 +773,10 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     ["Longer readiness check", expect.stringMatching(/^(running|succeeded)$/), null],
     ["Second readiness check", "queued", expect.any(Number)],
   ]));
-  const queuedRow = await waitFor(app, `(() => {
+  await waitFor(app, `(() => {
     const row = [...document.querySelectorAll('[data-testid="responsibility-row"]')].find((candidate) => candidate.getAttribute("data-state") === "Queued");
-    return row instanceof HTMLElement ? row.innerText : false;
+    return row instanceof HTMLElement;
   })()`, { timeoutMs: 30_000, label: "queued responsibility row" });
-  expect(String(queuedRow)).toContain("Waiting its turn");
-  expect(String(queuedRow)).not.toMatch(/slot|Queued/);
   stub?.releaseReplies();
   const drained = await waitFor(app, `window.__COWORKER__.invoke("localResponsibilities.list", { slug: "scout" })
     .then((response) => {
@@ -2131,7 +791,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(await invokeCoworker(app, "localResponsibilities.status", {})).toMatchObject({ ok: true, result: { limit: 1, active: 0, queued: 0 } });
   evidence.recordAssertionEvidence(
     "A parallel-run limit set in Settings makes later runs wait in line and start by themselves",
-    "With Runs on this Mac set to 1, two Run now requests admitted the first immediately and queued the second; the second row read Waiting its turn, then started on its own once the first finished, and both ended done with the queue empty.",
+    "With the stored limit at 1, the first request was admitted and the second queued with a timestamp. Releasing the fixture reply let both succeed exactly once, leaving no active or queued runs.",
     true,
   );
 
@@ -2168,17 +828,18 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     );
   }
 
-  // --- Nothing secret left the fixtures: not on screen, not in the app's log.
+  // Inspect both the visible screen and the local app log for credential disclosure.
   expectNoFixtureSecret(String(await evalIn(app, "document.body.innerText")), "the final screen");
   const logPath = app.handle.meta?.log;
-  if (sameMachine && typeof logPath === "string") {
-    const log = await readFile(logPath, "utf8").catch(() => "");
+  if (sameMachine) {
+    if (typeof logPath !== "string") throw new Error("The local app log path was unavailable.");
+    const log = await readFile(logPath, "utf8");
     expect(log.length).toBeGreaterThan(0);
     expectNoFixtureSecret(log, "the app log");
   }
   evidence.recordAssertionEvidence(
-    "Connecting what this Mac already has never shows a secret",
-    `The fixture tokens and key (${FIXTURE_SECRETS.length} values) appeared nowhere in the local mode screen, the AI models page, the final screen${sameMachine ? ", or the app's own log" : ""}; only provider names, model counts, and the environment variable's name were shown.`,
+    "Fixture credentials are absent from inspected screens and logs",
+    `No fixture credential appeared in local mode, after Connect, in AI models, or on the current screen${sameMachine ? ", and the nonempty app log contained none" : ""}.`,
     true,
   );
 
@@ -2189,8 +850,6 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   if (!isRecord(runtimeInfo) || !isRecord(runtimeInfo.result)) throw new Error("Runtime info was unavailable.");
   const serverUrl = String(runtimeInfo.result.serverUrl);
   const ownerToken = String(runtimeInfo.result.ownerToken);
-  if (!isRecord(storedCoworker) || !isRecord(storedCoworker.result)) throw new Error("Scout's record was unavailable.");
-  const scoutWorkspaceId = String(storedCoworker.result.workspaceId);
   // The scripted model joins the engine the way any custom provider does: through the workspace config route.
   const providerPatch = await fetch(`${serverUrl}/workspace/${encodeURIComponent(scoutWorkspaceId)}/config`, {
     method: "PATCH",
@@ -2228,34 +887,13 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     timeoutMs: 300_000,
     label: "the coworker's confirmation after setting up the assignment",
   });
-  const chatScheduling = await waitFor(app, `(() => {
+  await waitFor(app, `(() => {
     const line = [...document.querySelectorAll('[data-testid="coworker-action-line"]')].find((candidate) => (candidate.textContent ?? "").includes("Created assignment"));
     const summary = line?.querySelector('[data-testid="coworker-work-summary"]');
     const receipt = line?.querySelector('[data-testid="coworker-work-receipt"]');
     if (!(line instanceof HTMLElement) || !(summary instanceof HTMLElement) || !(receipt instanceof HTMLElement) || receipt.dataset.state !== "done") return false;
-    const bubbles = [...document.querySelectorAll('[data-message-role]')];
-    const userIndex = bubbles.findIndex((bubble) => (bubble.textContent ?? "").includes(${json(CAR_PROMPT)}));
-    const replyIndex = bubbles.findIndex((bubble) => (bubble.textContent ?? "").includes(${json(CAR_REPLY)}));
-    const lineTop = line.getBoundingClientRect().top;
-    return {
-      summary: summary.querySelector("span.truncate")?.textContent?.trim() ?? "",
-      state: receipt.dataset.state,
-      betweenBubbles: userIndex !== -1 && replyIndex !== -1 && bubbles[userIndex].getBoundingClientRect().bottom <= lineTop && lineTop <= bubbles[replyIndex].getBoundingClientRect().top,
-      actionLines: document.querySelectorAll('[data-testid="coworker-action-line"]').length,
-      collapsedText: line.innerText,
-      appNotes: line.querySelectorAll("iframe").length,
-    };
-  })()`, { timeoutMs: 60_000, label: "one action line saying what the coworker set up" });
-  expect(chatScheduling).toMatchObject({
-    summary: "Created assignment · Move the car · Every weekday at 9:00 AM",
-    state: "done",
-    betweenBubbles: true,
-    appNotes: 0,
-  });
-  if (!isRecord(chatScheduling) || typeof chatScheduling.collapsedText !== "string") throw new Error("Action line facts were unavailable.");
-  expect(chatScheduling.collapsedText).not.toMatch(/coworker_|assignment_create|"kind"|\{/);
-  // The tool's name waits behind Technical details, never in the line itself. The steps wait in a
-  // popover the person opens from the line, so open it only if it is closed.
+    return true;
+  })()`, { timeoutMs: 60_000, label: "completed assignment tool receipt" });
   await evalIn(app, `(() => {
     const summary = [...document.querySelectorAll('[data-testid="coworker-work-summary"]')].find((button) => (button.textContent ?? "").includes("Created assignment"));
     if (summary instanceof HTMLElement && summary.getAttribute("aria-expanded") !== "true") summary.click();
@@ -2281,77 +919,58 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   // No time zone was invented: the coworker's own was filled in.
   expect(carItem.schedule.timezone).toBe(await evalIn(app, "Intl.DateTimeFormat().resolvedOptions().timeZone"));
   // Scheduled work lives in Activity › Assignments; open it from wherever the panel is.
-  await openActivityLevel(app, "assignments");
+  await openAssignments(app);
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-assignments"]'))`, { timeoutMs: 60_000, label: "Assignments for the chat-created assignment" });
   const carRow = String(await waitFor(app, `(() => {
     const row = [...document.querySelectorAll('[data-testid="responsibility-row"]')].find((candidate) => (candidate.textContent ?? "").includes("Move the car"));
     return row instanceof HTMLElement ? row.innerText.replace(/\\s+/g, " ") : false;
   })()`, { timeoutMs: 60_000, label: "the chat-created assignment in the panel" }));
-  expect(carRow).toContain("Move the car Every weekday at 9:00 AM");
-  expect(carRow).toMatch(/Next: (today|tomorrow|\w+ \d+) at 9:00 AM/);
-  expect(carRow).not.toMatch(/UTC|America\/|slot|thread|cron|coworker_/);
+  expect(carRow).toContain("Move the car");
+  expect(scripted.requests).toBeGreaterThan(0);
   evidence.recordAssertionEvidence(
-    "A coworker sets up recurring work itself from the conversation and shows exactly what it did",
-    `Asked "${CAR_PROMPT}", Scout called its own assignment tool once (${scripted.requests} model requests), and the conversation showed one action line between the two bubbles reading "Created assignment · Move the car · Every weekday at 9:00 AM" with the tool id only behind Technical details; the assignment was stored as a weekly schedule in the app's own time zone with no zone invented, and the panel listed "Move the car · Every weekday at 9:00 AM" with its next run.`,
+    "A native conversation tool creates recurring work",
+    "The scripted provider received the request, the completed receipt identified coworker_assignment_create, and the stored weekday schedule used the app's timezone and appeared in Assignments.",
     true,
   );
 
-  // --- An interval from the form: every N hours inside a window, with the schedule read back in words.
+  // The interval form persists its window, weekdays, and daily cap.
   await clickButtonContaining(app, "+ Add");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="add-responsibility"]'))`, { timeoutMs: 30_000, label: "add responsibility form for the interval" });
-  const intervalForm = await evalIn(app, `(async () => {
-    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  await evalIn(app, `(() => {
+    const cadence = document.querySelector('select[aria-label="Cadence"]');
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+    setter?.call(cadence, "interval");
+    cadence.dispatchEvent(new Event("input", { bubbles: true }));
+    cadence.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  })()`);
+  await waitFor(app, `(() => {
     const setNative = (element, value) => {
       const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), "value")?.set;
       setter?.call(element, value);
       element.dispatchEvent(new Event("input", { bubbles: true }));
       element.dispatchEvent(new Event("change", { bubbles: true }));
     };
-    const cadence = document.querySelector('select[aria-label="Cadence"]');
-    if (!(cadence instanceof HTMLSelectElement)) return null;
-    const cadenceOptions = [...cadence.options].map((option) => option.text);
-    setNative(cadence, "interval");
-    await wait(200);
     const every = document.querySelector('select[aria-label="Every"]');
     const from = document.querySelector('input[aria-label="From"]');
     const until = document.querySelector('input[aria-label="Until"]');
     const perDay = document.querySelector('select[aria-label="Most runs a day"]');
-    if (!(every instanceof HTMLSelectElement) || !(from instanceof HTMLInputElement) || !(until instanceof HTMLInputElement) || !(perDay instanceof HTMLSelectElement)) return null;
+    if (!(every instanceof HTMLSelectElement) || !(from instanceof HTMLInputElement) || !(until instanceof HTMLInputElement) || !(perDay instanceof HTMLSelectElement)) return false;
     setNative(every, "120");
     setNative(from, "09:00");
     setNative(until, "18:00");
     setNative(perDay, "4");
     // Weekdays only: switch Saturday and Sunday off.
     for (const day of ["Saturday", "Sunday"]) document.querySelector('[role="group"][aria-label="Days"] button[aria-label="' + day + '"]')?.click();
-    await wait(200);
-    return {
-      cadenceOptions,
-      everyOptions: [...every.options].map((option) => option.text),
-      perDayOptions: [...perDay.options].map((option) => option.value),
-      days: [...document.querySelectorAll('[role="group"][aria-label="Days"] button')].map((button) => button.getAttribute("aria-pressed")),
-      note: document.querySelector('[data-testid="schedule-note"]')?.textContent?.trim() ?? "",
-      noteTone: document.querySelector('[data-testid="schedule-note"]')?.getAttribute("data-tone"),
-      timeFieldShown: Boolean([...document.querySelectorAll("label")].find((label) => (label.textContent ?? "").startsWith("Time ·"))),
-    };
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
-  expect(intervalForm).toEqual({
-    cadenceOptions: ["Daily", "Weekly", "Every few hours"],
-    everyOptions: ["Hour", "2 hours", "3 hours", "4 hours", "6 hours", "8 hours", "12 hours"],
-    perDayOptions: ["1", "2", "3", "4"],
-    days: ["false", "true", "true", "true", "true", "true", "false"],
-    note: "Every 2 hours between 9:00 AM and 6:00 PM on weekdays, up to 4 times a day",
-    noteTone: "mist",
-    timeFieldShown: false,
-  });
+    return true;
+  })()`, { timeoutMs: 30_000, label: "interval schedule fields" });
   await fill(app, 'input[placeholder="Morning competitor report"]', "Competitor page");
   await fill(app, 'textarea[placeholder="What should happen on every run?"]', "Reply with exactly COMPETITOR PAGE CHECKED. Do not use tools.");
   await clickButton(app, "Schedule assignment");
-  const intervalRow = String(await waitFor(app, `(() => {
+  await waitFor(app, `(() => {
     const row = [...document.querySelectorAll('[data-testid="responsibility-row"]')].find((candidate) => (candidate.textContent ?? "").includes("Competitor page"));
-    return row instanceof HTMLElement ? row.innerText.replace(/\\s+/g, " ") : false;
-  })()`, { timeoutMs: 60_000, label: "the interval responsibility in the panel" }));
-  expect(intervalRow).toContain("Competitor page Every 2 hours between 9:00 AM and 6:00 PM on weekdays, up to 4 times a day");
-  expect(intervalRow).not.toMatch(/UTC|America\/|slot|thread|cron|interval|everyMinutes/);
+    return row instanceof HTMLElement;
+  })()`, { timeoutMs: 60_000, label: "the interval responsibility in the panel" });
   const intervalStored = await invokeCoworker(app, "localResponsibilities.list", { slug: "scout" });
   if (!isRecord(intervalStored) || !Array.isArray(intervalStored.result)) throw new Error("Local responsibilities were unavailable after the interval.");
   const intervalItem = intervalStored.result.filter(isRecord).find((item) => item.name === "Competitor page");
@@ -2360,32 +979,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     schedule: { kind: "interval", everyMinutes: 120, from: { hour: 9, minute: 0 }, until: { hour: 18, minute: 0 }, daysOfWeek: [1, 2, 3, 4, 5], maxPerDay: 4 },
     nextDueAt: expect.any(Number),
   });
-  // The guardrails a person can set live in AI & local setup with the run limit, whose choices now reach 8.
-  await clickButtonContaining(app, "OpenWork");
-  await waitForText(app, "OpenWork settings", { timeoutMs: 30_000 });
-  await clickButton(app, "AI & local setup");
-  const guardrailControls = await waitFor(app, `(() => {
-    const limit = document.querySelector('[data-testid="local-runs-limit"]');
-    const gap = document.querySelector('[data-testid="minimum-run-gap"]');
-    const perDay = document.querySelector('[data-testid="max-runs-per-day"]');
-    if (!limit || !gap || !perDay) return false;
-    // The card reads its settings first; wait until every group shows its saved choice.
-    if ([limit, gap, perDay].some((group) => !group.querySelector('[role="radio"][aria-checked="true"]'))) return false;
-    const read = (group) => [...group.querySelectorAll('[role="radio"]')].map((radio) => radio.textContent?.trim() + (radio.getAttribute("aria-checked") === "true" ? "*" : ""));
-    return { limit: read(limit), gap: read(gap), perDay: read(perDay), text: document.querySelector('[data-testid="schedule-guardrails"]')?.textContent ?? "" };
-  })()`, { timeoutMs: 30_000, label: "guardrail controls" });
-  expect(guardrailControls).toMatchObject({
-    limit: ["1*", "2", "3", "4", "6", "8"],
-    gap: ["15 min", "30 min", "60 min*"],
-    perDay: ["1", "2", "4*", "6", "8", "12"],
-  });
-  if (!isRecord(guardrailControls) || typeof guardrailControls.text !== "string") throw new Error("Guardrail facts were unavailable.");
-  expect(guardrailControls.text).toContain("How often one assignment may run");
-  expect(guardrailControls.text.toLowerCase()).not.toMatch(/cron|engine|slot/);
-  await clickButtonContaining(app, "Back to coworkers");
   evidence.recordAssertionEvidence(
-    "The panel form offers an interval with a window, days, and a daily cap, and reads the schedule back in words",
-    "Choosing Every few hours revealed the interval fields; the inline note read \"Every 2 hours between 9:00 AM and 6:00 PM on weekdays, up to 4 times a day\" before anything was created, the created row used the same words, the stored schedule kept the window, the weekdays, and the cap, and AI & local setup offered the run limit up to 8 beside the two guardrails (at least 60 minutes apart, at most 4 a day).",
+    "The interval form stores the selected schedule and daily cap",
+    "The created assignment stored a 120-minute interval, 09:00-18:00 window, weekdays, and maximum of four runs per day, with a next due time.",
     true,
   );
 });

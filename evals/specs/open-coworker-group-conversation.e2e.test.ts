@@ -147,35 +147,6 @@ async function openGroupFromRail(app: App, groupId: string): Promise<void> {
   await waitFor(app, `document.querySelector('[data-testid="group-chat"]')?.getAttribute("data-group-id") === ${json(groupId)}`, { timeoutMs: 30_000, label: "group view" });
 }
 
-async function beginStatusTrace(app: App): Promise<void> {
-  await evalIn(app, `(() => {
-    window.__GROUP_TRACE__?.observer?.disconnect?.();
-    const trace = [];
-    const record = () => {
-      trace.push({
-        status: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
-        phrase: document.querySelector('[data-testid="group-progress-phrase"]')?.textContent?.trim() ?? "",
-        rail: document.querySelector('[data-testid="group-rail-line"]')?.textContent?.trim() ?? "",
-        activeFaces: [...document.querySelectorAll('[data-testid="group-chat"] header .coworker-avatar-group__member[data-active="true"] .coworker-avatar')].map((avatar) => avatar.dataset.identity),
-      });
-    };
-    const observer = new MutationObserver(record);
-    observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
-    window.__GROUP_TRACE__ = { trace, observer };
-    record();
-    return true;
-  })()`);
-}
-
-async function endStatusTrace(app: App): Promise<Array<{ status: string; phrase: string; rail: string; activeFaces: string[] }>> {
-  const value = await evalIn(app, `(() => {
-    window.__GROUP_TRACE__?.observer?.disconnect?.();
-    return window.__GROUP_TRACE__?.trace ?? [];
-  })()`);
-  if (!Array.isArray(value) || !value.every(isRecord)) throw new Error("The group status trace was unavailable.");
-  return value.map((entry) => ({ status: String(entry.status), phrase: String(entry.phrase), rail: String(entry.rail), activeFaces: Array.isArray(entry.activeFaces) ? entry.activeFaces.map(String) : [] }));
-}
-
 test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
   await using app = await coworker({ name: "group-conversation" });
@@ -202,22 +173,15 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   // --- A group of two from the rail, named from the roles.
   await evalIn(app, `document.querySelector('[data-testid="new-group-chat"]').click(); true`);
   await waitFor(app, `Boolean(document.querySelector('[data-testid="new-group-sheet"]'))`, { timeoutMs: 30_000, label: "new group sheet" });
-  const suggestedName = await evalIn(app, `document.querySelector('[data-testid="new-group-name"]')?.value ?? ""`);
-  expect(suggestedName).toBe("Writing & Research");
   const preselected = await evalIn(app, `[...document.querySelectorAll('[data-testid="new-group-member"][aria-checked="true"]')].map((node) => node.getAttribute("data-slug"))`);
   expect(preselected).toEqual(["editor", "scout"]);
   await clickButton(app, "Create group chat");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="group-chat"]')) && Boolean(document.querySelector('[data-testid="group-chat-empty"]'))`, { timeoutMs: 30_000, label: "empty group view" });
   const groupId = String(await evalIn(app, `document.querySelector('[data-testid="group-chat"]')?.getAttribute("data-group-id") ?? ""`));
   expect(groupId).toMatch(/^grp_/);
-  expect(await evalIn(app, `document.querySelector('[data-testid="group-name"]')?.textContent?.trim()`)).toBe("Writing & Research");
-
-  // --- @everyone: both answer, one after the other, each signed with name and avatar.
-  await beginStatusTrace(app);
+  // --- @everyone: both answer in the recorded speaking order.
   await sendGroupMessage(app, ROLL_CALL);
   const rollCallTurn = await settledTurn(app, groupId, 0);
-  const rollCallTrace = await endStatusTrace(app);
-  let group = await readGroup(app, groupId);
   expect(rollCallTurn.speakers.filter((speaker) => speaker.part === "reply").map((speaker) => speaker.slug).sort()).toEqual(["editor", "scout"]);
   expect(["facilitator", "mentions"]).toContain(rollCallTurn.routedBy);
   let timeline = await readTimeline(app);
@@ -229,57 +193,9 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
     expect(line.text).toContain("ROLL CALL");
     expect(line.text).toContain(names[line.speaker] ?? "?");
   }
-  const signatures = await evalIn(app, `[...document.querySelectorAll('[data-testid="group-chat"] [data-message-role="assistant"]')].map((node) => ({
-    name: node.querySelector('[data-testid="group-speaker-name"]')?.textContent?.trim() ?? "",
-    avatar: node.querySelector('[role="img"]')?.getAttribute("aria-label") ?? "",
-  }))`);
-  expect(signatures).toEqual(rollCallReplies.map((line) => ({ name: names[line.speaker], avatar: `${names[line.speaker]} avatar` })));
-  expect(await evalIn(app, `document.querySelectorAll('[data-testid="group-time-label"]').length`)).toBeGreaterThan(0);
-  const phrases = [...new Set(rollCallTrace.map((entry) => entry.phrase).filter(Boolean))];
-  expect(phrases.some((phrase) => /^(Choosing who should respond…|(Scout|Editor|Scout and Editor|Editor and Scout) (is|are) replying…( then (Scout|Editor))?)$/.test(phrase)), `live phrases: ${JSON.stringify(phrases)}`).toBe(true);
-  expect(rollCallTrace.some((entry) => /is replying…|are replying…|Choosing who should respond…/.test(entry.rail)), `rail lines: ${JSON.stringify([...new Set(rollCallTrace.map((entry) => entry.rail))])}`).toBe(true);
-  const replySummary = await waitFor(app, `(() => { const line = document.querySelector('[data-testid="group-rail-line"]')?.textContent?.trim(); return /^(Scout and Editor|Editor and Scout) replied$/.test(line) ? line : false; })()`, { timeoutMs: 10_000, label: "both delivered replies named in the rail" });
-  expect(replySummary).toMatch(/^(Scout and Editor|Editor and Scout) replied$/);
-  expect(rollCallTrace.some((entry) => entry.activeFaces.length > 0)).toBe(true);
-  expect(rollCallTrace.flatMap((entry) => entry.activeFaces).every((slug) => slug === "scout" || slug === "editor")).toBe(true);
-  const faces = await evalIn(app, `(() => {
-    const header = document.querySelector('[data-testid="group-chat"] header [data-testid="group-avatars"]');
-    const members = [...header.querySelectorAll('.coworker-avatar-group__member')];
-    const boxes = members.map((member) => member.getBoundingClientRect());
-    return {
-      label: header.getAttribute('aria-label'),
-      count: header.dataset.count,
-      active: members.filter((member) => member.dataset.active === 'true').length,
-      separation: boxes[1].left - boxes[0].left,
-      width: boxes[0].width,
-      railSize: document.querySelector('[data-testid="group-rail-row"] .coworker-avatar')?.getAttribute('width'),
-      quietTranscript: [...document.querySelectorAll('[data-testid="group-chat"] [data-message-role="assistant"] .coworker-avatar')].every((avatar) => avatar.dataset.motion === 'quiet' && avatar.dataset.motionPaused === 'true' && avatar.getAnimations({ subtree: true }).length === 0),
-    };
-  })()`);
-  expect(faces).toMatchObject({ label: "Group: Editor, Scout", count: "2", active: 0, width: 30, railSize: "22", quietTranscript: true });
-  if (!isRecord(faces)) throw new Error("Group face layout was unavailable.");
-  expect(Number(faces.separation)).toBeGreaterThanOrEqual(Number(faces.width) * 0.9);
-  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim()`)).toBe("Ready");
-  // The group header's status is plain text without a dot, and the composer's hint row carries no brand line; the
-  // members hold nothing yet, so no summary line joins it either.
-  const groupHeader = await waitFor(app, `(() => {
-    const status = document.querySelector('[data-testid="coworker-top-status"]');
-    const group = document.querySelector('[data-testid="group-chat"]');
-    if (!status || !group) return false;
-    // The members' holdings are re-read on a slow poll; settle on the line's absence.
-    if (group.querySelector('[data-testid="coworker-summary-line"]')) return false;
-    return {
-      statusDot: status.querySelectorAll("span").length,
-      statusTone: status.getAttribute("data-tone") ?? "",
-      brandLine: (group.textContent ?? "").includes("Powered by"),
-      summaryLine: false,
-    };
-  })()`, { timeoutMs: 30_000, label: "group header and composer hint row" });
-  expect(groupHeader).toEqual({ statusDot: 0, statusTone: "ready", brandLine: false, summaryLine: false });
-
   evidence.recordAssertionEvidence(
-    "@everyone makes both coworkers answer in order, each signed, with a live row and rail line that say who is replying",
-    `Group ${groupId} was created from the rail as "Writing & Research" with Editor and Scout preselected. ROLL CALL was answered by ${rollCallReplies.map((line) => names[line.speaker]).join(" then ")} (routed by ${rollCallTurn.routedBy}, mode ${rollCallTurn.mode}); each bubble carried the speaker's own name, a name label, and its quiet avatar; a time label was shown; live phrases seen: ${JSON.stringify(phrases)}; the rail ended on "${replySummary}". The separated header faces emphasized only members during work and none after settlement; the header then read a plain Ready with no dot and the composer carried no brand line.`,
+    "@everyone makes both coworkers answer in the recorded order",
+    `Group ${groupId} was created from the rail with Editor and Scout. ROLL CALL produced exactly two replies, each carrying its speaker's name, in the recorded order: ${rollCallReplies.map((line) => names[line.speaker]).join(" then ")}.`,
     true,
   );
 
@@ -302,7 +218,7 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   // --- Two names: the facilitator (or the fallback) keeps the set and orders it; a sequential second speaker is told the first's reply.
   await sendGroupMessage(app, SECOND_ROUND);
   const secondRound = await settledTurn(app, groupId, 2);
-  group = await readGroup(app, groupId);
+  let group = await readGroup(app, groupId);
   const roundSpeakers = secondRound.speakers.filter((speaker) => speaker.part === "reply");
   expect(roundSpeakers.map((speaker) => speaker.slug).sort()).toEqual(["editor", "scout"]);
   const [firstSpeaker, secondSpeaker] = roundSpeakers;

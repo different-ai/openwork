@@ -30,12 +30,12 @@ async function waitForCoworkerReadiness(app: AttachedSurface, timeoutMs: number)
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const ready = await evaluateOnSurface(app, `(() => {
+      const ready = await evaluateOnSurface(app, () => {
         const text = (document.body?.innerText ?? "").toLowerCase();
-        return Boolean(window.__COWORKER__)
+        return Boolean(Reflect.get(window, "__COWORKER__"))
           && (Boolean(document.querySelector('[data-testid="coworker-rail"]'))
             || ["welcome to open coworker", "add a coworker"].some((label) => text.includes(label)));
-      })()`, { timeoutMs: Math.min(8_000, Math.max(1, deadline - Date.now())) });
+      }, { timeoutMs: Math.min(8_000, Math.max(1, deadline - Date.now())) });
       if (ready === true) return;
     } catch {
       // Navigation and cold embedded-server startup can briefly block CDP.

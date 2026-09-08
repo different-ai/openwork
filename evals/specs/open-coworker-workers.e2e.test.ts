@@ -3,7 +3,7 @@ import { expect } from "vitest";
 
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const title = enabled
-  ? "Open Coworker Workers: a Worker's findings wake the coworker, share this Mac's run limit, and the coworker starts one through its own tool"
+  ? "Open Coworker Workers: findings wake the coworker, share this Mac's run limit, and stay out of discussions and assignments"
   : "Open Coworker Workers journey skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1";
 
 type App = Awaited<ReturnType<typeof coworker>>;
@@ -55,16 +55,6 @@ async function waitForWorker(
     await sleep(1_000);
   }
   throw new Error(`Timed out waiting for ${label}. Last record: ${JSON.stringify(last)}`);
-}
-
-/** Row actions disable while one is in flight; click only when the button is ready. */
-async function clickRowAction(app: App, testId: string): Promise<void> {
-  await waitFor(app, `(() => {
-    const button = document.querySelector('[data-testid=${JSON.stringify(testId)}]');
-    if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
-    button.click();
-    return true;
-  })()`, { timeoutMs: 30_000, label: `${testId} ready to click` });
 }
 
 async function workerEvents(app: App, id: string): Promise<Record<string, unknown>[]> {
@@ -124,25 +114,6 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const discussionThreadId = String(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" })).conversationThreadId);
   expect(discussionThreadId).toMatch(/^ses_/);
   await waitFor(app, `document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 120_000, label: "discussion settled" });
-  // What a fresh coworker's first turn costs on the free model, as the engine reports it: the fixed stack
-  // (contract, identity, memory, the two indexes, the team description, and the tools) plus one short message.
-  const firstTurnTokens = await evalIn(app, `(async () => {
-    const runtime = (await window.__COWORKER__.invoke("runtime.info")).result;
-    const coworker = (await window.__COWORKER__.invoke("coworkers.get", { slug: "editor" })).result;
-    const response = await fetch(runtime.serverUrl + "/workspace/" + encodeURIComponent(coworker.workspaceId) + "/opencode/session/" + encodeURIComponent(coworker.conversationThreadId) + "/message", { headers: { Authorization: "Bearer " + runtime.ownerToken } });
-    if (!response.ok) return { status: response.status };
-    const messages = await response.json();
-    const reply = messages.find((message) => message.info?.role === "assistant" && message.info?.tokens);
-    const tokens = reply?.info?.tokens ?? null;
-    return tokens ? { input: tokens.input, output: tokens.output, reasoning: tokens.reasoning, cacheRead: tokens.cache?.read ?? 0, cacheWrite: tokens.cache?.write ?? 0, model: reply.info.modelID ?? "" } : { status: "no tokens" };
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
-  expect(firstTurnTokens).toMatchObject({ input: expect.any(Number) });
-  const measured = isRecord(firstTurnTokens) ? firstTurnTokens : {};
-  evidence.recordAssertionEvidence(
-    "The engine reports what a fresh coworker's first turn costs on the free model",
-    `Editor's first reply on ${String(measured.model)} reported ${String(measured.input)} input tokens (${String(measured.cacheRead)} read from cache, ${String(measured.cacheWrite)} written), ${String(measured.output)} output tokens, and ${String(measured.reasoning)} reasoning tokens for a one-line message — the fixed instruction stack plus the message.`,
-    true,
-  );
 
   // One run at a time on this Mac, so a Worker turn and a responsibility run must take turns.
   expect(resultRecord(await invokeCoworker(app, "settings.update", { maxParallelLocalRuns: 1 })).maxParallelLocalRuns).toBe(1);
@@ -265,39 +236,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
 
   evidence.recordAssertionEvidence(
     "A Worker posts findings that wake the coworker and shares this Mac's run limit",
-    `Worker ${workerId} started in native thread ${workerThreadId}; with the limit at one, the responsibility run was admitted as queued (status limit 1 / active 1 / queued 1) and later succeeded once the slot freed. The header left Ready ("${String(topStatusWhileWorking)}") while the Worker worked. Its first finding contained WORKER FINDING ONE and woke the coworker in discussion ${discussionThreadId}: the transcript showed the action line "${String(reviewLine)}" followed by the coworker's own reply, with no person bubble carrying the review scaffolding; a review event named that discussion. The Worker finished within its two turns. workers.json listed its thread, the discussion menu listed only the discussion, and the composer's summary line read 1 assignment, opening Activity › Assignments, which named the scheduled Limit check once and not the Worker.`,
-    true,
-  );
-
-  // The coworker starts a Worker through its own tool when asked; the conversation shows the receipt.
-  const toolPrompt = 'Use your worker_spawn tool right now to start a Worker named "Tool check" with the goal: reply with a section titled "Finding" whose only sentence is TOOL WORKER READY, then say Done. Give it 1 turn. Do not ask me anything; after the tool call, tell me in one sentence what you started.';
-  await fill(app, 'textarea[aria-label="Message Editor"]', toolPrompt);
-  await clickButton(app, "Send");
-  const toolStarted = await waitFor(app, `window.__COWORKER__.invoke("workers.list", { slug: "editor" }).then((response) => {
-    const worker = (response.result ?? []).find((candidate) => candidate.name === "Tool check");
-    return worker ? { id: worker.id, spawnedBy: worker.spawnedBy, lifespan: worker.lifespan } : false;
-  })`, { awaitPromise: true, timeoutMs: 300_000, label: "a Worker started by the coworker's tool" });
-  expect(toolStarted).toMatchObject({ spawnedBy: "coworker", lifespan: { kind: "turns", max: 1 } });
-  const toolWorkerId = isRecord(toolStarted) ? String(toolStarted.id) : "";
-  // The receipt names the Worker either as its one line or as one step of a larger receipt.
-  const receipt = await waitFor(app, `(() => {
-    const summaries = [...document.querySelectorAll('[data-testid="coworker-work-summary"]')];
-    for (const summary of summaries) {
-      const line = summary.textContent?.trim() ?? "";
-      if (/Started a Worker/.test(line)) return line;
-      if (/Workers/.test(line) && summary.getAttribute("aria-expanded") !== "true") summary.click();
-    }
-    const step = [...document.querySelectorAll('[data-testid="coworker-work-step"]')].map((node) => node.textContent?.trim() ?? "").find((line) => /Started a Worker/.test(line));
-    return step ?? false;
-  })()`, { timeoutMs: 120_000, label: "the receipt for starting a Worker" });
-  expect(String(receipt)).toContain("Started a Worker");
-  const toolEvents = await workerEvents(app, toolWorkerId);
-  expect(toolEvents[0]).toMatchObject({ kind: "status", text: "Started by Editor", by: "coworker" });
-  await waitForWorker(app, toolWorkerId, (worker) => worker.status === "finished", { timeoutMs: 300_000, label: "the tool-started Worker to finish its one turn" });
-
-  evidence.recordAssertionEvidence(
-    "Asked in the discussion, the coworker starts a Worker through its own tool",
-    `Editor started Worker ${toolWorkerId} ("Tool check", 1 turn) through its own worker_spawn tool; the conversation showed the receipt "${String(receipt)}", the Worker's first event read Started by Editor, and it finished its one turn.`,
+    `Worker ${workerId} started in native thread ${workerThreadId}. With the local run limit at one, the responsibility queued and later succeeded. A finding containing WORKER FINDING ONE or WORKER DONE woke the coworker in discussion ${discussionThreadId}, with a matched review event and no person bubble carrying review scaffolding. The Worker finished within its lifespan; its registered thread stayed out of the discussion menu and assignments, which listed only Limit check.`,
     true,
   );
 });

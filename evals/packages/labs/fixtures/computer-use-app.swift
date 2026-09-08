@@ -15,8 +15,10 @@ final class DragSurface: NSView {
 final class RefreshLabel: NSTextField {
     var remainingChanges = 0
     var reads = 0
+    var onNextRead: (() -> Void)?
     override func accessibilityValue() -> String? {
         reads += 1
+        if let onNextRead { self.onNextRead = nil; onNextRead() }
         if remainingChanges != 0 {
             if remainingChanges > 0 { remainingChanges -= 1 }
             stringValue = remainingChanges == 0 ? "Ready after refresh" : "Updating \(reads)"
@@ -58,6 +60,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
         windows = [first, second]
         first.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        if Bundle.main.bundleIdentifier?.hasPrefix("org.example.openwork.launch-fixture.") == true { return }
         Task.detached {
             while let line = readLine(), let data = line.data(using: .utf8) {
                 guard let request = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
@@ -78,6 +81,15 @@ final class Fixture: NSObject, NSApplicationDelegate {
         let method = request["method"] as? String ?? ""
         var result: [String: Any] = [:]
         switch method {
+        case "interrupt_next_read":
+            refreshLabel.onNextRead = {
+                // Only emit person input into this owned foreground fixture.
+                guard NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier else { return }
+                for down in [true, false] {
+                    CGEvent(keyboardEventSource: nil, virtualKey: 124, keyDown: down)?.post(tap: .cghidEventTap)
+                }
+            }
+            result = ["ok": true]
         case "refresh_changes":
             refreshLabel.reads = 0
             refreshLabel.remainingChanges = (request["params"] as? [String: Any])?["continuous"] as? Bool == true ? -1 : 2
@@ -134,6 +146,10 @@ final class Fixture: NSObject, NSApplicationDelegate {
                 self.respond(request, result: ["ok": true])
             }
             return
+        case "hover":
+            let point = CGPoint(x: windows[0].frame.midX, y: (NSScreen.screens.first?.frame.height ?? 0) - windows[0].frame.midY)
+            CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+            result = ["ok": true]
         case "permissions": result = ["accessibility": AXIsProcessTrusted()]
         case "resize":
             windows[0].setContentSize(NSSize(width: 440, height: 350)); result = ["ok": true]
@@ -141,7 +157,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
         case "press_helper_button", "select_helper_window", "helper_panel":
             Task.detached {
                 var result: [String: Any] = [:]
-                let buttons: Set<String> = ["Allow this session", "Cancel", "Take over", "Continue", "Stop", "Hide panel", "Show Computer Use task"]
+                let buttons: Set<String> = ["Hide", "Allow and start", "Allow this session", "Cancel", "Take over", "Continue", "Stop", "Hide panel", "Show Computer Use task"]
                 if let params = request["params"] as? [String: Any], let pid = params["pid"] as? Int32,
                    let name = params["name"] as? String,
                    (method == "helper_panel" || (method == "select_helper_window" ? name == "Workspace window" : buttons.contains(name))),
@@ -180,7 +196,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
             visited += 1
             guard depth < 18, visited < 800 else { return [] }
             var result: [String] = []
-            for attribute in [kAXTitleAttribute, kAXValueAttribute] {
+            for attribute in [kAXTitleAttribute, kAXValueAttribute, kAXDescriptionAttribute] {
                 var value: CFTypeRef?
                 AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
                 if let text = value as? String { result.append(text) }

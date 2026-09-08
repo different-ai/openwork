@@ -10,7 +10,6 @@ import {
 
 type SharedProps = {
   stars: string;
-  downloadHref: string;
   calUrl: string;
 };
 
@@ -58,7 +57,6 @@ export function LandingTrustOverview(props: SharedProps) {
           <SiteNav
             stars={props.stars}
             callUrl={callHref}
-            downloadHref={props.downloadHref}
           />
         </div>
 

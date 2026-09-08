@@ -1,15 +1,13 @@
-import { and, eq, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, gt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import type { Hono } from "hono"
-import { InferenceKeyTable, InferenceUsageLedgerBucketChargeTable, InferenceUsageLedgerEntryTable, InferenceOrgUsageBucketTable } from "@openwork-ee/den-db"
+import { InferenceKeyTable, InferenceOrgLimitPolicyTable, InferenceUsageLedgerBucketChargeTable, InferenceUsageLedgerEntryTable, InferenceOrgUsageBucketTable } from "@openwork-ee/den-db"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
-import { INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
+import { INFERENCE_USAGE_CONVERSION_FACTOR, INFERENCE_WINDOW_TYPES } from "@openwork/types/den/inference"
 import * as Sentry from "@sentry/node"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { constantTimeEquals } from "./keys.js"
-import { ensureUsableBuckets as ensureUsageBuckets } from "./limits.js"
-import type { BucketLimitMetadata, BucketMetadata } from "./limits.js"
 import { resolveModelByUpstreamModel } from "./model-catalog.js"
 
 type JsonRecord = Record<string, unknown>
@@ -17,9 +15,9 @@ type JsonRecord = Record<string, unknown>
 type OpenRouterUsageMetadata = {
   requestModel: string | null
   responseModel: string | null
-  inputCost: number
-  outputCost: number
-  totalCost: number
+  inputCost: number | null
+  outputCost: number | null
+  totalCost: number | null
   inputTokens: number | null
   outputTokens: number | null
   totalTokens: number | null
@@ -55,49 +53,29 @@ type ParsedSpan = {
   reportedModel: string
   requestModel: string | null
   responseModel: string | null
-  inputCost: number
-  outputCost: number
+  inputCost: number | null
+  outputCost: number | null
   usageMetadata: OpenRouterUsageMetadata
 }
 
 type WebhookInferenceKey = {
   id: DenTypeId<"inferenceKey">
   status: string
+  revoked_at: Date | null
   organization_id: DenTypeId<"organization">
   org_membership_id: DenTypeId<"member">
 }
 
-type UsageBucketSettlement = {
-  ok: boolean
-  bucketIds: BucketMetadata
-  bucketLimits: BucketLimitMetadata
-  limitedBy?: string
-}
-
-type UsageLedgerEntryRef = {
-  id: DenTypeId<"inferenceUsageLedgerEntry">
-}
-
-type InsertUsageLedgerEntryInput = {
+type SettleUsageInput = {
   inferenceKey: WebhookInferenceKey
   span: ParsedSpan
-  costAmount: number
-}
-
-type ChargeBucketsInput = {
-  limits: UsageBucketSettlement
-  ledgerEntryId: DenTypeId<"inferenceUsageLedgerEntry">
-  costAmount: number
+  costAmount: number | null
 }
 
 type WebhookDependencies = {
   reporter: OpenRouterUsageWebhookReporter
   findInferenceKey(inferenceKeyId: string): Promise<WebhookInferenceKey | null>
-  ensureUsableBuckets(organizationId: string, occurredAt: Date): Promise<UsageBucketSettlement>
-  findLedgerEntryByExternalEventId(externalEventId: string): Promise<UsageLedgerEntryRef | null>
-  findOpenRouterUsageLedgerEntry(openworkRequestId: string): Promise<UsageLedgerEntryRef | null>
-  insertOpenRouterUsageLedgerEntry(input: InsertUsageLedgerEntryInput): Promise<UsageLedgerEntryRef>
-  chargeBuckets(input: ChargeBucketsInput): Promise<void>
+  settleUsage(input: SettleUsageInput): Promise<"ingested" | "deferred" | "skipped">
 }
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -141,8 +119,8 @@ function stringAttr(attrs: JsonRecord, keys: string[]) {
 function numberAttr(attrs: JsonRecord, keys: string[]) {
   for (const key of keys) {
     const value = attrs[key]
-    const numberValue = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN
-    if (Number.isFinite(numberValue)) return numberValue
+    const numberValue = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN
+    if (Number.isFinite(numberValue) && numberValue >= 0) return numberValue
   }
   return null
 }
@@ -152,21 +130,28 @@ function spanString(span: JsonRecord, key: string) {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
-function usageUnitsForModel(input: { upstreamModel: string; inputCost: number; outputCost: number }) {
+function usageUnitsForModel(input: { upstreamModel: string; inputCost: number | null; outputCost: number | null }) {
   const model = resolveModelByUpstreamModel(input.upstreamModel)
-  if (!model) return null
-  return Math.max(1, Math.ceil((input.inputCost + input.outputCost) * INFERENCE_USAGE_CONVERSION_FACTOR * model.usageFactor))
+  if (!model || input.inputCost === null || input.outputCost === null) return null
+  const amount = Math.max(1, Math.ceil((input.inputCost + input.outputCost) * INFERENCE_USAGE_CONVERSION_FACTOR * model.usageFactor))
+  return Number.isSafeInteger(amount) ? amount : null
 }
 
 function logWebhookError(message: string, details?: Record<string, unknown>) {
   console.error(`[openrouter-webhook] ${message}`, details ?? {})
 }
 
-function timeFromSpan(span: JsonRecord) {
-  const raw = stringAttr(span, ["endTimeUnixNano", "startTimeUnixNano", "timeUnixNano"])
-  if (!raw) return new Date()
-  const ms = Number(BigInt(raw) / 1_000_000n)
-  return Number.isFinite(ms) ? new Date(ms) : new Date()
+function timeFromSpan(span: JsonRecord, attrs: JsonRecord) {
+  const admittedAt = stringAttr(attrs, ["trace.usage_started_at", "trace.metadata.usage_started_at", "metadata.usage_started_at", "usage_started_at"])
+  let date: Date
+  if (admittedAt) {
+    date = new Date(admittedAt)
+  } else {
+    const raw = stringAttr(span, ["startTimeUnixNano", "endTimeUnixNano", "timeUnixNano"])
+    if (!raw || !/^\d{1,20}$/.test(raw)) return null
+    date = new Date(Number(BigInt(raw) / 1_000_000n))
+  }
+  return Number.isFinite(date.getTime()) && date.getTime() > 0 && date.getTime() <= 2_147_483_647_000 ? date : null
 }
 
 function usageMetadataFromSpan(input: {
@@ -174,8 +159,8 @@ function usageMetadataFromSpan(input: {
   attrs: JsonRecord
   requestModel: string | null
   responseModel: string | null
-  inputCost: number
-  outputCost: number
+  inputCost: number | null
+  outputCost: number | null
   generationId: string | null
 }): OpenRouterUsageMetadata {
   return {
@@ -183,7 +168,7 @@ function usageMetadataFromSpan(input: {
     responseModel: input.responseModel,
     inputCost: input.inputCost,
     outputCost: input.outputCost,
-    totalCost: input.inputCost + input.outputCost,
+    totalCost: input.inputCost === null || input.outputCost === null ? null : input.inputCost + input.outputCost,
     inputTokens: numberAttr(input.attrs, ["gen_ai.usage.input_tokens", "gen_ai.usage.prompt_tokens", "llm.usage.prompt_tokens", "prompt_tokens"]),
     outputTokens: numberAttr(input.attrs, ["gen_ai.usage.output_tokens", "gen_ai.usage.completion_tokens", "llm.usage.completion_tokens", "completion_tokens"]),
     totalTokens: numberAttr(input.attrs, ["gen_ai.usage.total_tokens", "llm.usage.total_tokens", "total_tokens"]),
@@ -195,8 +180,7 @@ function usageMetadataFromSpan(input: {
   }
 }
 
-function parseSpan(span: JsonRecord, resourceAttrs: JsonRecord, scopeAttrs: JsonRecord): ParsedSpan | null {
-  const attrs = { ...resourceAttrs, ...scopeAttrs, ...attributesToRecord(span.attributes) }
+function parseSpan(span: JsonRecord, attrs: JsonRecord): ParsedSpan | null {
   const orgMembershipId = stringAttr(attrs, ["trace.metadata.org_membership_id", "trace.org_membership_id", "metadata.org_membership_id", "org_membership_id"])
   const inferenceKeyId = stringAttr(attrs, ["trace.metadata.inference_key_id", "trace.inference_key_id", "metadata.inference_key_id", "inference_key_id"])
   const openworkRequestId = stringAttr(attrs, ["trace.metadata.openwork_request_id", "trace.openwork_request_id", "metadata.openwork_request_id", "openwork_request_id", "trace_id"])
@@ -206,11 +190,29 @@ function parseSpan(span: JsonRecord, resourceAttrs: JsonRecord, scopeAttrs: Json
   const reportedModel = responseModel ?? requestModel
   const inputCost = numberAttr(attrs, ["gen_ai.usage.input_cost"])
   const outputCost = numberAttr(attrs, ["gen_ai.usage.output_cost"])
-  if (!orgMembershipId || !inferenceKeyId || !openworkRequestId || !reportedModel || inputCost === null || outputCost === null) {
+  if (!orgMembershipId || !inferenceKeyId || !openworkRequestId || !reportedModel) {
     return null
   }
   const generationId = stringAttr(attrs, ["gen_ai.response.id", "gen_ai.generation.id", "generation_id", "response_id"])
   const externalEventId = stringAttr(attrs, ["event_id", "id", "span_id"]) ?? generationId ?? spanString(span, "spanId")
+  const occurredAt = timeFromSpan(span, attrs)
+  const usageMetadata = usageMetadataFromSpan({ span, attrs, requestModel, responseModel, inputCost, outputCost, generationId })
+  if (!occurredAt || [openworkRequestId, reportedModel, externalEventId].some((value) => value !== null && value.length > 255)) return null
+  if (usageMetadata.currency !== null && usageMetadata.currency !== "USD") return null
+  for (const name of ["gen_ai.usage.input_cost", "gen_ai.usage.output_cost"]) {
+    const value = attrs[name]
+    const missing = value == null || (typeof value === "string" && value.trim() === "")
+    if (!missing && numberAttr(attrs, [name]) === null) return null
+  }
+  if (usageMetadata.totalCost !== null && !Number.isFinite(usageMetadata.totalCost)) return null
+  for (const name of Object.keys(attrs).filter((key) => /^(gen_ai\.usage\.|llm\.usage\.)?(input|output|prompt|completion|total)_tokens$/.test(key))) {
+    const value = numberAttr(attrs, [name])
+    if (value === null || !Number.isSafeInteger(value) || value > 2_147_483_647) return null
+  }
+  try {
+    normalizeDenTypeId("member", orgMembershipId)
+    normalizeDenTypeId("inferenceKey", inferenceKeyId)
+  } catch { return null }
 
   return {
     orgMembershipId,
@@ -218,19 +220,20 @@ function parseSpan(span: JsonRecord, resourceAttrs: JsonRecord, scopeAttrs: Json
     openworkRequestId,
     externalEventId,
     generationId,
-    occurredAt: timeFromSpan(span),
+    occurredAt,
     reportedModel,
     requestModel,
     responseModel,
     inputCost,
     outputCost,
-    usageMetadata: usageMetadataFromSpan({ span, attrs, requestModel, responseModel, inputCost, outputCost, generationId }),
+    usageMetadata,
   }
 }
 
 function parseOtlpSpans(body: unknown) {
   const spans: ParsedSpan[] = []
-  if (!isRecord(body)) return spans
+  let invalid = 0
+  if (!isRecord(body)) return { spans, invalid }
   for (const resourceSpan of values(body.resourceSpans)) {
     if (!isRecord(resourceSpan)) continue
     const resourceAttrs = attributesToRecord(isRecord(resourceSpan.resource) ? resourceSpan.resource.attributes : undefined)
@@ -239,12 +242,14 @@ function parseOtlpSpans(body: unknown) {
       const scopeAttrs = attributesToRecord(isRecord(scopeSpan.scope) ? scopeSpan.scope.attributes : undefined)
       for (const span of values(scopeSpan.spans)) {
         if (!isRecord(span)) continue
-        const parsed = parseSpan(span, resourceAttrs, scopeAttrs)
+        const attrs = { ...resourceAttrs, ...scopeAttrs, ...attributesToRecord(span.attributes) }
+        const parsed = parseSpan(span, attrs)
         if (parsed) spans.push(parsed)
+        else if (Object.keys(attrs).some((key) => key.startsWith("gen_ai.usage."))) invalid += 1
       }
     }
   }
-  return spans
+  return { spans, invalid }
 }
 
 function isAuthorized(request: Request) {
@@ -281,74 +286,89 @@ const defaultWebhookDependencies: WebhookDependencies = {
       .limit(1)
     return inferenceKey ?? null
   },
-  async ensureUsableBuckets(organizationId, occurredAt) {
-    return ensureUsageBuckets(organizationId, occurredAt)
-  },
-  async findLedgerEntryByExternalEventId(externalEventId) {
-    const [event] = await db.select({ id: InferenceUsageLedgerEntryTable.id }).from(InferenceUsageLedgerEntryTable)
-      .where(eq(InferenceUsageLedgerEntryTable.external_event_id, externalEventId))
-      .limit(1)
-    return event ?? null
-  },
-  async findOpenRouterUsageLedgerEntry(openworkRequestId) {
-    const [existing] = await db.select({ id: InferenceUsageLedgerEntryTable.id }).from(InferenceUsageLedgerEntryTable)
-      .where(and(eq(InferenceUsageLedgerEntryTable.external_job_id, openworkRequestId), eq(InferenceUsageLedgerEntryTable.event_type, "openrouter_usage"))).limit(1)
-    return existing ?? null
-  },
-  async insertOpenRouterUsageLedgerEntry(input) {
-    const entryId = createDenTypeId("inferenceUsageLedgerEntry")
-    await db.insert(InferenceUsageLedgerEntryTable).values({
-      id: entryId,
-      organization_id: input.inferenceKey.organization_id,
-      org_membership_id: input.inferenceKey.org_membership_id,
-      inference_key_id: input.inferenceKey.id,
-      external_job_id: input.span.openworkRequestId,
-      external_event_id: input.span.externalEventId,
-      cost_amount: input.costAmount,
-      model_id: input.span.reportedModel,
-      provider_id: "openrouter",
-      input_tokens: input.span.usageMetadata.inputTokens,
-      output_tokens: input.span.usageMetadata.outputTokens,
-      total_tokens: input.span.usageMetadata.totalTokens,
-      event_type: "openrouter_usage",
-      occurred_at: input.span.occurredAt,
-    })
-    return { id: entryId }
-  },
-  async chargeBuckets(input) {
-    await db.transaction(async (tx) => {
-      for (const [windowType, bucketId] of Object.entries(input.limits.bucketIds)) {
-        if (!bucketId) continue
-        const limitAmount = input.limits.bucketLimits[windowType]
-        if (limitAmount === undefined) continue
-        const [charge] = await tx.select({ id: InferenceUsageLedgerBucketChargeTable.id })
-          .from(InferenceUsageLedgerBucketChargeTable)
-          .where(and(
-            eq(InferenceUsageLedgerBucketChargeTable.ledger_entry_id, input.ledgerEntryId),
-            eq(InferenceUsageLedgerBucketChargeTable.bucket_id, bucketId),
-          ))
-          .limit(1)
-        if (charge) {
-          continue
-        }
-
-        await tx.insert(InferenceUsageLedgerBucketChargeTable).values({
-          id: createDenTypeId("inferenceUsageLedgerBucketCharge"),
-          ledger_entry_id: input.ledgerEntryId,
-          bucket_id: bucketId,
-          amount: input.costAmount,
-        })
-        await tx.update(InferenceOrgUsageBucketTable).set({
-          limit_amount: limitAmount,
-          used_amount: sql`${InferenceOrgUsageBucketTable.used_amount} + ${input.costAmount}`,
-        }).where(eq(InferenceOrgUsageBucketTable.id, bucketId))
+  async settleUsage({ inferenceKey, span, costAmount }) {
+    return db.transaction(async (tx) => {
+      // Shared with both bucket writers and admin reset. Historical settlement
+      // never provisions access, changes a limit, or advances a current pointer.
+      const policies = await tx.select().from(InferenceOrgLimitPolicyTable)
+        .where(eq(InferenceOrgLimitPolicyTable.organization_id, inferenceKey.organization_id))
+        .orderBy(asc(InferenceOrgLimitPolicyTable.window_type)).for("update")
+      const identity = or(
+        and(eq(InferenceUsageLedgerEntryTable.external_job_id, span.openworkRequestId), eq(InferenceUsageLedgerEntryTable.event_type, "openrouter_usage")),
+        span.externalEventId ? eq(InferenceUsageLedgerEntryTable.external_event_id, span.externalEventId) : undefined,
+      )
+      const matchesIdentity = (entry: typeof InferenceUsageLedgerEntryTable.$inferSelect) =>
+        entry.organization_id === inferenceKey.organization_id && entry.org_membership_id === inferenceKey.org_membership_id &&
+        entry.inference_key_id === inferenceKey.id && entry.external_job_id === span.openworkRequestId && entry.event_type === "openrouter_usage"
+      const existing = await tx.select().from(InferenceUsageLedgerEntryTable).where(identity).for("update")
+      if (existing.some((entry) => !matchesIdentity(entry))) return "skipped"
+      const occurredAt = existing[0]?.occurred_at ?? span.occurredAt
+      if (inferenceKey.status !== "active" && (!inferenceKey.revoked_at || occurredAt > inferenceKey.revoked_at)) return "skipped"
+      const providerUsage = {
+        source: "openrouter_otlp" as const,
+        status: costAmount === null ? "unpriced" as const : "priced" as const,
+        requestModel: span.requestModel, responseModel: span.responseModel,
+        inputCost: span.inputCost, outputCost: span.outputCost, currency: span.usageMetadata.currency,
       }
+      if (!existing[0]) {
+        await tx.insert(InferenceUsageLedgerEntryTable).values({
+          id: createDenTypeId("inferenceUsageLedgerEntry"),
+          organization_id: inferenceKey.organization_id, org_membership_id: inferenceKey.org_membership_id,
+          inference_key_id: inferenceKey.id, external_job_id: span.openworkRequestId, external_event_id: span.externalEventId,
+          cost_amount: costAmount ?? 0, model_id: span.reportedModel, provider_id: "openrouter",
+          input_tokens: span.usageMetadata.inputTokens, output_tokens: span.usageMetadata.outputTokens, total_tokens: span.usageMetadata.totalTokens,
+          event_type: "openrouter_usage", occurred_at: occurredAt, provider_usage: providerUsage,
+        }).onDuplicateKeyUpdate({ set: { id: sql`${InferenceUsageLedgerEntryTable.id}` } })
+      }
+      // A unique event can collide across organizations despite the policy lock.
+      const entries = await tx.select().from(InferenceUsageLedgerEntryTable).where(identity).for("update")
+      const entry = entries[0]
+      if (!entry || entries.length !== 1 || !matchesIdentity(entry)) return "skipped"
+      if (entry.provider_usage?.status === "unpriced" && costAmount !== null) {
+        await tx.update(InferenceUsageLedgerEntryTable).set({ cost_amount: costAmount, provider_usage: providerUsage })
+          .where(eq(InferenceUsageLedgerEntryTable.id, entry.id))
+        entry.cost_amount = costAmount
+        entry.provider_usage = providerUsage
+      }
+      if (entry.provider_usage?.status === "unpriced") return "deferred"
+
+      const buckets: typeof InferenceOrgUsageBucketTable.$inferSelect[] = []
+      for (const policy of policies) {
+        const matches = await tx.select().from(InferenceOrgUsageBucketTable).where(and(
+          eq(InferenceOrgUsageBucketTable.policy_id, policy.id),
+          eq(InferenceOrgUsageBucketTable.organization_id, entry.organization_id),
+          lte(InferenceOrgUsageBucketTable.window_start_at, entry.occurred_at), gt(InferenceOrgUsageBucketTable.window_end_at, entry.occurred_at),
+        )).orderBy(asc(InferenceOrgUsageBucketTable.id)).limit(2).for("update")
+        // Older writers could create overlapping windows. Do not guess which
+        // allowance owns this usage; retain it until that history is repaired.
+        if (matches.length !== 1) return "deferred"
+        buckets.push(matches[0]!)
+      }
+      // Missing historical windows are durably deferred, not invented using
+      // today's entitlement. Provider retries remain safe if history is repaired.
+      if (buckets.length !== INFERENCE_WINDOW_TYPES.length) return "deferred"
+      for (const bucket of buckets) {
+        const [charge] = await tx.select().from(InferenceUsageLedgerBucketChargeTable).where(and(
+          eq(InferenceUsageLedgerBucketChargeTable.ledger_entry_id, entry.id), eq(InferenceUsageLedgerBucketChargeTable.bucket_id, bucket.id),
+        )).limit(1).for("update")
+        if (charge) continue // Includes admin-forgiven zero-amount identities.
+        // Before provider facts existed, reset deleted identities. A legacy gap
+        // cannot safely be distinguished from forgiveness, so never backfill it.
+        if (entry.provider_usage === null) return "deferred"
+        if (!Number.isSafeInteger(bucket.used_amount + entry.cost_amount)) throw new Error("Usage total exceeds safe integer range")
+        await tx.insert(InferenceUsageLedgerBucketChargeTable).values({
+          id: createDenTypeId("inferenceUsageLedgerBucketCharge"), ledger_entry_id: entry.id, bucket_id: bucket.id, amount: entry.cost_amount,
+        })
+        await tx.update(InferenceOrgUsageBucketTable).set({ used_amount: sql`${InferenceOrgUsageBucketTable.used_amount} + ${entry.cost_amount}` })
+          .where(eq(InferenceOrgUsageBucketTable.id, bucket.id))
+      }
+      return "ingested"
     })
   },
 }
 
 function reportUnknownPricedModel(input: { span: ParsedSpan; inferenceKey: WebhookInferenceKey; reporter: OpenRouterUsageWebhookReporter }) {
-  logWebhookError("skipped span for unknown priced model", {
+  logWebhookError("retained unpriced provider usage", {
     reportedModel: input.span.reportedModel,
     organizationId: input.inferenceKey.organization_id,
     openworkRequestId: input.span.openworkRequestId,
@@ -368,9 +388,8 @@ function reportUnknownPricedModel(input: { span: ParsedSpan; inferenceKey: Webho
 
 async function ingestSpan(span: ParsedSpan, dependencies: WebhookDependencies) {
   const inferenceKey = await dependencies.findInferenceKey(span.inferenceKeyId)
-  if (!inferenceKey || inferenceKey.status !== "active") {
-    logWebhookError("skipped span for missing or inactive inference key", { inferenceKeyId: span.inferenceKeyId })
-    return false
+  if (!inferenceKey) {
+    return "skipped"
   }
   if (inferenceKey.org_membership_id !== normalizeDenTypeId("member", span.orgMembershipId)) {
     logWebhookError("skipped span for mismatched org membership", {
@@ -378,32 +397,15 @@ async function ingestSpan(span: ParsedSpan, dependencies: WebhookDependencies) {
       spanOrgMembershipId: span.orgMembershipId,
       keyOrgMembershipId: inferenceKey.org_membership_id,
     })
-    return false
+    return "skipped"
   }
 
   const costAmount = usageUnitsForModel({ upstreamModel: span.reportedModel, inputCost: span.inputCost, outputCost: span.outputCost })
-  if (costAmount === null) {
+  const result = await dependencies.settleUsage({ inferenceKey, span, costAmount })
+  if (costAmount === null && result === "deferred") {
     reportUnknownPricedModel({ span, inferenceKey, reporter: dependencies.reporter })
-    return false
   }
-
-  const limits = await dependencies.ensureUsableBuckets(inferenceKey.organization_id, span.occurredAt)
-  if (!limits.ok) {
-    logWebhookError("settling usage after limit was exceeded", {
-      inferenceKeyId: span.inferenceKeyId,
-      limitedBy: limits.limitedBy,
-    })
-  }
-
-  if (span.externalEventId) {
-    const event = await dependencies.findLedgerEntryByExternalEventId(span.externalEventId)
-    if (event) return false
-  }
-
-  const existing = await dependencies.findOpenRouterUsageLedgerEntry(span.openworkRequestId)
-  const entry = existing ?? await dependencies.insertOpenRouterUsageLedgerEntry({ inferenceKey, span, costAmount })
-  await dependencies.chargeBuckets({ limits, ledgerEntryId: entry.id, costAmount })
-  return true
+  return result
 }
 
 export function registerWebhookRoutes(app: Hono, dependencies: WebhookDependencies = defaultWebhookDependencies) {
@@ -423,25 +425,31 @@ export function registerWebhookRoutes(app: Hono, dependencies: WebhookDependenci
       return c.json({ error: "unauthorized" }, 401)
     }
 
-    const body = await c.req.json().catch((error) => {
-      logWebhookError("failed to parse webhook JSON", { error: error instanceof Error ? error.message : String(error) })
+    const body = await c.req.json().catch(() => {
+      logWebhookError("failed to parse webhook JSON")
       return null
     })
-    const spans = parseOtlpSpans(body)
+    if (!isRecord(body) || !Array.isArray(body.resourceSpans)) return c.json({ error: "invalid_usage_payload" }, 400)
+    const { spans, invalid } = parseOtlpSpans(body)
     let ingested = 0
     let skipped = 0
+    let deferred = 0
+    let failed = 0
     for (const span of spans) {
       try {
-        if (await ingestSpan(span, dependencies)) {
+        const result = await ingestSpan(span, dependencies)
+        if (result === "ingested") {
           ingested += 1
+        } else if (result === "deferred") {
+          deferred += 1
         } else {
           skipped += 1
         }
-      } catch (error) {
-        skipped += 1
-        logWebhookError("failed to ingest OpenRouter usage span", { error: error instanceof Error ? error.message : String(error) })
+      } catch {
+        failed += 1
+        logWebhookError("Usage persistence failed; provider must retry", { requestId: span.openworkRequestId })
       }
     }
-    return c.json({ ok: true, ingested, skipped })
+    return c.json({ ok: failed === 0 && invalid === 0, ingested, skipped, deferred, invalid, failed }, failed ? 503 : invalid ? 400 : 200)
   })
 }

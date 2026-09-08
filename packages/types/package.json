@@ -79,6 +79,11 @@
       "development": "./src/den/egress-diagnostics.ts",
       "default": "./src/den/egress-diagnostics.ts"
     },
+    "./den/managed-models-policy": {
+      "types": "./src/den/managed-models-policy.ts",
+      "development": "./src/den/managed-models-policy.ts",
+      "default": "./src/den/managed-models-policy.ts"
+    },
     "./den/inference": {
       "types": "./src/den/inference.ts",
       "development": "./src/den/inference.ts",

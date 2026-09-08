@@ -11,12 +11,14 @@ import {
   LOCAL_MODE_COPY as COPY,
   busyProviderIds,
   connectReducer,
+  openAiSetupGuard,
   pickFreeModel,
   planLocalMode,
   type AddableProvider,
   type ConnectState,
   type ConnectedRow,
 } from "@/lib/local-providers";
+import { MODEL_GROWTH_OFFER_IDS, modelGrowthOffer, type ModelGrowthOfferId } from "@/lib/model-growth";
 import { createCoworkerThreads, type EngineModelCatalog } from "@/lib/threads";
 import { Button, ErrorNote, StatusDot, inputClass } from "@/ui/kit";
 import { OptionRow } from "@/ui/interactions";
@@ -24,20 +26,20 @@ import { GroupLabel, QuietLine, TechnicalDetails } from "@/ui/rows";
 
 const EMPTY_CATALOG: EngineModelCatalog = { models: [], connectedProviderIds: [], cloud: null };
 const EMPTY_READINESS: LocalProvidersReadiness = { workspaceId: "", engineManaged: false, serverUrl: "", ownerToken: "", providers: [], signIns: {} };
-const RECOMMENDED_DISMISSED_KEY = "coworker.local-mode.recommended-dismissed";
+const OFFER_DISMISSED_KEY = "coworker.model-growth.dismissed.";
 const SIGN_IN_POLL_MS = 2_000;
 
-function readDismissed(): boolean {
+function readDismissed(): ModelGrowthOfferId[] {
   try {
-    return window.sessionStorage.getItem(RECOMMENDED_DISMISSED_KEY) === "1";
+    return MODEL_GROWTH_OFFER_IDS.filter((id) => window.sessionStorage.getItem(`${OFFER_DISMISSED_KEY}${id}`) === "1");
   } catch {
-    return false;
+    return [];
   }
 }
 
-function writeDismissed(): void {
+function writeDismissed(id: ModelGrowthOfferId): void {
   try {
-    window.sessionStorage.setItem(RECOMMENDED_DISMISSED_KEY, "1");
+    window.sessionStorage.setItem(`${OFFER_DISMISSED_KEY}${id}`, "1");
   } catch {
     // Session storage is a convenience; the banner simply shows again next time.
   }
@@ -264,8 +266,9 @@ function CustomForm({ onSaved, onCancel, onStartModel }: { onSaved: (line: strin
 
 export function LocalProviders({
   runtime,
-  session,
   onConnectAccount,
+  onExploreThinking,
+  onExploreTeams,
   onModelsChanged,
   onRuntimeChanged,
   onStartModel,
@@ -274,6 +277,10 @@ export function LocalProviders({
   runtime: RuntimeInfo;
   session: DenSession | null;
   onConnectAccount: () => void;
+  /** Navigation only; defaults to the existing account route. Never selects a model or sends work. */
+  onExploreThinking?: () => void;
+  /** Navigation to existing account/templates; no team entitlement is implied. */
+  onExploreTeams?: () => void;
   /** Something connected or disconnected: the model catalog changed. */
   onModelsChanged?: () => void;
   /** The platform restarted while getting ready; re-read runtime info. */
@@ -295,6 +302,10 @@ export function LocalProviders({
   const [states, setStates] = useState<Record<string, ConnectState>>({});
   const [adding, setAdding] = useState<"" | "list" | "custom" | string>("");
   const [disconnecting, setDisconnecting] = useState<{ providerId: string; note: string } | null>(null);
+  const [replacementConfirmed, setReplacementConfirmed] = useState(false);
+  const foundRowsRef = useRef<HTMLUListElement>(null);
+  const setupRef = useRef<HTMLDivElement>(null);
+  const revealSetupRef = useRef(false);
   const statesRef = useRef(states);
   statesRef.current = states;
 
@@ -304,6 +315,7 @@ export function LocalProviders({
 
   const refresh = useCallback(async (options: { clearRows?: boolean } = {}) => {
     setRefreshing(true);
+    setReplacementConfirmed(false);
     setError("");
     try {
       // Detection only looks at this Mac, so its rows appear while the AI service
@@ -311,6 +323,10 @@ export function LocalProviders({
       const detecting = coworkerBridge.localProviders.detect().then((detected) => {
         setFindings(detected.found);
         setFound(true);
+      }, (cause: unknown) => {
+        setFindings([]);
+        setFound(false);
+        setError(messageOf(cause));
       });
       const ready = await coworkerBridge.localProviders.prepare();
       setReadiness(ready);
@@ -322,7 +338,7 @@ export function LocalProviders({
           ? createCoworkerThreads({ serverUrl: ready.serverUrl, workspaceId: ready.workspaceId, token: ready.ownerToken }).listModelCatalog()
           : Promise.resolve(EMPTY_CATALOG),
       ]);
-      if (models.status === "fulfilled") setCatalog(models.value);
+      setCatalog(models.status === "fulfilled" ? models.value : EMPTY_CATALOG);
       const failed = [detected, models].find((entry): entry is PromiseRejectedResult => entry.status === "rejected");
       if (failed) setError(messageOf(failed.reason));
       // The Refresh control starts finished rows clean; a sign-in in progress is never wiped.
@@ -331,6 +347,8 @@ export function LocalProviders({
         setStates((current) => Object.fromEntries(Object.entries(current).filter(([id]) => busy.has(id))));
       }
     } catch (cause) {
+      setReadiness(EMPTY_READINESS);
+      setCatalog(EMPTY_CATALOG);
       setError(messageOf(cause));
     } finally {
       setRefreshing(false);
@@ -349,6 +367,44 @@ export function LocalProviders({
     return planLocalMode({ findings: visible, readiness, catalog });
   }, [catalog, findings, loaded, readiness]);
   const freeModel = useMemo(() => pickFreeModel(catalog), [catalog]);
+  const setupReady = loaded && found && readiness.engineManaged && !refreshing;
+  const openaiBusy = ["codex", "opencode:openai", "add:openai"].some((id) => states[id]?.phase === "connecting" || states[id]?.phase === "waiting");
+  const openaiGuard = openAiSetupGuard(findings, readiness);
+  const offer = found && !refreshing && !error ? modelGrowthOffer({
+    findings,
+    readiness,
+    usingFreeModel: plan.free.available && catalog.models.every((model) => model.tier === "free"),
+    dismissedOfferIds: dismissed,
+  }) : null;
+
+  function dismissOffer(id: ModelGrowthOfferId) {
+    writeDismissed(id);
+    setDismissed((current) => current.includes(id) ? current : [...current, id]);
+  }
+
+  function openProviderSetup(providerId: string) {
+    setReplacementConfirmed(false);
+    revealSetupRef.current = true;
+    setAdding(providerId);
+  }
+
+  useEffect(() => {
+    if (!revealSetupRef.current || !setupRef.current) return;
+    revealSetupRef.current = false;
+    setupRef.current.scrollIntoView({ block: "nearest" });
+    setupRef.current.focus();
+  });
+
+  function revealFinding(findingId: string) {
+    const finding = plan.found.find((entry) => entry.id === findingId);
+    if (!finding || finding.how === "in-use" || (finding.providerId === "openai" && openaiGuard)) {
+      openProviderSetup("openai");
+      return;
+    }
+    const row = Array.from(foundRowsRef.current?.children ?? []).find((entry) => entry.getAttribute("data-testid") === `found-${findingId}`);
+    row?.scrollIntoView({ block: "nearest" });
+    row?.querySelector("button")?.focus();
+  }
 
   const changed = useCallback(async () => {
     await refresh();
@@ -356,6 +412,11 @@ export function LocalProviders({
   }, [onModelsChanged, refresh]);
 
   async function connect(finding: LocalProviderFinding) {
+    if (!setupReady || (finding.providerId === "openai" && openaiBusy)) return;
+    if (finding.providerId === "openai" && openaiGuard) {
+      openProviderSetup("openai");
+      return;
+    }
     setRowState(finding.id, { phase: "connecting" });
     try {
       const result = await coworkerBridge.localProviders.connect(finding.id);
@@ -367,6 +428,11 @@ export function LocalProviders({
   }
 
   async function signIn(rowId: string, providerId: string) {
+    if (!setupReady || (providerId === "openai" && openaiBusy)) return;
+    if (providerId === "openai" && openaiGuard && !(openaiGuard.kind === "confirm" && replacementConfirmed)) {
+      openProviderSetup("openai");
+      return;
+    }
     setRowState(rowId, { phase: "connecting" });
     try {
       const start = await coworkerBridge.localProviders.signIn.start(providerId);
@@ -419,7 +485,7 @@ export function LocalProviders({
     setRowState(rowId, IDLE);
   }
 
-  async function disconnect(row: ConnectedRow, confirmed: boolean) {
+  async function disconnect(row: Pick<ConnectedRow, "providerId">, confirmed: boolean) {
     setError("");
     try {
       const result = await coworkerBridge.localProviders.disconnect(row.providerId, confirmed);
@@ -446,15 +512,19 @@ export function LocalProviders({
     }
     if (state.phase === "connecting") return <Button variant="ghost" disabled aria-busy>{COPY.connecting}</Button>;
     if (state.phase === "connected" || state.phase === "waiting") return null;
+    if (finding.providerId === "openai" && openaiBusy) return <Button variant="ghost" disabled aria-busy>{COPY.connecting}</Button>;
+    if (finding.providerId === "openai" && (finding.how === "in-use" || openaiGuard)) {
+      return <Button variant="default" disabled={!setupReady} onClick={() => openProviderSetup(finding.providerId)}>Set up</Button>;
+    }
     if (state.phase === "failed") {
       return (
         <>
-          {state.canSignIn ? <Button variant="ghost" onClick={() => void signIn(finding.id, finding.providerId)}>{COPY.signIn}</Button> : null}
-          <Button variant="default" onClick={() => void connect(finding)}>{COPY.connect}</Button>
+          {state.canSignIn ? <Button variant="ghost" disabled={!setupReady} onClick={() => void signIn(finding.id, finding.providerId)}>{COPY.signIn}</Button> : null}
+          <Button variant="default" disabled={!setupReady} onClick={() => void connect(finding)}>{COPY.connect}</Button>
         </>
       );
     }
-    return <Button variant="primary" onClick={() => void connect(finding)} data-testid={`found-${finding.id}-connect`}>{COPY.connect}</Button>;
+    return <Button variant="primary" disabled={!setupReady} onClick={() => void connect(finding)} data-testid={`found-${finding.id}-connect`}>{COPY.connect}</Button>;
   }
 
   function rowLine(finding: LocalProviderFinding, state: ConnectState): { line: string; tone?: "mint" | "amber" | "rose" } {
@@ -467,22 +537,26 @@ export function LocalProviders({
   const addableOpen = adding !== "";
   const addableChosen = plan.addable.find((provider) => provider.id === adding) ?? null;
   const addRowState = states["add-another"] ?? IDLE;
+  const setupGuard = addableChosen?.id === "openai" ? openaiGuard : null;
+  const setupBlocked = setupGuard !== null && !(setupGuard.kind === "confirm" && replacementConfirmed);
 
   return (
     <div className="space-y-5" data-testid="local-providers" data-loaded={loaded ? "true" : "false"} data-found={found ? "true" : "false"}>
-      {!session && !dismissed ? (
-        <div className="flex items-center gap-3 rounded-xl border border-spark/25 bg-spark/8 px-3 py-2 text-[12px] text-snow" data-testid="local-mode-recommended">
-          <span className="min-w-0 flex-1">{COPY.recommended}</span>
-          <button type="button" className="shrink-0 font-medium text-[#b8caff] hover:underline" onClick={onConnectAccount}>{COPY.recommendedAction}</button>
+      {offer ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-spark/25 bg-spark/8 px-3 py-2 text-[12px] text-snow" data-testid="model-growth-offer" data-offer-id={offer.id}>
+          <span className="min-w-0 flex-[1_1_220px]">{offer.title}</span>
+          <button type="button" className="shrink-0 font-medium text-[#b8caff] hover:underline disabled:opacity-60" disabled={offer.action.kind === "setup-chatgpt" && !setupReady} onClick={() => {
+            dismissOffer(offer.id);
+            if (offer.action.kind === "setup-chatgpt") revealFinding(offer.action.findingId);
+            else if (offer.action.kind === "explore-thinking") (onExploreThinking ?? onConnectAccount)();
+            else (onExploreTeams ?? onConnectAccount)();
+          }}>{offer.action.label}</button>
           <button
             type="button"
             className="flex size-6 shrink-0 items-center justify-center rounded-full text-mist hover:bg-white/8 hover:text-snow"
             aria-label="Dismiss"
             title="Dismiss"
-            onClick={() => {
-              writeDismissed();
-              setDismissed(true);
-            }}
+            onClick={() => dismissOffer(offer.id)}
           >
             <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
           </button>
@@ -508,7 +582,7 @@ export function LocalProviders({
         {loaded && plan.found.length === 0 ? <QuietLine testId="found-empty">{COPY.nothingFound}</QuietLine> : null}
         {!loaded && found && plan.found.length === 0 ? <QuietLine testId="found-waiting">{COPY.waitingService}</QuietLine> : null}
         {plan.found.length > 0 ? (
-          <ul className="px-1" aria-label={COPY.found} data-testid="found-rows">
+          <ul ref={foundRowsRef} className="px-1" aria-label={COPY.found} data-testid="found-rows">
             {plan.found.map((finding) => {
               // A row under Found is not connected now; a "connected" line left from earlier is stale.
               const remembered = states[finding.id] ?? IDLE;
@@ -594,7 +668,7 @@ export function LocalProviders({
           tone={addRowState.phase === "connected" ? "mint" : undefined}
           testId="add-another-row"
           extra={addableOpen ? (
-            <div className="mt-3 ml-11 space-y-3" data-testid="add-another">
+            <div ref={setupRef} tabIndex={-1} className="mt-3 ml-11 space-y-3" data-testid="add-another">
               {adding === "list" ? (
                 <div className="overflow-hidden rounded-xl border border-line bg-ink/60" role="listbox" aria-label={COPY.addAnother}>
                   {plan.addable.map((provider, index) => (
@@ -603,7 +677,7 @@ export function LocalProviders({
                       letter={String.fromCharCode(65 + index)}
                       label={provider.label}
                       description={provider.connected ? "Connected" : provider.canSignIn && provider.acceptsKey ? "Sign in or paste a key" : provider.canSignIn ? "Sign in" : "Paste a key"}
-                      onChoose={() => setAdding(provider.id)}
+                      onChoose={() => openProviderSetup(provider.id)}
                     />
                   ))}
                   <OptionRow letter={String.fromCharCode(65 + plan.addable.length)} label={COPY.custom} description={COPY.customDetail} onChoose={() => setAdding("custom")} />
@@ -626,9 +700,25 @@ export function LocalProviders({
                     <p className="text-[12px] text-snow">{addableChosen.label}</p>
                     <button type="button" className="text-[11px] font-medium text-mist hover:text-snow" onClick={() => setAdding("list")}>{COPY.back}</button>
                   </div>
-                  {addableChosen.canSignIn ? (
+                  {setupGuard ? (
+                    <div className="space-y-2 text-[11px] leading-relaxed text-mist" data-testid="openai-replacement-warning">
+                      <p>{setupGuard.note}</p>
+                      {setupGuard.kind === "disconnect" ? (
+                        <>
+                          {disconnecting?.providerId === "openai" ? <p className="text-amber">{disconnecting.note}</p> : null}
+                          <Button variant={disconnecting?.providerId === "openai" ? "danger" : "default"} disabled={!setupReady || openaiBusy} onClick={() => void disconnect({ providerId: "openai" }, disconnecting?.providerId === "openai")}>
+                            {disconnecting?.providerId === "openai" ? COPY.disconnectAnyway : COPY.disconnect}
+                          </Button>
+                        </>
+                      ) : setupGuard.kind === "confirm" && !replacementConfirmed ? (
+                        <Button variant="danger" disabled={!setupReady} onClick={() => setReplacementConfirmed(true)}>Replace saved connection</Button>
+                      ) : null}
+                      <Button variant="ghost" disabled={openaiBusy} onClick={() => { setDisconnecting(null); setReplacementConfirmed(false); setAdding(""); }}>{COPY.keep}</Button>
+                    </div>
+                  ) : null}
+                  {addableChosen.canSignIn && !setupBlocked ? (
                     (states[`add:${addableChosen.id}`] ?? IDLE).phase === "waiting" ? null : (
-                      <Button variant="default" onClick={() => void signIn(`add:${addableChosen.id}`, addableChosen.id)} data-testid={`add-${addableChosen.id}-sign-in`}>{COPY.signIn}</Button>
+                      <Button variant="default" disabled={!setupReady || states[`add:${addableChosen.id}`]?.phase === "connecting" || (addableChosen.id === "openai" && openaiBusy)} onClick={() => void signIn(`add:${addableChosen.id}`, addableChosen.id)} data-testid={`add-${addableChosen.id}-sign-in`}>{COPY.signIn}</Button>
                     )
                   ) : null}
                   {(() => {
@@ -647,7 +737,7 @@ export function LocalProviders({
                     if (state.phase === "failed") return <ErrorNote>{state.error}</ErrorNote>;
                     return null;
                   })()}
-                  {addableChosen.acceptsKey ? (
+                  {addableChosen.acceptsKey && (addableChosen.id !== "openai" || (!setupBlocked && setupReady && !openaiBusy)) ? (
                     <KeyForm
                       provider={addableChosen}
                       onSaved={(line) => {

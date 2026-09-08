@@ -944,6 +944,7 @@ export default function App() {
             ) : (
             selectedGroupId === allHandsGroup?.id ? null : <CoworkerHome
               key={selected.slug}
+              active={!globalSettings}
               runtime={runtime}
               session={session}
               coworkers={coworkers}

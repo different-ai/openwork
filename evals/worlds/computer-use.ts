@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +36,9 @@ function pipeClient(executable: string, args: string[]) {
   child.on("error", fail); child.on("exit", fail);
   return {
     pid: child.pid,
+    cancelPending() {
+      for (const requestId of pending.keys()) child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId } })}\n`);
+    },
     request(method: string, params: Record<string, unknown> = {}, timeoutMs = 15_000) {
       const id = ++nextId;
       return new Promise<unknown>((resolve, reject) => {
@@ -47,7 +50,7 @@ function pipeClient(executable: string, args: string[]) {
     async close() {
       child.stdin.end(); lines.close();
       await new Promise<void>((resolve) => {
-        if (child.exitCode !== null) { resolve(); return; }
+        if (child.exitCode !== null || child.signalCode !== null) { resolve(); return; }
         const timeout = setTimeout(() => { child.kill("SIGKILL"); resolve(); }, 2000);
         child.once("exit", () => { clearTimeout(timeout); resolve(); });
       });
@@ -95,7 +98,7 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place },
   await mkdir(join(contents, "MacOS"), { recursive: true });
   await writeFile(join(contents, "Info.plist"), `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.openwork.computer-use-fixture</string><key>CFBundleName</key><string>Computer Use Fixture</string><key>CFBundleExecutable</key><string>Fixture</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleVersion</key><string>1</string><key>CFBundleShortVersionString</key><string>1.0</string><key>LSMinimumSystemVersion</key><string>14.0</string></dict></plist>`);
   const fixtureExecutable = join(contents, "MacOS/Fixture");
-  const compiled = spawnSync("swiftc", ["-parse-as-library", join(root, "evals/packages/labs/fixtures/computer-use-app.swift"), "-o", fixtureExecutable], { encoding: "utf8", timeout: 90_000 });
+  const compiled = spawnSync("swiftc", ["-target", `${process.arch === "arm64" ? "arm64" : "x86_64"}-apple-macosx14.0`, "-parse-as-library", join(root, "evals/packages/labs/fixtures/computer-use-app.swift"), "-o", fixtureExecutable], { encoding: "utf8", timeout: 90_000 });
   if (compiled.status !== 0) { await rm(directory, { recursive: true }); throw new Error(compiled.stderr); }
   const fixture = pipeClient(fixtureExecutable, []);
   const helper = externalHelper ? null : pipeClient(executable, ["mcp"]);
@@ -114,10 +117,45 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place },
       return client;
     };
     return {
+      async launchableFixture() {
+        const appId = "org.example.openwork.launch-fixture." + directory.split("-").at(-1);
+        // Launch Services deliberately excludes apps in the OS temporary directory.
+        const appPath = join(root, "evals/results/.native-apps", `${appId}.app`);
+        const launchContents = join(appPath, "Contents");
+        await mkdir(join(launchContents, "MacOS"), { recursive: true });
+        await copyFile(fixtureExecutable, join(launchContents, "MacOS/Fixture"));
+        await writeFile(join(launchContents, "Info.plist"), (await readFile(join(contents, "Info.plist"), "utf8")).replace("org.example.openwork.computer-use-fixture", appId));
+        const register = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+        const result = spawnSync(register, ["-f", appPath], { encoding: "utf8", timeout: 10_000 });
+        if (result.status !== 0) throw new Error(`Could not register disposable launch fixture: ${result.stderr}`);
+        return { appId, async [Symbol.asyncDispose]() {
+          const discovery = toolState(await owned(helper).request("tools/call", { name: "computer_discover", arguments: {} }));
+          if (Array.isArray(discovery.apps)) for (const entry of discovery.apps) {
+            if (record(entry) && entry.app_id === appId && typeof entry.pid === "number") {
+              try { process.kill(entry.pid, "SIGTERM"); } catch { /* Already closed. */ }
+            }
+          }
+          spawnSync(register, ["-u", appPath], { timeout: 10_000 });
+          await rm(appPath, { recursive: true, force: true });
+        } };
+      },
+      async hostedClient(command: unknown) {
+        if (!Array.isArray(command) || command.length !== 3 || !command.every((part): part is string => typeof part === "string") || command[1] !== "relay") throw new Error("Desktop did not provide the hosted relay command");
+        const client = pipeClient(command[0], command.slice(1));
+        await client.request("initialize", { protocolVersion: "2025-11-25", clientInfo: { name: "desktop-journey", version: "1" }, capabilities: {} });
+        return {
+          call: (name: string, args: Record<string, unknown> = {}) => client.request("tools/call", { name, arguments: args }, 60_000),
+          request: client.request,
+          cancelPending: client.cancelPending,
+          close: client.close,
+          [Symbol.asyncDispose]: () => client.close(),
+        };
+      },
       async electronFixture() {
         const main = join(directory, "electron-fixture.cjs");
         await writeFile(main, `
           const { app, BrowserWindow } = require('electron');
+          app.setPath('userData', ${JSON.stringify(join(directory, "electron-profile"))});
           const readline = require('node:readline');
           let window;
           const ready = app.whenReady().then(async () => {
@@ -141,7 +179,10 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place },
           return { appId: identity.app_id, pid: client.pid, state: () => client.request("state"), [Symbol.asyncDispose]: () => client.close() };
         } catch (error) { await client.close(); throw error; }
       },
-      desktop: () => desktop({ name: "computer-use-setup", host: place.host(), env: { OPENWORK_COMPUTER_USE_BINARY: executable } }),
+      desktop: () => desktop({ name: "computer-use-setup", host: place.host(), env: {
+        OPENWORK_COMPUTER_USE_BINARY: executable,
+        OPENCODE_DB: join(directory, "opencode.db"),
+      } }),
       workspacePath: join(directory, "workspace"),
       appId: "org.example.openwork.computer-use-fixture",
       appPid: fixture.pid,
@@ -151,10 +192,13 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place },
       state: () => fixture.request("state"),
       refreshChanges: (continuous: boolean) => fixture.request("refresh_changes", { continuous }),
       refreshStable: () => fixture.request("refresh_stable"),
+      interruptNextRead: () => fixture.request("interrupt_next_read"),
       refreshState: () => fixture.request("refresh_state"),
       resize: () => fixture.request("resize"),
       async setupPanel() {
-        const setup = spawn(executable, ["setup"], { stdio: "ignore" });
+        const setup = spawn(executable, ["setup"], { stdio: ["ignore", "ignore", "pipe"] });
+        let stderr = "";
+        setup.stderr.on("data", (data: Buffer) => { stderr = (stderr + data.toString()).slice(-2000); });
         try {
           await new Promise<void>((resolve, reject) => { setup.once("spawn", resolve); setup.once("error", reject); });
           const deadline = Date.now() + 5_000;
@@ -165,7 +209,7 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place },
             if (record(result) && typeof result.text === "string" && result.text.includes("Accessibility")) return result;
             await new Promise((resolve) => setTimeout(resolve, 100));
           }
-          throw new Error(`The setup window did not show permission status: ${JSON.stringify(lastPanel)}`);
+          throw new Error(`The setup window did not show permission status: ${JSON.stringify(lastPanel)}; exit ${setup.exitCode}; ${stderr}`);
         } finally {
           setup.kill("SIGTERM");
           await new Promise<void>((resolve) => {
@@ -175,6 +219,12 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place },
           });
         }
       },
+      async hostedControl(pid: unknown, name: "Hide" | "Stop") {
+        if (typeof pid !== "number") throw new Error("Missing hosted preview process");
+        const result = await fixture.request("press_helper_button", { name, pid, executable });
+        if (!record(result) || result.ok !== true) throw new Error(`Preview ${name} button unavailable`);
+      },
+      hostedPanel: (pid: unknown) => fixture.request("helper_panel", { name: "", pid, executable }),
       panel: async () => fixture.request("helper_panel", { name: "", ...await target() }),
       foregroundWindow: () => fixture.request("foreground_window"),
       minimized: () => fixture.request("minimized"),
@@ -191,6 +241,7 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place },
         }
         return fixture.request("human_edit");
       },
+      hover: () => fixture.request("hover"),
       prepareDrag: () => fixture.request("prepare_drag"),
       dragState: () => fixture.request("drag_state"),
       front: () => fixture.request("front"),
@@ -203,7 +254,7 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place },
         }
         throw new Error("The native window picker did not become available.");
       },
-      async pressControl(name: "Allow this session" | "Cancel" | "Take over" | "Continue" | "Stop" | "Hide panel" | "Show Computer Use task") {
+      async pressControl(name: "Allow and start" | "Allow this session" | "Cancel" | "Take over" | "Continue" | "Stop" | "Hide panel" | "Show Computer Use task") {
         const deadline = Date.now() + 10_000;
         while (Date.now() < deadline) {
           const result = await fixture.request("press_helper_button", { name, ...await target() });

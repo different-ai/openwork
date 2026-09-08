@@ -26,6 +26,9 @@ importers:
       '@openwork/matchers':
         specifier: workspace:*
         version: link:packages/matchers
+      '@openwork/review':
+        specifier: link:../packages/review
+        version: link:../packages/review
       '@openwork/sdk':
         specifier: link:../packages/sdk
         version: link:../packages/sdk
@@ -155,7 +158,11 @@ importers:
 
   packages/matchers: {}
 
-  packages/test-artifacts: {}
+  packages/test-artifacts:
+    dependencies:
+      '@openwork/review':
+        specifier: link:../../../packages/review
+        version: link:../../../packages/review
 
   packages/test-evidence:
     dependencies:

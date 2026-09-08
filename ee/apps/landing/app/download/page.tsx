@@ -48,7 +48,6 @@ export default async function Download() {
       <StructuredData data={downloadSchema} />
       <SiteNav
         stars={github.stars}
-        downloadHref={github.downloads.macos}
         mobilePrimaryHref="/download"
         mobilePrimaryLabel="Download now"
         active="download"

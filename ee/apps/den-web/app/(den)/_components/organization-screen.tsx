@@ -16,7 +16,7 @@ type SettingsTab = "profile" | "organizations";
 
 export function OrganizationScreen() {
   const router = useRouter();
-  const { user, sessionHydrated, signOut, runtimeConfig, runtimeConfigLoaded } = useDenFlow();
+  const { user, sessionHydrated, signOut, runtimeConfig, runtimeConfigLoaded, continueSetup } = useDenFlow();
   const [orgs, setOrgs] = useState<DenOrgSummary[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +46,7 @@ export function OrganizationScreen() {
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
   const singleOrgName = runtimeConfig.singleOrgName || "OpenWork";
   const singleOrgSlug = runtimeConfig.singleOrgSlug.trim();
-  const showDirectCreateFlow = !isSingleOrgMode && orgs.length === 0;
+  const showDirectCreateFlow = !isSingleOrgMode && !error && orgs.length === 0;
   const {
     query: orgQuery,
     setQuery: setOrgQuery,
@@ -74,7 +74,11 @@ export function OrganizationScreen() {
         }
 
         if (isMounted) {
+          if (typeof payload !== "object" || payload === null || !("orgs" in payload) || !Array.isArray(payload.orgs)) {
+            throw new Error("Organization lookup returned incomplete details.");
+          }
           const parsed = parseOrgListPayload(payload);
+          if (parsed.orgs.length !== payload.orgs.length) throw new Error("Organization lookup returned incomplete details.");
           const nextOrgs = parsed.orgs.map((org) => ({ ...org, isActive: org.slug === parsed.activeOrgSlug }));
           const targetOrg = nextOrgs.find((org) => org.isActive) ?? nextOrgs[0] ?? null;
           if (isSingleOrgMode && targetOrg) {
@@ -82,6 +86,7 @@ export function OrganizationScreen() {
             return;
           }
           setOrgs(nextOrgs);
+          if (!isSingleOrgMode && nextOrgs.length === 0) continueSetup(null, "/organization");
           setShowCreate(!isSingleOrgMode && nextOrgs.length === 0);
           setBusy(false);
         }
@@ -151,6 +156,7 @@ export function OrganizationScreen() {
       if (intent === "team" && desktopSetup === "restricted") {
         await applyRestrictedSetup(nextOrg.id);
       }
+      continueSetup(nextOrg.id, getOnboardingPeopleRoute(nextOrg.slug));
       router.push(getOnboardingPeopleRoute(nextOrg.slug));
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Failed to create organization.");

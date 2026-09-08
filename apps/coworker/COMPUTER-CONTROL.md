@@ -8,24 +8,41 @@ approves one native app/window when the coworker requests it. Setup, permission,
 task execution, and observed task completion are four different states.
 
 The first implementation supplies **This Mac**, using the shared
-`@openwork/computer-use` runtime. **Remote computer** is visibly unavailable until
-a compatible service is registered. There is no automatic provisioning and no
-remote-to-local fallback. This is a development candidate, not a release claim.
+`@openwork/computer-use` runtime. When present in the target list, an unavailable
+**Remote computer** appears only as a disabled chooser option. There is no
+automatic provisioning and no remote-to-local fallback. This is a development
+candidate, not a release claim.
 
 ### The experience
 
 1. Open **Computer** in a saved discussion's header. New discussions start off.
-2. Review the selected computer and Desktop/Cloud placement. Resolve native setup
-   if needed; granting macOS permissions does not enable the discussion.
+2. Review the selected computer and **This computer** / **Remote** placement in
+   the details popover. Resolve native setup if needed; granting macOS permissions
+   does not enable the discussion.
 3. Choose **Allow for this discussion**, then ask for the task normally.
 4. The coworker discovers available app identities and asks for a scoped session.
    The person selects the exact window and approves observe, assist, or control.
 5. The native panel retains the purpose, window, expiry, Take over, Continue and
-   Stop controls. Coworker's compact popover reports state, not a second control
-   dashboard. Paused tools wait for the person within a bounded execution; the
-   model cannot resume them or repeat an interrupted action automatically.
-6. **Stop & revoke** disables the discussion and awaits session release. Unknown
-   release remains visibly pending. A later target cannot borrow that lease.
+   Stop controls. A compact persistent strip can sit above the composer through
+   `ComputerControl`'s optional `statusSlot: HTMLElement | null` prop. It appears
+   only while access is enabled, a session exists, or cleanup is pending. It shows
+   the selected computer, approved app/window when supplied, and observed phase:
+   **You have control**, **Waiting for window approval**, **Working**, or
+   **Access allowed**. Access alone does not mean work is running. Refreshing,
+   unavailable status, and pending cleanup are reported separately. A failed read
+   retains the active strip and labels its state as last known, not stopped.
+6. **Stop & revoke** is directly available in the strip as well as the details
+   popover. It disables the discussion and awaits session release. Unknown release
+   remains visibly pending. A later target cannot borrow that lease. Confirmed
+   off state removes the strip; without a status slot, only the existing header
+   control and popover are rendered.
+
+The strip points to the native task panel for **Take over** and **Continue**;
+it does not add a renderer-side resume action. Paused tools wait for the person
+within a bounded execution; the model cannot resume them or repeat an interrupted
+action automatically. The popover remains the setup and review surface. Neither
+surface displays a computer screenshot or live computer video; window observations
+belong to the native tool flow, not a simulated preview.
 
 Leaving the discussion stops its UI observer, not its work. A completed turn
 closes its native session; discussion opt-in can remain until revoked or the app

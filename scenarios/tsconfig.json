@@ -12,6 +12,7 @@
     ]
   },
   "include": [
+    "../evals/packages/cdp/src/browser-globals.d.ts",
     "**/*.ts",
     "**/*.tsx"
   ],

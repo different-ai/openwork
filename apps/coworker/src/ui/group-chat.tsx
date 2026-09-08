@@ -1,5 +1,5 @@
 import { useComposerDraft } from "@/ui/use-composer-draft";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { coworkerBridge, type CollaborationReceipt, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type GroupInteraction, type GroupTimelineEvent, type RuntimeInfo } from "@/lib/bridge";
 import { assignmentPrompt, assignmentTitle, timeLabelBetween, type DiscussionMessage } from "@/lib/conversation";
@@ -226,7 +226,12 @@ export function GroupChat({
   const [liveTurn, setLiveTurn] = useState<CoworkerGroupTurn | null>(null);
   const [queue, setQueue] = useState<QueuedGroupMessage[]>([]);
   const [receipts, setReceipts] = useState<CollaborationReceipt[]>([]);
+  const [receiptsLoaded, setReceiptsLoaded] = useState(false);
   const [failedSend, setFailedSend] = useState<{ text: string; clientMessageId: string; error: string } | null>(null);
+  const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
+  const submissionRevision = useRef(0);
+  const [activityError, setActivityError] = useState("");
   const [error, setError] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState(group.name);
@@ -236,6 +241,10 @@ export function GroupChat({
   const [assignment, setAssignment] = useState("");
   const [pendingAssignment, setPendingAssignment] = useState<{ outcome: string; suggested: string } | null>(null);
   const [assignmentBusy, setAssignmentBusy] = useState("");
+  const assignmentInFlight = useRef(false);
+  const assignmentChoiceRef = useRef<HTMLDivElement>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const groupRef = useRef(group);
   groupRef.current = group;
   const coworkersRef = useRef(coworkers);
@@ -263,64 +272,84 @@ export function GroupChat({
     setLiveTurn(null);
     setQueue([]);
     setReceipts([]);
+    setReceiptsLoaded(false);
   }, [group.id]);
 
   useEffect(() => {
     let cancelled = false;
-    let reading = false;
-    const refresh = async () => {
-      if (reading) return;
-      reading = true;
-      try {
-        // Apply authoritative waits immediately, but settle every read before another poll.
-        const [status, activity, updated, work] = await Promise.allSettled([
-          coworkerBridge.groups.status(group.id).then((status) => {
-            if (cancelled || groupRef.current.id !== group.id) return;
-            setLive(status.active); setLiveTurn(status.turn); setQueue(status.queue);
-            setHumanWaits({ groupId: group.id, entries: status.interactions });
-            publishGroupRun({ groupId: group.id, active: status.active, ...(status.turn ? { turn: status.turn } : {}), done: !status.active });
-          }),
-          coworkerBridge.groups.activity(group.id),
-          coworkerBridge.groups.get(group.id),
-          coworkerBridge.collaboration.receipts({ groupId: group.id }),
-        ]);
-        if (cancelled || groupRef.current.id !== group.id) return;
-        if (status.status === "rejected") throw status.reason;
-        if (activity.status === "rejected") throw activity.reason;
-        if (updated.status === "rejected") throw updated.reason;
-        if (work.status === "rejected") throw work.reason;
-        setObserved({ groupId: group.id, ...activity.value }); setReceipts(work.value); setLoaded(true); setError("");
-        if (updated.value.updatedAt !== groupRef.current.updatedAt) changedRef.current(updated.value);
-      } catch {
-        if (!cancelled && groupRef.current.id === group.id) {
-          setObserved((current) => ({ ...current, executions: [] }));
-          setError("Live activity could not be refreshed. Recorded replies and waiting receipts are kept.");
+    const current = () => !cancelled && groupRef.current.id === group.id;
+    const failures = new Set<string>();
+    setActivityError("");
+    // Each observation has its own in-flight guard. Slow native activity must
+    // not stop status, queue or receipt updates; timeline and executions stay paired.
+    const poll = (name: string, read: () => Promise<void>) => {
+      let reading = false;
+      const refresh = async () => {
+        if (reading) return;
+        reading = true;
+        try {
+          await read();
+          failures.delete(name);
+        } catch {
+          failures.add(name);
+          if (current() && name === "activity") setObserved((value) => ({ ...value, executions: [] }));
+        } finally {
+          reading = false;
+          if (current()) setActivityError(failures.size ? "Live activity could not be refreshed. Recorded replies and waiting receipts are kept." : "");
         }
-      }
-      finally { reading = false; }
+      };
+      void refresh();
+      return window.setInterval(() => void refresh(), PROGRESS_LIMITS.activityPollMs);
     };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), PROGRESS_LIMITS.activityPollMs);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    const timers = [
+      poll("status", async () => {
+        const revision = submissionRevision.current;
+        const status = await coworkerBridge.groups.status(group.id);
+        if (!current() || revision !== submissionRevision.current) return;
+        setLive(status.active); setLiveTurn(status.turn); setQueue(status.queue); setLoaded(true);
+        setHumanWaits({ groupId: group.id, entries: status.interactions });
+        publishGroupRun({ groupId: group.id, active: status.active, ...(status.turn ? { turn: status.turn } : {}), done: !status.active });
+      }),
+      poll("activity", async () => {
+        const activity = await coworkerBridge.groups.activity(group.id);
+        if (current()) setObserved({ groupId: group.id, ...activity });
+      }),
+      poll("group", async () => {
+        const updated = await coworkerBridge.groups.get(group.id);
+        if (current() && updated.updatedAt !== groupRef.current.updatedAt) changedRef.current(updated);
+      }),
+      poll("receipts", async () => {
+        const work = await coworkerBridge.collaboration.receipts({ groupId: group.id });
+        if (current()) { setReceipts(work); setReceiptsLoaded(true); }
+      }),
+    ];
+    return () => { cancelled = true; timers.forEach(window.clearInterval); };
   }, [group.id]);
 
   useEffect(() => {
-    if (!loaded || observed.groupId !== group.id) return;
-    const presentation = describeGroupPresentation({ events, executions, interactions, active: live, turn: liveTurn ?? group.turns.at(-1) ?? null, nameFor, unavailable: Boolean(error) });
+    if (!loaded || !receiptsLoaded || observed.groupId !== group.id) return;
+    const presentation = describeGroupPresentation({ events, executions, interactions, active: live, turn: liveTurn ?? group.turns.at(-1) ?? null, nameFor, unavailable: Boolean(activityError) });
     onActivityLine(group.id, presentation.line, presentation.activeSlugs);
-  }, [events, executions, interactions, group.id, group.turns, observed.groupId, live, liveTurn, loaded, error, nameFor, onActivityLine]);
+  }, [events, executions, interactions, group.id, group.turns, observed.groupId, live, liveTurn, loaded, receiptsLoaded, activityError, nameFor, onActivityLine]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [events.length, liveTurn?.status, liveTurn?.speakers, queue.length]);
+    if (active && !pendingAssignment) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [active, pendingAssignment, events.length, live, liveTurn?.status, liveTurn?.speakers, queue.length]);
 
   useEffect(() => {
-    if (loaded && active) composerRef.current?.focus();
+    if (loaded && active && !assignmentChoiceRef.current) composerRef.current?.focus();
   }, [loaded, group.id, active]);
+
+  useLayoutEffect(() => {
+    if (!active || !pendingAssignment) return;
+    assignmentChoiceRef.current?.scrollIntoView({ block: "nearest", behavior: "instant" });
+    assignmentChoiceRef.current?.focus({ preventScroll: true });
+  }, [active, pendingAssignment]);
 
   async function startTurn(text: string, clientMessageId: string): Promise<boolean> {
     try {
       await coworkerBridge.groups.submit(group.id, { text, clientMessageId, context: briefing?.context });
+      submissionRevision.current += 1;
       setLive(true);
       return true;
     } catch (cause) {
@@ -333,6 +362,7 @@ export function GroupChat({
     setError("");
     try {
       await coworkerBridge.groups.submit(group.id, { text: turn.prompt, clientMessageId: newId("resume"), turnId: turn.id, only, attempt: Date.now(), context: briefing?.context });
+      submissionRevision.current += 1;
       setLive(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -372,24 +402,34 @@ export function GroupChat({
 
   async function send(): Promise<void> {
     const text = message.trim();
-    if (!text) return;
+    if (!text || sendingRef.current) return;
     if (members.length < 2) {
       setError("A group chat needs at least two coworkers who are still here.");
       return;
     }
-    const focus = /^(?:\/focus\s+|focus on\s+)([\s\S]+)$/i.exec(text);
-    if (focus?.[1] && onRememberFocus) {
-      try { await onRememberFocus(focus[1]); }
-      catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); return; }
-    }
-    setError("");
-    setFailedSend(null);
     setMessage("");
     setMention(null);
-    const clientMessageId = newId("m");
-    if (await startTurn(text, clientMessageId)) {
-      const mentions = parseMentions(text, members);
-      for (const slug of mentions.everyone ? members.map((member) => member.slug) : mentions.slugs) acknowledgeCoworker(slug);
+    await sendMessage(text, newId("m"));
+  }
+
+  async function sendMessage(text: string, clientMessageId: string): Promise<void> {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    setSending(true);
+    setError("");
+    setFailedSend(null);
+    try {
+      const focus = /^(?:\/focus\s+|focus on\s+)([\s\S]+)$/i.exec(text);
+      if (focus?.[1] && onRememberFocus) await onRememberFocus(focus[1]);
+      if (await startTurn(text, clientMessageId)) {
+        const mentions = parseMentions(text, members);
+        for (const slug of mentions.everyone ? members.map((member) => member.slug) : mentions.slugs) acknowledgeCoworker(slug);
+      }
+    } catch (cause) {
+      setFailedSend({ text, clientMessageId, error: cause instanceof Error ? cause.message : String(cause) });
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
     }
   }
 
@@ -404,15 +444,17 @@ export function GroupChat({
   /** Ask who should own it: the best match by role is proposed first; the person confirms. */
   function proposeAssignment(): void {
     const outcome = assignment.trim();
-    if (!outcome || members.length === 0) return;
+    if (!active || !outcome || members.length === 0 || pendingAssignment || assignmentInFlight.current) return;
     setError("");
     setPendingAssignment({ outcome, suggested: chooseSpeakers(outcome, members, events)[0] ?? members[0]?.slug ?? "" });
   }
 
   /** Create the assignment in the owner's own workspace and link it from the timeline as one action line. */
   async function createAssignment(slug: string, outcome: string): Promise<void> {
+    if (!activeRef.current || assignmentInFlight.current) return;
     const owner = coworkersRef.current.find((coworker) => coworker.slug === slug);
     if (!owner) return;
+    assignmentInFlight.current = true;
     setAssignmentBusy(slug);
     setError("");
     try {
@@ -428,12 +470,15 @@ export function GroupChat({
       await threads.client.sendTurn(thread.id, { prompt: assignmentPrompt(outcome, context), messageId: newId("msg") });
       const line = await coworkerBridge.groups.appendEvent(group.id, { kind: "action", slug, action: "assignment", title, threadId: thread.id, text: `Assignment for ${owner.name} · ${title}` });
       publishGroupRun({ groupId: group.id, event: line });
+      // Completion must not pull typing out of a document or another surface.
+      if (activeRef.current && assignmentChoiceRef.current?.contains(document.activeElement)) composerRef.current?.focus({ preventScroll: true });
       setPendingAssignment(null);
       setAssignment("");
       setAssignmentMode(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
+      assignmentInFlight.current = false;
       setAssignmentBusy("");
     }
   }
@@ -444,12 +489,20 @@ export function GroupChat({
     return ordered.map((member, index) => ({ letter: LETTERS[index] ?? String(index + 1), member, suggested: member.slug === pendingAssignment.suggested }));
   }, [members, pendingAssignment]);
 
+  function dismissAssignment(): void {
+    if (assignmentInFlight.current) return;
+    setPendingAssignment(null);
+    if (activeRef.current) composerRef.current?.focus();
+  }
+
   useEffect(() => {
-    if (!pendingAssignment) return;
+    if (!active || !pendingAssignment) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (typingInField(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.repeat || assignmentInFlight.current || typingInField(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (!(event.target instanceof Node) || !assignmentChoiceRef.current?.contains(event.target)) return;
       if (event.key === "Escape") {
-        setPendingAssignment(null);
+        event.preventDefault();
+        dismissAssignment();
         return;
       }
       const choice = ownerChoices.find((item) => item.letter === event.key.toUpperCase());
@@ -498,8 +551,8 @@ export function GroupChat({
   const showContinue = recoverable && !(unfinished.length === 1 && unfinished[0]?.status === "failed");
   const progressLine = liveTurn ? describeTurnProgress(liveTurn, nameFor) : "";
   const waiting = receipts.some((receipt) => ["waiting", "waiting-person", "resumption-queued"].includes(receipt.state));
-  const statusLine = !loaded || observed.groupId !== group.id ? "Checking activity" : interactions.length ? "Waiting for you" : error ? "Activity unavailable" : executions.length ? `${executions.length} active execution${executions.length === 1 ? "" : "s"}` : live ? (progressLine || "Choosing who should respond…") : waiting ? "Waiting for requested work" : "Ready";
-  const activeSlugs = describeGroupPresentation({ events, executions, interactions, active: live, turn: liveTurn, nameFor, unavailable: Boolean(error) }).activeSlugs;
+  const statusLine = sending ? "Sending…" : interactions.length ? "Waiting for you" : activityError ? "Activity unavailable" : executions.length ? `${executions.length} active execution${executions.length === 1 ? "" : "s"}` : live ? (progressLine || "Choosing who should respond…") : waiting ? "Waiting for requested work" : !loaded || !receiptsLoaded || observed.groupId !== group.id ? "Checking activity" : "Ready";
+  const activeSlugs = describeGroupPresentation({ events, executions, interactions, active: live, turn: liveTurn, nameFor, unavailable: Boolean(activityError) }).activeSlugs;
 
   return (
     <div className="glass-main flex h-full min-w-0 flex-1" data-testid="group-chat" data-group-id={group.id} data-live={live ? "true" : "false"}>
@@ -546,7 +599,8 @@ export function GroupChat({
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
         <div className="mx-auto max-w-3xl space-y-3">
           {introduction}
-          {loaded && events.length === 0 && !introduction ? (
+          {observed.groupId !== group.id ? <p role="status" className="text-xs text-mist">Loading conversation…</p> : null}
+          {loaded && observed.groupId === group.id && events.length === 0 && !introduction ? (
             <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center py-10 text-center" data-testid="group-chat-empty">
               <GroupAvatars members={members} size={40} animated={false} />
               <p className="mt-3 text-sm font-semibold text-snow">{group.name}</p>
@@ -622,7 +676,7 @@ export function GroupChat({
               </div>
             );
           })}
-          <CollaborationReceipts receipts={observed.groupId === group.id ? receipts : []} />
+          <CollaborationReceipts receipts={receipts} />
           {interactions.map((entry) => {
             const member = members.find((member) => member.slug === entry.slug);
             if (!member) return null;
@@ -650,11 +704,13 @@ export function GroupChat({
           {failedSend ? (
             <div className="flex items-center justify-center gap-3 text-[11px] text-mist" data-testid="group-turn-failed">
               <span>That message could not be sent: {failedSend.error}</span>
-              <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" onClick={() => { const retry = failedSend; setFailedSend(null); void startTurn(retry.text, retry.clientMessageId); }}>Retry</button>
+              <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" onClick={() => void sendMessage(failedSend.text, failedSend.clientMessageId)}>Retry</button>
             </div>
           ) : null}
           {pendingAssignment ? (
-            <InteractionCard label="Who should own this assignment" title="Who should own this?" detail={pendingAssignment.outcome} onClose={() => setPendingAssignment(null)} testId="group-assignment-owner">
+            <div ref={assignmentChoiceRef} tabIndex={-1} role="group" aria-label="Choose an assignment owner" className="outline-none" data-testid="group-assignment-choice">
+            <InteractionCard label="Who should own this assignment" title="Who should own this?" detail={pendingAssignment.outcome} onClose={assignmentBusy ? undefined : dismissAssignment} testId="group-assignment-owner">
+              {assignmentBusy ? <p role="status" className="mt-2 text-xs text-mist">Creating assignment for {nameFor(assignmentBusy)}…</p> : null}
               <div className="mt-3 divide-y divide-line/70 rounded-xl border border-line/70" role="listbox" aria-label="Owner">
                 {ownerChoices.map((choice) => (
                   <OptionRow
@@ -669,12 +725,15 @@ export function GroupChat({
                 ))}
               </div>
             </InteractionCard>
+            </div>
           ) : null}
           {error ? <ErrorNote>{error}</ErrorNote> : null}
+          {activityError ? <ErrorNote>{activityError}</ErrorNote> : null}
         </div>
       </div>
       <div className="px-5 pb-4 pt-2" data-testid="coworker-composer">
         <div className="mx-auto max-w-3xl">
+          {sending ? <p role="status" className="mb-2 px-2 text-[11px] text-mist" data-testid="group-sending">Sending…</p> : null}
           {assignmentMode ? (
             <p className="mb-2 px-2 text-[11px] text-mist" data-testid="group-assignment-mode">Something one of them should own, separate from this chat</p>
           ) : null}
@@ -734,7 +793,7 @@ export function GroupChat({
                 onClick={(event) => !assignmentMode && updateMention(event.currentTarget.value, event.currentTarget.selectionStart ?? 0)}
                 onKeyDown={(event) => {
                   if (assignmentMode) {
-                    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                    if (event.key === "Enter" && !event.repeat && !event.shiftKey && !event.nativeEvent.isComposing) {
                       event.preventDefault();
                       proposeAssignment();
                     }
@@ -769,6 +828,7 @@ export function GroupChat({
                 <button
                   type="button"
                   aria-pressed={assignmentMode}
+                  disabled={Boolean(assignmentBusy)}
                   data-testid="group-assignment-toggle"
                   className={`flex size-8 shrink-0 items-center justify-center rounded-full border text-lg leading-none transition-colors ${
                     assignmentMode ? "border-spark/50 bg-spark/15 text-spark" : "border-line text-mist hover:border-spark/40 hover:text-snow"
@@ -788,7 +848,7 @@ export function GroupChat({
                 {assignmentMode ? (
                   <SendButton label="Create assignment" busy={false} disabled={!assignment.trim() || !runtime.engineManaged || Boolean(pendingAssignment)} onClick={proposeAssignment} testId="group-send" />
                 ) : (
-                  <SendButton label={live ? "Next" : "Send"} busy={false} disabled={!message.trim() || !runtime.engineManaged} onClick={send} testId="group-send" />
+                  <SendButton label={sending ? "Sending" : live ? "Next" : "Send"} busy={sending} disabled={sending || !message.trim() || !runtime.engineManaged} onClick={send} testId="group-send" />
                 )}
               </div>
             </div>

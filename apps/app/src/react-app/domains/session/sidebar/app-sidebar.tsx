@@ -161,6 +161,52 @@ import { SessionTitle } from "./session-title";
 const OUTCOME_DOT_UNREAD = "#2FBE54";
 const OUTCOME_DOT_NEEDS_ACTION = "#E8933A";
 
+const SidebarReorderContext = React.createContext<{
+  isReordering: boolean;
+  setIsReordering: (value: boolean) => void;
+} | null>(null);
+
+function SidebarReorderScope({ children }: { children: React.ReactNode }) {
+  const [isReordering, setIsReordering] = React.useState(false);
+
+  return (
+    <SidebarReorderContext.Provider value={{ isReordering, setIsReordering }}>
+      <LazyMotion features={domMax}>{children}</LazyMotion>
+    </SidebarReorderContext.Provider>
+  );
+}
+
+function SidebarReorderItem(props: React.ComponentProps<typeof Reorder.Item>) {
+  const reorder = React.useContext(SidebarReorderContext);
+  const ownsGesture = React.useRef(false);
+  if (!reorder) throw new Error("SidebarReorderItem requires SidebarReorderScope");
+
+  // Removing a row mid-drag must not leave expansion animations enabled.
+  React.useEffect(() => () => {
+    if (ownsGesture.current) reorder.setIsReordering(false);
+  }, [reorder.setIsReordering]);
+
+  return (
+    <Reorder.Item
+      {...props}
+      layout="position"
+      dragElastic={0}
+      // Reorder's drag prop bypasses layoutDependency. Keep measuring every
+      // update, but only animate layout shifts during an actual reorder gesture.
+      transition={reorder.isReordering ? undefined : { layout: { duration: 0 } }}
+      onDragStart={() => {
+        ownsGesture.current = true;
+        reorder.setIsReordering(true);
+      }}
+      onDragEnd={() => {
+        ownsGesture.current = false;
+        reorder.setIsReordering(false);
+      }}
+      transformTemplate={(_latest, generated) => generated.replace(/ ?scale[XY]?\([^)]*\)/g, "")}
+    />
+  );
+}
+
 interface SessionStatusIndicatorProps {
   status?: string;
   isActiveWork: boolean;
@@ -1178,13 +1224,13 @@ export function AppSidebar(props: AppSidebarProps) {
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarHeader>
-        <LazyMotion features={domMax}>
+        <SidebarReorderScope>
           <m.div
             layoutScroll
             data-slot="sidebar-content"
             data-sidebar="content"
             data-session-number-modifier-held={props.sessionNumberShortcuts.modifierHeld ? "true" : undefined}
-            className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-x-hidden overflow-y-auto [--radius:var(--radius-md)] group-data-[collapsible=icon]:overflow-hidden"
+            className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-x-hidden overflow-y-auto [overflow-anchor:none] [--radius:var(--radius-md)] group-data-[collapsible=icon]:overflow-hidden"
           >
             {pinnedSessions.length > 0 ? (
               <GlobalPinnedSessions entries={pinnedSessions} />
@@ -1226,7 +1272,7 @@ export function AppSidebar(props: AppSidebarProps) {
               <GlobalArchivedSessions entries={archivedSessions} />
             ) : null}
           </m.div>
-        </LazyMotion>
+        </SidebarReorderScope>
 
         <SidebarFooter className="border-t border-sidebar-border/60 p-1.5 pe-0">
           <AccountStatusMenu {...props.status} onOpenAccountSettings={props.onOpenAccountSettings} />
@@ -1377,20 +1423,13 @@ function WorkspaceReorderItem({
   const dragControls = useDragControls();
 
   return (
-    <Reorder.Item
+    <SidebarReorderItem
       as="div"
       value={group.workspace.id}
       id={group.workspace.id}
       data-sidebar-workspace-id={group.workspace.id}
-      layout="position"
-      dragElastic={0}
       dragListener={false}
       dragControls={dragControls}
-      transformTemplate={(_latest, generated) =>
-        // Keep Motion's translate-based reorder movement, but drop projection scale
-        // so expanded workspace contents don't stretch during collapse/expand.
-        generated.replace(/ ?scale[XY]?\([^)]*\)/g, "")
-      }
       className="relative"
     >
       <WorkspaceSidebarGroup
@@ -1400,7 +1439,7 @@ function WorkspaceReorderItem({
         showMoreSessions={showMoreSessions}
         onWorkspaceTitlePointerDown={(event) => dragControls.start(event)}
       />
-    </Reorder.Item>
+    </SidebarReorderItem>
   );
 }
 
@@ -2112,15 +2151,12 @@ function SessionGroupSection({ group, rows, expanded, workspaceId, store, render
   const remaining = Math.max(0, rows.length - previewCount);
 
   return (
-    <Reorder.Item
+    <SidebarReorderItem
       as="div"
       value={group.id}
       id={group.id}
-      layout="position"
-      dragElastic={0}
       dragListener={false}
       dragControls={dragControls}
-      transformTemplate={(_latest, generated) => generated.replace(/ ?scale[XY]?\([^)]*\)/g, "")}
     >
       <GroupDropZone groupId={group.id} workspaceId={workspaceId}>
         <Collapsible
@@ -2161,7 +2197,7 @@ function SessionGroupSection({ group, rows, expanded, workspaceId, store, render
           </CollapsibleContent>
         </Collapsible>
       </GroupDropZone>
-    </Reorder.Item>
+    </SidebarReorderItem>
   );
 }
 
@@ -2340,15 +2376,12 @@ function SessionMenuItem({
   if (!draggable) return item;
 
   return (
-    <Reorder.Item
+    <SidebarReorderItem
       as="div"
       value={session.id}
       id={session.id}
-      layout="position"
-      dragElastic={0}
-      transformTemplate={(_latest, generated) => generated.replace(/ ?scale[XY]?\([^)]*\)/g, "")}
     >
       {item}
-    </Reorder.Item>
+    </SidebarReorderItem>
   );
 }

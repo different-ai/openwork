@@ -119,17 +119,15 @@ describe("library destination", () => {
     expect(libraryAddKindsForFilter("skill")).toEqual(["skill"]);
     expect(libraryAddKindsForFilter("command")).toEqual(["command"]);
     expect(libraryAddKindsForFilter("agent")).toEqual(["agent"]);
-    expect(libraryAddKindsForFilter("mcp")).toEqual(["mcp", "workspace-mcp"]);
-    expect(libraryAddKindsForFilter("plugin")).toEqual(["plugin"]);
+    expect(libraryAddKindsForFilter("mcp")).toEqual(["workspace-mcp"]);
+    expect(libraryAddKindsForFilter("plugin")).toEqual([]);
     expect(libraryAddKindsForFilter("connection")).toEqual(["connection"]);
     expect(libraryAddKindsForFilter("app")).toEqual([]);
     expect(libraryAddKindsForFilter("all")).toEqual([
       "skill",
       "command",
       "agent",
-      "mcp",
       "workspace-mcp",
-      "plugin",
       "connection",
     ]);
   });

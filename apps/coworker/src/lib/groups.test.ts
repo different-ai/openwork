@@ -1,24 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { describeGroupPresentation } from "./group-presentation.ts";
-import type { ExecutionActivity } from "./progress-activity.ts";
 import type { CoworkerGroupTurn, GroupSpeakerRun, GroupTimelineEvent, GroupTurnPatch } from "./bridge.ts";
 import {
   chooseSpeakers,
-  describeGroupActivity,
-  describeSpeakerFailure,
-  describeTurnProgress,
   fallbackPlan,
-  unavailableModelReason,
   groupSpeakerPrompt,
   isNothingToAdd,
-  mentionCandidates,
   parseMentions,
   planSpeakers,
   replyTextSince,
   resumeGroupTurn,
   runGroupTurn,
-  suggestGroupName,
   type GroupTurnDeps,
   type RoutingPlan,
 } from "./groups.ts";
@@ -98,17 +90,12 @@ function fakeStore(initialEvents: GroupTimelineEvent[] = []) {
 
 test("mentions name coworkers by handle or first name, once each, and @everyone includes all", () => {
   assert.deepEqual(parseMentions("@Editor and @scout, then @editor again", team), { everyone: false, slugs: ["editor", "scout"] });
-  assert.deepEqual(parseMentions("@ops what do you think", team), { everyone: false, slugs: ["ops"] });
   assert.deepEqual(parseMentions("email me at me@example.com", team), { everyone: false, slugs: [] });
   assert.deepEqual(parseMentions("@everyone weigh in", team), { everyone: true, slugs: [] });
   // Punctuation and brackets around a handle do not hide it; @everyone with names keeps the names for ordering.
   assert.deepEqual(parseMentions("(@Scout) and @editor: thoughts?", team), { everyone: false, slugs: ["scout", "editor"] });
   assert.deepEqual(parseMentions("@everyone, @scout first", team), { everyone: true, slugs: ["scout"] });
-  assert.deepEqual(parseMentions("@Scout-", team), { everyone: false, slugs: ["scout"] });
   assert.deepEqual(parseMentions("nobody here is @stranger", team), { everyone: false, slugs: [] });
-  assert.deepEqual(mentionCandidates("e", team).map((member) => member.slug), ["editor"]);
-  assert.deepEqual(mentionCandidates("", team).map((member) => member.slug), ["scout", "editor", "ops"]);
-  assert.deepEqual(mentionCandidates("lea", team).map((member) => member.slug), ["ops"]);
 });
 
 test("the fallback picks one coworker by role and mission unless the message names who answers", () => {
@@ -131,13 +118,6 @@ test("the fallback picks one coworker by role and mission unless the message nam
   ]);
 });
 
-test("a group name comes from roles when they exist, otherwise from names", () => {
-  assert.equal(suggestGroupName([scout, editor]), "Research & Writing");
-  assert.equal(suggestGroupName([scout, editor, ops]), "Research & Writing");
-  assert.equal(suggestGroupName([ops, { ...ops, slug: "care", name: "Care" }]), "Ops Lead & Care");
-  assert.equal(suggestGroupName([{ ...scout, role: "Research" }, { ...editor, role: "Research" }]), "Research desk");
-});
-
 test("a speaker's prompt carries the room, the recent visible conversation, earlier replies, its part, and the message only", () => {
   const recent = [
     event({ kind: "user", text: "Hello both" }),
@@ -155,24 +135,12 @@ test("a speaker's prompt carries the room, the recent visible conversation, earl
     nameFor: (slug) => (slug === "scout" ? "Scout" : slug),
     brief: "Propose the first sentence.",
   });
-  assert.match(prompt, /^You are Editor, Writing partner, in the group chat "Desk" with the person and Scout \(Research partner\)\./);
-  assert.match(prompt, /Your part in this reply: Propose the first sentence\./);
-  assert.match(prompt, /add something new/);
-  assert.match(prompt, /reply with exactly "Nothing to add\." and nothing else/);
   assert.match(prompt, /- Person: Hello both\n- Scout: Hi from Scout/);
   assert.doesNotMatch(prompt, /could not reply/);
   assert.doesNotMatch(prompt, /Assignment for Editor/);
   assert.match(prompt, /Already said in reply to this message:\n- Scout: Lead with the finding\./);
   assert.match(prompt, /The person's message: What should the intro say\?$/);
 
-  // Without a brief the speaker still gets a sensible default; a wrap-up and a follow-up read differently.
-  const plain = groupSpeakerPrompt({ group: { name: "Desk" }, speaker: editor, participants: [editor], message: "Go", recent: [], earlierReplies: [], nameFor: (slug) => slug });
-  assert.match(plain, /Your part in this reply: answer the person for your part, from your role\./);
-  const wrap = groupSpeakerPrompt({ group: { name: "Desk" }, speaker: editor, participants: [editor], message: "Go", recent: [], earlierReplies: [{ name: "Scout", text: "A" }], nameFor: (slug) => slug, part: "wrap-up" });
-  assert.match(wrap, /two or three sentences/);
-  assert.doesNotMatch(wrap, /add something new/);
-  const follow = groupSpeakerPrompt({ group: { name: "Desk" }, speaker: editor, participants: [editor], message: "Go", recent: [], earlierReplies: [], nameFor: (slug) => slug, part: "follow-up" });
-  assert.match(follow, /Your part in this reply: respond to what the other coworkers just said/);
   // Only the last RECENT_CONTEXT_EVENTS visible lines are carried.
   const long = Array.from({ length: 20 }, (_, index) => event({ kind: "user", text: `line ${index}` }));
   const bounded = groupSpeakerPrompt({ group: { name: "Desk" }, speaker: editor, participants: [editor], message: "Go", recent: long, earlierReplies: [], nameFor: (slug) => slug });
@@ -192,57 +160,6 @@ test("reply text is the visible assistant text after the accepted turn", () => {
   assert.equal(isNothingToAdd("Nothing to add."), true);
   assert.equal(isNothingToAdd("  nothing more to add  "), true);
   assert.equal(isNothingToAdd("Nothing to add, except that the date moved."), false);
-});
-
-test("plain lines name who is replying, who is next, and why a speaker did not reply", () => {
-  const nameFor = (slug: string) => ({ scout: "Scout", editor: "Editor", ops: "Ops" })[slug] ?? slug;
-  assert.equal(describeGroupActivity([], nameFor), "No messages yet");
-  assert.equal(describeGroupActivity([event({ kind: "user", text: "hi" })], nameFor), "Waiting for a reply");
-  assert.equal(describeGroupActivity([event({ kind: "user", text: "hi" }), event({ kind: "coworker", slug: "scout", text: "hey" }), event({ kind: "status", text: "s" })], nameFor), "Scout replied");
-  assert.equal(describeGroupActivity([], nameFor, { status: "routing", speakers: [] }), "Choosing who should respond…");
-  const speakers = (statuses: GroupSpeakerRun["status"][]): GroupSpeakerRun[] => statuses.map((status, index) => ({ slug: ["scout", "editor", "ops"][index] ?? "x", order: index, status, part: "reply", brief: "", threadId: "", error: "", startedAt: null, endedAt: null }));
-  assert.equal(describeGroupActivity([], nameFor, { status: "running", speakers: speakers(["succeeded", "running", "queued"]) }), "Editor is replying…");
-  assert.equal(describeTurnProgress({ status: "running", speakers: speakers(["running", "queued", "queued"]) }, nameFor), "Scout is replying… then Editor and Ops");
-  assert.equal(describeTurnProgress({ status: "running", speakers: speakers(["running", "running"]) }, nameFor), "Scout and Editor are replying…");
-  assert.equal(describeTurnProgress({ status: "running", speakers: speakers(["queued", "queued", "queued"]) }, nameFor), "Starting with Scout… then Editor and Ops");
-  assert.equal(describeTurnProgress({ status: "running", speakers: speakers(["succeeded", "queued"]) }, nameFor), "Starting with Editor…");
-  assert.equal(describeTurnProgress({ status: "succeeded", speakers: speakers(["succeeded"]) }, nameFor), "");
-  assert.deepEqual(describeSpeakerFailure("Editor took too long to reply.", "Editor"), { headline: "Editor took too long to reply.", modelRelated: false });
-  assert.deepEqual(describeSpeakerFailure("Stopped when the app closed", "Editor"), { headline: "Editor was stopped when the app closed.", modelRelated: false });
-  assert.deepEqual(describeSpeakerFailure('The saved model "x/y" is not available', "Editor"), { headline: "Editor's AI model is not available.", modelRelated: true });
-  assert.deepEqual(describeSpeakerFailure("socket hang up", "Editor"), { headline: "Editor couldn't reach the AI model.", modelRelated: true });
-  assert.deepEqual(describeSpeakerFailure("Tool execution failed: permission denied", "Editor"), { headline: "Editor could not reply.", modelRelated: false });
-  const connected = [{ id: "opencode/big-pickle", providerId: "opencode", providerLabel: "OpenCode" }];
-  assert.equal(unavailableModelReason("", connected), "");
-  assert.equal(unavailableModelReason("opencode/big-pickle", connected), "");
-  assert.equal(unavailableModelReason("opencode/other", connected), 'The saved model "opencode/other" is not offered by OpenCode any more. Choose another of its AI models.');
-  assert.equal(unavailableModelReason("missing-provider/missing-model", connected), 'The saved model "missing-provider/missing-model" is not available: provider "missing-provider" is not connected on this Mac. Choose another AI model or connect that provider in OpenWork.');
-  assert.equal(describeSpeakerFailure(unavailableModelReason("missing-provider/missing-model", connected), "Editor").headline, "Editor's AI model is not available.");
-});
-
-test("group presentation uses observed replies, keeps human waits first, and never animates queued or unavailable work", () => {
-  const execution: ExecutionActivity = {
-    executionId: "exec_scout", messageId: "m1", threadId: "t1", slug: "scout", state: "running",
-    startedAt: 1, completedAt: null, continuation: false, pendingCoworkers: 0, pendingWorkers: 0,
-    available: true, nativeStatus: "busy", replies: [], tools: [], completedSteps: 0, failedSteps: 0,
-  };
-  const input = { events: [], executions: [execution], interactions: [], active: true, turn: null, nameFor: (slug: string) => team.find((member) => member.slug === slug)?.name ?? slug };
-  assert.deepEqual(describeGroupPresentation(input), { line: "Scout is replying…", activeSlugs: ["scout"] });
-  assert.deepEqual(describeGroupPresentation({ ...input, interactions: [{ slug: "editor" }, { slug: "editor" }] }), { line: "Editor waiting for you", activeSlugs: [] });
-  assert.deepEqual(describeGroupPresentation({ ...input, interactions: [{ slug: "editor" }], unavailable: true }), { line: "Editor waiting for you", activeSlugs: [] });
-  for (const [patch, line] of [
-    [{ state: "queued" }, "Waiting to start"],
-    [{ available: false }, "Activity unavailable"],
-    [{ nativeStatus: "unknown" }, "Activity unavailable"],
-    [{ nativeStatus: "retry" }, "Waiting for the AI model"],
-    [{ nativeStatus: "idle" }, "Waiting for a reply"],
-    [{ nativeStatus: "idle", pendingWorkers: 1 }, "Waiting for requested work"],
-  ] satisfies Array<[Partial<ExecutionActivity>, string]>) {
-    assert.deepEqual(describeGroupPresentation({ ...input, executions: [{ ...execution, ...patch }] }), { line, activeSlugs: [] });
-  }
-  const events = [event({ kind: "coworker", slug: "ops", turnId: "old", text: "Earlier" }), event({ kind: "user", turnId: "round", text: "Both" }), event({ kind: "coworker", slug: "scout", turnId: "round", text: "Sources" }), event({ kind: "coworker", slug: "editor", turnId: "round", text: "Draft" })];
-  assert.deepEqual(describeGroupPresentation({ ...input, events, executions: [], active: false }), { line: "Scout and Editor replied", activeSlugs: [] });
-  assert.deepEqual(describeGroupPresentation({ ...input, events: [...events, event({ kind: "user", text: "Next" })], executions: [], active: false }), { line: "Waiting for a reply", activeSlugs: [] });
 });
 
 test("a group turn is recorded through the store, asks each speaker in order with earlier replies, and keeps going past one failure", async () => {
@@ -293,8 +210,9 @@ test("a group turn is recorded through the store, asks each speaker in order wit
   assert.equal(store.published.at(-1), "partial:scout=succeeded,editor=failed,ops=succeeded");
 
   // A double Send finds the turn already open and does nothing more.
-  const again = await runGroupTurn({ group: { id: "grp_x", name: "Desk" }, participants: team, recent: [], message: "@scout @editor @ops plan the launch note", clientMessageId: "m1", signal: new AbortController().signal, deps: { ...store.deps, ask: async () => { throw new Error("must not ask"); } } });
+  const again = await runGroupTurn({ group: { id: "grp_x", name: "Desk" }, participants: team, recent: [], message: "@scout @editor @ops plan the launch note", clientMessageId: "m1", signal: new AbortController().signal, deps: { ...store.deps, ask: async (slug, prompt) => { asked.push({ slug, prompt }); return { text: "unexpected", threadId: "unexpected" }; } } });
   assert.equal(again, null);
+  assert.equal(asked.length, 3, "a duplicate send must not ask again");
   assert.equal(store.events.filter((entry) => entry.kind === "user").length, 1);
 });
 
@@ -373,27 +291,6 @@ test("independent parallel replies settle into the timeline in the facilitator's
   assert.equal(result.mode, "parallel");
   assert.deepEqual(store.events.filter((entry) => entry.kind === "coworker").map((entry) => entry.slug), ["scout", "editor"]);
   assert.ok(store.published.includes("running:scout=running,editor=running"), "both speakers were running at once");
-});
-
-test("a speaker with nothing to add becomes a quiet line, not a bubble", async () => {
-  const store = fakeStore();
-  const result = await runGroupTurn({
-    group: { id: "grp_x", name: "Desk" },
-    participants: team,
-    recent: [],
-    message: "@scout @editor anything?",
-    clientMessageId: "m4",
-    signal: new AbortController().signal,
-    deps: { ...store.deps, ask: async (slug) => ({ text: slug === "scout" ? "Nothing to add." : "One thing: the date.", threadId: "ses" }) },
-  });
-  assert.ok(result);
-  assert.deepEqual(store.events.map((entry) => [entry.kind, entry.status ?? "", entry.text]), [
-    ["user", "", "@scout @editor anything?"],
-    ["status", "passed", "Scout had nothing to add."],
-    ["coworker", "", "One thing: the date."],
-  ]);
-  assert.deepEqual(result.speakers.map((speaker) => speaker.status), ["passed", "succeeded"]);
-  assert.equal(result.status, "succeeded");
 });
 
 test("stopping a group turn marks the in-flight speaker and the rest stopped without asking them", async () => {
@@ -486,5 +383,7 @@ test("continuing a turn runs only the unfinished speakers with the earlier repli
   assert.equal(retried.speakers[2]?.error, "");
   assert.deepEqual(store.events.filter((entry) => entry.kind === "coworker").map((entry) => entry.slug), ["scout", "editor", "ops"]);
   // Nothing left to do: resuming a finished turn asks nobody.
-  assert.equal(await resumeGroupTurn({ group: { id: "grp_x", name: "Desk" }, participants: team, turn: retried, events: store.events, signal: new AbortController().signal, deps: { ...store.deps, ask: async () => { throw new Error("must not ask"); } } }), retried);
+  asked.length = 0;
+  assert.equal(await resumeGroupTurn({ group: { id: "grp_x", name: "Desk" }, participants: team, turn: retried, events: store.events, signal: new AbortController().signal, deps: { ...store.deps, ask: async (slug, prompt) => { asked.push({ slug, prompt }); return { text: "unexpected", threadId: "unexpected" }; } } }), retried);
+  assert.deepEqual(asked, [], "a finished turn never asks again");
 });

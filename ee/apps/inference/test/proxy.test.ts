@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
+import { assertManagedModelsAllowed, ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import type { InferenceHandledErrorReport, InferenceReporter, InferenceRequestReport } from "../src/inference-reporting.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
@@ -15,10 +16,12 @@ type UpstreamRequest = {
   method: string | undefined
   body: string | null
   headers: Headers
+  redirect: RequestRedirect | undefined
 }
 
 type DependencyCalls = {
   findActiveInferenceKey: number
+  policyOrganizationIds: string[]
   getOpenRouterProviderKey: number
   ensureUsableBuckets: number
 }
@@ -26,9 +29,13 @@ type DependencyCalls = {
 type CapturedReports = {
   requests: InferenceRequestReport[]
   handledErrors: InferenceHandledErrorReport[]
+  completions: Parameters<NonNullable<InferenceReporter["completion"]>>[0][]
 }
 
 type TestServerOptions = {
+  assertOrganizationManagedModelsAllowed?: (organizationId: string) => Promise<void>
+  organizationMetadata?: unknown
+  invalidKey?: boolean
   analytics?: typeof import("../src/task-analytics.js").beginModelAnalytics
   organizationId?: string
   providerKey?: { encrypted_api_key: string } | null
@@ -112,9 +119,10 @@ function inferenceRequest(input: { method: string; headers: Headers; body?: stri
 function createTestServer(options: TestServerOptions = {}) {
   const app = new Hono()
   const upstreamRequests: UpstreamRequest[] = []
-  const reports: CapturedReports = { requests: [], handledErrors: [] }
+  const reports: CapturedReports = { requests: [], handledErrors: [], completions: [] }
   const calls: DependencyCalls = {
     findActiveInferenceKey: 0,
+    policyOrganizationIds: [],
     getOpenRouterProviderKey: 0,
     ensureUsableBuckets: 0,
   }
@@ -124,8 +132,11 @@ function createTestServer(options: TestServerOptions = {}) {
       method: init?.method,
       body: readInitBody(init?.body),
       headers: new Headers(init?.headers),
+      redirect: init?.redirect,
     })
-    return Response.json({ ok: true })
+    const request = parseJsonObject(requireBodyText(readInitBody(init?.body)))
+    if (request.stream) return new Response('data: {"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } })
+    return Response.json({ choices: [{ index: 0, message: { role: "assistant", content: "Hello" }, finish_reason: "stop" }] })
   })
   const reporter: InferenceReporter = {
     request(report) {
@@ -134,15 +145,27 @@ function createTestServer(options: TestServerOptions = {}) {
     handledError(report) {
       reports.handledErrors.push(report)
     },
+    completion(report) {
+      reports.completions.push(report)
+    },
   }
 
   registerProxyRoutes(app, {
     async findActiveInferenceKey(_key) {
       calls.findActiveInferenceKey += 1
+      if (options.invalidKey) return null
       return {
         id: "inference_key_123",
         organization_id: options.organizationId ?? "organization_123",
         org_membership_id: "member_123",
+      }
+    },
+    async assertOrganizationManagedModelsAllowed(organizationId) {
+      calls.policyOrganizationIds.push(organizationId)
+      if (options.assertOrganizationManagedModelsAllowed) {
+        await options.assertOrganizationManagedModelsAllowed(organizationId)
+      } else {
+        assertManagedModelsAllowed(options.organizationMetadata)
       }
     },
     async getOpenRouterProviderKey(_organizationId: string) {
@@ -170,6 +193,7 @@ function createTestServer(options: TestServerOptions = {}) {
       }
       return {
         ok: true,
+        admittedAt: new Date("2026-09-08T12:00:00.123Z"),
         bucketIds: {},
         bucketLimits: {},
       }
@@ -182,36 +206,285 @@ function createTestServer(options: TestServerOptions = {}) {
   return { app, upstreamRequests, calls, reports }
 }
 
+for (const organizationMetadata of [undefined, null, {}, { dpaSigned: false }, '{"dpaSigned":false}', { nested: { dpaSigned: true } }]) {
+  test(`allows managed models for metadata ${JSON.stringify(organizationMetadata)}`, async () => {
+    const { app, upstreamRequests, calls } = createTestServer({ organizationMetadata })
+    const response = await app.fetch(inferenceRequest({
+      method: "POST", headers: authHeaders("application/json"),
+      body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [], metadata: { dpaSigned: true } }),
+    }))
+    assert.equal(response.status, 200)
+    assert.deepEqual(calls.policyOrganizationIds, ["organization_123", "organization_123"])
+    assert.equal(upstreamRequests.length, 1)
+    assert.equal(upstreamRequests[0].redirect, "error")
+  })
+}
+
+for (const policy of [
+  { metadata: { dpaSigned: true }, code: "managed_models_disabled_for_dpa", status: 403 },
+  { metadata: '{"dpaSigned":true}', code: "managed_models_disabled_for_dpa", status: 403 },
+  { metadata: "{broken", code: "managed_models_policy_unavailable", status: 503 },
+  { metadata: [], code: "managed_models_policy_unavailable", status: 503 },
+]) {
+  test(`blocks catalog and chat before body reporting for ${JSON.stringify(policy.metadata)}`, async () => {
+    let analyticsCalls = 0
+    const { app, upstreamRequests, calls, reports } = createTestServer({
+      organizationMetadata: policy.metadata,
+      analytics: async () => { analyticsCalls += 1; return null },
+    })
+    for (const input of [
+      { method: "GET", path: "/api/v1/models" },
+      { method: "POST", path: "/api/v1/chat/completions", body: "{invalid body" },
+      { method: "POST", path: "/api/v1/chat/completions?model=ignored", body: "{}" },
+    ]) {
+      const request = inferenceRequest({ ...input, headers: authHeaders("application/json") })
+      const response = await app.fetch(request)
+      assert.equal(response.status, policy.status)
+      assert.equal(await readErrorCode(response), policy.code)
+      assert.equal(request.bodyUsed, false)
+    }
+    assert.deepEqual(calls.policyOrganizationIds, ["organization_123", "organization_123", "organization_123"])
+    assert.equal(calls.ensureUsableBuckets, 0)
+    assert.equal(calls.getOpenRouterProviderKey, 0)
+    assert.equal(analyticsCalls, 0)
+    assert.equal(upstreamRequests.length, 0)
+    assert.deepEqual(reports, { requests: [], handledErrors: [], completions: [] })
+  })
+}
+
+test("policy lookup failures fail closed without leaking the underlying error", async () => {
+  for (const error of [new ManagedModelsPolicyError("managed_models_policy_unavailable"), new Error("private database failure")]) {
+    const { app, calls, reports, upstreamRequests } = createTestServer({
+      assertOrganizationManagedModelsAllowed: async () => { throw error },
+    })
+    const response = await app.fetch(inferenceRequest({ method: "GET", path: "/api/v1/models", headers: authHeaders() }))
+    assert.equal(response.status, 503)
+    assert.deepEqual(await response.json(), { error: {
+      message: new ManagedModelsPolicyError("managed_models_policy_unavailable").message,
+      type: "invalid_request_error",
+      code: "managed_models_policy_unavailable",
+    } })
+    assert.equal(calls.ensureUsableBuckets, 0)
+    assert.equal(calls.getOpenRouterProviderKey, 0)
+    assert.equal(upstreamRequests.length, 0)
+    assert.deepEqual(reports, { requests: [], handledErrors: [], completions: [] })
+  }
+})
+
+test("policy uses only the authenticated key organization, not caller organization hints", async () => {
+  const { app, calls } = createTestServer({ organizationId: "organization_key_owner" })
+  const headers = authHeaders("application/json")
+  headers.set("x-organization-id", "organization_caller")
+  const response = await app.fetch(inferenceRequest({ method: "POST", headers,
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [], organizationId: "organization_caller", dpaSigned: false }),
+  }))
+  assert.equal(response.status, 200)
+  assert.deepEqual(calls.policyOrganizationIds, ["organization_key_owner", "organization_key_owner"])
+})
+
+for (const unavailable of [false, true]) {
+  test(`rechecks fresh policy after quota, key and analytics awaits (${unavailable ? "unavailable" : "disabled"})`, async () => {
+    let metadata: unknown = { dpaSigned: false }
+    let analyticsCalls = 0
+    const { app, calls, upstreamRequests } = createTestServer({
+      assertOrganizationManagedModelsAllowed: async () => { assertManagedModelsAllowed(metadata) },
+      analytics: async () => {
+        assert.equal(calls.ensureUsableBuckets, 1)
+        assert.equal(calls.getOpenRouterProviderKey, 1)
+        assert.equal(calls.policyOrganizationIds.length, 1)
+        await Promise.resolve()
+        analyticsCalls += 1
+        metadata = unavailable ? "{corrupt" : { dpaSigned: true }
+        return null
+      },
+    })
+    const request = () => inferenceRequest({ method: "POST", headers: authHeaders("application/json"),
+      body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+    })
+    const response = await app.fetch(request())
+    assert.equal(response.status, unavailable ? 503 : 403)
+    assert.equal(await readErrorCode(response), unavailable ? "managed_models_policy_unavailable" : "managed_models_disabled_for_dpa")
+    assert.deepEqual(calls.policyOrganizationIds, ["organization_123", "organization_123"])
+    assert.equal(upstreamRequests.length, 0)
+    const retry = await app.fetch(request())
+    assert.equal(retry.status, unavailable ? 503 : 403)
+    assert.equal(calls.policyOrganizationIds.length, 3)
+    assert.equal(calls.ensureUsableBuckets, 1)
+    assert.equal(calls.getOpenRouterProviderKey, 1)
+    assert.equal(analyticsCalls, 1)
+    assert.equal(upstreamRequests.length, 0)
+  })
+}
+
+test("new requests observe both enabling and disabling policy without a cached decision", async () => {
+  let metadata = { dpaSigned: false }
+  const { app, calls, upstreamRequests } = createTestServer({
+    assertOrganizationManagedModelsAllowed: async () => { assertManagedModelsAllowed(metadata) },
+  })
+  for (const dpaSigned of [false, true, false]) {
+    metadata = { dpaSigned }
+    const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"),
+      body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+    }))
+    assert.equal(response.status, dpaSigned ? 403 : 200)
+  }
+  assert.equal(calls.policyOrganizationIds.length, 5)
+  assert.equal(upstreamRequests.length, 2)
+})
+
+test("redirect rejection is not retried and a client retry rechecks policy", async () => {
+  let fetchCalls = 0
+  let metadata = { dpaSigned: false }
+  const { app, calls } = createTestServer({
+    assertOrganizationManagedModelsAllowed: async () => { assertManagedModelsAllowed(metadata) },
+    fetch: async (_input, init) => {
+      fetchCalls += 1
+      assert.equal(init?.redirect, "error")
+      metadata = { dpaSigned: true }
+      throw new TypeError("redirect encountered")
+    },
+  })
+  const request = () => inferenceRequest({ method: "POST", headers: authHeaders("application/json"),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+  })
+  const response = await app.fetch(request())
+  assert.equal(response.status, 502)
+  assert.equal(await readErrorCode(response), "upstream_unreachable")
+  assert.equal(fetchCalls, 1)
+  const retry = await app.fetch(request())
+  assert.equal(retry.status, 403)
+  assert.equal(await readErrorCode(retry), "managed_models_disabled_for_dpa")
+  assert.equal(fetchCalls, 1)
+  assert.equal(calls.policyOrganizationIds.length, 3)
+})
+
+test("invalid authentication never reads organization policy", async () => {
+  const { app, calls, upstreamRequests, reports } = createTestServer({ invalidKey: true })
+  const response = await app.fetch(inferenceRequest({ method: "GET", path: "/api/v1/models", headers: authHeaders() }))
+  assert.equal(response.status, 401)
+  assert.equal(await readErrorCode(response), "invalid_api_key")
+  assert.deepEqual(calls.policyOrganizationIds, [])
+  assert.equal(upstreamRequests.length, 0)
+   assert.deepEqual(reports, { requests: [], handledErrors: [], completions: [] })
+})
+
+test("first-output telemetry survives a later malformed frame in the same chunk", async () => {
+  const { app, reports } = createTestServer({
+    fetch: async () => new Response('data: {"choices":[{"index":0,"delta":{"content":"Partial"},"finish_reason":null}]}\n\ndata: {broken\n\n', { headers: { "content-type": "text/event-stream" } }),
+  })
+  const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }], stream: true }) }))
+  const body = await response.text()
+  assert.match(body, /Partial/)
+  assert.match(body, /upstream_malformed_stream/)
+  assert.doesNotMatch(body, /\[DONE\]/)
+  assert.equal(reports.completions.length, 1)
+  assert.equal(reports.completions[0]?.outcome, "incomplete")
+  assert.equal(typeof reports.completions[0]?.firstOutputMs, "number")
+})
+
 test("analytics storage failures preserve exact streamed bytes and upstream status", async () => {
   const { observeModelResponse } = await import("../src/task-analytics.js")
-  const body = 'data: {"choices":[{"delta":{"content":"hello"}}]}\n\ndata: [DONE]\n\n'
+  const body = 'data: {"choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
   const { app } = createTestServer({
     fetch: async () => new Response(body, { headers: { "content-type": "text/event-stream" } }),
     analytics: async ({ requestId, startedAt }) => (streaming) => observeModelResponse({
       id: requestId, startedAt, streaming, sessionId: "session", taskId: "task", model: "model",
     }, async () => { throw new Error("store unavailable") }),
   })
-  const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }) }))
+  const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: "z-ai/glm-5.2", stream: true, messages: [{ role: "user", content: "Hello" }] }) }))
   assert.equal(response.status, 200)
   assert.equal(await response.text(), body)
 })
 
-test("an unavailable analytics check leaves existing inference operational", async () => {
-  const { app } = createTestServer({ analytics: async () => { throw new Error("analytics offline") } })
-  const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }) }))
-  assert.equal(response.status, 200)
-  assert.deepEqual(await response.json(), { ok: true })
-})
+for (const [failure, analytics] of [
+  ["rejected check", async () => { throw new Error("analytics offline") }],
+  ["synchronous check", () => { throw new Error("analytics offline") }],
+  ["observer factory", async () => () => { throw new Error("observer unavailable") }],
+  ["stalled check", () => new Promise<null>(() => {})],
+] satisfies [string, NonNullable<TestServerOptions["analytics"]>][]) {
+  test(`an analytics ${failure} leaves existing inference operational`, { timeout: 2000 }, async () => {
+    const { app } = createTestServer({ analytics })
+    const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }] }) }))
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { choices: [{ index: 0, message: { role: "assistant", content: "Hello" }, finish_reason: "stop" }] })
+  })
+}
 
 test("an analytics observer failure cannot truncate an upstream response", async () => {
-  const body = "data: original response\n\ndata: [DONE]\n\n"
+  const body = 'data: {"choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
+  let chunks = 0
+  let finishes = 0
   const { app } = createTestServer({
     fetch: async () => new Response(body, { headers: { "content-type": "text/event-stream" } }),
-    analytics: async () => () => ({ chunk() { throw new Error("parser unavailable") }, finish() { throw new Error("observer unavailable") } }),
+    analytics: async () => () => ({ chunk() { chunks += 1; throw new Error("parser unavailable") }, finish() { finishes += 1; throw new Error("observer unavailable") } }),
   })
-  const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }) }))
+  const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: "z-ai/glm-5.2", stream: true, messages: [{ role: "user", content: "Hello" }] }) }))
   assert.equal(response.status, 200)
   assert.equal(await response.text(), body)
+  assert.ok(chunks > 0)
+  assert.equal(finishes, 1)
+})
+
+for (const streaming of [false, true]) {
+  for (const completed of [false, true]) {
+    test(`${streaming ? "streamed" : "JSON"} analytics requires managed protocol completion (${completed})`, async () => {
+      const { observeModelResponse } = await import("../src/task-analytics.js")
+      const events: import("@openwork-ee/telemetry").ModelsAnalyticsEvent[] = []
+      const payload = {
+        model: "z-ai/glm-5.2", provider: "test-provider",
+        choices: [{ index: 0, ...(streaming ? { delta: { content: "private output" } } : { message: { role: "assistant", content: "private output" } }), finish_reason: completed ? "stop" : null }],
+        usage: { prompt_tokens: 10, completion_tokens: 4, cost: 0.01, prompt_tokens_details: { cached_tokens: 2 } },
+      }
+      const { app } = createTestServer({
+        fetch: async () => streaming
+          ? new Response(`data: ${JSON.stringify(payload)}\n\n${completed ? "data: [DONE]\n\n" : ""}`, { headers: { "content-type": "text/event-stream" } })
+          : Response.json(payload),
+        analytics: async ({ requestId, startedAt, model }) => (streaming) => observeModelResponse({
+          id: requestId, startedAt, model, streaming, sessionId: "session", taskId: "task",
+        }, async (event) => { events.push(event) }),
+      })
+      const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: "z-ai/glm-5.2", stream: streaming, messages: [{ role: "user", content: "private prompt" }] }) }))
+      assert.equal(response.status, streaming || completed ? 200 : 502)
+      const text = await response.text()
+      assert.equal(text.includes("upstream_incomplete"), !completed)
+      assert.equal(events.length, 1)
+      assert.equal(events[0].id, response.headers.get("x-openwork-request-id"))
+      assert.equal(events[0].status, completed ? "completed" : "failed")
+      assert.equal(events[0].usageComplete, completed)
+      assert.equal(events[0].inputTokens, 10)
+      assert.equal(events[0].outputTokens, 4)
+      assert.equal(events[0].cacheReadTokens, 2)
+      assert.equal(events[0].costUsd, 0.01)
+      assert.equal(events[0].provider, "test-provider")
+      assert.ok(!JSON.stringify(events).includes("private"))
+    })
+  }
+}
+
+test("downstream cancellation records one cancelled analytics event, never success", async () => {
+  const { observeModelResponse } = await import("../src/task-analytics.js")
+  const events: import("@openwork-ee/telemetry").ModelsAnalyticsEvent[] = []
+  let cancelled = false
+  const { app } = createTestServer({
+    fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"choices":[{"index":0,"delta":{"content":"partial"}}],"usage":{"prompt_tokens":10,"completion_tokens":4,"cost":0.01}}\n\n'))
+      },
+      cancel() { cancelled = true },
+    }), { headers: { "content-type": "text/event-stream" } }),
+    analytics: async ({ requestId, startedAt, model }) => (streaming) => observeModelResponse({
+      id: requestId, startedAt, model, streaming, sessionId: "session", taskId: "task",
+    }, async (event) => { events.push(event) }),
+  })
+  const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: "z-ai/glm-5.2", stream: true, messages: [{ role: "user", content: "Hello" }] }) }))
+  const reader = response.body?.getReader()
+  assert.ok(reader)
+  assert.equal((await reader.read()).done, false)
+  await reader.cancel()
+  assert.equal(cancelled, true)
+  assert.equal(events.length, 1)
+  assert.equal(events[0].status, "cancelled")
+  assert.equal(events[0].usageComplete, false)
 })
 
 test("cancelled, malformed and oversized usage stays incomplete with one accounting event", async () => {
@@ -250,7 +523,7 @@ test("rewrites approved model aliases before forwarding JSON requests", async ()
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/json; charset=utf-8"),
-    body: JSON.stringify({ model: "openwork/z-ai/glm-5.2", messages: [] }),
+    body: JSON.stringify({ model: "openwork/z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 200)
@@ -270,6 +543,7 @@ test("rewrites approved model aliases before forwarding JSON requests", async ()
   const trace = body.trace
   assert.ok(isRecord(trace))
   assert.equal(trace.generation_name, "z-ai/glm-5.2")
+  assert.equal(trace.usage_started_at, "2026-09-08T12:00:00.123Z")
 
   const report = requireRequestReport(reports)
   assert.equal(report.organizationId, "organization_123")
@@ -277,7 +551,7 @@ test("rewrites approved model aliases before forwarding JSON requests", async ()
   assert.equal(report.openworkRequestId, upstream.headers.get("x-openwork-request-id"))
   assert.equal(report.route, "/api/v1/chat/completions")
   assert.equal(report.method, "POST")
-  assert.equal(report.incomingModel, "openwork/z-ai/glm-5.2")
+  assert.equal(report.incomingModel, "z-ai/glm-5.2")
   assert.equal(report.resolvedUpstreamModel, "z-ai/glm-5.2")
 })
 
@@ -286,7 +560,7 @@ test("returns model_not_found for unknown JSON model aliases", async () => {
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/json"),
-    body: JSON.stringify({ model: "openwork/unknown-model", messages: [] }),
+    body: JSON.stringify({ model: "openwork/unknown-model", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 404)
@@ -295,7 +569,7 @@ test("returns model_not_found for unknown JSON model aliases", async () => {
   assert.equal(calls.getOpenRouterProviderKey, 0)
   assert.equal(upstreamRequests.length, 0)
   const report = requireRequestReport(reports)
-  assert.equal(report.incomingModel, "openwork/unknown-model")
+  assert.equal(report.incomingModel, null)
   assert.equal(report.resolvedUpstreamModel, null)
 })
 
@@ -344,69 +618,12 @@ test("summarizes ordinary organization payload shape without message content or 
   assert.deepEqual(payload.roles, ["system", "user"])
 })
 
-test("logs full debug organization payload with recursive credential redaction", async () => {
+test("every organization uses content-free diagnostics", async () => {
   const { app, reports } = createTestServer({ organizationId: "org_01krnrcabhe8htwpbnsw0zk0bw" })
-  const response = await app.fetch(inferenceRequest({
-    method: "POST",
-    headers: authHeaders("application/json"),
-    body: JSON.stringify({
-      model: "z-ai/glm-5.2",
-      api_key: "payload-secret-key",
-      key: "generic-key-secret",
-      private_key: "private-key-secret",
-      client_secret: "client-secret-value",
-      clientKey: "client-key-value",
-      dsn: "dsn-secret",
-      signature: "signature-secret",
-      max_tokens: 128,
-      nested: {
-        password: "payload-password",
-        providerKey: "provider-secret-key",
-        inferenceKeyId: "inference_key_123",
-        api_key_id: "api_key_id_123",
-        provider_key_id: "provider_key_id_123",
-      },
-      messages: [{
-        role: "assistant",
-        content: "debug prompt content",
-        tool_calls: [{
-          type: "function",
-          function: {
-            name: "lookup_customer",
-            arguments: JSON.stringify({
-              password: "argument-password",
-              private_key: "argument-private-key",
-              query: "debug argument content",
-              api_key_id: "argument_api_key_id",
-            }),
-          },
-        }],
-      }],
-    }),
-  }))
-
+  const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "private prompt" }] }) }))
   assert.equal(response.status, 200)
-  const report = requireRequestReport(reports)
-  assert.equal(report.payloadMode, "full")
-  const payloadText = JSON.stringify(report.payload)
-  assert.ok(payloadText.includes("debug prompt content"))
-  assert.ok(payloadText.includes("debug argument content"))
-  assert.ok(payloadText.includes("inference_key_123"))
-  assert.ok(payloadText.includes("api_key_id_123"))
-  assert.ok(payloadText.includes("provider_key_id_123"))
-  assert.ok(payloadText.includes("argument_api_key_id"))
-  assert.ok(payloadText.includes("128"))
-  assert.ok(!payloadText.includes("payload-secret-key"))
-  assert.ok(!payloadText.includes("generic-key-secret"))
-  assert.ok(!payloadText.includes("private-key-secret"))
-  assert.ok(!payloadText.includes("client-secret-value"))
-  assert.ok(!payloadText.includes("client-key-value"))
-  assert.ok(!payloadText.includes("dsn-secret"))
-  assert.ok(!payloadText.includes("signature-secret"))
-  assert.ok(!payloadText.includes("payload-password"))
-  assert.ok(!payloadText.includes("provider-secret-key"))
-  assert.ok(!payloadText.includes("argument-password"))
-  assert.ok(!payloadText.includes("argument-private-key"))
+  assert.equal(requireRequestReport(reports).payloadMode, "summary")
+  assert.ok(!JSON.stringify(reports).includes("private prompt"))
 })
 
 test("redacts credential-like incoming headers without redacting non-secret IDs", async () => {
@@ -432,29 +649,12 @@ test("redacts credential-like incoming headers without redacting non-secret IDs"
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers,
-    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 200)
   const report = requireRequestReport(reports)
-  assert.equal(report.headers.authorization, "[REDACTED]")
-  assert.equal(report.headers.key, "[REDACTED]")
-  assert.equal(report.headers["x-api-key"], "[REDACTED]")
-  assert.equal(report.headers["x-api-key-id"], "api_key_id_123")
-  assert.equal(report.headers["x-provider-key-id"], "provider_key_id_123")
-  assert.equal(report.headers.cookie, "[REDACTED]")
-  assert.equal(report.headers["client-secret"], "[REDACTED]")
-  assert.equal(report.headers["x-private-key"], "[REDACTED]")
-  assert.equal(report.headers["sentry-dsn"], "[REDACTED]")
-  assert.equal(report.headers["x-signature"], "[REDACTED]")
-  assert.equal(report.headers["x-custom-token"], "[REDACTED]")
-  assert.equal(report.headers.forwarded, "[REDACTED]")
-  assert.equal(report.headers["x-forwarded-for"], "[REDACTED]")
-  assert.equal(report.headers["x-real-ip"], "[REDACTED]")
-  assert.equal(report.headers["cf-connecting-ip"], "[REDACTED]")
-  assert.equal(report.headers["true-client-ip"], "[REDACTED]")
-  assert.equal(report.headers["x-inference-key-id"], "inference_key_123")
-  assert.equal(report.headers["x-safe-header"], "safe-value")
+  assert.deepEqual(report.headers, { "content-type": "application/json" })
 })
 
 test("returns usage-limit 429 without reporting a handled error or contacting provider/upstream", async () => {
@@ -465,7 +665,7 @@ test("returns usage-limit 429 without reporting a handled error or contacting pr
     const response = await app.fetch(inferenceRequest({
       method: "POST",
       headers: authHeaders("application/json"),
-      body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+      body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }] }),
     }))
 
     assert.equal(response.status, 429)
@@ -492,7 +692,7 @@ test("reports handled upstream errors with searchable request context", async ()
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/json"),
-    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 503)
@@ -509,7 +709,7 @@ test("reports handled upstream errors with searchable request context", async ()
   assert.equal(errorReport.status, 503)
 })
 
-test("reports caught upstream fetch exceptions with the original Error object", async () => {
+test("reports upstream connection failures without retaining exception payloads", async () => {
   const upstreamError = new Error("socket hang up")
   const { app, reports } = createTestServer({
     fetch: async () => {
@@ -519,14 +719,14 @@ test("reports caught upstream fetch exceptions with the original Error object", 
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/json"),
-    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 502)
   const errorReport = requireHandledErrorReport(reports)
   assert.equal(errorReport.reason, "upstream_unreachable")
-  assert.equal(errorReport.exception, upstreamError)
-  assert.equal(errorReport.error, "socket hang up")
+  assert.equal(errorReport.exception, undefined)
+  assert.equal(errorReport.error, "Upstream connection failed")
   assert.equal(errorReport.organizationId, "organization_123")
   assert.equal(errorReport.inferenceKeyId, "inference_key_123")
 })
@@ -536,7 +736,7 @@ test("blocks an unknown model when Content-Type is omitted", async () => {
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({ model: "openwork/unknown-model", messages: [] }),
+    body: JSON.stringify({ model: "openwork/unknown-model", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 415)
@@ -551,7 +751,7 @@ test("blocks an unknown model sent as text/plain", async () => {
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("text/plain"),
-    body: JSON.stringify({ model: "openwork/unknown-model", messages: [] }),
+    body: JSON.stringify({ model: "openwork/unknown-model", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 415)
@@ -566,7 +766,7 @@ test("accepts application/*+json media types", async () => {
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/vnd.openwork.request+json; charset=utf-8"),
-    body: JSON.stringify({ model: "openwork/z-ai/glm-5.2", messages: [] }),
+    body: JSON.stringify({ model: "openwork/z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 200)
@@ -585,7 +785,7 @@ test("does not forward caller headers or session IDs that can affect routing", a
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers,
-    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [], session_id: "caller-session" }),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }], session_id: "caller-session" }),
   }))
 
   assert.equal(response.status, 200)
@@ -606,7 +806,7 @@ for (const [field, value] of [
   test(`rejects the top-level ${field} selector when present`, async () => {
     await expectUnsupportedModelSelection({
       model: "z-ai/glm-5.2",
-      messages: [],
+      messages: [{ role: "user", content: "Hello" }],
       [field]: value,
     })
   })
@@ -615,7 +815,7 @@ for (const [field, value] of [
 test("rejects the Fusion plugin", async () => {
   await expectUnsupportedModelSelection({
     model: "z-ai/glm-5.2",
-    messages: [],
+    messages: [{ role: "user", content: "Hello" }],
     plugins: [{ id: "fusion" }],
   })
 })
@@ -624,7 +824,7 @@ for (const field of ["model", "analysis_models", "allowed_models"]) {
   test(`rejects ${field} in an OpenRouter plugin context`, async () => {
     await expectUnsupportedModelSelection({
       model: "z-ai/glm-5.2",
-      messages: [],
+      messages: [{ role: "user", content: "Hello" }],
       plugins: [{ id: "web", [field]: null }],
     })
   })
@@ -632,7 +832,7 @@ for (const field of ["model", "analysis_models", "allowed_models"]) {
   test(`rejects parameters.${field} in an OpenRouter plugin context`, async () => {
     await expectUnsupportedModelSelection({
       model: "z-ai/glm-5.2",
-      messages: [],
+      messages: [{ role: "user", content: "Hello" }],
       plugins: [{ id: "web", parameters: { [field]: null } }],
     })
   })
@@ -647,7 +847,7 @@ for (const type of [
   test(`rejects the ${type} server tool`, async () => {
     await expectUnsupportedModelSelection({
       model: "z-ai/glm-5.2",
-      messages: [],
+      messages: [{ role: "user", content: "Hello" }],
       tools: [{ type }],
     })
   })
@@ -670,7 +870,7 @@ test("allows ordinary function tools with a model property in their JSON Schema"
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/json"),
-    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [], tools }),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }], tools }),
   }))
 
   assert.equal(response.status, 200)
@@ -724,7 +924,7 @@ test("returns model IDs that can be requested as aliases", async () => {
   const chatResponse = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/json"),
-    body: JSON.stringify({ model: listedModel.id, messages: [] }),
+    body: JSON.stringify({ model: listedModel.id, messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(chatResponse.status, 200)
@@ -742,6 +942,7 @@ test("requires authentication before returning the local model catalog", async (
   assert.equal(response.status, 401)
   assert.equal(await readErrorCode(response), "missing_api_key")
   assert.equal(calls.findActiveInferenceKey, 0)
+  assert.deepEqual(calls.policyOrganizationIds, [])
   assert.equal(calls.ensureUsableBuckets, 0)
   assert.equal(calls.getOpenRouterProviderKey, 0)
   assert.equal(upstreamRequests.length, 0)
@@ -776,7 +977,7 @@ test("blocks chat completion query parameters locally", async () => {
     method: "POST",
     headers: authHeaders("application/json"),
     path: "/api/v1/chat/completions?model=attacker/random-model",
-    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 400)

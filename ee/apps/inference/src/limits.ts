@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { InferenceOrgLimitPolicyTable, InferenceOrgUsageBucketTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_TIER_LIMITS, INFERENCE_WINDOW_DURATIONS_MS } from "@openwork/types/den/inference"
@@ -7,6 +7,7 @@ import { db } from "./db.js"
 
 export type BucketMetadata = Partial<Record<string, DenTypeId<"inferenceOrgUsageBucket">>>
 export type BucketLimitMetadata = Partial<Record<string, number>>
+type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
 function addWindow(start: Date, windowType: InferenceWindowType) {
   return new Date(start.getTime() + INFERENCE_WINDOW_DURATIONS_MS[windowType])
@@ -32,8 +33,8 @@ function readInferenceTier(metadata: Record<string, unknown> | null): InferenceT
   return tier === "tier1" || tier === "tier2" ? tier : null
 }
 
-async function getEffectiveLimits(organizationId: DenTypeId<"organization">) {
-  const [organization] = await db
+async function getEffectiveLimits(tx: Transaction, organizationId: DenTypeId<"organization">) {
+  const [organization] = await tx
     .select({ metadata: OrganizationTable.metadata })
     .from(OrganizationTable)
     .where(eq(OrganizationTable.id, organizationId))
@@ -41,7 +42,7 @@ async function getEffectiveLimits(organizationId: DenTypeId<"organization">) {
   const tier = readInferenceTier(organization?.metadata ?? null)
   if (!tier) return null
 
-  const [memberCountRow] = await db
+  const [memberCountRow] = await tx
     .select({ count: sql<number>`count(*)` })
     .from(MemberTable)
     .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt)))
@@ -52,13 +53,13 @@ async function getEffectiveLimits(organizationId: DenTypeId<"organization">) {
   ) as Record<InferenceWindowType, number>
 }
 
-async function ensureBucket(policy: typeof InferenceOrgLimitPolicyTable.$inferSelect, now: Date, effectiveLimit: number) {
+async function ensureBucket(tx: Transaction, policy: typeof InferenceOrgLimitPolicyTable.$inferSelect, now: Date, effectiveLimit: number) {
   const current = policy.current_bucket_id
-    ? (await db.select().from(InferenceOrgUsageBucketTable).where(eq(InferenceOrgUsageBucketTable.id, policy.current_bucket_id)).limit(1))[0]
+    ? (await tx.select().from(InferenceOrgUsageBucketTable).where(eq(InferenceOrgUsageBucketTable.id, policy.current_bucket_id)).limit(1).for("update"))[0]
     : null
   if (current && current.window_start_at <= now && current.window_end_at > now) {
     if (current.limit_amount !== effectiveLimit) {
-      await db.update(InferenceOrgUsageBucketTable).set({ limit_amount: effectiveLimit }).where(eq(InferenceOrgUsageBucketTable.id, current.id))
+      await tx.update(InferenceOrgUsageBucketTable).set({ limit_amount: effectiveLimit }).where(eq(InferenceOrgUsageBucketTable.id, current.id))
       current.limit_amount = effectiveLimit
     }
     return current
@@ -74,7 +75,7 @@ async function ensureBucket(policy: typeof InferenceOrgLimitPolicyTable.$inferSe
     : { start: now, end: addWindow(now, policy.window_type) }
   const id = createDenTypeId("inferenceOrgUsageBucket")
 
-  await db.insert(InferenceOrgUsageBucketTable).values({
+  await tx.insert(InferenceOrgUsageBucketTable).values({
     id,
     organization_id: policy.organization_id,
     policy_id: policy.id,
@@ -83,46 +84,52 @@ async function ensureBucket(policy: typeof InferenceOrgLimitPolicyTable.$inferSe
     limit_amount: effectiveLimit,
     used_amount: 0,
   })
-  await db.update(InferenceOrgLimitPolicyTable).set({ current_bucket_id: id }).where(eq(InferenceOrgLimitPolicyTable.id, policy.id))
+  await tx.update(InferenceOrgLimitPolicyTable).set({ current_bucket_id: id }).where(eq(InferenceOrgLimitPolicyTable.id, policy.id))
 
-  return (await db.select().from(InferenceOrgUsageBucketTable).where(eq(InferenceOrgUsageBucketTable.id, id)).limit(1))[0]
+  return (await tx.select().from(InferenceOrgUsageBucketTable).where(eq(InferenceOrgUsageBucketTable.id, id)).limit(1))[0]
 }
 
-export async function ensureUsableBuckets(organizationId: string, now = new Date()) {
+export async function ensureUsableBuckets(organizationId: string) {
   const orgId = normalizeDenTypeId("organization", organizationId)
-  const effectiveLimits = await getEffectiveLimits(orgId)
-  if (!effectiveLimits) {
-    return { ok: false as const, bucketIds: {}, bucketLimits: {}, limitedBy: "inference_metadata", windowType: "monthly" as const }
-  }
-
-  const policies = await db.select().from(InferenceOrgLimitPolicyTable).where(eq(InferenceOrgLimitPolicyTable.organization_id, orgId))
-  const bucketIds: BucketMetadata = {}
-  const bucketLimits: BucketLimitMetadata = {}
-
-  for (const policy of policies) {
-    const effectiveLimit = effectiveLimits[policy.window_type]
-    const bucket = await ensureBucket(policy, now, effectiveLimit)
-    if (!bucket) {
-      continue
+  return db.transaction(async (tx) => {
+    const policies = await tx.select().from(InferenceOrgLimitPolicyTable)
+      .where(eq(InferenceOrgLimitPolicyTable.organization_id, orgId))
+      .orderBy(asc(InferenceOrgLimitPolicyTable.window_type)).for("update")
+    // This timestamp owns attribution, including time spent waiting for provider credentials.
+    const admittedAt = new Date()
+    const effectiveLimits = await getEffectiveLimits(tx, orgId)
+    if (!effectiveLimits) {
+      return { ok: false as const, bucketIds: {}, bucketLimits: {}, limitedBy: "inference_metadata", windowType: "monthly" as const }
     }
-    const remaining = effectiveLimit - bucket.used_amount
-    if (remaining <= 0) {
-      return {
-        ok: false as const,
-        bucketIds,
-        bucketLimits,
-        limitedBy: bucket.id,
-        windowType: policy.window_type,
-        limitedBucket: {
-          limitAmount: effectiveLimit,
-          usedAmount: bucket.used_amount,
-          windowEndAt: bucket.window_end_at,
-        },
+
+    const bucketIds: BucketMetadata = {}
+    const bucketLimits: BucketLimitMetadata = {}
+
+    for (const policy of policies) {
+      const effectiveLimit = effectiveLimits[policy.window_type]
+      const bucket = await ensureBucket(tx, policy, admittedAt, effectiveLimit)
+      if (!bucket) {
+        continue
       }
+      const remaining = effectiveLimit - bucket.used_amount
+      if (remaining <= 0) {
+        return {
+          ok: false as const,
+          bucketIds,
+          bucketLimits,
+          limitedBy: bucket.id,
+          windowType: policy.window_type,
+          limitedBucket: {
+            limitAmount: effectiveLimit,
+            usedAmount: bucket.used_amount,
+            windowEndAt: bucket.window_end_at,
+          },
+        }
+      }
+      bucketIds[policy.window_type] = bucket.id
+      bucketLimits[policy.window_type] = effectiveLimit
     }
-    bucketIds[policy.window_type] = bucket.id
-    bucketLimits[policy.window_type] = effectiveLimit
-  }
 
-  return { ok: true as const, bucketIds, bucketLimits }
+    return { ok: true as const, bucketIds, bucketLimits, admittedAt }
+  })
 }

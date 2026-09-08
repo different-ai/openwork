@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   addToMemoryIndex,
-  humanizeMemoryFileName,
   isMemoryFileName,
   memoryFileNameFor,
-  memoryTitle,
   parseIndexLine,
   parseMemoryIndex,
   removeFromMemoryIndex,
@@ -61,13 +59,6 @@ test("adding a memory replaces the placeholder, then appends after the last entr
   assert.equal(addToMemoryIndex(two, "people.md", "again"), two, "an indexed file is not listed twice");
   const bare = addToMemoryIndex("# Index\n", "notes.md", "Loose notes");
   assert.equal(bare, "# Index\n\n- `long-term/notes.md` — Loose notes\n");
-});
-
-test("titles come from the first heading and fall back to the file name", () => {
-  assert.equal(memoryTitle("# Street cleaning\n\n- Move the car", "cleaning-day.md"), "Street cleaning");
-  assert.equal(memoryTitle("\n\n## People ##\n", "people.md"), "People");
-  assert.equal(memoryTitle("Just a paragraph\n# Not first", "team_notes.md"), "Team notes");
-  assert.equal(humanizeMemoryFileName("q3-plan.md"), "Q3 plan");
 });
 
 test("new memory file names are safe slugs", () => {

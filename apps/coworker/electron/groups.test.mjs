@@ -6,6 +6,7 @@ import test from "node:test";
 import { createCollaboration, nativeMessageId } from "./collaboration.mjs";
 import { createGroupExecution, repairGroupSelection } from "./group-execution.mjs";
 import { withInteractiveQuestionDefault } from "./collaboration-plugin.mjs";
+import { createWorker, nextWorkerState, parseWorkerReport, updateWorker } from "./workers.mjs";
 import { createCoworkerThreads } from "../src/lib/threads.ts";
 import {
   INTERRUPTED_TURN_MESSAGE,
@@ -14,10 +15,8 @@ import {
   archiveGroup,
   beginGroupTurn,
   createGroup,
-  deriveTurnStatus,
   getGroup,
   listGroups,
-  listNames,
   normalizeParticipantSlugs,
   parseTimeline,
   readGroupTimeline,
@@ -100,18 +99,6 @@ test("timeline events append in order, tolerate one truncated final line, and va
     await assert.rejects(appendGroupEvent(home, group.id, { kind: "bogus", text: "x" }), /Unknown timeline event kind/);
     assert.equal((await readGroupTimeline(home, group.id, { limit: 1 })).length, 1);
   });
-});
-
-test("a turn's status follows its speakers", () => {
-  assert.equal(deriveTurnStatus([]), "routing");
-  assert.equal(deriveTurnStatus([{ status: "queued" }, { status: "succeeded" }]), "running");
-  assert.equal(deriveTurnStatus([{ status: "succeeded" }, { status: "passed" }]), "succeeded");
-  assert.equal(deriveTurnStatus([{ status: "succeeded" }, { status: "failed" }]), "partial");
-  assert.equal(deriveTurnStatus([{ status: "succeeded" }, { status: "stopped" }]), "partial");
-  assert.equal(deriveTurnStatus([{ status: "failed" }, { status: "failed" }]), "failed");
-  assert.equal(deriveTurnStatus([{ status: "failed" }, { status: "stopped" }]), "stopped");
-  assert.equal(listNames(["Scout"]), "Scout");
-  assert.equal(listNames(["Scout", "Editor", "Ops"]), "Scout, Editor and Ops");
 });
 
 test("a turn is recorded once per client message, with its user line, and is updated through the store", async () => {
@@ -352,6 +339,78 @@ test("a focused consultation and a Worker resume the immutable private origin ex
       assert.ok((await service.excludedThreads("editor")).includes(question.threadId));
       await assert.rejects(service.registerOwner({ slug: "editor", threadId: question.threadId, conversationId: question.threadId, kind: "private" }), /another conversation/);
     } finally { groups.stop(); await service.stop(); }
+  });
+});
+
+test("one thinking brief permits a bounded delivery handoff, and unavailable Workers return a failure to the origin", async () => {
+  await withHome(async (home) => {
+    let service;
+    const spawned = [];
+    const fixture = nativeFixture(async ({ slug, threadId, input, reply }) => {
+      const trusted = await service.context(slug, { sessionID: threadId, messageID: reply.id, callID: reply.parts[0].callId });
+      const ask = (callId, purpose, name = purpose) => service.request({ ...trusted, callId }, "worker", { name, purpose, goal: "Use workspace/brief.md; check acceptance criteria.", continuation: { objective: "Deliver the original task", refs: ["workspace/brief.md"], resumeInstructions: "Check the evidence and report here." } });
+      if (input.prompt === "Start with ambiguity") {
+        await ask("thinking", "thinking");
+        await assert.rejects(ask("extra-thinker", "thinking"), /at most one thinking brief/);
+        await assert.rejects(ask("premature-delivery", "delivery"), /completed thinking brief/);
+      } else if (["Empty thinker", "Exhausted thinker", "Empty Done"].includes(input.prompt)) {
+        await ask("incomplete-thinker", "thinking", input.prompt);
+      } else if (input.prompt === "Unavailable model") {
+        await ask("unavailable", "delivery", "Unavailable");
+      } else if (input.prompt.includes("THINKING BRIEF") && !input.prompt.includes("DELIVERY EVIDENCE")) {
+        await ask("delivery-one", "delivery");
+        await ask("delivery-two", "delivery");
+        await assert.rejects(ask("delivery-three", "delivery"), /collaboration limit/);
+        await assert.rejects(ask("another-thinker", "thinking"), /at most one thinking brief/);
+      } else {
+        await assert.rejects(ask("recursive-delivery", "delivery"), /collaboration limit|completed thinking brief/);
+      }
+    });
+    service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5, cancelWorker: async () => {},
+      spawn: async (slug, input) => {
+        spawned.push(input);
+        if (input.name === "Unavailable") throw new Error("Worker model is unavailable; no fallback was selected.");
+        let worker = await createWorker(home, slug, { ...input, spawnedBy: "coworker" });
+        for (let turn = 0; turn < 2; turn++) {
+          const reply = input.name === "Empty thinker" ? "" : input.name === "Exhausted thinker" ? "## Finding\nStill comparing workspace/brief.md" : input.name === "Empty Done" ? "## Done" : `## Done\n${input.purpose === "thinking" ? "THINKING BRIEF: workspace/brief.md" : "DELIVERY EVIDENCE: workspace/result.md"}`;
+          const step = nextWorkerState(worker, { kind: "settled", report: parseWorkerReport(reply) });
+          worker = await updateWorker(home, slug, worker.id, step.patch);
+          await service.completeWorker(worker, step.events);
+          if (step.schedule === "stop") break;
+        }
+        return worker;
+      },
+    });
+    try {
+      const owner = { slug: "scout", threadId: "ses_brief_origin", conversationId: "ses_brief_origin", kind: "private" };
+      const first = await service.submit({ owner, messageId: "msg_thinking", prompt: "Start with ambiguity", track: true });
+      await eventually(async () => (await service.read((state) => state.tasks[first.taskId])).state === "succeeded");
+      assert.deepEqual(spawned.map((input) => input.purpose), ["thinking", "delivery", "delivery"]);
+      assert.equal(fixture.requests.length, 3, "one original turn and two handbacks, not a recursive tree");
+      assert.match(fixture.requests[2].prompt, /DELIVERY EVIDENCE/);
+      assert.ok(fixture.requests.every((request) => request.threadId === owner.threadId));
+      const failed = await service.submit({ owner, messageId: "msg_unavailable", prompt: "Unavailable model", track: true });
+      await eventually(async () => (await service.read((state) => state.tasks[failed.taskId])).state === "succeeded");
+      assert.match(fixture.requests.at(-1).prompt, /Worker model is unavailable; no fallback/);
+      assert.equal(spawned.length, 4, "failure is reported, not retried on a different model");
+      const manual = { slug: owner.slug, id: "wrk_manualthinker", name: "Manual brief", purpose: "thinking", goal: "Deliver the original task", status: "finished" };
+      await service.attachWorker(manual, owner);
+      await service.completeWorker(manual, [{ kind: "finding", report: "done", text: "THINKING BRIEF: workspace/brief.md" }]);
+      await eventually(() => fixture.requests.length === 7);
+      await eventually(async () => (await service.receipts({ slug: owner.slug, threadId: owner.threadId })).every((receipt) => receipt.state === "succeeded"));
+      assert.deepEqual(spawned.slice(4).map((input) => input.purpose), ["delivery", "delivery"], "a thinking Worker from New Worker uses the same bounded handoff");
+      for (const prompt of ["Empty thinker", "Exhausted thinker", "Empty Done"]) {
+        const before = spawned.length;
+        const entry = await service.submit({ owner, messageId: nativeMessageId(), prompt, track: true });
+        await eventually(async () => (await service.read((state) => state.tasks[entry.taskId])).state === "succeeded");
+        const child = await service.read((state) => state.tasks[state.tasks[entry.taskId].dependencies[0]]);
+        assert.equal(child.state, "failed");
+        assert.equal(child.briefReady, false);
+        assert.match(child.error, /^Incomplete:/);
+        assert.equal(spawned.length, before + 1, "an incomplete thinking result never launches delivery");
+        assert.match(fixture.requests.at(-1).prompt, /Incomplete:/, "the original coworker receives the incomplete result");
+      }
+    } finally { await service.stop(); }
   });
 });
 

@@ -9,11 +9,11 @@ const NATIVE_PHASE_LABELS: Record<string, string> = {
   ready_to_continue: "Ready to continue",
   refreshing: "Refreshing approved window",
   working: "Working",
-  "native-approval": "Waiting for app/window approval",
+  "native-approval": "Waiting for window approval",
 };
 
 /** Mounted only for a real private discussion, keyed by slug and native thread id. */
-export function ComputerControl({ slug, threadId }: { slug: string; threadId: string }) {
+export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; threadId: string; statusSlot?: HTMLElement | null }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
   const [snapshot, setSnapshot] = useState<ComputerSnapshot | null>(null);
@@ -57,7 +57,8 @@ export function ComputerControl({ slug, threadId }: { slug: string; threadId: st
     };
   }, []);
 
-  const observing = (open && visible) || snapshot?.enabled === true || snapshot?.cleanupPending === true;
+  const canStop = Boolean(snapshot && (snapshot.enabled || snapshot.session || snapshot.cleanupPending));
+  const observing = (open && visible) || canStop;
   useEffect(() => {
     if (!observing) return;
     void readLatest();
@@ -66,7 +67,6 @@ export function ComputerControl({ slug, threadId }: { slug: string; threadId: st
   }, [observing, open, visible]);
 
   const target = snapshot?.targets.find((item) => item.id === snapshot.targetId);
-  const canStop = Boolean(snapshot && (snapshot.enabled || snapshot.session || snapshot.cleanupPending));
   const canSelectTarget = snapshot !== null && !canStop && !readError;
   const canAllow = canSelectTarget && snapshot?.readiness === "ready" && target?.available === true;
 
@@ -117,6 +117,14 @@ export function ComputerControl({ slug, threadId }: { slug: string; threadId: st
     : readError ? "Unavailable" : "Checking...";
   const readiness = snapshot ? { ready: "Ready", "setup-required": "Setup required", unsupported: "Unsupported", unavailable: "Unavailable" }[snapshot.readiness] : "";
   const expires = snapshot?.session?.expiresAt ? new Date(snapshot.session.expiresAt) : null;
+  const session = snapshot?.session;
+  const phase = snapshot?.cleanupPending ? "Cleanup pending"
+    : session?.state === "unavailable" ? "Status unavailable"
+    : session?.state === "paused" || session?.phase === "person_interacting" || session?.phase === "ready_to_continue" ? "You have control"
+    : session?.state === "opening" ? "Waiting for window approval"
+    : session?.phase ? NATIVE_PHASE_LABELS[session.phase] ?? session.phase.replaceAll("_", " ").replaceAll("-", " ")
+    : "Access allowed";
+  const approvedScope = [session?.appName, session?.windowTitle].filter(Boolean).join(" / ");
 
   return (
     <>
@@ -137,6 +145,24 @@ export function ComputerControl({ slug, threadId }: { slug: string; threadId: st
         Computer
         {readError || actionError ? <AlertIcon className="size-3 text-amber" /> : snapshot?.cleanupPending ? <span className="text-amber">Pending</span> : snapshot?.enabled ? <span className="text-ready">On</span> : null}
       </Button>
+      {statusSlot && canStop ? createPortal(
+        <section aria-label="Computer activity" data-testid="coworker-computer-strip" className="window-no-drag w-full space-y-2 rounded-xl border border-line bg-panel px-3 py-2.5 text-xs leading-relaxed text-mist [overflow-wrap:anywhere]">
+          <div className="flex flex-wrap items-start gap-2">
+            <div className="min-w-0 flex-1 basis-48 space-y-1">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="font-medium text-snow">Computer{target ? ` / ${target.label}` : ""}</span>
+                <span role="status" data-testid="coworker-computer-strip-phase" className={readError || snapshot?.cleanupPending || session?.state === "unavailable" ? "text-amber" : "text-ready"}>{readError ? "Last known: " : ""}{phase}</span>
+              </div>
+              {approvedScope ? <p data-testid="coworker-computer-strip-scope" className="text-snow">Approved app/window: {approvedScope}</p> : null}
+              <p>Take over and Continue are in the native task panel.</p>
+            </div>
+            <Button type="button" variant="danger" className="shrink-0 text-xs" disabled={busy !== null} aria-busy={busy === "stop"} data-testid="coworker-computer-strip-stop" onClick={() => void act("stop")}>Stop &amp; revoke</Button>
+          </div>
+          {readError ? <p role="alert" className="text-amber">Updates unavailable. Last known state is shown; a connection failure does not confirm a stop.</p> : snapshot?.cleanupPending ? <p className="text-amber">Session release is not yet confirmed.</p> : null}
+          {actionError ? <p role="alert" className="text-rose">{actionError}</p> : null}
+        </section>,
+        statusSlot,
+      ) : null}
       {open && anchor ? (
         <ComputerControlPopover anchor={anchor} id={id} onClose={() => setOpen(false)}>
           {readError ? <div role="alert" data-testid="coworker-computer-read-error"><ErrorNote>{snapshot ? "Updates unavailable. Last known state is shown; a connection failure does not confirm a stop. " : "Computer control is unavailable. "}{readError}</ErrorNote></div> : null}
@@ -149,18 +175,17 @@ export function ComputerControl({ slug, threadId }: { slug: string; threadId: st
               value={snapshot?.targetId ?? ""}
               disabled={!canSelectTarget || busy !== null}
               aria-busy={busy === "target"}
-              aria-describedby={`${id}-placement`}
+              aria-describedby={canStop ? `${id}-placement` : undefined}
               data-testid="coworker-computer-target"
               onChange={(event) => void act("target", event.target.value)}
             >
               {!snapshot ? <option value="">{readError ? "Unavailable" : "Checking targets..."}</option> : null}
-              {snapshot?.targets.map((item) => <option key={item.id} value={item.id} disabled={!item.available}>{item.label} ({item.placement === "desktop" ? "Desktop" : "Cloud"}){item.available ? "" : " - unavailable"}</option>)}
+              {snapshot?.targets.map((item) => <option key={item.id} value={item.id} disabled={!item.available} title={item.reason} data-testid={!item.available ? "coworker-computer-target-unavailable" : undefined}>{item.label} ({item.placement === "desktop" ? "This computer" : "Remote"}){item.available ? "" : " - unavailable"}</option>)}
             </select>
-            <p id={`${id}-placement`}>Cloud control stays remote; it never falls back to This Mac.{canStop ? " Stop & revoke before switching targets." : ""}</p>
-            {snapshot?.targets.filter((item) => !item.available && item.id !== snapshot.targetId).map((item) => <p key={item.id} data-testid="coworker-computer-target-unavailable">{item.label}: {item.reason ?? "Unavailable."}</p>)}
+            {canStop ? <p id={`${id}-placement`}>Stop &amp; revoke before choosing another computer.</p> : null}
           </div>
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5">
-            {target ? <><dt>Placement</dt><dd className="text-snow" data-testid="coworker-computer-placement">{target.placement === "desktop" ? "Desktop" : "Cloud"}</dd></> : null}
+            {target ? <><dt>Placement</dt><dd className="text-snow" data-testid="coworker-computer-placement">{target.placement === "desktop" ? "This computer" : "Remote"}</dd></> : null}
             <dt>{readError && snapshot ? "Last known access" : "Access"}</dt>
             <dd className="text-snow" role="status" data-testid="coworker-computer-status">{status}</dd>
             {snapshot ? <><dt>Readiness</dt><dd>{readiness}</dd></> : null}

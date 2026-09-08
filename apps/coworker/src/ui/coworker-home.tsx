@@ -140,6 +140,7 @@ function useCoworkerHoldings(slug: string): {
 }
 
 export function CoworkerHome({
+  active,
   runtime,
   session,
   coworkers,
@@ -161,6 +162,7 @@ export function CoworkerHome({
   onHandOff,
   onVisitCoworker,
 }: {
+  active: boolean;
   runtime: RuntimeInfo;
   session: DenSession | null;
   coworkers: CoworkerSummary[];
@@ -462,6 +464,7 @@ export function CoworkerHome({
         ) : null}
         <main className="min-h-0 flex-1 overflow-hidden">
           <ThreadsPanel
+            active={active}
             runtime={runtime}
             session={session}
             coworker={coworker}
@@ -962,6 +965,18 @@ function CoworkerSettings({
     }
   }
 
+  async function updateWorkerModel(purpose: "thinking" | "delivery", selection: ModelSelection) {
+    setError("");
+    try {
+      const patch = purpose === "thinking"
+        ? { thinkingModel: selection.model, thinkingModelVariant: selection.modelVariant }
+        : { deliveryModel: selection.model, deliveryModelVariant: selection.modelVariant };
+      onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, patch));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   async function retire() {
     setBusy(true);
     setError("");
@@ -1058,9 +1073,26 @@ function CoworkerSettings({
         </div>
         <p className="mt-3 text-xs leading-relaxed text-mist" data-testid="coworker-model-note">
           {coworker.modelMode === "auto"
-            ? `${coworker.name} reads each message and picks a quick, standard, or deep model for it; the header says which one is answering. Assignments and Workers use the standard model. How hard it thinks on each turn follows the dial, unless an exact thinking effort is fixed.`
-            : `${coworker.name} uses this AI model for every discussion, assignment, and Worker. How hard it thinks on each turn follows the dial, unless an exact thinking effort is fixed.`}
+            ? `${coworker.name} reads each message and picks a quick, standard, or deep model for it; the header says which one is answering. Assignments use the standard model. Worker models can be set separately below.`
+            : `${coworker.name} uses this AI model for discussions and assignments. Worker models can be set separately below. How hard it thinks follows the dial unless an exact effort is fixed.`}
         </p>
+      </section>
+
+      <section className="space-y-4" data-testid="coworker-worker-model-settings">
+        <div>
+          <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Worker models</h3>
+          <p className="mt-2 text-xs leading-relaxed text-mist">Optional choices for new Workers, which pin their model and effort when started. Clear work stays with {coworker.name}; hard ambiguity can use one thinking brief before delivery. Unavailable choices stop rather than switch providers. Older Workers still follow the coworker's model.</p>
+        </div>
+        <div data-testid="thinking-model-settings">
+          <h4 className="mb-2 text-xs font-medium text-snow">Deep thinking model</h4>
+          <ModelPicker runtime={runtime} session={session} coworker={coworker} value={coworker.thinkingModel ?? ""} modelVariant={coworker.thinkingModelVariant ?? ""} onChange={(selection) => void updateWorkerModel("thinking", selection)} onSyncProviders={onSyncProviders} onConnect={onOpenAccount} compact forWorker />
+          <p className="mt-2 text-[11px] text-mist">A bounded decision brief. Two turns by default.</p>
+        </div>
+        <div data-testid="delivery-model-settings">
+          <h4 className="mb-2 text-xs font-medium text-snow">Delivery model</h4>
+          <ModelPicker runtime={runtime} session={session} coworker={coworker} value={coworker.deliveryModel ?? ""} modelVariant={coworker.deliveryModelVariant ?? ""} onChange={(selection) => void updateWorkerModel("delivery", selection)} onSyncProviders={onSyncProviders} onConnect={onOpenAccount} compact forWorker />
+          <p className="mt-2 text-[11px] text-mist">Work from a brief and file references, with evidence returned to {coworker.name}. Uses the effort dial's finite turn budget by default.</p>
+        </div>
       </section>
 
       <section className="flex items-center justify-between gap-3 border-t border-line/60 pt-4">

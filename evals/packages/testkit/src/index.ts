@@ -24,3 +24,4 @@ export * from "./spec/index.ts";
 export * from "./state.ts";
 
 export { observeTranscript, readTranscriptMessages } from "./transcript-observer.ts";
+export { readSidebarOverflow } from "@openwork/behaviors";

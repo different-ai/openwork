@@ -77,6 +77,8 @@ opencode.jsonc
 transcript-analysis
 # Eval runner output
 evals/results/
+# DocShot review receipts are capture evidence, tied to the source commit.
+*.png.review.json
 .playwright-mcp/
 .vscode/
 

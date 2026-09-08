@@ -1,6 +1,7 @@
 import type { Env, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { signedWebhookRoute } from "../../middleware/index.js"
 import { captureException } from "../../observability/runtime.js"
 import { handleStripeWebhook } from "../../stripe-billing.js"
@@ -20,6 +21,7 @@ export function registerStripeWebhookRoutes<T extends Env>(app: Hono<T>) {
       summary: "Stripe webhook ingress",
       responses: {
         200: jsonResponse("Stripe webhook processed successfully.", stripeWebhookResponseSchema),
+        503: jsonResponse("Managed Models policy is unavailable.", z.object({ error: z.string(), message: z.string() })),
       },
     }),
     signedWebhookRoute,
@@ -29,6 +31,9 @@ export function registerStripeWebhookRoutes<T extends Env>(app: Hono<T>) {
       try {
         return c.json(await handleStripeWebhook({ payload, signature }))
       } catch (error) {
+        if (error instanceof ManagedModelsPolicyError) {
+          return c.json({ error: error.code, message: error.message }, error.status)
+        }
         const message = error instanceof Error ? error.message : "stripe_webhook_failed"
         const status = message.includes("missing") || message.includes("signature") ? 400 : 500
         if (status === 500) {

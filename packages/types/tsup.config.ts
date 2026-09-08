@@ -18,6 +18,7 @@ export default defineConfig({
     "den/connect-diagnostics": "src/den/connect-diagnostics.ts",
     "den/egress-diagnostics": "src/den/egress-diagnostics.ts",
     "den/inference": "src/den/inference.ts",
+    "den/managed-models-policy": "src/den/managed-models-policy.ts",
     "den/mcp-connection-action": "src/den/mcp-connection-action.ts",
     "den/microsoft-365": "src/den/microsoft-365.ts",
   },

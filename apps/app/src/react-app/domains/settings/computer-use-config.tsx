@@ -62,12 +62,18 @@ export function ComputerUseConfig({ connected, connecting, onConnect, onRefresh,
   const queryClient = useQueryClient();
   const { data: result, isFetching, error: checkError, refetch } = useQuery({
     queryKey: PERMISSIONS_QUERY_KEY,
-    queryFn: async () => parsePermissionResult(await desktopBridge.checkComputerUsePermissions()),
+    queryFn: async () => {
+      // Engine connections can finish restoring after the settings page mounts.
+      // Refresh workspace readiness alongside macOS permissions while it is open.
+      const [permissions] = await Promise.all([desktopBridge.checkComputerUsePermissions(), onRefresh?.()]);
+      return parsePermissionResult(permissions);
+    },
     enabled: hasDesktopBridge(),
     retry: false,
     refetchOnWindowFocus: true,
     staleTime: 0,
     refetchInterval: 2_000,
+    refetchIntervalInBackground: true,
   });
   const connect = useMutation({
     mutationFn: async () => { await onConnect?.(); await onRefresh?.(); },
@@ -92,7 +98,7 @@ export function ComputerUseConfig({ connected, connecting, onConnect, onRefresh,
       <CardHeader>
         <CardTitle>Work in an app you choose</CardTitle>
         <CardDescription>
-          Approve one Mac app, choose its window, and decide how OpenWork can help. Each session has its own Take over and Stop controls.
+          Approve one Mac app, choose its window, and decide how OpenWork can help. Your input interrupts control; Stop in the preview ends access.
         </CardDescription>
         <CardAction>
           <Button variant="ghost" size="icon-sm" aria-label="Refresh Computer Use status" onClick={() => void refresh()} disabled={busy}>

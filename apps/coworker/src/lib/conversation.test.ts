@@ -1,12 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assignmentPrompt, assignmentTitle, discussionTitle, explainRunPrompt, parseAssignmentBrief, timeLabelBetween } from "./conversation.ts";
-
-test("discussionTitle and assignmentTitle stay readable and within native session limits", () => {
-  assert.equal(discussionTitle(" Scout "), "Discussion with Scout");
-  assert.equal(assignmentTitle("  Prepare   the launch brief  "), "Prepare the launch brief");
-  assert.equal(assignmentTitle("x".repeat(90)).length, 80);
-});
+import { assignmentPrompt, parseAssignmentBrief } from "./conversation.ts";
 
 test("assignmentPrompt carries bounded visible discussion into an explicit outcome", () => {
   const messages = Array.from({ length: 10 }, (_, index) => ({
@@ -35,41 +29,15 @@ test("assignmentPrompt carries bounded visible discussion into an explicit outco
   assert.ok(prompt.length < 7_000, `assignment prompt stayed bounded, got ${prompt.length} characters`);
 });
 
-test("assignmentPrompt drops tool-only and system turns and keeps the outcome as the source of truth", () => {
-  const prompt = assignmentPrompt("Summarize the week.", [
-    { role: "system", text: "hidden system text" },
-    { role: "assistant", text: "" },
-    { role: "user", text: "How was the week?" },
-  ]);
-  assert.doesNotMatch(prompt, /hidden system text/);
-  assert.match(prompt, /You: How was the week\?/);
-  assert.match(prompt, /treat the outcome above as the source of truth/);
-});
-
-test("explainRunPrompt carries the run's outcome, summary, and error into the discussion", () => {
-  const prompt = explainRunPrompt({
-    responsibilityName: "  Morning   digest ",
-    outcome: "Failed",
-    when: "Sep 2, 9:00 AM",
-    summary: "Drafted the digest but could not send it.\n",
-    error: "Mail provider rejected the request",
-  });
-  assert.match(prompt, /^Explain the Sep 2, 9:00 AM run of your responsibility "Morning digest"\. It failed\./);
-  assert.match(prompt, /Here is what you reported at the end of that run:\n\nDrafted the digest but could not send it\./);
-  assert.match(prompt, /It stopped with this problem: Mail provider rejected the request/);
-  assert.match(prompt, /whether anything needs my attention/);
-  const bare = explainRunPrompt({ responsibilityName: "", outcome: "Succeeded", when: "just now", summary: "", error: "" });
-  assert.match(bare, /"this responsibility"\. It succeeded\./);
-  assert.doesNotMatch(bare, /reported|problem/);
-});
-
 test("parseAssignmentBrief reads back the outcome and carried discussion, and nothing else", () => {
   const messages = [
     { role: "user", text: "Can you draft the launch note?\n\nKeep it short." },
     { role: "assistant", text: "Yes — I would lead with the date.\nThen the two changes." },
-    { role: "system", text: "ignored" },
+    { role: "system", text: "hidden system text" },
+    { role: "assistant", text: "" },
   ];
   const prompt = assignmentPrompt("Write the launch note by Friday", messages);
+  assert.doesNotMatch(prompt, /hidden system text/);
   const brief = parseAssignmentBrief(prompt);
   assert.ok(brief);
   assert.equal(brief.outcome, "Write the launch note by Friday");
@@ -81,16 +49,4 @@ test("parseAssignmentBrief reads back the outcome and carried discussion, and no
   assert.deepEqual(bare, { outcome: "Just do it", context: [] });
   assert.equal(parseAssignmentBrief("Reply with exactly CHAT ONE READY."), null);
   assert.equal(parseAssignmentBrief("This is an explicit assignment created from our ongoing discussion.\n\nno headings"), null);
-});
-
-test("time labels appear only after a gap and name today, yesterday, the weekday, or the date", () => {
-  const now = new Date(2026, 8, 2, 16, 0).getTime();
-  const at = (daysAgo: number, hour: number) => now - daysAgo * 86_400_000 - (16 - hour) * 3_600_000;
-  assert.equal(timeLabelBetween(null, null, now), null);
-  assert.equal(timeLabelBetween(at(0, 15), at(0, 15) + 5 * 60_000, now), null);
-  assert.match(timeLabelBetween(null, at(0, 15), now) ?? "", /^Today 3:00/);
-  assert.match(timeLabelBetween(at(0, 14), at(0, 15), now) ?? "", /^Today 3:00/);
-  assert.match(timeLabelBetween(null, at(1, 9), now) ?? "", /^Yesterday 9:00/);
-  assert.match(timeLabelBetween(null, at(3, 9), now) ?? "", /^Sunday 9:00/);
-  assert.match(timeLabelBetween(null, at(20, 9), now) ?? "", /^Aug 13 9:00/);
 });

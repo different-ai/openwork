@@ -34,6 +34,14 @@ main process only. Instantiate **one host per shell**, not one per owner. That
 host owns one registry and lazily creates one never-shown parking BrowserWindow
 for all background owners. It never creates a replacement main window.
 
+Each host admits at most 12 tabs, including pending opens; overflow rejects
+without evicting existing pages. Failed opens release their allocation unless
+an aborted open is explicitly preserved by the shell for takeover. External
+target closure uses the same owner/native cleanup as explicit close. The parking
+window is destroyed when empty and recreated on demand. Desktop's
+`openwork:browser:closeSessionTabs` IPC closes only an exact non-empty owner;
+missing or malformed owners never close shared or foreground tabs implicitly.
+
 Required factory options:
 
 - `getWindow(): BrowserWindow | null`: the shell's main container. Its

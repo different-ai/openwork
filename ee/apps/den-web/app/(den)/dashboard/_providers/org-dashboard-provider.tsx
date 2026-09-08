@@ -22,7 +22,7 @@ import {
   roleIncludesCanonicalRole,
 } from "../../_lib/den-org";
 import { shouldOpenOrgSelection } from "../../_lib/org-selection";
-import { ORG_SCOPE_HEADER, OrganizationNotFoundError, setRequestOrgScope } from "../../_lib/org-scope";
+import { ORG_SCOPE_HEADER, OrganizationNotFoundError, getRequestOrgScope, setRequestOrgScope } from "../../_lib/org-scope";
 
 type OrgDashboardContextValue = {
   orgSlug: string | null;
@@ -49,7 +49,7 @@ type OrgDashboardContextValue = {
   removeMember: (memberId: string) => Promise<void>;
   transferOwnership: (memberId: string) => Promise<void>;
   createTeam: (input: { name: string; memberIds: string[] }) => Promise<void>;
-  updateTeam: (teamId: string, input: { name?: string; memberIds?: string[] }) => Promise<void>;
+  updateTeam: (teamId: string, input: { name?: string; memberIds?: string[]; grantsOrganizationAdmin?: boolean }) => Promise<void>;
   deleteTeam: (teamId: string) => Promise<void>;
   createRole: (input: { roleName: string; permission: Record<string, string[]> }) => Promise<void>;
   updateRole: (roleId: string, input: { roleName?: string; permission?: Record<string, string[]> }) => Promise<void>;
@@ -79,7 +79,7 @@ export function OrgDashboardProvider({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { user, sessionHydrated, signOut, refreshWorkers, workersLoadedOnce, runtimeConfig, runtimeConfigLoaded } = useDenFlow();
+  const { user, sessionHydrated, signOut, refreshWorkers, workersLoadedOnce, runtimeConfig, runtimeConfigLoaded, setupOrganizationId } = useDenFlow();
   const [orgDirectory, setOrgDirectory] = useState<DenOrgSummary[]>([]);
   const [orgContext, setOrgContext] = useState<DenOrgContext | null>(null);
   const [orgSelectionOpen, setOrgSelectionOpen] = useState(false);
@@ -221,10 +221,14 @@ export function OrgDashboardProvider({
 
     try {
       let directoryPayload = await loadOrgDirectory();
-      const displayedOrgId = orgContext?.organization.id ?? null;
+      // A tab's unfinished setup owns its org even when another tab switches the session.
+      const displayedOrgId = setupOrganizationId ?? orgContext?.organization.id ?? null;
       const displayedOrg = displayedOrgId
         ? directoryPayload.orgs.find((entry) => entry.id === displayedOrgId) ?? null
         : null;
+      if (setupOrganizationId && !displayedOrg) {
+        throw new Error("Your setup workspace is unavailable. Restore access before continuing setup.");
+      }
 
       if (displayedOrg && !displayedOrg.isActive) {
         setRequestOrgScope(displayedOrg.id);
@@ -258,7 +262,7 @@ export function OrgDashboardProvider({
       // Single-org deployments never surface the picker; otherwise the
       // org-selection module decides from the directory plus any pending
       // sign-in request.
-      if (!isSingleOrgMode && shouldOpenOrgSelection(directoryPayload.orgs)) {
+      if (!setupOrganizationId && !isSingleOrgMode && shouldOpenOrgSelection(directoryPayload.orgs)) {
         setRequestOrgScope(null);
         setOrgDirectory(directoryPayload.orgs);
         setOrgContext(null);
@@ -277,6 +281,12 @@ export function OrgDashboardProvider({
       setOrgContext(context);
       await refreshWorkers({ keepSelection: false, quiet: workersLoadedOnce });
     } catch (error) {
+      if (setupOrganizationId) {
+        setRequestOrgScope(null);
+        setOrgContext(null);
+        setOrgError(error instanceof Error ? error.message : "Could not restore your setup workspace.");
+        return;
+      }
       if (error instanceof OrganizationNotFoundError) {
         try {
           await recoverFromOrganizationNotFound();
@@ -784,7 +794,7 @@ export function OrgDashboardProvider({
     });
   }
 
-  async function updateTeam(teamId: string, input: { name?: string; memberIds?: string[] }) {
+  async function updateTeam(teamId: string, input: { name?: string; memberIds?: string[]; grantsOrganizationAdmin?: boolean }) {
     if (!getCurrentAccess().canManageTeams) {
       throw new Error("Only workspace admins can manage teams.");
     }
@@ -895,7 +905,7 @@ export function OrgDashboardProvider({
     }
 
     void refreshOrgData();
-  }, [router, sessionHydrated, user?.id, isSingleOrgMode]);
+  }, [router, sessionHydrated, user?.id, isSingleOrgMode, setupOrganizationId]);
 
   const value: OrgDashboardContextValue = {
     orgSlug: activeOrg?.slug ?? null,
@@ -932,7 +942,13 @@ export function OrgDashboardProvider({
 
   return (
     <OrgDashboardContext.Provider value={value}>
-      {children}
+      {setupOrganizationId && (orgContext?.organization.id !== setupOrganizationId
+        || activeOrgId !== setupOrganizationId || getRequestOrgScope() !== setupOrganizationId) ? (
+        <div className="grid min-h-[420px] place-content-center gap-3 px-6 text-sm text-gray-600" data-testid="setup-workspace-restoring">
+          <p role={orgError ? "alert" : "status"}>{orgError ?? "Restoring your setup workspace..."}</p>
+          {!orgBusy ? <button type="button" onClick={() => void refreshOrgData()} className="font-medium text-gray-900 underline underline-offset-4">Retry setup workspace</button> : null}
+        </div>
+      ) : children}
       <ReauthDialog
         open={reauthDialogOpen}
         user={user}

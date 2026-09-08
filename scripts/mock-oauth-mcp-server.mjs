@@ -216,7 +216,10 @@ function validateAgentWorkloads(value) {
     const finalReplyDelayMs = workload.finalReplyDelayMs ?? 0;
     if (!Number.isInteger(finalReplyDelayMs) || finalReplyDelayMs < 0 || finalReplyDelayMs > 10000)
       throw new Error("finalReplyDelayMs must be between 0 and 10000");
-    return { promptMarker, finalReply, finalReplyFrom: workload.finalReplyFrom, finalReplyChunkSize, finalReplyDelayMs, finalReasoning: workload.finalReasoning, steps, latestUserTurn: workload.latestUserTurn === true };
+    const rateLimitAttempts = workload.rateLimitAttempts ?? 0;
+    if (!Number.isInteger(rateLimitAttempts) || rateLimitAttempts < 0 || rateLimitAttempts > 3)
+      throw new Error("rateLimitAttempts must be between 0 and 3");
+    return { promptMarker, finalReply, finalReplyFrom: workload.finalReplyFrom, finalReplyChunkSize, finalReplyDelayMs, finalReasoning: workload.finalReasoning, steps, latestUserTurn: workload.latestUserTurn === true, rateLimitAttempts };
   });
 }
 
@@ -410,6 +413,13 @@ async function handleAgentCompletion(req, res, entry) {
     return;
   }
   if (!workload) throw new Error("matched agent workload disappeared");
+  if (workload.rateLimitAttempts > 0) {
+    workload.rateLimitAttempts -= 1;
+    entry.agentCompletion = { ...baseRequest, kind: "error", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
+    res.setHeader("retry-after", "5");
+    json(res, 429, { error: { message: "Rate limited for lifecycle verification" } });
+    return;
+  }
   if (completedTools >= workload.steps.length) {
     if (workload.finalReplyDelayMs) await new Promise(resolve => setTimeout(resolve, workload.finalReplyDelayMs));
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };

@@ -43,7 +43,7 @@ export default async ({ directory }) => {
     }),
     coworker_worker_spawn: tool({
       description: "Start a Worker for one bounded goal beyond this reply. Record the original objective and how to use its result, then acknowledge and END this turn. The app delivers a follow-up here when the Worker finishes; never poll or wait in this turn. Use an assignment for scheduled work. Workers cannot start Workers.",
-      args: { name: tool.schema.string().min(1).max(80), goal: tool.schema.string().min(1).max(4000), lifespan: tool.schema.object({ kind: tool.schema.enum(["turns", "until", "open"]), turns: tool.schema.number().int().min(1).max(100).optional(), until: tool.schema.string().optional() }).optional(), continuation }, execute: execute("worker_spawn"),
+      args: { name: tool.schema.string().min(1).max(80), goal: tool.schema.string().min(1).max(4000), purpose: tool.schema.enum(["thinking", "delivery"]).optional().describe("Thinking brief or delivery work; default delivery. Follow the Workers contract; uses the person's corresponding model setting."), lifespan: tool.schema.object({ kind: tool.schema.enum(["turns", "until"]), turns: tool.schema.number().int().min(1).max(100).optional(), until: tool.schema.string().optional() }).optional(), continuation }, execute: execute("worker_spawn"),
     }),
   } };
 };

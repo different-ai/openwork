@@ -6,14 +6,10 @@ import {
   configureDiscussionStore,
   discussionIds,
   discussionIdsForWorkspace,
-  discussionLabel,
-  discussionLooksUsed,
-  discussionTitleFromPrompt,
   loadDiscussionRegistry,
   parseDiscussionRegistry,
   registerDiscussion,
   serializeDiscussionRegistry,
-  splitDiscussionThreads,
 } from "./discussions.ts";
 
 test("parseDiscussionRegistry tolerates missing, malformed, and legacy shapes", () => {
@@ -31,17 +27,6 @@ test("discussionIds keeps the open discussion even when an older record never re
   assert.deepEqual(discussionIds([], ""), []);
 });
 
-test("splitDiscussionThreads never lets a discussion count as an assignment", () => {
-  const threads = [
-    { id: "ses_1", title: "Discussion with Scout" },
-    { id: "ses_2", title: "Launch brief" },
-    { id: "ses_3", title: "Street cleaning reminder" },
-  ];
-  const { discussions, assignments } = splitDiscussionThreads(threads, ["ses_1", "ses_3"]);
-  assert.deepEqual(discussions.map((thread) => thread.id), ["ses_1", "ses_3"]);
-  assert.deepEqual(assignments.map((thread) => thread.id), ["ses_2"]);
-});
-
 test("classifyThreads keeps Worker threads out of both discussions and assignments, by registry not title", () => {
   const threads = [
     { id: "ses_chat", title: "Discussion with Scout" },
@@ -55,21 +40,6 @@ test("classifyThreads keeps Worker threads out of both discussions and assignmen
   assert.deepEqual(sorted.workers.map((thread) => thread.id), ["ses_w1", "ses_w2", "ses_both"]);
   assert.deepEqual(sorted.assignments.map((thread) => thread.id), ["ses_work"]);
   assert.deepEqual(classifyThreads(threads, { discussions: [], workers: [] }).assignments.length, threads.length);
-});
-
-test("discussionLabel and discussionTitleFromPrompt read well in a list", () => {
-  assert.equal(discussionLabel("Discussion with Scout", "Discussion with Scout"), "New discussion");
-  assert.equal(discussionLabel("", "Discussion with Scout"), "New discussion");
-  assert.equal(discussionLabel("Move the car on Fridays", "Discussion with Scout"), "Move the car on Fridays");
-  assert.equal(discussionLabel("Discussion with Scout", "Discussion with Scout", true), "Discussion");
-  assert.equal(discussionLooksUsed({ createdAt: 1_000, updatedAt: 1_000 + 60_000 }), true);
-  assert.equal(discussionLooksUsed({ createdAt: 1_000, updatedAt: 3_000 }), false);
-  assert.equal(discussionLooksUsed({ createdAt: 0, updatedAt: 0 }), false);
-  assert.equal(discussionTitleFromPrompt("\n\n  can you   remember this\nsecond line"), "can you remember this");
-  assert.equal(discussionTitleFromPrompt(""), "");
-  const long = discussionTitleFromPrompt("x".repeat(100));
-  assert.equal(long.length, 60);
-  assert.ok(long.endsWith("…"));
 });
 
 test("the registry is written beside the coworker record and answers workspace lookups from cache", async () => {

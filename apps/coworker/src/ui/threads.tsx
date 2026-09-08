@@ -304,6 +304,7 @@ function threadTone(status: ThreadListItem["status"]): "spark" | "amber" | "read
 }
 
 export function ThreadsPanel({
+  active,
   runtime,
   session,
   coworker,
@@ -325,6 +326,7 @@ export function ThreadsPanel({
   team,
   turnRequest,
 }: {
+  active: boolean;
   runtime: RuntimeInfo;
   session: DenSession | null;
   coworker: CoworkerSummary;
@@ -497,9 +499,9 @@ export function ThreadsPanel({
   const startDiscussion = useCallback(async () => {
     if (!threads) throw new Error("This coworker needs a workspace before it can chat.");
     const discussion = await threads.client.createThread({ title: discussionTitle(coworker.name) });
-    // The thread exists now. Whatever else fails, it must never read as an assignment, so the
-    // view treats it as a discussion at once and records it in both places as far as they allow.
-    setRegisteredDiscussions((current) => (current.includes(discussion.id) ? current : [...current, discussion.id]));
+    // The open thread already counts as a discussion through discussionThreadIds.
+    // Native browser/computer controls must wait for the saved registry, not an
+    // optimistic ID that can race their first binding against the file write.
     setDiscussionThreadId(discussion.id);
     const [registered, updated] = await Promise.allSettled([
       registerDiscussion(coworker.slug, discussion.id),
@@ -603,6 +605,7 @@ export function ThreadsPanel({
     return (
       <ThreadView
         key={openThreadId}
+        active={active}
         threads={threads}
         threadId={openThreadId}
         coworker={coworker}
@@ -657,6 +660,7 @@ export function ThreadsPanel({
   return (
     <ThreadView
       key={discussionThreadId}
+      active={active}
       threads={threads}
       threadId={discussionThreadId}
       coworker={coworker}
@@ -929,6 +933,7 @@ function DiscussionSwitcher({
 }
 
 function ThreadView({
+  active,
   threads,
   threadId,
   coworker,
@@ -960,6 +965,7 @@ function ThreadView({
   onOpenSummary,
   browserEligible = false,
 }: {
+  active: boolean;
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   threadId: string;
   coworker: CoworkerSummary;
@@ -1947,9 +1953,11 @@ function ThreadView({
     ?? { id: threadId, title, createdAt: 0, updatedAt: 0, status: "idle" };
   const freshDiscussion = kind === "discussion" && visibleMessages.length === 0 && !working && !needsYou && !error && !outcome;
   const composerWorking = turnRunning || activeTurn !== null || (engineRunning && !needsYou);
+  const [controlStatusSlot, setControlStatusSlot] = useState<HTMLDivElement | null>(null);
+  const [floatingSlot, setFloatingSlot] = useState<HTMLDivElement | null>(null);
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-ink" data-testid={kind === "discussion" ? "coworker-discussion-view" : kind === "worker" ? "coworker-worker-view" : "coworker-assignment-view"}>
+    <section className="flex h-full min-h-0 flex-col bg-ink" data-active={active} data-testid={kind === "discussion" ? "coworker-discussion-view" : kind === "worker" ? "coworker-worker-view" : "coworker-assignment-view"}>
       {/* The one header above carries the coworker; the view places its title line and actions there. */}
       <HeaderContent
         slots={headerSlots}
@@ -1970,7 +1978,7 @@ function ThreadView({
         )}
         actions={(
           <>
-            {kind === "discussion" && threadId ? <ComputerControl key={`${coworker.slug}:${threadId}`} slug={coworker.slug} threadId={threadId} /> : null}
+            {active && kind === "discussion" && browserEligible ? <ComputerControl key={`${coworker.slug}:${threadId}`} slug={coworker.slug} threadId={threadId} statusSlot={controlStatusSlot} /> : null}
             {kind !== "discussion" ? <Button variant="ghost" onClick={onBack}>Back</Button> : null}
             {kind !== "worker" ? (
               // Stop keeps its place while it is not offered, so the status word beside it never slides.
@@ -1980,10 +1988,13 @@ function ThreadView({
         )}
       />
       {/* Progress and problems show inline in the conversation; this keeps the turn state readable to assistive tech and tests. */}
-      {kind === "discussion" && browserEligible ? <DiscussionBrowser key={`${coworker.slug}:${threadId}`} slug={coworker.slug} threadId={threadId} actionsSlot={headerSlots.actions} /> : null}
+      <div className="@container/discussion min-h-0 min-w-0 flex-1">
+      <div className="flex h-full min-h-0 min-w-0 flex-col @min-[760px]/discussion:flex-row">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="coworker-conversation-column">
       <p data-testid="coworker-thread-status" className="sr-only" aria-live="polite" data-state={needsYou ? "needs-you" : working ? "working" : "idle"} data-outcome={outcome?.kind ?? ""}>
         {kind === "discussion" && !working && !needsYou && !failed && !settledWord ? "Ready" : readableStatus}
       </p>
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <div
         className="min-h-0 flex-1 overflow-y-auto px-5 py-5"
         onScroll={(event) => {
@@ -2086,8 +2097,15 @@ function ThreadView({
           <div ref={endRef} />
         </div>
       </div>
+      {kind === "discussion" ? (
+        <div ref={setFloatingSlot} className="pointer-events-none absolute inset-0 overflow-hidden" data-testid="coworker-browser-float-slot" />
+      ) : null}
+      </div>
       {kind !== "worker" && turnState.next.length > 0 ? (
         <NextRows items={turnState.next} onEdit={editQueued} onRemove={(id) => commitTurnState((state) => removeQueued(state, id))} onSendNow={(id) => void sendQueuedNow(id)} />
+      ) : null}
+      {kind === "discussion" ? (
+        <div ref={setControlStatusSlot} className="shrink-0 space-y-2 px-5 pt-2 empty:hidden" data-testid="coworker-control-status" />
       ) : null}
       {kind === "discussion" ? (
         <DiscussionComposer
@@ -2126,6 +2144,10 @@ function ThreadView({
           onOpenSummary={onOpenSummary}
         />
       )}
+      </div>
+      {kind === "discussion" && browserEligible ? <DiscussionBrowser key={`${coworker.slug}:${threadId}`} active={active} slug={coworker.slug} threadId={threadId} actionsSlot={headerSlots.actions} statusSlot={controlStatusSlot} floatingSlot={floatingSlot} /> : null}
+      </div>
+      </div>
     </section>
   );
 }

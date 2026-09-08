@@ -995,6 +995,8 @@ export function McpView(props: McpViewProps) {
         const disabledReason = builtInDisabledReason ?? manageDisabledReasonForEntry(detailEntry);
         const isConnected = builtInDisabledReason
           ? false
+          : detailEntry.serverName === "computer-use"
+          ? enablementForEntry(detailEntry)?.active === true
           : isToggleOnlyExtension(detailEntry)
           ? isOpenWorkExtensionEnabled(detailEntry)
           : detailEntry.kind === "extension" && !isMcpBackedExtension(detailEntry)

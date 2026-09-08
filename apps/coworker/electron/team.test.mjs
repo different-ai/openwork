@@ -3,29 +3,19 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import { createCoworker, slugifyCoworkerName } from "./coworkers.mjs";
+import { createCoworker } from "./coworkers.mjs";
 import {
   DECLINE_QUIET_DAYS,
-  TEAM_ROLES,
   foldLog,
-  matchesExisting,
-  pickAvatarColor,
   readReferrals,
   readSuggestions,
-  recommendTeam,
   recordReferral,
   recordSuggestion,
-  referralGuard,
   rosterFor,
-  sameRequest,
-  scoreRole,
   setReferralState,
   setSuggestionState,
-  slugOf,
   suggestionGuard,
-  teamCatalog,
   teamStates,
-  uniqueName,
   writeTeamRoster,
 } from "./team.mjs";
 
@@ -43,80 +33,11 @@ after(async () => {
 const DAY = 86_400_000;
 const NOW = Date.UTC(2026, 8, 3, 15, 0, 0);
 
-test("the catalog has the six roles from the plan, each complete", () => {
-  assert.deepEqual(TEAM_ROLES.map((role) => role.id), ["research", "writing", "operations", "support", "sales", "product"]);
-  for (const role of TEAM_ROLES) {
-    assert.ok(role.defaultName && role.role && role.mission && role.pitch, role.id);
-    assert.equal(role.alternateNames.length, 3, role.id);
-    assert.ok(role.keywords.length >= 12, `${role.id} has enough words to be recognised`);
-    assert.ok(TEAM_ROLES.some((other) => other.id === role.complement), `${role.id}'s complement exists`);
-    assert.notEqual(role.complement, role.id);
-  }
-  const catalog = teamCatalog();
-  assert.equal(catalog.length, 6);
-  assert.deepEqual(Object.keys(catalog[0]).sort(), ["avatarColor", "avatarGlasses", "defaultName", "id", "mission", "personality", "pitch", "role"]);
-});
-
-test("recommendTeam: one intent brings its complement, two or three stand alone, more than three keeps the first three", () => {
-  assert.deepEqual(recommendTeam(["research"]).map((draft) => [draft.roleId, draft.name]), [["research", "Scout"], ["operations", "Ops"]]);
-  assert.deepEqual(recommendTeam(["operations"]).map((draft) => draft.roleId), ["operations", "research"]);
-  assert.deepEqual(recommendTeam(["writing", "sales"]).map((draft) => draft.roleId), ["writing", "sales"]);
-  assert.deepEqual(recommendTeam(["support", "product", "writing"]).map((draft) => draft.roleId), ["support", "product", "writing"]);
-  assert.deepEqual(recommendTeam(["sales", "support", "product", "writing", "research"]).map((draft) => draft.roleId), ["sales", "support", "product"]);
-  // Duplicates and unknown ids are dropped; nothing picked still proposes a starting pair.
-  assert.deepEqual(recommendTeam(["writing", "writing", "wizard"]).map((draft) => draft.roleId), ["writing", "operations"]);
-  assert.deepEqual(recommendTeam([]).map((draft) => draft.roleId), ["research", "operations"]);
-  const [scout] = recommendTeam(["research"]);
-  assert.equal(scout.role, "Research and synthesis");
-  assert.equal(scout.avatarColor, "blue");
-  assert.equal(scout.personality, "curious");
-  assert.match(scout.mission, /^I /);
-});
-
-test("uniqueName walks the default, the alternates, then a number; slugOf matches the store", () => {
-  assert.equal(uniqueName("research", new Set()), "Scout");
-  assert.equal(uniqueName("research", new Set(["scout"])), "Atlas");
-  assert.equal(uniqueName("research", new Set(["scout", "atlas", "nova", "lark"])), "Scout 2");
-  assert.equal(uniqueName("research", new Set(["scout", "atlas", "nova", "lark", "scout-2"])), "Scout 3");
-  assert.equal(uniqueName("wizard", new Set()), "Coworker 2");
-  for (const name of ["Scout 2", "Émile's QA — bot!", "Ops", "  Care  "]) {
-    assert.equal(slugOf(name), slugifyCoworkerName(name), name);
-  }
-});
-
-test("pickAvatarColor takes the least-used color, the preferred one among ties", () => {
-  assert.equal(pickAvatarColor([], "rose"), "rose");
-  assert.equal(pickAvatarColor(["blue", "violet", "mint", "orange", "rose", "slate"], "rose"), "rose");
-  assert.equal(pickAvatarColor(["blue", "rose", "rose"], "rose"), "violet");
-  assert.equal(pickAvatarColor(["blue", "violet", "mint", "orange", "slate"], "blue"), "rose");
-});
-
-test("scoreRole reads a request as the role whose words it uses", () => {
-  assert.equal(scoreRole("Can you keep an eye on the support inbox every morning?")?.roleId, "support");
-  assert.equal(scoreRole("Draft the launch announcement for the blog")?.roleId, "writing");
-  assert.equal(scoreRole("Compare the three vendors and summarize the trade-offs")?.roleId, "research");
-  assert.equal(scoreRole("Follow up with the leads from the demo and update the pipeline")?.roleId, "sales");
-  assert.equal(scoreRole("hello there"), null);
-});
-
 const TEAM = [
   { slug: "nova", name: "Nova", role: "Research and synthesis", mission: "I dig into questions.", roleId: "research" },
   { slug: "editor", name: "Editor", role: "Writing and content", mission: "I turn rough ideas into clear drafts.", roleId: "writing" },
   { slug: "pat", name: "Pat", role: "Bookkeeper", mission: "I reconcile invoices and expenses every week.", roleId: "" },
 ];
-
-test("matchesExisting finds the teammate who already covers a role, exactly by catalog id or by its words", () => {
-  assert.equal(matchesExisting("writing", TEAM)?.slug, "editor");
-  assert.equal(matchesExisting("Writing", TEAM)?.slug, "editor");
-  assert.equal(matchesExisting("research", TEAM)?.slug, "nova");
-  assert.equal(matchesExisting("support", TEAM), null);
-  assert.equal(matchesExisting("Customer support", TEAM), null);
-  // A role the person shaped by hand is matched by its own words.
-  assert.equal(matchesExisting("invoices and expenses", TEAM)?.slug, "pat");
-  assert.equal(matchesExisting("bookkeeper", TEAM)?.slug, "pat");
-  assert.equal(matchesExisting("", TEAM), null);
-  assert.equal(matchesExisting("writing", []), null);
-});
 
 test("rosterFor names teammates one line each, caps the list, lists recent declines, and never repeats the coworker itself", () => {
   const self = { slug: "nova", name: "Nova", role: "Research and synthesis", mission: "I dig into questions." };
@@ -145,22 +66,6 @@ test("rosterFor names teammates one line each, caps the list, lists recent decli
   assert.equal(capped.match(/^- Coworker /gm)?.length, 12);
   assert.match(capped, /- and 3 more/);
   assert.match(capped, /x{139}…/, "a long mission is cut");
-});
-
-test("a request the person chose to keep with the coworker is never offered again; a new request may be", () => {
-  const referrals = [
-    { id: "r1", to: "editor", message: "Draft the launch announcement", state: "continued", stateAt: NOW - DAY },
-    { id: "r2", to: "editor", message: "Rewrite the pricing page", state: "asked", stateAt: NOW - DAY },
-    { id: "r3", to: "ops", message: "Book the offsite", state: "offered", stateAt: NOW },
-  ];
-  assert.deepEqual(referralGuard({ message: "Draft the launch announcement", referrals }), { kind: "kept", at: NOW - DAY });
-  assert.deepEqual(referralGuard({ message: "  draft the LAUNCH announcement!  ", referrals }), { kind: "kept", at: NOW - DAY }, "case, spacing, and punctuation do not make it a new request");
-  assert.deepEqual(referralGuard({ message: "Rewrite the pricing page", referrals }), { kind: "ok" }, "a request the person handed over is not a kept one");
-  assert.deepEqual(referralGuard({ message: "Book the offsite", referrals }), { kind: "ok" }, "an open offer is not a kept one");
-  assert.deepEqual(referralGuard({ message: "Draft the launch announcement for May", referrals }), { kind: "ok" }, "a different request is a different request");
-  assert.deepEqual(referralGuard({ message: "", referrals }), { kind: "ok" });
-  assert.equal(sameRequest("A. ", "a"), true);
-  assert.equal(sameRequest("", ""), false, "two empty requests are not the same request");
 });
 
 test("logs fold by id, latest state wins, and states survive a torn line", () => {

@@ -1,6 +1,6 @@
 import { expect } from "vitest";
-import { eventually, observeTranscript, spec } from "@openwork/testkit";
-import { streamedMarkdown, streamedMarkdownMarker, streamedMarkdownReasoning } from "../worlds/chat.ts";
+import { eventually, observeTranscript, readTranscriptMessages, spec } from "@openwork/testkit";
+import { streamedMarkdown, streamedMarkdownMarker, streamedMarkdownReasoning, streamedToolHistory } from "../worlds/chat.ts";
 
 const test = spec.world(streamedMarkdown, { timeout: 420_000 });
 const prompt = `Write the streamed markdown answer. ${streamedMarkdownMarker}`;
@@ -26,6 +26,36 @@ function expectSettledDocument(visibleText: string) {
   for (const sentinel of blockSentinels) expect(occurrences(visibleText, sentinel)).toBe(1);
   for (const syntax of rawSyntax) expect(visibleText).not.toContain(syntax);
 }
+
+test("sending clears the composer and shows one pending turn in existing and new conversations", async ({ world, user, probe, step }) => {
+  for (const scenario of ["existing", "new"]) {
+    if (scenario === "new") await user.click({ role: "button", label: "New task" });
+    const text = `Keep this ${scenario} conversation message while submission is delayed.`;
+    await user.type("composer", text);
+    await world.holdNextSubmission();
+    await step(`${scenario}: Send clears the input before server acceptance`, async () => {
+      await user.click("Run task");
+      await user.see("composer", { text: "", timeoutMs: 500 });
+      await user.see({ text }, { timeoutMs: 500 });
+      expect(await probe.eventually(() => world.submissionAttempts(), {
+        within: 20_000, label: "held submission", until: (count) => count === 1,
+      })).toBe(1);
+      expect((await probe.composer()).draftText).toBe("");
+      expect(occurrences(await probe.text(), text)).toBe(1);
+    });
+    await step(`${scenario}: failure retains the message without replacing newer typing`, async () => {
+      await user.type("composer", "A newer draft");
+      await world.rejectSubmission();
+      await user.see({ text: /Your unsent message is saved/ });
+      expect((await probe.composer()).draftText).toBe("A newer draft");
+      expect(await world.submissionAttempts()).toBe(1);
+      await user.type("composer", "", { replace: true });
+      await user.click("Restore unsent message");
+      await user.see("composer", { text });
+      expect(await world.submissionAttempts()).toBe(1);
+    });
+  }
+});
 
 test("a streaming answer renders as markdown block by block and settles to the same document", async ({ world, user, probe, step }) => {
   const entries = [
@@ -123,5 +153,106 @@ test("a streaming answer renders as markdown block by block and settles to the s
     await user.see({ text: streamedMarkdownReasoning });
     expect(occurrences(await probe.text(), streamedMarkdownReasoning)).toBe(1);
     expectSettledDocument(await probe.text());
+  });
+});
+
+const historyTest = spec.world(streamedToolHistory, { timeout: 420_000 });
+
+historyTest("v1 keeps long tool-rich history ordered and its detected links available as the answer advances", { timeout: 15 * 60_000 }, async ({ world, user, agent, probe, step, place }) => {
+  const orderedHistory = async () => (await readTranscriptMessages(probe, "user"))
+    .flatMap(text => text.match(/Settled history \d{3}\./g) ?? []);
+  const expectTargets = async (names: string[], present = true) => {
+    await user.press(place.kind === "local" && process.platform === "darwin" ? "Meta+K" : "Control+K");
+    const rootSearch = { placeholder: "Search actions, settings, and sessions…" };
+    await user.type(rootSearch, "Accessible items", { replace: true });
+    await user.click({ role: "option", label: /^Accessible items/ });
+    const search = { placeholder: "Search servers and artifacts..." };
+    for (const name of names) {
+      await user.type(search, name, { replace: true });
+      if (present) await user.see({ role: "option", label: new RegExp(`^${name}\\b`) });
+      else await user.notSee({ role: "option", label: new RegExp(`^${name}\\b`) });
+    }
+    await user.press("Escape");
+    await user.notSee(search);
+    await user.press("Escape");
+    await user.notSee(rootSearch);
+  };
+  const oldTargets = [world.toolNames[0]!, world.toolNames.at(-1)!];
+
+  await step("the live cache retains history older than the native 140-message snapshot", async () => {
+    expect(await orderedHistory()).toEqual(world.history);
+    const bounded = await probe.desktopApi(`${world.historyPath}?limit=140`);
+    expect(bounded.status).toBe(200);
+    expect(bounded.body).toHaveLength(140);
+    expect(JSON.stringify(bounded.body)).not.toContain(world.history[0]);
+    expect(JSON.stringify(bounded.body)).toContain(world.history.at(-1));
+    await expectTargets(oldTargets);
+    await expectTargets([world.latestTool], false);
+  });
+
+  await using transcript = await observeTranscript(probe, [
+    ...[world.history[0]!, world.history[74]!, world.history[149]!].map((text): { role: "user"; text: string } => ({ role: "user", text })),
+    { role: "user", text: world.prompt },
+    { role: "assistant", text: world.opening },
+  ]);
+  await user.type("composer", world.prompt);
+  await user.click("Run task");
+
+  await step("new tool output becomes accessible without losing old targets while text grows", async () => {
+    await user.see({ text: world.opening }, { timeoutMs: 90_000 });
+    await user.notSee({ text: world.closing });
+    expect(await orderedHistory()).toEqual(world.history);
+    // These options come from detected tool output, not markdown links in the answer.
+    await expectTargets([...oldTargets, world.latestTool]);
+    await user.see({ text: world.middle }, { timeoutMs: 90_000 });
+    await user.notSee({ text: world.closing });
+    expect(await orderedHistory()).toEqual(world.history);
+  });
+
+  await step("settled history and the advancing answer never disappear or duplicate", async () => {
+    await user.see({ text: world.closing }, { timeoutMs: 120_000 });
+    await user.see("Run task", { timeoutMs: 60_000 });
+    expect(await orderedHistory()).toEqual(world.history);
+    const answers = await readTranscriptMessages(probe, "assistant");
+    const answer = answers.filter(text => text.includes(world.opening));
+    expect(answer).toHaveLength(1);
+    for (const sentinel of [world.opening, world.middle, world.closing]) {
+      expect(occurrences(answers.join("\n"), sentinel)).toBe(1);
+    }
+    expect(answer[0]!.indexOf(world.opening)).toBeLessThan(answer[0]!.indexOf(world.middle));
+    expect(answer[0]!.indexOf(world.middle)).toBeLessThan(answer[0]!.indexOf(world.closing));
+    expect(await transcript.finish()).toMatchObject({ seen: [true, true, true, true, true], violations: [], stopped: false });
+  });
+
+  await step("switching conversations preserves the full cached history and keeps targets scoped", async () => {
+    await agent.run("session.open", { sessionId: world.neighbor.sessionId });
+    await user.see("composer", { editable: true });
+    await user.notSee({ text: world.opening });
+    // Return before the inactive transcript's 15-second GC window. The slower
+    // palette isolation checks below deliberately belong to the cold path.
+    await agent.run("session.open", { sessionId: world.session.sessionId });
+    await user.see({ text: world.closing });
+    expect(await orderedHistory()).toEqual(world.history);
+    await expectTargets([...oldTargets, world.latestTool]);
+    await agent.run("session.open", { sessionId: world.neighbor.sessionId });
+    await user.see("composer", { editable: true });
+    await expectTargets([...oldTargets, world.latestTool], false);
+  });
+
+  await step("cold reload keeps the bounded history tail ordered and old and new tool links usable", async () => {
+    const bounded = await probe.desktopApi(`${world.historyPath}?limit=140`);
+    expect(bounded.status).toBe(200);
+    expect(bounded.body).toHaveLength(140);
+    const retainedHistory = world.history.filter(text => JSON.stringify(bounded.body).includes(text));
+    expect(retainedHistory.length).toBeGreaterThan(0);
+    expect(retainedHistory.length).toBeLessThan(world.history.length);
+    await agent.run("session.open", { sessionId: world.session.sessionId });
+    await user.reload();
+    await user.see({ text: world.closing }, { timeoutMs: 60_000 });
+    expect(await orderedHistory()).toEqual(retainedHistory);
+    expect(occurrences((await readTranscriptMessages(probe, "user")).join("\n"), world.prompt)).toBe(1);
+    expect(occurrences((await readTranscriptMessages(probe, "assistant")).join("\n"), world.closing)).toBe(1);
+    await expectTargets([...oldTargets, world.latestTool]);
+    await user.notSee({ text: /Something went wrong/ });
   });
 });

@@ -368,7 +368,29 @@ export function createConnectionsStore(options: {
 
     if (!canTryOpenworkServer || !openworkClient || !openworkWorkspaceId) return null;
 
-    const response = await openworkClient.listMcp(openworkWorkspaceId);
+    let response = await openworkClient.listMcp(openworkWorkspaceId);
+    // Upgrade the enabled bundled helper when a local workspace is opened.
+    // Never enable a disabled entry, rewrite a custom command, or target a remote worker.
+    if (isDesktopRuntime() && options.workspaceType() === "local") {
+      const computer = response.items.find((entry) => entry.name === "computer-use");
+      const config = computer?.config;
+      const command = config?.command;
+      if (config?.type === "local" && config.enabled !== false && Array.isArray(command)
+        && typeof command[0] === "string" && command[0].endsWith("/ComputerUse")
+        && ((command.length === 2 && command[1] === "mcp") || (command.length === 3 && command[1] === "relay"))) {
+        const currentCommand = await resolveDesktopCommand("getComputerUseMcpCommand", false);
+        const bundled = currentCommand && (command[0] === currentCommand[0]
+          || command[0].endsWith("/OpenWork Computer Use.app/Contents/MacOS/ComputerUse"));
+        if (bundled && JSON.stringify(command) !== JSON.stringify(currentCommand)) {
+          const writable = await resolveWritableOpenworkTarget();
+          if (writable.canUseOpenworkServer && writable.openworkClient && writable.openworkWorkspaceId === openworkWorkspaceId
+            && !mcpMutationDenied(true)) {
+            await writable.openworkClient.addMcp(openworkWorkspaceId, { name: "computer-use", config: { ...config, command: currentCommand } });
+            response = await openworkClient.listMcp(openworkWorkspaceId);
+          }
+        }
+      }
+    }
     const next = response.items.map((entry) => ({
       name: entry.name,
       config: entry.config as McpServerEntry["config"],
@@ -378,14 +400,12 @@ export function createConnectionsStore(options: {
     const engineSync = response.engineSync ?? null;
 
     let nextStatuses: McpStatusMap = {};
-    const activeClient = options.client();
-    if (activeClient && projectDir) {
-      try {
-        const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
-        nextStatuses = filterConfiguredStatuses(status as McpStatusMap, next);
-      } catch {
-        nextStatuses = {};
-      }
+    // Read through the same workspace mount as configuration. The chat client
+    // can still point at the previous/default workspace during restoration.
+    try {
+      nextStatuses = filterConfiguredStatuses(await openworkClient.getMcpStatus(openworkWorkspaceId), next);
+    } catch {
+      nextStatuses = {};
     }
 
     for (const entry of next) {

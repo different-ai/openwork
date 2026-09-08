@@ -6,6 +6,7 @@
  * of owning the process lifecycle.
  */
 import { randomUUID } from "node:crypto";
+import { stopTaskRecovery } from "./task-recovery.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { mkdir } from "node:fs/promises";
 import { resolveServerConfig, type CliArgs } from "./config.js";
@@ -49,6 +50,7 @@ export type EmbeddedServerOptions = CliArgs & {
   opencodeCwd?: string;
   /** Secure key custody for the local managed MCP credential vault. */
   localManagedMcpVaultKey?: LocalManagedMcpVaultKeyProvider;
+  resumeInterruptedTasks?: boolean;
 };
 
 export type EmbeddedServerHandle = {
@@ -73,6 +75,7 @@ export type EmbeddedServerHandle = {
 export async function startEmbeddedServer(options: EmbeddedServerOptions): Promise<EmbeddedServerHandle> {
   const config = await resolveServerConfig(options);
   config.localManagedMcpVaultKey = options.localManagedMcpVaultKey;
+  config.resumeInterruptedTasks = options.resumeInterruptedTasks === true && options.manageOpencode === true && !config.opencodeBaseUrl;
   const logger = createServerLogger(config);
 
   // Spawn managed OpenCode if requested and no explicit base URL was provided.
@@ -87,6 +90,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
 
   const releaseResources = async (): Promise<void> => {
     const errors: unknown[] = [];
+    try { await stopTaskRecovery(config); } catch (error) { errors.push(error); }
 
     const identity = managedOpencodeIdentity;
     managedOpencodeIdentity = null;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { RETRY_DELAYS_MS, classifyFailure, describeWait, retryDelayMs } from "./turn-retry.ts";
+import { RETRY_DELAYS_MS, classifyFailure, retryDelayMs } from "./turn-retry.ts";
 
 test("network trouble, a busy or rate-limited provider, a 5xx, and a restarting AI service are transient", () => {
   for (const raw of [
@@ -57,12 +57,4 @@ test("three automatic attempts wait 2 s, 6 s, and 15 s, then the budget is spent
   assert.equal(retryDelayMs(4), null);
   assert.equal(retryDelayMs(0), null);
   assert.equal(retryDelayMs(1.5), null);
-});
-
-test("a wait reads the way a person would say it", () => {
-  assert.equal(describeWait(2_000), "2 s");
-  assert.equal(describeWait(5_400), "6 s");
-  assert.equal(describeWait(400), "1 s");
-  assert.equal(describeWait(60_000), "1 min");
-  assert.equal(describeWait(9 * 3_600_000), "9 hr");
 });

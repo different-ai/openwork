@@ -16,7 +16,7 @@ import {
   type ComposerSettingsSection,
 } from "@/react-app/domains/settings/library";
 import { ModelSelect } from "@/components/model-select";
-import { LexicalPromptEditor, syncAttachmentChipStatus, type LexicalPromptEditorHandle } from "./editor";
+import { LexicalPromptEditor, syncAttachmentChipStatus, type ComposerAttachmentToken, type LexicalPromptEditorHandle } from "./editor";
 import { listRunningAppsForMention } from "./app-mentions";
 import { COMPUTER_MENTIONS } from "./computer-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
@@ -726,6 +726,16 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     () => props.pastedText.map((item) => ({ label: item.label, lines: item.lines, text: item.text })),
     [props.pastedText],
   );
+  // Stable tokens keep streaming renders from re-running Lexical's draft sync.
+  const attachmentTokens = useMemo<ComposerAttachmentToken[]>(
+    () => props.attachments.map((attachment) => ({
+      id: attachment.id,
+      name: attachment.name,
+      kind: isImageAttachment(attachment) ? "image" : "file",
+      previewUrl: attachment.previewUrl,
+    })),
+    [props.attachments],
+  );
 
   const handleExpandPastedText = useCallback((label: string) => {
     const target = props.pastedText.find((item) => item.label === label);
@@ -1314,12 +1324,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               value={props.draft}
               mentions={props.mentions}
               pastedText={pastedTextTokens}
-              attachments={props.attachments.map((attachment) => ({
-                id: attachment.id,
-                name: attachment.name,
-                kind: isImageAttachment(attachment) ? "image" : "file",
-                previewUrl: attachment.previewUrl,
-              }))}
+              attachments={attachmentTokens}
               submitDisabled={props.disabled}
               placeholder={t("composer.placeholder")}
               onChange={props.onDraftChange}

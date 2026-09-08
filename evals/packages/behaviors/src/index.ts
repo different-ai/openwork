@@ -16,3 +16,4 @@ export * from "./live-openai.ts";
 
 export { observeText, textProgressFailures } from "./text-observation.ts";
 export * from "./typing.ts";
+export { observeSidebarExpansion, readSidebarOverflow } from "./sidebar-observation.ts";

@@ -1,6 +1,8 @@
 import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, OrganizationTable, WorkerTable } from "@openwork-ee/den-db/schema"
+import { ManagedModelsPolicyError, readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
 import { db } from "./db.js"
+import { updateOrganizationMetadata } from "./organization-metadata.js"
 
 export const DEFAULT_ORGANIZATION_LIMITS = {
   members: 5,
@@ -45,7 +47,7 @@ export type OrganizationMetadata = {
 type OrganizationMetadataInput = Record<string, unknown> | string | null | undefined
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function normalizePositiveInteger(value: unknown, fallback: number) {
@@ -95,28 +97,11 @@ function sameStringArray(left: string[] | null, right: string[] | null) {
   return left.every((entry, index) => right[index] === entry)
 }
 
-function parseMetadata(input: OrganizationMetadataInput): Record<string, unknown> {
-  if (!input) {
-    return {}
-  }
-
-  if (typeof input === "string") {
-    try {
-      const parsed = JSON.parse(input) as unknown
-      return isRecord(parsed) ? parsed : {}
-    } catch {
-      return {}
-    }
-  }
-
-  return isRecord(input) ? input : {}
-}
-
 export function normalizeOrganizationMetadata(input: OrganizationMetadataInput): {
   metadata: OrganizationMetadata
   changed: boolean
 } {
-  const parsed = parseMetadata(input)
+  const parsed = readOrganizationMetadata(input)
   const rawLimits = isRecord(parsed.limits) ? parsed.limits : null
   const allowedDesktopVersions = normalizeAllowedDesktopVersions(parsed.allowedDesktopVersions)
   const members = normalizePositiveInteger(rawLimits?.members, DEFAULT_ORGANIZATION_LIMITS.members)
@@ -125,11 +110,12 @@ export function normalizeOrganizationMetadata(input: OrganizationMetadataInput):
   const metadata: OrganizationMetadata = {
     ...parsed,
     limits: {
+      ...rawLimits,
       members,
       workers,
     },
     ...(allowedDesktopVersions !== null ? { allowedDesktopVersions } : {}),
-  } as OrganizationMetadata
+  }
 
   if (allowedDesktopVersions === null) {
     delete metadata.allowedDesktopVersions
@@ -150,7 +136,7 @@ export function normalizeOrganizationMetadata(input: OrganizationMetadataInput):
 }
 
 export function serializeOrganizationMetadata(metadata: OrganizationMetadataInput) {
-  const parsed = parseMetadata(metadata)
+  const parsed = readOrganizationMetadata(metadata)
   return Object.keys(parsed).length > 0 ? JSON.stringify(parsed) : null
 }
 
@@ -161,12 +147,11 @@ export async function getOrInitializeOrganizationMetadata(organizationId: Organi
     .where(eq(OrganizationTable.id, organizationId))
     .limit(1)
 
-  const { metadata, changed } = normalizeOrganizationMetadata(rows[0]?.metadata)
+  if (!rows[0]) throw new ManagedModelsPolicyError("managed_models_policy_unavailable")
+  const { metadata, changed } = normalizeOrganizationMetadata(rows[0].metadata)
   if (changed) {
-    await db
-      .update(OrganizationTable)
-      .set({ metadata })
-      .where(eq(OrganizationTable.id, organizationId))
+    const updated = await updateOrganizationMetadata(organizationId, (current) => normalizeOrganizationMetadata(current).metadata)
+    return normalizeOrganizationMetadata(updated).metadata
   }
 
   return metadata

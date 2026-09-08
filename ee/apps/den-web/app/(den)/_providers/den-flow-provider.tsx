@@ -1,6 +1,8 @@
 "use client";
 
 import { createContext, createElement, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { SETUP_CONTINUATION_KEY, parseSetupContinuation, type SetupContinuation } from "../_lib/setup-continuation";
 import {
   AUTH_TOKEN_STORAGE_KEY,
   DEFAULT_AUTH_NAME,
@@ -131,9 +133,14 @@ type DenFlowContextValue = {
   sessionHydrated: boolean;
   desktopAuthRequested: boolean;
   desktopAuthScheme: string;
+  setupPending: boolean;
+  setupOrganizationId: string | null;
+  continueSetup: (organizationId: string | null, route: string) => void;
+  completeSetup: (organizationId: string) => Promise<boolean>;
   webAuthRequested: boolean;
   desktopRedirectUrl: string | null;
   desktopRedirectBusy: boolean;
+  retryDesktopAuthHandoff: () => void;
   showAuthFeedback: boolean;
   submitAuth: (event: FormEvent<HTMLFormElement>) => Promise<AuthNavigationResult>;
   submitVerificationCode: (event: FormEvent<HTMLFormElement>) => Promise<AuthNavigationResult>;
@@ -234,6 +241,12 @@ function clearPendingAuthIntent() {
 }
 
 export function DenFlowProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [continuation, setContinuation] = useState<SetupContinuation | null>(null);
+  const continuationRef = useRef<SetupContinuation | null>(null);
+  const handoffBusyRef = useRef(false);
+  const sessionEpochRef = useRef(0);
   const [authMode, setAuthModeState] = useState<AuthMode>("sign-up");
   const [email, setEmail] = useState("");
   const [authName, setAuthName] = useState("");
@@ -257,13 +270,15 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     return token;
   });
-  const [sessionHydrated, setSessionHydrated] = useState(false);
-  const [desktopAuthRequested, setDesktopAuthRequested] = useState(false);
-  const [desktopAuthScheme, setDesktopAuthScheme] = useState("openwork");
+  const [hydratedSession, setHydratedSession] = useState<{ token: string | null } | null>(null);
+  const sessionHydrated = hydratedSession !== null && hydratedSession.token === authToken;
+  const desktopAuthScheme = continuation?.desktopScheme ?? "openwork";
+  const setupPending = Boolean(user && continuation?.userId === user.id && continuation.setup);
   const [webAuthRequested, setWebAuthRequested] = useState(false);
   const [webAuthReturnUrl, setWebAuthReturnUrl] = useState<string | null>(null);
   const [desktopRedirectBusy, setDesktopRedirectBusy] = useState(false);
   const [desktopRedirectUrl, setDesktopRedirectUrl] = useState<string | null>(null);
+  const desktopAuthRequested = Boolean(continuation?.desktopScheme || desktopRedirectUrl);
   const [desktopRedirectAttempted, setDesktopRedirectAttempted] = useState(false);
   const [webRedirectBusy, setWebRedirectBusy] = useState(false);
   const [webRedirectAttempted, setWebRedirectAttempted] = useState(false);
@@ -373,6 +388,20 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     window.localStorage.setItem(ONBOARDING_INTENT_STORAGE_KEY, JSON.stringify(next));
+  }
+
+  function persistContinuation(next: SetupContinuation | null) {
+    continuationRef.current = next;
+    setContinuation(next);
+    if (next) window.sessionStorage.setItem(SETUP_CONTINUATION_KEY, JSON.stringify(next));
+    else window.sessionStorage.removeItem(SETUP_CONTINUATION_KEY);
+  }
+
+  function continueSetup(organizationId: string | null, route: string) {
+    if (!runtimeConfigLoaded || !sessionHydrated || !user || isSingleOrgMode) return;
+    const current = continuationRef.current;
+    persistContinuation({ userId: user.id, desktopScheme: current?.userId === user.id ? current.desktopScheme : null,
+      setup: { organizationId, route }, at: Date.now() });
   }
 
   function appendEvent(level: LaunchEvent["level"], label: string, detail: string) {
@@ -530,18 +559,13 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    if (desktopAuthRequested) {
-      setAuthInfo("Signed in. Returning to OpenWork...");
-      return null;
-    }
-
-    if (webAuthRequested) {
-      setAuthInfo("Signed in. Returning to OpenWork...");
-      return null;
-    }
-
     if (authenticatedUser && (getPendingWorkspaceClaimToken() || getPendingOrgInvitationId())) {
       return "join-org";
+    }
+
+    if (desktopAuthRequested || webAuthRequested) {
+      setAuthInfo("Signed in. Returning to OpenWork...");
+      return null;
     }
 
     if (authenticatedUser && nextMode === "sign-up") {
@@ -976,13 +1000,15 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }, 1800);
   }
 
-  async function refreshSession(quiet = false) {
+  async function refreshSession(quiet = false, isCurrent = () => true) {
+    const epoch = sessionEpochRef.current;
     const headers = new Headers();
     if (authToken) {
       headers.set("Authorization", `Bearer ${authToken}`);
     }
 
     const { response, payload } = await requestJson("/v1/me", { method: "GET", headers }, 12000);
+    if (!isCurrent() || epoch !== sessionEpochRef.current) return null;
 
     if (!response.ok) {
       setUser(null);
@@ -1016,29 +1042,23 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     const { response, payload } = await requestJson("/v1/me/orgs", { method: "GET", headers }, 12000);
     if (!response.ok) {
-      return {
-        orgs: [],
-        activeOrgId: null,
-        activeOrgSlug: null,
-      };
+      throw new Error(getErrorMessage(payload, "Could not load your organizations. Refresh to try again."));
     }
-
-    return parseOrgListPayload(payload);
+    if (!isRecord(payload) || !Array.isArray(payload.orgs)) throw new Error("Organization lookup returned incomplete details.");
+    const directory = parseOrgListPayload(payload);
+    if (directory.orgs.length !== payload.orgs.length) throw new Error("Organization lookup returned incomplete details.");
+    return directory;
   }
 
-  async function resolveDashboardRoute() {
-    const orgDirectory = await loadOrgDirectory();
-    requestOrgSelectionOnNextLoad(orgDirectory.orgs);
-
-    const activeOrgSlug = orgDirectory.activeOrgSlug ?? orgDirectory.orgs[0]?.slug ?? null;
-    return activeOrgSlug ? getOrgDashboardRoute(activeOrgSlug) : null;
-  }
-
-  async function completeDesktopAuthHandoff() {
-    if (!desktopAuthRequested || desktopRedirectBusy) {
-      return;
+  async function completeDesktopAuthHandoff(organizationId?: string) {
+    const current = continuationRef.current;
+    const epoch = sessionEpochRef.current;
+    if (!runtimeConfigLoaded || !sessionHydrated || authBusy || !current?.desktopScheme || current.userId !== user?.id || handoffBusyRef.current
+      || (current.setup && current.setup.organizationId !== organizationId)) {
+      return false;
     }
 
+    handoffBusyRef.current = true;
     setDesktopRedirectBusy(true);
     setDesktopRedirectAttempted(true);
     setAuthError(null);
@@ -1049,31 +1069,60 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         headers.set("Authorization", `Bearer ${authToken}`);
       }
 
+      if (organizationId) {
+        const selected = await requestJson("/v1/me/active-organization", {
+          method: "POST", headers, body: JSON.stringify({ organizationId }),
+        });
+        if (!selected.response.ok) throw new Error(getErrorMessage(selected.payload, "Could not select your workspace."));
+      }
+      if (continuationRef.current !== current || epoch !== sessionEpochRef.current) return false;
+
       const { response, payload } = await requestJson("/api/auth/desktop-handoff", {
         method: "POST",
         headers,
         body: JSON.stringify({ desktopScheme: desktopAuthScheme })
       });
+      if (continuationRef.current !== current || epoch !== sessionEpochRef.current) return false;
 
       if (!response.ok) {
         setAuthError(getErrorMessage(payload, `Desktop handoff failed with ${response.status}.`));
-        return;
+        return false;
       }
 
       const openworkUrl = getDesktopHandoffOpenworkUrl(payload) ?? "";
       if (!openworkUrl) {
         setAuthError("Desktop handoff succeeded, but no OpenWork redirect URL was returned.");
-        return;
+        return false;
       }
 
       rememberDesktopHandoffGrant(getDesktopHandoffGrant(payload, openworkUrl));
       setDesktopRedirectUrl(openworkUrl);
+      persistContinuation(null);
+      clearPendingAuthIntent();
       window.location.assign(openworkUrl);
+      return true;
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Failed to open OpenWork.");
+      if (continuationRef.current === current && epoch === sessionEpochRef.current) setAuthError(error instanceof Error ? error.message : "Failed to open OpenWork.");
+      return false;
     } finally {
+      handoffBusyRef.current = false;
       setDesktopRedirectBusy(false);
     }
+  }
+
+  async function completeSetup(organizationId: string) {
+    const current = continuationRef.current;
+    if (!runtimeConfigLoaded || !sessionHydrated) return false;
+    if (!user || (current && current.userId !== user.id)
+      || (current?.setup && current.setup.organizationId !== organizationId)) {
+      setAuthError("Return to the workspace where you started setup before completing it.");
+      return false;
+    }
+    if (getPendingOrgInvitationId() || getPendingWorkspaceClaimToken()) return false;
+    if (current?.desktopScheme) return completeDesktopAuthHandoff(organizationId);
+    persistContinuation(null);
+    clearPendingAuthIntent();
+    return true;
   }
 
   function getWebHandoffReturnUrl(payload: unknown) {
@@ -1147,7 +1196,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     // (auth-screen) gate on it themselves, while explicit actions — the
     // "Go to dashboard" button on the signed-in handoff card — must resolve
     // a destination even mid desktop handoff.
-    if (!user) {
+    if (!runtimeConfigLoaded || !sessionHydrated || !user) {
       return null;
     }
 
@@ -1161,23 +1210,40 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       return getJoinOrgRoute(pendingInvitationId);
     }
 
-    const dashboardRoute = await resolveDashboardRoute();
-
-    if (dashboardRoute) {
-      if (getPendingAuthIntent() === "models") {
-        clearPendingAuthIntent();
-        return getInferenceRoute();
-      }
-
-      return dashboardRoute;
+    if (continuationRef.current?.userId === user.id && continuationRef.current.setup) {
+      return continuationRef.current.setup.route;
+    }
+    if (runtimeConfig === EMPTY_RUNTIME_CONFIG) {
+      setAuthError("Could not load workspace configuration. Refresh to try again.");
+      return null;
     }
 
-    return "/organization";
+    const epoch = sessionEpochRef.current;
+    let directory: Awaited<ReturnType<typeof loadOrgDirectory>>;
+    try {
+      directory = await loadOrgDirectory();
+    } catch (error) {
+      if (epoch === sessionEpochRef.current) setAuthError(error instanceof Error ? error.message : "Could not load your organizations.");
+      return null;
+    }
+    if (epoch !== sessionEpochRef.current) return null;
+    requestOrgSelectionOnNextLoad(directory.orgs);
+    if (directory.orgs.length === 0) {
+      if (!isSingleOrgMode) continueSetup(null, "/organization");
+      return "/organization";
+    }
+
+    if (getPendingAuthIntent() === "models") {
+      clearPendingAuthIntent();
+      return getInferenceRoute();
+    }
+    return getOrgDashboardRoute();
   }
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    sessionEpochRef.current += 1;
     setAuthBusy(true);
     setAuthError(null);
     setSignupPasswordFeedback([]);
@@ -1348,6 +1414,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    sessionEpochRef.current += 1;
+    persistContinuation(null);
+    clearPendingAuthIntent();
+    setDesktopRedirectUrl(null);
     setAuthBusy(true);
     setAuthError(null);
 
@@ -1365,6 +1435,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     setUser(null);
     setAuthToken(null);
+    setHydratedSession({ token: null });
     setWorker(null);
     setWorkers([]);
     setWorkerLookupId("");
@@ -1920,11 +1991,11 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       setAuthMode(requestedMode);
     }
 
-    setDesktopAuthRequested(params.get("desktopAuth") === "1");
-    const requestedScheme = params.get("desktopScheme")?.trim() ?? "";
-    if (/^[a-z][a-z0-9+.-]*$/i.test(requestedScheme)) {
-      setDesktopAuthScheme(requestedScheme);
-    }
+    const stored = parseSetupContinuation(window.sessionStorage.getItem(SETUP_CONTINUATION_KEY));
+    persistContinuation(params.get("desktopAuth") === "1"
+      ? { userId: stored?.userId ?? null, setup: stored?.setup ?? null, at: Date.now(),
+          desktopScheme: params.get("desktopScheme") === "opencoworker" ? "opencoworker" : "openwork" }
+      : stored);
     setWebAuthRequested(params.get("webAuth") === "1");
     const requestedWebReturnUrl = params.get("webAuthReturn")?.trim() ?? "";
     setWebAuthReturnUrl(requestedWebReturnUrl || null);
@@ -1956,11 +2027,12 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     const hydrateSession = async () => {
+      const epoch = sessionEpochRef.current;
       try {
-        await refreshSession(true);
+        await refreshSession(true, () => !cancelled);
       } finally {
-        if (!cancelled) {
-          setSessionHydrated(true);
+        if (!cancelled && epoch === sessionEpochRef.current) {
+          setHydratedSession({ token: authToken });
         }
       }
     };
@@ -2170,20 +2242,78 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }, [activeWorker?.workerId, selectedWorker?.workerId, runtimeSnapshot?.upgrade.status]);
 
   useEffect(() => {
-    if (!desktopAuthRequested || !user || desktopRedirectUrl || desktopRedirectBusy || desktopRedirectAttempted) {
-      return;
+    if (!runtimeConfigLoaded || !sessionHydrated || !user || !continuation) return;
+    if (continuation.userId && continuation.userId !== user.id) {
+      persistContinuation(null);
+      setDesktopRedirectUrl(null);
+      setDesktopRedirectAttempted(false);
+      clearPendingAuthIntent();
+    } else if (!continuation.userId) {
+      persistContinuation({ ...continuation, userId: user.id });
     }
-
-    void completeDesktopAuthHandoff();
-  }, [desktopAuthRequested, user?.id, authToken, desktopRedirectUrl, desktopRedirectBusy, desktopRedirectAttempted, desktopAuthScheme]);
+  }, [runtimeConfigLoaded, sessionHydrated, user?.id, continuation]);
 
   useEffect(() => {
-    if (!webAuthRequested || !user || webRedirectBusy || webRedirectAttempted) {
+    const current = continuationRef.current;
+    if (!runtimeConfigLoaded || !sessionHydrated || !user || current?.userId !== user.id || !current.setup) return;
+    if (["/dashboard/onboarding/people", "/dashboard/onboarding/tools", "/dashboard/onboarding"].includes(pathname)
+      && current.setup.route !== pathname) {
+      persistContinuation({ ...current, setup: { ...current.setup, route: pathname } });
+    }
+  }, [pathname, user?.id, runtimeConfigLoaded, sessionHydrated]);
+
+  useEffect(() => {
+    if (!runtimeConfigLoaded || !sessionHydrated || authBusy || !desktopAuthRequested || !user || continuation?.userId !== user.id
+      || setupPending || desktopRedirectUrl || desktopRedirectBusy || desktopRedirectAttempted) return;
+    // Invitation acceptance and workspace claims own their explicit handoffs.
+    if (pathname === "/join-org" || pathname === "/workspace-claim") return;
+    const pendingClaim = getPendingWorkspaceClaimToken();
+    const pendingInvitation = getPendingOrgInvitationId();
+    if (pendingClaim) {
+      router.replace(getWorkspaceClaimRoute(pendingClaim));
+      return;
+    }
+    if (pendingInvitation) {
+      router.replace(getJoinOrgRoute(pendingInvitation));
+      return;
+    }
+    // Failed config fetches return the single-org fallback, not a deployment decision.
+    if (runtimeConfig === EMPTY_RUNTIME_CONFIG) {
+      setAuthError("Could not load workspace configuration. Refresh to try again.");
+      setDesktopRedirectAttempted(true);
+      return;
+    }
+    let cancelled = false;
+    const current = continuationRef.current;
+    const epoch = sessionEpochRef.current;
+    void loadOrgDirectory().then((directory) => {
+      if (cancelled || epoch !== sessionEpochRef.current || continuationRef.current !== current || getPendingOrgInvitationId() || getPendingWorkspaceClaimToken()) return;
+      if (directory.orgs.length === 0) {
+        if (!isSingleOrgMode) {
+          persistContinuation({ userId: user.id, desktopScheme: desktopAuthScheme, setup: { organizationId: null, route: "/organization" }, at: Date.now() });
+        }
+        router.replace("/organization");
+        return;
+      }
+      void completeDesktopAuthHandoff();
+    }).catch((error: unknown) => {
+      if (!cancelled && epoch === sessionEpochRef.current) {
+        setAuthError(error instanceof Error ? error.message : "Could not load your organizations.");
+        setDesktopRedirectAttempted(true);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [runtimeConfig, runtimeConfigLoaded, isSingleOrgMode, sessionHydrated, authBusy, desktopAuthRequested, user?.id, authToken, continuation?.userId, setupPending, pathname, desktopRedirectUrl, desktopRedirectBusy, desktopRedirectAttempted, desktopAuthScheme]);
+
+  useEffect(() => {
+    if (!runtimeConfigLoaded || !sessionHydrated || !webAuthRequested || !user || webRedirectBusy || webRedirectAttempted
+      || pathname === "/join-org" || pathname === "/workspace-claim"
+      || getPendingOrgInvitationId() || getPendingWorkspaceClaimToken()) {
       return;
     }
 
     void completeWebAuthHandoff();
-  }, [webAuthRequested, webAuthReturnUrl, user?.id, authToken, webRedirectBusy, webRedirectAttempted]);
+  }, [runtimeConfigLoaded, sessionHydrated, webAuthRequested, webAuthReturnUrl, user?.id, authToken, webRedirectBusy, webRedirectAttempted, pathname]);
 
   useEffect(() => {
     if (!user || !onboardingPending) {
@@ -2255,9 +2385,18 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     sessionHydrated,
     desktopAuthRequested,
     desktopAuthScheme,
+    setupPending,
+    setupOrganizationId: setupPending ? continuation?.setup?.organizationId ?? null : null,
+    continueSetup,
+    completeSetup,
     webAuthRequested,
     desktopRedirectUrl,
     desktopRedirectBusy,
+    retryDesktopAuthHandoff: () => {
+      if (handoffBusyRef.current || setupPending) return;
+      setAuthError(null);
+      setDesktopRedirectAttempted(false);
+    },
     showAuthFeedback,
     submitAuth,
     submitVerificationCode,

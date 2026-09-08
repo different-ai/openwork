@@ -14,7 +14,7 @@ complete a real authentication test, and explicitly enable SSO.
 You need:
 
 - An OpenWork organization with the Enterprise SSO entitlement.
-- An OpenWork owner, or a member who can manage security configuration.
+- An OpenWork owner or super-admin.
 - A Google Workspace super administrator who can create custom SAML apps.
 - Control of DNS for the email domain you will associate with the connection.
 - The final OpenWork auth origin, for example `https://app.openworklabs.com`.
@@ -114,8 +114,9 @@ unless your organization needs them. OpenWork's baseline SSO identity comes from
 NameID / primary email.
 
 If Google shows **Group membership (optional)**, leave it blank for the SSO
-test. Use SCIM-managed teams or another documented team-management process for
-authorization after SSO is working.
+test. This mapping does not create OpenWork teams or grant organization roles.
+Google custom SAML apps do not provide a generic outbound SCIM connector; see
+[Google Workspace SCIM support](/cloud/scim-google-workspace).
 
 Select **Finish**.
 
@@ -186,8 +187,10 @@ profile or suspension changes. If that user later completes SSO, OpenWork can
 link the matching account and provision the organization membership through SSO.
 
 OpenWork does not convert SAML attributes such as `role`, `groups`, or `admin`
-into elevated organization roles. Assign `Admin`, `Owner`, or custom roles in
-OpenWork after review, or through an invitation that grants the intended role.
+into elevated organization roles. Owners and super-admins assign roles in
+OpenWork; ownership changes require ownership transfer. You can use a manually
+managed OpenWork team for [Team Admin access](/cloud/members-and-rbac#team-admin-access),
+but its membership will not synchronize from Google groups through SAML.
 
 ## Troubleshooting
 

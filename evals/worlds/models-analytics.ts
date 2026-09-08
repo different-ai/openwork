@@ -20,16 +20,31 @@ function object(value: unknown): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value));
 }
 
-export async function modelsAnalyticsWorld(seed: Seed) {
-  const den = await seed.den({ web: true, org: { name: "Models Analytics Upgrade", admin: { name: "Models Admin" }, members: { teammate: { name: "Models Member" } } },
-    env: { ...fixtureSecrets, DEN_ORG_MODE: "multi_org", OPENROUTER_MANAGEMENT_API_KEY: "fixture-management-unused", DEN_PLAN_GATING_ENABLED: "true" },
+async function createModelsWorld(seed: Seed, analyticsUpgrade: boolean, usageSettlement = false) {
+  if (!analyticsUpgrade && process.env.OPENWORK_EVAL_DEN_API_URL) throw new Error("DPA proof requires a fresh isolated Den, not a reused service");
+  const egressFile = seed.tmpPath("models-egress") + ".jsonl";
+  const dpaWitnessPort = analyticsUpgrade ? null : await allocateFreePort();
+  const guard = "evals/packages/labs/src/models-egress-guard.mjs";
+  const preload = `import { existsSync } from 'node:fs'; await import(existsSync('/workspace/${guard}') ? 'file:///workspace/${guard}' : ${JSON.stringify(new URL(guard, `file://${root}`).href)});`;
+  const isolatedEnv = analyticsUpgrade ? {} : {
+    ...Object.fromEntries(Object.keys(process.env).filter((key) => /OPENAI|ANTHROPIC|OPENROUTER|STRIPE|SENTRY|LANGFUSE|POSTHOG|POLAR|RESEND|REDIS/.test(key)).map((key) => [key, ""])),
+    OPENAI_API_KEY: "", OPENAI_REALTIME_API_KEY: "", STRIPE_API_KEY: "",
+    STRIPE_SECRET_KEY: "sk_test_models_dpa_fixture_not_real", STRIPE_WEBHOOK_SECRET: "whsec_models_dpa_fixture_not_real",
+    MODELS_STRIPE_PORT: String(dpaWitnessPort),
+    SENTRY_DSN: "", NEXT_PUBLIC_SENTRY_DSN: "", DATABASE_REDIS_URL: "", RESEND_API_KEY: "",
+    MODELS_DPA_FIXTURE: "1", MODELS_EGRESS_FILE: egressFile,
+    NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(preload)}`,
+  };
+  const den = await seed.den({ web: analyticsUpgrade, org: { name: analyticsUpgrade ? "Models Analytics Upgrade" : "Models DPA Boundary", admin: { name: "Models Admin" }, members: { teammate: { name: "Models Member" } } },
+    env: { ...isolatedEnv, ...fixtureSecrets, DEN_ORG_MODE: "multi_org", OPENROUTER_MANAGEMENT_API_KEY: "fixture-management-unused", DEN_PLAN_GATING_ENABLED: "true" },
   });
+  if (!analyticsUpgrade) console.error(`placement: ${den.placement?.kind} (testkit resolvePlace; isolated app-less Den and inference)`);
   const context = object((await seed.api(den.admin, "/v1/org")).body);
   const orgId = String(object(context.organization).id);
   const memberId = String(object(context.currentMember).id);
   const remote = den.placement?.kind === "daytona" ? den.placement.sandboxId : null;
   const inferencePort = remote ? 8791 : await allocateFreePort();
-  const witnessPort = remote ? 8792 : await allocateFreePort();
+  const witnessPort = dpaWitnessPort ?? (remote ? 8792 : await allocateFreePort());
   const host = remote ? createDaytonaHost({ sandboxId: remote, repoRoot: root, log: () => {} }) : null;
   const inferenceUrl = host ? await host.previewUrl(inferencePort) : `http://127.0.0.1:${inferencePort}`;
   const witnessUrl = host ? await host.previewUrl(witnessPort) : `http://127.0.0.1:${witnessPort}`;
@@ -37,8 +52,10 @@ export async function modelsAnalyticsWorld(seed: Seed) {
   if (!databaseUrl) throw new Error("The upgrade world requires its own isolated Den database");
   const env = {
     OPENWORK_DEV_MODE: "1", DATABASE_URL: databaseUrl, DB_MODE: "mysql",
-    ...fixtureSecrets, SENTRY_DSN: "", NEXT_PUBLIC_SENTRY_DSN: "",
+    ...isolatedEnv, ...fixtureSecrets, SENTRY_DSN: "", NEXT_PUBLIC_SENTRY_DSN: "",
     PORT: String(inferencePort), MODELS_WITNESS_PORT: String(witnessPort),
+    ...(usageSettlement ? { MODELS_USAGE_FIXTURE: "1", INFERENCE_WEBHOOK_SECRET: "paid-usage-fixture-secret" } : {}),
+    MODELS_DPA_ORG_ID: orgId,
     OPENROUTER_UPSTREAM_URL: `http://127.0.0.1:${witnessPort}`,
   };
   async function remoteExec(script: string, context: string) {
@@ -63,7 +80,7 @@ export async function modelsAnalyticsWorld(seed: Seed) {
   const enabled = await seed.api(den.admin, "/v1/inference", { method: "PATCH", body: JSON.stringify({ enabled: true, tier: "tier1" }) });
   if (!enabled.response.ok) throw new Error(`Existing Models subscriber setup failed: HTTP ${enabled.response.status}`);
   await arrange("configure");
-  await arrange("before-migration");
+  if (analyticsUpgrade) await arrange("before-migration");
   let child: ReturnType<typeof spawn> | null = null;
   if (remote) {
     const config = Buffer.from(JSON.stringify(env)).toString("base64");
@@ -77,9 +94,10 @@ export async function modelsAnalyticsWorld(seed: Seed) {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
   if (!healthy) throw new Error("Models inference did not start");
-  const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/inference", headless: true, viewport: { width: 1440, height: 1100 } });
   return {
-    den, web, orgId, memberId, witnessUrl, inferenceUrl,
+    den, orgId, memberId, witnessUrl, inferenceUrl,
+    arrange,
+    fixtureKey: modelsFixtureKey,
     async upgradeAnalytics() { await arrange("migrate"); },
     async analyticsStoreUnavailable(unavailable: boolean) { await arrange(unavailable ? "pause-analytics" : "resume-analytics"); },
     async anotherOrganization() { return provisionOrg(den.ref, {}); },
@@ -143,6 +161,24 @@ export async function modelsAnalyticsWorld(seed: Seed) {
       });
       return { status: response.status, body: await response.text() };
     },
-    async [Symbol.asyncDispose]() { child?.kill("SIGTERM"); },
+    async [Symbol.asyncDispose]() {
+      // Den's disposal can cancel fixture subscriptions through the SDK.
+      try { if (!analyticsUpgrade) await den[Symbol.asyncDispose](); }
+      finally { child?.kill("SIGTERM"); }
+    },
   };
+}
+
+export async function modelsAnalyticsWorld(seed: Seed) {
+  const world = await createModelsWorld(seed, true);
+  const web = await seed.web({ den: world.den, signedInAs: world.den.admin, startPath: "/dashboard/inference", headless: true, viewport: { width: 1440, height: 1100 } });
+  return { ...world, web };
+}
+
+export async function modelsInferenceWorld(seed: Seed) {
+  return createModelsWorld(seed, false);
+}
+
+export async function paidUsageWorld(seed: Seed) {
+  return createModelsWorld(seed, false, true);
 }

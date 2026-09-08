@@ -39,13 +39,16 @@ OpenWork stores organization API keys and SCIM bearer tokens as hashes. SSO prov
 
 Use the Cloud member model as the source of truth for organization access:
 
-- Keep at least two `Owner` members.
+- Protect the `Owner` account and maintain a tested recovery path.
+- Reserve `Super Admin` for trusted settings and access administrators.
 - Use `Admin` for day-to-day operators.
 - Keep most people as `Member`.
 - Use custom roles only when the built-in roles are too broad.
 - Use teams for resource access to Collections and providers.
 
-SSO just-in-time provisioning uses `Member` as the safe default for first-login users after successful SAML authentication. The standard sign-in flow routes email addresses from verified, enabled SSO domains to SSO. A standalone email/password signup with the same domain does not grant organization membership by itself. OpenWork does not convert IdP attributes such as `role`, `groups`, or `admin` into organization roles during SSO sign-in. Elevation to `Admin`, `Owner`, or a custom role should be an explicit, reviewed, and audited change in OpenWork.
+SSO just-in-time provisioning uses `Member` as the safe default for first-login users after successful SAML authentication. The standard sign-in flow routes email addresses from verified, enabled SSO domains to SSO. A standalone email/password signup with the same domain does not grant organization membership by itself. OpenWork does not convert IdP attributes such as `role`, `groups`, or `admin` into organization roles during SSO sign-in. Elevated access requires an explicit OpenWork role assignment, ownership transfer, or approved Admin team.
+
+An owner or super-admin can approve a manual or SCIM-managed team to grant organization `Admin`. Review both direct roles and **Admin via** sources: removing one grant does not remove the others. For SCIM Admin teams, include IdP group-management permissions and provisioning delays in access reviews. See [Team Admin access](/cloud/members-and-rbac#team-admin-access) for approval, revocation, and mapping-reset safeguards.
 
 For access reviews, export the current member list, roles, teams, pending invitations, API keys, SSO configuration, and SCIM configuration on a regular cadence. Reconfirm that each member still needs their current role and team access.
 
@@ -55,8 +58,8 @@ For production organizations, use SSO with identity-provider MFA as the primary 
 
 - Enable enforced SSO for organizations that have owners, admins, SCIM, SSO, API keys, or shared production providers.
 - Require MFA, phishing-resistant factors where available, and conditional-access policy in the identity provider before users reach OpenWork Cloud.
-- Keep SSO, SCIM, and API-key management behind the `security_configuration.manage` permission. Owners receive that permission by default and can delegate it through a custom role; default admins do not receive it automatically.
-- Invitation role assignment is bounded by the inviter's own permissions, so default admins can invite standard admins or members but cannot grant delegated security-configuration access unless they already hold that permission.
+- Keep SSO, SCIM, API-key management, and Admin team designation with owners and super-admins. Direct or inherited `Admin`, or a custom role with `security_configuration.manage` alone, does not satisfy those role requirements.
+- Admins can invite only `Member` users. Owners and super-admins can assign other permitted invitation roles, but not `Owner`; ownership requires transfer.
 - The server requires a session created in the last 15 minutes before privileged routes can change SSO, SCIM, API keys, organization settings, custom roles, member roles, billing, or inference settings.
 - Do not rely on standalone email/password accounts for production owner access unless the deployment has an equivalent MFA and recovery control outside OpenWork.
 

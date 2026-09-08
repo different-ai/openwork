@@ -63,6 +63,8 @@ export interface Agent {
 
 export interface Probe {
   text(): Promise<string>;
+  /** Fixed, read-only DOM projection for layout, focus and element presence assertions. */
+  dom(selector: string): ReturnType<typeof import("@openwork/cdp").readDom>;
   has(text: string): Promise<boolean>;
   composer(): ReturnType<typeof import("@openwork/behaviors").readComposerState>;
   storage(key: string): Promise<unknown>;

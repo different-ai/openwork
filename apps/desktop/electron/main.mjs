@@ -26,6 +26,8 @@ import { registerUpdaterIpc } from "./updater.mjs";
 import {
   checkComputerUsePermissions,
   getComputerUseMcpCommand,
+  getComputerUseState,
+  computerUseAction,
   listRunningApps,
   openComputerUseSetupApp,
 } from "./computer-use.mjs";
@@ -1893,6 +1895,11 @@ const desktopCommandHandlers = {
       }
       return ["npx", "-y", "openwork-ui-mcp"];
   },
+  "getComputerUseState": async () => getComputerUseState(),
+  "computerUseAction": async (event, value) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("Computer Use controls require the main OpenWork window.");
+    return computerUseAction(value);
+  },
   "getComputerUseMcpCommand": async (event, ...args) => {
       return getComputerUseMcpCommand();
   },
@@ -2846,6 +2853,14 @@ or use: pnpm dev:worktree`);
     // Electron see the same workspace list. Import the short-lived
     // Electron-only filename only when the shared file is missing.
     await workspaceStore.migrateLegacyElectronWorkspaceStateIfNeeded();
+    // Public first launch uses the same folder as the chat-first composer.
+    // Provision it before the renderer and runtime read the workspace list.
+    const firstLaunchWorkspaceFailure = DESKTOP_DISTRIBUTION.flavor === "public" && !bootstrapConfig.fromFile && !bootstrapConfig.requireSignin
+      ? await workspaceStore.bootstrapFirstLaunchWorkspace()
+      : null;
+    if (firstLaunchWorkspaceFailure) {
+      console.warn("[workspace] default folder unavailable; continuing without a workspace", firstLaunchWorkspaceFailure);
+    }
     // The UI-control bridge evaluates arbitrary JavaScript in the renderer, so
     // it stays down until the installation is activated. Otherwise it is a
     // local bypass of the pre-activation restriction.
@@ -2863,6 +2878,14 @@ or use: pnpm dev:worktree`);
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const win = await createMainWindow();
+    if (firstLaunchWorkspaceFailure) {
+      runDetachedTask("show default workspace warning", () => dialog.showMessageBox(win, {
+        type: "warning",
+        message: "OpenWork could not prepare its default folder",
+        detail: `OpenWork is open without a workspace. Use Add workspace in the sidebar to choose another folder.\n\n${firstLaunchWorkspaceFailure.error}`,
+        buttons: ["Continue"],
+      }));
+    }
     if (process.platform === "linux" && !BLANK_SLATE_LAUNCH.enabled) {
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
     }

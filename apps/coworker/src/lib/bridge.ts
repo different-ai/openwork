@@ -139,6 +139,11 @@ export type CoworkerSummary = {
   model: string;
   /** Optional reasoning/behavior variant for the preferred model. */
   modelVariant: string;
+  /** Unset means the coworker's standard model and effort; applies to new Workers only. */
+  thinkingModel?: string;
+  thinkingModelVariant?: string;
+  deliveryModel?: string;
+  deliveryModelVariant?: string;
   /** Who chose the model: the app by itself ("app", may be swapped once when it fails), the person ("person"), or "" for a record that never said (read as the person's). */
   modelChosenBy: ModelChosenBy;
   /** `auto`: a quick, standard, or deep model per message around `model`; `fixed`: `model` every time. */
@@ -152,7 +157,7 @@ export type CoworkerSummary = {
 export type ModelChosenBy = "app" | "person" | "";
 
 export type AvatarColor = "blue" | "violet" | "mint" | "orange" | "rose" | "slate" | "sand" | "sage";
-export type AvatarGlasses = "round" | "square" | "oval" | "none" | "sunglasses" | "monocle";
+export type AvatarGlasses = "round" | "square" | "oval" | "none" | "sunglasses" | "monocle" | "star";
 
 /** One role from the team catalog, as onboarding and the Add screen propose it. */
 export type TeamRole = {
@@ -311,6 +316,8 @@ export type ProviderSyncRun = {
 export type LocalProviderFinding = {
   id: string;
   kind: "codex" | "claude-code" | "copilot" | "opencode" | "env" | "server";
+  /** Supported credential shape only, never a token, subscription tier, or entitlement check. */
+  credentialKind: "chatgpt-oauth" | "api-key" | "unknown";
   label: string;
   detail: string;
   providerId: string;
@@ -379,15 +386,22 @@ type BridgeResponse = { ok: true; result: unknown } | { ok: false; error: string
 export type BrowserSnapshot = {
   revision: number;
   requested: boolean;
+  presentation: { mode: "floating" | "side" | "fullscreen" | "hidden"; snap: "top" | "middle" | "bottom" };
+  activity: { label: string; state: "running" | "idle" | "interrupted" } | null;
   activeTabId: string | null;
   tabs: Array<{ id: string; url: string; title: string; status: string; canGoBack: boolean; canGoForward: boolean }>;
+  control: { state: "automation" } | { state: "human"; phase: "pausing" | "ready"; handoffId: string; tabId: string; reason: "sign-in" | "takeover" };
 };
+export type BrowserThumbnail = { tabId: string; generation: number; mimeType: "image/jpeg"; imageBase64: string; width: number; height: number; capturedAt: number };
 export type BrowserCommand =
   | { action: "request"; open: boolean }
-  | { action: "hide" | "back" | "forward" | "reload" }
+  | { action: "present"; mode: BrowserSnapshot["presentation"]["mode"] }
+  | { action: "snap"; position: BrowserSnapshot["presentation"]["snap"] }
+  | { action: "hide" | "back" | "forward" | "reload" | "exit-fullscreen" }
   | { action: "bounds"; bounds: { x: number; y: number; width: number; height: number } }
   | { action: "open" | "navigate"; url: string }
-  | { action: "select" | "close"; tabId: string };
+  | { action: "select" | "close" | "takeover"; tabId: string }
+  | { action: "resume"; handoffId: string };
 
 export type ComputerSnapshot = {
   revision: number;
@@ -430,6 +444,7 @@ export const coworkerBridge = {
     bind: (slug: string, threadId: string, viewId: string) => invoke<BrowserSnapshot>("browser.bind", { slug, threadId, viewId }),
     detach: (viewId: string) => invoke<void>("browser.detach", { viewId }),
     read: (viewId: string) => invoke<BrowserSnapshot>("browser.read", { viewId }),
+    thumbnail: (viewId: string, tabId: string, size?: "thumbnail" | "watch") => invoke<BrowserThumbnail | null>("browser.thumbnail", { viewId, tabId, size }),
     command: (viewId: string, command: BrowserCommand) => invoke<BrowserSnapshot>("browser.command", { ...command, viewId }),
   },
   computer: {
@@ -465,7 +480,7 @@ export const coworkerBridge = {
     get: (slug: string) => invoke<CoworkerSummary>("coworkers.get", { slug }),
     create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses; personality: Personality; roleId?: string; firstNote?: string }) =>
       invoke<CoworkerSummary>("coworkers.create", input),
-    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "modelChosenBy" | "modelMode" | "effortPreference" | "avatarColor" | "avatarGlasses" | "personality">>) =>
+    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "thinkingModel" | "thinkingModelVariant" | "deliveryModel" | "deliveryModelVariant" | "modelChosenBy" | "modelMode" | "effortPreference" | "avatarColor" | "avatarGlasses" | "personality">>) =>
       invoke<CoworkerSummary>("coworkers.update", { slug, patch }),
     ensureWorkspace: (slug: string) => invoke<CoworkerSummary>("coworkers.ensureWorkspace", { slug }),
     /** Retire: archive the whole home under `.retired/`; nothing is deleted. */
@@ -593,7 +608,7 @@ export const coworkerBridge = {
     list: (slug: string) => invoke<WorkerSummary[]>("workers.list", { slug }),
     get: (slug: string, id: string) => invoke<WorkerSummary>("workers.get", { slug, id }),
     /** A missing lifespan means the default turn budget; a Worker is never unbounded by accident. */
-    spawn: (slug: string, input: { name: string; goal: string; lifespan?: WorkerLifespan; spawnedFromThreadId?: string }) =>
+    spawn: (slug: string, input: { name: string; goal: string; purpose?: import("./workers.ts").WorkerPurpose; lifespan?: WorkerLifespan; spawnedFromThreadId?: string }) =>
       invoke<WorkerSummary>("workers.spawn", { slug, ...input }),
     /** Arrives as the Worker's next turn; if one is in flight, it waits for it. */
     steer: (slug: string, id: string, text: string) => invoke<WorkerSummary>("workers.steer", { slug, id, text }),

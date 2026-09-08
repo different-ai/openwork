@@ -1,0 +1,96 @@
+name: Evidence review
+
+# Publication runs after existing checks, on its own workflow. Never require
+# this check in branch protection: storage and presentation do not gate shipping.
+on:
+  pull_request:
+    paths:
+      - apps/review/**
+      - packages/review/**
+      - evals/packages/test-artifacts/**
+      - evals/packages/test-evidence/src/vitest.ts
+      - evals/bin/evals.mjs
+      - evals/docs-shots/run.ts
+      - evals/specs/evidence-review.test.ts
+      - evals/worlds/evidence-review.ts
+      - .github/workflows/evidence-review.yml
+  workflow_run:
+    workflows: [Build and core checks, Product journeys]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+concurrency:
+  group: evidence-review-${{ github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  check-app:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+      - name: Install review and testkit dependencies
+        run: |
+          pnpm --filter @openwork/review-app... --filter @openwork/world... --filter @openwork/types... install --frozen-lockfile --ignore-scripts
+          pnpm --dir evals install --frozen-lockfile --ignore-scripts
+      - name: Build and verify the review app
+        env:
+          OPENWORK_EVAL_REVIEW: "1"
+        run: |
+          pnpm --filter @openwork/review-app build
+          node --test evals/packages/test-artifacts/test/*.test.ts evals/bin/evals.test.mjs
+          pnpm evals:pr specs/evidence-review.test.ts
+      - name: Save review journey evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: review-app-evidence
+          path: evals/results/test-runs/
+          retention-days: 7
+  publish:
+    if: >-
+      vars.OPENWORK_REVIEW_URL != '' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.pull_requests[0].number != null &&
+      (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    steps:
+      # Only trusted default-branch code runs with the publishing credentials.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+      - name: Install publisher dependencies
+        run: |
+          pnpm --filter @openwork/review... install --frozen-lockfile --ignore-scripts
+          pnpm --dir evals --filter @openwork/test-artifacts install --frozen-lockfile --ignore-scripts
+      - name: Read completed evidence and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.OPENWORK_REVIEW_BLOB_TOKEN }}
+          OPENWORK_REVIEW_URL: ${{ vars.OPENWORK_REVIEW_URL }}
+          REVIEW_RUN_ID: ${{ github.event.workflow_run.id }}
+          REVIEW_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          REVIEW_SHA: ${{ github.event.workflow_run.pull_requests[0].head.sha }}
+        run: node evals/scripts/publish-review.mjs

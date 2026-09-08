@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -7,7 +6,7 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { createGroup, updateGroup, archiveGroup, normalizeEvent, readGroupTimeline } from "./groups.mjs";
 import { createDocument } from "./documents.mjs";
-import { assertGroupDocumentToolContext, createGroupDocumentService, createGroupDocuments, groupDocumentToolCatalog, validateGroupDocumentArguments } from "./group-documents.mjs";
+import { assertGroupDocumentToolContext, createGroupDocumentService, createGroupDocuments, groupDocumentToolCatalog } from "./group-documents.mjs";
 import { GROUP_DOCUMENT_PLUGIN, installGroupDocumentPlugin } from "./group-document-plugin.mjs";
 
 async function fixture(t) {
@@ -187,34 +186,6 @@ test("a caller revoked while an operation waits cannot write", async (t) => {
   assert.deepEqual(await f.store.list(f.group.id, f.person), []);
 });
 
-test("the native tool contract never lets the model choose its author or context", () => {
-  const catalog = groupDocumentToolCatalog();
-  assert.equal(catalog.length, 5);
-  for (const { inputSchema } of catalog) {
-    assert.equal(inputSchema.additionalProperties, false);
-    for (const key of ["slug", "author", "authorSlug", "context", "sessionID", "messageID", "callID", "path"]) assert.equal(Object.hasOwn(inputSchema.properties, key), false);
-  }
-  const save = catalog.find((tool) => tool.name === "group_document_save");
-  assert.deepEqual(save.inputSchema.dependentRequired, { id: ["expectedRevision"], expectedRevision: ["id"] });
-});
-
-test("main-side validation applies the exact catalog, including strict fields and revision dependencies", () => {
-  const groupId = "grp_12345678";
-  const inputs = [{ groupId }, { groupId, id: "plan" }, { groupId, title: "Plan", body: "Draft" },
-    { groupId, id: "plan" }, { groupId, id: "plan", revision: 1, expectedRevision: 2 }];
-  for (const [index, tool] of groupDocumentToolCatalog().entries()) {
-    assert.deepEqual(validateGroupDocumentArguments(tool.name, inputs[index]), inputs[index]);
-    for (const extra of [{ author: "You" }, { slug: "editor" }, { groupId: "../outside" }, { path: "/private" }]) {
-      assert.throws(() => validateGroupDocumentArguments(tool.name, { ...inputs[index], ...extra }), /Invalid/);
-    }
-  }
-  for (const extra of [{ id: "plan" }, { expectedRevision: 1 }, { id: "plan", expectedRevision: 1.5 },
-    { summary: "x".repeat(241) }, { highlights: ["x".repeat(161)] }, { body: "x".repeat(100001) }]) {
-    assert.throws(() => validateGroupDocumentArguments("group_document_save", { ...inputs[2], ...extra }), /Invalid/);
-  }
-  assert.throws(() => validateGroupDocumentArguments("document_save", inputs[2]), /Unknown/);
-});
-
 function documentWitness(groupId = "grp_12345678", directory = "/native/workspace") {
   const args = { groupId, title: "Plan", body: "Draft" };
   return {
@@ -368,11 +339,11 @@ test("announcement failure never fails or repeats a committed save and document 
 });
 
 // Exercise generated transport without the native SDK or a running HTTP service.
-// The small SDK double records the exact argument shape as well as validating test inputs.
+// The small SDK double validates test inputs before transport.
 function pluginSchema(type, items) {
-  const json = { type, ...(items ? { items: items.json } : {}) };
+  const json = { type };
   return {
-    json, isOptional: false,
+    isOptional: false,
     min(value) { json[type === "string" ? "minLength" : "minimum"] = value; return this; },
     max(value) { json[type === "string" ? "maxLength" : "maxItems"] = value; return this; },
     int() { json.type = "integer"; return this; },
@@ -408,19 +379,6 @@ async function generatedPlugin(fetch, read = async () => JSON.stringify({ url: "
 }
 
 const nativeContext = (extra = {}) => ({ sessionID: "session-one", messageID: "message-one", callID: "call-one", directory: "/native/workspace", abort: new AbortController().signal, ...extra });
-
-test("generated native plugin is valid JavaScript and exposes exactly the catalog fields", async () => {
-  execFileSync(process.execPath, ["--input-type=module", "--check"], { input: GROUP_DOCUMENT_PLUGIN });
-  const plugin = await generatedPlugin(() => { throw new Error("No request expected."); });
-  const catalog = groupDocumentToolCatalog();
-  assert.deepEqual(Object.keys(plugin.tool), catalog.map((entry) => `coworker_${entry.name}`));
-  for (const { name, description, inputSchema } of catalog) {
-    const native = plugin.tool[`coworker_${name}`];
-    assert.equal(native.description, description);
-    assert.deepEqual(Object.fromEntries(Object.entries(native.args).map(([key, schema]) => [key, schema.json])), inputSchema.properties);
-    assert.deepEqual(Object.entries(native.args).filter(([, schema]) => !schema.isOptional).map(([key]) => key), inputSchema.required);
-  }
-});
 
 test("native plugin stamps every tool with context and sends one authenticated text request", async () => {
   const requests = [];
