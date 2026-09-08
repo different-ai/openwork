@@ -14,6 +14,7 @@ declare global {
     };
     __reauthOriginalOpen?: typeof window.open;
     __OPENWORK_ELECTRON__: {
+      shell: { relaunch(): Promise<void> };
       browserLogins: {
         testWitnessUrl(): Promise<string>;
         writeTestStore(request: { path: string; cookies: unknown[] }): Promise<unknown>;

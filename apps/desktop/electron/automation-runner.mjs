@@ -76,7 +76,7 @@ function createWorkspaceSessionClient(local, workspaceId, fetchImpl) {
     // Automation run receipts own recovery; desktop restart must not independently
     // resume an occurrence that its scheduler may already have settled or retried.
     fetch: (input, init) => {
-      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))
+      const headers = new Headers(init?.headers)
       headers.set("x-openwork-task-recovery", "off")
       return fetchImpl(input, { ...init, headers })
     },
