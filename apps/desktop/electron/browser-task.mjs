@@ -162,7 +162,8 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
   function navigationGuard(tabId) {
     const scope = navigations.get(tabId);
     // Pausing alone must not turn a late task redirect into manual browsing.
-    // Only subsequent user input/navigation enables manual mode, without grants.
+    // Only explicit app-toolbar navigation enables manual mode, without grants.
+    // Page input (including trusted events) can come from queued automation.
     if (!scope || (scope.manual && pausedSessions.has(scope.sessionId) && ownerOf(tabId) === scope.sessionId)) return null;
     return (url) => authorizeNavigation(scope, url);
   }

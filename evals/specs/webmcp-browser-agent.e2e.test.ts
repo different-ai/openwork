@@ -250,9 +250,24 @@ test("a conversation signs in, uses site tools and page controls with consent, i
       expect(released.pageRequests).toEqual(held.pageRequests);
       expect(await probe.browserState()).toEqual(before);
       expect(await task("observe", { tabId })).toMatchObject({ ok: false, code: "paused" });
+      // CDP-injected webpage mouse/key input must not authorize manual redirects.
+      const page = user.on(site);
+      await page.click({ label: "Draft title" });
+      await page.press("ArrowLeft");
+      await page.navigate(`${world.origin}/redirect`);
+      const blocked = await witness();
+      expect(blocked.pageRequests.filter((request) => request.path === "/fallback")).toHaveLength(0);
+      expect(blocked.pageRequests).toEqual(released.pageRequests);
+      // Only the app's address bar deliberately enables navigation while paused.
+      await user.type({ placeholder: "Enter URL..." }, `${world.origin}/execution-delay`, { replace: true });
+      await user.press("Enter");
+      await page.see({ text: "Session active" });
+      await user.see({ role: "button", label: "Resume browser" });
+      expect(await task("observe", { tabId })).toMatchObject({ ok: false, code: "paused" });
       await user.click({ role: "button", label: "Resume browser" });
       expect((await task("observe", { tabId })).text).toContain("Nothing saved");
       expect((await witness()).discovery.callbacks).toBe(0);
+      evidence.recordAssertionEvidence("Injected webpage input cannot authorize navigation after takeover", "CDP mouse and keyboard input followed by navigation to the redirect left the destination request count at zero. Explicit app address-bar navigation restored the signed-in page while agent operations remained paused until Resume browser.", true);
     } finally {
       await seed.browserFixtureDiscovery(world.app, world.origin, "release");
     }

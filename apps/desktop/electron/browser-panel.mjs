@@ -899,8 +899,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       scheduleWebMcpToolCountRefresh(tabId);
     });
     view.webContents.on("focus", () => resetViewportEmulation(view));
-    view.webContents.on("before-input-event", (_event, input) => { if (input.type === "keyDown") taskHost.manualNavigation(tabId); });
-    view.webContents.on("before-mouse-event", (_event, input) => { if (input.type === "mouseDown") taskHost.manualNavigation(tabId); });
     view.webContents.once("destroyed", () => {
       // CDP Target.closeTarget and page-initiated close bypass our tab-strip
       // handler; they must release the native parent and owner state too.
@@ -1374,6 +1372,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   function registerIpc(ipcMain) {
+    function authorizeManualNavigation(event) {
+      const contents = window()?.webContents;
+      if (!contents || event.sender !== contents || event.senderFrame !== contents.mainFrame) throw new Error("Use the browser toolbar to navigate.");
+      const tabId = registry.onScreenTabId();
+      if (tabId && registry.ownerOf(tabId) !== registry.visibleSessionId()) throw new Error("Select this conversation first.");
+      taskHost.manualNavigation(tabId);
+    }
     ipcMain.handle("openwork:browser:show", (_event, bounds, sessionId) => (
       attachBrowserView(bounds, sessionId === undefined ? {} : { sessionId: normalizeSessionId(sessionId) })
     ));
@@ -1384,25 +1389,25 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         ownerSessionId: normalizeSessionId(options && typeof options === "object" ? options.sessionId : null),
       })
     ));
-    ipcMain.handle("openwork:browser:navigate", (_event, url) => {
+    ipcMain.handle("openwork:browser:navigate", (event, url) => {
+      authorizeManualNavigation(event);
       getActiveWebContents(); // Reject navigation while suspension is pending.
       const view = getActiveBrowserView()
         ?? createBrowserTab("about:blank", { select: true, ownerSessionId: registry.visibleSessionId() }).view;
-      taskHost.manualNavigation(tabForView(view)?.tabId);
       runDetachedTask("navigate browser tab", () => view.webContents.loadURL(normalizeBrowserUrl(url)));
     });
-    ipcMain.handle("openwork:browser:back", () => {
-      taskHost.manualNavigation(registry.onScreenTabId());
+    ipcMain.handle("openwork:browser:back", (event) => {
+      authorizeManualNavigation(event);
       const webContents = getActiveWebContents();
       if (webContents?.canGoBack()) webContents.goBack();
     });
-    ipcMain.handle("openwork:browser:forward", () => {
-      taskHost.manualNavigation(registry.onScreenTabId());
+    ipcMain.handle("openwork:browser:forward", (event) => {
+      authorizeManualNavigation(event);
       const webContents = getActiveWebContents();
       if (webContents?.canGoForward()) webContents.goForward();
     });
-    ipcMain.handle("openwork:browser:reload", () => {
-      taskHost.manualNavigation(registry.onScreenTabId());
+    ipcMain.handle("openwork:browser:reload", (event) => {
+      authorizeManualNavigation(event);
       getActiveWebContents()?.reload();
     });
     ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {

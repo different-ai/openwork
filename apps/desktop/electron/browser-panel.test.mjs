@@ -1085,7 +1085,7 @@ test("managed policy denial precedes loading and is rechecked after navigation a
 });
 
 test("takeover cancels pending navigation, permits manual browsing without grants, and requires fresh consent on resume", async () => {
-  const { invoke, panel, views, approve } = createPanel();
+  const { invoke, emit, panel, views, approve, mainContents } = createPanel();
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");
   const { tabId } = invoke("openwork:browser:createTab", "about:blank", "A");
   await flush();
@@ -1099,6 +1099,18 @@ test("takeover cancels pending navigation, permits manual browsing without grant
   assert.deepEqual(views()[0].webContents.destinations, []);
   assert.equal((await navigate()).code, "paused");
   assert.deepEqual(await views()[0].webContents.request("https://late-redirect.example/"), { cancel: true }, "a late task redirect is not manual browsing");
+  const contents = views()[0].webContents;
+  for (const [event, type] of [["before-input-event", "keyDown"], ["before-mouse-event", "mouseDown"]]) {
+    contents.emit(event, { type });
+    assert.deepEqual(await contents.request("https://queued-input.example/"), { cancel: true }, "post-pause page input cannot authorize navigation");
+  }
+  for (const channel of ["navigate", "back", "forward", "reload"]) {
+    for (const event of [{ sender: contents, senderFrame: {} }, { sender: mainContents, senderFrame: {} }]) {
+      assert.throws(() => emit(`openwork:browser:${channel}`, event, url), /browser toolbar/);
+      assert.deepEqual(await contents.request("https://forged-toolbar.example/"), { cancel: true });
+    }
+  }
+  assert.deepEqual(contents.destinations, [], "neither queued input nor a forged toolbar message contacts a destination");
   invoke("openwork:browser:navigate", url);
   await flush();
   assert.deepEqual(views()[0].webContents.destinations, [url], "manual takeover navigation is still available");
