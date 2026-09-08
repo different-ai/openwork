@@ -55,12 +55,12 @@ export function chatContinuity(app: Surface, workspaceId: string) {
         const sample = () => {
           const pane = document.querySelector<HTMLElement>('[data-workbench-pane="' + expected.pane + '"]');
           const surface = pane?.querySelector<HTMLElement>('[data-session-surface-id]');
-          // Arm before the click. Inspect the pane as soon as the route OR its
-          // surface adopts the destination, including stale content in that pane.
+          // Arm before the click and inspect the destination's first DOM commit.
+          // The URL can change before React commits navigation; the outgoing
+          // surface still belongs to the previous conversation during that time.
           const selected = surface && (!expected.sessionId || surface.dataset.sessionSurfaceId === expected.sessionId)
             && surface.dataset.sessionSurfaceWorkspaceId === workspaceId;
-          if (selectedAt === undefined && !selected
-            && !(expected.pane === "primary" && expected.sessionId && location.hash.includes(expected.sessionId))) return;
+          if (selectedAt === undefined && !selected) return;
           selectedAt ??= performance.now();
           state.elapsedMs = performance.now() - selectedAt;
           if (state.elapsedMs < 1500) state.shortSamples++;
