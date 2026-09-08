@@ -381,6 +381,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Workflows", description: "Saved Workflows (Code Mode scripts), their versions, snapshots, and views." },
       { name: "Workflow Runs", description: "Durable Workflow run history." },
       { name: "Codemode Runs", description: "Generated Artifact views produced by Code Mode runs." },
+      { name: "Apps", description: "Saved reusable apps built from Workflows and Artifact views, and their sharing." },
       { name: "Config Objects", description: "Versioned configuration objects (skills, workflows, and other plugin content)." },
       { name: "Plugins", description: "Plugin packages, access grants, and imports." },
       { name: "Marketplaces", description: "Marketplaces that distribute plugins to members and teams." },

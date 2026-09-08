@@ -11204,12 +11204,35 @@ export type PostV1InferenceAnalyticsEventsData = {
   url: "/v1/inference/analytics/events";
 };
 
+export type PostV1InferenceAnalyticsEventsErrors = {
+  /**
+   * Invalid request.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+};
+
+export type PostV1InferenceAnalyticsEventsError =
+  PostV1InferenceAnalyticsEventsErrors[keyof PostV1InferenceAnalyticsEventsErrors];
+
 export type PostV1InferenceAnalyticsEventsResponses = {
   /**
-   * OK
+   * Accepted event ids.
    */
-  200: unknown;
+  202: {
+    acceptedIds: Array<string>;
+  };
+  /**
+   * Task analytics are not enabled for this organization; nothing was recorded.
+   */
+  204: void;
 };
+
+export type PostV1InferenceAnalyticsEventsResponse =
+  PostV1InferenceAnalyticsEventsResponses[keyof PostV1InferenceAnalyticsEventsResponses];
 
 export type GetV1InferenceAnalyticsActivityData = {
   body?: never;
@@ -11323,12 +11346,38 @@ export type PostV1InferenceAnalyticsLangfuseTestData = {
   url: "/v1/inference/analytics/langfuse/test";
 };
 
+export type PostV1InferenceAnalyticsLangfuseTestErrors = {
+  /**
+   * Invalid request, or Langfuse could not be reached with these credentials.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace admins can configure analytics exports, or task analytics are not enabled.
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceAnalyticsLangfuseTestError =
+  PostV1InferenceAnalyticsLangfuseTestErrors[keyof PostV1InferenceAnalyticsLangfuseTestErrors];
+
 export type PostV1InferenceAnalyticsLangfuseTestResponses = {
   /**
-   * OK
+   * The destination is reachable.
    */
-  200: unknown;
+  200: {
+    ok: true;
+  };
 };
+
+export type PostV1InferenceAnalyticsLangfuseTestResponse =
+  PostV1InferenceAnalyticsLangfuseTestResponses[keyof PostV1InferenceAnalyticsLangfuseTestResponses];
 
 export type PostV1InferenceAnalyticsLangfuseConnectData = {
   body: {
@@ -11341,12 +11390,38 @@ export type PostV1InferenceAnalyticsLangfuseConnectData = {
   url: "/v1/inference/analytics/langfuse/connect";
 };
 
+export type PostV1InferenceAnalyticsLangfuseConnectErrors = {
+  /**
+   * Invalid request, or Langfuse could not be reached with these credentials.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace admins can configure analytics exports, or task analytics are not enabled.
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceAnalyticsLangfuseConnectError =
+  PostV1InferenceAnalyticsLangfuseConnectErrors[keyof PostV1InferenceAnalyticsLangfuseConnectErrors];
+
 export type PostV1InferenceAnalyticsLangfuseConnectResponses = {
   /**
-   * OK
+   * The destination is reachable and was saved.
    */
-  200: unknown;
+  200: {
+    ok: true;
+  };
 };
+
+export type PostV1InferenceAnalyticsLangfuseConnectResponse =
+  PostV1InferenceAnalyticsLangfuseConnectResponses[keyof PostV1InferenceAnalyticsLangfuseConnectResponses];
 
 export type DeleteV1InferenceAnalyticsLangfuseData = {
   body?: never;
@@ -11355,12 +11430,31 @@ export type DeleteV1InferenceAnalyticsLangfuseData = {
   url: "/v1/inference/analytics/langfuse";
 };
 
+export type DeleteV1InferenceAnalyticsLangfuseErrors = {
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace admins can disconnect analytics exports.
+   */
+  403: ForbiddenError;
+};
+
+export type DeleteV1InferenceAnalyticsLangfuseError =
+  DeleteV1InferenceAnalyticsLangfuseErrors[keyof DeleteV1InferenceAnalyticsLangfuseErrors];
+
 export type DeleteV1InferenceAnalyticsLangfuseResponses = {
   /**
-   * OK
+   * Export disconnected.
    */
-  200: unknown;
+  200: {
+    ok: true;
+  };
 };
+
+export type DeleteV1InferenceAnalyticsLangfuseResponse =
+  DeleteV1InferenceAnalyticsLangfuseResponses[keyof DeleteV1InferenceAnalyticsLangfuseResponses];
 
 export type DeleteV1ScimData = {
   body?: never;

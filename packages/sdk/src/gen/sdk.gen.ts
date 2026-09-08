@@ -39,6 +39,7 @@ import type {
   DeleteV1DesktopPoliciesByDesktopPolicyIdErrors,
   DeleteV1DesktopPoliciesByDesktopPolicyIdResponses,
   DeleteV1DesktopPoliciesByKeyByExternalKeyResponses,
+  DeleteV1InferenceAnalyticsLangfuseErrors,
   DeleteV1InferenceAnalyticsLangfuseResponses,
   DeleteV1LlmProvidersByKeyByExternalKeyResponses,
   DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdErrors,
@@ -539,8 +540,11 @@ import type {
   PostV1DirectUploadsGoogleWorkspaceDriveFilesResponses,
   PostV1DirectUploadsGoogleWorkspaceGmailDraftsErrors,
   PostV1DirectUploadsGoogleWorkspaceGmailDraftsResponses,
+  PostV1InferenceAnalyticsEventsErrors,
   PostV1InferenceAnalyticsEventsResponses,
+  PostV1InferenceAnalyticsLangfuseConnectErrors,
   PostV1InferenceAnalyticsLangfuseConnectResponses,
+  PostV1InferenceAnalyticsLangfuseTestErrors,
   PostV1InferenceAnalyticsLangfuseTestResponses,
   PostV1InstallConnectExchangeErrors,
   PostV1InstallConnectExchangeResponses,
@@ -3942,6 +3946,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Report task analytics events for the calling member's OpenWork Models calls
+   *
+   * Accepts runtime metadata for tasks the member actually ran through OpenWork Models; events for other members' tasks or BYOK calls are dropped. Answers 204 when the organization has not opted into task analytics.
+   */
   public postV1InferenceAnalyticsEvents<ThrowOnError extends boolean = false>(
     parameters?: {
       events?: Array<{
@@ -3980,7 +3989,11 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "events" }] }]);
-    return (options?.client ?? this.client).post<PostV1InferenceAnalyticsEventsResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<
+      PostV1InferenceAnalyticsEventsResponses,
+      PostV1InferenceAnalyticsEventsErrors,
+      ThrowOnError
+    >({
       url: "/v1/inference/analytics/events",
       ...options,
       ...params,
@@ -4064,6 +4077,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Test a Langfuse analytics export destination
+   *
+   * Sends an empty batch to the given Langfuse host with the project keys to verify connectivity. Nothing is stored.
+   */
   public postV1InferenceAnalyticsLangfuseTest<ThrowOnError extends boolean = false>(
     parameters?: {
       host?: string;
@@ -4084,7 +4102,11 @@ export class DenClient extends HeyApiClient {
         },
       ],
     );
-    return (options?.client ?? this.client).post<PostV1InferenceAnalyticsLangfuseTestResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<
+      PostV1InferenceAnalyticsLangfuseTestResponses,
+      PostV1InferenceAnalyticsLangfuseTestErrors,
+      ThrowOnError
+    >({
       url: "/v1/inference/analytics/langfuse/test",
       ...options,
       ...params,
@@ -4096,6 +4118,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Connect a Langfuse analytics export destination
+   *
+   * Verifies connectivity, then stores the Langfuse destination and starts exporting task analytics recorded from now on. Requires the organization to have opted into task analytics.
+   */
   public postV1InferenceAnalyticsLangfuseConnect<ThrowOnError extends boolean = false>(
     parameters?: {
       host?: string;
@@ -4118,7 +4145,7 @@ export class DenClient extends HeyApiClient {
     );
     return (options?.client ?? this.client).post<
       PostV1InferenceAnalyticsLangfuseConnectResponses,
-      unknown,
+      PostV1InferenceAnalyticsLangfuseConnectErrors,
       ThrowOnError
     >({
       url: "/v1/inference/analytics/langfuse/connect",
@@ -4132,13 +4159,19 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Disconnect the Langfuse analytics export destination
+   *
+   * Stops exporting and forgets the stored Langfuse host and project keys.
+   */
   public deleteV1InferenceAnalyticsLangfuse<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
-    return (options?.client ?? this.client).delete<DeleteV1InferenceAnalyticsLangfuseResponses, unknown, ThrowOnError>({
-      url: "/v1/inference/analytics/langfuse",
-      ...options,
-    });
+    return (options?.client ?? this.client).delete<
+      DeleteV1InferenceAnalyticsLangfuseResponses,
+      DeleteV1InferenceAnalyticsLangfuseErrors,
+      ThrowOnError
+    >({ url: "/v1/inference/analytics/langfuse", ...options });
   }
 
   /**
