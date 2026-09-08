@@ -20,7 +20,7 @@ import { useWorkspace } from "@/react-app/shell/workspace-provider";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { InferenceAllowanceSummary, OwnProviderAction, useInferenceAccess } from "@/react-app/domains/cloud/inference-access-provider";
-import { managedModelAccessLabel, managedModelRecommendation, managedModelRecommendations, markExplicitModelChoice, modelSelectionUpgradeReason } from "@/app/lib/inference-access";
+import { managedModelAccessLabel, managedModelRecommendation, managedModelRecommendations, markExplicitModelChoice, modelPickerView, modelSelectionUpgradeReason } from "@/app/lib/inference-access";
 import {
   OPENWORK_MODELS_PROVIDER_ID,
   OPENWORK_MODELS_PROVIDER_NAME,
@@ -56,7 +56,7 @@ import {
   nextFavoriteModel,
   useModelCollectionsStore,
 } from "@/react-app/domains/session/models/model-collections-store";
-import { favoriteModelShortcutLabel } from "@/react-app/shell/favorite-model-shortcut";
+import { favoriteModelShortcutLabel, isFavoriteModelShortcut } from "@/react-app/shell/favorite-model-shortcut";
 
 function getProviderDisplayName(providerId: string) {
   return providerId
@@ -252,14 +252,21 @@ export function ModelSelect({
   const favorites = useModelCollectionsStore((state) => state.favorites);
   const recent = useModelCollectionsStore((state) => state.recent);
   const catalogOptions = useModelOptions(open, fallbackOptions, denAuth.isSignedIn);
-  const modelOptions = React.useMemo(
-    () => overlaySelectedBehavior(catalogOptions, value, {
+  const { options: modelOptions, managedOnly } = React.useMemo(
+    () => modelPickerView(overlaySelectedBehavior(catalogOptions, value, {
       value: behaviorValue,
       label: behaviorLabel,
       options: behaviorOptions,
-    }),
-    [behaviorLabel, behaviorOptions, behaviorValue, catalogOptions, value],
+    }), { access: inference.access, signedIn: denAuth.isSignedIn, target: "session" }),
+    [behaviorLabel, behaviorOptions, behaviorValue, catalogOptions, value, inference.access, denAuth.isSignedIn],
   );
+  const selectedTitle = catalogOptions.find((option) => isSameModel(value, option))?.title ?? value.modelID;
+  React.useEffect(() => {
+    if (managedOnly && thinkingFor && thinkingFor.providerID !== "openwork") {
+      setThinkingFor(null);
+      setPane("model");
+    }
+  }, [managedOnly, thinkingFor]);
   const shortcutOs = resolveThinkingModeShortcutOs(
     platform.os,
     typeof navigator === "undefined" ? "" : navigator.platform,
@@ -351,6 +358,7 @@ export function ModelSelect({
     && Boolean(effectiveBehaviorLabel);
 
   const applyModel = (option: ModelOption, behavior?: string | null) => {
+    if (!modelOptions.some((available) => isSameModel(available, option) && !available.disabled)) return;
     if (!inference.checkSelection(option, sessionId, modelOptions, value)) { onOpenChange(false); return; }
     markExplicitModelChoice();
     useModelCollectionsStore.getState().recordRecent(option);
@@ -429,7 +437,7 @@ export function ModelSelect({
             <span className="truncate">
               {hideValue || (!denAuth.isSignedIn && isCloudManagedProviderKey(value.providerID))
                 ? "Select model"
-                : (selectedOption?.title ?? value.modelID ?? "Select model")}
+                : selectedTitle}
             </span>
             {showBehavior ? (
               <span className="shrink-0 text-gray-9">· {effectiveBehaviorLabel}</span>
@@ -446,9 +454,16 @@ export function ModelSelect({
         align="start"
         initialFocus={false}
         data-testid="managed-model-picker"
-        aria-label="Choose a model"
+        data-model-scope={managedOnly ? "openwork" : "all"}
+        aria-label={managedOnly ? "Choose an OpenWork model" : "Choose a model"}
+        onKeyDownCapture={(event) => {
+          if (!managedOnly || !isFavoriteModelShortcut(event)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (!event.repeat) cycleFavorite();
+        }}
       >
-        {pane === "effort" && thinkingFor ? (
+        {pane === "effort" && thinkingFor && (!managedOnly || thinkingFor.providerID === "openwork") ? (
           <div data-slot="model-thinking-submenu" className="flex max-h-(--available-height) flex-col">
             <button
               ref={thinkingBackRef}
@@ -491,6 +506,7 @@ export function ModelSelect({
               <div className="flex min-h-0 flex-1 flex-col">
               <CommandHeader className="p-1.5 pb-1">
                 <CommandInput ref={searchInputRef} placeholder="Search all models..." aria-label="Search all models" className="h-9 text-sm" />
+                {managedOnly ? <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">OpenWork models</p> : null}
               </CommandHeader>
               <InferenceAllowanceSummary className="px-3 pb-2" available={catalogOptions.some((option) => option.providerID === "openwork")} />
               {openWorkModelsSyncing ? (
@@ -503,7 +519,9 @@ export function ModelSelect({
                 </div>
               ) : null}
               <CommandPanel className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
-                <CommandEmpty>No models found.</CommandEmpty>
+                <CommandEmpty>{managedOnly
+                  ? query ? "No OpenWork models match your search." : "No OpenWork models are available. Open the full list to refresh."
+                  : "No models found."}</CommandEmpty>
                 <CommandList className="not-empty:scroll-py-1 not-empty:p-1">
                   {(group: ModelSelectGroup) => (
                     <CommandGroup key={group.value} items={group.items} className="[[role=group]+&]:mt-1">
@@ -583,7 +601,7 @@ export function ModelSelect({
                   }}
                 >
                   <Settings2 className="size-3.5" />
-                  See all models
+                  {managedOnly ? "See all OpenWork models" : "See all models"}
                 </button>
                 {favoriteOptions.length > 0 ? <button type="button" disabled={!nextFavorite} className="flex w-full items-center justify-between rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent disabled:opacity-50" aria-label="Cycle favorite models" onClick={cycleFavorite}>
                   <span>Next favorite</span><kbd>{favoriteShortcutLabel}</kbd>

@@ -37,6 +37,17 @@ export const inferenceAccessSchema: z.ZodType<InferenceAccess & { canUpgrade: bo
 
 export type InferenceUpgradeReason = "free_allowance_exhausted" | "managed_model_requires_upgrade";
 
+export function modelPickerView(options: readonly ModelOption[], input: {
+  access: InferenceAccess | null;
+  signedIn: boolean;
+  target: "session" | "default";
+}) {
+  const managedOnly = input.signedIn && input.target === "session"
+    && (input.access?.kind === "free" || input.access?.kind === "exhausted" || input.access?.kind === "paid");
+  // This is a view filter, not a provider restriction or a change to saved choices.
+  return { managedOnly, options: managedOnly ? options.filter((option) => option.providerID === "openwork") : options };
+}
+
 export function managedModelRecommendation(access: InferenceAccess | null, model: ModelRef) {
   return model.providerID === FREE_LUNA_MODEL.providerID
     ? access?.catalog?.find((item) => item.modelID === model.modelID)

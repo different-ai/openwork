@@ -8,7 +8,7 @@ declare const expect: (value: unknown) => {
 
 import { DEFAULT_DEN_BASE_URL, HOSTED_DEFAULT_DEN_BASE_URL, setDenBootstrapConfig } from "../../../app/lib/den";
 import { INFERENCE_ACCESS_REASONS, type InferenceAccess } from "@openwork/types/den/inference";
-import { FREE_LUNA_MODEL, inferenceAccessSchema, managedModelAccessLabel, managedModelRecommendation, managedModelRecommendations, modelSelectionUpgradeReason, pendingInferenceUsageLabel, shouldSelectInitialLuna } from "../../../app/lib/inference-access";
+import { FREE_LUNA_MODEL, inferenceAccessSchema, managedModelAccessLabel, managedModelRecommendation, managedModelRecommendations, modelPickerView, modelSelectionUpgradeReason, pendingInferenceUsageLabel, shouldSelectInitialLuna } from "../../../app/lib/inference-access";
 import type { ModelOption } from "../../../app/types";
 import { nextFavoriteModel } from "../session/models/model-collections-store";
 import {
@@ -84,6 +84,31 @@ const freeAccess: InferenceAccess & { canUpgrade: boolean } = {
 };
 
 describe("member allowance model decisions", () => {
+  test("restricts only positively managed session catalogs, not settings or legacy provider selection", () => {
+    const options: ModelOption[] = ["opencode", "openwork", "lpr_own", "anthropic"].map((providerID) => ({
+      providerID, modelID: "fixture", title: "Fixture", behaviorTitle: "", behaviorLabel: "", behaviorDescription: "", behaviorValue: null, isFree: false,
+    }));
+    const kinds: InferenceAccess["kind"][] = ["free", "exhausted", "paid"];
+    for (const kind of kinds) {
+      const access = { ...freeAccess, kind };
+      const view = modelPickerView(options, { access, signedIn: true, target: "session" });
+      expect(view.managedOnly).toBe(true);
+      expect(view.options.map((model) => model.providerID).join(",")).toBe("openwork");
+      expect(modelPickerView(options, { access, signedIn: true, target: "default" }).options).toBe(options);
+      expect(modelPickerView(options, { access, signedIn: false, target: "session" }).options).toBe(options);
+      const waiting = modelPickerView(options.filter((model) => model.providerID !== "openwork"), { access, signedIn: true, target: "session" });
+      expect(waiting.managedOnly).toBe(true);
+      expect(waiting.options.length).toBe(0);
+    }
+    const legacyAccess: Array<InferenceAccess | null> = [null, { ...freeAccess, kind: "unavailable", reason: "free_disabled" }];
+    for (const access of legacyAccess) {
+      const view = modelPickerView(options, { access, signedIn: true, target: "session" });
+      expect(view.managedOnly).toBe(false);
+      expect(view.options).toBe(options);
+    }
+    expect(options.map((model) => model.providerID).join(",")).toBe("opencode,openwork,lpr_own,anthropic");
+  });
+
   test("gates only paid OpenWork selections, never Luna or organization BYOK", () => {
     expect(modelSelectionUpgradeReason(freeAccess, FREE_LUNA_MODEL)).toBe(null);
     expect(modelSelectionUpgradeReason(freeAccess, { providerID: "openwork", modelID: "openai/gpt-5.6-luna-fast" })).toBe("managed_model_requires_upgrade");

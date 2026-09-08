@@ -11,6 +11,7 @@ import { explicitModelChoiceKey, FREE_LUNA_MODEL, markExplicitModelChoice, model
 import { LOCAL_PREFERENCES_KEY } from "../src/react-app/kernel/local-preferences-storage";
 import { readModelPreferenceBeforeRepair, readStoredDefaultModel, writeStoredDefaultModel } from "../src/react-app/kernel/model-config";
 import { resolveEntitledOrgDefaultModel } from "../src/react-app/domains/connections/provider-auth/provider-policy";
+import { isFavoriteModelShortcut } from "../src/react-app/shell/favorite-model-shortcut";
 // Base UI detects DOM support when its module loads.
 GlobalRegistrator.register({ url: "http://localhost" });
 Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
@@ -231,7 +232,7 @@ test("member access ignores stale organization reads and opens upgrades only on 
   }
 });
 
-test("compact picker opens model rows, dedupes recommendations and favorites, and selects before effort", async () => {
+test("managed compact picker hides own models without changing stored choices and selects before effort", async () => {
   const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
   const { WorkspaceProvider } = await import("../src/react-app/shell/workspace-provider");
   const { ModelSelect } = await import("../src/components/model-select");
@@ -241,7 +242,9 @@ test("compact picker opens model rows, dedupes recommendations and favorites, an
   const paidModel = modelOption("fixture-paid", "openwork", "Fixture Paid");
   const hiddenModel = modelOption("fixture-other", "openwork", "Other managed model");
   const ownModel = modelOption("fixture-own", "lpr_own", "My own model");
-  const options = [freeModel, paidModel, hiddenModel, ownModel];
+  const starter = modelOption("big-pickle", "opencode", "Big Pickle");
+  const options = [freeModel, paidModel, hiddenModel, ownModel, starter];
+  let availableOptions = options;
   const access: InferenceAccess & { canUpgrade: boolean } = {
     kind: "free", modelID: freeModel.modelID, weeklyLimitUsd: 1, usedUsd: 0, reservedUsd: 0,
     remainingUsd: 1, resetsAt: null, reason: null, canUpgrade: true,
@@ -251,6 +254,9 @@ test("compact picker opens model rows, dedupes recommendations and favorites, an
   const behaviors: Array<string | null> = [];
   const locked: ModelRef[] = [];
   const lockedCurrentModels: Array<ModelRef | undefined> = [];
+  let escapedFavoriteShortcuts = 0;
+  const onGlobalShortcut = (event: KeyboardEvent) => { if (isFavoriteModelShortcut(event)) escapedFavoriteShortcuts++; };
+  window.addEventListener("keydown", onGlobalShortcut);
   let providerSetup = 0;
   const onProvider = () => { providerSetup++; };
   window.addEventListener("openwork-open-provider-auth", onProvider);
@@ -262,17 +268,24 @@ test("compact picker opens model rows, dedupes recommendations and favorites, an
   } });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   localStorage.removeItem(explicitModelChoiceKey);
-  useModelCollectionsStore.setState({ favorites: [paidModel, ownModel], recent: [freeModel, ownModel] });
+  writeStoredDefaultModel(starter);
+  const storedPreference = localStorage.getItem(MODEL_PREF_KEY);
+  const favorites = [paidModel, ownModel, starter];
+  const recent = [freeModel, ownModel, starter];
+  useModelCollectionsStore.setState({ favorites, recent });
   function Picker() {
     const [open, setOpen] = useState(false);
-    const [value, setValue] = useState<ModelRef>(ownModel);
-    return createElement(ModelSelect, { open, onOpenChange: setOpen, value, fallbackOptions: options,
+    const [value, setValue] = useState<ModelRef>(starter);
+    return createElement(ModelSelect, { open, onOpenChange: setOpen, value, fallbackOptions: availableOptions,
       onChange: (model) => { selected.push(model); setValue(model); }, onBehaviorChange: (value) => behaviors.push(value),
     });
   }
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
+  const render = () => root.render(createElement(PlatformProvider, { value: createDefaultPlatform(), children:
+    createElement(QueryClientProvider, { client: queryClient, children:
+      createElement(WorkspaceProvider, { client: null, selectedWorkspaceRoot: "", children: createElement(Picker) }) }) }));
   const click = async (selector: string) => {
     const button = document.querySelector<HTMLElement>(selector);
     if (!button) throw new Error(`Missing picker control: ${selector}`);
@@ -287,11 +300,15 @@ test("compact picker opens model rows, dedupes recommendations and favorites, an
     });
   };
   try {
-    await act(async () => root.render(createElement(PlatformProvider, { value: createDefaultPlatform(), children:
-      createElement(QueryClientProvider, { client: queryClient, children:
-        createElement(WorkspaceProvider, { client: null, selectedWorkspaceRoot: "", children: createElement(Picker) }) }) })));
+    await act(async () => { render(); });
     await click('[aria-label="Change model"]');
     expect(document.querySelector('[data-testid="managed-model-picker"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="managed-model-picker"]')?.getAttribute("data-model-scope")).toBe("openwork");
+    expect(document.querySelector('[aria-label="Change model"]')?.textContent).toContain("Big Pickle");
+    expect(document.querySelector('[data-testid="managed-model-picker"]')?.textContent).not.toContain("Big Pickle");
+    expect(document.querySelector('[data-testid="managed-model-picker"]')?.textContent).not.toContain("My own model");
+    expect(document.querySelector('[data-testid="selected-model-detail"]')).toBeNull();
+    expect(document.querySelector('[data-testid="managed-model-picker"]')?.textContent).toContain("See all OpenWork models");
     expect(document.querySelector('[aria-label="Search all models"]')).not.toBeNull();
     expect(document.querySelector('[data-slot="model-select-root"]')).toBeNull();
     expect(document.querySelector('[data-slot="model-thinking-submenu"]')).toBeNull();
@@ -299,20 +316,34 @@ test("compact picker opens model rows, dedupes recommendations and favorites, an
     expect(document.querySelector('[data-testid="model-option-openwork-fixture-paid"]')?.textContent).toContain("Upgrade");
     expect(document.querySelector('[data-testid="model-option-openwork-fixture-paid"]')?.getAttribute("aria-label")).toContain("opens upgrade options without changing your model");
     expect(document.querySelector(`[data-testid="model-option-openwork-${freeModel.modelID}"]`)?.textContent).toContain("Free");
-    expect(document.querySelector('[data-testid="model-option-lpr_own-fixture-own"]')?.textContent).not.toContain("Upgrade");
+    expect(document.querySelector('[data-testid="model-option-lpr_own-fixture-own"]')).toBeNull();
+    expect(document.querySelector('[data-testid="model-option-opencode-big-pickle"]')).toBeNull();
     expect(document.querySelector('[data-testid="model-option-openwork-fixture-other"]')).toBeNull();
     expect(selected).toEqual([]);
+    expect(localStorage.getItem(MODEL_PREF_KEY)).toBe(storedPreference);
+    expect(useModelCollectionsStore.getState().favorites).toEqual(favorites);
+    expect(useModelCollectionsStore.getState().recent).toEqual(recent);
+    await act(async () => {
+      document.querySelector('[aria-label="Search all models"]')?.dispatchEvent(new KeyboardEvent("keydown", { key: "m", ctrlKey: true, shiftKey: true, bubbles: true }));
+    });
+    expect(escapedFavoriteShortcuts).toBe(0);
+    expect(selected).toEqual([]);
+    for (const query of ["opencode", "Big Pickle", "My own model", "lpr_own"]) {
+      await search(query);
+      expect(document.querySelector('[data-testid="managed-model-picker"]')?.textContent).toContain("No OpenWork models match your search.");
+      expect(document.querySelector('[data-testid^="model-option-"]')).toBeNull();
+    }
     await search("Other managed model");
     expect(document.querySelector('[data-testid="model-option-openwork-fixture-other"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="model-option-openwork-fixture-paid"]')).toBeNull();
     await search("");
     await click('[data-testid="model-option-openwork-fixture-paid"]');
     expect(locked).toEqual([paidModel]);
-    expect(lockedCurrentModels).toEqual([ownModel]);
+    expect(lockedCurrentModels).toEqual([starter]);
     expect(selected).toEqual([]);
     expect(behaviors).toEqual([]);
     expect(localStorage.getItem(explicitModelChoiceKey)).toBeNull();
-    expect(useModelCollectionsStore.getState().favorites).toEqual([paidModel, ownModel]);
+    expect(useModelCollectionsStore.getState().favorites).toEqual(favorites);
     await click('[aria-label="Change model"]');
     await search("Fixture Free");
     await act(async () => {
@@ -332,10 +363,10 @@ test("compact picker opens model rows, dedupes recommendations and favorites, an
     expect(behaviors).toEqual(["high"]);
     expect(selected.length).toBe(1);
     await click('[aria-label="Change model"]');
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Cycle favorite models"]')?.disabled).toBe(true);
     await click('[aria-label="Cycle favorite models"]');
-    expect(selected[1]).toEqual({ providerID: ownModel.providerID, modelID: ownModel.modelID });
+    expect(selected.length).toBe(1);
     expect(locked.length).toBe(1);
-    await click('[aria-label="Change model"]');
     await click('[data-testid="model-own-provider"]');
     expect(providerSetup).toBe(1);
     access.catalog = undefined;
@@ -345,6 +376,23 @@ test("compact picker opens model rows, dedupes recommendations and favorites, an
     await click('[data-testid="model-own-provider"]');
     expect(window.location.hash).toBe("#/workspace/fixture/settings/ai");
     expect(providerSetup).toBe(1);
+    availableOptions = [ownModel, starter];
+    await act(async () => { render(); });
+    await click('[aria-label="Change model"]');
+    expect(document.querySelector('[data-testid="managed-model-picker"]')?.textContent).toContain("No OpenWork models are available.");
+    expect(document.querySelector('[data-testid^="model-option-"]')).toBeNull();
+    expect(document.querySelector('[aria-label="Cycle favorite models"]')).toBeNull();
+    expect(document.querySelector('[data-testid="model-access-label"]')).toBeNull();
+    expect(selected.length).toBe(1);
+    expect(useModelCollectionsStore.getState().favorites).toEqual(favorites);
+    authSpy.mockReturnValue({ status: "signed_out", user: null, verifiedIdentity: null, isSignedIn: false, error: null, refresh: async () => undefined });
+    await act(async () => { render(); });
+    expect(document.querySelector('[data-testid="managed-model-picker"]')?.getAttribute("data-model-scope")).toBe("all");
+    expect(document.querySelector('[data-testid="model-option-opencode-big-pickle"]')?.textContent).toContain("Big Pickle");
+    expect(document.querySelector('[data-testid="managed-model-picker"]')?.textContent).toContain("See all models");
+    expect(localStorage.getItem(MODEL_PREF_KEY)).toBe(storedPreference);
+    await click('[data-testid="model-option-opencode-big-pickle"]');
+    expect(selected[1]).toEqual({ providerID: starter.providerID, modelID: starter.modelID });
   } finally {
     await act(async () => root.unmount());
     host.remove();
@@ -354,7 +402,118 @@ test("compact picker opens model rows, dedupes recommendations and favorites, an
     inferenceSpy.mockRestore();
     useModelCollectionsStore.setState({ favorites: [], recent: [] });
     window.removeEventListener("openwork-open-provider-auth", onProvider);
+    window.removeEventListener("keydown", onGlobalShortcut);
     window.location.hash = "";
+  }
+});
+
+test("full session catalogs contain only hosted models while default/provider settings can still select BYOK", async () => {
+  const inferenceModule = await import("../src/react-app/domains/cloud/inference-access-provider");
+  const { useModelCollectionsStore } = await import("../src/react-app/domains/session/models/model-collections-store");
+  const ownModel = modelOption("fixture-own", "lpr_own", "My own model");
+  const starter = modelOption("big-pickle", "opencode", "Big Pickle");
+  const freeModel = modelOption(FREE_LUNA_MODEL.modelID, "openwork", "Fixture Free");
+  const options = [ownModel, starter, freeModel, modelOption("fixture-paid")];
+  let availableOptions = options;
+  const base: InferenceAccess & { canUpgrade: boolean } = {
+    kind: "free", modelID: freeModel.modelID, weeklyLimitUsd: 1, usedUsd: 0, reservedUsd: 0,
+    remainingUsd: 1, resetsAt: null, reason: null, canUpgrade: true,
+  };
+  let access: (InferenceAccess & { canUpgrade: boolean }) | null = base;
+  let target: "session" | "default" = "session";
+  const selected: ModelRef[] = [];
+  let refreshes = 0;
+  let escapedFavoriteShortcuts = 0;
+  const onGlobalShortcut = (event: KeyboardEvent) => { if (isFavoriteModelShortcut(event)) escapedFavoriteShortcuts++; };
+  window.addEventListener("keydown", onGlobalShortcut);
+  const previousCollections = useModelCollectionsStore.getState();
+  useModelCollectionsStore.setState({ favorites: [ownModel, starter], recent: [starter] });
+  const authSpy = spyOn(auth, "useDenAuth").mockReturnValue({ status: "signed_in", user: null, verifiedIdentity: { principalId: "fixture", organizationId: "fixture" }, isSignedIn: true, error: null, refresh: async () => undefined });
+  const restrictionSpy = spyOn(desktopConfig, "useCheckDesktopRestriction").mockImplementation(() => () => false);
+  const inferenceSpy = spyOn(inferenceModule, "useInferenceAccess").mockImplementation(() => ({
+    access, pickerRequest: null, showUpgrade: () => undefined,
+    checkSelection: (model) => !modelSelectionUpgradeReason(access, model),
+  }));
+  function Picker() {
+    const [query, setQuery] = useState("");
+    return createElement(ModelPickerModal, {
+      open: true, options: availableOptions, target, current: ownModel, query, setQuery,
+      onSelect: (model) => selected.push(model), onClose: () => undefined, onOpenSettings: () => undefined, onBehaviorChange: () => undefined,
+      onRefreshOrganizationModels: async () => { refreshes++; },
+    });
+  }
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const render = () => root.render(createElement(PlatformProvider, { value: createDefaultPlatform(), children: createElement(Picker) }));
+  const search = async (value: string) => {
+    const input = document.querySelector<HTMLInputElement>('[aria-label="Search all models"]');
+    if (!input) throw new Error("Missing full model search");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  try {
+    const kinds: InferenceAccess["kind"][] = ["free", "paid", "exhausted"];
+    for (const kind of kinds) {
+      access = { ...base, kind };
+      await act(async () => { render(); });
+      const picker = document.querySelector('[data-testid="all-models-picker"]');
+      expect(picker?.getAttribute("data-model-scope")).toBe("openwork");
+      expect(picker?.textContent).toContain("Fixture Free");
+      expect(picker?.textContent).not.toContain("Big Pickle");
+      expect(picker?.textContent).not.toContain("My own model");
+      for (const query of ["opencode", "Big Pickle", "lpr_own", "My own model"]) {
+        await search(query);
+        expect(document.querySelector('[data-testid^="model-option-"]')).toBeNull();
+        expect(picker?.textContent).toContain("No OpenWork models match your search.");
+      }
+      await search("");
+      await act(async () => {
+        document.querySelector('[aria-label="Search all models"]')?.dispatchEvent(new KeyboardEvent("keydown", { key: "m", ctrlKey: true, shiftKey: true, bubbles: true }));
+      });
+      expect(escapedFavoriteShortcuts).toBe(0);
+      expect(selected).toEqual([]);
+      expect(useModelCollectionsStore.getState().favorites).toEqual([ownModel, starter]);
+      expect(useModelCollectionsStore.getState().recent).toEqual([starter]);
+    }
+    availableOptions = [ownModel, starter];
+    await act(async () => { render(); });
+    expect(document.querySelector('[data-testid="all-models-picker"]')?.textContent).toContain("No OpenWork models are available. Refresh to try again.");
+    expect(document.querySelector('[data-testid^="model-option-"]')).toBeNull();
+    const refresh = document.querySelector<HTMLButtonElement>('[data-testid="model-catalog-refresh"]');
+    if (!refresh) throw new Error("Missing managed catalog recovery action");
+    await act(async () => refresh.click());
+    expect(refreshes).toBe(1);
+    expect(selected).toEqual([]);
+    availableOptions = options;
+    for (const legacyAccess of [null, { ...base, kind: "unavailable", reason: "free_disabled" } satisfies InferenceAccess]) {
+      access = legacyAccess;
+      await act(async () => { render(); });
+      expect(document.querySelector('[data-testid="all-models-picker"]')?.getAttribute("data-model-scope")).toBe("all");
+      await search("Big Pickle");
+      expect(document.querySelector('[data-testid="model-option-opencode-big-pickle"]')).not.toBeNull();
+      await search("");
+    }
+    target = "default";
+    access = { ...base, kind: "paid" };
+    await act(async () => { render(); });
+    expect(document.querySelector('[data-testid="all-models-picker"]')?.getAttribute("data-model-scope")).toBe("all");
+    await search("My own model");
+    const own = document.querySelector<HTMLButtonElement>('[data-testid="model-option-lpr_own-fixture-own"]');
+    if (!own) throw new Error("Provider settings must still allow selecting connected BYOK models");
+    await act(async () => own.click());
+    expect(selected).toEqual([{ providerID: ownModel.providerID, modelID: ownModel.modelID }]);
+    expect(useModelCollectionsStore.getState().favorites).toEqual([ownModel, starter]);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    authSpy.mockRestore();
+    restrictionSpy.mockRestore();
+    inferenceSpy.mockRestore();
+    useModelCollectionsStore.setState({ favorites: previousCollections.favorites, recent: previousCollections.recent });
+    window.removeEventListener("keydown", onGlobalShortcut);
   }
 });
 

@@ -25,8 +25,9 @@ import type { ModelOption, ModelRef } from "../../../../app/types";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { InferenceAllowanceSummary, OwnProviderAction, useInferenceAccess } from "../../cloud/inference-access-provider";
-import { managedModelAccessLabel, managedModelRecommendation, managedModelRecommendations, markExplicitModelChoice, modelSelectionUpgradeReason } from "@/app/lib/inference-access";
-import { modelRefKey, useModelCollectionsStore } from "../models/model-collections-store";
+import { managedModelAccessLabel, managedModelRecommendation, managedModelRecommendations, markExplicitModelChoice, modelPickerView, modelSelectionUpgradeReason } from "@/app/lib/inference-access";
+import { modelRefKey, nextFavoriteModel, useModelCollectionsStore } from "../models/model-collections-store";
+import { isFavoriteModelShortcut } from "@/react-app/shell/favorite-model-shortcut";
 import { usePlatform } from "../../../kernel/platform";
 import {
   OPENWORK_MODELS_PROVIDER_ID,
@@ -121,7 +122,12 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   const [refreshingOrganizationModels, setRefreshingOrganizationModels] = useState(false);
   const denAuth = useDenAuth();
   const inference = useInferenceAccess();
-  const requested = inference.pickerRequest?.sessionId === props.sessionId ? inference.pickerRequest?.model : undefined;
+  const favorites = useModelCollectionsStore((state) => state.favorites);
+  const { options, managedOnly } = useMemo(() => modelPickerView(props.options, {
+    access: inference.access, signedIn: denAuth.isSignedIn, target: props.target,
+  }), [props.options, inference.access, denAuth.isSignedIn, props.target]);
+  const requested = inference.pickerRequest?.sessionId === props.sessionId
+    && (!managedOnly || inference.pickerRequest?.model.providerID === "openwork") ? inference.pickerRequest?.model : undefined;
   const platform = usePlatform();
   const organizationModelsSettingsUrl = props.organizationModelsSettingsUrl;
   const organizationProviderLabel = useMemo(
@@ -151,8 +157,8 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   // Filter by search
   const filteredOptions = useMemo(() => {
     const q = props.query.trim().toLowerCase();
-    if (!q) return props.options;
-    return props.options.filter((o) => {
+    if (!q) return options;
+    return options.filter((o) => {
       const recommendation = managedModelRecommendation(inference.access, o);
       return (
         o.title.toLowerCase().includes(q) ||
@@ -162,11 +168,11 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
         [recommendation?.displayName, recommendation?.providerName, recommendation?.summary, ...(recommendation?.capabilities ?? [])].some((text) => text?.toLowerCase().includes(q))
       );
     });
-  }, [props.options, props.query, inference.access]);
+  }, [options, props.query, inference.access]);
 
   // Group by provider
   const providerGroups = useMemo<ProviderGroup[]>(() => {
-    const recommendations = managedModelRecommendations(inference.access, props.options);
+    const recommendations = managedModelRecommendations(inference.access, options);
     const ranks = new Map(recommendations.map((option, index) => [modelRefKey(option), index]));
     const map = new Map<string, ProviderGroup>();
     for (const opt of filteredOptions) {
@@ -205,12 +211,12 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
       if (a.hasCurrent !== b.hasCurrent) return a.hasCurrent ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
-  }, [filteredOptions, props.current, props.options, disabledSet, inference.access]);
+  }, [filteredOptions, props.current, options, disabledSet, inference.access]);
 
   // Auto-expand on search
   useEffect(() => {
     if (props.query.trim()) {
-      setExpandedProviders(new Set(providerGroups.map((g) => g.id)));
+      setExpandedProviders((previous) => new Set([...previous, ...providerGroups.map((g) => g.id)]));
     }
   }, [props.query, providerGroups]);
 
@@ -251,7 +257,8 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   }, []);
 
   const handleSelect = (opt: ModelOption) => {
-    if (!inference.checkSelection(opt, props.sessionId, props.options.filter((option) => !disabledSet.has(option.providerID)), props.current)) {
+    if (!options.some((option) => modelEquals(option, opt) && !option.disabled && !disabledSet.has(option.providerID))) return;
+    if (!inference.checkSelection(opt, props.sessionId, options.filter((option) => !disabledSet.has(option.providerID)), props.current)) {
       props.onClose({ restorePromptFocus: false });
       return;
     }
@@ -273,9 +280,9 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   const emptyState = resolveModelPickerEmptyState({
     providerGroupCount: providerGroups.length,
     query: props.query,
-    organizationModelsEmpty: Boolean(props.organizationModelsEmpty),
+    organizationModelsEmpty: Boolean(props.organizationModelsEmpty) || (managedOnly && options.length === 0),
     restrictToCloud: Boolean(props.restrictToCloud),
-    organizationModelsSettingsUrl,
+    organizationModelsSettingsUrl: managedOnly ? undefined : organizationModelsSettingsUrl,
   });
 
   // Escape
@@ -295,13 +302,23 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
         if (!open) props.onClose();
       }}
     >
-      <DialogContent data-testid="all-models-picker" className="flex max-h-[calc(100vh-2rem)] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
+      <DialogContent data-testid="all-models-picker" data-model-scope={managedOnly ? "openwork" : "all"} className="flex max-h-[calc(100vh-2rem)] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg"
+        onKeyDownCapture={(event) => {
+          if (!managedOnly || !isFavoriteModelShortcut(event)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.repeat) return;
+          const next = nextFavoriteModel(favorites.filter((model) => options.some((option) => modelEquals(option, model)
+            && !option.disabled && !disabledSet.has(option.providerID)) && !modelSelectionUpgradeReason(inference.access, model)), props.current);
+          const option = next ? options.find((option) => modelEquals(option, next)) : undefined;
+          if (option) handleSelect(option);
+        }}>
         <DialogHeader>
-          <DialogTitle>{t("models.title")}</DialogTitle>
+          <DialogTitle>{managedOnly ? "OpenWork models" : t("models.title")}</DialogTitle>
           <DialogDescription>
             {resolveModelPickerSubtitle(props.subtitle)}
           </DialogDescription>
-          <InferenceAllowanceSummary available={props.options.some((option) => option.providerID === "openwork")} />
+          <InferenceAllowanceSummary available={options.some((option) => option.providerID === "openwork")} />
           {requested ? <p role="status" className="text-sm text-muted-foreground" data-testid="requested-model-ready">Select {managedModelRecommendation(inference.access, requested)?.displayName ?? requested.title ?? requested.modelID} to use it. Your model and draft are unchanged.</p> : null}
         </DialogHeader>
 
@@ -341,10 +358,13 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             {emptyState ? (
               <div className="space-y-3 rounded-2xl border border-dls-border bg-dls-hover/30 px-4 py-6 text-center">
                 <div className="text-sm text-dls-secondary">
-                  {t(emptyState.messageKey)}
+                  {managedOnly ? props.query.trim()
+                    ? "No OpenWork models match your search."
+                    : "No OpenWork models are available. Refresh to try again."
+                    : t(emptyState.messageKey)}
                 </div>
-                {emptyState.showRefreshOrganizationModels ? (
-                  <Button variant="outline" onClick={() => void handleRefreshOrganizationModels()} disabled={refreshingOrganizationModels}>
+                {emptyState.showRefreshOrganizationModels && props.onRefreshOrganizationModels ? (
+                  <Button data-testid="model-catalog-refresh" variant="outline" onClick={() => void handleRefreshOrganizationModels()} disabled={refreshingOrganizationModels}>
                     <RefreshCw className={`mr-1 size-3 ${refreshingOrganizationModels ? "animate-spin" : ""}`} />
                     {refreshingOrganizationModels ? t("models.refreshing_organization_models") : t("models.refresh_organization_models")}
                   </Button>

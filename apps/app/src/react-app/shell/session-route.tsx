@@ -3734,7 +3734,7 @@ export function SessionRoute() {
           ? MODEL_PICKER_UNAVAILABLE_SUBTITLE
           : undefined
       }
-      target="default"
+      target="session"
       current={
         (modelPickerSessionId ? getSessionModelSelection(modelPickerSessionId)?.model : null)
           ?? local.prefs.defaultModel
