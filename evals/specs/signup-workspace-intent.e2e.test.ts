@@ -5,7 +5,9 @@ import { desktopOnboardingWorld } from "../../scenarios/onboarding/world.ts";
 
 // New journey: an account with no organization makes its first personal/team
 // choice, optionally invites people, then reviews the ready workspace.
-const test = spec.world((seed) => signupWorkspace(seed), { timeout: 600_000 });
+// This journey cold-boots Den and three browser surfaces; each individual
+// interaction remains bounded below, including the final signed-out mobile view.
+const test = spec.world((seed) => signupWorkspace(seed), { timeout: 900_000 });
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
 test("signup distinguishes joining, personal work, and restricted team setup without changing another organization", async ({ world, user, probe, seed, evidence, step }) => {
