@@ -256,16 +256,17 @@ export async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string,
       throw new Error("The session view did not come back on screen.");
     },
 
-    /** Open a page in the built-in browser the way the agent's browser tool does. */
+    /** Arrange a shared human-created page; automation requires a conversation. */
     async openTab(name: string): Promise<BuiltinBrowserTab> {
       const url = `${origin}/?viewport-probe=${encodeURIComponent(name)}`;
-      const result = await control(app, "browser.open_url", { url, provider: "builtin" });
-      if (!isRecord(result)) throw new Error("browser.openUrl returned no handle.");
-      return {
-        tabId: stringField(result.tab_id),
-        targetId: stringField(result.target_id),
-        name,
-      };
+      const { tabId } = await seed.evalIn(app, browserScript((url) => window.__OPENWORK_ELECTRON__.browser.createTab(url, null), [url]));
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        const targets = (await listTargets(app.handle.cdpUrl)).filter((target) => target.type === "page" && target.url === url);
+        if (targets.length === 1) return { tabId, targetId: targets[0].id, name };
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      throw new Error("The shared browser page did not finish opening.");
     },
 
     /** Open a page that reports only whether an HttpOnly session cookie arrived. */
@@ -630,7 +631,7 @@ export async function builtinBrowserWorld(seed: Seed, options: { workspacePath?:
   const app = await seed.desktop({ name: "builtin-browser" });
   const workspace = await seed.workspace(app, options.workspacePath ?? seed.tmpPath("builtin-browser"));
   const session = await seed.session(app, { title: "Browser project" });
-  const info = await seed.evalIn(app, `window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo")`, { awaitPromise: true });
+  const info = await seed.evalIn(app, () => window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo"), { awaitPromise: true });
   if (!info || typeof info !== "object" || !("baseUrl" in info) || typeof info.baseUrl !== "string") throw new Error("The embedded server is unavailable.");
   return { app, workspace, session, origin: info.baseUrl.replace(/\/+$/, "") };
 }

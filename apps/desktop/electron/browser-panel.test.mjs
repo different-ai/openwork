@@ -418,7 +418,7 @@ test("capacity refuses allocation without replacing existing tabs and closing fr
   for (let i = 0; i < limit; i++) invoke("openwork:browser:createTab", "about:blank", `owner-${i}`);
   const before = invoke("openwork:browser:state");
   assert.throws(() => invoke("openwork:browser:createTab", "about:blank", "overflow"), /12 browser tabs open.*Close.*try again/);
-  await assert.rejects(invoke("openwork:browser:openUrl", "https://example.com"), /12 browser tabs open/);
+  await assert.rejects(invoke("openwork:browser:openUrl", "https://example.com", "builtin", { sessionId: "overflow" }), /12 browser tabs open/);
   assert.equal(views().length, limit, "rejection allocates no native view");
   assert.deepEqual(invoke("openwork:browser:state").tabs, before.tabs);
   invoke("openwork:browser:closeTab", before.tabs[0].id);
@@ -458,12 +458,14 @@ test("external target destruction releases owner state and the empty hidden host
   assert.equal(invoke("openwork:browser:state").backgroundWindowCount, 0);
 });
 
-test("failed target discovery rolls back its allocation while another owner's page survives", async () => {
+test("failed navigation rolls back its allocation while another owner's page survives", async (t) => {
   const { invoke, views } = createPanel();
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");
   invoke("openwork:browser:createTab", "about:blank", "A");
+  await flush();
   const before = invoke("openwork:browser:state");
-  await assert.rejects(invoke("openwork:browser:openUrl", "https://example.com", "builtin", { sessionId: "B" }), /Could not resolve/);
+  t.mock.method(navigation, "load", async () => { throw new Error("ERR_UNSAFE_PORT"); });
+  await assert.rejects(invoke("openwork:browser:openUrl", "http://127.0.0.1:1", "builtin", { sessionId: "B" }), { code: "browser_operation_failed" });
   assert.deepEqual(invoke("openwork:browser:state").tabs, before.tabs);
   assert.equal(invoke("openwork:browser:state").backgroundWindowCount, 0);
   assert.equal(views()[1].webContents.isDestroyed(), true);
@@ -878,5 +880,6 @@ test("takeover cancels automation opening during policy and during navigation", 
   finishLoad();
   await flush();
   assert.deepEqual(views()[1].webContents.loads, ["https://a.example/slow"]);
+  assert.equal(views()[1].webContents.isDestroyed(), true, "a canceled open releases its abandoned page");
   assert.ok(invoke("openwork:browser:state").tabs.every((tab) => tab.browserTask.status === "paused"));
 });

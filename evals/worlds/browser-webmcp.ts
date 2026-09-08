@@ -1,4 +1,5 @@
 import { control } from "@openwork/behaviors";
+import { browserScript } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
 import { configureBrowserFixtureModel, startBrowserFixture } from "@openwork/env";
 import type { Den, Seed } from "@openwork/env";
@@ -22,14 +23,14 @@ export async function browserWebMcpWorld(seed: Seed) {
     const origin = fixture.origin;
     await configureBrowserFixtureModel(base.app, workspacePath, origin);
     const enginePath = `/workspace/${base.workspace.workspaceId}/opencode`;
-    await seed.evalIn(base.app, `async function (disposePath) {
+    await seed.evalIn(base.app, browserScript(async (disposePath) => {
       const info = await window.__OPENWORK_ELECTRON__.invokeDesktop('openworkServerInfo');
       const response = await fetch(info.baseUrl + disposePath, {
         method: 'POST', headers: { Authorization: 'Bearer ' + info.clientToken },
         signal: AbortSignal.timeout(30000),
       });
       if (!response.ok) throw new Error('Fixture model reload failed');
-    }`, { args: [`${enginePath}/instance/dispose`], awaitPromise: true, timeoutMs: 35_000 });
+    }, [`${enginePath}/instance/dispose`]), { awaitPromise: true, timeoutMs: 35_000 });
     const tab = browserTabHandle(await control(base.app, "browser.open_url", { url: `${origin}/`, provider: "builtin" }));
     const site = stack.use(await attachBuiltinTab(base.app, tab.targetId));
     return { ...base, origin, enginePath, tab, site, async [Symbol.asyncDispose]() { await stack.disposeAsync(); } };
@@ -49,9 +50,9 @@ export async function setBrowserPolicy(seed: Seed, app: Surface, den: Den, origi
     method: "PATCH", body: JSON.stringify({ policyName: current.policyName, policy }),
   });
   if (!patched.response.ok) throw new Error("The organization rejected its browser policy update.");
-  await seed.evalIn(app, `window.dispatchEvent(new Event('openwork-den-settings-changed'))`);
+  await seed.evalIn(app, () => window.dispatchEvent(new Event('openwork-den-settings-changed')));
 }
 
 export async function setBrowserEnabled(seed: Seed, app: Surface, enabled: boolean) {
-  await seed.evalIn(app, `window.__OPENWORK_ELECTRON__.browser.setControlEnabled(${JSON.stringify(enabled)})`, { awaitPromise: true });
+  await seed.evalIn(app, browserScript((enabled) => window.__OPENWORK_ELECTRON__.browser.setControlEnabled(enabled), [enabled]), { awaitPromise: true });
 }

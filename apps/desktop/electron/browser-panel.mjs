@@ -749,7 +749,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     // Check synchronously before creating a WebContentsView, including pending
     // opens, popups, transcript links and the tab-strip button.
     if (browserTabs.size >= MAX_BROWSER_TABS) {
-      throw new Error(`OpenWork has ${MAX_BROWSER_TABS} browser tabs open. Close an unused browser tab in any conversation, then try again.`);
+      throw new BrowserTaskError("tab_limit", `OpenWork has ${MAX_BROWSER_TABS} browser tabs open. Close an unused browser tab in any conversation, then try again.`);
     }
     if (!restoreTabId && registry.size() >= 100) throw new Error("OpenWork has 100 saved browser tabs. Close an unused tab, then try again.");
     installBrowserSessionHooks();

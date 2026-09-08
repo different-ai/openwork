@@ -178,7 +178,7 @@ lifecycleTest("repeated refused navigations leave no allocated page or hidden ho
       // Chromium refuses this loopback port without depending on DNS or a server.
       const ownerSessionId = attempt === 1 ? reading.sessionId : researching.sessionId;
       await expect(world.openTabAs(`refused-${attempt}`, ownerSessionId, "http://127.0.0.1:1"))
-        .rejects.toThrow(/ERR_UNSAFE_PORT/);
+        .rejects.toThrow(/Browser operation could not finish/);
       await eventually(async () => {
         const state = await world.readBrowserState();
         expect(state.tabs).toEqual(baseline.tabs);

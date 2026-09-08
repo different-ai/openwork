@@ -24,8 +24,10 @@ declare global {
       };
       invokeDesktop<C extends DesktopCommandName>(command: C, ...args: DesktopCommandArgs<C>): Promise<DesktopCommandResult<C>>;
       browser: {
-        openUrl(url: string, options?: { sessionId?: string | null }): Promise<{ tabId: string; [key: string]: unknown }>;
-        getState(): Promise<unknown>;
+        openUrl(url: string, provider?: string, options?: { sessionId?: string | null }): Promise<{ tab_id: string; target_id: string; [key: string]: unknown }>;
+        createTab(url?: string, sessionId?: string | null): Promise<{ tabId: string }>;
+        getState(): Promise<{ activeTabId: string | null; tabs: Array<{ id: string; url: string; ownerSessionId: string | null }>; [key: string]: unknown }>;
+        setControlEnabled(enabled: boolean): Promise<boolean>;
         [key: string]: unknown;
       };
       updater: {

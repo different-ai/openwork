@@ -84,7 +84,7 @@ export function parseBrowserTaskReply(value: unknown): BrowserTaskReply {
 
 /** Read only the native state, never focus, attach, or select a browser view. */
 export async function readBrowserState(app: Surface): Promise<BrowserState> {
-  const value = await evaluateOnSurface(app, "window.__OPENWORK_ELECTRON__.browser.getState()", { awaitPromise: true });
+  const value = await evaluateOnSurface(app, () => window.__OPENWORK_ELECTRON__.browser.getState(), { awaitPromise: true });
   if (!record(value) || !Array.isArray(value.tabs) || !Array.isArray(value.nativeViews)
     || typeof value.visibleWindowCount !== "number" || typeof value.backgroundWindowVisible !== "boolean") throw new Error("Missing native browser state.");
   return {
@@ -112,7 +112,7 @@ export async function readBrowserTabMetrics(app: Surface, targetId: string): Pro
   if (!target) throw new Error("The exact browser tab target is no longer available.");
   const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
   try {
-    const value = await evaluate(client, "({width:innerWidth,height:innerHeight,hasFocus:document.hasFocus()})");
+    const value = await evaluate(client, () => ({ width: innerWidth, height: innerHeight, hasFocus: document.hasFocus() }));
     if (!record(value) || typeof value.width !== "number" || typeof value.height !== "number" || typeof value.hasFocus !== "boolean") throw new Error("Invalid browser metrics.");
     return { width: value.width, height: value.height, hasFocus: value.hasFocus };
   } finally { client.close(); }
