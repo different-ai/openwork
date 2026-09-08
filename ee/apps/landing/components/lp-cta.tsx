@@ -1,3 +1,5 @@
+import { DownloadLink } from "./download-link";
+
 type CtaLink = {
   label: string;
   href: string;
@@ -30,9 +32,11 @@ export function LpCta({
       </div>
       <div className="flex shrink-0 flex-col items-start gap-3 md:items-end">
         <div className="flex flex-col gap-3 sm:flex-row">
-          <a href={primary.href} className="lp-pill-primary">
-            {primary.label}
-          </a>
+          {primary.href === "/download" ? (
+            <DownloadLink className="lp-pill-primary">{primary.label}</DownloadLink>
+          ) : (
+            <a href={primary.href} className="lp-pill-primary">{primary.label}</a>
+          )}
           <a href={secondary.href} className="lp-pill-secondary">
             {secondary.label}
           </a>

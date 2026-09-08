@@ -150,8 +150,8 @@ export const getGithubData = async () => {
   const exe = selectAsset(windowsAssets, [".exe"], ["openwork-win-"]);
   const macosApple = selectAsset(assets, [".dmg"], ["mac-arm64"]);
   const macosIntel = selectAsset(assets, [".dmg"], ["mac-x64"]);
-  const windowsX64 =
-    selectAsset(windowsAssets, [".exe"], ["win-x64"]) || exe;
+  const macosUniversal = selectAsset(assets, [".dmg"], ["mac-universal"]);
+  const windowsX64 = selectAsset(windowsAssets, [".exe"], ["win-x64"]);
   const windowsArm64 = selectAsset(windowsAssets, [".exe"], ["win-arm64"]);
 
   const linuxAppImageX64 =
@@ -175,8 +175,8 @@ export const getGithubData = async () => {
     },
     installers: {
       macos: {
-        appleSilicon: macosApple?.browser_download_url || dmg?.browser_download_url || releaseUrl,
-        intel: macosIntel?.browser_download_url || dmg?.browser_download_url || releaseUrl
+        appleSilicon: macosApple?.browser_download_url || macosUniversal?.browser_download_url || releaseUrl,
+        intel: macosIntel?.browser_download_url || macosUniversal?.browser_download_url || releaseUrl
       },
       windows: {
         x64: windowsX64?.browser_download_url || windowsReleaseUrl,

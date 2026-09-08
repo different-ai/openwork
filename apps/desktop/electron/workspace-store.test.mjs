@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, realpath, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, realpath, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -93,6 +93,9 @@ test("recovers missing desktop workspace state from token store paths", async ()
     assert.equal(state.selectedId, state.workspaces[0].id);
     assert.equal(state.watchedId, state.workspaces[0].id);
 
+    await store.bootstrapFirstLaunchWorkspace();
+    assert.deepEqual((await store.readWorkspaceState()).workspaces, state.workspaces);
+
     const persisted = JSON.parse(await readFile(path.join(userData, "openwork-workspaces.json"), "utf8"));
     assert.equal(persisted.workspaces.length, 1);
     assert.equal(persisted.selectedWorkspaceId, state.workspaces[0].id);
@@ -170,6 +173,8 @@ test("keeps persisted empty desktop workspace state authoritative", async () => 
     const state = await store.readWorkspaceState();
     assert.deepEqual(state.workspaces, []);
     assert.equal(state.selectedId, "");
+    await store.bootstrapFirstLaunchWorkspace();
+    assert.deepEqual((await store.readWorkspaceState()).workspaces, []);
   } finally {
     restoreEnv("OPENWORK_SERVER_CONFIG", previous);
   }
@@ -215,7 +220,7 @@ test("prefers server config workspaces when desktop state is missing", async () 
   }
 });
 
-test("does not create a default workspace when desktop state is absent", async () => {
+test("first-launch bootstrap creates and selects the chat folder, but ordinary reads do not", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
   const userData = path.join(root, "userData");
   const previousDevMode = process.env.OPENWORK_DEV_MODE;
@@ -232,11 +237,88 @@ test("does not create a default workspace when desktop state is absent", async (
 
     const state = await store.readWorkspaceState();
     assert.equal(state.workspaces.length, 0);
-    await assert.rejects(readFile(path.join(userData, "openwork-dev-data", "home", "OpenWork", ".opencode", "openwork.json"), "utf8"));
+    await assert.rejects(readFile(path.join(userData, "openwork-dev-data", "home", "OpenWork Chat", ".opencode", "openwork.json"), "utf8"));
+
+    await store.bootstrapFirstLaunchWorkspace();
+    const created = await store.readWorkspaceState();
+    const folder = path.join(userData, "openwork-dev-data", "home", "OpenWork Chat");
+    assert.equal(created.workspaces.length, 1);
+    assert.equal(created.workspaces[0].path, folder);
+    assert.equal(created.workspaces[0].workspaceType, "local");
+    assert.equal(created.selectedId, created.workspaces[0].id);
+    assert.equal(created.watchedId, created.selectedId);
+    assert.equal(created.activeId, created.selectedId);
+    const config = await store.readWorkspaceOpenworkConfig(folder);
+    assert.deepEqual(config.authorizedRoots, [folder]);
+    assert.equal(config.workspace.preset, "starter");
+    await store.bootstrapFirstLaunchWorkspace();
+    assert.deepEqual(await store.readWorkspaceState(), created);
   } finally {
     restoreEnv("OPENWORK_DEV_MODE", previousDevMode);
     restoreEnv("OPENWORK_SERVER_CONFIG", previousServerConfig);
   }
+});
+
+test("first-launch bootstrap preserves existing folders and their model configuration", async () => {
+  await withIsolatedBootstrapStore(async ({ store, root }) => {
+    const folder = path.join(root, "home", "OpenWork Chat");
+    const config = { version: 1, authorizedRoots: [folder], workspace: { name: "Existing chat" } };
+    await store.writeWorkspaceOpenworkConfig(folder, config);
+    const modelConfigPath = path.join(folder, "opencode.json");
+    const modelConfig = JSON.stringify({ model: "existing-provider/existing-model" });
+    await writeFile(modelConfigPath, modelConfig, "utf8");
+
+    await store.bootstrapFirstLaunchWorkspace();
+    assert.equal((await store.readWorkspaceState()).workspaces[0].path, await realpath(folder));
+    assert.deepEqual(await store.readWorkspaceOpenworkConfig(folder), config);
+    assert.equal(await readFile(modelConfigPath, "utf8"), modelConfig);
+  });
+});
+
+test("a blocked default folder reports the error and allows a different authorized workspace", async () => {
+  await withIsolatedBootstrapStore(async ({ store, root }) => {
+    const folder = path.join(root, "home", "OpenWork Chat");
+    await mkdir(path.dirname(folder), { recursive: true });
+    await writeFile(folder, "keep this file", "utf8");
+
+    const failure = await store.bootstrapFirstLaunchWorkspace();
+    assert.equal(failure.folderPath, await realpath(folder));
+    assert.match(failure.error, /EEXIST|ENOTDIR/);
+    assert.deepEqual((await store.readWorkspaceState()).workspaces, []);
+    assert.equal(await readFile(folder, "utf8"), "keep this file");
+
+    const alternate = path.join(root, "another-folder");
+    const created = await store.createWorkspace({ folderPath: alternate });
+    assert.equal(created.workspaces.length, 1);
+    assert.equal(created.selectedId, created.workspaces[0].id);
+    assert.deepEqual((await store.readWorkspaceOpenworkConfig(alternate)).authorizedRoots, [alternate]);
+  });
+});
+
+test("a non-writable default folder reports a recoverable permission error", {
+  skip: process.platform === "win32" || process.getuid?.() === 0,
+}, async () => {
+  await withIsolatedBootstrapStore(async ({ store, root }) => {
+    const folder = path.join(root, "home", "OpenWork Chat");
+    await mkdir(folder, { recursive: true });
+    await chmod(folder, 0o500);
+    try {
+      const failure = await store.bootstrapFirstLaunchWorkspace();
+      assert.equal(failure.folderPath, await realpath(folder));
+      assert.match(failure.error, /EACCES|EPERM/);
+      assert.deepEqual((await store.readWorkspaceState()).workspaces, []);
+    } finally {
+      await chmod(folder, 0o700);
+    }
+  });
+});
+
+test("first-launch bootstrap does not hide workspace registry failures", async () => {
+  await withIsolatedBootstrapStore(async ({ store, userDataPath }) => {
+    await writeFile(userDataPath, "not a registry directory", "utf8");
+    await assert.rejects(store.bootstrapFirstLaunchWorkspace(), { code: "EEXIST" });
+    assert.equal(await readFile(userDataPath, "utf8"), "not a registry directory");
+  });
 });
 
 test("normalizes recovered remote OpenWork entries before persisting", async () => {

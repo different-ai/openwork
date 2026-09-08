@@ -22,7 +22,6 @@ import { SiteNav } from "./site-nav";
 
 type Props = {
   stars: string;
-  downloadHref: string;
   calUrl: string;
 };
 
@@ -118,7 +117,6 @@ export function LandingEnterprise(props: Props) {
         <SiteNav
           stars={props.stars}
           callUrl={props.calUrl}
-          downloadHref={props.downloadHref}
           active="enterprise"
         />
 

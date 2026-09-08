@@ -83,7 +83,6 @@ export default async function PricingPage() {
           <SiteNav
             stars={github.stars}
             callUrl={callUrl}
-            downloadHref={github.downloads.macos}
             active="pricing"
           />
         </div>

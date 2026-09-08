@@ -31,6 +31,30 @@ export interface Located {
   covering: { tag: string; text: string; role: string } | null;
 }
 
+/** Read-only DOM geometry and focus; deliberately excludes input values and attributes. */
+export async function readDom(surface: Surface, selector: string) {
+  const snapshot = await callFunctionOnSurface(surface, (selector) => ({
+    viewportWidth: document.documentElement.clientWidth,
+    documentWidth: document.documentElement.scrollWidth,
+    elements: Array.from(document.querySelectorAll(selector), (element) => {
+      const { left, right, top, bottom, width, height } = element.getBoundingClientRect();
+      return {
+        tag: element.tagName.toLowerCase(),
+        text: element.textContent?.trim() ?? "",
+        focused: element === document.activeElement,
+        rect: { left, right, top, bottom, width, height },
+      };
+    }),
+  }), [selector]);
+  if (!snapshot || !Number.isFinite(snapshot.viewportWidth) || !Number.isFinite(snapshot.documentWidth)
+    || !Array.isArray(snapshot.elements) || !snapshot.elements.every((element) => element
+      && typeof element.tag === "string" && typeof element.text === "string" && typeof element.focused === "boolean"
+      && element.rect && [element.rect.left, element.rect.right, element.rect.top, element.rect.bottom, element.rect.width, element.rect.height].every(Number.isFinite))) {
+    throw new Error("DOM inspection returned an invalid snapshot.");
+  }
+  return snapshot;
+}
+
 interface SerializedMatcher {
   kind: "string" | "regexp";
   value: string;

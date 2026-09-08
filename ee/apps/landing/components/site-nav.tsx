@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Menu, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { OpenWorkMark } from "./openwork-mark";
+import { DownloadLink } from "./download-link";
 
 type ActivePage =
   | "home"
@@ -19,7 +20,6 @@ type ActivePage =
 type Props = {
   stars: string;
   callUrl?: string;
-  downloadHref?: string;
   mobilePrimaryHref?: string;
   mobilePrimaryLabel?: string;
   active?: ActivePage;
@@ -48,8 +48,6 @@ export function SiteNav(props: Props) {
   const mobilePrimaryLabel = props.mobilePrimaryLabel || "Get Started for free";
   const callExternal = /^https?:\/\//.test(callHref);
   const mobilePrimaryExternal = /^https?:\/\//.test(mobilePrimaryHref);
-  const downloadHref = props.downloadHref || "/download";
-  const downloadExternal = /^https?:\/\//.test(downloadHref);
   const navItems: NavItem[] = [
     { href: "/#product", label: "Product", key: "home" },
     { href: "/connect", label: "Connect", key: "connect" },
@@ -113,14 +111,11 @@ export function SiteNav(props: Props) {
               </svg>
               {props.stars}
             </a>
-            <a
-              href={downloadHref}
-              target={downloadExternal ? "_blank" : undefined}
-              rel={downloadExternal ? "noreferrer" : undefined}
+            <DownloadLink
               className="lp-pill-primary lp-pill-sm !hidden lg:!inline-flex"
             >
               Download
-            </a>
+            </DownloadLink>
             <button
               type="button"
               className="rounded-full p-2 text-[#011627] transition-colors hover:bg-white/70 lg:hidden"

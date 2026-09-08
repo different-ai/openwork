@@ -32,7 +32,7 @@ export default async function StarterSuccessPage() {
 
   return (
     <div className="min-h-screen">
-      <SiteNav stars={github.stars} downloadHref={github.downloads.macos} />
+      <SiteNav stars={github.stars} />
 
       <main className="pb-24 pt-20">
         <div className="content-max-width px-6">

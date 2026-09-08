@@ -9,18 +9,25 @@ test("app boots with a control route and meaningful visible content", async ({ w
   expect((await probe.text()).trim().length).toBeGreaterThan(40);
   if (world.packaged) {
     expect(await world.packagedRuntime()).toEqual({
-      bridge: true, protocol: "file:", health: 200, welcome: true, crash: false,
+      bridge: true, protocol: "file:", health: 200, emptySession: true, signedOut: true, onboarding: false, crash: false,
     });
+    await user.see("composer", { editable: true, text: "" });
+    await user.see("Run task");
+    const workspaceId = /^#\/workspace\/([^/]+)\/session$/.exec(await probe.hash())?.[1];
+    if (!workspaceId) throw new Error("The packaged app did not open its empty workspace route.");
+    const sessions = await probe.desktopApi(`/workspace/${workspaceId}/opencode/session`);
+    expect(sessions.status).toBe(200);
+    expect(sessions.body).toEqual([]);
     const tools = await world.packagedToolIds();
     expect(tools).toEqual(expect.arrayContaining(["openwork_docs_search", "openwork_query"]));
     evidence.recordAssertionEvidence(
       "The packaged engine loads OpenWork Connect canary tools",
-      "A workspace created through the packaged embedded server exposes openwork_docs_search and openwork_query through the real engine tool registry. The engine resolves the shipped plugins outside app.asar without repository dependencies.",
+      "The automatically selected default workspace exposes openwork_docs_search and openwork_query through the real engine tool registry without test-driven workspace creation or engine startup. The engine resolves the shipped plugins outside app.asar without repository dependencies.",
       true,
     );
     evidence.recordAssertionEvidence(
       "The packaged desktop loads its renderer, preload bridge, and embedded server without a development server",
-      "The installed-layout binary reached an interactive welcome screen through file: assets; a preload IPC round trip returned its embedded server endpoint and HTTP health returned 200. No crash screen was present. The host used a fresh isolated profile.",
+      "The installed-layout binary opened an empty editable session through file: assets, signed out and without onboarding gates or a blank session. A preload IPC round trip returned its embedded server endpoint and HTTP health returned 200. No crash screen was present. The host used a fresh isolated profile.",
       true,
     );
   } else {

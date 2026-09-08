@@ -26,7 +26,6 @@ import { createClient, unwrap } from "@/app/lib/opencode";
 import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
 import { getNativeSession } from "@/app/lib/opencode-session-native";
 import { createOpenworkServerClient, OpenworkServerError, type OpenworkServerClient } from "@/app/lib/openwork-server";
-import { readDenBootstrapConfig } from "@/app/lib/den";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import type { WorkspaceConnectionState } from "@/app/types";
@@ -950,18 +949,15 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     workspaces,
   ]);
 
-  // Redirect to /welcome when no workspaces exist and the user hasn't
-  // completed onboarding. Desktop only does this for the default hosted
-  // bootstrap; org-bound desktops should keep their sign-in gate instead.
+  // Desktop starts in the normal task UI; deployment sign-in and activation
+  // gates are owned by the app root. Keep the non-desktop welcome path.
   useEffect(() => {
+    if (isDesktopRuntime()) return;
     if (loading) return;
     if (workspaces.length > 0) return;
     if (local.prefs.hasCompletedOnboarding) return;
     if (denAuth.status === "checking") return;
     if (denAuth.isSignedIn) return;
-    if (isDesktopRuntime()) {
-      if (readDenBootstrapConfig().source !== "default") return;
-    }
     navigate("/welcome", { replace: true });
   }, [denAuth.isSignedIn, denAuth.status, loading, local.prefs.hasCompletedOnboarding, navigate, workspaces.length]);
 

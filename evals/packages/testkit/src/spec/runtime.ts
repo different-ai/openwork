@@ -21,6 +21,7 @@ import {
   evaluateOnSurface,
   hoverAt,
   locate,
+  readDom,
   assertAbsent,
   navigate,
   pressKey,
@@ -864,6 +865,11 @@ export class ProbeChannel implements Probe {
 
   on(surface: Surface): Probe {
     return new ProbeChannel(this.#runtime, surface);
+  }
+
+  dom(selector: string) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "dom", `dom(${JSON.stringify(redacted(selector))})`, surface, () => readDom(surface, selector));
   }
 
   text(): Promise<string> {

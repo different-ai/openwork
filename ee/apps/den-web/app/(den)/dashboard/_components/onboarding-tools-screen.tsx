@@ -30,6 +30,7 @@ export function OnboardingToolsScreen() {
 function ToolsForm() {
   const router = useRouter();
   const { orgSlug } = useOrgDashboard();
+  const { desktopAuthRequested } = useDenFlow();
   const presetsQuery = useMcpConnectionPresets();
   const connectionsQuery = useMcpConnections("manageable");
   const createConnection = useCreateMcpConnection();
@@ -96,7 +97,7 @@ function ToolsForm() {
   function continueSetup() {
     if (addingRef.current) return;
     const intent = normalizeAuthIntentParam(window.sessionStorage.getItem(PENDING_AUTH_INTENT_STORAGE_KEY));
-    if (intent === "models") {
+    if (intent === "models" && !desktopAuthRequested) {
       window.sessionStorage.removeItem(PENDING_AUTH_INTENT_STORAGE_KEY);
       router.push(getInferenceRoute(orgSlug));
       return;

@@ -82,7 +82,6 @@ export default async function GlmLanding() {
       <StructuredData data={glmSchema} />
       <SiteNav
         stars={github.stars}
-        downloadHref={github.downloads.macos}
       />
 
       <main className="pb-24 pt-20">

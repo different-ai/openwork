@@ -920,6 +920,29 @@ export function createWorkspaceStore({
     return writeWorkspaceState(next);
   }
 
+  async function bootstrapFirstLaunchWorkspace() {
+    const state = await readWorkspaceState();
+    // Recovery and an explicitly saved empty list both take precedence.
+    if (state.workspaces.length > 0 || existsSync(workspaceStatePath())) return null;
+    const home = process.env.OPENWORK_DEV_MODE === "1" && process.env.OPENWORK_DEV_SHARED_STATE !== "1"
+      ? path.join(app.getPath("userData"), "openwork-dev-data", "home")
+      : os.homedir();
+    const folderPath = await normalizeLocalWorkspacePath(path.join(home, "OpenWork Chat"));
+    try {
+      await createWorkspace({ folderPath });
+      return null;
+    } catch (error) {
+      // A blocked default folder is recoverable by choosing another folder.
+      // Never hide registry writes or unexpected initialization failures.
+      if (
+        !["EEXIST", "ENOTDIR", "EACCES", "EPERM", "EROFS"].includes(error?.code)
+        || typeof error.path !== "string"
+        || (error.path !== folderPath && !error.path.startsWith(`${folderPath}${path.sep}`))
+      ) throw error;
+      return { folderPath, error: error.message };
+    }
+  }
+
   async function listLocalWorkspacePaths() {
     return (await readWorkspaceState())
       .workspaces
@@ -977,7 +1000,9 @@ export function createWorkspaceStore({
       workspaceType: "local",
     });
     await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
-    await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath, preset));
+    if (!(await pathExists(path.join(folderPath, ".opencode", "openwork.json")))) {
+      await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath, preset));
+    }
 
     return mutateWorkspaceState((state) => {
       const key = workspacePathKey(workspace);
@@ -1224,6 +1249,7 @@ export function createWorkspaceStore({
 
   return {
     addAuthorizedRoot,
+    bootstrapFirstLaunchWorkspace,
     createRemoteWorkspace,
     createWorkspace,
     clearDesktopBootstrapConfig,
