@@ -421,20 +421,34 @@ test("workspace New task is instantly typable and every v1 send paints before en
             label: "the first lazy session remains selected after reload",
             until: (sessionId) => sessionId === createdSessionId,
           });
-          await faults.resume();
-          const reloaded = await visibleFacts(scenario.marker);
-          const afterReloadRequests = readFaults();
+          const reloadedState = await probe.eventually(async () => {
+            const [reloaded, visibleUser, visibleReply] = await Promise.all([
+              visibleFacts(scenario.marker),
+              world.visibleMessageFacts(createdSessionId, "user", scenario.marker),
+              world.visibleMessageFacts(createdSessionId, "assistant", scenario.reply),
+            ]);
+            return { reloaded, visibleUser, visibleReply };
+          }, {
+            within: 30_000,
+            label: `reloaded v1 transcript ${createdSessionId} renders its user and reply rows`,
+            until: ({ reloaded, visibleUser, visibleReply }) => reloaded.rowCount > 0
+              && reloaded.markerOccurrences > 0
+              && visibleUser.rowCount > 0 && visibleUser.markerOccurrences > 0
+              && visibleReply.rowCount > 0 && visibleReply.markerOccurrences > 0,
+          });
+          const { reloaded } = reloadedState;
           const reloadedBackend = await probe.eventually(() => world.messageFacts(createdSessionId, scenario.marker), {
             within: 30_000,
             label: `reloaded v1 transcript ${createdSessionId} is readable with exactly one marker`,
             until: (facts) => facts.markerCount === 1 && facts.markerOccurrences === 1,
           });
+          const afterReloadRequests = readFaults();
           const afterReload = {
             providerRequestCount: await world.providerRequestCount(scenario.marker),
             sessionIds: await world.sessionIds(),
             nativeReply: await world.messageFacts(createdSessionId, scenario.reply),
-            visibleUser: await world.visibleMessageFacts(createdSessionId, "user", scenario.marker),
-            visibleReply: await world.visibleMessageFacts(createdSessionId, "assistant", scenario.reply),
+            visibleUser: reloadedState.visibleUser,
+            visibleReply: reloadedState.visibleReply,
           };
           negatives.exactAfterReload = reloaded.rowCount === 1
             && reloaded.markerOccurrences === 1
@@ -451,6 +465,15 @@ test("workspace New task is instantly typable and every v1 send paints before en
             && afterReload.nativeReply.markerCount === 1 && afterReload.nativeReply.markerOccurrences === 1
             && afterReload.visibleUser.rowCount === 1 && afterReload.visibleUser.markerOccurrences === 1
             && afterReload.visibleReply.rowCount === 1 && afterReload.visibleReply.markerOccurrences === 1;
+          evidence.recordJsonArtifact("First reload proof", {
+            visibleUserCount: afterReload.visibleUser.rowCount,
+            visibleReplyCount: afterReload.visibleReply.rowCount,
+            providerCountBefore: beforeReload.providerRequestCount,
+            providerCountAfter: afterReload.providerRequestCount,
+            providerCountEqual: afterReload.providerRequestCount === beforeReload.providerRequestCount,
+            inventoryEqual: JSON.stringify(afterReload.sessionIds) === JSON.stringify(beforeReload.sessionIds),
+          });
+          await faults.resume();
         }
       }
     });
@@ -739,6 +762,7 @@ test("workspace New task is instantly typable and every v1 send paints before en
     await step("navigation while a send is held cannot leak, clear the next draft, navigate late, or steal focus", async () => {
       await openSession(world.existing);
       await user.type({ placeholder: "Describe your task..." }, world.navigation.marker, { replace: true, verify: true });
+      await accessibleRunTask(world.navigation.marker, "the navigation payload has an enabled Run task control before Enter");
       const requestsBefore = readFaults();
       const promptGate = faults.holdNext("prompt", "request");
       const rowObserver = await world.observeRenderer("user-row", world.navigation.marker);
@@ -779,6 +803,7 @@ test("workspace New task is instantly typable and every v1 send paints before en
     await step("a separately held real response reconciles from SSE without duplicate rows", async () => {
       await openSession(world.existing);
       await user.type({ placeholder: "Describe your task..." }, world.responseHold.marker, { replace: true, verify: true });
+      await accessibleRunTask(world.responseHold.marker, "the response-held payload has an enabled Run task control before Enter");
       const inventoryBefore = await world.sessionIds();
       const requestsBefore = readFaults();
       const responseGate = faults.holdNext("prompt", "response");
@@ -819,12 +844,57 @@ test("workspace New task is instantly typable and every v1 send paints before en
         label: "response-stage session remains selected after reload",
         until: (sessionId) => sessionId === world.existing.sessionId,
       });
-      await faults.resume();
-      const afterReload = await probe.eventually(() => visibleFacts(world.responseHold.marker), {
-        within: 30_000,
-        label: "reloaded SSE-reconciled row remains exactly once",
-        until: (facts) => facts.rowCount > 0 && facts.markerOccurrences > 0,
-      });
+      let finalReloadDiagnostic: unknown = null;
+      let finalReloadPolls = 0;
+      const finalReloadStartedAt = Date.now();
+      const afterReloadState = await (async () => {
+        try {
+          return await probe.eventually(async () => {
+            finalReloadPolls += 1;
+            const [renderedUser, native, exactNonUtilityModelInvocations] = await Promise.all([
+              world.visibleMessageFacts(world.existing.sessionId, "user", world.responseHold.marker),
+              world.messageFacts(world.existing.sessionId, world.responseHold.marker, world.responseHold.reply),
+              world.providerRequestCount(world.responseHold.marker),
+            ]);
+            const interceptorState = faults.read();
+            const responseGateState = responseGate.read();
+            finalReloadDiagnostic = {
+              elapsedMs: Date.now() - finalReloadStartedAt,
+              polls: finalReloadPolls,
+              native: native.diagnostic,
+              renderedUser: {
+                total: renderedUser.totalRowCount,
+                viewport: renderedUser.rowCount,
+                offscreen: renderedUser.offscreenRowCount,
+                surfaces: renderedUser.surfaceCount,
+                visibleSurfaces: renderedUser.visibleSurfaceCount,
+              },
+              labels: { loaders: renderedUser.loaderLabels, errors: renderedUser.errorLabels },
+              browserNetwork: renderedUser.network,
+              exactNonUtilityModelInvocations,
+              interceptor: {
+                enabled: interceptorState.enabled,
+                creationRequests: interceptorState.creation,
+                promptRequests: interceptorState.prompt,
+                activeGateCount: interceptorState.activeGateCount,
+                activeHeldRequestCount: interceptorState.activeHeldRequestCount,
+                gateHeldCount: responseGateState.held,
+                activeHeldCount: responseGateState.released ? 0 : responseGateState.held,
+                gateReleased: responseGateState.released,
+              },
+            };
+            return { renderedUser };
+          }, {
+            within: 30_000,
+            label: "reloaded SSE-reconciled row remains exactly once",
+            until: (state) => state.renderedUser.rowCount > 0 && state.renderedUser.markerOccurrences > 0,
+          });
+        } catch (error) {
+          evidence.recordJsonArtifact("Final reload diagnostic", finalReloadDiagnostic ?? { capture: "unavailable" });
+          throw error;
+        }
+      })();
+      const afterReload = afterReloadState.renderedUser;
       const backend = await world.messageFacts(world.existing.sessionId, world.responseHold.marker);
       const replyBackend = await world.messageFacts(world.existing.sessionId, world.responseHold.reply);
       const afterReloadProof = {
@@ -852,6 +922,7 @@ test("workspace New task is instantly typable and every v1 send paints before en
         && requestsAfter.prompt - requestsBefore.prompt === 1
         && requestsAfter.creation === requestsBefore.creation
         && JSON.stringify(await world.sessionIds()) === JSON.stringify(inventoryBefore);
+      if (negatives.responseSseReconciliation) await faults.resume();
     });
 
     const expandedAfter = await expanded();

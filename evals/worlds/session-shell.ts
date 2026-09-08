@@ -218,10 +218,14 @@ const INSTANT_BOUNDARY_REJECTION_MESSAGE = "The request was rejected before admi
 async function instantBoundaryController(app: Surface, workspaceId: string) {
   const endpoint = app.client.webSocketDebuggerUrl;
   if (!endpoint) throw new Error("Instant-send boundary observer requires the desktop CDP endpoint");
-  const baseUrl = await evaluate(app.client, async () => {
+  const runtime = await evaluate(app.client, async () => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-    return info?.running && info.baseUrl ? String(info.baseUrl) : "";
+    return {
+      baseUrl: info?.running && info.baseUrl ? String(info.baseUrl) : "",
+      rendererOrigin: window.location.origin,
+    };
   }, { awaitPromise: true });
+  const { baseUrl, rendererOrigin } = runtime;
   if (typeof baseUrl !== "string" || !baseUrl) throw new Error("OpenWork server URL was unavailable to the boundary observer");
   const origin = new URL(baseUrl).origin;
   const encodedWorkspaceId = encodeURIComponent(workspaceId);
@@ -277,8 +281,13 @@ async function instantBoundaryController(app: Surface, workspaceId: string) {
           requestId,
           responseCode: 400,
           responsePhrase: "Bad Request",
-          responseHeaders: [{ name: "Content-Type", value: "application/json" }],
-          body: Buffer.from(JSON.stringify({ error: { message: INSTANT_BOUNDARY_REJECTION_MESSAGE } }), "utf8").toString("base64"),
+          responseHeaders: [
+            { name: "Content-Type", value: "application/json" },
+            { name: "Access-Control-Allow-Origin", value: rendererOrigin },
+            { name: "Access-Control-Allow-Credentials", value: "true" },
+            { name: "Vary", value: "Origin" },
+          ],
+          body: Buffer.from(JSON.stringify(INSTANT_BOUNDARY_REJECTION_MESSAGE), "utf8").toString("base64"),
         }
       : { requestId, ...(interceptResponse ? { interceptResponse: true } : {}) })));
   };
@@ -371,7 +380,14 @@ async function instantBoundaryController(app: Surface, workspaceId: string) {
     holdNext: arm,
     read() {
       if (failure) throw failure;
-      return { creation: counts.creation, prompt: counts.prompt };
+      const activelyHeld = gates.filter((gate) => !gate.released && gate.requestIds.size > 0);
+      return {
+        creation: counts.creation,
+        prompt: counts.prompt,
+        enabled: fetchEnabled,
+        activeGateCount: activelyHeld.length,
+        activeHeldRequestCount: activelyHeld.reduce((total, gate) => total + gate.requestIds.size, 0),
+      };
     },
     async suspend() {
       if (disposed) throw new Error("Instant-send boundary observer is disposed");
@@ -737,7 +753,156 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
     }
     return "unavailable";
   };
-  const messageFacts = async (sessionId: string, marker: string) => {
+  const messageFacts = async (sessionId: string, marker: string, diagnosticReplyMarker?: string) => {
+    if (diagnosticReplyMarker !== undefined) {
+      let currentServerInfo: { baseUrl: string; ownerAccessToken: string; clientAccessToken: string } | null = null;
+      let serverInfoError: string | null = null;
+      try {
+        currentServerInfo = await seed.evalIn(app, async () => {
+          const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+          if (!info?.running || !info.baseUrl) return null;
+          return {
+            baseUrl: String(info.baseUrl),
+            ownerAccessToken: String(info.ownerToken ?? ""),
+            clientAccessToken: String(info.clientToken ?? ""),
+          };
+        }, { awaitPromise: true, timeoutMs: 5_000 });
+      } catch (error) {
+        serverInfoError = sanitizedErrorField(error, "message");
+      }
+      const unavailable = (error: string) => ({
+        messages: 0,
+        markerCount: 0,
+        markerOccurrences: 0,
+        diagnostic: {
+          transport: "node",
+          user: { count: 0, occurrences: 0 },
+          reply: { count: 0, occurrences: 0 },
+          ownerSnapshot: Object.fromEntries(["session", "messages", "todo", "status"]
+            .map((name) => [name, { status: 0, durationMs: 0, errorName: "unavailable", errorMessage: error }])),
+          clientSnapshot: null,
+          health: { status: 0, durationMs: 0, errorName: "unavailable", errorMessage: error, actualV1Version: null },
+          preview: { status: 0, durationMs: 0, errorName: "unavailable", errorMessage: error, enabled: null, chatRouting: null },
+        },
+      });
+      if (!currentServerInfo?.ownerAccessToken) return unavailable(serverInfoError ?? "current owner server credential unavailable");
+
+      const base = currentServerInfo.baseUrl.replace(/\/+$/, "");
+      const nodeGet = async (path: string, accessToken: string) => {
+        const startedAt = performance.now();
+        try {
+          const response = await fetch(`${base}${path}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            signal: AbortSignal.timeout(5_000),
+          });
+          const text = await response.text();
+          let body: unknown = text;
+          try { body = text ? JSON.parse(text) : null; } catch {}
+          return {
+            ok: response.ok,
+            status: response.status,
+            durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+            body,
+            transportErrorName: null,
+            transportErrorMessage: null,
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            status: 0,
+            durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+            body: null,
+            transportErrorName: sanitizedErrorField(error, "name"),
+            transportErrorMessage: sanitizedErrorField(error, "message"),
+          };
+        }
+      };
+      const responseFacts = (response: Awaited<ReturnType<typeof nodeGet>>) => ({
+        status: response.status,
+        durationMs: response.durationMs,
+        errorName: response.ok ? null : response.transportErrorName ?? sanitizedErrorField(response.body, "name"),
+        errorMessage: response.ok ? null : response.transportErrorMessage ?? sanitizedErrorField(response.body, "message"),
+      });
+      const mount = `/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode`;
+      const encodedSessionId = encodeURIComponent(sessionId);
+      const snapshotPaths = {
+        session: `${mount}/session/${encodedSessionId}`,
+        messages: `${mount}/session/${encodedSessionId}/message?limit=140`,
+        todo: `${mount}/session/${encodedSessionId}/todo`,
+        status: `${mount}/session/status`,
+      };
+      const snapshotProbe = async (accessToken: string) => {
+        const [session, messages, todo, status] = await Promise.all([
+          nodeGet(snapshotPaths.session, accessToken),
+          nodeGet(snapshotPaths.messages, accessToken),
+          nodeGet(snapshotPaths.todo, accessToken),
+          nodeGet(snapshotPaths.status, accessToken),
+        ]);
+        return {
+          responses: { session, messages, todo, status },
+          facts: {
+            session: responseFacts(session),
+            messages: responseFacts(messages),
+            todo: responseFacts(todo),
+            status: responseFacts(status),
+          },
+        };
+      };
+      const compareClient = Boolean(currentServerInfo.clientAccessToken
+        && currentServerInfo.clientAccessToken !== currentServerInfo.ownerAccessToken);
+      const [ownerSnapshot, clientSnapshot, healthResponse, previewResponse] = await Promise.all([
+        snapshotProbe(currentServerInfo.ownerAccessToken),
+        compareClient ? snapshotProbe(currentServerInfo.clientAccessToken) : Promise.resolve(null),
+        nodeGet(`${mount}/global/health`, currentServerInfo.ownerAccessToken),
+        nodeGet("/experimental/engine-v2-preview/status", currentServerInfo.ownerAccessToken),
+      ]);
+      const messageResponse = ownerSnapshot.responses.messages;
+      const responseItems = Array.isArray(messageResponse.body)
+        ? messageResponse.body
+        : isRecord(messageResponse.body) && Array.isArray(messageResponse.body.data)
+          ? messageResponse.body.data
+          : [];
+      const nativeMessages = responseItems.flatMap((message) => {
+        if (!isRecord(message)) return [];
+        const info = isRecord(message.info) ? message.info : message;
+        const parts = Array.isArray(message.parts) ? message.parts : [];
+        return [{
+          role: typeof info.role === "string" ? info.role : "",
+          text: parts.map((part) => isRecord(part) && typeof part.text === "string" ? part.text : "").join("\n"),
+        }];
+      });
+      const markerFacts = (role: "user" | "assistant", value: string) => {
+        const matching = nativeMessages.filter((message) => message.role === role && message.text.includes(value));
+        return {
+          count: matching.length,
+          occurrences: value ? matching.reduce((total, message) => total + message.text.split(value).length - 1, 0) : 0,
+        };
+      };
+      const user = markerFacts("user", marker);
+      const reply = markerFacts("assistant", diagnosticReplyMarker);
+      const actualV1Version = isRecord(healthResponse.body) && typeof healthResponse.body.version === "string"
+        ? sanitizedDiagnosticText(healthResponse.body.version) : null;
+      return {
+        messages: nativeMessages.length,
+        markerCount: user.count,
+        markerOccurrences: user.occurrences,
+        diagnostic: {
+          transport: "node",
+          user,
+          reply,
+          ownerSnapshot: ownerSnapshot.facts,
+          clientSnapshot: clientSnapshot?.facts ?? null,
+          health: { ...responseFacts(healthResponse), actualV1Version },
+          preview: {
+            ...responseFacts(previewResponse),
+            enabled: isRecord(previewResponse.body) && typeof previewResponse.body.enabled === "boolean"
+              ? previewResponse.body.enabled : null,
+            chatRouting: isRecord(previewResponse.body) && typeof previewResponse.body.chatRouting === "boolean"
+              ? previewResponse.body.chatRouting : null,
+          },
+        },
+      };
+    }
     const result = await engine.messages(sessionId, 100).catch((error: unknown) => {
       const errorName = sanitizedErrorField(error, "name");
       const errorMessage = sanitizedErrorField(error, "message");
@@ -754,11 +919,12 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
       messages: texts.length,
       markerCount: matching.length,
       markerOccurrences: marker ? matching.reduce((total, text) => total + text.split(marker).length - 1, 0) : 0,
+      diagnostic: null,
     };
   };
   const providerRequestCount = async (promptMarker: string) => (await mock.agentRequests({ promptMarker }))
     .filter((request) => request.promptMarker === promptMarker && request.kind !== "utility").length;
-  const visibleMessageFacts = (sessionId: string, role: "user" | "assistant", marker: string) => seed.evalIn(app, browserScript((sessionId, role, marker) => {
+  const visibleMessageFacts = (sessionId: string, role: "user" | "assistant", marker: string) => seed.evalIn(app, browserScript((sessionId, role, marker, workspaceId) => {
     const visible = (node: HTMLElement) => {
       const rect = node.getBoundingClientRect();
       const style = getComputedStyle(node);
@@ -767,14 +933,39 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
         && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) > 0;
     };
     const surfaces = [...document.querySelectorAll<HTMLElement>("[data-session-surface-id]")]
-      .filter((surface) => surface.dataset.sessionSurfaceId === sessionId && visible(surface));
+      .filter((surface) => surface.dataset.sessionSurfaceId === sessionId);
     const rows = surfaces.flatMap((surface) => [...surface.querySelectorAll<HTMLElement>("[data-message-role]")])
-      .filter((row) => row.dataset.messageRole === role && visible(row) && row.innerText.includes(marker));
+      .filter((row) => row.dataset.messageRole === role && row.innerText.includes(marker));
+    const viewportRows = rows.filter(visible);
+    const labels = (selector: string) => [...document.querySelectorAll<HTMLElement>(selector)]
+      .filter(visible)
+      .map((node) => (node.getAttribute("aria-label") ?? node.innerText).replace(/\s+/g, " ").trim().slice(0, 120))
+      .filter((label, index, values) => Boolean(label) && values.indexOf(label) === index)
+      .slice(0, 5);
+    const resourcePrefixes = ["workspace", "w"].map((mount) => `/${mount}/${encodeURIComponent(workspaceId)}/opencode`);
+    const network = performance.getEntriesByType("resource").flatMap((entry) => {
+      if (!(entry instanceof PerformanceResourceTiming)) return [];
+      const url = new URL(entry.name);
+      if (!resourcePrefixes.some((prefix) => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))) return [];
+      return [{
+        path: url.pathname,
+        limit: url.searchParams.get("limit"),
+        responseStatus: entry.responseStatus,
+        durationMs: Math.round(entry.duration * 100) / 100,
+      }];
+    }).slice(-30);
     return {
-      rowCount: rows.length,
-      markerOccurrences: marker ? rows.reduce((total, row) => total + row.innerText.split(marker).length - 1, 0) : 0,
+      rowCount: viewportRows.length,
+      markerOccurrences: marker ? viewportRows.reduce((total, row) => total + row.innerText.split(marker).length - 1, 0) : 0,
+      totalRowCount: rows.length,
+      offscreenRowCount: rows.length - viewportRows.length,
+      surfaceCount: surfaces.length,
+      visibleSurfaceCount: surfaces.filter(visible).length,
+      loaderLabels: labels('[role="status"], [data-session-loading-indicator]'),
+      errorLabels: labels('[role="alert"]'),
+      network,
     };
-  }, [sessionId, role, marker]));
+  }, [sessionId, role, marker, workspace.workspaceId]));
   const readInstantComposer = () => seed.evalIn(app, browserScript((workspaceId) => {
     const visible = (node: HTMLElement) => {
       const rect = node.getBoundingClientRect();
