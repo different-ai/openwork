@@ -2292,13 +2292,7 @@ const commands = {
   "groups.submit": async ({ id, ...input }) => groupExecution.submit(id, input),
   "groups.status": async ({ id }) => groupExecution.status(id),
   "groups.interactions.reply": async (input) => { await groupExecution.replyInteraction(input); return { ok: true }; },
-  "groups.activity": async ({ id }) => {
-    // Read delivered bubbles first. An execution behind any of these is already terminal,
-    // so the later running-only projection cannot return the same reply as a live bubble.
-    const timeline = await readGroupTimeline(coworkersDir, id);
-    const executions = await readCollaborationActivity({ groupId: id });
-    return { timeline, executions };
-  },
+  "groups.activity": async ({ id }) => groupExecution.activity(id, readCollaborationActivity),
   "groups.cancel": async ({ id }) => { await groupExecution.cancel(id); return { ok: true }; },
   "groups.removeQueued": async ({ id, clientMessageId }) => { await groupExecution.remove(id, clientMessageId); return { ok: true }; },
   "groups.get": async ({ id }) => getGroup(coworkersDir, id),
@@ -2311,13 +2305,11 @@ const commands = {
   // view and recovery read, so a double Send or a quit mid-turn loses nothing.
   "groups.beginTurn": async ({ id, clientMessageId, prompt }) => beginGroupTurn(coworkersDir, id, { clientMessageId, prompt }),
   "groups.updateTurn": async ({ id, turnId, patch }) => updateGroupTurn(coworkersDir, id, turnId, patch ?? {}),
-  // The window drives group turns, so a fresh window means none is live: every
-  // turn still recorded as running was cut off and is settled as partial here.
+  // Reloads do not stop native work. Check queue ownership at the recovery mutation.
   "groups.recoverInterrupted": async () => {
     const coworkers = await listCoworkers(coworkersDir).catch(() => []);
     const names = new Map(coworkers.map((coworker) => [coworker.slug, coworker.name]));
-    const activeTurnIds = await collaboration.read((state) => new Set(Object.values(state.groups).flatMap((group) => group.queue.map((entry) => entry.turnId))));
-    return reconcileInterruptedGroupTurns(coworkersDir, { activeTurnIds, nameFor: (slug) => names.get(slug) ?? slug });
+    return reconcileInterruptedGroupTurns(coworkersDir, { isActive: (turn, group) => collaboration.read((state) => state.groups[group.id]?.queue.some((entry) => entry.turnId === turn.id || entry.id === turn.clientMessageId) ?? false), nameFor: (slug) => names.get(slug) ?? slug });
   },
   // The silent facilitator's own workspace: hidden, tool-less, registered like a
   // coworker's but never listed as one.

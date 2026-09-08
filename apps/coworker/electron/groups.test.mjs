@@ -93,6 +93,13 @@ test("timeline events append in order, tolerate one truncated final line, and va
     const file = path.join(home, ".groups", group.id, "timeline.jsonl");
     await writeFile(file, `${await readFile(file, "utf8")}{"id":"evt_x","kind":"status","te`, "utf8");
     assert.equal((await readGroupTimeline(home, group.id)).length, 2);
+    await appendGroupEvent(home, group.id, { id: "evt_recovered", kind: "user", text: "After the crash" });
+    await appendGroupEvent(home, group.id, { id: "evt_recovered", kind: "user", text: "After the crash" });
+    await appendGroupEvent(home, group.id, { id: "evt_next", kind: "user", text: "Next" });
+    assert.deepEqual((await readGroupTimeline(home, group.id)).map((event) => event.text), ["Hello both", "Hi", "After the crash", "Next"]);
+    await writeFile(file, (await readFile(file, "utf8")).trimEnd());
+    await appendGroupEvent(home, group.id, { kind: "user", text: "After a complete line without a newline" });
+    assert.equal((await readGroupTimeline(home, group.id)).length, 5);
     assert.throws(() => parseTimeline('{"id":"evt_a","kind":"user","text":"a"}\nnot json\n{"id":"evt_b","kind":"user","text":"b"}\n'));
 
     await assert.rejects(appendGroupEvent(home, group.id, { kind: "coworker", text: "no slug" }), /names its coworker/);
@@ -209,6 +216,24 @@ test("turns cut off by a quit become partial with one quiet line, and finished r
     // Running it again changes nothing: the interrupted turns are already settled.
     assert.deepEqual(await reconcileInterruptedGroupTurns(home, { activeTurnIds: new Set([active.turn.id]), now: 101 }), []);
     assert.equal((await readGroupTimeline(home, group.id)).filter((event) => event.kind === "status").length, 2);
+
+    const later = await createGroup(home, { name: "Other group", participantSlugs: ["scout", "editor"] }, { now: 0 });
+    const finishing = await beginGroupTurn(home, later.id, { clientMessageId: "finishing", prompt: "Almost done" }, { now: 1 });
+    await updateGroupTurn(home, later.id, finishing.turn.id, { speakers: [{ slug: "scout", status: "running" }] }, { now: 2 });
+    await updateGroupTurn(home, group.id, active.turn.id, { speakers: [{ slug: "scout", status: "running" }] }, { now: 200 });
+    let completion;
+    await reconcileInterruptedGroupTurns(home, { nameFor: (slug) => {
+      completion ??= updateGroupTurn(home, later.id, finishing.turn.id, { speaker: { slug: "scout", status: "succeeded" } });
+      return slug;
+    } });
+    await completion;
+    assert.equal((await getGroup(home, later.id)).turns[0].status, "succeeded", "recovery must not overwrite completion after its initial group listing");
+    assert.equal((await readGroupTimeline(home, later.id)).length, 1);
+
+    const linking = await beginGroupTurn(home, later.id, { clientMessageId: "linking", prompt: "Still owned by the queue" });
+    const queue = [{ id: "linking", turnId: "" }];
+    assert.deepEqual(await reconcileInterruptedGroupTurns(home, { isActive: (turn) => queue.some((entry) => entry.id === turn.clientMessageId || entry.turnId === turn.id) }), []);
+    assert.equal((await getGroup(home, later.id)).turns.find((turn) => turn.id === linking.turn.id).status, "routing");
   });
 });
 
@@ -459,10 +484,32 @@ test("the backend group runner cancels every parallel native speaker", async () 
       await groups.submit(group.id, { clientMessageId: "parallel", text: "@everyone Check your part independently." });
       await eventually(() => fixture.requests.filter((request) => request.slug !== ".coordinator").length === 2);
       const threads = fixture.requests.filter((request) => request.slug !== ".coordinator").map((request) => request.threadId);
+      await assert.rejects(groups.remove(group.id, "parallel"), /already started/);
+      await groups.submit(group.id, { clientMessageId: "queued-removal", text: "@everyone This queued message will be removed." });
+      await groups.remove(group.id, "queued-removal");
+      assert.deepEqual(await service.read((state) => state.groups[group.id].queue.map((entry) => entry.id)), ["parallel"]);
       await groups.cancel(group.id);
       await eventually(async () => !(await groups.status(group.id)).active);
       assert.ok(threads.every((id) => fixture.aborted.includes(id)));
       assert.deepEqual((await getGroup(home, group.id)).turns[0].speakers.map((speaker) => speaker.status), ["stopped", "stopped"]);
+
+      await groups.submit(group.id, { clientMessageId: "parallel-completed", text: "@everyone Another independent check." });
+      await eventually(() => fixture.requests.filter((request) => request.slug !== ".coordinator").length === 4);
+      const editor = fixture.requests.filter((request) => request.slug === "editor").at(-1);
+      fixture.held.delete(editor.threadId);
+      await eventually(async () => (await service.activityEntries({ groupId: group.id })).some((entry) => entry.messageId === editor.messageId && entry.state === "succeeded"));
+      const buffered = await groups.activity(group.id, (scope) => service.activityEntries(scope));
+      assert.ok(buffered.executions.some((entry) => entry.messageId === editor.messageId));
+      assert.equal(buffered.timeline.filter((event) => event.kind === "coworker").length, 0);
+      const handedOff = await groups.activity(group.id, async (scope) => {
+        const before = await service.activityEntries(scope);
+        await groups.cancel(group.id);
+        await eventually(async () => !(await groups.status(group.id)).active);
+        return before;
+      });
+      assert.equal(handedOff.timeline.filter((event) => event.kind === "coworker" && event.slug === "editor").length, 1);
+      assert.equal(handedOff.executions.some((entry) => entry.messageId === editor.messageId), false, "publication between activity and timeline reads must not duplicate the reply");
+      assert.deepEqual((await getGroup(home, group.id)).turns[1].speakers.map((speaker) => speaker.status), ["stopped", "succeeded"]);
     } finally { groups.stop(); await service.stop(); }
   });
 });
@@ -473,7 +520,10 @@ test("backend Next drains without a view and results queue behind a foreground r
     const service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5, consult: async () => {}, spawn: async (_slug, input) => ({ id: input.id, status: "running" }), cancelWorker: async () => {} });
     const owner = { slug: "scout", threadId: "ses_queue", conversationId: "ses_queue", kind: "private" };
     try {
+      const empty = await service.threadState(owner.slug, owner.threadId);
       const root = await service.submit({ owner, messageId: "msg_queue", prompt: "Original", track: true });
+      const admitted = await service.threadState(owner.slug, owner.threadId);
+      assert.ok((await service.updateThread(owner.slug, owner.threadId, admitted, { ...admitted, pending: null })).pending, "a stale clear cannot remove an active backend admission");
       const child = await service.request({ entry: root, callId: "child" }, "worker", { name: "Check", goal: "Check once" });
       const before = await service.threadState(owner.slug, owner.threadId);
       await service.updateThread(owner.slug, owner.threadId, before, { ...before, next: [{ id: "next_a", text: "Foreground next", queuedAt: Date.now() }] });
@@ -481,7 +531,12 @@ test("backend Next drains without a view and results queue behind a foreground r
       await eventually(async () => (await service.receipts({ slug: owner.slug, threadId: owner.threadId }))[0]?.state === "succeeded");
       assert.equal(fixture.requests[1].prompt, "Foreground next");
       assert.match(fixture.requests[2].prompt, /^Continue the original task/);
+      assert.ok(fixture.requests[1].messageId < fixture.requests[2].messageId, "native IDs follow admission order, not continuation creation order");
       assert.equal((await service.threadState(owner.slug, owner.threadId)).next.length, 0);
+      const stale = await service.updateThread(owner.slug, owner.threadId, empty, { ...admitted, next: [{ id: "after_settlement", text: "Still drains", queuedAt: Date.now() }] });
+      assert.equal(stale.pending, null, "a completed pending turn cannot be resurrected by a late client write");
+      await eventually(() => fixture.requests.some((request) => request.prompt === "Still drains"));
+      await eventually(async () => (await service.threadState(owner.slug, owner.threadId)).pending === null);
     } finally { await service.stop(); }
   });
 });
@@ -567,6 +622,7 @@ test("group human waits release capacity but retain their session lock and exact
       const first = await service.submit({ owner, messageId: "msg_wait", prompt: "Wait for permission" });
       await eventually(async () => (await service.read((state) => state.executions[first.id])).state === "waiting-person");
       const waits = await service.groupInteractions("grp_a");
+      assert.equal((await service.activityEntries({ groupId: "grp_a" }))[0].state, "waiting-person", "waiting on a person retains the execution's visible reply");
       assert.deepEqual(waits[0].pending.permissions.map((request) => request.id), ["permission_a"]);
       assert.deepEqual(waits[0].pending.questions, []);
       assert.deepEqual(await service.groupInteractions("grp_other"), []);
@@ -848,8 +904,10 @@ test("group retry sends a new follow-up and retains the accepted tool-bearing at
     const fixture = nativeFixture(async ({ input, reply }) => {
       if (!input.prompt.startsWith("Continue the earlier group request")) reply.error = { message: "Interrupted after a tool action" };
     });
-    const service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5 });
-    const groups = createGroupExecution({ directory: home, collaboration: service, clientFor: fixture.clientFor, pollMs: 5, coworkerFor: async (slug) => ({ slug, name: slug, role: "", mission: "" }) });
+    const options = { directory: home, clientFor: fixture.clientFor, pollMs: 5 };
+    let service = createCollaboration(options);
+    const groupOptions = { directory: home, clientFor: fixture.clientFor, pollMs: 5, coworkerFor: async (slug) => ({ slug, name: slug, role: "", mission: "" }) };
+    let groups = createGroupExecution({ ...groupOptions, collaboration: service });
     try {
       const group = await createGroup(home, { name: "Pair", participantSlugs: ["scout", "editor"] });
       await groups.start();
@@ -858,7 +916,14 @@ test("group retry sends a new follow-up and retains the accepted tool-bearing at
       const failed = (await getGroup(home, group.id)).turns[0];
       assert.equal(failed.status, "failed");
       const original = await service.read((state) => Object.values(state.executions)[0]);
-      await groups.submit(group.id, { clientMessageId: "explicit-follow-up", text: failed.prompt, turnId: failed.id });
+      const followUp = { clientMessageId: "explicit-follow-up", text: failed.prompt, turnId: failed.id };
+      const repeatAccepted = async () => {
+        const before = await service.read((state) => state.groups[group.id]);
+        assert.deepEqual(await Promise.all([groups.submit(group.id, followUp), groups.submit(group.id, followUp)]), [{ accepted: true }, { accepted: true }]);
+        assert.deepEqual(await service.read((state) => state.groups[group.id]), before, "same-ID retries do not enqueue work or spend another attempt");
+        assert.equal(fixture.requests.length, 2);
+      };
+      await groups.submit(group.id, followUp);
       await eventually(async () => !(await groups.status(group.id)).active);
       assert.equal((await getGroup(home, group.id)).turns[0].status, "succeeded");
       assert.equal(fixture.requests.length, 2);
@@ -869,6 +934,50 @@ test("group retry sends a new follow-up and retains the accepted tool-bearing at
       assert.equal((await service.read((state) => state.executions[original.id])).state, "failed");
       assert.equal(fixture.histories.get(original.owner.threadId).filter((message) => message.role === "user").length, 2);
       assert.equal(fixture.histories.get(original.owner.threadId).filter((message) => message.parentId === original.messageId && message.parts.some((part) => part.type === "tool")).length, 1);
+      assert.deepEqual(await service.read((state) => state.groups[group.id].recoveryRequests), [{ id: followUp.clientMessageId, turnId: failed.id, attempt: 1 }]);
+      await repeatAccepted();
+      const delivered = (await readGroupTimeline(home, group.id)).find((event) => event.kind === "coworker");
+      for (const crash of ["before-append", "before-receipt"]) {
+        groups.stop();
+        await service.stop();
+        await service.change((state) => {
+          state.executions[delivered.executionId].groupReply.published = false;
+          if (crash === "before-append") {
+            delete state.groups[group.id].recoveryRequests;
+            state.groups[group.id].queue.push({ id: "explicit-follow-up", text: failed.prompt, turnId: failed.id, attempt: 1 });
+          }
+        });
+        await updateGroupTurn(home, group.id, failed.id, { speaker: { slug: "scout", status: "stopped" } });
+        const events = await readGroupTimeline(home, group.id);
+        // The second window also covers a pre-upgrade event lacking execution correlation.
+        const { executionId, ...legacy } = delivered;
+        const kept = events.filter((event) => event.id !== delivered.id);
+        if (crash === "before-receipt") kept.push(legacy);
+        await writeFile(path.join(home, ".groups", group.id, "timeline.jsonl"), kept.map((event) => JSON.stringify(event)).join("\n") + "\n");
+        service = createCollaboration(options);
+        groups = createGroupExecution({ ...groupOptions, collaboration: service });
+        await groups.start();
+        await service.start();
+        await eventually(async () => (await service.read((state) => state.executions[executionId])).groupReply.published);
+        assert.equal((await getGroup(home, group.id)).turns[0].status, "succeeded");
+        const activity = await groups.activity(group.id, (scope) => service.activityEntries(scope));
+        assert.equal(activity.timeline.filter((event) => event.id === delivered.id).length, 1);
+        assert.equal(activity.executions.length, 0);
+        assert.equal(fixture.requests.length, 2, "delivery recovery does not replay native work");
+        await eventually(async () => !(await groups.status(group.id)).active);
+        await repeatAccepted();
+      }
+      const fresh = { ...followUp, clientMessageId: "fresh-follow-up" };
+      assert.deepEqual(await groups.submit(group.id, fresh), { accepted: true });
+      assert.equal(await service.read((state) => state.groups[group.id].retryCounts[failed.id]), 2);
+      assert.deepEqual(await service.read((state) => state.groups[group.id].recoveryRequests.at(-1)), { id: fresh.clientMessageId, turnId: failed.id, attempt: 2 });
+      await eventually(async () => !(await groups.status(group.id)).active);
+      await repeatAccepted();
+      await assert.rejects(groups.submit(group.id, { ...followUp, clientMessageId: "over-budget" }), /follow-up limit/);
+      await service.change((state) => { (state.groups[group.id].cancelledRequestIds ??= []).push(followUp.clientMessageId); });
+      await assert.rejects(groups.submit(group.id, followUp), /cancelled/);
+      assert.equal(await service.read((state) => state.groups[group.id].retryCounts[failed.id]), 2);
+      assert.equal(fixture.requests.length, 2);
     } finally { groups.stop(); await service.stop(); }
   });
 });

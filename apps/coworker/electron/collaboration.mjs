@@ -5,6 +5,7 @@ import { isRunning, toTranscript } from "@openwork/headless-threads";
 import { hasPendingInteractions, stalledRetry } from "../src/lib/threads.ts";
 import { assertComputerToolContext, COMPUTER_DENY, COMPUTER_STOP_GUIDANCE } from "./computer-control.mjs";
 import { completedThinkingBrief, workerPurpose } from "./workers.mjs";
+import { groupReplyEvent } from "./groups.mjs";
 
 const terminal = new Set(["succeeded", "failed", "cancelled"]);
 const text = (value, max = 4000) => typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -68,9 +69,14 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
         if (!group || typeof group !== "object" || (group.queue !== undefined && !Array.isArray(group.queue))) throw new Error("The saved group queue is unreadable. Existing work has been kept.");
         group.queue ??= [];
         group.cancelledRequestIds ??= [];
+        group.recoveryRequests ??= [];
+        for (const request of group.queue) {
+          if (request.attempt > 0 && !group.recoveryRequests.some((receipt) => receipt.id === request.id)) group.recoveryRequests.push({ id: request.id, turnId: request.turnId, attempt: request.attempt });
+        }
       }
       for (const entry of Object.values(parsed.executions)) {
         entry.timeoutMs ??= stepTimeoutMs;
+        entry.generatedMessageId ??= entry.continuation;
         if (!entry.sentAt && ["queued", "admitting"].includes(entry.state)) { entry.state = "queued"; entry.deadline = null; }
       }
       for (const task of Object.values(parsed.tasks)) if (task.state === "starting") task.state = "requested";
@@ -117,12 +123,20 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
   }
   function execution(state, input) {
     const id = input.id ?? collaborationId(input.owner.slug, input.owner.threadId, input.messageId);
-    if (state.executions[id]) return state.executions[id];
+    if (state.executions[id]) {
+      const entry = state.executions[id];
+      if (input.groupReply && !entry.groupReply) {
+        entry.groupReply = { name: input.groupReply.name, published: false };
+      }
+      return entry;
+    }
     const owner = own(state, input.owner);
     const at = now();
     if (input.timeoutMs !== undefined && (!Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 1 || input.timeoutMs > 2_147_483_647)) throw new Error("An execution needs a finite positive time limit.");
     const entry = { id, owner, messageId: input.messageId ?? nativeMessageId(), prompt: text(input.prompt, 100_000), model: input.model ?? null, state: "queued", createdAt: at, timeoutMs: input.timeoutMs ?? stepTimeoutMs, deadline: null, sentAt: null, endedAt: null, error: "", result: "", taskId: input.taskId ?? id, continuation: input.continuation === true, tools: input.tools ?? null, priority: input.priority ?? 0, groupRequestId: input.groupRequestId ?? "" };
     entry.personRequest = input.track === true || input.personRequest === true;
+    entry.generatedMessageId = !input.messageId;
+    if (input.groupReply) entry.groupReply = { name: input.groupReply.name, published: false };
     if (owner.kind !== "private" || !entry.personRequest || entry.continuation) entry.tools = { ...entry.tools, ...COMPUTER_DENY };
     state.executions[id] = entry;
     state.tasks[entry.taskId] ??= { id: entry.taskId, owner, state: "running", executionId: id, dependencies: [], parentId: null, depth: 0, lineage: [owner.slug], objective: text(input.prompt), refs: [], completedActions: [], resumeInstructions: "Use the requested results to finish the original task. Do not repeat completed actions.", continuationId: null, generation: 0, createdAt: at, deadline: at + dependencyTimeoutMs, error: "" };
@@ -208,6 +222,12 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
         if (!runnable(value, current)) return null;
         const turns = value.threads[threadKey(current.owner)];
         if (current.continuation && (turns?.pending || turns?.next.length)) return null;
+        // Foreground work can overtake a queued continuation; only admitted IDs are immutable.
+        if (!current.sentAt && !present && current.generatedMessageId) {
+          const previousId = current.messageId;
+          current.messageId = nativeMessageId();
+          if (turns?.pending?.messageId === previousId) turns.pending.messageId = current.messageId;
+        }
         // Queue time is not execution time. A recovered admitted step keeps its deadline.
         current.deadline = current.sentAt ? current.deadline ?? current.sentAt + current.timeoutMs : now() + current.timeoutMs;
         current.sentAt ??= now();
@@ -449,7 +469,12 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
           const owner = entry.owner;
           const registered = state.owners[threadKey(owner)];
           if (!entry.messageId || !registered || registered.kind !== owner.kind || registered.conversationId !== owner.conversationId) return false;
-          if (groupId) return ["group", "consultation"].includes(owner.kind) && owner.groupId === groupId && owner.conversationId === groupId && registered.groupId === groupId && entry.state === "running";
+          if (groupId) {
+            const undelivered = (entry.groupReply && entry.state === "succeeded" && entry.result && !entry.groupReply.published)
+              || (entry.continuation && terminal.has(entry.state) && !entry.published)
+              || (owner.kind === "consultation" && entry.state === "succeeded" && !state.tasks[entry.taskId].published);
+            return ["group", "consultation"].includes(owner.kind) && owner.groupId === groupId && owner.conversationId === groupId && registered.groupId === groupId && (["running", "waiting-person"].includes(entry.state) || undelivered);
+          }
           return ["private", "assignment", "worker"].includes(owner.kind) && owner.slug === slug && owner.threadId === threadId;
         }).sort((a, b) => Number(terminal.has(a.state)) - Number(terminal.has(b.state)) || b.createdAt - a.createdAt);
         // Private views also need the last settled turn's tool timing at the completion boundary.
@@ -457,7 +482,7 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
         return selected.slice(0, limit).map((entry) => {
           const task = state.tasks[entry.taskId];
           const pending = (task?.dependencies ?? []).map((id) => state.tasks[id]).filter((child) => child && !terminal.has(child.state));
-           return { executionId: entry.id, messageId: entry.messageId, threadId: entry.owner.threadId, slug: entry.owner.slug, state: entry.state, startedAt: entry.sentAt, completedAt: entry.endedAt, continuation: entry.continuation, failure: entry.state === "failed" ? entry.error : "", retryLabel: entry.state === "succeeded" ? entry.retryLabel ?? "" : "", pendingCoworkers: pending.filter((child) => child.kind === "consultation").length, pendingWorkers: pending.filter((child) => child.kind === "worker").length };
+          return { executionId: entry.id, messageId: entry.messageId, threadId: entry.owner.threadId, slug: entry.owner.slug, state: entry.state, startedAt: entry.sentAt, completedAt: entry.endedAt, continuation: entry.continuation, timelineEventId: entry.owner.kind === "consultation" ? `evt_${collaborationId(entry.taskId, "answer").slice(5)}` : entry.continuation ? `evt_${collaborationId(entry.id, "follow-up").slice(5)}` : groupReplyEvent(entry)?.id, failure: entry.state === "failed" ? entry.error : "", retryLabel: entry.state === "succeeded" ? entry.retryLabel ?? "" : "", pendingCoworkers: pending.filter((child) => child.kind === "consultation").length, pendingWorkers: pending.filter((child) => child.kind === "worker").length };
         });
       });
     },
@@ -611,13 +636,13 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
     async wait(id, signal) {
       for (;;) {
         if (closed) throw new Error("The collaboration service is closing.");
-        if (signal?.aborted) throw signal.reason ?? new Error("Stopped.");
         const entry = await read((state) => state.executions[id]);
         if (!entry) throw new Error("The work is not on record.");
         if (terminal.has(entry.state)) {
           if (entry.state !== "succeeded") throw new Error(entry.error || "Stopped.");
           return { text: entry.result, threadId: entry.owner.threadId };
         }
+        if (signal?.aborted) throw signal.reason ?? new Error("Stopped.");
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
     },
@@ -808,7 +833,12 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
         const removed = new Set(previous.next.filter((item) => !next.next.some((other) => other.id === item.id)).map((item) => item.id));
         current.next = current.next.filter((item) => !removed.has(item.id));
         for (const item of next.next) if (!previous.next.some((other) => other.id === item.id) && !current.next.some((other) => other.id === item.id)) current.next.push(item);
-        if (current.pending?.messageId === previous.pending?.messageId || (!current.pending && next.pending?.messageId !== previous.pending?.messageId)) current.pending = next.pending;
+        const entries = Object.values(state.executions).filter((entry) => threadKey(entry.owner) === key);
+        const pending = entries.find((entry) => entry.messageId === current.pending?.messageId);
+        const proposed = entries.find((entry) => entry.messageId === next.pending?.messageId);
+        const resurrected = proposed && terminal.has(proposed.state) && next.pending?.messageId !== current.pending?.messageId;
+        const clearsLive = pending && !terminal.has(pending.state) && next.pending?.messageId !== pending.messageId;
+        if (!resurrected && !clearsLive && (current.pending?.messageId === previous.pending?.messageId || (!current.pending && next.pending?.messageId !== previous.pending?.messageId))) current.pending = next.pending;
         return current;
       });
       wake();

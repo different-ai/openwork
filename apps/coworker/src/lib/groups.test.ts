@@ -291,6 +291,19 @@ test("independent parallel replies settle into the timeline in the facilitator's
   assert.equal(result.mode, "parallel");
   assert.deepEqual(store.events.filter((entry) => entry.kind === "coworker").map((entry) => entry.slug), ["scout", "editor"]);
   assert.ok(store.published.includes("running:scout=running,editor=running"), "both speakers were running at once");
+
+  const stoppedStore = fakeStore();
+  const controller = new AbortController();
+  const stopped = await runGroupTurn({
+    group: { id: "grp_x", name: "Desk" }, participants: team, recent: [], message: "Both of you", clientMessageId: "m4", signal: controller.signal,
+    deps: { ...stoppedStore.deps, route: async () => plan, ask: async (slug) => {
+      if (slug === "scout") await new Promise<void>((_resolve, reject) => controller.signal.addEventListener("abort", () => reject(new Error("Stopped.")), { once: true }));
+      else setTimeout(() => controller.abort(), 5);
+      return { text: `${slug} done`, threadId: `ses_${slug}` };
+    } },
+  });
+  assert.deepEqual(stopped?.speakers.map((speaker) => speaker.status), ["stopped", "succeeded"]);
+  assert.deepEqual(stoppedStore.events.filter((entry) => entry.kind === "coworker").map((entry) => entry.slug), ["editor"]);
 });
 
 test("stopping a group turn marks the in-flight speaker and the rest stopped without asking them", async () => {
