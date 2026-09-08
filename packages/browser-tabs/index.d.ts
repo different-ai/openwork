@@ -24,7 +24,8 @@ export type BrowserPanelTab = {
   label: string;
   url: string;
   favicon: string | null;
-  status: "loading" | "ready";
+  status: "loading" | "ready" | "suspending" | "suspended" | "restoring";
+  automationProtected?: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
   /** Conversation (session) that opened the tab; null for shared/legacy tabs. */

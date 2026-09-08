@@ -173,6 +173,8 @@ function BrowserPanelContent({
   onClose,
 }: BrowserPanelContentProps) {
   const isAvailable = Boolean(getElectronBrowser());
+  const suspended = tab.status === "suspended";
+  const busy = tab.status === "suspending" || tab.status === "restoring";
   const [urlInput, setUrlInput] = React.useState(tab.url);
   const urlFocusedRef = React.useRef(false);
   const contentRef = React.useRef<HTMLDivElement>(null);
@@ -194,16 +196,29 @@ function BrowserPanelContent({
   }, [urlInput]);
 
   const back = React.useCallback(() => {
-    void getElectronBrowser()?.back?.();
+    void getElectronBrowser()?.back?.().catch((error: unknown) => {
+      toast.error(error instanceof Error ? error.message : String(error));
+    });
   }, []);
 
   const forward = React.useCallback(() => {
-    void getElectronBrowser()?.forward?.();
+    void getElectronBrowser()?.forward?.().catch((error: unknown) => {
+      toast.error(error instanceof Error ? error.message : String(error));
+    });
   }, []);
 
   const reload = React.useCallback(() => {
-    void getElectronBrowser()?.reload?.();
-  }, []);
+    const browser = getElectronBrowser();
+    void (suspended ? browser?.selectTab?.(tab.id) : browser?.reload?.())?.catch((error: unknown) => {
+      toast.error(error instanceof Error ? error.message : String(error));
+    });
+  }, [suspended, tab.id]);
+
+  const suspend = React.useCallback(() => {
+    void getElectronBrowser()?.suspendTab?.(tab.id).catch((error: unknown) => {
+      toast.error(error instanceof Error ? error.message : String(error));
+    });
+  }, [tab.id]);
 
   const handleUrlKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
@@ -333,7 +348,7 @@ function BrowserPanelContent({
                     variant="ghost"
                     size="icon-sm"
                     onClick={back}
-                    disabled={!tab.canGoBack}
+                    disabled={suspended || busy || !tab.canGoBack}
                     aria-label="Go back"
                   >
                     <ArrowLeft />
@@ -349,7 +364,7 @@ function BrowserPanelContent({
                     variant="ghost"
                     size="icon-sm"
                     onClick={forward}
-                    disabled={!tab.canGoForward}
+                    disabled={suspended || busy || !tab.canGoForward}
                     aria-label="Go forward"
                   >
                     <ArrowRight />
@@ -365,9 +380,10 @@ function BrowserPanelContent({
                     variant="ghost"
                     size="icon-sm"
                     onClick={reload}
+                    disabled={busy}
                     aria-label="Reload page"
                   >
-                    {tab.status === "loading" ? <Loader2 className="animate-spin" /> : <RotateCw />}
+                    {tab.status === "loading" || busy ? <Loader2 className="animate-spin" /> : <RotateCw />}
                   </Button>
                 )}
               />
@@ -379,6 +395,7 @@ function BrowserPanelContent({
                 type="text"
                 className="h-7"
                 value={urlInput}
+                disabled={suspended || busy}
                 onChange={(event) => setUrlInput(event.target.value)}
                 onKeyDown={handleUrlKeyDown}
                 onFocus={() => {
@@ -396,6 +413,15 @@ function BrowserPanelContent({
                 <Globe />
               </InputGroupAddon>
             </InputGroup>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={suspend}
+              disabled={tab.status !== "ready" || tab.automationProtected}
+              title={tab.automationProtected ? "Protected until browser work is released" : "Suspend this tab to free memory"}
+            >
+              Suspend
+            </Button>
           </>
         ) : (
           <p className="px-2 text-sm text-muted-foreground">
@@ -413,7 +439,17 @@ function BrowserPanelContent({
         </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
-        {isAvailable ? <div ref={contentRef} className="h-full overflow-hidden" /> : null}
+        {isAvailable ? (
+          <div ref={contentRef} className="h-full overflow-hidden">
+            {suspended ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+                <p className="text-sm font-medium">Tab suspended</p>
+                <p className="text-sm text-muted-foreground">Reload opens the saved URL, not the previous page state.</p>
+                <Button variant="outline" size="sm" onClick={reload}>Reload</Button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </>
   );

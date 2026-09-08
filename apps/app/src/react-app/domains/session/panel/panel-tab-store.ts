@@ -156,6 +156,7 @@ function isSameTab(left: PanelTab, right: PanelTab) {
       left.url === right.url &&
       left.favicon === right.favicon &&
       left.status === right.status &&
+      left.automationProtected === right.automationProtected &&
       left.canGoBack === right.canGoBack &&
       left.canGoForward === right.canGoForward &&
       left.ownerSessionId === right.ownerSessionId

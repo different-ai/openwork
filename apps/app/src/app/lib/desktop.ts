@@ -258,6 +258,9 @@ declare global {
         getState?: () => Promise<BrowserStatePayload | null>;
         createTab?: (url?: string, sessionId?: string | null) => Promise<{ tabId: string }>;
         closeTab?: (tabId: string) => Promise<string | null>;
+        suspendTab?: (tabId: string) => Promise<string | null>;
+        restoreTab?: (tabId: string, sessionId: string | null) => Promise<OpenBrowserUrlResult>;
+        releaseTab?: (tabId: string, sessionId: string | null) => Promise<{ tabId: string; released: true }>;
         closeAllTabs?: () => Promise<string[]>;
         closeSessionTabs?: (sessionId: string) => Promise<string[]>;
         selectTab?: (tabId: string) => Promise<string>;

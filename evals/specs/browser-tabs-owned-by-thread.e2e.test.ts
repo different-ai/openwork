@@ -260,7 +260,7 @@ test("moving the last background page on screen releases its hidden host and rep
   }
 });
 
-test("a background conversation's agent browses silently and its page is waiting when the user switches to it", async ({ world, user, step }) => {
+test("a background conversation's agent browses silently and its page is waiting when the user switches to it", async ({ world, user, agent, step }) => {
   const reading = { ...world.session, title: "Reading the news" };
   await world.renameSession(reading.sessionId, reading.title);
   const researching = await world.openSession("Background research");
@@ -359,6 +359,18 @@ test("a background conversation's agent browses silently and its page is waiting
     });
     await user.see(tabButton(readingTab.name), { timeoutMs: 30_000 });
     expect(await world.readViewport(readingTab)).toEqual(panelViewport);
+  });
+  await step("Task handles preserve live pages, reject the other owner, and require explicit release", async () => {
+    expect(await agent.run("browser.restore_tab", { tabId: readingTab.tabId }))
+      .toMatchObject({ tab_id: readingTab.tabId, target_id: readingTab.targetId, owner_session_id: reading.sessionId });
+    await expect(agent.run("browser.restore_tab", { tabId: researchTab.tabId })).rejects.toThrow(/owner/i);
+    await user.click({ role: "button", label: "Suspend tab" });
+    await user.see({ text: /Browser tab is protected or busy/ });
+    expect(await agent.run("browser.release_tab", { tabId: readingTab.tabId }))
+      .toMatchObject({ tabId: readingTab.tabId, released: true });
+    expect((await world.readBrowserState()).tabs.map(tab => tab.id).sort())
+      .toEqual([readingTab.tabId, researchTab.tabId].sort());
+    expect(await world.readInputProbe(researchTab)).toEqual({ clicks: 2, value: "okok" });
   });
 });
 

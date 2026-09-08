@@ -130,7 +130,8 @@ To open settings or navigate the app, use openwork_execute with ids from openwor
 const OPENWORK_BROWSER_INSTRUCTION =
   `## Built-in Browser (external websites)
 For web browsing tasks, ALWAYS start with openwork_execute id browser.open_url. It creates/selects a built-in OpenWork browser tab and returns browser_url plus target_id. Use that exact browser_url and target_id for every later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot call.
-Do not call browser_navigate without a target_id returned by browser.open_url; a target titled "OpenWork" or whose URL contains ":5173/#/" is the app itself, not a web page.`;
+Do not call browser_navigate without a target_id returned by browser.open_url; a target titled "OpenWork" or whose URL contains ":5173/#/" is the app itself, not a web page.
+When browser.release_tab is available, keep the returned tab_id and release it only after all running and queued browser calls have finished. This permits the person to suspend the page. Before any later use, call browser.restore_tab with that tabId and use its returned browser_url and target_id; never reuse an old target after release.`;
 
 type OpenWorkWorkspace = z.infer<typeof workspaceSchema>;
 type SessionInfo = z.infer<typeof sessionInfoSchema>;

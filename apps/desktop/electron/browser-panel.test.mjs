@@ -5,11 +5,17 @@ import test from "node:test";
 // Keep Electron and installed-browser discovery in memory: these guards must
 // never touch the clipboard, show a dialog, or launch a real browser.
 const electronStub = `
+import { EventEmitter } from "node:events";
 export const effects = [];
+export const controls = {
+  confirm: async () => 0, beforeLoad: async () => {}, beforeCommand: async () => {},
+};
 export const app = { on() {} };
 export const clipboard = { writeText(url) { effects.push({ type: "copy", url }); } };
-export const dialog = { async showMessageBox() { effects.push({ type: "dialog" }); } };
-export const session = { fromPartition() { return { webRequest: { onBeforeRequest() {} } }; } };
+export const dialog = { async showMessageBox(_window, options) { effects.push({ type: "dialog" }); return { response: await controls.confirm(options) }; } };
+export const browserSession = new EventEmitter();
+browserSession.webRequest = { onBeforeRequest() {} };
+export const session = { fromPartition() { return browserSession; } };
 export const shell = { async openExternal(url) { effects.push({ type: "external", url }); } };
 export const createdViews = [];
 export class BrowserWindow {
@@ -31,11 +37,14 @@ export class BrowserWindow {
 export class WebContentsView {
   constructor() {
     createdViews.push(this);
-    const listeners = new Map();
+    const listeners = new EventEmitter();
     let attached = false;
+    const targetId = "target-" + createdViews.length;
+    const view = this;
     this.bounds = { x: 0, y: 0, width: 0, height: 0 };
     this.webContents = {
       url: "about:blank",
+      targetId, domReady: false, loading: false, audible: false, closeMode: "destroy", loads: [],
       sent: [],
       send(channel, payload) { this.sent.push({ channel, payload }); },
       debugger: {
@@ -43,22 +52,40 @@ export class WebContentsView {
         isAttached: () => attached,
         attach() { attached = true; },
         detach() { attached = false; },
-        async sendCommand(method, params) { this.commands.push({ method, params }); },
+        async sendCommand(method, params) {
+          if (method.startsWith("Emulation.") && !view.webContents.domReady) throw new Error("Emulation before initial document");
+          this.commands.push({ method, params });
+          await controls.beforeCommand(method);
+          if (method === "Target.getTargetInfo") return { targetInfo: { targetId } };
+        },
       },
-      on(event, handler) { listeners.set(event, handler); },
-      once(event, handler) { listeners.set(event, handler); },
-      emit(event, ...args) { listeners.get(event)?.(null, ...args); },
+      on(event, handler) { listeners.on(event, handler); },
+      once(event, handler) { listeners.once(event, handler); },
+      removeListener(event, handler) { listeners.removeListener(event, handler); },
+      emit(event, ...args) { listeners.emit(event, null, ...args); },
       setWindowOpenHandler() {},
       destroyed: false,
       isDestroyed() { return this.destroyed; },
       getURL() { return this.url; },
       getTitle() { return ""; },
-      isLoading() { return false; },
+      isLoading() { return this.loading; },
+      isCurrentlyAudible() { return this.audible; },
       canGoBack() { return false; },
       canGoForward() { return false; },
-      loadURL(url) { this.url = url; return Promise.resolve(); },
+      async loadURL(url) {
+        this.url = url;
+        this.loads.push(url);
+        await controls.beforeLoad(this, url);
+        if (this.destroyed) throw new Error("Contents destroyed");
+        this.domReady = true;
+        this.emit("dom-ready");
+      },
       focus() {},
-      close() { this.destroyed = true; this.emit("destroyed"); },
+      close(options) {
+        if (options?.waitForBeforeUnload && this.closeMode === "pending") return;
+        if (options?.waitForBeforeUnload && this.closeMode === "veto") { this.emit("will-prevent-unload"); return; }
+        this.destroyed = true; this.emit("destroyed");
+      },
     };
   }
   setBounds(bounds) { this.bounds = bounds; }
@@ -94,7 +121,7 @@ export function load(url, context, next) {
 register(`data:text/javascript,${encodeURIComponent(hooks)}`);
 const { createBrowserPanel } = await import("./browser-panel.mjs");
 // @ts-expect-error The registered test-only Electron stub exports its witnesses.
-const { createdViews, effects } = await import("electron");
+const { createdViews, effects, controls, browserSession } = await import("electron");
 
 const PANEL_BOUNDS = { x: 800, y: 40, width: 400, height: 900 };
 const LINK = { url: "https://example.com/a%2Fb?x=one%20two&x=%2F#section", point: { x: 20, y: 30 }, sessionId: "A" };
@@ -103,8 +130,12 @@ const RESET_SEQUENCE = [
   { method: "Emulation.clearDeviceMetricsOverride", params: undefined },
 ];
 
-function createPanel(checkPolicy = async () => {}) {
+function createPanel(checkPolicy = async () => {}, remoteDebugPort = 0) {
   effects.length = 0;
+  controls.confirm = async () => 0;
+  controls.beforeLoad = async () => {};
+  controls.beforeCommand = async () => {};
+  browserSession.removeAllListeners("will-download");
   const policies = [];
   const children = [];
   const firstView = createdViews.length;
@@ -135,7 +166,7 @@ function createPanel(checkPolicy = async () => {}) {
     on(channel, handler) { handlers.set(channel, handler); },
   };
   createBrowserPanel({
-    getWindow: () => mainWindow, remoteDebugPort: 0, onDeepLink: () => {},
+    getWindow: () => mainWindow, remoteDebugPort, onDeepLink: () => {},
     checkPolicy: async (request) => { policies.push(request); await checkPolicy(); },
   }).registerIpc(ipcMain);
   const mainContents = mainWindow.webContents;
@@ -163,10 +194,27 @@ function createPanel(checkPolicy = async () => {}) {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
+function gate() {
+  /** @type {() => void} */
+  let finish;
+  const promise = new Promise((resolve) => { finish = () => resolve(undefined); });
+  return { promise, finish };
+}
+
+/** @param {import("node:test").TestContext} t */
+function createTaskPanel(t) {
+  const panel = createPanel(undefined, 9222);
+  t.mock.method(globalThis, "fetch", async () => new Response(JSON.stringify(panel.views()
+    .filter(view => !view.webContents.isDestroyed())
+    .map(({ webContents }) => ({ type: "page", id: webContents.targetId, url: webContents.getURL() })))));
+  return panel;
+}
+
 test("showing the panel sizes the active tab and resets viewport emulation left on it", async () => {
   const { invoke, onScreen, commands } = createPanel();
   invoke("openwork:browser:createTab", "https://example.com");
   assert.equal(onScreen(), null, "a tab created while the panel is hidden stays off screen");
+  await flush();
 
   invoke("openwork:browser:show", PANEL_BOUNDS);
   await flush();
@@ -410,6 +458,238 @@ test("tabs created without a conversation stay shared and behave as before", asy
   assert.ok(onScreen(), "a shared tab stays on screen for every conversation");
   invoke("openwork:browser:closeAllTabs");
   assert.deepEqual(messages("openwork:browser:panel-closed"), [{ ownerSessionId: null }]);
+});
+
+test("suspension requires explicit confirmation with Cancel as both defaults and never falls back to the active tab", async () => {
+  const { invoke, views } = createPanel();
+  const { tabId } = invoke("openwork:browser:createTab", "https://example.com", "A");
+  await flush();
+  const before = invoke("openwork:browser:state").tabs;
+  controls.confirm = async (options) => {
+    assert.equal(options.title, "Suspend browser tab?");
+    assert.equal(options.type, "warning");
+    assert.deepEqual(options.buttons, ["Cancel", "Suspend"]);
+    assert.equal(options.defaultId, 0);
+    assert.equal(options.cancelId, 0);
+    assert.match(options.detail, /Form input, scroll position, and page history will be lost/);
+    return 0;
+  };
+  assert.equal(await invoke("openwork:browser:suspendTab", tabId), null);
+  for (const id of [undefined, null, "", "missing"]) await assert.rejects(invoke("openwork:browser:suspendTab", id), /Unknown/);
+  assert.deepEqual(invoke("openwork:browser:state").tabs, before);
+  assert.equal(views()[0].webContents.isDestroyed(), false);
+  assert.equal(effects.length, 1);
+});
+
+test("confirmed suspension frees native resources but retains identity and owner until an explicit selection reloads", async () => {
+  const { invoke, views, messages } = createPanel();
+  const { tabId } = invoke("openwork:browser:createTab", "https://example.com/form", "B");
+  controls.confirm = async () => 1;
+  for (let cycle = 0; cycle < 4; cycle++) {
+    await flush();
+    const previous = views().at(-1);
+    assert.equal(await invoke("openwork:browser:suspendTab", tabId), tabId);
+    assert.equal(previous.webContents.isDestroyed(), true);
+    invoke("openwork:browser:setVisibleSession", "A");
+    invoke("openwork:browser:show", PANEL_BOUNDS, "B");
+    invoke("openwork:browser:bounds", PANEL_BOUNDS);
+    const state = invoke("openwork:browser:state");
+    assert.equal(state.tabs.length, 1);
+    assert.equal(state.tabs[0].id, tabId);
+    assert.equal(state.tabs[0].ownerSessionId, "B");
+    assert.equal(state.tabs[0].url, "https://example.com/form");
+    assert.equal(state.tabs[0].status, "suspended");
+    assert.equal(state.tabs[0].automationProtected, false);
+    assert.equal(state.activeTabIdByOwner.B, tabId);
+    assert.deepEqual(state.nativeViews, []);
+    assert.equal(state.backgroundWindowCount, 0);
+    assert.deepEqual(messages("openwork:browser:panel-closed"), []);
+    assert.equal(await invoke("openwork:browser:selectTab", tabId), tabId);
+    assert.notEqual(views().at(-1), previous);
+    assert.deepEqual(views().at(-1).webContents.loads, ["https://example.com/form"]);
+    assert.equal(views().filter(view => !view.webContents.isDestroyed()).length, 1);
+    assert.equal(invoke("openwork:browser:state").tabs[0].automationProtected, false);
+  }
+  invoke("openwork:browser:closeSessionTabs", "B");
+  assert.deepEqual(invoke("openwork:browser:state").tabs, []);
+});
+
+test("automation is protected before marker loading and returns only after first-document background emulation", async (t) => {
+  const { invoke, views, commands } = createTaskPanel(t);
+  const document = gate();
+  const emulation = gate();
+  controls.beforeLoad = () => document.promise;
+  controls.beforeCommand = () => emulation.promise;
+  let returned = false;
+  const opening = invoke("openwork:browser:openUrl", "https://example.com", "builtin", { sessionId: "B" });
+  void opening.then(() => { returned = true; });
+  const tab = invoke("openwork:browser:state").tabs[0];
+  assert.equal(tab.automationProtected, true);
+  assert.deepEqual(commands(views()[0]), [], "no Emulation before the first dom-ready");
+  await assert.rejects(invoke("openwork:browser:suspendTab", tab.id), /protected or busy/);
+  assert.throws(() => invoke("openwork:browser:releaseTab", tab.id, "B"), /busy/);
+  document.finish();
+  await flush();
+  assert.equal(returned, false, "a ready document alone is not a usable background handle");
+  emulation.finish();
+  const handle = await opening;
+  assert.equal(handle.tab_id, tab.id);
+  assert.equal(handle.target_id, views()[0].webContents.targetId);
+  assert.equal(handle.owner_session_id, "B");
+  assert.deepEqual(commands(views()[0]), BACKGROUND_SEQUENCE);
+  const loads = [...views()[0].webContents.loads];
+  assert.equal((await invoke("openwork:browser:restoreTab", tab.id, "B")).target_id, handle.target_id);
+  assert.deepEqual(views()[0].webContents.loads, loads, "reacquiring a live page never navigates it");
+  assert.deepEqual(effects, [], "protected suspension never opens the confirmation dialog");
+});
+
+test("restore and release enforce exact ownership and protection lasts until explicit release", async (t) => {
+  const { invoke, views } = createTaskPanel(t);
+  const first = await invoke("openwork:browser:openUrl", "https://example.com", "builtin", { sessionId: "B" });
+  const tabId = first.tab_id;
+  controls.confirm = async () => 1;
+  for (const owner of [undefined, null, "", "A"]) {
+    await assert.rejects(invoke("openwork:browser:restoreTab", tabId, owner), /owner mismatch/);
+    assert.throws(() => invoke("openwork:browser:releaseTab", tabId, owner), /owner mismatch/);
+  }
+  await assert.rejects(invoke("openwork:browser:suspendTab", tabId), /protected/);
+  assert.deepEqual(invoke("openwork:browser:releaseTab", tabId, "B"), { tabId, released: true });
+  assert.equal(views()[0].webContents.isDestroyed(), false, "release is not a close or navigation");
+  await invoke("openwork:browser:suspendTab", tabId);
+  const suspended = invoke("openwork:browser:state").tabs;
+  await assert.rejects(invoke("openwork:browser:restoreTab", tabId, "A"), /owner mismatch/);
+  assert.equal(views().length, 1, "ownership is checked before allocating a native page");
+  assert.deepEqual(invoke("openwork:browser:state").tabs, suspended);
+  const restored = await invoke("openwork:browser:restoreTab", tabId, "B");
+  assert.equal(restored.tab_id, tabId);
+  assert.equal(restored.owner_session_id, "B");
+  assert.notEqual(restored.target_id, first.target_id);
+  assert.deepEqual(views()[1].webContents.loads, [first.url]);
+  await assert.rejects(invoke("openwork:browser:suspendTab", tabId), /protected/);
+  views()[1].webContents.close();
+  assert.deepEqual(invoke("openwork:browser:state").tabs, [], "ordinary CDP close still deletes the logical tab");
+});
+
+test("confirmation rechecks the captured page for active work, loading, downloads, and media", async (t) => {
+  const { EventEmitter } = await import("node:events");
+  const { invoke, views } = createTaskPanel(t);
+  const { tabId } = invoke("openwork:browser:createTab", "https://example.com", "B");
+  await flush();
+  const contents = views()[0].webContents;
+  for (const field of ["loading", "audible"]) {
+    controls.confirm = async () => { contents[field] = true; return 1; };
+    await assert.rejects(invoke("openwork:browser:suspendTab", tabId), /loading, downloading, or playing/);
+    contents[field] = false;
+  }
+  controls.confirm = async () => { contents.emit("media-started-playing"); return 1; };
+  await assert.rejects(invoke("openwork:browser:suspendTab", tabId), /playing media/);
+  contents.emit("media-paused");
+  const download = new EventEmitter();
+  controls.confirm = async () => { browserSession.emit("will-download", null, download, contents); return 1; };
+  await assert.rejects(invoke("openwork:browser:suspendTab", tabId), /downloading/);
+  download.emit("done");
+  controls.confirm = async () => { await invoke("openwork:browser:restoreTab", tabId, "B"); return 1; };
+  await assert.rejects(invoke("openwork:browser:suspendTab", tabId), /protected/);
+  invoke("openwork:browser:releaseTab", tabId, "B");
+  const other = invoke("openwork:browser:createTab", "about:blank", "B");
+  controls.confirm = async () => { invoke("openwork:browser:closeTab", tabId); return 1; };
+  await assert.rejects(invoke("openwork:browser:suspendTab", tabId), /Unknown/);
+  assert.deepEqual(invoke("openwork:browser:state").tabs.map(tab => tab.id), [other.tabId]);
+});
+
+test("beforeunload veto leaves the live document intact and pending close retains capacity even after timeout", async (t) => {
+  const { invoke, views } = createPanel();
+  invoke("openwork:browser:setVisibleSession", "A");
+  const { tabId } = invoke("openwork:browser:createTab", "https://example.com", "A");
+  await flush();
+  const contents = views()[0].webContents;
+  controls.confirm = async () => 1;
+  contents.closeMode = "veto";
+  await assert.rejects(invoke("openwork:browser:suspendTab", tabId), /page prevented/);
+  assert.equal(contents.isDestroyed(), false);
+  assert.equal(invoke("openwork:browser:state").tabs[0].status, "ready");
+  for (let i = 1; i < 12; i++) invoke("openwork:browser:createTab", "about:blank", "A");
+  await invoke("openwork:browser:selectTab", tabId);
+  contents.closeMode = "pending";
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const pending = invoke("openwork:browser:suspendTab", tabId);
+  const rejected = assert.rejects(pending, /still waiting to close/);
+  await flush();
+  assert.equal(invoke("openwork:browser:state").tabs[0].status, "suspending");
+  await assert.rejects(invoke("openwork:browser:restoreTab", tabId, "A"), /busy/);
+  await assert.rejects(invoke("openwork:browser:selectTab", tabId), /suspending/);
+  assert.throws(() => invoke("openwork:browser:reload"), /suspending/);
+  t.mock.timers.tick(2501);
+  await rejected;
+  assert.throws(() => invoke("openwork:browser:createTab", "about:blank"), /12 browser tabs/);
+  assert.equal(invoke("openwork:browser:state").nativeViews.length, 12);
+  contents.close();
+  assert.equal(invoke("openwork:browser:state").tabs[0].status, "suspended");
+  invoke("openwork:browser:createTab", "about:blank");
+  assert.equal(invoke("openwork:browser:state").tabs.length, 13);
+});
+
+test("failed and capacity-blocked restoration preserve saved metadata and a retry returns the same logical tab", async (t) => {
+  const { invoke, views } = createTaskPanel(t);
+  const { tabId } = invoke("openwork:browser:createTab", "https://example.com", "B");
+  await flush();
+  controls.confirm = async () => 1;
+  await invoke("openwork:browser:suspendTab", tabId);
+  const saved = invoke("openwork:browser:state").tabs[0];
+  controls.beforeLoad = async () => { throw new Error("Navigation failed"); };
+  await assert.rejects(invoke("openwork:browser:restoreTab", tabId, "B"), /Navigation failed/);
+  assert.deepEqual(invoke("openwork:browser:state").tabs, [saved]);
+  assert.ok(views().every(view => view.webContents.isDestroyed()));
+  assert.equal(invoke("openwork:browser:state").backgroundWindowCount, 0);
+  controls.beforeLoad = async () => {};
+  controls.beforeCommand = async (method) => { if (method === "Target.getTargetInfo") throw new Error("Target failed"); };
+  await assert.rejects(invoke("openwork:browser:restoreTab", tabId, "B"), /Target failed/);
+  assert.deepEqual(invoke("openwork:browser:state").tabs, [saved]);
+  controls.beforeCommand = async () => {};
+  for (let i = 0; i < 12; i++) invoke("openwork:browser:createTab", "about:blank", "A");
+  await assert.rejects(invoke("openwork:browser:restoreTab", tabId, "B"), /12 browser tabs/);
+  assert.deepEqual(invoke("openwork:browser:state").tabs[0], saved);
+  invoke("openwork:browser:closeSessionTabs", "A");
+  assert.equal((await invoke("openwork:browser:restoreTab", tabId, "B")).tab_id, tabId);
+});
+
+test("deletion cancels pending suspension and restoration without resurrecting saved tabs", async (t) => {
+  const { invoke, views } = createTaskPanel(t);
+  controls.confirm = async () => 1;
+  const { tabId } = invoke("openwork:browser:createTab", "https://example.com", "B");
+  await flush();
+  views()[0].webContents.closeMode = "pending";
+  const suspending = invoke("openwork:browser:suspendTab", tabId);
+  const closed = assert.rejects(suspending, /closed/);
+  await flush();
+  invoke("openwork:browser:closeSessionTabs", "B");
+  await closed;
+  assert.deepEqual(invoke("openwork:browser:state").tabs, []);
+
+  const saved = invoke("openwork:browser:createTab", "https://example.com", "B");
+  await flush();
+  await invoke("openwork:browser:suspendTab", saved.tabId);
+  const loading = gate();
+  controls.beforeLoad = () => loading.promise;
+  const restoring = invoke("openwork:browser:restoreTab", saved.tabId, "B");
+  const cancelled = assert.rejects(restoring, /destroyed|closed/);
+  await assert.rejects(invoke("openwork:browser:restoreTab", saved.tabId, "B"), /busy/);
+  assert.equal(invoke("openwork:browser:state").nativeViews.length, 1);
+  invoke("openwork:browser:closeAllTabs");
+  loading.finish();
+  await cancelled;
+  assert.deepEqual(invoke("openwork:browser:state").tabs, []);
+  assert.ok(views().every(view => view.webContents.isDestroyed()));
+
+  controls.beforeLoad = async () => {};
+  for (const channel of ["closeTab", "closeSessionTabs", "closeAllTabs", "destroy"]) {
+    const next = invoke("openwork:browser:createTab", "about:blank", "B");
+    await flush();
+    await invoke("openwork:browser:suspendTab", next.tabId);
+    invoke(`openwork:browser:${channel}`, channel === "closeSessionTabs" ? "B" : next.tabId);
+    assert.deepEqual(invoke("openwork:browser:state").tabs, []);
+    await assert.rejects(invoke("openwork:browser:selectTab", next.tabId), /Unknown/);
+  }
 });
 
 test("a catalog choice launches only the selected browser with the exact link, not a built-in tab", async () => {
