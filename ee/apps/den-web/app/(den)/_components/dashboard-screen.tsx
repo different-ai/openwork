@@ -1,5 +1,7 @@
 "use client";
 
+import { WorkspaceLoadingScreen } from "./workspace-loading-screen";
+
 import Link from "next/link";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -211,11 +213,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
   }, [router, sessionHydrated, user]);
 
   if (!sessionHydrated || !user || onboardingDecisionBusy) {
-    return (
-      <section className="mx-auto grid w-full max-w-[52rem] gap-4 rounded-[32px] border border-[var(--dls-border)] bg-[var(--dls-surface)] p-6">
-        <p className="text-sm text-[var(--dls-text-secondary)]">Preparing your dashboard...</p>
-      </section>
-    );
+    return <WorkspaceLoadingScreen />;
   }
 
   const currentWorker = activeWorker ?? (selectedWorker ? { workerName: selectedWorker.workerName, status: selectedWorker.status } : null);

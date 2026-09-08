@@ -1,5 +1,7 @@
 "use client";
 
+import { WorkspaceLoadingScreen } from "../../_components/workspace-loading-screen";
+
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -299,7 +301,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const onboardingRoute = getMarketplaceOnboardingRoute();
   const isOnboarding = pathname === onboardingRoute || pathname.startsWith(`${onboardingRoute}/`);
-  const { user, signOut, updateUserProfile, runtimeConfig, runtimeConfigLoaded } = useDenFlow();
+  const { user, sessionHydrated, signOut, updateUserProfile, runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const {
     activeOrg,
     orgDirectory,
@@ -310,6 +312,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     mutationBusy,
     switchOrganization,
   } = useOrgDashboard();
+  const [workspaceReady, setWorkspaceReady] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -384,6 +387,16 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [switcherOpen]);
+
+  useEffect(() => {
+    if (orgContext && !orgBusy) setWorkspaceReady(true);
+  }, [orgContext, orgBusy]);
+
+  // Do not briefly render member navigation or an empty workspace before access resolves.
+  // Keep an already loaded shell visible during background refreshes; errors remain actionable.
+  if (!sessionHydrated || !user || !runtimeConfigLoaded || ((!orgContext || !workspaceReady) && !orgSelectionOpen && !orgError)) {
+    return <WorkspaceLoadingScreen />;
+  }
 
   // The picker replaces the whole shell until a workspace is chosen.
   if (orgSelectionOpen) {
