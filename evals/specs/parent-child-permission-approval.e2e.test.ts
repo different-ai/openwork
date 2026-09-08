@@ -8,6 +8,9 @@ const test = spec.world(parentChildPermissionWorld);
 const scopeTest = spec.world(scopedPermissionRefreshWorld, { timeout: 600_000 });
 
 scopeTest("switching and creating threads hydrate permissions without waiting for unrelated roots", async ({ world, user, agent, probe, step }) => {
+  user = user.on(world.app);
+  agent = agent.on(world.app);
+  probe = probe.on(world.app);
   await probe.eventually(() => world.permissionReads(), {
     within: 15_000, label: "the unrelated permission endpoint is held open",
     until: (reads) => reads.some((read) => read.calibration && read.held && !read.completed),
@@ -26,7 +29,7 @@ scopeTest("switching and creating threads hydrate permissions without waiting fo
   };
   await step("switching reads only the selected root, not the other seven roots", async () => {
     const before = world.permissionReads().length;
-    await user.click({ text: world.selected.title });
+    await agent.run("session.open", { sessionId: world.selected.sessionId });
     await assertScoped(world.selected.sessionId, before);
   });
   await step("a newly created thread hydrates without sweeping existing roots", async () => {
