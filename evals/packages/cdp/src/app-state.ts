@@ -89,7 +89,9 @@ const PROBE_EXPRESSION = `(() => {
   const transitional = ${JSON.stringify([...APP_TRANSITIONAL_TEXTS])}
     .find((message) => text.includes(message)) ?? null;
   const buttonLabels = [...document.querySelectorAll("button")].map((button) => (button.textContent ?? "").trim());
-  const taskUi = text.includes("What do you need done?") || buttonLabels.includes("Run task");
+  // Running and archived conversations are interactive even without a Run task button.
+  const taskUi = text.includes("What do you need done?") || buttonLabels.includes("Run task")
+    || Boolean(document.querySelector("[data-session-surface-id]"));
   const needsWorkspace = text.includes("Create or connect a workspace");
   const welcome = text.includes("Welcome to OpenWork");
   // The product's own active-workspace state; the route is only a fallback
