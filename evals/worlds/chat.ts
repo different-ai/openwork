@@ -616,6 +616,33 @@ export async function attachmentUpload(seed: Seed) {
       app,
       workspace,
       session,
+      async holdUploads() {
+        await seed.evalIn(app, () => {
+          const originalFetch = window.fetch;
+          let release = () => {};
+          const gate = new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("Attachment upload gate timed out")), 60_000);
+            release = () => { clearTimeout(timer); resolve(); };
+          });
+          const fault = {
+            attempts: 0,
+            release: () => { release(); window.fetch = originalFetch; },
+          };
+          window.__openworkSubmissionFault = fault;
+          window.fetch = async (input, init) => {
+            const url = input instanceof Request ? input.url : String(input);
+            const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+            if (method === "POST" && /\/inbox\?/.test(url) && url.includes("chat-attachments")) {
+              fault.attempts++;
+              await gate;
+            }
+            return originalFetch(input, init);
+          };
+        });
+      },
+      async releaseUploads() {
+        await seed.evalIn(app, () => window.__openworkSubmissionFault?.release());
+      },
       approvalTimeoutMs,
       uploadStatus: uploadResponse.status,
       uploadElapsedMs,

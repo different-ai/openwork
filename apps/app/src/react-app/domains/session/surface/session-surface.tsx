@@ -581,7 +581,7 @@ export type SessionSurfaceProps = {
   onRefreshOrganizationModels?: () => void | Promise<void>;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef, variant?: string | null) => void;
-  onSendDraft: (draft: ComposerDraft, sessionId: string) => Promise<CloudMcpSubmissionResult>;
+  onSendDraft: (draft: ComposerDraft, sessionId: string, onPrepared?: () => void) => Promise<CloudMcpSubmissionResult>;
   cloudMcpSubmissionState: CloudMcpSubmissionGateState;
   onOpenConnect: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
@@ -1350,7 +1350,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   );
   const pendingMessages = useComposerStateStore((state) => state.pendingMessages[sessionOwner]);
   const failedDraft = useComposerStateStore((state) => state.failedDrafts[sessionOwner]?.[0]);
-  const autoSending = hasComposerAutoSend(props.sessionId) && !sessionModelUnavailable;
+  const autoSending = hasComposerAutoSend(props.sessionId) && !sessionModelUnavailable && attachments.length === 0;
   const unmatchedPendingMessages = useMemo(() => {
     const matchedIds = new Set<string>();
     const remaining = (pendingMessages ?? []).filter(({ draft: pending, previousMessageIds }) => {
@@ -1860,7 +1860,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Core sender shared by initial send and steered follow-ups. OpenCode
   // accepts follow-up user turns mid-run (steering) — the running loop picks
   // up the new message — so this is safe to call while the agent is busy.
-  const sendDraft = useCallback(async (nextDraft: ComposerDraft, itemId: string): Promise<CloudMcpSubmissionResult | { outcome: "unknown" }> => {
+  const sendDraft = useCallback(async (nextDraft: ComposerDraft, itemId: string, onPrepared?: () => void): Promise<CloudMcpSubmissionResult | { outcome: "unknown" }> => {
     const messageId = nextDraft.messageId ?? createPromptMessageID();
     const generation = getQueuedSendGeneration(props.sessionId);
     const submissionId = Symbol();
@@ -1869,7 +1869,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setError(null);
     try {
       const result = await submitAfterInterruption(props.opencodeBaseUrl, props.sessionId,
-        () => props.onSendDraft({ ...nextDraft, messageId }, props.sessionId));
+        () => props.onSendDraft({ ...nextDraft, messageId }, props.sessionId, onPrepared));
       dispatchQueuedDrain(props.sessionId, { type: "send_result", itemId, outcome: result.outcome, at: Date.now() });
       if (getQueuedSendGeneration(props.sessionId) !== generation) return result;
       if (result.outcome === "blocked" || result.outcome === "cancelled") return result;
@@ -1924,8 +1924,27 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!claimQueuedSend(props.sessionId, nextDraft.messageId, true)) return;
     const sentAttachments = attachments;
     const savedComposer = useComposerStateStore.getState().sessions[props.sessionId];
-    clearComposer();
-    const clearedComposer = useComposerStateStore.getState().sessions[props.sessionId];
+    let clearedComposer: typeof savedComposer;
+    let composerCleared = false;
+    const markPrepared = () => {
+      // Do not erase edits made while attachments were being prepared.
+      if (useComposerStateStore.getState().sessions[props.sessionId] === savedComposer
+        && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey) {
+        clearComposer();
+        clearedComposer = useComposerStateStore.getState().sessions[props.sessionId];
+        composerCleared = true;
+      }
+      useComposerStateStore.setState((state) => ({
+        pendingMessages: {
+          ...state.pendingMessages,
+          [sessionOwner]: [...(state.pendingMessages[sessionOwner] ?? []), {
+            draft: nextDraft,
+            previousMessageIds: baseRenderedMessages.map((message) => message.id),
+          }],
+        },
+      }));
+      setAttachmentsUploading(false);
+    };
     const removePending = () => useComposerStateStore.setState((state) => ({
       pendingMessages: {
         ...state.pendingMessages,
@@ -1934,6 +1953,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }));
     const restore = () => {
       removePending();
+      if (!composerCleared) return;
       const state = useComposerStateStore.getState();
       // Identity, not text equality: typing and then deleting is still a newer edit.
       if (savedComposer && state.sessions[props.sessionId] === clearedComposer
@@ -1947,24 +1967,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
         } });
       }
     };
-    useComposerStateStore.setState((state) => ({
-      pendingMessages: {
-        ...state.pendingMessages,
-        [sessionOwner]: [...(state.pendingMessages[sessionOwner] ?? []), {
-          draft: nextDraft,
-          previousMessageIds: baseRenderedMessages.map((message) => message.id),
-        }],
-      },
-    }));
     if (sentAttachments.length) setAttachmentsUploading(true);
+    else markPrepared();
     try {
-      const result = await sendDraft(nextDraft, nextDraft.messageId);
+      const result = await sendDraft(nextDraft, nextDraft.messageId, sentAttachments.length ? markPrepared : undefined);
       if (result.outcome === "blocked" || result.outcome === "cancelled") {
         restore();
         return;
       }
       if (result.outcome !== "unknown" && (nextDraft.command || nextDraft.mode === "shell")) removePending();
-      sentAttachments.forEach(revokeAttachmentPreview);
+      const retained = useComposerStateStore.getState().sessions[props.sessionId]?.attachments ?? [];
+      sentAttachments.filter((attachment) => !retained.includes(attachment)).forEach(revokeAttachmentPreview);
     } catch {
       restore();
     } finally {
@@ -2004,13 +2017,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Queue: hold the draft locally and clear the composer. The drain effect
   // sends it once the session reports idle.
   const handleQueue = useCallback(() => {
+    if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
     const queuedDraft = withoutRevertTarget(buildDraft(text, attachments));
     if (!queuedDraft) return;
     appendQueuedDraft(props.sessionId, queuedDraft);
     clearComposer();
-  }, [appendQueuedDraft, attachments, buildDraft, clearComposer, draft, props.sessionId]);
+  }, [appendQueuedDraft, attachments, buildDraft, clearComposer, draft, props.sessionId, sessionOwner]);
 
   const removeQueuedDraft = useCallback((id: string) => {
     const target = queuedItems.find((item) => item.id === id);

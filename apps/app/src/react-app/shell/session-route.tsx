@@ -1300,7 +1300,7 @@ export function SessionRoute() {
           openSettings: handleOpenSettings,
         });
       },
-      onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
+      onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: () => void): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
         const generation = getQueuedSendGeneration(targetSessionId);
@@ -1373,11 +1373,13 @@ export function SessionRoute() {
                 trackTaskStarted(targetSessionId, telemetryDimensions);
 
                 if (draft.mode === "shell") {
+                  onPrepared?.();
                   await shellInSession(opencodeClient, targetSessionId, text);
                   return;
                 }
 
                 if (draft.command) {
+                  onPrepared?.();
                   const result = await opencodeClient.session.command({
                     sessionID: targetSessionId,
                     command: draft.command.name,
@@ -1397,6 +1399,7 @@ export function SessionRoute() {
                   runtimeKey: environmentRuntimeKey,
                 });
                 assertCurrent();
+                onPrepared?.();
                 const result = await opencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
                   messageID: draft.messageId,
@@ -1654,7 +1657,7 @@ export function SessionRoute() {
       isSandboxWorkspace: isSandboxWorkspace(workspace),
       environmentRuntimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
       onApplyEnvironmentChanges: undefined,
-      onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
+      onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: () => void): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || session.sessionId;
         const generation = getQueuedSendGeneration(targetSessionId);
         const assertCurrent = () => assertQueuedSendCurrent(targetSessionId, generation);
@@ -1705,10 +1708,12 @@ export function SessionRoute() {
                 trackSessionActive(targetSessionId, telemetryDimensions);
                 trackTaskStarted(targetSessionId, telemetryDimensions);
                 if (draft.mode === "shell") {
+                  onPrepared?.();
                   await shellInSession(workspaceOpencodeClient, targetSessionId, text);
                   return;
                 }
                 if (draft.command) {
+                  onPrepared?.();
                   const result = await workspaceOpencodeClient.session.command({
                     sessionID: targetSessionId,
                     command: draft.command.name,
@@ -1725,6 +1730,7 @@ export function SessionRoute() {
                   runtimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
                 });
                 assertCurrent();
+                onPrepared?.();
                 const result = await workspaceOpencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
                   messageID: draft.messageId,

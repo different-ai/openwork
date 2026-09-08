@@ -94,7 +94,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   const submittingRef = useRef(false);
   const draftRevisionRef = useRef(0);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
-  const [pendingAttachmentNames, setPendingAttachmentNames] = useState<string[]>([]);
+  const [preparingAttachments, setPreparingAttachments] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [failedSubmission, setFailedSubmission] = useState<{ text: string; attachments: ComposerAttachment[]; pastedText: PastedTextChip[] } | null>(null);
   const draftRef = useRef(props.draft);
@@ -259,26 +259,32 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     const revision = draftRevisionRef.current;
     const resolved = resolvePastedTextPlaceholders(originalDraft, pastedText);
     const saved = { text: originalDraft, attachments, pastedText };
-    setPendingPrompt(resolved.replace(/\[attachment [^\]]+\]/g, ""));
-    setPendingAttachmentNames(attachments.map((attachment) => attachment.name));
+    if (!attachments.length) setPendingPrompt(resolved.replace(/\[attachment [^\]]+\]/g, ""));
+    setPreparingAttachments(attachments.length > 0);
     setSubmissionError(null);
-    props.onDraftChange("");
-    draftRef.current = "";
-    setAttachments([]);
-    setPastedText([]);
+    // Attachment drafts stay visible through session creation and are handed
+    // to the session composer, which clears them only after preparation.
+    if (!attachments.length) {
+      props.onDraftChange("");
+      draftRef.current = "";
+      setAttachments([]);
+      setPastedText([]);
+    }
     try {
       await props.onRunTask(resolved, attachments);
     } catch (error) {
-      if (draftRevisionRef.current === revision && !draftRef.current) {
-        props.onDraftChange(originalDraft);
-        setAttachments(saved.attachments);
-        setPastedText(saved.pastedText);
-      } else {
-        setFailedSubmission(saved);
+      if (!attachments.length) {
+        if (draftRevisionRef.current === revision && !draftRef.current) {
+          props.onDraftChange(originalDraft);
+          setAttachments(saved.attachments);
+          setPastedText(saved.pastedText);
+        } else {
+          setFailedSubmission(saved);
+        }
       }
       setSubmissionError(error instanceof Error ? error.message : "Could not create the conversation. Try again.");
       setPendingPrompt(null);
-      setPendingAttachmentNames([]);
+      setPreparingAttachments(false);
       submittingRef.current = false;
     }
   };
@@ -292,14 +298,6 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     <>
     {pendingPrompt !== null ? <div className="mb-4 whitespace-pre-wrap rounded-xl bg-muted px-4 py-3 text-sm" data-message-role="user">
       {pendingPrompt}
-      {pendingAttachmentNames.length > 0 ? <div role="status" className="mt-2 flex flex-wrap gap-2">
-        {pendingAttachmentNames.map((name, index) => (
-          <span key={index} className="inline-flex max-w-full items-center gap-2 rounded-xl border border-border/70 px-2 py-1 text-xs text-muted-foreground" data-attachment-status="preparing">
-            <span className="truncate" title={name}>{name}</span>
-            <span className="shrink-0">Preparing attachment...</span>
-          </span>
-        ))}
-      </div> : null}
     </div> : null}
     {submissionError ? <div role="alert" className="mb-2 text-sm text-red-11">{submissionError}</div> : null}
     {failedSubmission ? <button type="button" disabled={Boolean(props.draft || attachments.length)} className="mb-2 text-sm disabled:opacity-50" onClick={() => {
@@ -319,7 +317,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       onStop={noop}
       busy={false}
       steering={false}
-      submissionPreparing={props.busy || pendingPrompt !== null || failedSubmission !== null}
+      submissionPreparing={props.busy || pendingPrompt !== null || preparingAttachments || failedSubmission !== null}
       queuedCount={0}
       disabled={Boolean(context?.modelUnavailable)}
       modelUnavailable={context?.modelUnavailable}
@@ -335,7 +333,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       onModelPickerOpenChange={context?.onModelPickerOpenChange ?? noop}
       onModelChange={context?.onModelChange ?? noop}
       attachments={attachments}
-      attachmentsUploading={props.busy && attachments.length > 0}
+      attachmentsUploading={preparingAttachments}
       onAttachFiles={handleAttachFiles}
       onRemoveAttachment={handleRemoveAttachment}
       attachmentsEnabled

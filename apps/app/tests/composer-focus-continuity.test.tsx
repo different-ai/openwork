@@ -8,7 +8,7 @@ import { createRoot } from "react-dom/client";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
-import type { ComposerDraft } from "../src/app/types";
+import type { ComposerAttachment, ComposerDraft } from "../src/app/types";
 import type { CloudMcpSubmissionResult } from "../src/react-app/domains/connections/cloud-mcp-submit-readiness";
 
 const workspaceId = "workspace-focus-continuity";
@@ -128,6 +128,7 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
   const draft = "Keep this draft while the task finishes";
   let submission = Promise.withResolvers<CloudMcpSubmissionResult>();
   const sentDrafts: ComposerDraft[] = [];
+  let prepareSubmission: (() => void) | undefined;
 
   try {
     await act(async () => {
@@ -151,8 +152,9 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
                 selectedModel={{ providerID: "test", modelID: "test-model" }}
                 onModelPickerOpenChange={() => {}}
                 onModelChange={() => {}}
-                onSendDraft={(value) => {
+                onSendDraft={(value, _sessionId, onPrepared) => {
                   sentDrafts.push(value);
+                  prepareSubmission = onPrepared;
                   return submission.promise;
                 }}
                 cloudMcpSubmissionState={IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE}
@@ -211,6 +213,43 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
       button.click();
       button.click();
     };
+    const attachment: ComposerAttachment = { id: "image-ready", name: "photo.png", mimeType: "image/png", size: 3, kind: "image",
+      file: new File(["png"], "photo.png", { type: "image/png" }) };
+    await act(async () => {
+      useComposerStateStore.getState().setAttachments(sessionId, [attachment]);
+      useComposerStateStore.getState().setDraft(sessionId, `${draft}[attachment image-ready]`);
+    });
+    await act(async () => send());
+    expect(sentDrafts).toHaveLength(1);
+    expect(editor.textContent).toContain(draft);
+    expect(container.querySelector('[data-attachment-status="uploading"]')).not.toBeNull();
+    expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(0);
+    await act(async () => {
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }));
+    });
+    expect(sentDrafts).toHaveLength(1);
+    expect(useComposerStateStore.getState().queuedDrafts[sessionId]).toBeUndefined();
+    await act(async () => submission.reject(new Error("Image preparation failed")));
+    expect(editor.textContent).toContain(draft);
+    expect(useComposerStateStore.getState().sessions[sessionId]?.attachments).toEqual([attachment]);
+    expect(Object.values(useComposerStateStore.getState().failedDrafts).flat()).toHaveLength(0);
+
+    submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss error"]')?.click());
+    await act(async () => send());
+    expect(prepareSubmission).toBeFunction();
+    await act(async () => prepareSubmission?.());
+    expect(editor.textContent).toBe("");
+    expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(1);
+    await act(async () => submission.resolve({ outcome: "cancelled", reason: "context_changed" }));
+    expect(editor.textContent).toContain(draft);
+    await act(async () => {
+      useComposerStateStore.getState().setAttachments(sessionId, []);
+      useComposerStateStore.getState().setDraft(sessionId, draft);
+    });
+    sentDrafts.length = 0;
+    submission = Promise.withResolvers<CloudMcpSubmissionResult>();
     await act(async () => send());
     expect(sentDrafts).toHaveLength(1);
     expect(editor.textContent).toBe("");
@@ -306,7 +345,7 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
     expect(sentDrafts).toHaveLength(4);
 
     const { NewTaskComposer } = await import("../src/react-app/domains/session/chat/new-task-composer");
-    const creation = Promise.withResolvers<void>();
+    let creation = Promise.withResolvers<void>();
     let creations = 0;
     let updateHeroDraft = (_text: string) => {};
     function Hero() {
@@ -333,6 +372,21 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
     });
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("First hero message");
     expect(creations).toBe(1);
+    creation = Promise.withResolvers<void>();
+    await act(async () => {
+      const input = container.querySelector<HTMLInputElement>('input[type="file"][multiple]');
+      if (!input) throw new Error("Expected the attachment input");
+      Object.defineProperty(input, "files", { configurable: true, value: [attachment.file] });
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => send());
+    expect(creations).toBe(2);
+    expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toContain("First hero message");
+    expect(container.querySelector('[data-message-role="user"]')).toBeNull();
+    expect(container.querySelector('[data-attachment-status="uploading"]')).not.toBeNull();
+    await act(async () => creation.reject(new Error("Image session creation failed")));
+    expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toContain("First hero message");
+    expect(container.querySelector('[data-attachment-id]')).not.toBeNull();
   } finally {
     await act(async () => root.unmount());
     resetQueuedDrainForTests();
