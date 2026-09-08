@@ -165,7 +165,7 @@ function parsePolarBilling(payload: unknown): PolarBilling | null {
 export function BillingDashboardScreen() {
   const router = useRouter();
   const { runtimeConfig, runtimeConfigLoaded, sessionHydrated, user } = useDenFlow();
-  const { activeOrg, orgContext, runReauthableAction } = useOrgDashboard();
+  const { activeOrg, orgContext, orgDirectory, switchOrganization, mutationBusy, runReauthableAction } = useOrgDashboard();
   const activeOrgId = orgContext?.organization.id ?? null;
   const [stripeBillingValue, setStripeBillingValue] = useState<StripeBilling | null>(null);
   const [stripeBillingOrgId, setStripeBillingOrgId] = useState<string | null>(null);
@@ -391,6 +391,15 @@ export function BillingDashboardScreen() {
           : "Team seats and built-in AI model access are separate purchases. Your expected monthly total reflects the subscriptions shown below."}
         colors={["#F5F3FF", "#312E81", "#635BFF", "#C4B5FD"]}
       >
+      <DenNotice
+        className="mb-6"
+        message={`Organization subscriptions belong to ${orgContext?.organization.name ?? activeOrg?.name ?? "the selected organization"}. Switching organizations does not move paid access.`}
+      />
+      {orgDirectory.filter((org) => org.id !== activeOrgId && org.hasSubscriptions).map((org) => (
+        <button key={org.id} type="button" disabled={mutationBusy === "switch-organization"} onClick={() => switchOrganization(org.slug, "billing")} className="mb-4 block text-sm underline disabled:opacity-50">
+          Open Billing for {org.name} — subscriptions in this organization
+        </button>
+      ))}
       {stripeError && stripeBilling ? (
         <DenNotice message={stripeError} className="mb-6" />
       ) : null}

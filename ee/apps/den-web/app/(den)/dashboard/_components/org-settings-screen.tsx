@@ -821,7 +821,7 @@ export function OrgSettingsScreen() {
               Danger zone
             </h2>
             <p className="max-w-2xl text-[14px] leading-6 text-red-700">
-              Permanently delete this organization, including members, teams, workers, plugins, and connections. This cannot be undone.
+              Permanently delete this organization, including members, teams, workers, plugins, and connections. This cannot be undone. Subscriptions belong to this organization and must end before it can be deleted. Manage them in Billing; switching organizations does not move paid access.
             </p>
           </div>
           <div>
