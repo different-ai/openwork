@@ -8,6 +8,9 @@ if (process.isMainFrame) {
   let interaction = false;
   let documentRisk = false;
   let lastReason;
+  let armedClose = null;
+  let cancelledClose = null;
+  let lastCloseToken = 0;
   const riskySelector = "script,noscript,form,input,textarea,select,button,[contenteditable],iframe,frame,frameset,audio,video,object,embed,canvas,svg,template,[download]";
   function protectDocument() {
     documentRisk = true;
@@ -88,17 +91,48 @@ if (process.isMainFrame) {
     send(initial);
   });
   ipcRenderer.on("openwork:browser:safety-probe", (_event, payload) => {
-    if (payload.generation === generation) ipcRenderer.send("openwork:browser:safety-report", report(payload.token, true));
+    if (generation === null || payload.generation !== generation) return;
+    if (payload.arm === true && Number.isSafeInteger(payload.token) && payload.token > lastCloseToken && !armedClose && !cancelledClose) {
+      lastCloseToken = payload.token;
+      armedClose = { token: payload.token, generation };
+      window.addEventListener("beforeunload", checkSuspensionClose, { capture: true });
+    }
+    ipcRenderer.send("openwork:browser:safety-report", {
+      ...report(payload.token, true), armed: Boolean(armedClose && armedClose.token === payload.token),
+    });
   });
-  window.addEventListener("beforeunload", (event) => {
-    // Main returns null for ordinary navigation/explicit close. For suspension
-    // it checks native pins, loading, downloads and identity synchronously while
-    // this renderer cannot accept another input event between report and veto.
-    if (ipcRenderer.sendSync("openwork:browser:safety-close", report(undefined, true)) === false) {
+  ipcRenderer.on("openwork:browser:safety-disarm", (_event, payload) => {
+    const attempt = armedClose || cancelledClose;
+    if (!attempt || payload.generation !== generation || payload.generation !== attempt.generation || payload.token !== attempt.token) return;
+    armedClose = null;
+    // A timed-out native close cannot be recalled. Disable IPC but retain a
+    // local veto until main acknowledges cancellation, rather than allow an
+    // unchecked late close. This listener exists only for that pending attempt.
+    cancelledClose = payload.closePending === true ? attempt : null;
+    if (!cancelledClose) window.removeEventListener("beforeunload", checkSuspensionClose, { capture: true });
+  });
+  function checkSuspensionClose(event) {
+    const attempt = armedClose;
+    let allowed = false;
+    if (attempt && !cancelledClose) {
+      armedClose = null;
+      window.removeEventListener("beforeunload", checkSuspensionClose, { capture: true });
+      // Consume the arm before calling main. Ordinary marker navigation never
+      // installs this listener or sends synchronous IPC, and retries need a new
+      // token. Unknown replies, stale generations and exceptions all veto.
+      try {
+        const next = { ...report(attempt.token, true), armed: true };
+        if (attempt.generation === generation) {
+          const authorized = ipcRenderer.sendSync("openwork:browser:safety-close", next);
+          allowed = authorized === true && next.reason === null;
+        }
+      } catch { /* Fail closed without leaving a synchronous unload listener. */ }
+    }
+    if (!allowed) {
       event.preventDefault();
       event.returnValue = "";
     }
-  }, { capture: true });
+  }
 }
 
 function dismissMenuOverlay() {

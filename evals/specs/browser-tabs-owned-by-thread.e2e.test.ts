@@ -21,20 +21,27 @@ const conversation = (title: string): Target => ({ text: title });
 const BACKGROUND_TAB_VIEWPORT = { width: 1280, height: 800 };
 
 test("memory saver reclaims only released safe pages and restores their identity without leaking native resources", async ({ world, user, agent, step }) => {
+  const setupStep = <T>(name: string, run: () => Promise<T>) => step(name, async () => {
+    try { return await run(); }
+    catch (error) {
+      console.error("Memory saver pre-teardown diagnostics", JSON.stringify(await world.failureDiagnostics()));
+      throw new Error(`${name}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
+  });
   const reading = { ...world.session, title: "Reading with memory saver" };
-  await world.renameSession(reading.sessionId, reading.title);
-  const research = await world.openSession("Saved browser research");
-  await user.click(conversation(reading.title));
-  const origin = await world.staticWitnessUrl();
-  const neighbor = await world.openTabAs("protected", reading.sessionId, `${origin}/?page=protected`);
-  await user.click({ role: "button", label: "Suspend tab" });
-  await user.see({ text: /Cannot suspend browser tab: automation/ });
-  const saved = await world.openTabAs("saved", research.sessionId, `${origin}/?page=saved`);
+  await setupStep("Name the reading session", () => world.renameSession(reading.sessionId, reading.title));
+  const research = await setupStep("Create the research session", () => world.openSession("Saved browser research"));
+  await setupStep("Return to the reading session", () => user.click(conversation(reading.title)));
+  const origin = await setupStep("Resolve the static witness", () => world.staticWitnessUrl());
+  const neighbor = await setupStep("openTabAs(protected): foreground automation command", () => world.openTabAs("protected", reading.sessionId, `${origin}/?page=protected`));
+  await setupStep("Request suspension of the protected foreground tab", () => user.click({ role: "button", label: "Suspend tab" }));
+  await setupStep("See the automation suspension refusal", () => user.see({ text: /Cannot suspend browser tab: automation/ }));
+  const saved = await setupStep("openTabAs(saved): background automation command", () => world.openTabAs("saved", research.sessionId, `${origin}/?page=saved`));
   const stateOfSaved = () => world.readBrowserState().then(state => state.tabs.find(tab => tab.id === saved.tabId));
-  await world.tabCommandAs("browser.release_tab", saved.tabId, research.sessionId);
-  await eventually(stateOfSaved, { within: 15_000,
+  await setupStep("Release the saved tab automation handle", () => world.tabCommandAs("browser.release_tab", saved.tabId, research.sessionId));
+  await setupStep("Read native state until the saved page is eligible", () => eventually(stateOfSaved, { within: 15_000,
     until: tab => tab?.status === "ready" && tab.automationProtected === false && tab.suspensionBlockedReason === null,
-    label: "the real static HTTP response is eligible after automation releases it" });
+    label: "the real static HTTP response is eligible after automation releases it" }));
 
   await step("Pressure saves a released background page, never its older protected neighbor", async () => {
     for (let index = 0; index < 10; index += 1) await world.openTabAs(`memory-${index}`, reading.sessionId);

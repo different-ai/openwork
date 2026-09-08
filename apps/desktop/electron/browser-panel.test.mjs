@@ -194,19 +194,24 @@ async function safeDocument(panel, view, { method = "GET", reason = null } = {})
   const url = contents.getURL();
   const event = () => ({ sender: contents, senderFrame: contents.mainFrame });
   let generation;
-  const report = (token) => ({ generation, token, url: contents.getURL(), reason });
+  let armedToken = null;
+  const report = (token) => ({ generation, token, url: contents.getURL(), reason, armed: token != null && token === armedToken });
   contents.onSend = (channel, payload) => {
     if (channel === "openwork:browser:safety-init") {
       generation = payload.generation;
       panel.emit("openwork:browser:safety-report", event(), report());
     }
     if (channel === "openwork:browser:safety-probe") {
+      if (payload.arm === true && payload.generation === generation) armedToken = payload.token;
       queueMicrotask(() => panel.emit("openwork:browser:safety-report", event(), report(payload.token)));
     }
+    if (channel === "openwork:browser:safety-disarm" && payload.generation === generation && payload.token === armedToken) armedToken = null;
   };
   contents.safetyClose = () => {
     const request = event();
-    panel.emit("openwork:browser:safety-close", request, report());
+    const closing = report(armedToken);
+    armedToken = null;
+    panel.emit("openwork:browser:safety-close", request, closing);
     return request.returnValue;
   };
   contents.emit("did-start-navigation", url, false, true);
@@ -745,16 +750,106 @@ test("stale, forged and failed probes retain the page; late native input and pag
       if (mode === "failed") throw new Error("disposed frame");
       if (mode === "pin-during-probe") invoke("openwork:browser:setKeepActive", tabId, true);
       const event = safety.event();
-      const report = safety.report(payload.token);
+      const report = { ...safety.report(payload.token), armed: true };
       if (mode === "subframe") event.senderFrame = {};
       if (mode === "stale") report.generation -= 1;
       emit("openwork:browser:safety-report", event, report);
     };
     await assert.rejects(invoke("openwork:browser:suspendTab", tabId), /Cannot suspend|prevented/);
+    const probe = contents.sent.findLast((entry) => entry.channel === "openwork:browser:safety-probe").payload;
+    assert.deepEqual(contents.sent.findLast((entry) => entry.channel === "openwork:browser:safety-disarm").payload,
+      { token: probe.token, generation: probe.generation, closePending: false }, `${mode} disarms its own attempt`);
     assert.equal(contents.isDestroyed(), false, mode);
     assert.equal(invoke("openwork:browser:state").liveTabCount, 1, mode);
     invoke("openwork:browser:destroy");
   }
+});
+
+test("native suspension requires an armed acknowledgement and consumes only its exact close token", async () => {
+  const panel = createPanel();
+  const { invoke, views, emit } = panel;
+  const { tabId } = await invoke("openwork:browser:createTab", "https://static.example", "A");
+  const contents = views()[0].webContents;
+  const safety = await safeDocument(panel, views()[0]);
+  const onSend = contents.onSend;
+  contents.onSend = (channel, payload) => {
+    if (channel === "openwork:browser:safety-probe") {
+      emit("openwork:browser:safety-report", safety.event(), { ...safety.report(payload.token), armed: false });
+    } else onSend(channel, payload);
+  };
+  await assert.rejects(invoke("openwork:browser:suspendTab", tabId), /unarmed/);
+  assert.equal(contents.closeOptions, undefined, "an unarmed page must never receive a native close request");
+  assert.equal(contents.isDestroyed(), false);
+  contents.onSend = onSend;
+  const originalClose = contents.safetyClose;
+  contents.safetyClose = () => {
+    const probe = contents.sent.findLast((entry) => entry.channel === "openwork:browser:safety-probe").payload;
+    const closing = { ...safety.report(probe.token), armed: true };
+    for (const change of [{ token: undefined }, { token: probe.token + 1 }, { generation: probe.generation + 1 }, { armed: false }]) {
+      const event = safety.event();
+      emit("openwork:browser:safety-close", event, { ...closing, ...change });
+      assert.equal(event.returnValue, false, "unknown, stale or unarmed handshake fails closed");
+    }
+    const authorized = originalClose();
+    assert.equal(authorized, true, "invalid messages must not consume the legitimate arm");
+    const replay = safety.event();
+    emit("openwork:browser:safety-close", replay, closing);
+    assert.equal(replay.returnValue, false, "a close token authorizes at most one unload");
+    return authorized;
+  };
+  assert.equal(await invoke("openwork:browser:suspendTab", tabId), tabId);
+  assert.equal(contents.isDestroyed(), true);
+});
+
+test("native probe timeout disarms only that generation and never requests an unarmed close", async () => {
+  for (const navigateDuringProbe of [false, true]) {
+    const panel = createPanel();
+    const { invoke, views } = panel;
+    const { tabId } = await invoke("openwork:browser:createTab", "https://static.example", "A");
+    const contents = views()[0].webContents;
+    await safeDocument(panel, views()[0]);
+    const onSend = contents.onSend;
+    contents.onSend = (channel, payload) => {
+      if (channel !== "openwork:browser:safety-probe") { onSend(channel, payload); return; }
+      // Simulate a lost reply. A later document must not receive its disarm.
+      if (navigateDuringProbe) contents.emit("did-start-navigation", "https://static.example/next", false, true);
+    };
+    await assert.rejects(invoke("openwork:browser:suspendTab", tabId), /unknown/);
+    const disarms = contents.sent.filter((entry) => entry.channel === "openwork:browser:safety-disarm");
+    assert.equal(disarms.length, navigateDuringProbe ? 0 : 1);
+    if (!navigateDuringProbe) {
+      const probe = contents.sent.findLast((entry) => entry.channel === "openwork:browser:safety-probe").payload;
+      assert.deepEqual(disarms[0].payload, { token: probe.token, generation: probe.generation, closePending: false });
+    }
+    assert.equal(contents.closeOptions, undefined);
+    assert.equal(invoke("openwork:browser:state").liveTabCount, 1);
+    invoke("openwork:browser:destroy");
+  }
+});
+
+test("a timed-out native close is disarmed, rejects late authorization and retains its live slot", async () => {
+  const panel = createPanel();
+  const { invoke, views, emit } = panel;
+  const { tabId } = await invoke("openwork:browser:createTab", "https://static.example", "A");
+  const contents = views()[0].webContents;
+  const safety = await safeDocument(panel, views()[0]);
+  const close = contents.close;
+  // Unlike deferClose, this delays beforeunload itself, not just destruction.
+  contents.close = (options) => { contents.closeOptions = options; };
+  await assert.rejects(invoke("openwork:browser:suspendTab", tabId), /still pending/);
+  const probe = contents.sent.findLast((entry) => entry.channel === "openwork:browser:safety-probe").payload;
+  assert.deepEqual(contents.sent.findLast((entry) => entry.channel === "openwork:browser:safety-disarm").payload,
+    { token: probe.token, generation: probe.generation, closePending: true });
+  const late = safety.event();
+  emit("openwork:browser:safety-close", late, { ...safety.report(probe.token), armed: true });
+  assert.equal(late.returnValue, false);
+  assert.equal(contents.isDestroyed(), false);
+  assert.equal(invoke("openwork:browser:state").liveTabCount, 1);
+  contents.emit("will-prevent-unload");
+  assert.deepEqual(contents.sent.findLast((entry) => entry.channel === "openwork:browser:safety-disarm").payload,
+    { token: probe.token, generation: probe.generation, closePending: false }, "native cancellation removes the remaining local veto");
+  contents.close = close;
+  assert.equal(await invoke("openwork:browser:suspendTab", tabId), tabId, "retry arms a new attempt after cancellation settles");
 });
 
 test("failed restore preserves the saved tab and protection; shutdown cancels queued allocation", async () => {
@@ -822,7 +917,7 @@ test("a tab selected while an automatic safety probe is pending cannot be reclai
   views()[0].webContents.onSend = (channel, payload) => {
     if (channel !== "openwork:browser:safety-probe") return;
     void invoke("openwork:browser:selectTab", ids[0]);
-    panel.emit("openwork:browser:safety-report", safety.event(), safety.report(payload.token));
+    panel.emit("openwork:browser:safety-report", safety.event(), { ...safety.report(payload.token), armed: true });
   };
   await assert.rejects(invoke("openwork:browser:createTab", "about:blank", "A"), /12 browser tabs/);
   assert.equal(views()[0].webContents.isDestroyed(), false);
@@ -1152,12 +1247,14 @@ test("concurrent restores reserve live slots and pin both identities before asyn
   assert.ok(messages("openwork:browser:state").every((state) => state.liveTabCount <= 12));
 });
 
-test("isolated preload scans mutations linearly and stops permanently on input or document risk", async () => {
+test("isolated preload keeps ordinary navigation free of sync IPC and bounds armed safety scans", async () => {
   const source = await readFile(new URL("./browser-content-preload.cjs", import.meta.url), "utf8");
-  function preload() {
+  function preload(url = "https://static.example", initialize = true) {
     const listeners = new Map();
     const ipc = new Map();
     const reports = [];
+    const syncCalls = [];
+    let syncResult = false;
     let observe;
     let queued = [];
     const scans = { full: 0, children: 0, own: 0, disconnected: false };
@@ -1178,10 +1275,17 @@ test("isolated preload scans mutations linearly and stops permanently on input o
       require: () => ({ ipcRenderer: {
         on(channel, handler) { ipc.set(channel, handler); },
         send(channel, report) { if (channel === "openwork:browser:safety-report") reports.push(report); },
-        sendSync() { return false; },
+        sendSync(channel, report) {
+          syncCalls.push({ channel, report });
+          if (syncResult instanceof Error) throw syncResult;
+          return syncResult;
+        },
       } }),
-      process: { isMainFrame: true }, document, location: { href: "https://static.example" }, history: { state: null },
-      window: { addEventListener(event, handler) { const list = listeners.get(event) ?? []; list.push(handler); listeners.set(event, list); } },
+      process: { isMainFrame: true }, document, location: { href: url }, history: { state: null },
+      window: {
+        addEventListener(event, handler) { const list = listeners.get(event) ?? []; list.push(handler); listeners.set(event, list); },
+        removeEventListener(event, handler) { listeners.set(event, (listeners.get(event) ?? []).filter((entry) => entry !== handler)); },
+      },
       MutationObserver: class {
         constructor(handler) { observe = handler; }
         observe() {}
@@ -1189,12 +1293,79 @@ test("isolated preload scans mutations linearly and stops permanently on input o
         disconnect() { scans.disconnected = true; queued = []; }
       },
     });
-    ipc.get("openwork:browser:safety-init")(null, { generation: 1 });
-    return { reports, document, body, bodyChildren, element, scans,
+    if (initialize) ipc.get("openwork:browser:safety-init")(null, { generation: 1 });
+    return { reports, document, body, bodyChildren, element, scans, syncCalls,
+      setSyncResult: (value) => { syncResult = value; },
+      listenerCount: () => (listeners.get("beforeunload") ?? []).length,
+      arm: (token = 1, generation = 1) => ipc.get("openwork:browser:safety-probe")(null, { token, generation, arm: true }),
+      disarm: (token = 1, generation = 1, closePending = false) => ipc.get("openwork:browser:safety-disarm")(null, { token, generation, closePending }),
       queue: (records) => { queued = records; },
       init: () => ipc.get("openwork:browser:safety-init")(null, { generation: 1 }),
-      observe: (records) => observe(records), dispatch: (event, payload = {}) => listeners.get(event)?.forEach((handler) => handler(payload)),
+      observe: (records) => observe(records), dispatch: (event, payload = {}) => [...(listeners.get(event) ?? [])].forEach((handler) => handler(payload)),
       probe: () => ipc.get("openwork:browser:safety-probe")(null, { token: 1, generation: 1 }) };
+  }
+  for (const url of ["data:text/html,foreground-marker", "data:text/html,background-marker", "https://static.example"]) {
+    const ordinary = preload(url, false);
+    let prevented = false;
+    const event = { preventDefault() { prevented = true; } };
+    ordinary.dispatch("beforeunload", event);
+    ordinary.init();
+    ordinary.probe();
+    ordinary.dispatch("beforeunload", event);
+    assert.equal(ordinary.listenerCount(), 0, "ordinary documents have no unload safety listener");
+    assert.equal(ordinary.syncCalls.length, 0, "marker departure and ordinary navigation/close send no synchronous safety IPC");
+    assert.equal(prevented, false);
+  }
+  const scoped = preload();
+  scoped.arm(1, 0);
+  scoped.arm(0);
+  assert.equal(scoped.listenerCount(), 0, "unknown generation or invalid token cannot arm a close");
+  scoped.arm(1);
+  scoped.setSyncResult(true);
+  assert.equal(scoped.reports.at(-1).armed, true);
+  scoped.disarm(1, 0);
+  scoped.disarm(2);
+  assert.equal(scoped.listenerCount(), 1, "other generations and attempts cannot disarm this guard");
+  let vetoes = 0;
+  scoped.dispatch("beforeunload", { preventDefault() { vetoes += 1; } });
+  assert.equal(vetoes, 0);
+  assert.equal(scoped.syncCalls.length, 1);
+  assert.equal(scoped.syncCalls[0].report.token, 1);
+  assert.equal(scoped.syncCalls[0].report.generation, 1);
+  assert.equal(scoped.listenerCount(), 0, "the arm is consumed before the native handshake");
+  scoped.dispatch("beforeunload", { preventDefault() { vetoes += 1; } });
+  scoped.arm(1);
+  assert.equal(scoped.reports.at(-1).armed, false, "a consumed token cannot be replayed");
+  assert.equal(scoped.syncCalls.length, 1);
+  scoped.arm(2);
+  scoped.disarm(1);
+  scoped.dispatch("input");
+  scoped.dispatch("beforeunload", { preventDefault() { vetoes += 1; } });
+  assert.equal(vetoes, 1, "late input vetoes suspension even if a native reply incorrectly allows it");
+  assert.equal(scoped.syncCalls.at(-1).report.reason, "interaction");
+  assert.equal(scoped.listenerCount(), 0);
+  const cancelled = preload();
+  cancelled.arm();
+  cancelled.disarm();
+  cancelled.dispatch("beforeunload", { preventDefault() { assert.fail("disarmed probe touched ordinary navigation"); } });
+  assert.equal(cancelled.syncCalls.length, 0);
+  assert.equal(cancelled.listenerCount(), 0);
+  cancelled.arm(2);
+  cancelled.disarm(2, 1, true);
+  let lateCloseVetoed = false;
+  cancelled.dispatch("beforeunload", { preventDefault() { lateCloseVetoed = true; } });
+  assert.equal(lateCloseVetoed, true, "a timed-out queued native close remains fail-closed");
+  assert.equal(cancelled.syncCalls.length, 0, "a cancelled attempt cannot send synchronous IPC");
+  cancelled.disarm(2);
+  assert.equal(cancelled.listenerCount(), 0, "native cancellation confirmation removes the local veto");
+  for (const response of [null, undefined, false, new Error("IPC unavailable")]) {
+    const unknown = preload();
+    unknown.arm();
+    unknown.setSyncResult(response);
+    let vetoed = false;
+    unknown.dispatch("beforeunload", { preventDefault() { vetoed = true; } });
+    assert.equal(vetoed, true, "only an explicit true authorization may unload");
+    assert.equal(unknown.listenerCount(), 0);
   }
   const batch = preload();
   assert.equal(batch.scans.full, 1);
@@ -1247,6 +1418,7 @@ test("isolated preload scans mutations linearly and stops permanently on input o
   assert.equal(failedScan.reports.at(-1).reason, "document-risk", "inspection failures fail closed");
   assert.equal(failedScan.scans.disconnected, true);
   const page = preload();
+  page.arm();
   page.queue([{ target: page.body, addedNodes: [], removedNodes: [page.element("script")] }]);
   let prevented = false;
   page.dispatch("beforeunload", { preventDefault() { prevented = true; } });

@@ -183,31 +183,61 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const view = tab.view;
     const generation = tab.generation;
     const token = ++probeCounter;
-    const report = await new Promise((resolve) => {
-      const timer = setTimeout(() => { tab.probe = null; resolve(null); }, SAFETY_TIMEOUT_MS);
-      tab.probe = { token, generation, finish: (report) => { clearTimeout(timer); tab.probe = null; resolve(report); } };
-      try { view.webContents.send("openwork:browser:safety-probe", { token, generation }); }
-      catch { tab.probe.finish(null); }
-    });
-    if (!report || browserTabs.get(tab.tabId) !== tab || tab.view !== view || tab.generation !== generation || suspensionBlockedReason(tab, automatic)) {
-      throw new Error("Cannot suspend browser tab: safety changed or is unknown.");
+    const attempt = { view, generation, automatic, token, armed: false, authorized: false,
+      cancelled: false, closeRequested: false, consumed: false, settled: false };
+    function disarm() {
+      if (tab.view !== view || tab.generation !== generation || view.webContents.isDestroyed()) return;
+      try {
+        view.webContents.send("openwork:browser:safety-disarm", {
+          token, generation, closePending: attempt.closeRequested && !attempt.settled && !attempt.consumed,
+        });
+      } catch (error) { console.warn("[browser] could not disarm suspension guard", error); }
     }
-    browserTabToPanelTab(tab.tabId, tab);
-    // Keep the view/count until destroyed. Do not detach a debugger or native
-    // parent before beforeunload has accepted the close. The isolated preload
-    // synchronously rechecks with main at that boundary, including late input.
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("Browser suspension is still pending; the live view is retained.")), SAFETY_TIMEOUT_MS);
-      tab.suspending = { view, generation, automatic, token, authorized: false, finish: (closed) => {
-        clearTimeout(timer);
-        tab.suspending = null;
-        if (closed) resolve();
-        else reject(new Error("Browser page prevented suspension."));
-      } };
-      try { view.webContents.close({ waitForBeforeUnload: true }); }
-      catch { tab.suspending.finish(false); }
-    });
-    return tab.tabId;
+    try {
+      const report = await new Promise((resolve) => {
+        const timer = setTimeout(() => { tab.probe = null; resolve(null); }, SAFETY_TIMEOUT_MS);
+        tab.probe = { token, generation, finish: (report) => { clearTimeout(timer); tab.probe = null; resolve(report); } };
+        try { view.webContents.send("openwork:browser:safety-probe", { token, generation, arm: true }); }
+        catch { tab.probe?.finish(null); }
+      });
+      if (report?.armed !== true || browserTabs.get(tab.tabId) !== tab || tab.view !== view || tab.generation !== generation || suspensionBlockedReason(tab, automatic)) {
+        throw new Error("Cannot suspend browser tab: safety changed, unarmed or unknown.");
+      }
+      browserTabToPanelTab(tab.tabId, tab);
+      // The view and slot remain live until destroyed. Only an acknowledged
+      // arm can request close; its synchronous handshake is single-use.
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          attempt.cancelled = true;
+          attempt.armed = false;
+          reject(new Error("Browser suspension is still pending; the live view is retained."));
+        }, SAFETY_TIMEOUT_MS);
+        attempt.armed = true;
+        attempt.finish = (closed) => {
+          clearTimeout(timer);
+          attempt.settled = true;
+          attempt.cancelled = !closed;
+          attempt.armed = false;
+          disarm();
+          tab.suspending = null;
+          if (closed) resolve();
+          else reject(new Error("Browser page prevented suspension."));
+        };
+        tab.suspending = attempt;
+        attempt.closeRequested = true;
+        try { view.webContents.close({ waitForBeforeUnload: true }); }
+        catch (error) {
+          attempt.cancelled = true;
+          attempt.armed = false;
+          clearTimeout(timer);
+          reject(error);
+        }
+      });
+      return tab.tabId;
+    } finally {
+      attempt.armed = false;
+      disarm();
+    }
   }
 
   async function restoreBrowserTab(tab, automation = false, navigationUrl) {
@@ -1402,10 +1432,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       sendBrowserState();
     });
     ipcMain.on("openwork:browser:safety-close", (event, report) => {
-      event.returnValue = [...browserTabs.values()].some((tab) => tab.view?.webContents === event.sender && tab.suspending) ? false : null;
+      event.returnValue = false;
       const tab = safetyTab(event, report);
       const pending = tab?.suspending;
-      if (!pending || pending.view !== tab.view || pending.generation !== tab.generation) return;
+      if (!pending || pending.view !== tab.view || pending.generation !== tab.generation ||
+          pending.token !== report.token || report.armed !== true || !pending.armed || pending.cancelled || pending.consumed) return;
+      pending.armed = false;
+      pending.consumed = true;
       tab.safety = { generation: report.generation, url: report.url, reason: report.reason };
       if (suspensionBlockedReason(tab, pending.automatic)) return;
       pending.authorized = true;

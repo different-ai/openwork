@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { browserScript, browserSource } from "@openwork/cdp";
 import { control } from "@openwork/behaviors";
 import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets, navigate } from "@openwork/cdp";
@@ -187,11 +189,56 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
   const workspace = await seed.workspace(app, workspacePath);
   const session = await seed.session(app);
   const origin = await embeddedServerUrl(seed, app);
+  const initialAppTargetId = app.client.targetId;
 
   return {
     app,
     workspace,
     session,
+    /** Failure-only observations: never heal the app socket or invoke a browser write. */
+    async failureDiagnostics() {
+      const safeText = (value: unknown) => String(value instanceof Error ? value.message : value)
+        .replace(/(?:https?|wss?|file|data):[^\s"'<>]+/gi, "[url]")
+        .replace(/(Bearer\s+)\S+/gi, "$1[redacted]")
+        .replace(/((?:token|secret|password|cookie|authorization)[\w-]*[\s"':=]+)[^\s,;]+/gi, "$1[redacted]");
+      const observe = async (run: () => Promise<unknown>) => {
+        try { return { ok: true, value: await run() }; }
+        catch (error) { return { ok: false, error: safeText(error) }; }
+      };
+      const probe = async (client: CdpClient) => {
+        const renderer = await evaluate(client, () => ({
+          readyState: document.readyState,
+          desktopBridge: typeof window.__OPENWORK_ELECTRON__?.browser?.getState === "function",
+          control: typeof window.__openworkControl?.command === "function",
+        }), { timeoutMs: 3_000 });
+        const native = renderer.desktopBridge ? await observe(async () => {
+          const state = await evaluate(client, () => window.__OPENWORK_ELECTRON__.browser.getState(), { timeoutMs: 3_000 });
+          return JSON.parse(safeText(JSON.stringify(state)));
+        }) : null;
+        return { renderer, native };
+      };
+      const [existingAppSocket, targets, nativeLog] = await Promise.all([
+        observe(() => probe(app.client)),
+        observe(async () => Promise.all((await listTargets(app.handle.cdpUrl, { timeoutMs: 3_000 })).map(async target => ({
+          id: target.id,
+          type: target.type,
+          url: target.url === "about:blank" ? target.url
+            : /\/overlay\.html(?:[?#]|$)/.test(target.url) ? "[overlay.html]"
+            : target.id === initialAppTargetId ? "[initial app document]" : "[page URL redacted]",
+          freshSocket: target.type === "page" ? await observe(async () => {
+            const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target), { connectTimeoutMs: 3_000, sendTimeoutMs: 3_000 });
+            try { return await probe(client); } finally { client.close(); }
+          }) : null,
+        })))),
+        observe(async () => {
+          const { sandboxId, meta } = app.handle;
+          if (!sandboxId || !meta?.log || !/^\/tmp\/[\w.-]+$/.test(meta.log)) return "No remote Electron log handle";
+          const { stdout } = await promisify(execFile)("daytona", ["exec", sandboxId, "--", `tail -c 24000 ${meta.log}`], { timeout: 10_000, maxBuffer: 64 * 1024 });
+          return stdout.split(/\r?\n/).filter(line => /browser-panel\.mjs|Object has been destroyed|uncaught|unhandled|FATAL|SIGSEGV|SIGABRT|render-process-gone/i.test(line)).map(safeText);
+        }),
+      ]);
+      return { initialAppTargetId, currentAppTargetId: app.client.targetId, existingAppSocket, targets, nativeLog };
+    },
     sessionApiBase: `/workspace/${encodeURIComponent(workspace.workspaceId)}/${resolveEvalEngine() === "v2" ? "opencode2/api" : "opencode"}/session`,
 
     /** Persist a real transcript link and an attached file without invoking a model. */
