@@ -111,6 +111,27 @@ function sortFullyTimestampedMessages(messages: UIMessage[]) {
     .map((item) => item.message);
 }
 
+function mergeMissingMessagesByChronology(messages: UIMessage[], missing: UIMessage[], sourceOrder: UIMessage[]) {
+  if (missing.length > 0) {
+    const byCreated = new Map<number, UIMessage>();
+    for (const message of [...messages, ...missing]) {
+      const created = messageCreated(message);
+      if (created === null || !Number.isFinite(created) || byCreated.has(created)) break;
+      byCreated.set(created, message);
+    }
+    // Unique finite timestamps make the final order independent of insertion order.
+    // Ties and missing/invalid timestamps must retain the source-neighbor insertion rules.
+    if (byCreated.size === messages.length + missing.length) {
+      return [...byCreated]
+        .sort(([a], [b]) => a - b)
+        .map(([, message]) => message);
+    }
+  }
+
+  for (const message of missing) insertMessageByChronology(messages, message, sourceOrder);
+  return sortFullyTimestampedMessages(messages);
+}
+
 export function messageListContainsAll(container: UIMessage[], required: UIMessage[]) {
   if (required.length === 0) return true;
   const ids = new Set(container.map((message) => message.id));
@@ -132,13 +153,10 @@ export function mergeSnapshotAndLiveMessages(
     return liveMessage ? mergeSnapshotMessageWithCached(snapshotMessage, liveMessage) : snapshotMessage;
   });
 
-  if (options.appendLiveOnlyMessages) {
-    for (const liveMessage of liveMessages) {
-      if (!snapshotIds.has(liveMessage.id)) insertMessageByChronology(merged, liveMessage, liveMessages);
-    }
-  }
-
-  return sortFullyTimestampedMessages(merged);
+  const missing = options.appendLiveOnlyMessages
+    ? liveMessages.filter((message) => !snapshotIds.has(message.id))
+    : [];
+  return mergeMissingMessagesByChronology(merged, missing, liveMessages);
 }
 
 export function mergeSnapshotIntoCachedMessages(snapshotMessages: UIMessage[], cachedMessages: UIMessage[]) {
@@ -157,11 +175,12 @@ export function mergeSnapshotIntoCachedMessages(snapshotMessages: UIMessage[], c
       : message;
   });
 
+  const missing: UIMessage[] = [];
   for (const message of cachedMessages) {
     if (seen.has(message.id)) continue;
     seen.add(message.id);
-    insertMessageByChronology(merged, message, cachedMessages);
+    missing.push(message);
   }
 
-  return sortFullyTimestampedMessages(merged);
+  return mergeMissingMessagesByChronology(merged, missing, cachedMessages);
 }

@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
 import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
-import { resolveEvalEngine, type Seed } from "@openwork/env";
+import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
 import type { MockAgentWorkload } from "@openwork/labs";
 import { chatContinuity } from "./chat-continuity.ts";
 
@@ -617,6 +617,75 @@ export async function renderCycle(seed: Seed) {
     await close(provider);
     throw error;
   }
+}
+
+export async function streamedToolHistory(seed: Seed) {
+  if (resolveEvalEngine() !== "v1") throw new SkipError("native v1 transcript history (OPENWORK_EVAL_ENGINE=v1)");
+  const providerId = "streamed-history-mock";
+  const modelId = "streamed-history-model";
+  const prompt = "Continue the history review and report the latest tool result.";
+  const opening = "History review is advancing.";
+  const middle = "The next review section is arriving.";
+  const closing = "History review is complete.";
+  const answer = [opening, "Earlier work remains available. ".repeat(16), middle,
+    "The current answer continues to grow. ".repeat(20), closing].join("\n\n");
+  const history = Array.from({ length: 150 }, (_, index) => `Settled history ${String(index + 1).padStart(3, "0")}.`);
+  const toolNames = Array.from({ length: 20 }, (_, index) => `history-tool-${String(index + 1).padStart(2, "0")}`);
+  const latestTool = "latest-tool-result";
+  // The complete URL exists only in output, not in the tool input or final reply.
+  const command = (name: string) => `printf '%s%s/%s\\n' 'http://' '127.0.0.1:43123' '${name}'`;
+  const mock = seed.mock({ agentWorkloads: [{
+    promptMarker: prompt, latestUserTurn: true, finalReply: answer, finalReplyChunkSize: 2,
+    steps: [{ tool: "bash", arguments: { command: command(latestTool), description: "Read the latest history result" } }],
+  }] });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const app = await seed.desktop({ name: "streamed-tool-history", den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("streamed-tool-history"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    permission: { bash: "allow" },
+    provider: { [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Streamed history mock",
+      options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-streamed-history" },
+      models: { [modelId]: { name: "Streamed history model" } },
+    } },
+  });
+  const neighbor = await seedSessionRetry(seed, app, { title: "Unrelated history review" });
+  const session = await seedSessionRetry(seed, app, { title: "Long tool history" });
+  const historyPath = `/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode/session/${encodeURIComponent(session.sessionId)}/message`;
+  // Persist through native HTTP boundaries while the real SSE subscriber builds
+  // its cache. Never inject renderer messages or import the merge implementation.
+  await seed.evalIn(app, browserScript(async (historyPath, history, commands, providerId, modelId) => {
+    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+    const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" };
+    const deadline = Date.now() + 150000;
+    const post = async (path: string, body: unknown) => {
+      if (Date.now() >= deadline) throw new Error("Native history arrangement exceeded 150 seconds");
+      const response = await fetch(base + path, {
+        method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(30000),
+      });
+      if (!response.ok) throw new Error("Native history arrangement failed: " + response.status);
+      return response.json();
+    };
+    for (const text of history) {
+      await post(historyPath, { noReply: true, model: { providerID: providerId, modelID: modelId }, parts: [{ type: "text", text }] });
+      // Wait for each native event to reach the transcript, including the oldest
+      // entries that will no longer fit in a later bounded snapshot.
+      const visibleDeadline = Math.min(deadline, Date.now() + 10000);
+      while (![...document.querySelectorAll<HTMLElement>('[data-message-role="user"]')].some(node => node.innerText.includes(text))) {
+        if (Date.now() >= visibleDeadline) throw new Error("Native history event did not render: " + text);
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    }
+    for (const command of commands) {
+      const result = await post(historyPath.replace(/\/message$/, "/shell"), {
+        agent: "build", model: { providerID: providerId, modelID: modelId }, command,
+      });
+      if (!Array.isArray(result.parts) || !result.parts.some((part: { type?: string; state?: { status?: string } }) => part.type === "tool" && part.state?.status === "completed")) {
+        throw new Error("Native shell history did not complete");
+      }
+    }
+  }, [historyPath, history, toolNames.map(command), providerId, modelId]), { awaitPromise: true, timeoutMs: 185_000 });
+  return { app, workspace, session, neighbor, historyPath, history, toolNames, latestTool, prompt, opening, middle, closing };
 }
 
 export const streamedMarkdownMarker = "STREAM_MARKDOWN_ANSWER";
