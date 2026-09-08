@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, expect, mock, spyOn, test } from "bun:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { serializeSignedCookie } from "better-call"
-import { freeInferenceWindow, INFERENCE_ACCESS_REASONS, INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
+import { freeInferenceWindow, INFERENCE_ACCESS_REASONS, INFERENCE_FREE_MODEL_ID, INFERENCE_MODEL_ALIASES, INFERENCE_TIER_LIMITS, INFERENCE_USAGE_CONVERSION_FACTOR, inferencePlanPresentation, managedModelCatalog } from "@openwork/types/den/inference"
+import type { InferenceAccess } from "@openwork/types/den/inference"
 
 const API_ORIGIN = "http://127.0.0.1:8790"
 
@@ -300,10 +301,13 @@ test("joined members enroll once and read a person-wide allowance without paid p
   const access = await request(memberCookie, `${accessPath}?userId=${ownerUserId}`)
   expect(access.headers.get("cache-control")).toBe("no-store")
   const accessText = await access.text()
-  expect(JSON.parse(accessText)).toEqual({
-    access: { kind: "free", modelID: INFERENCE_FREE_MODEL_ID, weeklyLimitUsd: 1, usedUsd: 0, reservedUsd: 0, remainingUsd: 1, resetsAt: freeInferenceWindow().end.toISOString(), reason: null, canUpgrade: false },
+  const freePayload: { access: InferenceAccess } = JSON.parse(accessText)
+  expect(freePayload).toEqual({
+    access: { kind: "free", modelID: INFERENCE_FREE_MODEL_ID, weeklyLimitUsd: 1, usedUsd: 0, reservedUsd: 0, remainingUsd: 1, resetsAt: freeInferenceWindow().end.toISOString(), reason: null, canUpgrade: false, catalog: managedModelCatalog({ freeModelID: INFERENCE_FREE_MODEL_ID }), plan: inferencePlanPresentation("tier1") },
     upgradePath: null,
   })
+  expect(freePayload.access.catalog?.find((model) => model.modelID === INFERENCE_FREE_MODEL_ID)?.capabilities).toEqual(["reasoning", "tools"])
+  expect(freePayload.access.catalog?.filter((model) => model.modelID !== INFERENCE_FREE_MODEL_ID)).toEqual(managedModelCatalog().filter((model) => model.modelID !== INFERENCE_FREE_MODEL_ID))
   expect(accessText).not.toContain(provider.apiKey)
   expect(accessText).not.toContain("key_hash")
   expect(accessText).not.toContain("upstreamProviderConfigured")
@@ -339,7 +343,9 @@ test("joined members enroll once and read a person-wide allowance without paid p
   expect(workerReads).toEqual(["GET /opencode/config"])
   expect(await (await request(ownerCookie, accessPath)).json()).toMatchObject({ access: { usedUsd: 0, reservedUsd: 0, remainingUsd: 1 } })
   await db.update(schema.InferenceFreeUsageBucketTable).set({ used_amount: 101_000_000, reserved_amount: 0 }).where(eq(schema.InferenceFreeUsageBucketTable.user_id, memberUserId))
-  expect(await (await request(memberCookie, accessPath)).json()).toMatchObject({ access: { kind: "exhausted", reason: "free_allowance_exhausted", usedUsd: 1.01, reservedUsd: 0, remainingUsd: 0 } })
+  const exhaustedPayload: { access: InferenceAccess } = await (await request(memberCookie, accessPath)).json()
+  expect(exhaustedPayload).toMatchObject({ access: { kind: "exhausted", reason: "free_allowance_exhausted", usedUsd: 1.01, reservedUsd: 0, remainingUsd: 0 } })
+  expect(exhaustedPayload.access.catalog?.find((model) => model.modelID === INFERENCE_FREE_MODEL_ID)?.capabilities).toEqual(["reasoning", "tools"])
   await db.update(schema.InferenceFreeUsageBucketTable).set({ blocked: true }).where(eq(schema.InferenceFreeUsageBucketTable.user_id, memberUserId))
   expect(await (await request(memberCookie, accessPath)).json()).toMatchObject({ access: { kind: "unavailable", reason: "accounting_unavailable" } })
   expect(await (await request(memberCookie, connectPath)).json()).toMatchObject({ llmProvider: { apiKey: null } })
@@ -374,11 +380,16 @@ test("rollout, paid precedence, billing fallback and explicit admin disable pres
   expect(await (await request(memberCookie, connectPath)).json()).toMatchObject({ llmProvider: { apiKey: null } })
   expect(providerIds(await (await request(memberCookie, "/v1/llm-providers")).json())).not.toContain(provider.id)
   await db.update(schema.OrganizationTable).set({ metadata: { inference: { enabled: true, tier: "tier2" }, inferenceFree: { offerAllowed: true } } }).where(eq(schema.OrganizationTable.id, organizationId))
-  expect(await (await request(memberCookie, accessPath)).json()).toMatchObject({ access: { kind: "paid", modelID: null, weeklyLimitUsd: null, remainingUsd: null } })
+  const paidPayload: { access: InferenceAccess } = await (await request(memberCookie, accessPath)).json()
+  expect(paidPayload).toMatchObject({ access: { kind: "paid", modelID: null, weeklyLimitUsd: null, remainingUsd: null } })
+  expect(paidPayload).toMatchObject({ access: {
+    catalog: managedModelCatalog(), plan: inferencePlanPresentation("tier2"), canUpgrade: false,
+  }, upgradePath: null })
+  expect(paidPayload.access.catalog?.find((model) => model.modelID === INFERENCE_FREE_MODEL_ID)?.capabilities).toEqual(["reasoning", "tools", "images", "documents"])
   expect(await (await request(memberCookie, connectPath)).json()).toMatchObject({ llmProvider: { apiKey: provider.apiKey } })
   env.inferenceFree.enabled = true
   await inference.setInferenceEnabled({ organizationId, enabled: false, source: "billing" })
-  expect(await (await request(memberCookie, accessPath)).json()).toMatchObject({ access: { kind: "free" } })
+  expect(await (await request(memberCookie, accessPath)).json()).toMatchObject({ access: { kind: "free", modelID: INFERENCE_FREE_MODEL_ID, plan: inferencePlanPresentation("tier1") } })
   const [downgraded] = await db.select().from(schema.LlmProviderTable).where(eq(schema.LlmProviderTable.id, provider.id))
   expect(downgraded?.providerConfig).toEqual(provider.providerConfig)
   expect(await db.select().from(schema.LlmProviderModelTable).where(eq(schema.LlmProviderModelTable.llmProviderId, provider.id))).toHaveLength(1)
@@ -446,7 +457,53 @@ test("model catalog retains paid entries for contextual upgrade discovery", asyn
   expect(fetchWitness).toHaveBeenCalledTimes(1)
 })
 
-test("member access OpenAPI exposes the shared metered reason contract", async () => {
+test("managed presentation lists only enabled aliases, preserves accounting, and has four task defaults", () => {
+  const aliasesBefore = structuredClone(INFERENCE_MODEL_ALIASES)
+  const catalog = managedModelCatalog()
+  const freeCatalog = managedModelCatalog({ freeModelID: INFERENCE_FREE_MODEL_ID })
+  expect(freeCatalog.find((model) => model.modelID === INFERENCE_FREE_MODEL_ID)?.capabilities).toEqual(["reasoning", "tools"])
+  expect(freeCatalog.filter((model) => model.modelID !== INFERENCE_FREE_MODEL_ID)).toEqual(catalog.filter((model) => model.modelID !== INFERENCE_FREE_MODEL_ID))
+  expect(managedModelCatalog().find((model) => model.modelID === INFERENCE_FREE_MODEL_ID)?.capabilities).toEqual(["reasoning", "tools", "images", "documents"])
+  expect(managedModelCatalog({ freeModelID: "not-registered" })).toEqual(catalog)
+  expect(catalog.filter((model) => model.recommended).map((model) => model.modelID)).toEqual([
+    INFERENCE_FREE_MODEL_ID, "openai/gpt-6-astra", "moonshotai/kimi-k2.7-code", "z-ai/glm-5.2",
+  ])
+  expect(catalog.map((model) => model.modelID).sort()).toEqual(Object.keys(INFERENCE_MODEL_ALIASES).sort())
+  expect(catalog.map((model) => model.rank)).toEqual([...catalog.map((model) => model.rank)].sort((left, right) => left - right))
+  expect(new Set(catalog.map((model) => model.rank)).size).toBe(catalog.length)
+  expect(catalog.find((model) => model.modelID === "openai/gpt-6-astra")).toMatchObject({
+    displayName: "GPT-6 Astra", providerName: "OpenAI", capabilities: ["reasoning", "tools", "images", "documents"],
+  })
+  expect(catalog.some((model) => model.modelID === "openai/gpt-6-astra-pro")).toBe(false)
+  for (const model of catalog) {
+    expect(model.summary.length).toBeGreaterThan(0)
+    expect(model.capabilities.length).toBeGreaterThan(0)
+  }
+  // A retired alias must disappear even if its presentation metadata remains.
+  const astra = INFERENCE_MODEL_ALIASES["openai/gpt-6-astra"]
+  try {
+    Reflect.set(INFERENCE_MODEL_ALIASES, "openai/gpt-6-astra", { ...astra, enabled: false })
+    expect(managedModelCatalog().some((model) => model.modelID === "openai/gpt-6-astra")).toBe(false)
+    expect(managedModelCatalog().filter((model) => model.recommended)).toHaveLength(3)
+    Reflect.deleteProperty(INFERENCE_MODEL_ALIASES, "openai/gpt-6-astra")
+    expect(managedModelCatalog().some((model) => model.modelID === "openai/gpt-6-astra")).toBe(false)
+  } finally {
+    Reflect.set(INFERENCE_MODEL_ALIASES, "openai/gpt-6-astra", astra)
+  }
+  catalog[0]?.capabilities.push("not-a-capability")
+  expect(managedModelCatalog()[0]?.capabilities).not.toContain("not-a-capability")
+  expect(INFERENCE_MODEL_ALIASES).toEqual(aliasesBefore)
+
+  for (const tier of ["tier1", "tier2"] as const) {
+    const plan = inferencePlanPresentation(tier)
+    expect(plan.name).toBe("OpenWork Models")
+    expect(plan.priceLabel).toBeNull()
+    expect(plan.usageLabel).toBe(`Shared workspace usage allowances: $${INFERENCE_TIER_LIMITS[tier].five_hour / INFERENCE_USAGE_CONVERSION_FACTOR} per member / 5 hours, $${INFERENCE_TIER_LIMITS[tier].weekly / INFERENCE_USAGE_CONVERSION_FACTOR} per member / week, and $${INFERENCE_TIER_LIMITS[tier].monthly / INFERENCE_USAGE_CONVERSION_FACTOR} per member / month.`)
+    expect(plan.usageLabel.toLowerCase()).not.toContain("unlimited")
+  }
+})
+
+test("member access OpenAPI exposes optional presentation and the shared metered reason contract", async () => {
   const response = await request("", "/openapi.json")
   expect(response.status).toBe(200)
   const document: unknown = await response.json()
@@ -454,4 +511,24 @@ test("member access OpenAPI exposes the shared metered reason contract", async (
   expect(document).toHaveProperty(["components", "schemas", "InferenceAccessResponse", "properties", "access", "properties", "reason"], {
     anyOf: [{ type: "string", enum: [...INFERENCE_ACCESS_REASONS] }, { type: "null" }],
   })
+  expect(document).toHaveProperty(["components", "schemas", "InferenceAccessResponse", "properties", "access", "properties", "catalog"], {
+    type: "array", items: { $ref: "#/components/schemas/ManagedModelRecommendation" },
+  })
+  expect(document).toHaveProperty(["components", "schemas", "ManagedModelRecommendation"], expect.objectContaining({
+    type: "object",
+    required: ["modelID", "displayName", "providerName", "summary", "recommended", "rank", "capabilities"],
+    properties: expect.objectContaining({
+      modelID: { type: "string" }, displayName: { type: "string" }, providerName: { type: "string" }, summary: { type: "string" },
+      recommended: { type: "boolean" }, rank: { type: "number" }, capabilities: { type: "array", items: { type: "string" } },
+    }),
+  }))
+  expect(document).toHaveProperty(["components", "schemas", "InferenceAccessResponse", "properties", "access", "properties", "plan"], expect.objectContaining({
+    type: "object", required: ["name", "priceLabel", "usageLabel"],
+    properties: {
+      name: { type: "string" }, priceLabel: { anyOf: [{ type: "string" }, { type: "null" }] }, usageLabel: { type: "string" },
+    },
+  }))
+  expect(document).toHaveProperty(["components", "schemas", "InferenceAccessResponse", "properties", "access", "required"], [
+    "kind", "modelID", "weeklyLimitUsd", "usedUsd", "reservedUsd", "remainingUsd", "resetsAt", "reason", "canUpgrade",
+  ])
 })

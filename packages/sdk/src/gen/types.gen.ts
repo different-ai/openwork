@@ -897,6 +897,16 @@ export type DesktopPolicyListResponse = {
   }>;
 };
 
+export type ManagedModelRecommendation = {
+  modelID: string;
+  displayName: string;
+  providerName: string;
+  summary: string;
+  recommended: boolean;
+  rank: number;
+  capabilities: Array<string>;
+};
+
 export type InferenceAccessResponse = {
   access: {
     kind: "paid" | "free" | "exhausted" | "unavailable";
@@ -916,6 +926,12 @@ export type InferenceAccessResponse = {
       | "upstream_unavailable"
       | null;
     canUpgrade: boolean;
+    catalog?: Array<ManagedModelRecommendation>;
+    plan?: {
+      name: string;
+      priceLabel: string | null;
+      usageLabel: string;
+    };
   };
   upgradePath: "/dashboard/billing" | null;
 };

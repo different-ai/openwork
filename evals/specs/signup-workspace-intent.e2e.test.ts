@@ -529,7 +529,7 @@ desktopTest("desktop-origin signup completes the questions before issuing a fres
     noHandoff();
     await modelsOff();
     // Model/provider settings stay usable; returning to Ready does not complete setup.
-    await user.click({ role: "link", label: "Add a provider" });
+    await user.click({ role: "link", label: "Use my own provider…" });
     await user.see({ role: "link", label: "Back to setup" }, { timeoutMs: 90_000 });
     expect(await world.pathname()).toBe("/dashboard/custom-llm-providers");
     await user.reload();

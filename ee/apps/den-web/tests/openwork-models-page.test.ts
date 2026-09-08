@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { INFERENCE_ACCESS_REASONS, INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference";
+import { INFERENCE_ACCESS_REASONS, INFERENCE_MODEL_ALIASES, managedModelCatalog } from "@openwork/types/den/inference";
 import { freeAllowanceDescription, parseInferenceAccessPayload } from "../app/(den)/_lib/inference-status";
 
 const screen = readFileSync(
@@ -21,14 +21,17 @@ describe("OpenWork Models page", () => {
       expect(screen).toContain(primitive);
     }
     expect(screen).toContain('headerTone="plain"');
-    expect(screen).toContain("Best for");
+    expect(screen).toContain("Use for");
     expect(screen).toContain("Model ID");
   });
 
   test("describes every shipped model", () => {
+    expect(screen).toContain("managedModelCatalog().map");
+    expect(screen).not.toContain("MODEL_DETAILS");
+    const catalog = managedModelCatalog();
     for (const [id, model] of Object.entries(INFERENCE_MODEL_ALIASES)) {
       if (!model.enabled) continue;
-      expect(screen).toContain(`"${id}": { bestFor:`);
+      expect(catalog.find((entry) => entry.modelID === id)?.summary.length).toBeGreaterThan(0);
     }
   });
 

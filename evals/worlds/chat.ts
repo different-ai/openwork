@@ -1,10 +1,11 @@
-import { browserScript } from "@openwork/cdp";
+import { browserScript, listTargets } from "@openwork/cdp";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
 import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
 import { resolveEvalEngine, type Seed } from "@openwork/env";
+import { captureExternalBrowserUrls } from "@openwork/hosts";
 import type { MockAgentWorkload } from "@openwork/labs";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
@@ -377,10 +378,141 @@ export async function focusContinuity(seed: Seed) {
 }
 
 export async function modelPicker(seed: Seed) {
-  const den = await seed.den();
-  const app = await seed.desktop({ den, as: "admin" });
-  const session = await seedSessionRetry(seed, app);
-  return { app, den, session };
+  const den = await seed.den({ env: {
+    INFERENCE_FREE_ENABLED: "true",
+    INFERENCE_FREE_WEEKLY_BUDGET_USD: "1",
+    INFERENCE_FREE_MODEL_ID: "openai/gpt-5.6-luna",
+    // Enrollment is real; this world must never contact inference or Stripe.
+    INFERENCE_PROXY_BASE_URL: "http://127.0.0.1:9",
+    OPENROUTER_MANAGEMENT_API_KEY: "",
+    INFERENCE_FREE_UPSTREAM_API_KEY: "",
+    STRIPE_SECRET_KEY: "",
+  } });
+  const proxy = await seed.faultProxy(den);
+  const member = { ...den.admin, ...proxy.ref };
+  const response = await seed.api(member, "/v1/inference/access");
+  const body = response.body;
+  if (!response.response.ok || !isRecord(body) || !isRecord(body.access)) throw new Error("Real Den access read failed");
+  const access = body.access;
+  if (access.kind !== "free" || access.modelID !== "openai/gpt-5.6-luna" || access.weeklyLimitUsd !== 1
+    || access.remainingUsd !== 1 || access.canUpgrade !== true || !Array.isArray(access.catalog)
+    || !isRecord(access.plan) || typeof access.plan.name !== "string" || typeof access.plan.usageLabel !== "string") {
+    throw new Error("Fresh Den did not report free Luna access, catalog, and plan limits");
+  }
+  const catalog = access.catalog.map((model) => {
+    if (!isRecord(model) || typeof model.modelID !== "string" || typeof model.displayName !== "string"
+      || typeof model.summary !== "string" || !model.summary || typeof model.recommended !== "boolean") {
+      throw new Error("Den returned incomplete managed model discovery metadata");
+    }
+    return { modelID: model.modelID, displayName: model.displayName, summary: model.summary, recommended: model.recommended };
+  });
+  const luna = catalog.find((model) => model.modelID === access.modelID);
+  const astra = catalog.find((model) => model.modelID === "openai/gpt-6-astra");
+  if (!luna || !astra) throw new Error("Real Den catalog must include Luna and Astra");
+  const providers = await seed.api(member, "/v1/llm-providers");
+  const registered = isRecord(providers.body) && Array.isArray(providers.body.llmProviders)
+    ? providers.body.llmProviders.find((provider) => isRecord(provider) && provider.source === "openwork" && provider.providerId === "openwork") : null;
+  if (!providers.response.ok || !isRecord(registered) || typeof registered.id !== "string") {
+    throw new Error("Ordinary Den enrollment did not create the managed provider");
+  }
+
+  // Only the models.dev transport is isolated. Managed definitions come from the
+  // checked-in catalog; the provider/key is still imported through real Den.
+  const definitions: unknown = JSON.parse(await readFile(new URL("../../ee/apps/inference/src/models/openwork-models.json", import.meta.url), "utf8"));
+  if (!isRecord(definitions)) throw new Error("Managed model definitions are not an object");
+  const models = Object.fromEntries(catalog.map((model) => {
+    const definition = definitions[model.modelID];
+    if (!isRecord(definition) || definition.id !== model.modelID) throw new Error(`Missing managed definition: ${model.modelID}`);
+    return [model.modelID, { ...definition, name: `OpenWork: ${model.displayName}` }];
+  }));
+  const providerBase = `${proxy.ref.webUrl}/model-picker-fixture/inference`;
+  const fixtureCatalog = {
+    openwork: { id: "openwork", name: "OpenWork Models", env: ["OPENWORK_API_KEY"], doc: "https://example.test/models", npm: "@openrouter/ai-sdk-provider", api: providerBase, models },
+    opencode: { id: "opencode", name: "OpenCode", env: [], doc: "https://example.test/models", npm: "@ai-sdk/openai-compatible", api: providerBase, models: {
+      "big-pickle": { id: "big-pickle", name: "Big Pickle", attachment: false, reasoning: false, tool_call: true,
+        temperature: true, release_date: "2025-01-01", cost: { input: 0, output: 0 }, limit: { context: 128000, output: 4096 } },
+    } },
+  };
+  const installFaults = async () => {
+    await proxy.faults.clear();
+    await proxy.faults.status("/api/runtime-config", 200, { times: 1000, body: { denApiUrl: proxy.ref.apiUrl } });
+    await proxy.faults.status("/model-picker-fixture/catalog", 200, { times: 1000, body: fixtureCatalog });
+    await proxy.faults.status("/model-picker-fixture/inference", 409, { times: 1000, body: { error: "generation_forbidden_in_picker_journey" } });
+    await proxy.faults.status("/api/den/v1/billing", 409, { times: 1000, body: { error: "checkout_forbidden_in_picker_journey" } });
+  };
+  await installFaults();
+  const workspacePath = seed.tmpPath("managed-model-picker");
+  const app = await seed.desktop({ den: { ...den, ref: proxy.ref }, as: "admin", model: "opencode/big-pickle", workspacePath, env: {
+    DAYTONA_SECRETS_ENV: "/tmp/openwork-model-picker-no-secrets",
+    VITE_DISABLE_OPENWORK_MODELS: "0",
+    OPENCODE_MODELS_URL: `${proxy.ref.webUrl}/model-picker-fixture/catalog`,
+    OPENCODE_CONFIG: "",
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      enabled_providers: ["opencode", "openwork"], small_model: "opencode/big-pickle",
+      provider: {
+        opencode: { npm: "@ai-sdk/openai-compatible", options: { baseURL: providerBase, apiKey: "sk-eval-picker-only" }, whitelist: ["big-pickle"] },
+      },
+    }),
+  } });
+  const workspace = await seed.workspace(app, workspacePath);
+  const configuredModels = await seed.evalIn(app, browserScript(async (workspaceId, expectedIds) => {
+    const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port")
+          + "/workspace/" + workspaceId + "/opencode/provider", {
+          headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") }, signal: AbortSignal.timeout(5000),
+        });
+        const providers: unknown = response.ok ? await response.json() : null;
+        if (record(providers) && Array.isArray(providers.all) && Array.isArray(providers.connected)) {
+          const managed = providers.all.find((provider) => record(provider) && provider.id === "openwork");
+          if (providers.connected.includes("openwork") && record(managed) && record(managed.models)) {
+            const ids = Object.keys(managed.models);
+            if (expectedIds.every((id) => ids.includes(id))) return ids;
+          }
+        }
+      } catch { /* The engine can reload while the ordinary Den import settles. */ }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Error("Real enrolled OpenWork provider did not materialize the isolated catalog in the engine");
+  }, [workspace.workspaceId, catalog.map((model) => model.modelID)]), { awaitPromise: true, timeoutMs: 70000 });
+  // Retain that real imported provider and key, but pin its engine model map and
+  // upstream to fixture data. No catalog mock can invent a managed enrollment.
+  await configureProvider(seed, app, workspace.workspaceId, "opencode", "big-pickle", {
+    provider: { openwork: { options: { baseURL: providerBase }, models: Object.fromEntries(catalog.map((model) => {
+      const definition = definitions[model.modelID];
+      if (!isRecord(definition)) throw new Error(`Missing managed definition: ${model.modelID}`);
+      const efforts = Array.isArray(definition.reasoning_options) ? definition.reasoning_options.flatMap((option) =>
+        isRecord(option) && option.type === "effort" && Array.isArray(option.values)
+          ? option.values.filter((value): value is string => typeof value === "string") : []) : [];
+      return [model.modelID, {
+        ...Object.fromEntries(["id", "family", "attachment", "reasoning", "tool_call", "temperature", "limit", "modalities"].map((key) => [key, definition[key]])),
+        name: `OpenWork: ${model.displayName}`,
+        variants: Object.fromEntries(efforts.map((effort) => [effort, { reasoningEffort: effort }])),
+      }];
+    })) } },
+  });
+  const session = await seedSessionRetry(seed, app, { title: "Managed model discovery" });
+  const external = app.handle.hostKind === "daytona" ? await captureExternalBrowserUrls(app.handle) : null;
+  return {
+    app, den, proxy, member, workspace, session, luna, astra, catalog, configuredModels,
+    accessPath: "/v1/inference/access", registeredProviderId: registered.id,
+    freeResponse: body, plan: { name: access.plan.name, usageLabel: access.plan.usageLabel },
+    async seedFault(kind: "paid" | "non-admin") {
+      // UI-only access-report transition, not a purchase or billing-state proof.
+      await installFaults();
+      await proxy.faults.status("/api/den/v1/inference/access", 200, { times: 1000, body: {
+        ...body, upgradePath: kind === "non-admin" ? null : body.upgradePath,
+        access: { ...access, kind: kind === "paid" ? "paid" : "free", canUpgrade: kind !== "non-admin" },
+      } });
+    },
+    async browserDestinations() {
+      return { pages: (await listTargets(app.handle.cdpUrl)).filter((target) => target.type === "page").map((target) => target.url).sort(),
+        external: external ? await external.opened() : null };
+    },
+    async [Symbol.asyncDispose]() { await external?.[Symbol.asyncDispose](); },
+  };
 }
 
 export async function connectionsMenu(seed: Seed) {

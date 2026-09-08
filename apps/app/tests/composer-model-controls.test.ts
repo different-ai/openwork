@@ -32,10 +32,13 @@ describe("composer model controls", () => {
     expect(modelSelect).toContain("disabled={props.steering}");
     expect(modelSelect).not.toContain("disabled={props.busy}");
     expect(modelSelect).toContain("behaviorOptions={props.modelBehaviorOptions}");
-    expect(modelSelectSource).toContain("setThinkingFor(option)");
+    expect(modelSelectSource).toContain("setThinkingFor(selectedOption)");
     expect(modelSelectSource).not.toContain("setThinkingOpen(true)");
     expect(modelSelectSource).toContain('data-slot="model-thinking-submenu"');
     expect(modelSelectSource).not.toContain("onMouseEnter");
+    const sessionRouteSource = readFileSync(sessionRoutePath, "utf8");
+    const fullPicker = sessionRouteSource.slice(sessionRouteSource.indexOf("<ModelPickerModal"));
+    expect(fullPicker).toContain('target="session"');
   });
 
   test("tracks steering until the active run stops streaming", () => {
