@@ -16,6 +16,7 @@ import {
   denSessionUpdatedEvent,
 } from "../../app/lib/den-session-events";
 import { evalRelaunchDesktopApp } from "../../app/lib/desktop";
+import { isDesktopRuntime } from "../../app/lib/runtime-env";
 import { Button } from "../../components/ui/button";
 import { t } from "../../i18n";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
@@ -412,7 +413,7 @@ export function AppRoot() {
                 path="/welcome"
                 element={
                   <DevProfiler id="WelcomeRoute">
-                    <WelcomeRoute />
+                    {isDesktopRuntime() ? <Navigate to="/session" replace /> : <WelcomeRoute />}
                   </DevProfiler>
                 }
               />

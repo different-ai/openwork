@@ -2,7 +2,6 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, Globe, Monitor, SquareTerminal } from "lucide-react";
-import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { BrandLogo } from "./lp-brand-logos";
@@ -27,6 +26,7 @@ import {
 } from "./lp-primitives";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
+import { DownloadLink } from "./download-link";
 
 type Props = {
   stars: string;
@@ -64,7 +64,7 @@ export function LandingHome(props: Props) {
     () => landingDemoFlows.find((flow) => flow.id === activeDemoId) ?? landingDemoFlows[0],
     [activeDemoId]
   );
-  const primaryHref = props.isMobileVisitor ? CLOUD_SIGNUP_URL : props.downloadHref;
+  const primaryHref = props.isMobileVisitor ? CLOUD_SIGNUP_URL : "/download";
   const callExternal = /^https?:\/\//.test(props.callHref);
 
   return (
@@ -74,7 +74,6 @@ export function LandingHome(props: Props) {
       <div className="relative z-10">
         <SiteNav
           stars={props.stars}
-          downloadHref={props.downloadHref}
           callUrl={props.callHref}
           mobilePrimaryHref={CLOUD_SIGNUP_URL}
           mobilePrimaryLabel="Get started for free"
@@ -109,12 +108,11 @@ export function LandingHome(props: Props) {
                     Get Started for Free <ArrowRight size={18} />
                   </a>
                 ) : (
-                  <Link
-                    href="/download"
+                  <DownloadLink
                     className="doc-button inline-flex items-center gap-2"
                   >
                     Download for free <ArrowRight size={18} />
-                  </Link>
+                  </DownloadLink>
                 )}
                 <a
                   href={props.callHref}

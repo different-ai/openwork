@@ -29,7 +29,7 @@ const checklist = [
 export function MigrationGuidePage({ stars, downloadHref }: Props) {
   return (
     <div className="min-h-screen overflow-x-hidden bg-[var(--lp-page)] text-[var(--lp-ink)]">
-      <SiteNav stars={stars} downloadHref={downloadHref} active="docs" />
+      <SiteNav stars={stars} active="docs" />
 
       <main className="mx-auto w-full max-w-[1040px] px-6 pb-8">
         <header className="border-b border-[var(--lp-border)] pb-14 pt-16 md:pb-20 md:pt-[88px]">

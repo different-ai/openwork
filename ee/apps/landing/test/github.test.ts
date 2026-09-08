@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { getGithubData } from "../lib/github";
+import { automaticDownloadHref } from "../lib/automatic-download";
+import type { DetectedPlatform } from "@openwork/ui/react";
 
 type GithubFixtureAsset = {
   name: string;
@@ -79,6 +81,58 @@ afterEach(() => {
 });
 
 describe("getGithubData", () => {
+  test("never substitutes another architecture when a public installer is missing", async () => {
+    const release = releaseWithAssets([
+      asset("openwork-mac-arm64-0.17.38.dmg"),
+      asset("openwork-win-arm64-0.17.38.exe")
+    ]);
+    installGithubFetch({ latestRelease: release, releases: [release] });
+    const data = await getGithubData();
+    expect(data.installers.macos.intel).toBe(releasePageUrl);
+    expect(data.installers.windows.x64).toBe(releasePageUrl);
+    expect(automaticDownloadHref(data.installers, { os: "macos", arch: "x64", osVersion: null, source: "ua-ch" }, "Macintosh", 0)).toBeNull();
+
+    const universal = asset("openwork-mac-universal-0.17.38.dmg");
+    const universalRelease = releaseWithAssets([universal]);
+    installGithubFetch({ latestRelease: universalRelease, releases: [universalRelease] });
+    const universalData = await getGithubData();
+    expect(universalData.installers.macos.appleSilicon).toBe(universal.browser_download_url);
+    expect(universalData.installers.macos.intel).toBe(universal.browser_download_url);
+  });
+
+  test("one-click selection uses the detected architecture, with safe manual fallbacks", async () => {
+    const release = releaseWithAssets([
+      asset("openwork-mac-arm64-0.17.38.dmg"),
+      asset("openwork-mac-x64-0.17.38.dmg"),
+      asset("openwork-win-arm64-0.17.38.exe"),
+      asset("openwork-win-x64-0.17.38.exe"),
+      asset("openwork-linux-x86_64-0.17.38.AppImage"),
+      asset("openwork-linux-arm64-0.17.38.tar.gz")
+    ]);
+    installGithubFetch({ latestRelease: release, releases: [release] });
+    const { installers } = await getGithubData();
+    const devices: { os: DetectedPlatform["os"]; ua: string; hrefs: string[] }[] = [
+      { os: "macos", ua: "Macintosh", hrefs: [installers.macos.appleSilicon, installers.macos.intel] },
+      { os: "windows", ua: "Windows NT 10.0; Win64; x64", hrefs: [installers.windows.arm64, installers.windows.x64] },
+      { os: "linux", ua: "X11; Linux x86_64", hrefs: [installers.linux.tarArm64, installers.linux.appImageX64] }
+    ];
+    const architectures: DetectedPlatform["arch"][] = ["arm64", "x64"];
+    for (const device of devices) {
+      for (const [index, arch] of architectures.entries()) {
+        const detected: DetectedPlatform = { os: device.os, arch, osVersion: null, source: "ua-ch" };
+        expect(automaticDownloadHref(installers, detected, device.ua, 0)).toBe(device.hrefs[index]);
+        expect(automaticDownloadHref(installers, { ...detected, arch: null }, device.ua, 0)).toBeNull();
+      }
+    }
+    const mac: DetectedPlatform = { os: "macos", arch: "arm64", osVersion: null, source: "webgl" };
+    for (const ua of ["", "Unknown", "iPhone", "iPad", "Linux; Android", "X11; CrOS x86_64"]) {
+      expect(automaticDownloadHref(installers, mac, ua, 0)).toBeNull();
+    }
+    expect(automaticDownloadHref(installers, mac, "Macintosh", 5)).toBeNull();
+    expect(automaticDownloadHref(installers, mac, "Windows NT 10.0", 0)).toBeNull();
+    expect(automaticDownloadHref(installers, null, "Macintosh", 0)).toBeNull();
+  });
+
   test("selects only public desktop assets when installer assets are listed first", async () => {
     const macArm64 = asset("openwork-mac-arm64-0.17.38.dmg");
     const macX64 = asset("openwork-mac-x64-0.17.38.dmg");

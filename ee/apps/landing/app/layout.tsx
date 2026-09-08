@@ -1,10 +1,13 @@
 import "./globals.css";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import Script from "next/script";
+import type { ReactNode } from "react";
 import { BotIdClient } from "botid/client";
 import { WebMcpProvider } from "../components/webmcp-provider";
 import { StructuredData } from "../components/structured-data";
 import { POSTHOG_PROJECT_KEY } from "../lib/posthog-client";
+import { getGithubData } from "../lib/github";
+import { DownloadProvider } from "../components/download-link";
 
 // Matches the server-side gate in lib/posthog-server.ts.
 // Local pnpm dev, local prod builds, and Vercel previews load no PostHog at all (no autocapture/pageviews), so only real production traffic reaches analytics.
@@ -62,11 +65,12 @@ const protectedRoutes = [
   { path: "/api/app-feedback", method: "POST" as const },
 ];
 
-export default function RootLayout({
+export default async function RootLayout({
   children
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
+  const github = await getGithubData();
   return (
     <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
       <head>
@@ -89,7 +93,7 @@ export default function RootLayout({
       </head>
       <body className="overflow-x-hidden antialiased">
         <WebMcpProvider />
-        {children}
+        <DownloadProvider installers={github.installers}>{children}</DownloadProvider>
       </body>
     </html>
   );
