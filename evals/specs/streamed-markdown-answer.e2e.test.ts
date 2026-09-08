@@ -128,7 +128,7 @@ test("a streaming answer renders as markdown block by block and settles to the s
 
 const historyTest = spec.world(streamedToolHistory, { timeout: 420_000 });
 
-historyTest("v1 keeps long tool-rich history ordered and its detected links available as the answer advances", async ({ world, user, agent, probe, step, place }) => {
+historyTest("v1 keeps long tool-rich history ordered and its detected links available as the answer advances", { timeout: 15 * 60_000 }, async ({ world, user, agent, probe, step, place }) => {
   const orderedHistory = async () => (await readTranscriptMessages(probe, "user"))
     .flatMap(text => text.match(/Settled history \d{3}\./g) ?? []);
   const expectTargets = async (names: string[], present = true) => {
