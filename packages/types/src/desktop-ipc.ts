@@ -232,7 +232,8 @@ export type DesktopBootstrapConfig = {
 
 export type InstallationSessionResult =
   | { status: "signed_in"; user: { id: string; email: string; name: string | null } }
-  | { status: "signed_out" | "unavailable" };
+  | { status: "signed_out" }
+  | { status: "unavailable"; reason: "runtime_config_unavailable" | "session_request_failed" | "session_http_error" | "session_payload_invalid" };
 
 export type OpenworkDockerCleanupResult = {
   candidates: string[];

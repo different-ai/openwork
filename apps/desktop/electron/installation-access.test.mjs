@@ -276,3 +276,21 @@ test("unsafe runtime publications and redirected discovery cannot receive a toke
     assert.equal(tokenRequests, 0);
   }
 });
+
+test("unavailable verification reports only a safe stage category", async () => {
+  for (const failure of ["runtime_config_unavailable", "session_request_failed", "session_http_error", "session_payload_invalid"]) {
+    const access = createInstallationSession({
+      readBootstrapConfig: () => ({ baseUrl: "https://den.openwork.test" }),
+      fetcher: async (url) => {
+        if (url.endsWith("/api/runtime-config")) {
+          if (failure === "runtime_config_unavailable") throw new Error("private URL and fixture-token must not escape");
+          return Response.json({});
+        }
+        if (failure === "session_request_failed") throw new Error("redirect URL and fixture-token must not escape");
+        if (failure === "session_http_error") return new Response("private upstream error", { status: 503 });
+        return Response.json({ wrong: "private response" });
+      },
+    });
+    assert.deepEqual(await access.setToken("fixture-token", "https://den.openwork.test"), { status: "unavailable", reason: failure });
+  }
+});

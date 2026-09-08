@@ -86,8 +86,14 @@ fresh("a new installation requires verified sign-in for UI and automated tasks a
   const { grant, proxy } = world;
   if (!grant || !proxy) throw new Error("Fresh installation requires its isolated Den grant and fault proxy.");
   await step("A successful handoff unlocks the prepared empty workspace", async () => {
+    const persisted = await world.bootstrapPersistence();
+    expect(persisted.hasApiBaseUrl).toBe(false);
     await agent.run("auth.exchange-grant", { grant, baseUrl: proxy.ref.webUrl });
     await user.see("composer", { editable: true, text: "", timeoutMs: 180_000 });
+    expect(await world.bootstrapPersistence()).toEqual(persisted);
+    const verifications = (await proxy.requestLog()).filter((request) => request.path === "/api/den/v1/me");
+    expect(verifications.some((request) => request.status === 200 && !request.faulted)).toBe(true);
+    expect(verifications.some((request) => request.status >= 300 && request.status < 400)).toBe(false);
     await user.type("composer", world.prompt);
     await probe.eventually(async () => (await probe.composer()).runTaskEnabled, {
       within: 30_000, label: "verified first task ready", until: (ready) => ready,

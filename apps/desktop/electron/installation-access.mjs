@@ -136,9 +136,12 @@ export function createInstallationSession({ readBootstrapConfig, fetcher, now = 
     const { token } = credential;
     const isCurrent = () => current === generation && key === bootstrapApiKey(readBootstrapConfig());
     const promise = (/** @returns {Promise<import("@openwork/types/desktop-ipc").InstallationSessionResult>} */ async () => {
+      /** @type {Extract<import("@openwork/types/desktop-ipc").InstallationSessionResult, { status: "unavailable" }>["reason"]} */
+      let reason = "runtime_config_unavailable";
       try {
         const baseUrl = await resolveApiBaseUrl(config);
         if (!isCurrent()) return { status: "signed_out" };
+        reason = "session_request_failed";
         const response = await fetcher(`${baseUrl}/v1/me`, {
           headers: { Authorization: `Bearer ${token}` },
           credentials: "omit",
@@ -152,14 +155,14 @@ export function createInstallationSession({ readBootstrapConfig, fetcher, now = 
             return { status: "signed_out" };
           }
         }
-        if (!response.ok) return { status: "unavailable" };
-        if (typeof payload?.user?.id !== "string" || !payload.user.id.trim() || typeof payload.user.email !== "string") return { status: "unavailable" };
+        if (!response.ok) return { status: "unavailable", reason: "session_http_error" };
+        if (typeof payload?.user?.id !== "string" || !payload.user.id.trim() || typeof payload.user.email !== "string") return { status: "unavailable", reason: "session_payload_invalid" };
         return { status: "signed_in", user: {
           id: payload.user.id, email: payload.user.email,
           name: typeof payload.user.name === "string" ? payload.user.name : null,
         } };
       } catch {
-        return { status: isCurrent() ? "unavailable" : "signed_out" };
+        return isCurrent() ? { status: "unavailable", reason } : { status: "signed_out" };
       }
     })();
     pending = { generation: current, key, promise };

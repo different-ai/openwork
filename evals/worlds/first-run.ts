@@ -238,7 +238,7 @@ export async function installationFirstRunWorld(seed: Seed, { place }: { place: 
       // auth at the isolated Den; never seed its installation-access record.
       await seed.evalIn(app, browserScript(async (ref) => {
         await window.__OPENWORK_ELECTRON__.invokeDesktop("setDesktopBootstrapConfig", {
-          baseUrl: ref.webUrl, apiBaseUrl: ref.apiUrl, requireSignin: false,
+          baseUrl: ref.webUrl, requireSignin: false,
         });
       }, [proxy.ref]), { awaitPromise: true });
       await app.client.send("Page.reload");
@@ -246,6 +246,10 @@ export async function installationFirstRunWorld(seed: Seed, { place }: { place: 
     }
     return {
       ...setup, app, proxy, workspacePath, bootstrap, resetAuthFaults,
+      bootstrapPersistence: () => evalIn(app, async () => {
+        const config = await window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig");
+        return { hasApiBaseUrl: Boolean(config.apiBaseUrl), writtenAt: config.writtenAt };
+      }, { awaitPromise: true }),
       grant: proxy ? await createDesktopHandoffGrant(setup.den.admin) : null,
       issueGrant: () => createDesktopHandoffGrant(setup.den.admin),
       async relaunch() {

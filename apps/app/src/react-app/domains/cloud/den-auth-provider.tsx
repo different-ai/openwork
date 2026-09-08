@@ -267,7 +267,9 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
         throw new DenApiError(
           installationSession.status === "signed_out" ? 401 : 503,
           installationSession.status === "signed_out" ? "invalid_session" : "installation_session_unverified",
-          t("den.installation_session_unverified"),
+          installationSession.status === "unavailable"
+            ? `${t("den.installation_session_unverified")} (${installationSession.reason})`
+            : t("den.installation_session_unverified"),
         );
       }
       const nextUser = installationSession?.status === "signed_in"

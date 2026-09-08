@@ -32,11 +32,25 @@ async function freePort(): Promise<number> {
 }
 
 test("fault proxy script exposes authenticated controls and preserves local fault semantics", async () => {
+  let webApiRequests = 0;
   const upstream = createServer((request, response) => {
+    if (request.url?.startsWith("/api/den/")) {
+      webApiRequests++;
+      response.writeHead(307, { location: "https://redirect.invalid/v1/me" });
+      response.end();
+      return;
+    }
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ path: request.url }));
   });
   const upstreamPort = await listen(upstream);
+  const api = createServer((request, response) => {
+    assert.equal(request.url, "/v1/me");
+    const signedIn = request.headers.authorization === "Bearer fixture-session";
+    response.writeHead(signedIn ? 200 : 401, { "content-type": "application/json" });
+    response.end(JSON.stringify(signedIn ? { user: { id: "member", email: "member@openwork.test" } } : { error: "unauthorized" }));
+  });
+  const apiPort = await listen(api);
   const proxyPort = await freePort();
   const directory = await mkdtemp(join(tmpdir(), "openwork-fault-proxy-"));
   const scriptPath = join(directory, "proxy.mjs");
@@ -48,6 +62,7 @@ test("fault proxy script exposes authenticated controls and preserves local faul
       ...process.env,
       PORT: String(proxyPort),
       UPSTREAM: `http://127.0.0.1:${upstreamPort}`,
+      API_UPSTREAM: `http://127.0.0.1:${apiPort}`,
       ISSUER: issuer,
       CONTROL_TOKEN: token,
     },
@@ -121,9 +136,17 @@ test("fault proxy script exposes authenticated controls and preserves local faul
         { path: "/cleared", status: 200, faulted: false },
       ],
     );
+    const signedOut = await fetch(`${url}/api/den/v1/me`, { redirect: "error" });
+    assert.equal(signedOut.status, 401);
+    assert.deepEqual(await signedOut.json(), { error: "unauthorized" });
+    const signedIn = await fetch(`${url}/api/den/v1/me`, { redirect: "error", headers: { Authorization: "Bearer fixture-session" } });
+    assert.equal(signedIn.status, 200);
+    assert.deepEqual(await signedIn.json(), { user: { id: "member", email: "member@openwork.test" } });
+    assert.equal(webApiRequests, 0, "API verification must not pass through Den Web's redirect route");
   } finally {
     child.kill("SIGTERM");
     await close(upstream);
+    await close(api);
     await rm(directory, { recursive: true, force: true });
   }
 });
