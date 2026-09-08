@@ -8,6 +8,7 @@ const electronStub = `
 import { EventEmitter } from "node:events";
 export const effects = [];
 export const controls = {
+  ready: true,
   confirm: async () => 0, beforeLoad: async () => {}, beforeCommand: async () => {},
 };
 export const app = { on() {} };
@@ -15,7 +16,10 @@ export const clipboard = { writeText(url) { effects.push({ type: "copy", url });
 export const dialog = { async showMessageBox(_window, options) { effects.push({ type: "dialog" }); return { response: await controls.confirm(options) }; } };
 export const browserSession = new EventEmitter();
 browserSession.webRequest = { onBeforeRequest() {} };
-export const session = { fromPartition() { return browserSession; } };
+export const session = { fromPartition() {
+  if (!controls.ready) throw new Error("Session can only be received when app is ready");
+  return browserSession;
+} };
 export const shell = { async openExternal(url) { effects.push({ type: "external", url }); } };
 export const createdViews = [];
 export class BrowserWindow {
@@ -193,6 +197,19 @@ function createPanel(checkPolicy = async () => {}, remoteDebugPort = 0) {
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test("browser manager construction before app readiness defers session hooks until the first tab", async (t) => {
+  controls.ready = false;
+  t.after(() => { controls.ready = true; });
+  const { invoke } = createPanel();
+  assert.equal(browserSession.listenerCount("will-download"), 0);
+  controls.ready = true;
+  invoke("openwork:browser:createTab", "about:blank", "A");
+  invoke("openwork:browser:createTab", "about:blank", "B");
+  await flush();
+  assert.equal(browserSession.listenerCount("will-download"), 1, "download tracking is installed once");
+  invoke("openwork:browser:destroy");
+});
 
 function gate() {
   /** @type {() => void} */

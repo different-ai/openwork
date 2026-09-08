@@ -32,13 +32,23 @@ const MENU_OVERLAY_HEIGHT = 176;
 const MENU_OVERLAY_READY_TIMEOUT_MS = 2000;
 
 export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy }) {
-  let policyRequestHookInstalled = false;
-  function installPolicyRequestHook() {
-    if (policyRequestHookInstalled || !checkPolicy) return;
-    policyRequestHookInstalled = true;
+  let browserSessionHooksInstalled = false;
+  function installBrowserSessionHooks() {
+    if (browserSessionHooksInstalled) return;
+    // The manager is constructed before app.whenReady(). Only acquire the
+    // Electron session when creating a tab, after native window setup.
+    const browserSession = session.fromPartition(BROWSER_SESSION_PARTITION);
+    browserSession.on("will-download", (_event, item, contents) => {
+      const tab = [...browserTabs.values()].find((candidate) => candidate.view.webContents === contents);
+      if (!tab) return;
+      tab.downloads.add(item);
+      item.once("done", () => tab.downloads.delete(item));
+    });
+    browserSessionHooksInstalled = true;
+    if (!checkPolicy) return;
     // The session request boundary covers normal navigation, redirects, frames,
     // scripted fetches and CDP navigation; window navigation events do not.
-    session.fromPartition(BROWSER_SESSION_PARTITION).webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
+    browserSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
       if (["about:", "data:", "blob:"].some((scheme) => details.url.startsWith(scheme))) { callback({ cancel: false }); return; }
       Promise.resolve(checkPolicy({ url: details.url, method: details.method, hasUpload: Boolean(details.uploadData?.length) }))
         .then(() => callback({ cancel: false }), () => callback({ cancel: true }));
@@ -50,14 +60,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   const browserTabs = new Map();
   const suspendedTabs = new Map();
   const registry = createBrowserTabRegistry();
-  const browserSession = session.fromPartition(BROWSER_SESSION_PARTITION);
-  const onDownload = (_event, item, contents) => {
-    const tab = [...browserTabs.values()].find((candidate) => candidate.view.webContents === contents);
-    if (!tab) return;
-    tab.downloads.add(item);
-    item.once("done", () => tab.downloads.delete(item));
-  };
-  browserSession.on("will-download", onDownload);
   let browserViewVisible = false;
   let backgroundWindow = null;
   // Last browser panel bounds reported by the renderer, in renderer CSS pixels.
@@ -634,7 +636,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       throw new Error(`OpenWork has ${MAX_BROWSER_TABS} browser tabs open. Close an unused browser tab in any conversation, then try again.`);
     }
     if (!restoreTabId && registry.size() >= 100) throw new Error("OpenWork has 100 saved browser tabs. Close an unused tab, then try again.");
-    installPolicyRequestHook();
+    installBrowserSessionHooks();
     const tabId = restoreTabId ?? createBrowserTabId();
     const view = new WebContentsView({
       webPreferences: {
