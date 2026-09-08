@@ -119,6 +119,7 @@ test("process profile hides an installed bootstrap before workspace-store loads"
     assert.deepEqual(result.bootstrap, {
       baseUrl: "https://api.openworklabs.com",
       requireSignin: true,
+      installationRequiresSignin: false,
       fromFile: false,
     });
     assert.notEqual(result.bootstrapPath, installedBootstrapPath);

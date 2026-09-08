@@ -851,6 +851,9 @@ test("executeNukeFreshStart removes the bootstrap when preservation is disabled"
     await mkdir(path.dirname(bootstrapPath), { recursive: true });
     await writeFile(bootstrapPath, JSON.stringify({ baseUrl: "https://den.example.com" }), "utf8");
     await mkdir(input.userDataPath, { recursive: true });
+    const installationAccessPath = path.join(input.userDataPath, "installation-access.v1.json");
+    const installationAccess = '{"version":1,"cohort":"required"}';
+    await writeFile(installationAccessPath, installationAccess, "utf8");
     const app = fakeApp(input.userDataPath);
 
     const receipt = await executeNukeFreshStart({
@@ -863,6 +866,7 @@ test("executeNukeFreshStart removes the bootstrap when preservation is disabled"
 
     assert.equal(receipt.preservedBootstrap, false);
     assert.equal(await exists(bootstrapPath), false);
+    assert.equal(await readFile(installationAccessPath, "utf8"), installationAccess);
     await tinyDelay();
   });
 });

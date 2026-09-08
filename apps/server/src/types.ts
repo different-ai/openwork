@@ -105,6 +105,8 @@ export interface ServerConfig {
   logRequests: boolean;
   /** In-memory secure key custody supplied by an embedding host such as OpenWork Desktop. */
   localManagedMcpVaultKey?: LocalManagedMcpVaultKeyProvider;
+  /** In-process desktop authority only; never read from persisted/workspace config. */
+  authorizeTask?: () => Promise<boolean>;
 }
 
 export interface Capabilities {

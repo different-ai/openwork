@@ -592,7 +592,11 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
     const logPath = `/tmp/electron-${safeName}-${spawnStamp}.log`;
 
     try {
-      await checkedExec(exec, ["exec", sandbox, "--", "mkdir", "-p", shellQuote(userDataDir)], `mkdir Daytona Electron profile ${userDataDir}`, { timeoutMs: 30_000 });
+      if (opts.newInstallation) {
+        await checkedExec(exec, ["exec", sandbox, "--", `test ! -e ${shellQuote(userDataDir)} && mkdir -p ${shellQuote(profileRoot)}`], "prepare untouched Electron profile", { timeoutMs: 30_000 });
+      } else {
+        await checkedExec(exec, ["exec", sandbox, "--", "mkdir", "-p", shellQuote(userDataDir)], `mkdir Daytona Electron profile ${userDataDir}`, { timeoutMs: 30_000 });
+      }
       if (opts.bootstrap) {
         const bootstrapJson = `${JSON.stringify(opts.bootstrap, null, 2)}\n`;
         const encoded = Buffer.from(bootstrapJson, "utf8").toString("base64");

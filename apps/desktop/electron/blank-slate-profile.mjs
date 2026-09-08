@@ -69,7 +69,7 @@ export function prepareBlankSlateProfile({
   };
 
   const directories = new Set([
-    userDataPath,
+    paths.dirname(userDataPath),
     homePath,
     environment.XDG_CONFIG_HOME,
     environment.XDG_DATA_HOME,

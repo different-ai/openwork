@@ -390,10 +390,17 @@ async function prepareSharedElectronResources(repoRoot: string, log: (message: s
   await prepareSharedResourcesPromise;
 }
 
-async function ensureElectronProfile(paths: ElectronProfilePaths): Promise<void> {
+async function ensureElectronProfile(paths: ElectronProfilePaths, newInstallation = false): Promise<void> {
+  if (newInstallation) {
+    const existing = await stat(paths.userDataDir).then(() => true, (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return false;
+      throw error;
+    });
+    if (existing) throw new Error("New installation fixture requires absent Electron userData.");
+  }
   await Promise.all([
     mkdir(paths.root, { recursive: true }),
-    mkdir(paths.userDataDir, { recursive: true }),
+    ...(newInstallation ? [] : [mkdir(paths.userDataDir, { recursive: true })]),
     mkdir(paths.appDataDir, { recursive: true }),
     mkdir(paths.localAppDataDir, { recursive: true }),
     mkdir(paths.opencodeConfigDir, { recursive: true }),
@@ -839,7 +846,7 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
       const profileRoot = opts.profileDir ?? resolve(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
       if (!callerOwnedProfile) registerLiveProfileRoot(profileRoot);
       const paths = electronProfilePaths(profileRoot);
-      await ensureElectronProfile(paths);
+      await ensureElectronProfile(paths, opts.newInstallation);
       await writeBootstrap(paths.bootstrapPath, opts.bootstrap);
       const [port, cdpPort] = await allocateFreePorts(2);
       if (port === undefined || cdpPort === undefined) throw new Error("Could not allocate Electron Vite/CDP ports.");

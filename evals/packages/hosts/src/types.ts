@@ -6,6 +6,8 @@ export interface ElectronSurfaceOptions {
   profile?: "fresh" | "shared";
   /** Exact caller-owned profile root. Hosts preserve it on surface disposal. */
   profileDir?: string;
+  /** Leave Electron userData absent so the product observes a genuinely new installation. */
+  newInstallation?: boolean;
   bootstrap?: {
     baseUrl: string;
     apiBaseUrl?: string;

@@ -37,6 +37,7 @@ import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserLoginSync } from "./browser-login-sync.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
+import { createInstallationSession, initializeInstallationAccess } from "./installation-access.mjs";
 import {
   buildNukeManifest,
   executeNukeFreshStart,
@@ -134,11 +135,6 @@ const APP_NAME = BLANK_SLATE_LAUNCH.appName;
 let currentDisplayAppName = APP_NAME;
 installStdioErrorHandlers();
 installSocketTypeOfServiceGuard();
-await initOpenworkSentry({
-  app,
-  distribution: DESKTOP_DISTRIBUTION,
-  packageMetadata: desktopPackageMetadata,
-});
 const BASE_APP_IDENTIFIER = isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER;
 const APP_IDENTIFIER = resolveAppIdentifier({
   appIdentifierOverride: process.env.OPENWORK_ELECTRON_APP_IDENTIFIER,
@@ -149,6 +145,15 @@ const APP_IDENTIFIER = resolveAppIdentifier({
   isDevMode,
   isPackaged: app.isPackaged,
 });
+const userDataPath = BLANK_SLATE_LAUNCH.userDataPath ?? resolveUserDataPath({
+  appDataPath: app.getPath("appData"),
+  appIdentifier: APP_IDENTIFIER,
+  userDataOverride: process.env.OPENWORK_ELECTRON_USERDATA,
+});
+const requiredInstallation = initializeInstallationAccess({ userDataPath, env: process.env, homeDir: os.homedir() });
+const installationRequiresSignin = DESKTOP_DISTRIBUTION.flavor === "public" && requiredInstallation;
+app.setPath("userData", userDataPath);
+await initOpenworkSentry({ app, distribution: DESKTOP_DISTRIBUTION, packageMetadata: desktopPackageMetadata });
 if (BLANK_SLATE_LAUNCH.enabled || process.env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
   // Fresh, isolated development profiles otherwise trigger macOS's native
   // "Login" keychain prompt as soon as Chromium persists an authenticated
@@ -226,12 +231,6 @@ if (
 ) {
   app.setAsDefaultProtocolClient(DESKTOP_PROTOCOL_SCHEME);
 }
-const userDataPath = BLANK_SLATE_LAUNCH.userDataPath ?? resolveUserDataPath({
-  appDataPath: app.getPath("appData"),
-  appIdentifier: APP_IDENTIFIER,
-  userDataOverride: process.env.OPENWORK_ELECTRON_USERDATA,
-});
-app.setPath("userData", userDataPath);
 const linuxDesktopIntegration = createLinuxDesktopIntegration({
   app,
   dialog,
@@ -1083,6 +1082,12 @@ const workspaceStore = createWorkspaceStore({
   defaultDenBaseUrl: DEFAULT_DEN_BASE_URL,
   defaultRequireSignin: DEFAULT_DESKTOP_REQUIRE_SIGNIN,
   forceRequireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN,
+  installationRequiresSignin,
+});
+
+const installationSession = createInstallationSession({
+  readBootstrapConfig: () => workspaceStore.readDesktopBootstrapConfigSync(),
+  fetcher: (url, options) => electronNet.fetch(url, options),
 });
 
 const activeDesktopTransfers = new Map();
@@ -1294,6 +1299,9 @@ const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
+  authorizeTask: installationRequiresSignin
+    ? async () => (await installationSession.verify()).status === "signed_in"
+    : undefined,
   // When OPENWORK_ENCRYPTION_KEY is set, skip the safeStorage provider so it does not shadow the documented env override used by CI/headless/enterprise.
   localManagedMcpVaultKey: process.env.OPENWORK_ENCRYPTION_KEY?.trim()
     ? undefined
@@ -1927,6 +1935,7 @@ const desktopCommandHandlers = {
         OPENWORK_UI_CONTROL_DISCOVERY: path.join(app.getPath("userData"), "openwork-ui-control.json"),
       };
   },
+  "installationSessionVerify": async (_event, token, sourceBaseUrl = undefined) => installationSession.setToken(token, sourceBaseUrl),
   "getDesktopBootstrapConfig": async (event, ...args) => {
       return workspaceStore.getDesktopBootstrapConfig();
   },
@@ -2855,7 +2864,7 @@ or use: pnpm dev:worktree`);
     await workspaceStore.migrateLegacyElectronWorkspaceStateIfNeeded();
     // Public first launch uses the same folder as the chat-first composer.
     // Provision it before the renderer and runtime read the workspace list.
-    const firstLaunchWorkspaceFailure = DESKTOP_DISTRIBUTION.flavor === "public" && !bootstrapConfig.fromFile && !bootstrapConfig.requireSignin
+    const firstLaunchWorkspaceFailure = DESKTOP_DISTRIBUTION.flavor === "public" && (installationRequiresSignin || (!bootstrapConfig.fromFile && !bootstrapConfig.requireSignin)) && !desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)
       ? await workspaceStore.bootstrapFirstLaunchWorkspace()
       : null;
     if (firstLaunchWorkspaceFailure) {

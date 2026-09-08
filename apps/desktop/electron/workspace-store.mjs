@@ -138,6 +138,7 @@ export function createWorkspaceStore({
   defaultDenBaseUrl,
   defaultRequireSignin,
   forceRequireSignin,
+  installationRequiresSignin = false,
 }) {
   function desktopBootstrapPath() {
     if (process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) {
@@ -412,16 +413,16 @@ export function createWorkspaceStore({
     if (primary.ok && legacy?.ok) {
       if (compareDesktopBootstrapCandidates(legacy, primary) > 0) {
         await migrateLegacyDesktopBootstrapConfig(configPath, legacy);
-        return { ...legacy.normalized, fromFile: true };
+        return { ...legacy.normalized, installationRequiresSignin, fromFile: true };
       }
-      return { ...primary.normalized, fromFile: true };
+      return { ...primary.normalized, installationRequiresSignin, fromFile: true };
     }
 
-    if (primary.ok) return { ...primary.normalized, fromFile: true };
+    if (primary.ok) return { ...primary.normalized, installationRequiresSignin, fromFile: true };
 
     if (legacy?.ok) {
       await migrateLegacyDesktopBootstrapConfig(configPath, legacy);
-      return { ...legacy.normalized, fromFile: true };
+      return { ...legacy.normalized, installationRequiresSignin, fromFile: true };
     }
 
     console.warn("[desktop-bootstrap] falling back to defaults", {
@@ -431,6 +432,7 @@ export function createWorkspaceStore({
     return {
       baseUrl: defaultDenBaseUrl,
       requireSignin: defaultRequireSignin,
+      installationRequiresSignin,
       fromFile: false,
     };
   }
@@ -444,16 +446,18 @@ export function createWorkspaceStore({
     if (primary.ok && legacy?.ok) {
       return {
         ...(compareDesktopBootstrapCandidates(legacy, primary) > 0 ? legacy.normalized : primary.normalized),
+        installationRequiresSignin,
         fromFile: true,
       };
     }
 
-    if (primary.ok) return { ...primary.normalized, fromFile: true };
-    if (legacy?.ok) return { ...legacy.normalized, fromFile: true };
+    if (primary.ok) return { ...primary.normalized, installationRequiresSignin, fromFile: true };
+    if (legacy?.ok) return { ...legacy.normalized, installationRequiresSignin, fromFile: true };
 
     return {
       baseUrl: defaultDenBaseUrl,
       requireSignin: defaultRequireSignin,
+      installationRequiresSignin,
       fromFile: false,
     };
   }
@@ -491,7 +495,7 @@ export function createWorkspaceStore({
     const outputPath = desktopBootstrapPath();
     const stamped = { ...normalized, writtenAt: new Date().toISOString() };
     await writeJsonFileAtomic(outputPath, stamped);
-    return stamped;
+    return { ...stamped, installationRequiresSignin };
   }
 
   async function clearDesktopBootstrapFiles() {

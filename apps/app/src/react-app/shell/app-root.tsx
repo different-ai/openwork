@@ -7,6 +7,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router"
 import { captureAnalyticsEvent, initAnalytics } from "../../app/lib/analytics";
 import {
   readDenBootstrapConfig,
+  getDenBootstrapResolution,
   readDenSettings,
   setDenBootstrapConfig,
 } from "../../app/lib/den";
@@ -88,7 +89,10 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     readDenBootstrapSnapshot,
     readDenBootstrapSnapshot,
   );
-  const requireSignin = bootstrap.requireSignin;
+  const requireSignin = bootstrap.requireSignin || bootstrap.installationRequiresSignin === true;
+  const authenticated = bootstrap.installationRequiresSignin
+    ? denAuth.status === "signed_in"
+    : denAuth.isSignedIn;
   const path = location.pathname.toLowerCase();
   const onSignin = path === "/signin" || path.startsWith("/signin/");
   const onOnboarding = path === "/onboarding" || path.startsWith("/onboarding/");
@@ -107,9 +111,9 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     if (denAuth.status === "checking") return;
 
     if (requireSignin) {
-      if (!denAuth.isSignedIn && !onSignin) {
+      if (!authenticated && !onSignin) {
         navigate("/signin", { replace: true });
-      } else if (denAuth.isSignedIn && onSignin) {
+      } else if (authenticated && onSignin) {
         navigate(
           signedInRoute(readDenSettings().activeOrgId, {
             orgSelectionPending: readOrgSelectionPending().pending,
@@ -138,6 +142,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     }
   }, [
     denAuth.isSignedIn,
+    authenticated,
     denAuth.status,
     hasPreparedBootstrap,
     location,
@@ -184,7 +189,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     return () => window.removeEventListener(denSessionUpdatedEvent, handler);
   }, [navigate]);
 
-  if (requireSignin && denAuth.status === "checking") {
+  if ((isDesktopRuntime() && getDenBootstrapResolution() !== "resolved") || (requireSignin && denAuth.status === "checking")) {
     return null;
   }
 
@@ -201,7 +206,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
           >
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">{t("den.cloud_unavailable_title")}</p>
-              <p className="text-xs text-muted-foreground">{t("den.cloud_unavailable_body")}</p>
+              <p className="text-xs text-muted-foreground">{t(bootstrap.installationRequiresSignin ? "den.installation_session_unverified" : "den.cloud_unavailable_body")}</p>
             </div>
             <Button
               type="button"
@@ -214,7 +219,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
           </div>
         </div>
       ) : null}
-      {children}
+      {requireSignin && !authenticated ? <ForcedSigninPage developerMode={false} /> : children}
     </>
   );
 }
