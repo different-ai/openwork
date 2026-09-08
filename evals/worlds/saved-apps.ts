@@ -3,6 +3,7 @@ import type { Seed } from "@openwork/env";
 import { go, runWorkflow, saveWorkflow } from "@openwork/behaviors";
 import { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
 import { configureProvider } from "./chat.ts";
+import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 
 export const creationPrompt = "Create a reusable app for my dashboard that shows a weekly briefing using my existing Weekly briefing workflow.";
 export const creationReply = "Your briefing app draft is ready. Try the preview, then choose Save.";
@@ -23,7 +24,7 @@ export function field(value: unknown, key: string): string {
 
 export async function savedAppCreation(seed: Seed) {
   const den = await seed.den({
-    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_DASHBOARDS_ENABLED: "true" },
+    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_DASHBOARDS_ENABLED: "true", DEN_BETTER_AUTH_COOKIE_DOMAIN: "daytonaproxy01.net" },
     org: { name: `Saved Apps ${Date.now()}`, members: { colleague: { name: "Colleague" } } },
     mocks: {
       tracker: seed.mock({ allowUnauthenticatedMcp: true, appToolName: "search_issues_using_jql" }),
@@ -110,6 +111,7 @@ export async function savedAppCreation(seed: Seed) {
   };
   await resetProxy();
   const app = await seed.desktop({ den: { ...den, ref: proxy.ref }, name: "saved-app-creation", model: `${providerId}/${modelId}` });
+  const web = await seed.web({ den, startPath: "/reauth/desktop", headless: true });
   const workspace = await seed.workspace(app, seed.tmpPath("saved-app-creation"));
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     provider: { [providerId]: {
@@ -134,7 +136,28 @@ export async function savedAppCreation(seed: Seed) {
     } finally { client.close(); }
   };
   return {
-    app, den, proxy, resetProxy, workspace, configObjectId, dashboardId, rpc, run,
+    app, web, den, proxy, resetProxy, workspace, configObjectId, dashboardId, rpc, run,
+    async ageAdminSession() {
+      if (den.placement?.kind !== "daytona") throw new Error("Session ageing requires the disposable Daytona database");
+      const email = `CONVERT(0x${Buffer.from(den.admin.email).toString("hex")} USING utf8mb4)`;
+      const statement = `UPDATE session SET created_at=DATE_SUB(NOW(3), INTERVAL 20 MINUTE) WHERE user_id IN (SELECT id FROM user WHERE email=${email});`;
+      await execInSandbox(defaultDaytonaExec, den.placement.sandboxId,
+        `echo ${Buffer.from(statement).toString("base64")} | base64 -d | mysql -h127.0.0.1 -uroot -ppassword -N openwork_den`,
+        { timeoutMs: 30_000, context: "Age the synthetic sharing admin's session" });
+    },
+    async refreshFixtureAdmin() {
+      const result = await seed.api(den.admin, "/api/auth/sign-in/email", {
+        method: "POST", body: JSON.stringify({ email: den.admin.email, password: den.admin.password }),
+      });
+      if (!result.response.ok) throw new Error(`Fixture admin login failed: ${result.response.status}`);
+      den.admin.token = field(result.body, "token");
+    },
+    async returnVerification(link: string) {
+      // Deliver the browser's real, one-time link through the desktop bridge.
+      await evaluate(app.client, browserScript((link) => {
+        window.dispatchEvent(new CustomEvent("openwork:deep-link", { detail: { urls: [link] } }));
+      }, [link]));
+    },
     open: (path: string) => go(app, path),
     previewText: async () => String(await inPreview("read")),
     showDetails: () => inPreview("details"),

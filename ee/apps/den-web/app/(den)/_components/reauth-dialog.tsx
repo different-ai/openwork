@@ -58,12 +58,16 @@ export function ReauthDialog({
   orgContext,
   onCancel,
   onVerified,
+  title = "Confirm your identity to change workspace settings",
+  description = "Your change will finish automatically after you confirm.",
 }: {
   open: boolean;
   user: AuthUser | null;
   orgContext: DenOrgContext | null;
   onCancel: () => void;
   onVerified: () => Promise<void>;
+  title?: string;
+  description?: string;
 }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -150,11 +154,11 @@ export function ReauthDialog({
       try {
         const meResult = await requestJson("/v1/me", { method: "GET" }, 12000);
         const refreshedUser = getUser(meResult.payload);
-        if (!cancelled && refreshedUser) {
+        if (!cancelled && refreshedUser && refreshedUser.id === user?.id) {
           setProviders(refreshedUser.authProviders);
         }
 
-        const email = refreshedUser?.email ?? user?.email ?? "";
+        const email = user?.email ?? "";
         if (email) {
           const ssoResult = await requestJson(`/v1/orgs/sso/resolve?email=${encodeURIComponent(email)}`, { method: "GET" }, 12000);
           if (!cancelled && ssoResult.response.ok) {
@@ -165,6 +169,8 @@ export function ReauthDialog({
             setSsoUrl(nextUrl);
           }
         }
+      } catch (nextError) {
+        if (!cancelled) setError(nextError instanceof Error ? nextError.message : "Could not load sign-in methods. Try again.");
       } finally {
         if (!cancelled) {
           setLoadingMethods(false);
@@ -175,7 +181,7 @@ export function ReauthDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, user?.email]);
+  }, [open, user?.email, user?.id]);
 
   useEffect(() => {
     if (!open || !nonce) {
@@ -361,12 +367,12 @@ export function ReauthDialog({
           <div className="grid gap-2 pr-8">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Security check</p>
             <h2 id="reauth-dialog-title" className="text-[22px] font-semibold tracking-[-0.03em] text-slate-950">
-              {waitingForPopup ? "Complete sign-in in the other window" : "Confirm your identity to change workspace settings"}
+              {waitingForPopup ? "Complete sign-in in the other window" : title}
             </h2>
             <p className="text-[14px] leading-6 text-slate-600">
               {waitingForPopup
                 ? "Return here after signing in. Your change will finish automatically."
-                : "Your change will finish automatically after you confirm."}
+                : description}
             </p>
           </div>
         </div>

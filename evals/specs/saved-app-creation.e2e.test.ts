@@ -352,8 +352,60 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.see({ text: /No teammate with that email belongs to this organization/ });
     expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
     await user.type({ label: "Teammate’s email" }, colleague.email, { replace: true });
+    await world.ageAdminSession();
+    const staleShare = await seed.api(world.den.admin, `/v1/apps/${appId}/share`, {
+      method: "POST", body: JSON.stringify({ email: colleague.email }),
+    });
+    expect(staleShare.response.status, staleShare.text).toBe(403);
+    expect(staleShare.body).toMatchObject({ error: "reauth", reason: "fresh_auth_required" });
     await user.click("Share apps");
+    await user.see("Confirm your identity to share apps");
+    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
+    await user.click("Cancel verification");
+    expect(await probe.eval(() => document.querySelector<HTMLInputElement>('input[type="email"]')?.value)).toBe(colleague.email);
+    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
+    await user.click("Share apps");
+    await user.see("Confirm your identity to share apps");
+    const verificationUrl = await probe.eval(() => document.querySelector<HTMLInputElement>('[aria-label="Verification address"]')?.value);
+    if (typeof verificationUrl !== "string") throw new Error("Missing verification address");
+    const nonce = new URL(verificationUrl).searchParams.get("nonce");
+    if (!nonce) throw new Error("Missing verification nonce");
+    const wrongGrant = await seed.api(colleague, "/v1/auth/desktop-handoff", { method: "POST", body: "{}" });
+    expect(wrongGrant.response.status, wrongGrant.text).toBe(200);
+    const wrongLink = `openwork://den-reauth?nonce=${nonce}&grant=${field(wrongGrant.body, "grant")}`;
+    await world.returnVerification(wrongLink.replace(nonce, "unrelated-check"));
+    await user.see("Confirm your identity to share apps");
+    await user.type({ label: "Or paste your verification link" }, wrongLink);
+    await user.click("Confirm and share");
+    await user.see(`Sign in as ${world.den.admin.email} to confirm this share.`);
+    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
+    await user.screenshot();
+    const webUser = user.on(world.web);
+    const webProbe = probe.on(world.web);
+    // Follow the address offered by the app; authentication and the returned grant are real.
+    await webUser.navigate(verificationUrl);
+    await webUser.see("Confirm your identity to share apps", { timeoutMs: 90_000 });
+    await webUser.type({ label: "Password" }, "wrong-password");
+    await webUser.click("Verify password");
+    await webUser.see({ text: /invalid.*(email|password)|incorrect.*password/i });
+    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
+    await webUser.type({ label: "Password" }, world.den.admin.password, { replace: true });
+    await webUser.click("Verify password");
+    await webUser.see("Return to OpenWork to finish sharing", { timeoutMs: 60_000 });
+    const verifiedLink = await webProbe.eval(() => document.querySelector<HTMLInputElement>('[aria-label="Verification link"]')?.value);
+    if (typeof verifiedLink !== "string") throw new Error("Browser did not provide a verification link");
+    await webUser.screenshot();
+    await user.type({ label: "Or paste your verification link" }, verifiedLink, { replace: true });
+    await user.click("Confirm and share");
     await user.see({ text: `Shared 1 app with ${colleague.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
+    // Delivery after completion cannot consume the same link again or repeat the share.
+    await world.returnVerification(verifiedLink);
+    const stillStale = await seed.api(world.den.admin, `/v1/apps/${appId}/share`, {
+      method: "POST", body: JSON.stringify({ email: colleague.email }),
+    });
+    expect(stillStale.response.status).toBe(403);
+    expect(stillStale.body).toMatchObject({ error: "reauth" });
+    await world.refreshFixtureAdmin();
     const sharedApp = await probe.api(colleague, `/v1/apps/${appId}`);
     expect(sharedApp.response.status, sharedApp.text).toBe(200);
     expect(sharedApp.body).toMatchObject({ onDashboard: true, canManage: false, view: { id: appId }, payload: { data: { topic: "Next week’s briefing" } } });
@@ -384,6 +436,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.click("Done");
   });
   evidence.recordAssertionEvidence("Dashboard Share grants a teammate view access and adds the selected app to their dashboard", "Cancel and an unknown email left the app private. Sharing made one saved app visible on the recipient dashboard without manager access; repeat sharing did not duplicate it, the unchecked app and its separate workflow remained private, viewers could not reshare, and company dashboards stayed unchanged.", true);
+  evidence.recordAssertionEvidence("An expired admin can verify and resume sharing without losing their selection", "A real 20-minute-old session was rejected. Cancelling, an unrelated callback, a different account’s grant, and a wrong password left the app private. Browser password verification produced a real one-time link; pasting it shared only the selected app with the preserved recipient. The original stale session still could not share, and a late callback did not duplicate the dashboard entry.", true);
   evidence.recordAssertionEvidence("Sharing includes the workflow, saved results, and sibling apps without adding every sibling to the dashboard", "The recipient could read the workflow and the latest saved result in both the selected app and its previously inaccessible companion. Both appeared in the accessible app list, but only the selected app was on their dashboard; the separate private workflow stayed inaccessible.", true);
 
   const cleanupCompanion = await seed.api(world.den.admin, `/v1/artifact-views/${companionAppId}/retire`, { method: "POST" });
