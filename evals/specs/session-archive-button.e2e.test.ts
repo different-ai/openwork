@@ -38,8 +38,8 @@ test("archiving exits only the viewed conversation, and working sessions require
   await step("idle active archive returns to the same workspace without creating a session; Undo reopens without sending", async () => {
     await open(a2);
     await archive(a2);
-    await user.see("Session archived");
-    await user.notSee("This session is still working");
+    await user.see({ text: "Session archived" });
+    await user.notSee({ text: "This session is still working" });
     await probe.eventually(() => probe.hash(), { within: 15_000, label: "same workspace start", until: hash => hash === start(a2) });
     const facts = await archived(a2, true);
     expect(facts.surfaces).not.toContain(a2.sessionId);
@@ -57,7 +57,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     await open(b1);
     await open(a2);
     await archive(b1);
-    await user.see("Session archived");
+    await user.see({ text: "Session archived" });
     const facts = await archived(b1, true);
     expect(await probe.hash()).toBe(route(a2));
     expect(facts.surfaces).toContain(a2.sessionId);
@@ -86,8 +86,8 @@ test("archiving exits only the viewed conversation, and working sessions require
     await step(`${mode} work requires confirmation and cancel leaves metadata and navigation untouched`, async () => {
       await world.networkFault(mode, a2.sessionId);
       await archive(a2);
-      await user.see("This session is still working");
-      await user.see("Stop the current task and archive this conversation? Changes already made won’t be undone. Actions already submitted to external services may still complete.");
+      await user.see({ text: "This session is still working" });
+      await user.see({ text: "Stop the current task and archive this conversation? Changes already made won’t be undone. Actions already submitted to external services may still complete." });
       await user.click({ role: "button", label: "Keep session open" });
       await world.networkFault("none", a2.sessionId);
       await archived(a2, false);
@@ -109,14 +109,14 @@ test("archiving exits only the viewed conversation, and working sessions require
     await user.press("Enter");
     await user.see({ text: awayQueuedPrompt });
     await archive(a1);
-    await user.see("This session is still working");
+    await user.see({ text: "This session is still working" });
     await user.click({ role: "button", label: "Keep session open" });
     await archived(a1, false);
     await user.see({ text: awayQueuedPrompt });
     expect(await aborts()).toHaveLength(0);
     expect(await world.requests()).toHaveLength(2);
     const controlAttempt = agent.run("session.archive", { sessionId: a1.sessionId, archived: true }).catch((error: unknown) => error);
-    await user.see("This session is still working");
+    await user.see({ text: "This session is still working" });
     await user.click({ role: "button", label: "Keep session open" });
     expect(await controlAttempt).toMatchObject({
       message: "Desktop control action session.archive failed: Session archive was cancelled or could not be confirmed",
@@ -154,7 +154,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     expect(stopping.surfaces).toContain(a1.sessionId);
     expect(await probe.hash()).toBe(route(a1));
     await world.releaseAbort();
-    await user.see("Session archived", { timeoutMs: 30_000 });
+    await user.see({ text: "Session archived" }, { timeoutMs: 30_000 });
     const stopped = await archived(a1, true);
     expect(stopped.sessions.find(session => session.sessionId === a1.sessionId)?.status).toBe("idle");
     expect(stopped.sessions.find(session => session.sessionId === b1.sessionId)?.status).not.toBe("idle");
@@ -183,9 +183,9 @@ test("archiving exits only the viewed conversation, and working sessions require
     await open(a2);
     await world.networkFault("none", b1.sessionId);
     await archive(b1);
-    await user.see("This session is still working");
+    await user.see({ text: "This session is still working" });
     await user.click({ role: "button", label: "Stop and archive" });
-    await user.see("Session archived");
+    await user.see({ text: "Session archived" });
     const facts = await archived(b1, true);
     expect(await probe.hash()).toBe(route(a2));
     expect(facts.sessions.find(session => session.sessionId === b1.sessionId)?.status).toBe("idle");
@@ -204,7 +204,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     await user.press("Enter");
     await probe.eventually(async () => (await world.requests()).length, { within: 60_000, label: "third task held", until: count => count === 3 });
     await archive(a2);
-    await user.see("This session is still working");
+    await user.see({ text: "This session is still working" });
     const before = (await aborts()).length;
     await world.releaseRun();
     await probe.eventually(() => world.facts(), {
@@ -212,7 +212,7 @@ test("archiving exits only the viewed conversation, and working sessions require
       until: facts => facts.sessions.find(session => session.sessionId === a2.sessionId)?.status === "idle",
     });
     await user.click({ role: "button", label: "Stop and archive" });
-    await user.see("Session archived");
+    await user.see({ text: "Session archived" });
     await archived(a2, true);
     expect(await probe.hash()).toBe(start(a2));
     expect(await aborts()).toHaveLength(before);
@@ -230,8 +230,8 @@ test("archiving exits only the viewed conversation, and working sessions require
     await world.networkFault("none", b1.sessionId);
     const before = (await aborts()).length;
     await archive(b1);
-    await user.see("Session archived");
-    await user.notSee("This session is still working");
+    await user.see({ text: "Session archived" });
+    await user.notSee({ text: "This session is still working" });
     await archived(b1, true);
     expect(await probe.hash()).toBe(start(b1));
     await user.click({ role: "button", label: "Undo" });
@@ -246,7 +246,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     expect(transcript).toEqual(expect.arrayContaining([expect.objectContaining({ role: "user", text: "Finish this task while the archive dialog is open." })]));
     expect(await agent.run("session.archive", { sessionId: a2.sessionId, archived: true })).toEqual({ ok: true, sessionId: a2.sessionId, archived: true });
     await archived(a2, true);
-    await user.notSee("This session is still working");
+    await user.notSee({ text: "This session is still working" });
     await agent.run("session.open", { sessionId: a2.sessionId });
     await user.see({ testId: "archived-session" });
     await user.notSee("composer");
@@ -266,7 +266,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     await user.see("composer", { editable: true });
     expect(await world.transcript(a2)).toEqual(transcript);
     expect(await world.requests()).toHaveLength(3);
-    await user.notSee("Session archived", { timeoutMs: 15_000 });
+    await user.notSee({ text: "Session archived" }, { timeoutMs: 15_000 });
   });
 
   await step("Undo after leaving for Settings restores metadata without reviving the unmounted route", async () => {
@@ -299,7 +299,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     expect(settingsHash).toContain("/settings/");
     await world.releaseAbort();
     await world.networkFault("none", a2.sessionId);
-    await user.see("Session archived");
+    await user.see({ text: "Session archived" });
     expect(await probe.hash()).toBe(settingsHash);
     const facts = await world.facts();
     expect(facts.sessions.find(session => session.sessionId === a2.sessionId)?.archived).toBe(true);
@@ -323,7 +323,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     await probe.eventually(async () => (await world.requests()).length, { within: 60_000, label: "fourth task held", until: count => count === 4 });
     await user.type("composer", "This queued admission must never be replayed.");
     await user.press("Enter");
-    await user.see("This queued admission must never be replayed.");
+    await user.see({ text: "This queued admission must never be replayed." });
     await open(b1);
     await world.networkFault("hold_prompt", a1.sessionId);
     const before = (await world.facts()).requests.filter(request => request.action === "prompt_async").length;
@@ -333,21 +333,21 @@ test("archiving exits only the viewed conversation, and working sessions require
       until: facts => facts.requests.filter(request => request.action === "prompt_async").length === before + 1,
     });
     await archive(a1);
-    await user.see("This session is still working");
+    await user.see({ text: "This session is still working" });
     await user.click({ role: "button", label: "Stop and archive" });
-    await user.see("Stopping could not be confirmed. The session has not been archived. Try again.", { timeoutMs: 25_000 });
+    await user.see({ text: "Stopping could not be confirmed. The session has not been archived. Try again." }, { timeoutMs: 25_000 });
     await archived(a1, false);
     expect(await probe.hash()).toBe(route(b1));
     await world.releaseAbort();
     await world.networkFault("none", a1.sessionId);
     await user.click({ role: "button", label: "Stop and archive" });
-    await user.see("Session archived");
+    await user.see({ text: "Session archived" });
     await archived(a1, true);
     expect(await probe.hash()).toBe(route(b1));
     await user.click({ role: "button", label: "Undo" });
     await archived(a1, false);
     await open(a1);
-    await user.notSee("This queued admission must never be replayed.");
+    await user.notSee({ text: "This queued admission must never be replayed." });
     const deadline = Date.now() + 12_000;
     await probe.eventually(async () => {
       expect(await world.requests()).toHaveLength(4);
@@ -367,7 +367,7 @@ test("archiving exits only the viewed conversation, and working sessions require
         until: facts => facts.surfaces.includes(a2.sessionId) && facts.surfaces.includes(b1.sessionId),
       });
       await archive(target);
-      await user.see("Session archived");
+      await user.see({ text: "Session archived" });
       const facts = await archived(target, true);
       expect(facts.surfaces).not.toContain(target.sessionId);
       expect(facts.tabs).not.toContain(target.sessionId);
@@ -391,7 +391,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     await probe.eventually(async () => (await world.requests()).length, { within: 60_000, label: "background task starts", until: count => count === before + 1 });
     await user.type("composer", "Background completion last queued task.");
     await user.press("Enter");
-    await user.see("Background completion last queued task.");
+    await user.see({ text: "Background completion last queued task." });
     await open(b1);
     await world.releaseRun();
     await probe.eventually(async () => (await world.requests()).length, { within: 60_000, label: "last queued task reaches provider", until: count => count === before + 2 });
@@ -401,8 +401,8 @@ test("archiving exits only the viewed conversation, and working sessions require
     });
     const transcript = await world.transcript(a2);
     await archive(a2);
-    await user.see("Session archived");
-    await user.notSee("This session is still working");
+    await user.see({ text: "Session archived" });
+    await user.notSee({ text: "This session is still working" });
     await archived(a2, true);
     expect(await probe.hash()).toBe(route(b1));
     await user.click({ role: "button", label: "Undo" });
@@ -422,15 +422,15 @@ test("archiving exits only the viewed conversation, and working sessions require
     await probe.eventually(async () => (await world.requests()).length, { within: 60_000, label: "child task held", until: count => count === before + 1 });
     await user.type("composer", "Cancelled child follow-up must not replay.");
     await user.press("Enter");
-    await user.see("Cancelled child follow-up must not replay.");
+    await user.see({ text: "Cancelled child follow-up must not replay." });
     await open(b1);
     await archive(a1);
-    await user.see("This session is still working");
+    await user.see({ text: "This session is still working" });
     await user.click({ role: "button", label: "Keep session open" });
     expect(await aborts()).toHaveLength(beforeAborts);
     await archive(a1);
     await user.click({ role: "button", label: "Stop and archive" });
-    await user.see("Session archived");
+    await user.see({ text: "Session archived" });
     const facts = await archived(a1, true);
     expect(facts.sessions.find(session => session.sessionId === world.child.sessionId)).toMatchObject({ archived: false, status: "idle" });
     expect((await aborts()).slice(beforeAborts).map(request => request.sessionId)).toEqual([world.child.sessionId]);
@@ -439,7 +439,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     await archived(a1, false);
     await world.releaseRun();
     await agent.run("session.open", { sessionId: world.child.sessionId });
-    await user.notSee("Cancelled child follow-up must not replay.");
+    await user.notSee({ text: "Cancelled child follow-up must not replay." });
     expect(await world.requests()).toHaveLength(before + 1);
   });
 
@@ -470,9 +470,9 @@ test("archiving exits only the viewed conversation, and working sessions require
         until: facts => facts.requests.filter(request => request.action === "command").length === commandCount + 1,
       });
       await archive(a2);
-      await user.see("This session is still working");
+      await user.see({ text: "This session is still working" });
       await user.click({ role: "button", label: "Stop and archive" });
-      await user.see("Stopping could not be confirmed. The session has not been archived. Try again.", { timeoutMs: 25_000 });
+      await user.see({ text: "Stopping could not be confirmed. The session has not been archived. Try again." }, { timeoutMs: 25_000 });
       await archived(a2, false);
       expect(await aborts()).toHaveLength(beforeAborts);
       expect(await world.requests()).toHaveLength(before + Number(queued));
@@ -481,7 +481,7 @@ test("archiving exits only the viewed conversation, and working sessions require
       await world.networkFault("none", a2.sessionId);
       await probe.eventually(async () => (await world.requests()).length, { within: 60_000, label: "accepted command finally dispatched", until: count => count === before + Number(queued) + 1 });
       await user.click({ role: "button", label: "Stop and archive" });
-      await user.see("Session archived");
+      await user.see({ text: "Session archived" });
       await archived(a2, true);
       await user.click({ role: "button", label: "Undo" });
       await archived(a2, false);
