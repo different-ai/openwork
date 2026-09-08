@@ -1393,6 +1393,7 @@ export function SessionRoute() {
                 });
                 const result = await opencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
+                  messageID: draft.messageId,
                   parts,
                   model: sendModel ?? undefined,
                   agent: selectedAgent ?? undefined,
@@ -1713,6 +1714,7 @@ export function SessionRoute() {
                 });
                 const result = await workspaceOpencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
+                  messageID: draft.messageId,
                   parts,
                   model: sendModel ?? undefined,
                   agent: selectedAgent ?? undefined,
@@ -3011,7 +3013,6 @@ export function SessionRoute() {
               { token: sessionToken, mode: "openwork" },
             ).session.create({ directory: workspacePath || undefined })
               .then((result) => unwrap(result))
-              .catch(() => null)
           : null;
         setLegacySelectedWorkspaceId(targetWorkspaceId);
         writeActiveWorkspaceId(targetWorkspaceId);
@@ -3023,7 +3024,7 @@ export function SessionRoute() {
         captureAnalyticsEvent("workspace_created", { workspace_type: "local" });
         if (session?.id) {
           captureAnalyticsEvent("task_created", { source: "workspace_created", workspace_type: "local" });
-          if (firstTaskPrompt) {
+          if (firstTaskPrompt || firstTaskAttachments.length) {
             // Attachment chips only survive in-memory (File objects), so the
             // persisted fallback draft drops their tokens.
             saveSessionDraft(sessionDraftScope, targetWorkspaceId, session.id, { text: firstTaskPrompt.replace(/\[attachment [^\]]+\]/g, "").trim(), mode: "prompt" });
@@ -3056,6 +3057,7 @@ export function SessionRoute() {
       }
     } catch (error) {
       setCreateWorkspaceError(describeWorkspaceCreateError(error));
+      if (options?.firstTaskPrompt || options?.firstTaskAttachments?.length) throw error;
     } finally {
       setCreateWorkspaceBusy(false);
     }
@@ -3066,26 +3068,24 @@ export function SessionRoute() {
    * workspace under the user's home folder instead of asking where to put
    * it. Falls back to the create-workspace modal off desktop.
    */
-  const handleChatFirstTask = useCallback((prompt: string, attachments?: ComposerAttachment[]) => {
-    void (async () => {
-      if (!isDesktopRuntime()) {
-        // The cloud workspace is provisioned by Den; boot takeover covers the pre-attach state.
-        if (!canCreateWorkspaces()) return;
-        handleOpenCreateWorkspace();
-        return;
-      }
-      const home = await getDesktopHomeDir().catch(() => "");
-      if (!home) {
-        handleOpenCreateWorkspace();
-        return;
-      }
-      const folder = await joinDesktopPath(home, "OpenWork Chat").catch(() => "");
-      if (!folder) {
-        handleOpenCreateWorkspace();
-        return;
-      }
-      await handleCreateWorkspace("starter", folder, { firstTaskPrompt: prompt, firstTaskAttachments: attachments ?? [] });
-    })();
+  const handleChatFirstTask = useCallback(async (prompt: string, attachments?: ComposerAttachment[]) => {
+    if (!isDesktopRuntime()) {
+      // The cloud workspace is provisioned by Den; boot takeover covers the pre-attach state.
+      if (!canCreateWorkspaces()) throw new Error("Workspace creation is unavailable.");
+      handleOpenCreateWorkspace();
+      throw new Error("Choose a workspace before sending this message.");
+    }
+    const home = await getDesktopHomeDir().catch(() => "");
+    if (!home) {
+      handleOpenCreateWorkspace();
+      throw new Error("Choose a workspace before sending this message.");
+    }
+    const folder = await joinDesktopPath(home, "OpenWork Chat").catch(() => "");
+    if (!folder) {
+      handleOpenCreateWorkspace();
+      throw new Error("Choose a workspace before sending this message.");
+    }
+    await handleCreateWorkspace("starter", folder, { firstTaskPrompt: prompt, firstTaskAttachments: attachments ?? [] });
   }, [handleCreateWorkspace, handleOpenCreateWorkspace]);
 
   const createWorkspaceControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -3396,51 +3396,44 @@ export function SessionRoute() {
         onCreateSplitTaskInWorkspace: (workspaceId) => {
           void handleCreateSplitTaskInWorkspace(workspaceId);
         },
-        onCreateTaskWithPrompt: (workspaceId, prompt, attachments) => {
-          void (async () => {
-            const workspace = workspaces.find((item) => item.id === workspaceId);
-            if (!workspace) return;
-            const endpoint = endpointForWorkspace(workspace);
-            if (!endpoint?.token) return;
-            try {
-              const session = await createRouteSession(endpoint, workspace.path?.trim() || undefined);
-              if (workspaceId === selectedWorkspaceId) {
-                void refreshCloudProviderSync("new_chat");
-              }
-              const firstTaskPrompt = prompt.trim();
-              if (firstTaskPrompt) {
-                const firstTaskAttachments = attachments ?? [];
-                // Attachment chips only survive in-memory (File objects), so the
-                // persisted fallback draft drops their tokens.
-                saveSessionDraft(sessionDraftScope, workspaceId, session.id, { text: firstTaskPrompt.replace(/\[attachment [^\]]+\]/g, "").trim(), mode: "prompt" });
-                claimComposerSessionDraftScope(
-                  session.id,
-                  sessionDraftScopeKey(sessionDraftScope, workspaceId, session.id),
-                );
-                // The composer reads its draft from the composer state store,
-                // not the persisted draft store — seed both.
-                useComposerStateStore.getState().setDraft(session.id, firstTaskPrompt);
-                if (firstTaskAttachments.length) {
-                  useComposerStateStore.getState().setAttachments(session.id, firstTaskAttachments);
-                }
-                // One-step run: the session surface sends the seeded draft itself.
-                markComposerAutoSend(session.id);
-              }
-              writeActiveWorkspaceId(workspaceId || null);
-              writeLastSessionFor(workspaceId, session.id);
-              rememberPendingCreatedSession(workspaceId, session.id);
-              applyLastUsedModelToSession(session.id);
-              setSessionsByWorkspaceId((current) => ({
-                ...current,
-                [workspaceId]: mergeWorkspaceRouteSession(current[workspaceId] ?? [], session),
-              }));
-              navigateToWorkspaceSession(workspaceId, session.id);
-              focusPromptSoon();
-            } catch {
-              // Fall back to normal task creation without prompt
-              void handleCreateTaskInWorkspace(workspaceId);
+        onCreateTaskWithPrompt: async (workspaceId, prompt, attachments) => {
+          const workspace = workspaces.find((item) => item.id === workspaceId);
+          if (!workspace) throw new Error("Workspace is unavailable. Try again.");
+          const endpoint = endpointForWorkspace(workspace);
+          if (!endpoint?.token) throw new Error("Workspace is disconnected. Reconnect and try again.");
+          const session = await createRouteSession(endpoint, workspace.path?.trim() || undefined);
+          if (workspaceId === selectedWorkspaceId) {
+            void refreshCloudProviderSync("new_chat");
+          }
+          const firstTaskPrompt = prompt.trim();
+          if (firstTaskPrompt || attachments?.length) {
+            const firstTaskAttachments = attachments ?? [];
+            // Attachment chips only survive in-memory (File objects), so the
+            // persisted fallback draft drops their tokens.
+            saveSessionDraft(sessionDraftScope, workspaceId, session.id, { text: firstTaskPrompt.replace(/\[attachment [^\]]+\]/g, "").trim(), mode: "prompt" });
+            claimComposerSessionDraftScope(
+              session.id,
+              sessionDraftScopeKey(sessionDraftScope, workspaceId, session.id),
+            );
+            // The composer reads its draft from the composer state store,
+            // not the persisted draft store — seed both.
+            useComposerStateStore.getState().setDraft(session.id, firstTaskPrompt);
+            if (firstTaskAttachments.length) {
+              useComposerStateStore.getState().setAttachments(session.id, firstTaskAttachments);
             }
-          })();
+            // One-step run: the session surface sends the seeded draft itself.
+            markComposerAutoSend(session.id);
+          }
+          writeActiveWorkspaceId(workspaceId || null);
+          writeLastSessionFor(workspaceId, session.id);
+          rememberPendingCreatedSession(workspaceId, session.id);
+          applyLastUsedModelToSession(session.id);
+          setSessionsByWorkspaceId((current) => ({
+            ...current,
+            [workspaceId]: mergeWorkspaceRouteSession(current[workspaceId] ?? [], session),
+          }));
+          navigateToWorkspaceSession(workspaceId, session.id);
+          focusPromptSoon();
         },
         onOpenRenameWorkspace: handleOpenRenameWorkspace,
         onShareWorkspace: handleShareWorkspace,

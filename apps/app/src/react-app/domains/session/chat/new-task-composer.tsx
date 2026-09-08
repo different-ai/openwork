@@ -63,7 +63,7 @@ export type NewTaskComposerProps = {
   draft: string;
   onDraftChange: (value: string) => void;
   /** Called with a non-empty draft and in-memory attachments; the caller creates the session (and workspace if needed). */
-  onRunTask: (resolvedDraft: string, attachments: ComposerAttachment[]) => void;
+  onRunTask: (resolvedDraft: string, attachments: ComposerAttachment[]) => void | Promise<void>;
   /** Disable submission while a default workspace is being prepared. */
   busy: boolean;
   context: NewTaskComposerContext | null;
@@ -91,6 +91,13 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   const [mcpStatus, setMcpStatus] = useState<string | null>(null);
   const [importedPlugins, setImportedPlugins] = useState<CloudImportedPlugin[]>([]);
   const [pastedText, setPastedText] = useState<PastedTextChip[]>([]);
+  const submittingRef = useRef(false);
+  const draftRevisionRef = useRef(0);
+  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [failedSubmission, setFailedSubmission] = useState<{ text: string; attachments: ComposerAttachment[]; pastedText: PastedTextChip[] } | null>(null);
+  const draftRef = useRef(props.draft);
+  draftRef.current = props.draft;
   const skillsConnectPushRef = useRef(0);
   const mcpConnectPushRef = useRef(0);
   const pluginConnectPushRef = useRef(0);
@@ -202,6 +209,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   };
 
   const handleDraftChange = (value: string) => {
+    draftRevisionRef.current += 1;
     props.onDraftChange(value);
     const idsInDraft = new Set(
       [...value.matchAll(/\[attachment ([^\]]+)\]/g)].map((match) => match[1]).filter((id): id is string => Boolean(id)),
@@ -243,8 +251,33 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     props.onDraftChange(props.draft.replaceAll(`[attachment ${id}]`, ""));
   };
 
-  const handleRunTask = () => {
-    props.onRunTask(resolvePastedTextPlaceholders(props.draft, pastedText), attachments);
+  const handleRunTask = async () => {
+    if (submittingRef.current || props.busy || failedSubmission || (!props.draft.trim() && !attachments.length)) return;
+    submittingRef.current = true;
+    const originalDraft = props.draft;
+    const revision = draftRevisionRef.current;
+    const resolved = resolvePastedTextPlaceholders(originalDraft, pastedText);
+    const saved = { text: originalDraft, attachments, pastedText };
+    setPendingPrompt(resolved.replace(/\[attachment [^\]]+\]/g, ""));
+    setSubmissionError(null);
+    props.onDraftChange("");
+    draftRef.current = "";
+    setAttachments([]);
+    setPastedText([]);
+    try {
+      await props.onRunTask(resolved, attachments);
+    } catch (error) {
+      if (draftRevisionRef.current === revision && !draftRef.current) {
+        props.onDraftChange(originalDraft);
+        setAttachments(saved.attachments);
+        setPastedText(saved.pastedText);
+      } else {
+        setFailedSubmission(saved);
+      }
+      setSubmissionError(error instanceof Error ? error.message : "Could not create the conversation. Try again.");
+      setPendingPrompt(null);
+      submittingRef.current = false;
+    }
   };
 
   const handleUnsupportedFileLinks = (links: string[]) => {
@@ -253,6 +286,15 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   };
 
   return (
+    <>
+    {pendingPrompt !== null ? <div className="mb-4 whitespace-pre-wrap rounded-xl bg-muted px-4 py-3 text-sm" data-message-role="user">{pendingPrompt}</div> : null}
+    {submissionError ? <div role="alert" className="mb-2 text-sm text-red-11">{submissionError}</div> : null}
+    {failedSubmission ? <button type="button" disabled={Boolean(props.draft || attachments.length)} className="mb-2 text-sm disabled:opacity-50" onClick={() => {
+      props.onDraftChange(failedSubmission.text);
+      setAttachments(failedSubmission.attachments);
+      setPastedText(failedSubmission.pastedText);
+      setFailedSubmission(null);
+    }}>Clear the current draft to restore the unsent message</button> : null}
     <ReactSessionComposer
       runModeControl={<WorkspaceRunModeMenu client={workspaceClient} workspaceId={workspaceId} busy={props.busy} />}
       draft={props.draft}
@@ -264,7 +306,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       onStop={noop}
       busy={false}
       steering={false}
-      submissionPreparing={props.busy}
+      submissionPreparing={props.busy || pendingPrompt !== null || failedSubmission !== null}
       queuedCount={0}
       disabled={Boolean(context?.modelUnavailable)}
       modelUnavailable={context?.modelUnavailable}
@@ -318,6 +360,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       flush
       draftScopeKey={`new-task:${workspaceId ?? "chat-first"}`}
     />
+    </>
   );
 }
 

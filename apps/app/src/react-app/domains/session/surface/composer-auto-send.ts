@@ -15,3 +15,7 @@ export function markComposerAutoSend(sessionId: string) {
 export function consumeComposerAutoSend(sessionId: string): boolean {
   return pendingAutoSendSessionIds.delete(sessionId.trim());
 }
+
+export function hasComposerAutoSend(sessionId: string): boolean {
+  return pendingAutoSendSessionIds.has(sessionId.trim());
+}

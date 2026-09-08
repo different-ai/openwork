@@ -10,6 +10,12 @@ import { chatContinuity } from "./chat-continuity.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 
+declare global {
+  interface Window {
+    __openworkSubmissionFault?: { attempts: number; release: () => void };
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -775,6 +781,35 @@ export async function streamedMarkdown(seed: Seed) {
   if (ready !== true) throw new Error(`Selected ${engine} engine was not ready for the streaming journey`);
   const session = await seedSessionRetry(seed, app);
   return { app, den, workspace, session,
+    async holdNextSubmission() {
+      await seed.evalIn(app, () => {
+        const originalFetch = window.fetch;
+        const fault = { attempts: 0, release: () => {} };
+        window.__openworkSubmissionFault = fault;
+        window.fetch = async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+          if (method === "POST" && /\/session\/[^/]+\/(prompt_async|prompt)(\?|$)/.test(url)) {
+            fault.attempts++;
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, 30_000);
+              fault.release = () => { clearTimeout(timer); resolve(); };
+            });
+            window.fetch = originalFetch;
+            return new Response(JSON.stringify({ name: "SubmissionUnavailable", message: "Submission unavailable" }), {
+              status: 503, headers: { "content-type": "application/json" },
+            });
+          }
+          return originalFetch(input, init);
+        };
+      });
+    },
+    async submissionAttempts() {
+      return seed.evalIn(app, () => window.__openworkSubmissionFault?.attempts ?? 0);
+    },
+    async rejectSubmission() {
+      await seed.evalIn(app, () => window.__openworkSubmissionFault?.release());
+    },
     async videoState(play = false) {
       return seed.evalIn(app, browserScript(async (play) => {
         const video = document.querySelector<HTMLVideoElement>('video[data-openwork-video-path="clip.mp4"]');

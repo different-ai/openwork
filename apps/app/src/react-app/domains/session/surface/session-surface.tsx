@@ -144,7 +144,7 @@ import {
   readCloudInventoryScope,
 } from "@/react-app/domains/connections/cloud-inventory-cache";
 import { connectPluginsForComposer, EMPTY_CONNECT_CAPABILITY_INVENTORY } from "@/react-app/domains/session/surface/connect-capability-inventory";
-import { consumeComposerAutoSend } from "./composer-auto-send";
+import { consumeComposerAutoSend, hasComposerAutoSend } from "./composer-auto-send";
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
 import { buildConnectorToolIdentities } from "@/react-app/domains/connections/connector-tool-identity";
 
@@ -921,10 +921,6 @@ function revokeAttachmentPreview(attachment: { previewUrl?: string | undefined }
   URL.revokeObjectURL(attachment.previewUrl);
 }
 
-function sameAttachments(left: ComposerAttachment[], right: ComposerAttachment[]): boolean {
-  return left.length === right.length && left.every((attachment, index) => attachment.id === right[index]?.id);
-}
-
 function draftWithEditedText(draft: ComposerDraft, text: string): ComposerDraft {
   return {
     ...draft,
@@ -1094,7 +1090,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     : Boolean(props.modelUnavailable);
   // This surface is retained across navigation. Async completions must keep
   // their original owner, including when different servers reuse session IDs.
-  const sessionOwner = JSON.stringify([props.opencodeBaseUrl, props.workspaceId, props.sessionId]);
+  const sessionOwner = JSON.stringify([props.draftScope, props.opencodeBaseUrl, props.workspaceId, props.sessionId]);
   const activeSessionOwnerRef = useRef(sessionOwner);
   activeSessionOwnerRef.current = sessionOwner;
   const [ownedError, setOwnedError] = useState<{ owner: string; error: SessionError } | null>(null);
@@ -1335,11 +1331,46 @@ export function SessionSurface(props: SessionSurfaceProps) {
     () => deriveRenderedSessionMessages({ transcriptState, snapshot }),
     [snapshot, transcriptState],
   );
+  const pendingMessages = useComposerStateStore((state) => state.pendingMessages[sessionOwner]);
+  const failedDraft = useComposerStateStore((state) => state.failedDrafts[sessionOwner]?.[0]);
+  const autoSending = hasComposerAutoSend(props.sessionId) && !sessionModelUnavailable;
+  const unmatchedPendingMessages = useMemo(() => {
+    const matchedIds = new Set<string>();
+    const remaining = (pendingMessages ?? []).filter(({ draft: pending, previousMessageIds }) => {
+      const match = baseRenderedMessages.find((message) => message.role === "user"
+        && !matchedIds.has(message.id)
+        && (message.id === pending.messageId || (!previousMessageIds.includes(message.id)
+          && message.parts.some((part) => part.type === "text" && part.text === (pending.resolvedText ?? pending.text)))));
+      if (!match) return true;
+      matchedIds.add(match.id);
+      return false;
+    });
+    // A server turn can acknowledge only one pending send, even when two
+    // consecutive prompts have identical text and v2 assigns its own IDs.
+    return matchedIds.size ? remaining.map((item) => ({
+      ...item,
+      previousMessageIds: [...item.previousMessageIds, ...matchedIds],
+    })) : remaining;
+  }, [baseRenderedMessages, pendingMessages]);
+  useEffect(() => {
+    if (!pendingMessages || pendingMessages.length === unmatchedPendingMessages.length) return;
+    useComposerStateStore.setState((state) => ({
+      pendingMessages: { ...state.pendingMessages, [sessionOwner]: unmatchedPendingMessages },
+    }));
+  }, [pendingMessages, sessionOwner, unmatchedPendingMessages]);
   const renderedMessages = useMemo(() => {
-    if (evalMarkdownMessages.length === 0) return baseRenderedMessages;
-
-    return [...baseRenderedMessages, ...evalMarkdownMessages];
-  }, [baseRenderedMessages, evalMarkdownMessages]);
+    const pending: UIMessage[] = unmatchedPendingMessages.map(({ draft: item }) => ({
+      id: item.messageId,
+      role: "user",
+      parts: [{ type: "text", text: item.resolvedText ?? item.text }],
+    }));
+    if (autoSending && draft.trim()) pending.push({
+      id: `${props.sessionId}:first-send`,
+      role: "user",
+      parts: [{ type: "text", text: resolvePastedTextPlaceholders(draft, pasteParts).replace(/\[attachment [^\]]+\]/g, "") }],
+    });
+    return [...baseRenderedMessages, ...pending, ...evalMarkdownMessages];
+  }, [autoSending, baseRenderedMessages, draft, evalMarkdownMessages, pasteParts, props.sessionId, unmatchedPendingMessages]);
   const renderedMessagesRef = useRef(renderedMessages);
   useEffect(() => {
     renderedMessagesRef.current = renderedMessages;
@@ -1851,29 +1882,59 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const originalDraft = draft;
     const text = originalDraft.trim();
     if (!text && attachments.length === 0) return;
-    const nextDraft = buildDraft(text, attachments);
+    const nextDraft = {
+      ...buildDraft(text, attachments),
+      messageId: `msg_${(Date.now() * 4096).toString(16)}${crypto.randomUUID().replaceAll("-", "").slice(0, 14)}`,
+    };
     const sentAttachments = attachments;
+    const savedComposer = useComposerStateStore.getState().sessions[props.sessionId];
+    clearComposer();
+    const clearedComposer = useComposerStateStore.getState().sessions[props.sessionId];
+    const removePending = () => useComposerStateStore.setState((state) => ({
+      pendingMessages: {
+        ...state.pendingMessages,
+        [sessionOwner]: (state.pendingMessages[sessionOwner] ?? []).filter((item) => item.draft !== nextDraft),
+      },
+    }));
+    const restore = () => {
+      removePending();
+      const state = useComposerStateStore.getState();
+      // Identity, not text equality: typing and then deleting is still a newer edit.
+      if (savedComposer && state.sessions[props.sessionId] === clearedComposer
+        && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey) {
+        useComposerStateStore.setState({ sessions: { ...state.sessions, [props.sessionId]: savedComposer } });
+        props.onDraftChange(nextDraft);
+      } else if (savedComposer) {
+        useComposerStateStore.setState({ failedDrafts: {
+          ...state.failedDrafts,
+          [sessionOwner]: [...(state.failedDrafts[sessionOwner] ?? []), savedComposer],
+        } });
+      }
+    };
+    useComposerStateStore.setState((state) => ({
+      pendingMessages: {
+        ...state.pendingMessages,
+        [sessionOwner]: [...(state.pendingMessages[sessionOwner] ?? []), {
+          draft: nextDraft,
+          previousMessageIds: baseRenderedMessages.map((message) => message.id),
+        }],
+      },
+    }));
     if (sentAttachments.length) setAttachmentsUploading(true);
     try {
       const result = await sendDraft(nextDraft);
-      if (result.outcome === "blocked" || result.outcome === "cancelled") return;
-      const currentState = useComposerStateStore.getState();
-      const currentDraft = getComposerDraft(currentState, props.sessionId);
-      const currentAttachments = getComposerAttachments(currentState, props.sessionId);
-      if (currentDraft === originalDraft && sameAttachments(currentAttachments, sentAttachments)) {
-        clearComposer();
-        sentAttachments.forEach(revokeAttachmentPreview);
-      } else {
-        const retainedIds = new Set(currentAttachments.map((attachment) => attachment.id));
-        sentAttachments
-          .filter((attachment) => !retainedIds.has(attachment.id))
-          .forEach(revokeAttachmentPreview);
+      if (result.outcome === "blocked" || result.outcome === "cancelled") {
+        restore();
+        return;
       }
+      if (nextDraft.command || nextDraft.mode === "shell") removePending();
+      sentAttachments.forEach(revokeAttachmentPreview);
     } catch {
+      restore();
     } finally {
       setAttachmentsUploading(false);
     }
-  }, [attachments, buildDraft, clearComposer, draft, props.sessionId, sendDraft, sessionOwner]);
+  }, [attachments, baseRenderedMessages, buildDraft, clearComposer, draft, persistedDraftKey, props.onDraftChange, props.sessionId, sendDraft, sessionOwner]);
 
   // One-step run from the empty-state hero: the route seeds this session's
   // draft and marks it for auto-send. Fire the same send path as the send
@@ -1884,10 +1945,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (model.transitionState !== "idle") return;
     if (chatStreaming) return;
     if (sessionModelUnavailable) return;
-    if (!draft.trim()) return;
+    if (!draft.trim() && !attachments.length) return;
     if (!consumeComposerAutoSend(props.sessionId)) return;
     void handleSend();
-  }, [chatStreaming, draft, handleSend, model.transitionState, sessionModelUnavailable, props.sessionId]);
+  }, [attachments.length, chatStreaming, draft, handleSend, model.transitionState, sessionModelUnavailable, props.sessionId]);
 
   const handleSteer = useCallback(async () => {
     setSteering(true);
@@ -2107,11 +2168,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     if (hydratedDraftScopeKey !== persistedDraftKey) return;
+    // Auto-send can clear the store in an earlier effect from this render.
+    // Never persist that render's stale draft back over the cleared composer.
+    const current = useComposerStateStore.getState();
+    if (getComposerDraft(current, props.sessionId) !== draft || getComposerAttachments(current, props.sessionId) !== attachments) return;
     const nextDraft = buildDraft(draft, attachments);
     const persistableText = persistableComposerDraftText(nextDraft.text);
     persistDraft({ text: persistableText, mode: nextDraft.mode });
     props.onDraftChange(nextDraft);
-  }, [attachments, buildDraft, draft, hydratedDraftScopeKey, persistDraft, persistedDraftKey, props.onDraftChange]);
+  }, [attachments, buildDraft, draft, hydratedDraftScopeKey, persistDraft, persistedDraftKey, props.onDraftChange, props.sessionId]);
 
   const handleAttachFiles = useCallback((files: File[]) => {
     if (!props.attachmentsEnabled) {
@@ -2908,9 +2973,29 @@ export function SessionSurface(props: SessionSurfaceProps) {
             </button>
           </div>
         ) : null}
+        {failedDraft ? (
+          <div className="mx-3 mb-2 flex items-center gap-3 text-xs text-red-11">
+            <span>Your unsent message is saved. Clear the current draft to restore it.</span>
+            <button type="button" disabled={Boolean(draft || attachments.length)} className="font-medium disabled:opacity-50" onClick={() => {
+              const state = useComposerStateStore.getState();
+              if (getComposerDraft(state, props.sessionId) || getComposerAttachments(state, props.sessionId).length) return;
+              const failedDrafts = { ...state.failedDrafts };
+              failedDrafts[sessionOwner] = (failedDrafts[sessionOwner] ?? []).slice(1);
+              useComposerStateStore.setState({
+                sessions: { ...state.sessions, [props.sessionId]: failedDraft },
+                failedDrafts,
+              });
+            }}>Restore unsent message</button>
+          </div>
+        ) : null}
+        {unmatchedPendingMessages.flatMap(({ draft: pending }) => pending.attachments.map((attachment) => (
+          <div key={attachment.id} className="mx-3 mb-2 text-xs text-muted-foreground" data-attachment-status={sending ? "uploading" : "ready"}>
+            {attachment.name}{sending ? " · Uploading…" : ""}
+          </div>
+        )))}
         <ReactSessionComposer
           runModeControl={<WorkspaceRunModeMenu client={props.client} workspaceId={props.workspaceId} busy={chatStreaming || preparingCloudTools || Boolean(props.activePermission || props.activeQuestion)} />}
-          draft={draft}
+          draft={autoSending ? "" : draft}
           mentions={mentions}
           onDraftChange={handleComposerDraftChange}
         onSend={handleSend}
@@ -2919,7 +3004,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onStop={handleAbort}
         busy={chatStreaming}
         steering={steering}
-        submissionPreparing={preparingCloudTools}
+        submissionPreparing={preparingCloudTools || sending}
         queuedCount={queuedItems.length}
         disabled={model.transitionState !== "idle" || sessionModelUnavailable}
         modelUnavailable={sessionModelUnavailable}

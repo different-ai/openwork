@@ -159,7 +159,7 @@ export type SessionPageSidebarProps = {
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
   onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
-  onCreateTaskWithPrompt?: (workspaceId: string, prompt: string, attachments?: ComposerAttachment[]) => void;
+  onCreateTaskWithPrompt?: (workspaceId: string, prompt: string, attachments?: ComposerAttachment[]) => Promise<void>;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
@@ -261,7 +261,7 @@ export type SessionPageProps = {
   extensionsActive?: boolean;
   onOpenProviderAuth?: () => void;
   /** Chat-first: create a default workspace and start a task from the empty-state composer. */
-  onChatFirstTask?: (prompt: string, attachments?: ComposerAttachment[]) => void;
+  onChatFirstTask?: (prompt: string, attachments?: ComposerAttachment[]) => Promise<void>;
   chatFirstBusy?: boolean;
   /** Workspace-scoped wiring for the empty-state hero's full composer. */
   newTaskComposer?: NewTaskComposerContext | null;

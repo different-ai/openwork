@@ -27,6 +27,36 @@ function expectSettledDocument(visibleText: string) {
   for (const syntax of rawSyntax) expect(visibleText).not.toContain(syntax);
 }
 
+test("sending clears the composer and shows one pending turn in existing and new conversations", async ({ world, user, probe, step }) => {
+  for (const scenario of ["existing", "new"]) {
+    if (scenario === "new") await user.click({ role: "button", label: "New task" });
+    const text = `Keep this ${scenario} conversation message while submission is delayed.`;
+    await user.type("composer", text);
+    await world.holdNextSubmission();
+    await step(`${scenario}: Send clears the input before server acceptance`, async () => {
+      await user.click("Run task");
+      await user.see("composer", { text: "", timeoutMs: 500 });
+      await user.see({ text }, { timeoutMs: 500 });
+      expect(await probe.eventually(() => world.submissionAttempts(), {
+        within: 20_000, label: "held submission", until: (count) => count === 1,
+      })).toBe(1);
+      expect((await probe.composer()).draftText).toBe("");
+      expect(occurrences(await probe.text(), text)).toBe(1);
+    });
+    await step(`${scenario}: failure retains the message without replacing newer typing`, async () => {
+      await user.type("composer", "A newer draft");
+      await world.rejectSubmission();
+      await user.see({ text: /Your unsent message is saved/ });
+      expect((await probe.composer()).draftText).toBe("A newer draft");
+      expect(await world.submissionAttempts()).toBe(1);
+      await user.type("composer", "", { replace: true });
+      await user.click("Restore unsent message");
+      await user.see("composer", { text });
+      expect(await world.submissionAttempts()).toBe(1);
+    });
+  }
+});
+
 test("a streaming answer renders as markdown block by block and settles to the same document", async ({ world, user, probe, step }) => {
   const entries = [
     { role: "user", text: prompt } satisfies { role: "user"; text: string },
