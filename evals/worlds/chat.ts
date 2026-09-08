@@ -1362,6 +1362,121 @@ export async function sessionErrorCard(seed: Seed) {
   };
 }
 
+export async function sessionSubmitErrorIsolation(seed: Seed) {
+  const promptB = "Summarize the second task independently.";
+  const replyB = "The second task completed independently.";
+  const base = await splitPaneQuestions(seed, "session-submit-error-isolation", [
+    { promptMarker: promptB, latestUserTurn: true, finalReply: replyB, steps: [] },
+  ]);
+  const sessionB = await seedSessionRetry(seed, base.app, { title: "Independent task B" });
+  const sessionA = await seedSessionRetry(seed, base.app, { title: "Storage failure task A" });
+  const endpoint = base.app.client.webSocketDebuggerUrl;
+  if (!endpoint) throw new Error("Submit fault requires the desktop CDP endpoint");
+  const origin = await evalIn(base.app, () => "http://127.0.0.1:" + localStorage.getItem("openwork.server.port"));
+  const paths = (id: string) => ["workspace", "w"].flatMap(mount => ["opencode", "opencode2/api"].map(engine =>
+    `/${mount}/${encodeURIComponent(base.workspace.workspaceId)}/${engine}/session/${encodeURIComponent(id)}/prompt_async`));
+  const pathsA = paths(sessionA.sessionId);
+  const pathsB = paths(sessionB.sessionId);
+  const socket = new WebSocket(endpoint);
+  const ready = Promise.withResolvers<void>();
+  const commands = new Map<number, ReturnType<typeof Promise.withResolvers<void>>>();
+  const held = new Map<string, string>();
+  const finished = new Set<string>();
+  const requests: { sessionId: string; body: string }[] = [];
+  let nextId = 1;
+  let disposed = false;
+  let failure: Error | undefined;
+  const command = async (method: string, params = {}) => {
+    const id = nextId++;
+    const result = Promise.withResolvers<void>();
+    commands.set(id, result);
+    const timer = setTimeout(() => result.reject(new Error(`Submit fault timed out: ${method}`)), 15_000);
+    try { socket.send(JSON.stringify({ id, method, params })); await result.promise; }
+    finally { clearTimeout(timer); commands.delete(id); }
+  };
+  const fail = (error = new Error("Submit fault lost its CDP connection")) => {
+    if (disposed) return;
+    failure = error;
+    ready.reject(error);
+    for (const result of commands.values()) result.reject(error);
+  };
+  socket.addEventListener("open", () => ready.resolve());
+  socket.addEventListener("error", () => fail());
+  socket.addEventListener("close", () => fail());
+  socket.addEventListener("message", event => {
+    const message: unknown = JSON.parse(String(event.data));
+    if (!isRecord(message)) return;
+    if (typeof message.id === "number") {
+      const result = commands.get(message.id);
+      if (message.error) result?.reject(new Error("Submit fault CDP command failed"));
+      else result?.resolve();
+    }
+    const params = message.params;
+    if (!isRecord(params) || typeof params.requestId !== "string") return;
+    if (message.method === "Network.loadingFinished") finished.add(params.requestId);
+    if (message.method !== "Fetch.requestPaused") return;
+    const request = params.request;
+    const path = isRecord(request) && typeof request.url === "string" ? new URL(request.url).pathname : "";
+    if (isRecord(request) && request.method === "POST" && (pathsA.includes(path) || pathsB.includes(path))) {
+      requests.push({ sessionId: pathsA.includes(path) ? sessionA.sessionId : sessionB.sessionId,
+        body: typeof request.postData === "string" ? request.postData : "" });
+      if (pathsA.includes(path)) {
+        if (typeof params.networkId !== "string") { fail(new Error("Submit fault has no network request ID")); return; }
+        held.set(params.requestId, params.networkId);
+        return;
+      }
+    }
+    void command("Fetch.continueRequest", { requestId: params.requestId }).catch(fail);
+  });
+  const timer = setTimeout(() => ready.reject(new Error("Submit fault could not connect")), 15_000);
+  try {
+    await ready.promise;
+    await command("Network.enable");
+    await command("Fetch.enable", { patterns: [...pathsA, ...pathsB].map(path => ({ urlPattern: origin + path + "*", requestStage: "Request" })) });
+  } catch (error) { disposed = true; socket.close(); throw error; }
+  finally { clearTimeout(timer); }
+  return {
+    ...base, sessionA, sessionB, promptB, replyB,
+    readSubmissions() {
+      if (failure) throw failure;
+      return { requests: [...requests], held: held.size, finished: [...held.values()].filter(id => finished.has(id)).length };
+    },
+    async failHeldSubmissions() {
+      if (failure) throw failure;
+      const pending = [...held].filter(([, id]) => !finished.has(id));
+      if (!pending.length) throw new Error("No submit request is held");
+      // A real SDK response, not a seeded presentation: the storage code exists
+      // only in the upstream response body, not in the top-level message.
+      const body = Buffer.from(JSON.stringify({ name: "APIError", data: {
+        message: "Connected service could not save the task output", statusCode: 507,
+        responseBody: JSON.stringify({ error: { code: "EDQUOT", message: "Connected service storage quota exceeded" } }),
+      } })).toString("base64");
+      await Promise.all(pending.map(([requestId]) => command("Fetch.fulfillRequest", {
+        requestId, responseCode: 507, responseHeaders: [
+          { name: "content-type", value: "application/json" },
+          { name: "access-control-allow-origin", value: "*" },
+        ], body,
+      })));
+    },
+    async selectedSurface() {
+      return evalIn(base.app, () => {
+        const surface = document.querySelector<HTMLElement>('[data-workbench-pane="primary"] [data-session-surface-id]');
+        const run = surface?.querySelector<HTMLButtonElement>('button[aria-label="Run task"]');
+        return { sessionId: surface?.dataset.sessionSurfaceId ?? "", runEnabled: Boolean(run && !run.disabled) };
+      });
+    },
+    async settleResponse() {
+      // Network completion precedes the SDK promise chain and React's commit.
+      await evalIn(base.app, () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+        { awaitPromise: true, timeoutMs: 5_000 });
+    },
+    async [Symbol.asyncDispose]() {
+      try { if (socket.readyState === WebSocket.OPEN) await command("Fetch.disable"); }
+      finally { disposed = true; socket.close(); }
+    },
+  };
+}
+
 export async function snapshotFailure(seed: Seed) {
   const app = await seed.desktop({ name: "composer-snapshot-failure" });
   const workspace = await seed.workspace(app, seed.tmpPath("composer-snapshot-failure"));

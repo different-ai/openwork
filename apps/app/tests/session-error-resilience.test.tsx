@@ -51,9 +51,8 @@ describe("session error resilience", () => {
     const raw = `effect/sql/SqlError: Failed to execute statement\n at runLoop (/$bunfs/root/chunk.js:25:2045)\n${code}`
     const presentation = presentOpencodeSessionError({ name: "SqlError", data: { message: raw } })
     expect(presentation.kind).toBe("disk-full")
-    expect(presentation.title).toBe("Not enough disk space")
-    expect(presentation.description).toContain("Free up some disk space")
-    expect(presentation.description).toContain("cloud workspace")
+    expect(presentation.title).toBe("Storage error reported")
+    expect(presentation.description).toBe("A storage limit was reported by the task runtime or a connected service. This does not necessarily mean your computer is full. Check the affected service or workspace before freeing local disk space.")
     expect(presentation.technicalDetails).toContain(code)
     expect(presentation.technicalDetails).toContain("at runLoop")
     expect(presentation.recoveryPrompt).toBeNull()
@@ -66,6 +65,22 @@ describe("session error resilience", () => {
     ]) {
       expect(presentOpencodeSessionError(error).kind).toBe("disk-full")
     }
+  })
+
+  test("an upstream response-body storage code does not diagnose the local computer", () => {
+    const presentation = presentOpencodeSessionError({
+      name: "APIError",
+      data: {
+        message: "Connected service could not save the task output",
+        statusCode: 507,
+        responseBody: JSON.stringify({ error: { code: "EDQUOT", message: "Connected service storage quota exceeded" } }),
+      },
+    })
+    expect(presentation.kind).toBe("disk-full")
+    expect(presentation.title).toBe("Storage error reported")
+    expect(presentation.description).toContain("does not necessarily mean your computer is full")
+    expect(presentation.technicalDetails).toContain("EDQUOT")
+    expect(presentation.technicalDetails).toContain("507")
   })
 
   test("does not diagnose a generic database failure as a full disk", () => {
@@ -450,8 +465,8 @@ describe("session error technical details", () => {
   test("storage errors show guidance without technical codes outside developer mode", () => {
     const raw = "effect/sql/SqlError: Failed to execute statement\n at runLoop (/$bunfs/root/chunk.js:25:2045)\nENOSPC: no space left on device"
     const html = renderErrorTranscript(raw, false)
-    expect(html).toContain("Not enough disk space")
-    expect(html).toContain("Free up some disk space")
+    expect(html).toContain("Storage error reported")
+    expect(html).toContain("does not necessarily mean your computer is full")
     expect(html).not.toContain("SqlError")
     expect(html).not.toContain("runLoop")
     expect(html).not.toContain("ENOSPC")

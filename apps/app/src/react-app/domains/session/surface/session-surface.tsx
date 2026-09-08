@@ -1092,7 +1092,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const sessionModelUnavailable = props.resolveModelAvailability
     ? props.resolveModelAvailability(sessionModel.selectedModel).status === "unavailable"
     : Boolean(props.modelUnavailable);
-  const [error, setError] = useState<SessionError | null>(null);
+  // This surface is retained across navigation. Async completions must keep
+  // their original owner, including when different servers reuse session IDs.
+  const sessionOwner = JSON.stringify([props.opencodeBaseUrl, props.workspaceId, props.sessionId]);
+  const activeSessionOwnerRef = useRef(sessionOwner);
+  activeSessionOwnerRef.current = sessionOwner;
+  const [ownedError, setOwnedError] = useState<{ owner: string; error: SessionError } | null>(null);
+  const error = ownedError?.owner === sessionOwner ? ownedError.error : null;
+  const setError = useCallback((nextError: SessionError | null) => {
+    if (activeSessionOwnerRef.current !== sessionOwner) return;
+    setOwnedError(nextError ? { owner: sessionOwner, error: nextError } : null);
+  }, [sessionOwner]);
   const [restoringRevertedMessages, setRestoringRevertedMessages] = useState(false);
   const [delayedLoadingTarget, setDelayedLoadingTarget] = useState<{ workspaceId: string; sessionId: string } | null>(null);
   const showDelayedLoading = delayedLoadingTarget?.workspaceId === props.workspaceId &&
@@ -1123,7 +1133,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [cloudQueueRetryVersion, setCloudQueueRetryVersion] = useState(0);
   const [pendingSendSessions, setPendingSendSessions] = useState<string[]>([]);
   const pendingSendsRef = useRef(new Map<symbol, string>());
-  const sending = pendingSendSessions.includes(props.sessionId);
+  const sending = pendingSendSessions.includes(sessionOwner);
   const cloudQueueBlockedRef = useRef(false);
   const evalSnapshotFailureRef = useRef(false);
   // Shared with promote-to-send so a manual send-now cannot race the idle drain.
@@ -1209,7 +1219,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     autoOpenedTargetRef.current = null;
     initializedAutoOpenSessionRef.current = null;
     setVerifiedOpenTargets([]);
-  }, [props.sessionId]);
+  }, [sessionOwner, setError]);
 
   useEffect(() => () => {
     clearComposerRevertTarget(props.sessionId);
@@ -1458,7 +1468,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         return { ok: true };
       },
     };
-  }, [props.sessionId]);
+  }, [props.sessionId, setError]);
   useControlAction(props.isControlTarget ? seedSessionErrorControlAction : null);
   const seedSessionLifecycleControlAction = useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
@@ -1800,7 +1810,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // up the new message — so this is safe to call while the agent is busy.
   const sendDraft = useCallback(async (nextDraft: ComposerDraft) => {
     const submissionId = Symbol();
-    pendingSendsRef.current.set(submissionId, props.sessionId);
+    pendingSendsRef.current.set(submissionId, sessionOwner);
     setPendingSendSessions([...pendingSendsRef.current.values()]);
     setError(null);
     try {
@@ -1810,20 +1820,24 @@ export function SessionSurface(props: SessionSurfaceProps) {
       // submission and the route accepted or sent it.
       appendComposerHistory(props.sessionId, nextDraft.text);
       useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "busy" });
-      setAwaitingAssistantBaseline(renderedMessages.length);
+      if (activeSessionOwnerRef.current === sessionOwner) {
+        setAwaitingAssistantBaseline(renderedMessages.length);
+      }
       return result;
     } catch (nextError) {
       const parsed = parseSessionError(nextError);
       captureAnalyticsEvent("task_send_failed", {});
       setError(parsed);
       useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
-      setAwaitingAssistantBaseline(null);
+      if (activeSessionOwnerRef.current === sessionOwner) {
+        setAwaitingAssistantBaseline(null);
+      }
       throw nextError;
     } finally {
       pendingSendsRef.current.delete(submissionId);
       setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
-  }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length]);
+  }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length, sessionOwner, setError]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
@@ -1833,7 +1847,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
   // share the same immediate path.
   const handleSend = useCallback(async () => {
-    if ([...pendingSendsRef.current.values()].includes(props.sessionId)) return;
+    if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
     const originalDraft = draft;
     const text = originalDraft.trim();
     if (!text && attachments.length === 0) return;
@@ -1859,7 +1873,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } finally {
       setAttachmentsUploading(false);
     }
-  }, [attachments, buildDraft, clearComposer, draft, props.sessionId, sendDraft]);
+  }, [attachments, buildDraft, clearComposer, draft, props.sessionId, sendDraft, sessionOwner]);
 
   // One-step run from the empty-state hero: the route seeds this session's
   // draft and marks it for auto-send. Fire the same send path as the send
@@ -1974,12 +1988,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
     captureAnalyticsEvent("task_run_stopped", {});
     await snapshotQuery.refetch();
-  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceRoot, queuedItems, snapshotQuery.refetch]);
+  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceRoot, queuedItems, snapshotQuery.refetch, setError]);
 
   const handleDismissError = useCallback(() => {
     setError(null);
     useSessionActivityStore.getState().clearError(props.workspaceId, props.sessionId);
-  }, [props.sessionId, props.workspaceId]);
+  }, [props.sessionId, props.workspaceId, setError]);
 
   // Drain one queued follow-up each time the session goes idle, so prompts
   // run as separate turns instead of one merged message. Progress is grounded
