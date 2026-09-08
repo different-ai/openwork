@@ -1288,7 +1288,7 @@ export async function sessionErrorCard(seed: Seed) {
   await arrangeControl(seed, app, "eval.session_error.seed");
   return {
     app, workspace, session,
-    seedStorageError: (kind: "disk-full" | "database-error", surface: "transcript" | "banner" = "transcript") => arrangeControl(seed, app, "eval.session_error.seed", { kind, surface }),
+    seedError: (kind: "disk-full" | "database-error" | "free_allowance_exhausted" | "managed_model_requires_upgrade" | "byok-allowance", surface: "transcript" | "banner" = "transcript") => arrangeControl(seed, app, "eval.session_error.seed", { kind, surface }),
   };
 }
 

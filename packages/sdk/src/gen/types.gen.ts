@@ -897,6 +897,29 @@ export type DesktopPolicyListResponse = {
   }>;
 };
 
+export type InferenceAccessResponse = {
+  access: {
+    kind: "paid" | "free" | "exhausted" | "unavailable";
+    modelID: string | null;
+    weeklyLimitUsd: number | null;
+    usedUsd: number | null;
+    reservedUsd: number | null;
+    remainingUsd: number | null;
+    resetsAt: string | null;
+    reason:
+      | "admin_disabled"
+      | "not_eligible"
+      | "free_disabled"
+      | "accounting_unavailable"
+      | "free_allowance_exhausted"
+      | "free_request_in_progress"
+      | "upstream_unavailable"
+      | null;
+    canUpgrade: boolean;
+  };
+  upgradePath: "/dashboard/billing" | null;
+};
+
 export type InferenceStatus = {
   enabled: boolean;
   tier: "tier1" | "tier2";
@@ -10404,6 +10427,35 @@ export type PutV1DiagnosticsEgressTokenResponses = {
 
 export type PutV1DiagnosticsEgressTokenResponse =
   PutV1DiagnosticsEgressTokenResponses[keyof PutV1DiagnosticsEgressTokenResponses];
+
+export type GetV1InferenceAccessData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/access";
+};
+
+export type GetV1InferenceAccessErrors = {
+  /**
+   * Sign in to read inference access.
+   */
+  401: UnauthorizedError;
+  /**
+   * Join the organization before using inference.
+   */
+  403: ForbiddenError;
+};
+
+export type GetV1InferenceAccessError = GetV1InferenceAccessErrors[keyof GetV1InferenceAccessErrors];
+
+export type GetV1InferenceAccessResponses = {
+  /**
+   * Managed inference access returned successfully.
+   */
+  200: InferenceAccessResponse;
+};
+
+export type GetV1InferenceAccessResponse = GetV1InferenceAccessResponses[keyof GetV1InferenceAccessResponses];
 
 export type GetV1InferenceData = {
   body?: never;

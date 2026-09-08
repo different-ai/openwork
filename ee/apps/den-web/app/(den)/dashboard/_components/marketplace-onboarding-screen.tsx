@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Check, KeyRound, ArrowUpRight, ArrowRight } from "lucide-react";
 import { DenBadge } from "../../_components/ui/badge";
 import { DesktopHandoffAction } from "../../_components/auth-panel";
 import { SetupFrame } from "../../_components/setup-frame";
 import { getCustomLlmProvidersRoute, getInferenceRoute, getOrgDashboardRoute } from "../../_lib/den-org";
-import { getErrorMessage, normalizeAuthIntentParam, PENDING_AUTH_INTENT_STORAGE_KEY, requestJson } from "../../_lib/den-flow";
+import { normalizeAuthIntentParam, PENDING_AUTH_INTENT_STORAGE_KEY } from "../../_lib/den-flow";
+import { freeAllowanceDescription } from "../../_lib/inference-status";
+import { useInferenceAccess } from "../../_lib/use-inference-access";
 import { getDesktopGrant } from "../../_lib/desktop-handoff";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -25,19 +26,9 @@ export function MarketplaceOnboardingScreen() {
       modelsHeading.current?.focus();
     }
   }, [desktopAuthRequested]);
-  const { data: modelsEnabled, isPending: modelsLoading, error: modelsError } = useQuery({
-    queryKey: ["onboarding", "inference", orgId],
-    enabled: Boolean(orgId),
-    queryFn: async () => {
-      if (!orgId) throw new Error("Choose a workspace to check OpenWork Models.");
-      const { response, payload } = await requestJson("/v1/inference", { method: "GET", headers: { "x-openwork-org-id": orgId } }, 12000);
-      if (!response.ok) throw new Error(getErrorMessage(payload, "Could not check OpenWork Models."));
-      return typeof payload === "object" && payload !== null && "inference" in payload
-        && typeof payload.inference === "object" && payload.inference !== null
-        && "enabled" in payload.inference && payload.inference.enabled === true;
-    },
-    staleTime: 0,
-  });
+  const { data: modelAccess = null, isPending: modelsLoading, error: modelsError } = useInferenceAccess(orgId);
+  const modelsEnabled = modelAccess?.kind === "paid";
+  const allowance = freeAllowanceDescription(modelAccess);
 
   async function finish() {
     if (!orgId || completing) return;
@@ -57,9 +48,10 @@ export function MarketplaceOnboardingScreen() {
             <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-neutral-400">Optional · Models</p>
             <h2 id="setup-models-heading" ref={modelsHeading} tabIndex={-1} className="mt-2 text-xl font-semibold tracking-[-0.03em]">Your choice of model.</h2>
             <p className="mt-2 text-sm leading-6 text-[var(--dls-text-secondary)]" role="status">
-              {modelsLoading ? "Checking OpenWork Models..." : modelsError ? "Model status is unavailable. You can still complete setup." : modelsEnabled ? "OpenWork Models are on for this workspace." : "Signing in does not enable models. Keep your existing provider, or choose one when you are ready."}
+              {modelsLoading ? "Checking OpenWork Models..." : modelsError || !modelAccess ? "Model status is unavailable. You can still complete setup." : allowance ?? (modelsEnabled ? "OpenWork Models are on for this workspace." : "Keep your existing provider, or choose one when you are ready.")}
             </p>
             {modelsEnabled ? <DenBadge icon={Check}>Models on</DenBadge> : null}
+            {modelAccess?.kind === "free" ? <DenBadge icon={Check}>Free Luna included</DenBadge> : null}
           </div>
           <div className="divide-y divide-[var(--dls-border)] overflow-hidden rounded-2xl border border-[var(--dls-border)]">
             <div className="flex items-start gap-3 p-4 sm:p-5" data-testid="onboarding-choice-openwork-models">
@@ -68,7 +60,7 @@ export function MarketplaceOnboardingScreen() {
               </div>
               <div className="min-w-0 flex-1">
                 <h3 className="text-sm font-semibold">OpenWork Models</h3>
-                <p className="mt-1 text-[13px] leading-5 text-[var(--dls-text-secondary)]">Managed models, billed per member. No API keys to look after.</p>
+                <p className="mt-1 text-[13px] leading-5 text-[var(--dls-text-secondary)]">{allowance ? "Standard Luna with a free weekly allowance. Upgrade for other managed models." : "Managed models, billed per member. No API keys to look after."}</p>
                 <Link href={getInferenceRoute(orgSlug)} className="mt-3 inline-flex items-center gap-1.5 rounded-sm text-sm font-medium underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-neutral-950">
                   {modelsEnabled ? "Manage models" : "Explore models"}<ArrowUpRight className="size-3.5" aria-hidden />
                 </Link>

@@ -71,7 +71,7 @@ test("session error cards expose provider diagnostics only in Developer mode", a
   const storageErrors: Array<"disk-full" | "database-error"> = ["disk-full", "database-error"];
   for (const kind of storageErrors) {
     await step(`${kind} shows recovery guidance and keeps the stack trace in Developer mode`, async () => {
-      await world.seedStorageError(kind);
+      await world.seedError(kind);
       const title = kind === "disk-full" ? "Not enough disk space" : "OpenWork couldn’t access its saved data";
       await user.see({ text: title });
       await user.see({ text: kind === "disk-full" ? /Free up some disk space/ : /check the available disk space/ });
@@ -90,7 +90,7 @@ test("session error cards expose provider diagnostics only in Developer mode", a
       await user.notSee({ text: /at runLoop/ });
     });
     await step(`${kind} banner hides the stack trace outside Developer mode`, async () => {
-      await world.seedStorageError(kind, "banner");
+      await world.seedError(kind, "banner");
       const title = kind === "disk-full" ? "Not enough disk space" : "OpenWork couldn’t access its saved data";
       await user.see({ testId: "session-error-card" });
       await user.see({ text: title });
@@ -103,5 +103,28 @@ test("session error cards expose provider diagnostics only in Developer mode", a
       await user.notSee({ text: /at runLoop/ });
     });
   }
+
+  await user.type("composer", "Keep this unsent draft.");
+  for (const kind of ["free_allowance_exhausted", "managed_model_requires_upgrade"] as const) {
+    for (const surface of ["transcript", "banner"] as const) {
+      await step(`${kind} ${surface} explains the managed limit without retrying or discarding work`, async () => {
+        await world.seedError(kind, surface);
+        await user.see({ text: kind === "free_allowance_exhausted" ? "Your free Luna allowance is used up" : "This model requires OpenWork Models" });
+        await user.see({ testId: "inference-error-actions" });
+        await user.see({ role: "button", label: "Choose another provider" });
+        await user.notSee({ testId: "session-error-resume" });
+        await user.notSee({ testId: "inference-upgrade-dialog" });
+        await user.see("composer", { text: "Keep this unsent draft." });
+        if (surface === "transcript") await user.see({ text: "Looking at the repository now." });
+      });
+    }
+  }
+  await step("an organization BYOK 402 never becomes an OpenWork paywall", async () => {
+    await world.seedError("byok-allowance");
+    await user.see({ text: "The model request was declined." });
+    await user.notSee({ testId: "inference-error-actions" });
+    await user.notSee({ text: "Your free Luna allowance is used up" });
+    await user.see("composer", { text: "Keep this unsent draft." });
+  });
 
 });

@@ -1,6 +1,7 @@
-import { and, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   InferenceKeyTable,
+  InferenceFreeUsageBucketTable,
   InferenceOrgLimitPolicyTable,
   InferenceOrgUpstreamProviderKeyTable,
   InferenceOrgUsageBucketTable,
@@ -9,25 +10,31 @@ import {
   LlmProviderTable,
   MemberTable,
   OrganizationTable,
+  OrgSubscriptionTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
   createInferenceBearerKey,
+  inferenceBearerKey,
+  inferenceBearerKeyLookupDigests,
   inferenceBearerKeyPrefix,
   inferenceBearerKeyStorageDigest,
-  type InferenceBearerKey,
 } from "@openwork-ee/utils/inference-bearer-key"
 import {
   INFERENCE_RESET_STRATEGY_BY_WINDOW_TYPE,
   INFERENCE_TIER_LIMITS,
   INFERENCE_WINDOW_DURATIONS_MS,
+  freeInferenceAccess,
+  freeInferenceWindow,
+  inferenceAccessMode,
 } from "@openwork/types/den/inference"
-import type { InferenceOrganizationMetadata, InferenceTier, InferenceWindowType } from "@openwork/types/den/inference"
+import type { InferenceAccess, InferenceOrganizationMetadata, InferenceTier, InferenceWindowType } from "@openwork/types/den/inference"
 import { db } from "./db.js"
 import { env } from "./env.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
+type InferenceTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
 const OPENWORK_PROVIDER_ID = "openwork"
 const OPENROUTER_PROVIDER = "openrouter"
@@ -104,14 +111,14 @@ function buildOpenWorkProviderConfig() {
   }
 }
 
-async function revokeMemberInferenceKeys(memberId: MemberId) {
-  await db
+async function revokeMemberInferenceKeys(memberId: MemberId, tx: InferenceTransaction) {
+  await tx
     .update(InferenceKeyTable)
     .set({ status: "revoked", revoked_at: new Date() })
     .where(and(eq(InferenceKeyTable.org_membership_id, memberId), eq(InferenceKeyTable.status, "active")))
 }
 
-async function deleteOpenWorkProviders(where: { organizationId: OrgId; memberId?: MemberId }) {
+async function deleteOpenWorkProviders(where: { organizationId: OrgId; memberId?: MemberId }, tx: InferenceTransaction) {
   const providerWhere = where.memberId
     ? and(
         eq(LlmProviderTable.organizationId, where.organizationId),
@@ -125,138 +132,123 @@ async function deleteOpenWorkProviders(where: { organizationId: OrgId; memberId?
         eq(LlmProviderTable.providerId, OPENWORK_PROVIDER_ID),
       )
 
-  const providers = await db.select({ id: LlmProviderTable.id }).from(LlmProviderTable).where(providerWhere)
+  const providers = await tx.select({ id: LlmProviderTable.id }).from(LlmProviderTable).where(providerWhere)
   if (providers.length === 0) {
     return
   }
 
   const providerIds = providers.map((provider) => provider.id)
-  await db.transaction(async (tx) => {
-    await tx.delete(LlmProviderAccessTable).where(inArray(LlmProviderAccessTable.llmProviderId, providerIds))
-    await tx.delete(LlmProviderModelTable).where(inArray(LlmProviderModelTable.llmProviderId, providerIds))
-    await tx.delete(LlmProviderTable).where(inArray(LlmProviderTable.id, providerIds))
-  })
-}
-
-async function createMemberInferenceKey(input: { organizationId: OrgId; memberId: MemberId }) {
-  const key = createInferenceBearerKey()
-  await db.insert(InferenceKeyTable).values({
-    id: createDenTypeId("inferenceKey"),
-    organization_id: input.organizationId,
-    org_membership_id: input.memberId,
-    name: "OpenWork Models",
-    key_hash: await inferenceBearerKeyStorageDigest(key),
-    key_prefix: inferenceBearerKeyPrefix(key),
-    status: "active",
-  })
-  return key
-}
-
-async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId; memberId: MemberId; inferenceKey: InferenceBearerKey }) {
-  const now = new Date()
-  const providerRows = await db
-    .select({ id: LlmProviderTable.id })
-    .from(LlmProviderTable)
-    .where(and(
-      eq(LlmProviderTable.organizationId, input.organizationId),
-      eq(LlmProviderTable.createdByOrgMembershipId, input.memberId),
-      eq(LlmProviderTable.source, "openwork"),
-      eq(LlmProviderTable.providerId, OPENWORK_PROVIDER_ID),
-    ))
-    .limit(1)
-
-  const providerConfig = buildOpenWorkProviderConfig()
-  const providerId = providerRows[0]?.id ?? createDenTypeId("llmProvider")
-
-  await db.transaction(async (tx) => {
-    if (providerRows[0]) {
-      await tx
-        .update(LlmProviderTable)
-        .set({ name: "OpenWork Models", providerConfig, apiKey: input.inferenceKey.value, updatedAt: now })
-        .where(eq(LlmProviderTable.id, providerId))
-      await tx.delete(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, providerId))
-      await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, providerId))
-    } else {
-      await tx.insert(LlmProviderTable).values({
-        id: providerId,
-        organizationId: input.organizationId,
-        createdByOrgMembershipId: input.memberId,
-        source: "openwork",
-        providerId: OPENWORK_PROVIDER_ID,
-        name: "OpenWork Models",
-        providerConfig,
-        apiKey: input.inferenceKey.value,
-        createdAt: now,
-        updatedAt: now,
-      })
-    }
-
-    await tx.insert(LlmProviderAccessTable).values({
-      id: createDenTypeId("llmProviderAccess"),
-      llmProviderId: providerId,
-      orgMembershipId: input.memberId,
-      teamId: null,
-      createdAt: now,
-    })
-  })
-}
-
-async function ensureMemberInferenceAccess(input: { organizationId: OrgId; memberId: MemberId }) {
-  const key = await createMemberInferenceKey(input)
-  await ensureOpenWorkLlmProviderForMember({ ...input, inferenceKey: key })
-}
-
-async function memberHasOpenWorkInferenceAccess(input: { organizationId: OrgId; memberId: MemberId }) {
-  const [provider] = await db
-    .select({ id: LlmProviderTable.id })
-    .from(LlmProviderTable)
-    .where(and(
-      eq(LlmProviderTable.organizationId, input.organizationId),
-      eq(LlmProviderTable.createdByOrgMembershipId, input.memberId),
-      eq(LlmProviderTable.source, "openwork"),
-      eq(LlmProviderTable.providerId, OPENWORK_PROVIDER_ID),
-    ))
-    .limit(1)
-  const [key] = await db
-    .select({ id: InferenceKeyTable.id })
-    .from(InferenceKeyTable)
-    .where(and(
-      eq(InferenceKeyTable.organization_id, input.organizationId),
-      eq(InferenceKeyTable.org_membership_id, input.memberId),
-      eq(InferenceKeyTable.status, "active"),
-    ))
-    .limit(1)
-
-  return Boolean(provider && key)
+  await tx.delete(LlmProviderAccessTable).where(inArray(LlmProviderAccessTable.llmProviderId, providerIds))
+  await tx.delete(LlmProviderModelTable).where(inArray(LlmProviderModelTable.llmProviderId, providerIds))
+  await tx.delete(LlmProviderTable).where(inArray(LlmProviderTable.id, providerIds))
 }
 
 /**
- * Re-provision this member's OpenWork Models key + LLM provider when the org
- * has inference enabled but the member row was deleted or never created.
- * Safe to call from member-facing list endpoints (self-heal).
+ * Enroll eligible joined members and repair only their managed OpenWork provider.
+ * The organization/member locks serialize enrollment, disablement and key repair.
+ * No upstream request or paid policy creation belongs in this path.
  */
 export async function repairMemberInferenceAccessIfNeeded(input: {
   organizationId: OrgId
   memberId: MemberId
 }): Promise<boolean> {
-  const [organization] = await db
-    .select({ metadata: OrganizationTable.metadata })
-    .from(OrganizationTable)
-    .where(eq(OrganizationTable.id, input.organizationId))
-    .limit(1)
+  return db.transaction(async (tx) => {
+    const [organization] = await tx.select({ metadata: OrganizationTable.metadata })
+      .from(OrganizationTable).where(eq(OrganizationTable.id, input.organizationId)).limit(1).for("update")
+    const [member] = await tx.select().from(MemberTable).where(and(
+      eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, input.organizationId),
+    )).limit(1).for("update")
+    if (!organization || !member?.userId || !member.joinedAt || member.removedAt) return false
 
-  const inference = readInferenceMetadata(organization?.metadata ?? null)
-  if (!inference) {
-    return false
+    let mode = inferenceAccessMode(organization.metadata)
+    if (env.inferenceFree.enabled && mode === "not_eligible"
+      && organization.metadata?.inference == null && organization.metadata?.inferenceFree == null) {
+      // The old paid disable path deleted metadata. Subscription history makes
+      // that absence ambiguous, so only never-subscribed orgs enroll by default.
+      const [subscription] = await tx.select({ id: OrgSubscriptionTable.id }).from(OrgSubscriptionTable).where(and(
+        eq(OrgSubscriptionTable.organization_id, input.organizationId), eq(OrgSubscriptionTable.type, "inference"),
+      )).limit(1)
+      if (subscription) return false
+      const metadata = { ...organization.metadata, inferenceFree: { offerAllowed: true } }
+      await tx.update(OrganizationTable).set({ metadata }).where(eq(OrganizationTable.id, input.organizationId))
+      mode = inferenceAccessMode(metadata)
+    }
+    if (mode !== "paid" && !(mode === "free" && env.inferenceFree.enabled)) return false
+
+    const [provider] = await tx.select().from(LlmProviderTable).where(and(
+      eq(LlmProviderTable.organizationId, input.organizationId),
+      eq(LlmProviderTable.createdByOrgMembershipId, input.memberId),
+      eq(LlmProviderTable.source, "openwork"),
+      eq(LlmProviderTable.providerId, OPENWORK_PROVIDER_ID),
+    )).limit(1)
+    const activeKeys = await tx.select().from(InferenceKeyTable).where(and(
+      eq(InferenceKeyTable.organization_id, input.organizationId),
+      eq(InferenceKeyTable.org_membership_id, input.memberId),
+      eq(InferenceKeyTable.status, "active"),
+    ))
+    const digests = provider?.apiKey ? await inferenceBearerKeyLookupDigests(inferenceBearerKey(provider.apiKey)) : []
+    const matchingKey = activeKeys.find((key) => digests.includes(key.key_hash))
+    let changed = false
+    const staleKeys = activeKeys.filter((key) => key.id !== matchingKey?.id)
+    if (staleKeys.length) {
+      await tx.update(InferenceKeyTable).set({ status: "revoked", revoked_at: new Date() })
+        .where(inArray(InferenceKeyTable.id, staleKeys.map((key) => key.id)))
+      changed = true
+    }
+    const providerId = provider?.id ?? createDenTypeId("llmProvider")
+    if (!matchingKey) {
+      const key = createInferenceBearerKey()
+      await tx.insert(InferenceKeyTable).values({
+        id: createDenTypeId("inferenceKey"), organization_id: input.organizationId,
+        org_membership_id: input.memberId, name: "OpenWork Models",
+        key_hash: await inferenceBearerKeyStorageDigest(key), key_prefix: inferenceBearerKeyPrefix(key), status: "active",
+      })
+      if (provider) {
+        // Preserve provider identity, model selections and configuration on repair.
+        await tx.update(LlmProviderTable).set({ apiKey: key.value }).where(eq(LlmProviderTable.id, providerId))
+      } else {
+        await tx.insert(LlmProviderTable).values({
+          id: providerId, organizationId: input.organizationId, createdByOrgMembershipId: input.memberId,
+          source: "openwork", providerId: OPENWORK_PROVIDER_ID, name: "OpenWork Models",
+          providerConfig: buildOpenWorkProviderConfig(), apiKey: key.value,
+        })
+      }
+      changed = true
+    }
+    const [access] = await tx.select({ id: LlmProviderAccessTable.id }).from(LlmProviderAccessTable).where(and(
+      eq(LlmProviderAccessTable.llmProviderId, providerId), eq(LlmProviderAccessTable.orgMembershipId, input.memberId),
+    )).limit(1)
+    if (!access) {
+      await tx.insert(LlmProviderAccessTable).values({
+        id: createDenTypeId("llmProviderAccess"), llmProviderId: providerId, orgMembershipId: input.memberId, teamId: null,
+      })
+      changed = true
+    }
+    return changed
+  })
+}
+
+export async function getMemberInferenceAccess(input: {
+  organizationId: OrgId
+  memberId: MemberId
+  userId: DenTypeId<"user">
+}): Promise<InferenceAccess> {
+  const [row] = await db.select({ metadata: OrganizationTable.metadata })
+    .from(MemberTable).innerJoin(OrganizationTable, eq(OrganizationTable.id, MemberTable.organizationId))
+    .where(and(eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, input.organizationId),
+      eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt))).limit(1)
+  const mode = row ? inferenceAccessMode(row.metadata) : "not_eligible"
+  const now = new Date()
+  if (mode !== "free" || !env.inferenceFree.enabled) return freeInferenceAccess({ config: env.inferenceFree, mode, now })
+  try {
+    const [bucket] = await db.select().from(InferenceFreeUsageBucketTable).where(and(
+      eq(InferenceFreeUsageBucketTable.user_id, input.userId),
+      eq(InferenceFreeUsageBucketTable.window_start_at, freeInferenceWindow(now).start),
+    )).limit(1)
+    return freeInferenceAccess({ config: env.inferenceFree, mode, bucket, now })
+  } catch {
+    return { ...freeInferenceAccess({ config: env.inferenceFree, mode, now }), kind: "unavailable", reason: "accounting_unavailable", usedUsd: null, reservedUsd: null, remainingUsd: null }
   }
-
-  if (await memberHasOpenWorkInferenceAccess(input)) {
-    return false
-  }
-
-  await revokeMemberInferenceKeys(input.memberId)
-  await ensureMemberInferenceAccess(input)
-  return true
 }
 
 export async function syncInferenceForOrganizationMembers(input: { organizationId: OrgId }) {
@@ -267,12 +259,10 @@ export async function syncInferenceForOrganizationMembers(input: { organizationI
     .limit(1)
 
   const inference = readInferenceMetadata(organization?.metadata ?? null)
-  if (!inference) {
-    return
-  }
-
   const members = await listOrgMembers(input.organizationId)
-  await syncInferenceLimitPolicies({ organizationId: input.organizationId, tier: inference.tier, memberCount: members.length })
+  if (inference) {
+    await syncInferenceLimitPolicies({ organizationId: input.organizationId, tier: inference.tier, memberCount: members.length })
+  }
 
   for (const member of members) {
     await repairMemberInferenceAccessIfNeeded({
@@ -289,8 +279,12 @@ export async function syncInferenceAfterMemberChange(input: {
   change: "added" | "removed"
 }) {
   if (input.change === "removed") {
-    await revokeMemberInferenceKeys(input.memberId)
-    await deleteOpenWorkProviders({ organizationId: input.organizationId, memberId: input.memberId })
+    await db.transaction(async (tx) => {
+      await tx.select({ id: OrganizationTable.id }).from(OrganizationTable)
+        .where(eq(OrganizationTable.id, input.organizationId)).for("update")
+      await revokeMemberInferenceKeys(input.memberId, tx)
+      await deleteOpenWorkProviders({ organizationId: input.organizationId, memberId: input.memberId }, tx)
+    })
   }
 
   const [organization] = await db
@@ -299,14 +293,12 @@ export async function syncInferenceAfterMemberChange(input: {
     .where(eq(OrganizationTable.id, input.organizationId))
     .limit(1)
   const inference = readInferenceMetadata(organization?.metadata ?? null)
-  if (!inference) {
-    return
+  if (inference) {
+    await syncInferenceLimitPolicies({ organizationId: input.organizationId, tier: inference.tier, memberCount: input.memberCount })
   }
 
-  await syncInferenceLimitPolicies({ organizationId: input.organizationId, tier: inference.tier, memberCount: input.memberCount })
-
   if (input.change === "added") {
-    await ensureMemberInferenceAccess({ organizationId: input.organizationId, memberId: input.memberId })
+    await repairMemberInferenceAccessIfNeeded({ organizationId: input.organizationId, memberId: input.memberId })
   }
 }
 
@@ -586,7 +578,7 @@ export async function getInferenceStatus(organizationId: OrgId) {
   }
 }
 
-export async function setInferenceEnabled(input: { organizationId: OrgId; enabled: boolean; tier?: InferenceTier }) {
+export async function setInferenceEnabled(input: { organizationId: OrgId; enabled: boolean; tier?: InferenceTier; source?: "admin" | "billing" }) {
   const [organization] = await db
     .select({ metadata: OrganizationTable.metadata })
     .from(OrganizationTable)
@@ -597,28 +589,41 @@ export async function setInferenceEnabled(input: { organizationId: OrgId; enable
   }
 
   if (!input.enabled) {
-    const members = await listOrgMembers(input.organizationId)
+    await db.transaction(async (tx) => {
+      const [current] = await tx.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
+        .where(eq(OrganizationTable.id, input.organizationId)).limit(1).for("update")
+      if (!current) return
+      if (input.source === "billing" && inferenceAccessMode(current.metadata) === "free") return
+      const metadata = setInferenceMetadata(current.metadata, null)
+      // Billing expiry is not an administrator's opt-out. Preserve an existing
+      // opt-out, even on a repeated or delayed subscription event.
+      const offerAllowed = input.source === "billing" && inferenceAccessMode(current.metadata) !== "admin_disabled"
+        && !(isRecord(current.metadata?.inferenceFree) && current.metadata.inferenceFree.offerAllowed === false)
+      metadata.inferenceFree = { offerAllowed }
+      await tx.update(OrganizationTable).set({ metadata }).where(eq(OrganizationTable.id, input.organizationId))
+      await tx.update(InferenceKeyTable).set({ status: "revoked", revoked_at: new Date() })
+        .where(eq(InferenceKeyTable.organization_id, input.organizationId))
+      if (!offerAllowed) await deleteOpenWorkProviders({ organizationId: input.organizationId }, tx)
+    })
+    // Revoke locally before contacting upstream so a failed deletion fails closed.
     await revokeOrgUpstreamProviderKeys(input.organizationId)
-    await db
-      .update(OrganizationTable)
-      .set({ metadata: setInferenceMetadata(organization.metadata, null) })
-      .where(eq(OrganizationTable.id, input.organizationId))
-    if (members.length > 0) {
-      await db
-        .update(InferenceKeyTable)
-        .set({ status: "revoked", revoked_at: new Date() })
-        .where(and(eq(InferenceKeyTable.organization_id, input.organizationId), inArray(InferenceKeyTable.org_membership_id, members.map((member) => member.id))))
-    }
-    await deleteOpenWorkProviders({ organizationId: input.organizationId })
     return getInferenceStatus(input.organizationId)
   }
 
+  if (input.source === "billing" && inferenceAccessMode(organization.metadata) === "admin_disabled") {
+    return getInferenceStatus(input.organizationId)
+  }
   const tier = input.tier ?? readInferenceMetadata(organization.metadata)?.tier ?? "tier1"
   await ensureOrgUpstreamProviderKey(input.organizationId)
-  await db
-    .update(OrganizationTable)
-    .set({ metadata: setInferenceMetadata(organization.metadata, { enabled: true, tier }) })
-    .where(eq(OrganizationTable.id, input.organizationId))
+  await db.transaction(async (tx) => {
+    const [current] = await tx.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
+      .where(eq(OrganizationTable.id, input.organizationId)).limit(1).for("update")
+    if (!current || input.source === "billing" && inferenceAccessMode(current.metadata) === "admin_disabled") return
+    await tx.update(OrganizationTable).set({ metadata: {
+      ...setInferenceMetadata(current.metadata, { enabled: true, tier }),
+      inferenceFree: { offerAllowed: true },
+    } }).where(eq(OrganizationTable.id, input.organizationId))
+  })
   await syncInferenceForOrganizationMembers({ organizationId: input.organizationId })
   return getInferenceStatus(input.organizationId)
 }

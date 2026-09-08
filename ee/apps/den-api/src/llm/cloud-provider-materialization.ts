@@ -3,9 +3,11 @@ import { and, asc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   LlmProviderModelTable,
   LlmProviderTable,
+  OrganizationTable,
   WorkerTable,
   WorkerTokenTable,
 } from "@openwork-ee/den-db/schema"
+import { inferenceAccessMode } from "@openwork/types/den/inference"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
@@ -183,7 +185,12 @@ const databaseMaterializationStore: CloudProviderMaterializationStore = {
       modelsByProvider.set(model.llmProviderId, existing)
     }
 
-    return providers.map((provider) => ({
+    const [organization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
+      .where(eq(OrganizationTable.id, organizationId)).limit(1)
+    // This org-wide path has no calling person. Never copy one member's free
+    // allowance key into a shared worker; paid inference and BYOK stay unchanged.
+    const paidInference = inferenceAccessMode(organization?.metadata ?? null) === "paid"
+    return providers.filter((provider) => provider.source !== "openwork" || paidInference).map((provider) => ({
       id: provider.id,
       source: provider.source,
       providerId: provider.providerId,

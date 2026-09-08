@@ -19,6 +19,7 @@ import type {
   UpdateAutomation,
 } from "@openwork/types/automations";
 import { generatedArtifactViewSchema, savedAppDetailSchema, savedAppSummarySchema, type SaveApp, type WorkflowDetail } from "@openwork/types/workflows";
+import { inferenceAccessSchema } from "./inference-access";
 
 // Re-export the shared schema under the local alias so React consumers
 // (e.g. the cloud domain's desktop-config provider) can import it alongside
@@ -3010,6 +3011,14 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         organizationId: orgId,
       });
       return normalizeDenDesktopConfig(payload);
+    },
+
+    async getInferenceAccess(orgId: string) {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/inference/access", {
+        method: "GET", token, organizationId: orgId,
+      });
+      if (!isRecord(payload)) throw new Error("Inference access response was incomplete.");
+      return inferenceAccessSchema.parse(payload.access);
     },
 
     async getResourceSnapshot(orgId?: string | null): Promise<DenResourceSnapshot> {

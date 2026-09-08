@@ -4,6 +4,7 @@ import { modelPicker } from "../worlds/chat.ts";
 const test = spec.world(modelPicker);
 
 test("the composer model pickers keep their controls without the OpenWork Models subscribe promo", async ({ user, step }) => {
+  await user.type("composer", "Keep this model-picker draft.");
   await user.click({ role: "button", label: "Change model" });
   await user.click({ role: "button", label: /^Model\s+Big Pickle/ });
 
@@ -11,6 +12,8 @@ test("the composer model pickers keep their controls without the OpenWork Models
     await user.see({ placeholder: "Search models..." });
     await user.see({ role: "button", label: "All models" });
     await user.see({ role: "button", label: "Connect more providers" });
+    await user.notSee({ testId: "inference-upgrade-dialog" });
+    await user.see("composer", { text: "Keep this model-picker draft." });
     for (const removed of [
       "Your API keys",
       "Add your keys",
@@ -32,5 +35,8 @@ test("the composer model pickers keep their controls without the OpenWork Models
     await user.notSee({ text: "Subscribe to use hosted frontier models in this workspace." });
     await user.notSee({ text: "Sign in to unlock hosted frontier models for your team." });
     await user.notSee({ role: "button", label: "Subscribe" });
+    await user.notSee({ testId: "inference-upgrade-dialog" });
   });
+  await user.click({ role: "button", label: "Done" });
+  await user.see("composer", { text: "Keep this model-picker draft." });
 });

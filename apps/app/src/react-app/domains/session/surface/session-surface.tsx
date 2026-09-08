@@ -76,6 +76,8 @@ import {
   resolveAdmissionOutcome,
 } from "./session-admission-outcome";
 import { describeOpencodeSessionError, interruptedTaskRecoveryPrompt, presentOpencodeSessionError } from "@/react-app/domains/session/sync/session-error";
+import { InferenceErrorActions } from "@/react-app/domains/cloud/inference-access-provider";
+import { refreshInferenceAccess } from "@/app/lib/inference-access";
 import { createSessionErrorUIMessage } from "@/react-app/domains/session/sync/usechat-adapter";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
@@ -191,6 +193,7 @@ as $5 and $10 stay plain text.`,
 
 type SessionError = {
   message: string;
+  providerID?: string;
   kind?: "model-not-found" | "generic";
   /** For model-not-found: the model that failed. */
   failedModel?: { providerID: string; modelID: string };
@@ -833,23 +836,25 @@ function parseSessionError(thrown: unknown): SessionError {
   return { message: raw || "Failed to send prompt." };
 }
 
-function SessionErrorCard({ error, developerMode, onDismiss, onChangeModel, onOpenModelPicker }: {
+function SessionErrorCard({ error, sessionId, developerMode, onDismiss, onChangeModel, onOpenModelPicker }: {
   error: SessionError;
+  sessionId: string;
   developerMode: boolean;
   onDismiss: () => void;
   onChangeModel?: (model: { providerID: string; modelID: string }) => void;
   onOpenModelPicker?: () => void;
 }) {
-  const presentation = presentOpencodeSessionError(error.message);
+  const presentation = presentOpencodeSessionError(error.message, "Session failed", error.providerID);
   return (
     <div className="mx-auto max-w-[720px] px-3 py-3 sm:px-5" data-testid="session-error-card" role="alert">
       <div className="rounded-2xl border border-red-6/30 bg-red-3/15 px-5 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-red-11">{developerMode ? error.message : presentation.title}</div>
+            <div className="text-sm font-medium text-red-11">{developerMode && !presentation.inference ? error.message : presentation.title}</div>
             {!developerMode && presentation.description ? (
               <p className="mt-1 text-sm text-red-11">{presentation.description}</p>
             ) : null}
+            {presentation.inference ? <InferenceErrorActions {...presentation.inference} sessionId={sessionId} onOpenModelPicker={onOpenModelPicker} /> : null}
             {error.kind === "model-not-found" ? (
               <div className="mt-2 flex flex-wrap gap-2">
                 {error.suggestions && error.suggestions.length > 0 ? (
@@ -1449,17 +1454,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
       sideEffect: "mutation",
       disabled: !props.sessionId,
       args: [
-        { name: "kind", type: "string", description: "Optional disk-full or database-error fixture." },
+        { name: "kind", type: "string", description: "Optional disk-full, database-error, free_allowance_exhausted, managed_model_requires_upgrade, or byok-allowance fixture." },
         { name: "surface", type: "string", description: "Optional banner instead of the transcript." },
       ],
       execute: (args) => {
         const kind = args && typeof args === "object" && "kind" in args ? args.kind : null;
+        const allowance = kind === "free_allowance_exhausted" || kind === "managed_model_requires_upgrade" || kind === "byok-allowance";
         const error = kind === "disk-full" || kind === "database-error"
           ? { name: "SqlError", data: { message: `effect/sql/SqlError: Failed to execute statement\n    at runLoop (/$bunfs/root/chunk.js:25:2045)${kind === "disk-full" ? "\nCaused by: ENOSPC: no space left on device, write" : ""}` } }
+          : allowance ? { name: "APIError", data: {
+              message: "The model request was declined.", statusCode: 402, providerID: kind === "byok-allowance" ? "lpr_organization_byok" : "openwork",
+              responseBody: JSON.stringify({ error: { code: kind === "byok-allowance" ? "free_allowance_exhausted" : kind, resetsAt: "2026-09-14T00:00:00Z" } }),
+            } }
           : SESSION_ERROR_EVAL_PAYLOAD;
         if (args && typeof args === "object" && "surface" in args && args.surface === "banner") {
           setEvalMarkdownMessages([]);
-          setError({ message: error.data.message });
+          setError({ message: allowance ? JSON.stringify(error) : error.data.message });
         } else {
           setError(null);
           setEvalMarkdownMessages(createSessionErrorEvalMessages(props.sessionId, error));
@@ -1821,7 +1831,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setAwaitingAssistantBaseline(renderedMessages.length);
       return result;
     } catch (nextError) {
-      const parsed = parseSessionError(nextError);
+      const parsed = { ...parseSessionError(nextError), providerID: sessionModel.selectedModel.providerID };
+      refreshInferenceAccess();
       captureAnalyticsEvent("task_send_failed", {});
       setError(parsed);
       useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
@@ -1831,7 +1842,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       pendingSendsRef.current.delete(submissionId);
       setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
-  }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length]);
+  }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length, sessionModel.selectedModel.providerID]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
@@ -2757,6 +2768,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
             ) : null}
             {error && snapshot && snapshot.messages.length > 0 ? (
               <SessionErrorCard
+                sessionId={props.sessionId}
                 developerMode={props.developerMode}
                 error={error}
                 onDismiss={handleDismissError}
@@ -2774,6 +2786,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
               <div className="px-6 py-8">
                 {error ? (
                   <SessionErrorCard
+                    sessionId={props.sessionId}
                     developerMode={props.developerMode}
                     error={error}
                     onDismiss={handleDismissError}
@@ -2794,6 +2807,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
               </div>
             ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 && error ? (
               <SessionErrorCard
+                sessionId={props.sessionId}
                 developerMode={props.developerMode}
                 error={error}
                 onDismiss={handleDismissError}

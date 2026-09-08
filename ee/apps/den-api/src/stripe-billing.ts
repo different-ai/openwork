@@ -537,7 +537,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
   })
 
   if (subscriptionType === INFERENCE_SUBSCRIPTION_TYPE && EXPIRED_STATUSES.has(status)) {
-    await setInferenceEnabled({ organizationId: metadata.organizationId as OrgId, enabled: false })
+    await setInferenceEnabled({ organizationId: metadata.organizationId as OrgId, enabled: false, source: "billing" })
   }
 
   return findOrgSubscriptionByStripeId(subscription.id)
@@ -1172,7 +1172,7 @@ export async function syncStripeCheckoutSession(input: { organizationId: OrgId; 
     })
   }
   if (row?.type === INFERENCE_SUBSCRIPTION_TYPE && ACTIVE_STATUSES.has(subscriptionStatus(subscription.status))) {
-    await setInferenceEnabled({ organizationId: row.organization_id, enabled: true })
+    await setInferenceEnabled({ organizationId: row.organization_id, enabled: true, source: "billing" })
   }
   return row
 }
@@ -1246,7 +1246,7 @@ async function expireNonWebSubscriptionAfterPaymentFailure(
     .set({ status: "expired", last_event_id: eventId, updated_at: new Date() })
     .where(eq(OrgSubscriptionTable.id, row.id))
   if (row.type === INFERENCE_SUBSCRIPTION_TYPE) {
-    await setInferenceEnabled({ organizationId: row.organization_id, enabled: false })
+    await setInferenceEnabled({ organizationId: row.organization_id, enabled: false, source: "billing" })
   }
 }
 
@@ -1352,7 +1352,7 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
           })
         }
         if (row?.type === INFERENCE_SUBSCRIPTION_TYPE && ACTIVE_STATUSES.has(subscriptionStatus(subscription.status))) {
-          await setInferenceEnabled({ organizationId: row.organization_id, enabled: true })
+          await setInferenceEnabled({ organizationId: row.organization_id, enabled: true, source: "billing" })
         }
         if (row?.type === WEB_SUBSCRIPTION_TYPE && isEligibleOpenWorkWebSubscriptionStatus(subscription.status)) {
           await syncWebSubscriptionQuantityAfterMemberChange({

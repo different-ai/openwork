@@ -6,6 +6,8 @@ import { getReactQueryClient } from "../../../infra/query-client";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
 import { observeModelsTaskEvent } from "@/app/lib/models-task-analytics";
+import { refreshInferenceAccess } from "@/app/lib/inference-access";
+import { getSessionModelSelection } from "../surface/session-model-store";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import { perfNow, recordPerfLog } from "@/app/lib/perf-log";
@@ -19,6 +21,7 @@ import {
 } from "./usechat-adapter";
 import {
   describeOpencodeSessionError,
+  latestAssistantProvider,
   presentOpencodeSessionError,
 } from "./session-error";
 import {
@@ -858,8 +861,11 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const sessionId = sessionIdFromProperties(event.properties);
     if (sessionId) {
       const sessionError = sessionErrorFromProperties(event.properties);
-      const errorPresentation = presentOpencodeSessionError(sessionError);
-      const errorText = describeOpencodeSessionError(sessionError);
+      const providerID = latestAssistantProvider(queryClient.getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? [])
+        ?? getSessionModelSelection(sessionId)?.model.providerID;
+      const errorPresentation = presentOpencodeSessionError(sessionError, "Session failed", providerID);
+      const errorText = describeOpencodeSessionError(sessionError, "Session failed", providerID);
+      refreshInferenceAccess();
       const runStartedAt = takeTaskRunStart(sessionId);
       if (runStartedAt !== null) {
         captureAnalyticsEvent("task_run_errored", {
@@ -1017,7 +1023,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
   if (event.type === "message.updated") {
     const props = (event.properties ?? {}) as {
-      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; time?: { created?: number; completed?: number } };
+      info?: { id?: string; role?: UIMessage["role"] | string; providerID?: string; sessionID?: string; time?: { created?: number; completed?: number } };
     };
     const info = props.info;
     if (!info?.id || !info.sessionID || (info.role !== "user" && info.role !== "assistant" && info.role !== "system")) {
@@ -1042,7 +1048,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       id: info.id,
       role: info.role,
       ...(typeof created === "number"
-        ? { metadata: { opencode: { created, ...(typeof completed === "number" ? { completed } : {}) } } }
+        ? { metadata: { opencode: { created, ...(typeof info.providerID === "string" ? { providerID: info.providerID } : {}), ...(typeof completed === "number" ? { completed } : {}) } } }
         : {}),
       parts: [],
     } satisfies UIMessage;
@@ -1353,6 +1359,7 @@ function applySessionRunStatus(
       });
     }
     if (shouldRecordTerminal) {
+      refreshInferenceAccess();
       const assistantCompletedAt = entry.assistantMessageCompletedAt.get(sessionId);
       const runActiveAt = entry.runActiveObservedAt.get(sessionId);
       recordSessionCompletionMark("run-terminal", {

@@ -1916,7 +1916,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         checkRestriction: options.checkDesktopAppRestriction,
       },
     );
-    if (replacement) writeStoredDefaultModel(replacement);
+    if (replacement) writeStoredDefaultModel(replacement, { automaticRepair: true });
   };
 
   const refreshProvidersAfterCloudSync = async (optionsArg: {

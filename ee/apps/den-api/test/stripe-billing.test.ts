@@ -725,7 +725,7 @@ test("an asynchronous Checkout failure expires inference without enabling access
     status: "expired",
     last_event_id: "evt_inference_checkout_async_failed",
   })
-  expect(inferenceEnableCalls).toEqual([{ organizationId: "org_test", enabled: false }])
+  expect(inferenceEnableCalls).toEqual([{ organizationId: "org_test", enabled: false, source: "billing" }])
 })
 
 test("an asynchronous Checkout success clears payment failure and reconciles Web quantity", async () => {

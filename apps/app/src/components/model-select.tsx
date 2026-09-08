@@ -19,6 +19,8 @@ import {
 import { useWorkspace } from "@/react-app/shell/workspace-provider";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
+import { InferenceAllowanceSummary, useInferenceAccess } from "@/react-app/domains/cloud/inference-access-provider";
+import { markExplicitModelChoice, modelSelectionUpgradeReason } from "@/app/lib/inference-access";
 import {
   OPENWORK_MODELS_PROVIDER_ID,
   OPENWORK_MODELS_PROVIDER_NAME,
@@ -212,7 +214,7 @@ interface ModelSelectProps {
   disabled?: boolean;
   /** When set, "All models" opens the full picker scoped to this session. */
   sessionId?: string;
-  /** Den/import includes OpenWork Models. Kept for callers; picker no longer upsells here. */
+  /** Den/import includes OpenWork Models; allowance gates use member access instead. */
   openWorkModelsEntitled?: boolean;
   /** The server is waiting to reload this workspace with OpenWork Models. */
   openWorkModelsSyncing?: boolean;
@@ -245,6 +247,7 @@ export function ModelSelect({
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const platform = usePlatform();
   const denAuth = useDenAuth();
+  const inference = useInferenceAccess();
   const favorites = useModelCollectionsStore((state) => state.favorites);
   const recent = useModelCollectionsStore((state) => state.recent);
   const catalogOptions = useModelOptions(open, fallbackOptions, denAuth.isSignedIn);
@@ -335,12 +338,14 @@ export function ModelSelect({
   const selectedThinkingOptions = selectedOption ? thinkingOptionsFor(selectedOption) : [];
   const effectiveBehaviorLabel = behaviorLabel ?? selectedOption?.behaviorLabel ?? "Default";
   const currentFavorite = favoriteOptions.find((option) => isSameModel(value, option)) ?? favoriteOptions[0] ?? null;
-  const nextFavorite = nextFavoriteModel(favorites, value);
+  const nextFavorite = nextFavoriteModel(favorites.filter((model) => !modelSelectionUpgradeReason(inference.access, model)), value);
   const showBehavior = !hideValue
     && selectedThinkingOptions.length > 0
     && Boolean(effectiveBehaviorLabel);
 
   const applyModel = (option: ModelOption, behavior?: string | null) => {
+    if (!inference.checkSelection(option, sessionId)) { onOpenChange(false); return; }
+    markExplicitModelChoice();
     useModelCollectionsStore.getState().recordRecent(option);
     onChange({ providerID: option.providerID, modelID: option.modelID }, behavior);
     if (behavior !== undefined) {
@@ -353,6 +358,7 @@ export function ModelSelect({
   };
 
   const handleSelect = (option: ModelOption) => {
+    if (!inference.checkSelection(option, sessionId)) { onOpenChange(false); return; }
     const thinking = thinkingOptionsFor(option);
     if (thinking.length > 0 && onBehaviorChange) {
       setThinkingFor(option);
@@ -447,6 +453,7 @@ export function ModelSelect({
         align="start"
         initialFocus={false}
       >
+        <InferenceAllowanceSummary className="px-3 pt-2" available={catalogOptions.some((option) => option.providerID === "openwork")} />
         {pane === "root" ? (
           <div data-slot="model-select-root" className="space-y-0.5 p-2">
             <button

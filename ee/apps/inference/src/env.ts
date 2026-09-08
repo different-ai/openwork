@@ -1,6 +1,7 @@
 import "./load-env.js";
 import type { DenDbMode, PlanetScaleCredentials } from "@openwork-ee/den-db";
 import { z } from "zod";
+import { INFERENCE_FREE_ENV, readFreeInferenceConfig } from "@openwork/types/den/inference";
 
 const EnvSchema = z
   .object({
@@ -111,6 +112,8 @@ const planetscale: PlanetScaleCredentials | null =
     : null;
 
 export const env = {
+  freeInference: readFreeInferenceConfig(process.env),
+  freeUpstreamApiKey: optionalString(process.env[INFERENCE_FREE_ENV.upstreamApiKey]),
   port: parsePort(parsed.PORT),
   corsOrigins: splitCsv(parsed.CORS_ORIGINS),
   databaseUrl: parsed.DATABASE_URL,

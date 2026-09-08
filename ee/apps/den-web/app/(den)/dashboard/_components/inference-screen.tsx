@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference";
@@ -8,7 +9,8 @@ import { DenButton } from "../../_components/ui/button";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { DenCard } from "../../_components/ui/card";
 import { DenNotice } from "../../_components/ui/notice";
-import { parseInferencePayload, type InferenceStatus } from "../../_lib/inference-status";
+import { freeAllowanceDescription, parseInferencePayload } from "../../_lib/inference-status";
+import { useInferenceAccess } from "../../_lib/use-inference-access";
 import { DenSectionHeader } from "../../_components/ui/section-header";
 import { DenTable, type DenTableColumn } from "../../_components/ui/table";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
@@ -22,6 +24,7 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
  * unmapped models still render with sane defaults.
  */
 const MODEL_DETAILS: Record<string, { bestFor: string; monogram: string } | undefined> = {
+  "openai/gpt-5.6-luna": { bestFor: "Everyday knowledge work", monogram: "OA" },
   "moonshotai/kimi-k3": { bestFor: "Research & synthesis", monogram: "MS" },
   "z-ai/glm-5.2": { bestFor: "Multi-step tasks", monogram: "ZA" },
   "moonshotai/kimi-k2.7-code": { bestFor: "Spreadsheets & scripts", monogram: "MS" },
@@ -82,7 +85,7 @@ const MODEL_COLUMNS: readonly DenTableColumn<LineupModel>[] = [
   },
 ];
 
-function ModelsLineup({ subscribed }: { subscribed: boolean }) {
+function ModelsLineup({ subscribed, free }: { subscribed: boolean; free: boolean }) {
   return (
     <section className="grid gap-3.5">
       <DenSectionHeader
@@ -90,6 +93,7 @@ function ModelsLineup({ subscribed }: { subscribed: boolean }) {
         description={
           subscribed
             ? `Every member of your workspace can use all ${MODEL_LINEUP.length} models.`
+            : free ? "Standard Luna is included in the free weekly allowance. Upgrade to use every managed model below."
             : `Every member of your workspace can use all ${MODEL_LINEUP.length} models, the moment you subscribe.`
         }
       />
@@ -102,10 +106,8 @@ function ModelsLineup({ subscribed }: { subscribed: boolean }) {
 
 export function InferenceScreen() {
   const router = useRouter();
-  const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
+  const { runtimeConfig, runtimeConfigLoaded, user } = useDenFlow();
   const { activeOrg, orgContext, refreshOrgData, runReauthableAction } = useOrgDashboard();
-  const [status, setStatus] = useState<InferenceStatus | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [subscribeBusy, setSubscribeBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,41 +122,32 @@ export function InferenceScreen() {
   // (single-org) deployments manage their own LLM providers instead.
   const isSelfHosted = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
   const activeOrgSlug = activeOrg?.slug ?? null;
+  const orgId = orgContext?.organization.id ?? null;
+  const { data: memberAccess = null } = useInferenceAccess(orgId);
+  const canStartCheckout = canManageModels && memberAccess?.canUpgrade !== false;
+  const { data: status = null, isPending: loading, error: statusError, refetch: refreshStatus } = useQuery({
+    queryKey: ["inference-settings", user?.id, orgId],
+    enabled: Boolean(user && orgId && canManageModels && !isSelfHosted),
+    queryFn: async ({ signal }) => {
+      if (!orgId) return null;
+      const { response, payload } = await requestJson("/v1/inference", { method: "GET", signal, headers: { "x-openwork-org-id": orgId } }, 12000);
+      if (!response.ok) throw new Error(getErrorMessage(payload, `Failed to load inference settings (${response.status}).`));
+      return parseInferencePayload(payload);
+    },
+    gcTime: 0,
+    refetchOnWindowFocus: "always",
+  });
 
   useEffect(() => {
     if (!isSelfHosted) return;
     router.replace(getCustomLlmProvidersRoute(activeOrgSlug));
   }, [isSelfHosted, activeOrgSlug, router]);
 
-  async function loadStatus() {
-    setLoading(true);
-    setError(null);
-    try {
-      const { response, payload } = await requestJson("/v1/inference", { method: "GET" }, 12000);
-      if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to load inference settings (${response.status}).`));
-      }
-      const parsed = parseInferencePayload(payload);
-      if (!parsed) {
-        throw new Error("Inference settings response was incomplete.");
-      }
-      setStatus(parsed);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load inference settings.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadStatus();
-  }, [orgContext?.organization.id]);
-
   // Subscribe at the point of value: start the Stripe checkout right here
   // instead of bouncing the user to the billing page. Billing stays the
   // status/portal view.
   async function startSubscribeCheckout() {
-    if (!canManageModels) {
+    if (!canStartCheckout) {
       setError("Only workspace admins can start OpenWork Models checkout.");
       return;
     }
@@ -213,7 +206,7 @@ export function InferenceScreen() {
           if (!parsed) {
             throw new Error("Inference settings response was incomplete.");
           }
-          setStatus(parsed);
+          await refreshStatus();
           await refreshOrgData();
         } finally {
           setSaving(false);
@@ -230,9 +223,10 @@ export function InferenceScreen() {
 
   const enabled = status?.enabled === true;
   const subscribed = status?.subscribed === true;
-  const showGettingStarted = !loading && status !== null && !subscribed;
+  const allowance = freeAllowanceDescription(memberAccess);
+  const showGettingStarted = !loading && status !== null && !subscribed && !allowance;
   const memberCount = status?.memberCount ?? 0;
-  const actionLabel = subscribed ? (enabled ? "Manage subscription" : "Enable") : "Subscribe";
+  const actionLabel = subscribed ? (enabled ? "Manage subscription" : "Enable") : allowance ? "Upgrade" : "Subscribe";
   const memberCaption = memberCount > 0
     ? `${memberCount} active member${memberCount === 1 ? "" : "s"}`
     : "billed per active member";
@@ -242,12 +236,21 @@ export function InferenceScreen() {
       <DenPageHeader title="OpenWork Models"
         description="Reliable, hand-picked models for knowledge work. No API keys to manage."
         caption={`$10 / user / month · ${memberCaption}`}
-        action={<DenButton type="button" onClick={subscribed ? toggleEnabled : () => void startSubscribeCheckout()}
-          loading={loading || saving || subscribeBusy} disabled={!canManageModels} variant={enabled ? "secondary" : "primary"}>
-          {actionLabel}
+        action={<DenButton type="button" onClick={!canStartCheckout ? () => setError("Ask a workspace owner or admin to upgrade OpenWork Models.") : subscribed ? toggleEnabled : () => void startSubscribeCheckout()}
+          loading={(canManageModels && loading) || saving || subscribeBusy} variant={enabled ? "secondary" : "primary"}>
+          {canStartCheckout ? actionLabel : "Ask admin"}
         </DenButton>} />
 
-      {error ? <DenNotice message={error} tone="error" /> : null}
+      {error || statusError ? <DenNotice message={error ?? statusError?.message ?? "Could not load model status."} tone="error" /> : null}
+
+      {allowance ? <DenCard>
+        <div className="grid gap-2" data-testid="inference-free-allowance">
+          <h2 className="text-base font-semibold">{memberAccess?.kind === "exhausted" ? "Your weekly Luna allowance is used up" : "Luna is included"}</h2>
+          <p className="text-sm leading-6 text-[#637291]">{allowance}</p>
+          <p className="text-sm leading-6 text-[#637291]">The allowance is shared across your workspaces, not multiplied by them. Bring your Own Keys keeps its own billing.</p>
+          {memberAccess?.kind === "exhausted" ? <p className="text-sm">Wait for the reset, upgrade, or choose your own provider.</p> : null}
+        </div>
+      </DenCard> : null}
 
       {canManageModels ? null : (
         <DenNotice
@@ -260,7 +263,7 @@ export function InferenceScreen() {
         <p className="text-sm leading-6 text-[#637291]">One subscription activates models for everyone in your workspace. After subscribing, choose a model from the OpenWork group in the app and start a task.</p>
       </DenCard> : null}
 
-      <ModelsLineup subscribed={subscribed} />
+      <ModelsLineup subscribed={subscribed} free={Boolean(allowance)} />
 
       <p className="text-[13px] text-gray-400">
         Prefer your own provider accounts?{" "}

@@ -2,6 +2,7 @@ import os from "node:os"
 import { readFileSync } from "node:fs"
 import path from "node:path"
 import { denUrls } from "@openwork-ee/utils/den-urls"
+import { readFreeInferenceConfig } from "@openwork/types/den/inference"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
 import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { resolveDenServiceVersion } from "./service-version.js"
@@ -182,6 +183,9 @@ const EnvSchema = z.object({
   DEN_CKPT_INTERVAL_SECONDS: z.string().optional(),
   DEN_CKPT_KEEP: z.string().optional(),
   INFERENCE_PROXY_BASE_URL: z.string().optional(),
+  INFERENCE_FREE_ENABLED: z.string().optional(),
+  INFERENCE_FREE_WEEKLY_BUDGET_USD: z.string().optional(),
+  INFERENCE_FREE_MODEL_ID: z.string().optional(),
   OPENROUTER_MANAGEMENT_API_KEY: z.string().optional(),
   OPENROUTER_WORKSPACE_ID: z.string().optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
@@ -811,6 +815,7 @@ export const env = {
   corsHandledByEdge,
   openworkWebEnabled,
   inferenceProxyBaseUrl: optionalString(parsed.INFERENCE_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
+  inferenceFree: readFreeInferenceConfig(parsed),
   openRouterManagementApiKey: optionalString(parsed.OPENROUTER_MANAGEMENT_API_KEY),
   openRouterWorkspaceId: optionalString(parsed.OPENROUTER_WORKSPACE_ID),
   stripe: {

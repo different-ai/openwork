@@ -8,6 +8,7 @@ import { hydrateOpenworkServerSettingsFromEnv } from "@/app/lib/openwork-server"
 import { isDesktopRuntime } from "@/app/utils";
 import { ConnectLinkProvider } from "@/react-app/domains/cloud/connect-link-provider";
 import { DenAuthProvider } from "@/react-app/domains/cloud/den-auth-provider";
+import { InferenceAccessProvider } from "@/react-app/domains/cloud/inference-access-provider";
 import { AutomationRunnerBridge } from "@/react-app/domains/automations/automation-runner-bridge";
 import { GlobalQueueDrainerBridge } from "@/react-app/domains/session/sync/global-queue-drainer-bridge";
 import { BrandThemeProvider } from "@/react-app/domains/cloud/brand-theme";
@@ -98,7 +99,9 @@ export function AppProviders({ children }: AppProvidersProps) {
       <ServerProvider defaultUrl={defaultUrl}>
         <ArchitectureMismatchGate>
           <DenAuthProvider>
-            <EnterpriseAwareAppProviders>{children}</EnterpriseAwareAppProviders>
+            <InferenceAccessProvider>
+              <EnterpriseAwareAppProviders>{children}</EnterpriseAwareAppProviders>
+            </InferenceAccessProvider>
           </DenAuthProvider>
         </ArchitectureMismatchGate>
       </ServerProvider>

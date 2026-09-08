@@ -37,7 +37,7 @@ import {
 import { getModelsDevProvider, listModelsDevProviders } from "../../llm/models-dev.js"
 import type { MemberTeamsContext } from "../../middleware/member-teams.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
-import { repairMemberInferenceAccessIfNeeded } from "../../inference.js"
+import { getMemberInferenceAccess, repairMemberInferenceAccessIfNeeded } from "../../inference.js"
 import { listAccessibleLlmProviderAccess, listGrantedLlmProviderMemberIds } from "./llm-provider-access.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, ensureOrganizationAdminRole, idParamSchema, memberHasRole, orgAccessFailureStatus } from "./shared.js"
@@ -1309,9 +1309,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       const payload = c.get("organizationContext")
       const memberTeams = c.get("memberTeams") ?? []
 
-      // Desktop entitlement is based on this list. If org inference is enabled
-      // but this member's OpenWork provider/key was deleted, re-provision before
-      // listing so Subscribe CTAs don't lie about an already-enabled org.
+      // Enroll eligible members and repair managed inference without touching BYOK.
       if (query.scope === "usable") {
         try {
           await repairMemberInferenceAccessIfNeeded({
@@ -1331,8 +1329,11 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         scope: query.scope,
       })
 
+      const inferenceAccess = query.scope === "usable" && providers.some((provider) => provider.source === "openwork")
+        ? await getMemberInferenceAccess({ organizationId: payload.organization.id, memberId: payload.currentMember.id, userId: normalizeDenTypeId("user", c.get("user").id) })
+        : null
       return c.json({
-        llmProviders: providers.map((provider) => ({
+        llmProviders: providers.filter((provider) => provider.source !== "openwork" || inferenceAccess?.kind !== "unavailable").map((provider) => ({
           ...provider,
           apiKey: undefined,
           canManage: canManageLlmProvider(payload, provider),
@@ -1403,7 +1404,27 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
       let credential = decodeProviderCredential(provider.apiKey)
       let memberCredential: z.infer<typeof memberCredentialConnectionSchema> | null = null
-      if (provider.credentialMode === "per_member") {
+      if (provider.source === "openwork") {
+        credential = { apiKey: null, apiKeys: null }
+        if (provider.createdByOrgMembershipId === payload.currentMember.id) {
+          try {
+            await repairMemberInferenceAccessIfNeeded({ organizationId: payload.organization.id, memberId: payload.currentMember.id })
+            const access = await getMemberInferenceAccess({
+              organizationId: payload.organization.id,
+              memberId: payload.currentMember.id,
+              userId: normalizeDenTypeId("user", c.get("user").id),
+            })
+            if (access.kind !== "unavailable") {
+              const [repaired] = await db.select({ apiKey: LlmProviderTable.apiKey }).from(LlmProviderTable)
+                .where(eq(LlmProviderTable.id, llmProviderId)).limit(1)
+              credential = decodeProviderCredential(repaired?.apiKey ?? null)
+            }
+          } catch {
+            // Fail only this provider closed; retain the published 200 contract.
+          }
+        }
+      }
+      if (provider.source !== "openwork" && provider.credentialMode === "per_member") {
         const bindingRows = await db
           .select()
           .from(LlmProviderMemberCredentialTable)
@@ -1429,7 +1450,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       // return `apiKeys` with `apiKey: null` so old clients fail with their
       // missing-credential error instead of applying a JSON blob as the key.
       // Catalog providers leave Den under provider-scoped env names (see
-      // toRuntimeProviderEnv); the stored row keeps the catalog's names.
+      // toRuntimeProviderEnv); the stored row keeps the original catalog names.
       const runtime = toRuntimeProviderEnv({ ...provider, apiKeys: credential.apiKeys })
       return c.json({
         llmProvider: {

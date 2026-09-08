@@ -39,7 +39,7 @@ async function responseJson(response: Response) {
   return payload
 }
 
-function createWebhookTestServer() {
+function createWebhookTestServer(options: { settleFreeInference?: typeof import("../src/free-allowance.js").settleFreeInference } = {}) {
   const app = new Hono()
   const organizationId = createDenTypeId("organization")
   const orgMembershipId = createDenTypeId("member")
@@ -67,6 +67,7 @@ function createWebhookTestServer() {
   }
 
   registerWebhookRoutes(app, {
+    settleFreeInference: options.settleFreeInference,
     reporter: {
       unknownModel(report) {
         reports.push(report)
@@ -236,4 +237,48 @@ test("deducts usage without Sentry diagnostics when OpenRouter usage reports a k
     totalTokens: 24,
   }])
   assert.deepEqual(bucketCharges, [{ amount: 1 }])
+})
+
+test("authenticated free usage goes only to the original reservation, not current paid buckets", async () => {
+  const settlements: import("../src/free-allowance.js").FreeSettlement[] = []
+  const server = createWebhookTestServer({ settleFreeInference: async (input) => { settlements.push(input); return settlements.length === 1 } })
+  const payload = server.usagePayload({ requestId: "free_original-week", eventId: "event", generationId: "generation", requestModel: "openai/gpt-5.6-luna", responseModel: "openai/gpt-5.6-luna" })
+  const unauthorized = new Request(webhookRequest(payload), { headers: { "content-type": "application/json" } })
+  assert.equal((await server.app.fetch(unauthorized)).status, 401)
+  assert.equal(settlements.length, 0)
+  assert.equal((await responseJson(await server.app.fetch(webhookRequest(payload)))).ingested, 1)
+  assert.equal((await responseJson(await server.app.fetch(webhookRequest(payload)))).ingested, 0)
+  assert.equal(settlements[0].requestId, "free_original-week")
+  assert.equal(settlements[0].eventId, "generation")
+  assert.equal(settlements[0].currency, "USD")
+  assert.equal(server.calls.ensureUsableBuckets, 0)
+  assert.equal(server.insertedEntries.length, 0)
+  assert.equal(server.bucketCharges.length, 0)
+})
+
+test("missing free reservations and missing costs cannot become paid charges or free refunds", async () => {
+  const server = createWebhookTestServer({ settleFreeInference: async () => false })
+  const payload = server.usagePayload({ requestId: "free_unknown", eventId: "event", generationId: "generation", requestModel: "openai/gpt-5.6-luna", responseModel: "openai/gpt-5.6-luna" })
+  assert.equal((await responseJson(await server.app.fetch(webhookRequest(payload)))).ingested, 0)
+  payload.resourceSpans[0].scopeSpans[0].spans[0].attributes = payload.resourceSpans[0].scopeSpans[0].spans[0].attributes.filter((attr) => !attr.key.endsWith("_cost"))
+  assert.equal((await responseJson(await server.app.fetch(webhookRequest(payload)))).ingested, 0)
+  assert.equal(server.calls.ensureUsableBuckets, 0)
+  assert.equal(server.bucketCharges.length, 0)
+})
+
+test("free settlement accepts actual cost above its estimate and rejects invalid identity, model or currency", async () => {
+  const { freeSettlementAmount } = await import("../src/free-allowance.js")
+  const keyId = createDenTypeId("inferenceKey")
+  const memberId = createDenTypeId("member")
+  const reservation = { inference_key_id: keyId, org_membership_id: memberId, upstream_model: "openai/gpt-5.6-luna", reserved_amount: 50_000_000 }
+  const receipt = { requestId: "free_cost", inferenceKeyId: keyId, orgMembershipId: memberId, requestModel: reservation.upstream_model, responseModel: reservation.upstream_model, inputCost: 0.01, outputCost: 0.02, currency: "USD", eventId: "generation" }
+  assert.equal(freeSettlementAmount(receipt, reservation), 3_000_000)
+  assert.equal(freeSettlementAmount({ ...receipt, inputCost: 0, outputCost: 0 }, reservation), 0)
+  assert.equal(freeSettlementAmount({ ...receipt, inputCost: 0, outputCost: 1.01 }, reservation), 101_000_000)
+  assert.equal(freeSettlementAmount({ requestId: receipt.requestId, inferenceKeyId: keyId, orgMembershipId: memberId, requestModel: reservation.upstream_model, responseModel: reservation.upstream_model, currency: "USD", eventId: "generation", costUsd: 1.01 }, reservation), 101_000_000)
+  for (const invalid of [
+    { inputCost: -1 }, { outputCost: Infinity }, { outputCost: NaN }, { outputCost: Number.MAX_VALUE },
+    { inferenceKeyId: createDenTypeId("inferenceKey") }, { orgMembershipId: createDenTypeId("member") },
+    { requestModel: null }, { responseModel: "openai/gpt-5.6-luna-pro" }, { currency: null }, { currency: "EUR" }, { eventId: null },
+  ]) assert.equal(freeSettlementAmount({ ...receipt, ...invalid }, reservation), null)
 })

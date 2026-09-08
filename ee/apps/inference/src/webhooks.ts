@@ -11,6 +11,7 @@ import { constantTimeEquals } from "./keys.js"
 import { ensureUsableBuckets as ensureUsageBuckets } from "./limits.js"
 import type { BucketLimitMetadata, BucketMetadata } from "./limits.js"
 import { resolveModelByUpstreamModel } from "./model-catalog.js"
+import type { settleFreeInference } from "./free-allowance.js"
 
 type JsonRecord = Record<string, unknown>
 
@@ -91,6 +92,7 @@ type ChargeBucketsInput = {
 }
 
 type WebhookDependencies = {
+  settleFreeInference?: typeof settleFreeInference
   reporter: OpenRouterUsageWebhookReporter
   findInferenceKey(inferenceKeyId: string): Promise<WebhookInferenceKey | null>
   ensureUsableBuckets(organizationId: string, occurredAt: Date): Promise<UsageBucketSettlement>
@@ -274,6 +276,10 @@ const sentryWebhookReporter: OpenRouterUsageWebhookReporter = {
 }
 
 const defaultWebhookDependencies: WebhookDependencies = {
+  async settleFreeInference(input) {
+    const allowance = await import("./free-allowance.js")
+    return allowance.settleFreeInference(input)
+  },
   reporter: sentryWebhookReporter,
   async findInferenceKey(inferenceKeyId) {
     const [inferenceKey] = await db.select().from(InferenceKeyTable)
@@ -367,6 +373,22 @@ function reportUnknownPricedModel(input: { span: ParsedSpan; inferenceKey: Webho
 }
 
 async function ingestSpan(span: ParsedSpan, dependencies: WebhookDependencies) {
+  // Admission pins free identity/model/window before execution. Settle that
+  // immutable reservation even after revocation, upgrade or a weekly reset;
+  // an unknown free request never falls through into the paid ledger.
+  if (span.openworkRequestId.startsWith("free_")) {
+    return dependencies.settleFreeInference?.({
+      requestId: span.openworkRequestId,
+      inferenceKeyId: span.inferenceKeyId,
+      orgMembershipId: span.orgMembershipId,
+      requestModel: span.requestModel,
+      responseModel: span.responseModel,
+      inputCost: span.inputCost,
+      outputCost: span.outputCost,
+      currency: span.usageMetadata.currency,
+      eventId: span.generationId ?? span.externalEventId,
+    }) ?? false
+  }
   const inferenceKey = await dependencies.findInferenceKey(span.inferenceKeyId)
   if (!inferenceKey || inferenceKey.status !== "active") {
     logWebhookError("skipped span for missing or inactive inference key", { inferenceKeyId: span.inferenceKeyId })

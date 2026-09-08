@@ -62,6 +62,7 @@ import {
   ORGANIZATION_SSO_JIT_ROLE,
 } from "./sso-jit.js";
 import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js";
+import { normalizeOrganizationMetadata } from "./organization-limits.js";
 import {
   ORGANIZATION_SAML_ALLOW_IDP_INITIATED,
   ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR,
@@ -1094,10 +1095,21 @@ export const auth = betterAuth({
         });
       },
       organizationHooks: {
+        beforeCreateOrganization: async ({ organization }) => {
+          // Entitlements are server-owned, including on Better Auth's raw route.
+          const { metadata } = normalizeOrganizationMetadata(organization.metadata);
+          delete metadata.inference;
+          delete metadata.inferenceFree;
+          return { data: { ...organization, metadata } };
+        },
         afterCreateOrganization: async ({ organization }) => {
-          await seedDefaultOrganizationRoles(
-            normalizeDenTypeId("organization", organization.id),
-          );
+          const organizationId = normalizeDenTypeId("organization", organization.id);
+          // Better Auth serializes metadata for text columns. Den's JSON column
+          // must hold an object so enrollment can preserve the remaining fields.
+          await db.update(schema.OrganizationTable)
+            .set({ metadata: normalizeOrganizationMetadata(organization.metadata).metadata })
+            .where(eq(schema.OrganizationTable.id, organizationId));
+          await seedDefaultOrganizationRoles(organizationId);
         },
         beforeAddMember: async ({ member }) => {
           const role = typeof member.role === "string" ? member.role : "";
