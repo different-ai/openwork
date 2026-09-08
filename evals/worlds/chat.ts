@@ -700,11 +700,10 @@ function lastUserText(rawBody: string): string {
   return "";
 }
 
-async function writeProviderConfig(path: string, providerId: string, modelId: string, modelName: string, baseUrl: string, command?: Record<string, { template: string }>): Promise<void> {
+async function writeProviderConfig(path: string, providerId: string, modelId: string, modelName: string, baseUrl: string): Promise<void> {
   await mkdir(path, { recursive: true });
   await writeFile(join(path, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
-    command,
     provider: {
       [providerId]: {
         npm: "@ai-sdk/openai-compatible",
@@ -754,13 +753,13 @@ export const awayQueuedPrompt = "away-drain queued follow-up";
 export const awayFirstReply = "away-drain first reply";
 export const awayQueuedReply = "away-drain queued reply";
 
-export async function queuedDrainAway(seed: Seed, command?: Record<string, { template: string }>) {
+export async function queuedDrainAway(seed: Seed) {
   const providerId = "away-drain-mock";
   const modelId = "away-drain-model";
   const modelName = "Away drain model";
   const requests: QueueRequest[] = [];
   let releaseFirst: () => void = () => undefined;
-  let firstGate = new Promise<void>((resolveGate) => { releaseFirst = resolveGate; });
+  const firstGate = new Promise<void>((resolveGate) => { releaseFirst = resolveGate; });
   const provider = createServer((request, response) => {
     const url = request.url ?? "";
     if (request.method === "GET" && url.startsWith("/v1/models")) {
@@ -794,8 +793,8 @@ export async function queuedDrainAway(seed: Seed, command?: Record<string, { tem
     const workspacePathA = seed.tmpPath("away-drain-a");
     const workspacePathB = seed.tmpPath("away-drain-b");
     await Promise.all([
-      writeProviderConfig(workspacePathA, providerId, modelId, modelName, `${baseUrl}/v1`, command),
-      writeProviderConfig(workspacePathB, providerId, modelId, modelName, `${baseUrl}/v1`, command),
+      writeProviderConfig(workspacePathA, providerId, modelId, modelName, `${baseUrl}/v1`),
+      writeProviderConfig(workspacePathB, providerId, modelId, modelName, `${baseUrl}/v1`),
     ]);
     const app = await seed.desktop({ name: "queued-drain-while-away", model: `${providerId}/${modelId}` });
     const workspaceA = await seed.workspace(app, workspacePathA);
@@ -807,8 +806,7 @@ export async function queuedDrainAway(seed: Seed, command?: Record<string, { tem
       workspacePathB,
       sessionA,
       requests,
-      releaseFirst: () => releaseFirst(),
-      holdFirst: () => { firstGate = new Promise<void>((resolveGate) => { releaseFirst = resolveGate; }); },
+      releaseFirst,
       async [Symbol.asyncDispose]() {
         releaseFirst();
         await close(provider);

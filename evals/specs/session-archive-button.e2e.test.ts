@@ -49,7 +49,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     await user.click({ role: "button", label: "Undo" });
     await archived(a2, false);
     await probe.eventually(() => probe.hash(), { within: 15_000, label: "Undo reopens idle session", until: hash => hash === route(a2) });
-    expect(world.requests).toHaveLength(0);
+    expect(await world.requests()).toHaveLength(0);
     expect(await aborts()).toHaveLength(0);
   });
 
@@ -69,7 +69,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     await user.click({ role: "button", label: "Undo" });
     await archived(b1, false);
     expect(await probe.hash()).toBe(route(a2));
-    expect(world.requests).toHaveLength(0);
+    expect(await world.requests()).toHaveLength(0);
   });
 
   await step("Undo restores metadata but does not steal navigation after the user opens another conversation", async () => {
@@ -79,7 +79,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     await user.click({ role: "button", label: "Undo" });
     await archived(a2, false);
     expect(await probe.hash()).toBe(route(a1));
-    expect(world.requests).toHaveLength(0);
+    expect(await world.requests()).toHaveLength(0);
   });
 
   for (const mode of ["retry", "permission", "question"] satisfies Array<"retry" | "permission" | "question">) {
@@ -100,11 +100,11 @@ test("archiving exits only the viewed conversation, and working sessions require
     await open(b1);
     await user.type("composer", "Keep the other workspace task running for archive isolation proof.");
     await user.press("Enter");
-    await probe.eventually(() => world.requests.length, { within: 60_000, label: "other workspace task held", until: count => count === 1 });
+    await probe.eventually(async () => (await world.requests()).length, { within: 60_000, label: "other workspace task held", until: count => count === 1 });
     await open(a1);
     await user.type("composer", awayFirstPrompt);
     await user.press("Enter");
-    await probe.eventually(() => world.requests.length, { within: 60_000, label: "held provider receives task", until: count => count === 2 });
+    await probe.eventually(async () => (await world.requests()).length, { within: 60_000, label: "held provider receives task", until: count => count === 2 });
     await user.type("composer", awayQueuedPrompt);
     await user.press("Enter");
     await user.see({ text: awayQueuedPrompt });
@@ -114,7 +114,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     await archived(a1, false);
     await user.see({ text: awayQueuedPrompt });
     expect(await aborts()).toHaveLength(0);
-    expect(world.requests).toHaveLength(2);
+    expect(await world.requests()).toHaveLength(2);
     const controlAttempt = agent.run("session.archive", { sessionId: a1.sessionId, archived: true }).catch((error: unknown) => error);
     await user.see("This session is still working");
     await user.click({ role: "button", label: "Keep session open" });
@@ -140,7 +140,7 @@ test("archiving exits only the viewed conversation, and working sessions require
       expect(facts.surfaces).toContain(a1.sessionId);
       expect(facts.sessions.find(session => session.sessionId === a1.sessionId)?.status).not.toBe("idle");
       expect(facts.sessions.find(session => session.sessionId === b1.sessionId)?.archived).toBe(false);
-      expect(world.requests).toHaveLength(2);
+      expect(await world.requests()).toHaveLength(2);
     });
   }
 
@@ -169,13 +169,13 @@ test("archiving exits only the viewed conversation, and working sessions require
     // Cross the drain's observation timeout while unmounted, then remount.
     await open(b1);
     const deadline = Date.now() + 12_000;
-    await probe.eventually(() => {
-      expect(world.requests).toHaveLength(2);
+    await probe.eventually(async () => {
+      expect(await world.requests()).toHaveLength(2);
       return Date.now() >= deadline;
     }, { within: 15_000, label: "cancelled queue never drains in the background" });
     await open(a1);
     await user.notSee({ text: awayQueuedPrompt });
-    expect(world.requests).toHaveLength(2);
+    expect(await world.requests()).toHaveLength(2);
     expect((await world.facts()).requests.filter(request => request.action === "prompt_async")).toHaveLength(2);
   });
 
@@ -196,17 +196,17 @@ test("archiving exits only the viewed conversation, and working sessions require
     await user.click({ role: "button", label: "Undo" });
     await archived(b1, false);
     expect(await probe.hash()).toBe(route(a2));
-    expect(world.requests).toHaveLength(2);
+    expect(await world.requests()).toHaveLength(2);
   });
 
   await step("a task finishing while its dialog is open can archive after fresh idle without aborting or restarting", async () => {
     await user.type("composer", "Finish this task while the archive dialog is open.");
     await user.press("Enter");
-    await probe.eventually(() => world.requests.length, { within: 60_000, label: "third task held", until: count => count === 3 });
+    await probe.eventually(async () => (await world.requests()).length, { within: 60_000, label: "third task held", until: count => count === 3 });
     await archive(a2);
     await user.see("This session is still working");
     const before = (await aborts()).length;
-    world.releaseRun();
+    await world.releaseRun();
     await probe.eventually(() => world.facts(), {
       within: 30_000, label: "task finished naturally in confirmation",
       until: facts => facts.sessions.find(session => session.sessionId === a2.sessionId)?.status === "idle",
@@ -218,7 +218,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     expect(await aborts()).toHaveLength(before);
     await user.click({ role: "button", label: "Undo" });
     await archived(a2, false);
-    expect(world.requests).toHaveLength(3);
+    expect(await world.requests()).toHaveLength(3);
   });
 
   await step("a failed session archives directly; Undo restores it without retrying the failed send", async () => {
@@ -237,7 +237,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     await user.click({ role: "button", label: "Undo" });
     await archived(b1, false);
     expect(await aborts()).toHaveLength(before);
-    expect(world.requests).toHaveLength(3);
+    expect(await world.requests()).toHaveLength(3);
   });
 
   await step("completed ordinary sessions archive directly through control, retain their transcript, and reopen read-only until restored", async () => {
@@ -265,7 +265,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     await archived(a2, false);
     await user.see("composer", { editable: true });
     expect(await world.transcript(a2)).toEqual(transcript);
-    expect(world.requests).toHaveLength(3);
+    expect(await world.requests()).toHaveLength(3);
     await user.notSee("Session archived", { timeoutMs: 15_000 });
   });
 
@@ -282,7 +282,7 @@ test("archiving exits only the viewed conversation, and working sessions require
       until: facts => facts.sessions.find(session => session.sessionId === a2.sessionId)?.archived === false,
     });
     expect(await probe.hash()).toBe(settingsHash);
-    expect(world.requests).toHaveLength(3);
+    expect(await world.requests()).toHaveLength(3);
     await user.click({ role: "button", label: "Close settings" });
     await open(a2);
   });
@@ -312,22 +312,22 @@ test("archiving exits only the viewed conversation, and working sessions require
     expect(await probe.hash()).toBe(settingsHash);
     await user.click({ role: "button", label: "Close settings" });
     await open(a2);
-    expect(world.requests).toHaveLength(3);
+    expect(await world.requests()).toHaveLength(3);
   });
 
   await step("a global queued admission cannot archive before settling or requeue its late failure after Undo", async () => {
-    world.holdRun();
+    await world.holdRun();
     await open(a1);
     await user.type("composer", "Hold another task before the late queued admission.");
     await user.press("Enter");
-    await probe.eventually(() => world.requests.length, { within: 60_000, label: "fourth task held", until: count => count === 4 });
+    await probe.eventually(async () => (await world.requests()).length, { within: 60_000, label: "fourth task held", until: count => count === 4 });
     await user.type("composer", "This queued admission must never be replayed.");
     await user.press("Enter");
     await user.see("This queued admission must never be replayed.");
     await open(b1);
     await world.networkFault("hold_prompt", a1.sessionId);
     const before = (await world.facts()).requests.filter(request => request.action === "prompt_async").length;
-    world.releaseRun();
+    await world.releaseRun();
     await probe.eventually(() => world.facts(), {
       within: 30_000, label: "unmounted queue starts an admission that remains unconfirmed",
       until: facts => facts.requests.filter(request => request.action === "prompt_async").length === before + 1,
@@ -350,7 +350,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     await user.notSee("This queued admission must never be replayed.");
     const deadline = Date.now() + 12_000;
     await probe.eventually(async () => {
-      expect(world.requests).toHaveLength(4);
+      expect(await world.requests()).toHaveLength(4);
       expect((await world.facts()).requests.filter(request => request.action === "prompt_async")).toHaveLength(before + 1);
       return Date.now() >= deadline;
     }, { within: 20_000, label: "late admission failure does not replay on restore" });
@@ -379,22 +379,22 @@ test("archiving exits only the viewed conversation, and working sessions require
       await probe.eventually(() => probe.hash(), { within: 15_000, label: "Undo leaves primary route restored", until: hash => hash === route(a2) });
     }
     expect(await aborts()).toHaveLength(before);
-    expect(world.requests).toHaveLength(4);
+    expect(await world.requests()).toHaveLength(4);
   });
 
   await step("the last background queued run completes without leaving a false working confirmation", async () => {
-    const before = world.requests.length;
-    world.holdRun();
+    const before = (await world.requests()).length;
+    await world.holdRun();
     await open(a2);
     await user.type("composer", "Background completion initial task.");
     await user.press("Enter");
-    await probe.eventually(() => world.requests.length, { within: 60_000, label: "background task starts", until: count => count === before + 1 });
+    await probe.eventually(async () => (await world.requests()).length, { within: 60_000, label: "background task starts", until: count => count === before + 1 });
     await user.type("composer", "Background completion last queued task.");
     await user.press("Enter");
     await user.see("Background completion last queued task.");
     await open(b1);
-    world.releaseRun();
-    await probe.eventually(() => world.requests.length, { within: 60_000, label: "last queued task reaches provider", until: count => count === before + 2 });
+    await world.releaseRun();
+    await probe.eventually(async () => (await world.requests()).length, { within: 60_000, label: "last queued task reaches provider", until: count => count === before + 2 });
     await probe.eventually(() => world.facts(), {
       within: 30_000, label: "background queue finishes",
       until: facts => facts.sessions.find(session => session.sessionId === a2.sessionId)?.status === "idle",
@@ -408,18 +408,18 @@ test("archiving exits only the viewed conversation, and working sessions require
     await user.click({ role: "button", label: "Undo" });
     await archived(a2, false);
     expect(await world.transcript(a2)).toEqual(transcript);
-    expect(world.requests).toHaveLength(before + 2);
+    expect(await world.requests()).toHaveLength(before + 2);
   });
 
   await step("an idle parent stops its independently running child and cancels child queues, but archives only the parent", async () => {
-    const before = world.requests.length;
+    const before = (await world.requests()).length;
     const beforeAborts = (await aborts()).length;
-    world.holdRun();
+    await world.holdRun();
     await agent.run("session.open", { sessionId: world.child.sessionId });
     await user.see("composer", { editable: true });
     await user.type("composer", "Independent child work for archive proof.");
     await user.press("Enter");
-    await probe.eventually(() => world.requests.length, { within: 60_000, label: "child task held", until: count => count === before + 1 });
+    await probe.eventually(async () => (await world.requests()).length, { within: 60_000, label: "child task held", until: count => count === before + 1 });
     await user.type("composer", "Cancelled child follow-up must not replay.");
     await user.press("Enter");
     await user.see("Cancelled child follow-up must not replay.");
@@ -437,22 +437,22 @@ test("archiving exits only the viewed conversation, and working sessions require
     expect(await probe.hash()).toBe(route(b1));
     await user.click({ role: "button", label: "Undo" });
     await archived(a1, false);
-    world.releaseRun();
+    await world.releaseRun();
     await agent.run("session.open", { sessionId: world.child.sessionId });
     await user.notSee("Cancelled child follow-up must not replay.");
-    expect(world.requests).toHaveLength(before + 1);
+    expect(await world.requests()).toHaveLength(before + 1);
   });
 
   for (const queued of [false, true]) {
     await step(`${queued ? "queued" : "direct"} accepted commands cannot archive before their engine admission is observed`, async () => {
       await open(a2);
-      const before = world.requests.length;
+      const before = (await world.requests()).length;
       const beforeAborts = (await aborts()).length;
       if (queued) {
-        world.holdRun();
+        await world.holdRun();
         await user.type("composer", "Hold the run before queueing an archive command.");
         await user.press("Enter");
-        await probe.eventually(() => world.requests.length, { within: 60_000, label: "command predecessor held", until: count => count === before + 1 });
+        await probe.eventually(async () => (await world.requests()).length, { within: 60_000, label: "command predecessor held", until: count => count === before + 1 });
       }
       await world.networkFault("accepted_command", a2.sessionId);
       const commandCount = (await world.facts()).requests.filter(request => request.action === "command").length;
@@ -461,7 +461,7 @@ test("archiving exits only the viewed conversation, and working sessions require
         await user.press("Escape");
         await user.press("Enter");
         await open(b1);
-        world.releaseRun();
+        await world.releaseRun();
       } else {
         await agent.run("composer.send");
       }
@@ -475,18 +475,18 @@ test("archiving exits only the viewed conversation, and working sessions require
       await user.see("Stopping could not be confirmed. The session has not been archived. Try again.", { timeoutMs: 25_000 });
       await archived(a2, false);
       expect(await aborts()).toHaveLength(beforeAborts);
-      expect(world.requests).toHaveLength(before + Number(queued));
-      world.holdRun();
+      expect(await world.requests()).toHaveLength(before + Number(queued));
+      await world.holdRun();
       await world.releaseAbort();
       await world.networkFault("none", a2.sessionId);
-      await probe.eventually(() => world.requests.length, { within: 60_000, label: "accepted command finally dispatched", until: count => count === before + Number(queued) + 1 });
+      await probe.eventually(async () => (await world.requests()).length, { within: 60_000, label: "accepted command finally dispatched", until: count => count === before + Number(queued) + 1 });
       await user.click({ role: "button", label: "Stop and archive" });
       await user.see("Session archived");
       await archived(a2, true);
       await user.click({ role: "button", label: "Undo" });
       await archived(a2, false);
-      world.releaseRun();
-      expect(world.requests).toHaveLength(before + Number(queued) + 1);
+      await world.releaseRun();
+      expect(await world.requests()).toHaveLength(before + Number(queued) + 1);
       expect((await aborts()).slice(beforeAborts).map(request => request.sessionId)).toEqual([a2.sessionId]);
     });
   }

@@ -1,8 +1,7 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
-import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
-import type { Seed } from "@openwork/env";
-import { queuedDrainAway } from "./chat.ts";
+import { daytonaSandbox, desktop as launchDesktop, startMockOnSandbox } from "@openwork/hosts";
+import type { Place, Seed } from "@openwork/env";
 
 const stormProviderId = "active-session-storm-mock";
 const stormModelId = "mock-agent-workload-model";
@@ -105,10 +104,11 @@ async function configureWorkspaceProvider(
     baseUrl: string;
     smallModel?: string;
     allowTools?: boolean;
+    commands?: Record<string, { template: string }>;
   },
 ): Promise<void> {
   // TODO(primitive): seed.configureWorkspaceProvider should configure and reload a workspace model without raw renderer evaluation.
-  const result = await seed.evalIn(app, `async (workspaceIdsJson, smallModel, allowTools, providerId, modelId, modelName, baseUrl, defaultModel) => {
+  const result = await seed.evalIn(app, `async (workspaceIdsJson, smallModel, allowTools, providerId, modelId, modelName, baseUrl, defaultModel, commands) => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
     const workspaceIds = JSON.parse(workspaceIdsJson);
@@ -120,6 +120,7 @@ async function configureWorkspaceProvider(
     const outcomes = [];
     for (const workspaceId of workspaceIds) {
       const opencode = {
+        model: defaultModel,
         provider: {
           [providerId]: {
             npm: "@ai-sdk/openai-compatible",
@@ -130,6 +131,7 @@ async function configureWorkspaceProvider(
         },
       };
       if (smallModel) opencode.small_model = smallModel;
+      if (commands) opencode.command = JSON.parse(commands);
       if (allowTools) opencode.permission = { edit: "allow", write: "allow", read: "allow", bash: "allow" };
       const response = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
         method: "PATCH",
@@ -171,6 +173,7 @@ async function configureWorkspaceProvider(
       options.modelName,
       options.baseUrl,
       `${options.providerId}/${options.modelId}`,
+      options.commands ? JSON.stringify(options.commands) : null,
     ],
     awaitPromise: true,
     timeoutMs: 240_000,
@@ -293,14 +296,50 @@ export async function commandPaletteSearch(seed: Seed) {
   return oneWorkspace(seed, `command-palette-search-${Date.now()}`);
 }
 
-export async function archiveSessions(seed: Seed) {
+export async function archiveSessions(seed: Seed, { place }: { place: Place }) {
   await using resources = new AsyncDisposableStack();
-  const held = resources.use(await queuedDrainAway(seed, { "archive-witness": { template: "Archive command witness task." } }));
-  const { app, workspaceA } = held;
-  const a1 = held.sessionA;
-  const [a2] = await seed.sessions(app, ["Archive idle neighbor"]);
-  const workspaceB = await additionalWorkspace(seed, app, held.workspacePathB);
+  const providerId = "session-archive-mock";
+  const modelId = "mock-agent-workload-model";
+  const app = await seed.desktop({ name: "session-archive-button", model: `${providerId}/${modelId}` });
+  const definition = seed.mock({ agentWorkloads: [{ promptMarker: "session-archive", matchAll: true, finalReply: "Archive fixture reply.", steps: [] }] });
+  const sandbox = app.handle.sandboxId;
+  const booted = app.handle.hostKind === "daytona"
+    ? await (async () => {
+      if (!sandbox || !definition.connect) throw new Error("Archive mock requires its desktop sandbox and mock adapter.");
+      const remote = await startMockOnSandbox({ sandbox, port: definition.daytonaPort });
+      return definition.connect(remote.url);
+    })()
+    : await definition.boot(place);
+  const mock = resources.use(booted.handle);
+  const setHeld = async (held: boolean) => {
+    const response = await fetch(`${mock.url}/admin/agent-hold`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ held }), signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`Archive mock hold failed: HTTP ${response.status}`);
+  };
+  await setHeld(true);
+  const stamp = `${Date.now()}-${process.pid}`;
+  const workspaceA = await seed.workspace(app, `/tmp/openwork-session-archive-${stamp}-a`);
+  const workspaceBName = `openwork-session-archive-${stamp}-b`;
+  const workspaceB = await additionalWorkspace(seed, app, `/tmp/${workspaceBName}`);
+  await configureWorkspaceProvider(seed, app, [workspaceA.workspaceId, workspaceB.workspaceId], {
+    providerId, modelId, modelName: "Archive fixture model", baseUrl: `${mock.url}/v1`, allowTools: true,
+    smallModel: `${providerId}/${modelId}`,
+    commands: { "archive-witness": { template: "Archive command witness task." } },
+  });
+  await seed.evalIn(app, "location.reload(); true");
   const [b1] = await seed.sessions(app, ["Archive other workspace"]);
+  await seed.evalIn(app, `async (workspaceId) => {
+    location.hash = "/workspace/" + encodeURIComponent(workspaceId) + "/session";
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      if (window.__openwork?.slice?.("route")?.selectedWorkspaceId === workspaceId) return true;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw new Error("Archive workspace did not become selected");
+  }`, { args: [workspaceA.workspaceId], awaitPromise: true, timeoutMs: 35_000 });
+  const [a1, a2] = await seed.sessions(app, ["Chat A", "Archive idle neighbor"]);
   if (!a1 || !a2 || !b1) throw new Error("Archive world did not create all three sessions.");
   const child = await seed.evalIn(app, `async (workspaceId, parentID) => {
     const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
@@ -433,13 +472,13 @@ export async function archiveSessions(seed: Seed) {
     a2: { ...a2, workspaceId: workspaceA.workspaceId },
     b1: { ...b1, workspaceId: workspaceB.workspaceId },
     child: { sessionId: child.sessionId, title: child.title, workspaceId: workspaceA.workspaceId },
-    workspaceBName: held.workspacePathB.split("/").at(-1) ?? "",
+    workspaceBName,
     facts,
     networkFault,
     releaseAbort: () => seed.evalIn(app, "window.__archiveNetwork.release(); true"),
-    requests: held.requests,
-    releaseRun: held.releaseFirst,
-    holdRun: held.holdFirst,
+    requests: async () => (await mock.agentRequests()).filter(request => request.kind !== "utility"),
+    releaseRun: () => setHeld(false),
+    holdRun: () => setHeld(true),
     transcript: (session: { workspaceId: string; sessionId: string }) => seed.evalIn(app, `async (workspaceId, sessionId) => {
       const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
       const response = await fetch(info.baseUrl.replace(/\\/+$/, "") + "/workspace/" + workspaceId + "/opencode/session/" + sessionId + "/message", {

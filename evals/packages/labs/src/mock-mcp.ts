@@ -31,6 +31,8 @@ export interface MockAgentToolStep {
 
 export interface MockAgentWorkload {
   promptMarker: string;
+  /** A dedicated mock may answer every main turn without changing user prompts. */
+  matchAll?: boolean;
   finalReply: string;
   /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
   finalReplyChunkSize?: number;
