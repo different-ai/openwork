@@ -107,11 +107,31 @@ test("side chats keep questions, replies, and saved splits attached to their own
     });
   };
   const before = await ids();
+  await step("only a genuinely empty main conversation offers starters", async () => {
+    await probe.eventually(() => world.continuity.surfaceState("primary"), {
+      within: 15_000, label: "loaded empty primary offers starters",
+      until: value => value.sessionId === primary && value.starters && value.messages === 0,
+    });
+  });
   await user.rightClick({ text: world.session.title });
+  await using initialCreation = await world.continuity.observeCreation();
+  await using emptySide = await world.continuity.observeSurface({ pane: "secondary" });
   await user.click({ role: "menuitem", label: /^Open (a second|side) chat$/ });
   const first = await waitSplit(primary);
   expect(before).not.toContain(first.secondary);
   expect(await ids()).toEqual([...before, first.secondary].sort());
+
+  await step("a new empty side conversation never offers main-conversation starters", async () => {
+    await probe.eventually(() => emptySide.read(), {
+      within: 10_000, label: "empty side stays free of starters beyond the loading delay",
+      until: value => value.longSamples > 0,
+    });
+    expect(await emptySide.read()).toMatchObject({ violations: [], expired: false, text: "" });
+    expect(await world.continuity.surfaceState("secondary")).toMatchObject({ starters: false, messages: 0 });
+    expect(await initialCreation.read()).toMatchObject({ workspaceLists: 0, creates: 1, reblocked: false, expired: false });
+  });
+  await emptySide[Symbol.asyncDispose]();
+  await initialCreation[Symbol.asyncDispose]();
 
   await step("a real side-chat question appears and both panes can await different answers", async () => {
     try {
@@ -211,16 +231,29 @@ test("side chats keep questions, replies, and saved splits attached to their own
   });
 
   await step("palette creation replaces the focused side pane without moving the main conversation", async () => {
+    await using creation = await world.continuity.observeCreation();
     await palette("new split", /^Open side chat/);
     const second = await waitSplit(primary);
     expect(second.secondary).not.toBe(first.secondary);
     expect(await ids()).toContain(first.secondary);
     await user.click({ placeholder: "Describe your task...", nth: 1 });
+    await using mainHistory = await world.continuity.observeSurface({
+      sessionId: primary, pane: "primary", required: [world.primaryQuestionPrompt, "Main outline"],
+      forbidden: [world.secondaryQuestionPrompt],
+    });
     await palette("new task", /^New session/);
     const third = await probe.eventually(facts, { within: 30_000, label: "New session replaces only the focused side conversation",
       until: (value) => value.primary === primary && value.secondary !== second.secondary && value.panes === 1,
     });
     expect(await ids()).toContain(second.secondary);
+    await probe.eventually(() => mainHistory.read(), {
+      within: 10_000, label: "main history remains usable while side creation settles",
+      until: value => value.longSamples > 0,
+    });
+    expect(await mainHistory.read()).toMatchObject({ violations: [], expired: false });
+    expect(await creation.read()).toMatchObject({ workspaceLists: 0, creates: 2, reblocked: false, expired: false });
+    await mainHistory[Symbol.asyncDispose]();
+    await creation[Symbol.asyncDispose]();
     await send("secondary", world.secondaryPrompt);
     await answer("secondary", "Secondary split received", "Primary split received");
     await send("primary", world.primaryPrompt);
@@ -228,10 +261,22 @@ test("side chats keep questions, replies, and saved splits attached to their own
     const context = await world.agentContextViaServer();
     expect(context).toMatchObject({ ok: true, context: { conversations: { layout: { primarySessionId: primary, secondarySessionId: third.secondary } } } });
     await user.click({ placeholder: "Describe your task...", nth: 0 });
+    await using mainCreation = await world.continuity.observeCreation();
     await palette("new task", /^New session/);
     await probe.eventually(facts, { within: 30_000, label: "New session in the main pane starts a separate conversation",
       until: (value) => value.primary !== primary && value.panes === 0,
     });
+    await user.type("composer", "Draft stays editable after creating a conversation", { verify: true });
+    await probe.eventually(() => world.continuity.surfaceState("primary"), {
+      within: 15_000, label: "the newly created empty main thread offers starters without a workspace refresh",
+      until: value => value.starters && value.messages === 0,
+    });
+    await probe.eventually(() => mainCreation.read(), {
+      within: 10_000, label: "creation settles without a delayed full refresh or loading hint",
+      until: value => value.elapsedMs > 2500,
+    });
+    expect(await mainCreation.read()).toMatchObject({ workspaceLists: 0, creates: 1, reblocked: false, expired: false });
+    await mainCreation[Symbol.asyncDispose]();
     await user.click({ role: "button", label: `Side chat · ${world.session.title}` });
     await waitSplit(primary, third.secondary);
     const saved = await ids();
@@ -246,6 +291,92 @@ test("side chats keep questions, replies, and saved splits attached to their own
     await reopen(primary);
     await preservedHistory(primary, world.primaryQuestionPrompt, "Main outline", world.primaryPrompt, "Primary split received");
     await user.screenshot();
+  });
+
+  await step("cold history stays free of starters and foreign messages before and after the delayed loader", async () => {
+    // Reload away from this thread to discard renderer snapshots, not persisted history.
+    await reopen(world.switchSession.sessionId);
+    await send("primary", world.switchPrompt);
+    await answer("primary", "Switched session received", "Primary split received");
+    await user.reload();
+    await preservedHistory(world.switchSession.sessionId, world.switchPrompt, "Switched session received");
+    await using history = await world.continuity.holdHistory(primary);
+    await using visible = await world.continuity.observeSurface({
+      sessionId: primary, pane: "primary",
+      forbidden: [world.switchPrompt, "Switched session received", world.secondaryQuestionPrompt, "Secondary split received"],
+    });
+    await reopen(primary);
+    await probe.eventually(() => history.read(), {
+      within: 15_000, label: "the native history GET is actually held", until: value => value.pending,
+    });
+    await probe.eventually(() => visible.read(), {
+      within: 10_000, label: "observe the cold selection on both sides of the two-second delay",
+      until: value => value.shortSamples > 0 && value.longSamples > 0 && value.loaderSeen,
+    });
+    expect(history.read()).toMatchObject({ pending: true });
+    expect(history.read().elapsedMs).toBeGreaterThan(2000);
+    expect(await visible.read()).toMatchObject({ violations: [], expired: false, text: "" });
+    expect((await visible.read()).frames).toBeGreaterThan(1);
+    expect((await visible.read()).mutations).toBeGreaterThan(0);
+    await history.release();
+    await preservedHistory(primary, world.primaryQuestionPrompt, "Main outline", world.primaryPrompt, "Primary split received");
+    expect(await visible.read()).toMatchObject({ violations: [], expired: false });
+  });
+
+  await step("a warm revisit displays cached history throughout a held native refetch", async () => {
+    await reopen(world.switchSession.sessionId);
+    await preservedHistory(world.switchSession.sessionId, world.primaryPrompt, "Primary split received");
+    await using history = await world.continuity.holdHistory(primary);
+    await using visible = await world.continuity.observeSurface({
+      sessionId: primary, pane: "primary", required: [world.primaryQuestionPrompt, "Main outline"],
+      forbidden: [world.switchPrompt, "Switched session received", world.secondaryQuestionPrompt, "Secondary split received"],
+    });
+    await reopen(primary);
+    await probe.eventually(() => history.read(), {
+      within: 15_000, label: "the warm revisit refetch is held rather than skipped", until: value => value.pending,
+    });
+    await probe.eventually(() => visible.read(), {
+      within: 10_000, label: "cached history stays visible beyond the loader delay", until: value => value.longSamples > 0,
+    });
+    expect(history.read()).toMatchObject({ pending: true });
+    expect(await visible.read()).toMatchObject({ violations: [], expired: false });
+    await history.release();
+    await preservedHistory(primary, world.primaryQuestionPrompt, "Main outline");
+    expect(await visible.read()).toMatchObject({ violations: [], expired: false });
+  });
+
+  await step("switching between two pending histories starts a fresh loader delay for the destination", async () => {
+    await reopen(world.switchSession.sessionId);
+    await user.reload();
+    await preservedHistory(world.switchSession.sessionId, world.switchPrompt, "Switched session received");
+    await using histories = await world.continuity.holdHistory(primary, first.secondary);
+    await using main = await world.continuity.observeSurface({ sessionId: primary, pane: "primary" });
+    await reopen(primary);
+    await probe.eventually(() => main.read(), {
+      within: 15_000, label: "the first pending history reaches its delayed loader",
+      until: value => value.longSamples > 0 && value.loaderSeen,
+    });
+    expect(histories.read(primary).pending).toBe(true);
+    expect(await main.read()).toMatchObject({ violations: [], expired: false });
+    await main[Symbol.asyncDispose]();
+
+    await using destination = await world.continuity.observeSurface({
+      sessionId: first.secondary, pane: "primary",
+      forbidden: [world.primaryQuestionPrompt, world.switchPrompt, "Switched session received"],
+    });
+    await reopen(first.secondary);
+    await probe.eventually(() => destination.read(), {
+      within: 15_000, label: "the second pending history gets its own short and delayed loading windows",
+      until: value => value.shortSamples > 0 && value.longSamples > 0 && value.loaderSeen,
+    });
+    expect(histories.read(first.secondary).pending).toBe(true);
+    expect(await destination.read()).toMatchObject({ violations: [], expired: false, text: "" });
+    await histories.release();
+    await preservedHistory(first.secondary, world.secondaryQuestionPrompt, "Side checklist");
+    expect(await destination.read()).toMatchObject({ violations: [], expired: false });
+    await destination[Symbol.asyncDispose]();
+    await reopen(primary);
+    await preservedHistory(primary, world.primaryQuestionPrompt, "Main outline");
   });
 
   await step("deleting a conversation clears its saved split and keeps the other conversation usable", async () => {

@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
 import { resolveEvalEngine, type Seed } from "@openwork/env";
 import type { MockAgentWorkload } from "@openwork/labs";
+import { chatContinuity } from "./chat-continuity.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 
@@ -360,7 +361,7 @@ export async function newSplitPrimary(seed: Seed) {
     });
     return response.json();
   }, { awaitPromise: true, timeoutMs: 15_000 });
-  return { app, workspace, session, splitFacts, agentContextViaServer, primaryPrompt, secondaryPrompt, switchSession, switchPrompt, primaryQuestionPrompt, secondaryQuestionPrompt, contextPrompt };
+  return { app, workspace, session, continuity: chatContinuity(app, workspace.workspaceId), splitFacts, agentContextViaServer, primaryPrompt, secondaryPrompt, switchSession, switchPrompt, primaryQuestionPrompt, secondaryQuestionPrompt, contextPrompt };
 }
 
 export async function shimmerChat(seed: Seed) {

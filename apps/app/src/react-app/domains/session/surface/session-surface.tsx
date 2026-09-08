@@ -1094,7 +1094,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
     : Boolean(props.modelUnavailable);
   const [error, setError] = useState<SessionError | null>(null);
   const [restoringRevertedMessages, setRestoringRevertedMessages] = useState(false);
-  const [showDelayedLoading, setShowDelayedLoading] = useState(false);
+  const [delayedLoadingTarget, setDelayedLoadingTarget] = useState<{ workspaceId: string; sessionId: string } | null>(null);
+  const showDelayedLoading = delayedLoadingTarget?.workspaceId === props.workspaceId &&
+    delayedLoadingTarget.sessionId === props.sessionId;
   const [awaitingAssistantBaseline, setAwaitingAssistantBaseline] = useState<number | null>(null);
   // Terminal invariant: an accepted admission that reached idle with no
   // assistant result surfaces a bounded recovery card instead of plain idle.
@@ -1137,7 +1139,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const lastObservationProbeAtRef = useRef<number | null>(null);
   const [observationProbeVersion, setObservationProbeVersion] = useState(0);
   const composerShellRef = useRef<HTMLDivElement>(null);
-  const hydratedKeyRef = useRef<string | null>(null);
   const autoOpenedTargetRef = useRef<string | null>(null);
   const initializedAutoOpenSessionRef = useRef<string | null>(null);
   const opencodeClient = useMemo(
@@ -1198,11 +1199,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     evalSnapshotFailureRef.current = false;
-    hydratedKeyRef.current = null;
     setSteering(false);
     setError(null);
     setRestoringRevertedMessages(false);
-    setShowDelayedLoading(false);
     setAwaitingAssistantBaseline(null);
     setAdmissionOutcomeUnresolved(false);
     // Composer draft state lives in the shared store keyed by session id, so
@@ -1271,14 +1270,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!currentSnapshot) return;
     seedSessionState(props.workspaceId, currentSnapshot);
   }, [currentSnapshot, props.sessionId, props.workspaceId]);
-
-  useEffect(() => {
-    if (!currentSnapshot) return;
-    const key = `${props.sessionId}:${currentSnapshot.session.time?.updated ?? currentSnapshot.session.time?.created ?? 0}:${currentSnapshot.messages.length}`;
-    if (hydratedKeyRef.current === key) return;
-    hydratedKeyRef.current = key;
-    seedSessionState(props.workspaceId, currentSnapshot);
-  }, [props.sessionId, currentSnapshot, props.workspaceId]);
 
   const snapshot = resolveRenderedSessionSnapshot({
     sessionId: props.sessionId,
@@ -1661,13 +1652,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.sessionId, verifiedOpenTargets]);
 
   useEffect(() => {
-    if (!pendingSessionLoad) {
-      setShowDelayedLoading(false);
-      return;
-    }
-    const id = window.setTimeout(() => setShowDelayedLoading(true), 2000);
+    setDelayedLoadingTarget(null);
+    if (!pendingSessionLoad) return;
+    const id = window.setTimeout(() => setDelayedLoadingTarget({
+      workspaceId: props.workspaceId,
+      sessionId: props.sessionId,
+    }), 2000);
     return () => window.clearTimeout(id);
-  }, [pendingSessionLoad]);
+  }, [pendingSessionLoad, props.workspaceId, props.sessionId]);
 
   // Terminal invariant for accepted admissions: idle with no assistant result
   // must never silently clear the task. The transcript-length check alone is
@@ -2822,7 +2814,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       showThinking={showThinking}
                       highlightQuery={findHighlightQuery}
                       developerMode={props.developerMode}
-                      displaySuggestions={shellConfig.starterCards}
+                      displaySuggestions={shellConfig.starterCards && snapshot !== null && snapshot.messages.length === 0}
                       providerConnectedCount={props.providerConnectedCount ?? 0}
                       connectorIdentities={connectorIdentities}
                       syncDegraded={runSyncHealth.degraded}

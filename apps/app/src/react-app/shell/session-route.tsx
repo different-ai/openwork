@@ -2152,7 +2152,6 @@ export function SessionRoute() {
           workbench.setSideChat(sideChatOwner, tab);
         }
       }
-      void refreshRouteState();
       return session.id;
     } catch (error) {
       const message = describeTaskCreateError(error);
