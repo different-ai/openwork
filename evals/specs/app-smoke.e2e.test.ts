@@ -8,10 +8,10 @@ test("app boots with a control route and meaningful visible content", async ({ w
   expect(await probe.hash()).toBeTruthy();
   expect((await probe.text()).trim().length).toBeGreaterThan(40);
   if (world.packaged) {
+    await user.see("composer", { editable: true, text: "" });
     expect(await world.packagedRuntime()).toEqual({
       bridge: true, protocol: "file:", health: 200, emptySession: true, signedOut: true, onboarding: false, crash: false,
     });
-    await user.see("composer", { editable: true, text: "" });
     await user.see("Run task");
     const workspaceId = /^#\/workspace\/([^/]+)\/session$/.exec(await probe.hash())?.[1];
     if (!workspaceId) throw new Error("The packaged app did not open its empty workspace route.");
