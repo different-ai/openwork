@@ -33,7 +33,9 @@ test("selected browser logins stay synced until the user pauses or forgets them"
     },
   ];
   const store = await world.seedLoginStore("chosen", sourceCookies("login-v1-fixture"));
-  const tab = await world.openLoginWitnessTab("sync");
+  const opening = world.openLoginWitnessTab("sync");
+  await user.click({ role: "button", label: "Allow origin in this tab" });
+  const tab = await opening;
   expect(await world.readLoginWitness(tab)).toBe("signed-out");
 
   await step("Personal Desktop offers setup but reads nothing until the user acts", async () => {
@@ -74,8 +76,14 @@ test("selected browser logins stay synced until the user pauses or forgets them"
 
     const backgroundSession = await world.openSession("Background login work");
     await world.showSession(world.session.sessionId);
-    const backgroundTab = await world.openLoginWitnessTabAs("background-sync", backgroundSession.sessionId);
-    expect(backgroundTab.visible).toBe(false);
+    const opening = world.openLoginWitnessTabAs("background-sync", backgroundSession.sessionId);
+    await user.click({ text: backgroundSession.title });
+    await user.click({ role: "button", label: "Allow origin in this tab" });
+    const backgroundTab = await opening;
+    expect(backgroundTab.visible).toBe(true);
+    await world.showSession(world.session.sessionId);
+    expect((await world.readBrowserState()).nativeViews.find((view) => view.tabId === backgroundTab.tabId))
+      .toMatchObject({ attached: false, aboveApp: false });
     await eventually(() => world.readLoginWitness(backgroundTab), {
       within: 15_000,
       until: (value) => value === "signed-in-v1",

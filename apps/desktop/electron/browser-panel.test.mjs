@@ -14,8 +14,9 @@ export const controls = {
 export const app = { on() {} };
 export const clipboard = { writeText(url) { effects.push({ type: "copy", url }); } };
 export const dialog = { async showMessageBox(_window, options) { effects.push({ type: "dialog" }); return { response: await controls.confirm(options) }; } };
+export const requestHooks = [];
 export const browserSession = new EventEmitter();
-browserSession.webRequest = { onBeforeRequest() {} };
+browserSession.webRequest = { onBeforeRequest(_filter, listener) { requestHooks.push(listener); } };
 export const session = { fromPartition() {
   if (!controls.ready) throw new Error("Session can only be received when app is ready");
   return browserSession;
@@ -40,15 +41,17 @@ export class BrowserWindow {
   destroy() { this.destroyed = true; }
 }
 export class WebContentsView {
-  constructor() {
+  constructor(options) {
     createdViews.push(this);
     const listeners = new EventEmitter();
+    const requestHook = options?.webPreferences?.partition === "persist:openwork-browser" ? requestHooks.at(-1) : null;
     let attached = false;
     const targetId = "target-" + createdViews.length;
     const view = this;
     this.bounds = { x: 0, y: 0, width: 0, height: 0 };
     this.visible = true;
     this.webContents = {
+      id: createdViews.length,
       url: "about:blank",
       targetId, domReady: false, loading: false, audible: false, closeMode: "destroy", loads: [],
       sent: [],
@@ -69,7 +72,7 @@ export class WebContentsView {
       once(event, handler) { listeners.once(event, handler); },
       removeListener(event, handler) { listeners.removeListener(event, handler); },
       emit(event, ...args) { listeners.emit(event, null, ...args); },
-      setWindowOpenHandler() {},
+      setWindowOpenHandler(handler) { this.windowOpenHandler = handler; },
       destroyed: false,
       isDestroyed() { return this.destroyed; },
       getURL() { return this.url; },
@@ -79,12 +82,18 @@ export class WebContentsView {
       isCurrentlyAudible() { return this.audible; },
       canGoBack() { return false; },
       canGoForward() { return false; },
+      destinations: [],
       stops: 0,
+      async request(url, details = {}) {
+        const result = requestHook ? await new Promise((resolve) => requestHook({ url, method: "GET", resourceType: "mainFrame", webContentsId: this.id, ...details }, resolve)) : { cancel: false };
+        if (!result.cancel && /^https?:/.test(url)) this.destinations.push(url);
+        return result;
+      },
       async loadURL(url) {
-        this.url = url;
-        this.loads.push(url);
+        this.url = url; this.loads.push(url);
         await controls.beforeLoad(this, url);
-        await navigation.load(url);
+        if ((await this.request(url)).cancel) throw new Error("ERR_BLOCKED_BY_CLIENT");
+        await navigation.load(url, this);
         if (this.destroyed) throw new Error("Contents destroyed");
         this.domReady = true;
         this.emit("dom-ready");
@@ -133,7 +142,7 @@ export function load(url, context, next) {
 register(`data:text/javascript,${encodeURIComponent(hooks)}`);
 const { createBrowserPanel } = await import("./browser-panel.mjs");
 // @ts-expect-error The registered test-only Electron stub exports its witnesses.
-const { createdViews, effects, controls, browserSession, navigation } = await import("electron");
+const { createdViews, effects, controls, browserSession, navigation, requestHooks } = await import("electron");
 
 const PANEL_BOUNDS = { x: 800, y: 40, width: 400, height: 900 };
 const LINK = { url: "https://example.com/a%2Fb?x=one%20two&x=%2F#section", point: { x: 20, y: 30 }, sessionId: "A" };
@@ -190,6 +199,11 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
   const views = () => createdViews.slice(firstView);
   const commands = (view) => view.webContents.debugger.commands;
   const messages = (channel) => sent.filter((entry) => entry.channel === channel).map((entry) => entry.payload);
+  const approve = (allowed = true, tabId = invoke("openwork:browser:state").activeTabId) => {
+    const tab = invoke("openwork:browser:state").tabs.find((tab) => tab.id === tabId);
+    assert.ok(tab?.browserApproval, "the tab has a pending approval");
+    return invoke("openwork:browser:approve", tabId, tab.browserApproval.id, allowed);
+  };
   async function openLinkMenu(payload = LINK) {
     invoke("openwork:browser:linkContextMenu", payload);
     await flush();
@@ -202,7 +216,7 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
     const choose = (itemId) => emit("openwork:menu-overlay:choose", { sender: view.webContents }, { requestId: request.id, itemId });
     return { view, request, choose };
   }
-  return { invoke, emit, mainContents, onScreen, commands, children, messages, views, policies, openLinkMenu, panel };
+  return { invoke, emit, mainContents, onScreen, commands, children, messages, views, policies, openLinkMenu, panel, approve };
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -459,13 +473,18 @@ test("external target destruction releases owner state and the empty hidden host
 });
 
 test("failed navigation rolls back its allocation while another owner's page survives", async (t) => {
-  const { invoke, views } = createPanel();
+  const { invoke, views, approve } = createPanel();
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");
   invoke("openwork:browser:createTab", "about:blank", "A");
   await flush();
   const before = invoke("openwork:browser:state");
   t.mock.method(navigation, "load", async () => { throw new Error("ERR_UNSAFE_PORT"); });
-  await assert.rejects(invoke("openwork:browser:openUrl", "http://127.0.0.1:1", "builtin", { sessionId: "B" }), { code: "browser_operation_failed" });
+  const opening = invoke("openwork:browser:openUrl", "http://127.0.0.1:1", "builtin", { sessionId: "B" });
+  await flush();
+  invoke("openwork:browser:setVisibleSession", "B");
+  approve();
+  await assert.rejects(opening, { code: "browser_operation_failed" });
+  invoke("openwork:browser:setVisibleSession", "A");
   assert.deepEqual(invoke("openwork:browser:state").tabs, before.tabs);
   assert.equal(invoke("openwork:browser:state").backgroundWindowCount, 0);
   assert.equal(views()[1].webContents.isDestroyed(), true);
@@ -798,6 +817,7 @@ test("forged menu requests, senders, and action IDs are ignored without dismissi
   invoke("openwork:browser:createTab", "https://existing.example");
   const { view, request, choose } = await openLinkMenu();
   const tabs = invoke("openwork:browser:state").tabs;
+  policies.length = 0;
   emit("openwork:menu-overlay:choose", { sender: view.webContents }, { requestId: "forged", itemId: "browser:firefox" });
   invoke("openwork:menu-overlay:choose", { requestId: request.id, itemId: "browser:firefox" });
   choose("browser:unlisted");
@@ -813,20 +833,27 @@ test("forged menu requests, senders, and action IDs are ignored without dismissi
   assert.ok(!children.includes(view), "a valid choice still works and dismisses the menu");
 });
 
-test("automation open uses owned task tabs without a marker page or foreground change", async () => {
-  const { invoke, onScreen, views, panel } = createPanel(undefined, 9222);
+test("automation open waits for its owner's consent and then reuses only that owned task tab", async () => {
+  const { invoke, onScreen, views, panel, approve } = createPanel(undefined, 9222);
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");
   invoke("openwork:browser:createTab", "https://a.example", "A");
   const foreground = onScreen();
-  const opened = await invoke("openwork:browser:openUrl", "https://b.example/", "builtin", { sessionId: "B" });
+  const opening = invoke("openwork:browser:openUrl", "https://b.example/", "builtin", { sessionId: "B" });
+  await flush();
+  assert.equal(onScreen(), foreground);
+  assert.deepEqual(views()[1].webContents.loads, [], "background approval sends no destination load");
+  invoke("openwork:browser:setVisibleSession", "B");
+  approve();
+  const opened = await opening;
   assert.deepEqual(opened, {
     provider: "builtin", browser_url: "http://127.0.0.1:9222", target_id: views()[1].webContents.getOrCreateDevToolsTargetId(),
-    tab_id: invoke("openwork:browser:state").activeTabIdByOwner.B, url: "https://b.example/", owner_session_id: "B", visible: false,
+    tab_id: invoke("openwork:browser:state").activeTabIdByOwner.B, url: "https://b.example/", owner_session_id: "B", visible: true,
   });
+  invoke("openwork:browser:setVisibleSession", "A");
   assert.equal(onScreen(), foreground);
   assert.deepEqual(views()[1].webContents.loads, ["https://b.example/"]);
   assert.equal((await panel.browserTask({ sessionId: "B", operation: "open", args: { url: opened.url } })).tabId, opened.tab_id);
-  assert.deepEqual(await invoke("openwork:browser:openUrl", opened.url, "builtin", { sessionId: "B" }), opened);
+  assert.deepEqual(await invoke("openwork:browser:openUrl", opened.url, "builtin", { sessionId: "B" }), { ...opened, visible: false });
   assert.equal(views().length, 2, "both automation rails reuse the owned task tab");
 });
 
@@ -855,7 +882,7 @@ test("takeover cancels automation opening during policy and during navigation", 
   /** @type {() => void} */
   let releasePolicy;
   const policy = new Promise((resolve) => { releasePolicy = () => resolve(undefined); });
-  const { invoke, views } = createPanel(async ({ url }) => { if (url.endsWith("/policy")) await policy; });
+  const { invoke, views, approve } = createPanel(async ({ url }) => { if (url.endsWith("/policy")) await policy; });
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");
   const { tabId } = invoke("openwork:browser:createTab", "https://a.example/", "A");
   await flush();
@@ -874,6 +901,8 @@ test("takeover cancels automation opening during policy and during navigation", 
   const inFlight = invoke("openwork:browser:openUrl", "https://a.example/slow", "builtin", { sessionId: "A" });
   await flush();
   assert.equal(views().length, 2);
+  approve();
+  await flush();
   invoke("openwork:browser:taskControl", tabId, "pause");
   await assert.rejects(inFlight, { code: "paused" });
   assert.equal(views()[1].webContents.stops, 1);
@@ -882,4 +911,346 @@ test("takeover cancels automation opening during policy and during navigation", 
   assert.deepEqual(views()[1].webContents.loads, ["https://a.example/slow"]);
   assert.equal(views()[1].webContents.isDestroyed(), true, "a canceled open releases its abandoned page");
   assert.ok(invoke("openwork:browser:state").tabs.every((tab) => tab.browserTask.status === "paused"));
+});
+
+test("a first task open stays blank through asynchronous panel mounting and localhost needs explicit consent", async () => {
+  const { invoke, panel, views, approve } = createPanel();
+  const hooksBefore = requestHooks.length;
+  const url = "http://localhost:4173/preview";
+  const opening = panel.browserTask({ sessionId: "A", operation: "open", args: { url } });
+  await flush();
+  const pending = invoke("openwork:browser:state").tabs[0];
+  assert.equal(pending.url, "about:blank");
+  assert.equal(pending.browserApproval.approveLabel, "Allow origin in this tab");
+  assert.match(pending.browserApproval.message, /http:\/\/localhost:4173/);
+  assert.deepEqual(views()[0].webContents.loads, []);
+  assert.deepEqual(views()[0].webContents.destinations, []);
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  assert.equal(invoke("openwork:browser:state").tabs[0].browserApproval.id, pending.browserApproval.id, "mounting preserves the pending review");
+  approve();
+  const result = await opening;
+  assert.equal(result.ok, true);
+  assert.equal(invoke("openwork:browser:state").tabs[0].browserTask.status, "idle");
+  assert.deepEqual(views()[0].webContents.loads, [url]);
+  assert.deepEqual(views()[0].webContents.destinations, [url]);
+  assert.equal(requestHooks.length, hooksBefore + 1, "one all-request listener handles both policy and consent");
+  const reading = panel.browserTask({ sessionId: "A", operation: "observe", args: { tabId: result.tabId } });
+  await flush();
+  assert.equal(invoke("openwork:browser:state").tabs[0].browserApproval.title, "Allow website access?", "navigation did not grant reading or action access");
+  approve(false);
+  assert.equal((await reading).code, "user_denied");
+});
+
+test("denied, canceled, closed and background task opens never load and release their blank tabs", async () => {
+  for (const end of ["deny", "cancel", "close", "background"]) {
+    const { invoke, panel, views, approve } = createPanel();
+    invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+    const controller = new AbortController();
+    const opening = panel.browserTask({ sessionId: end === "background" ? "B" : "A", operation: "open", args: { url: "http://127.0.0.1:4173/" } }, { signal: controller.signal });
+    await flush();
+    const tab = invoke("openwork:browser:state").tabs[0];
+    if (end === "deny") approve(false);
+    if (end === "close") invoke("openwork:browser:closeTab", tab.id);
+    if (end === "cancel") controller.abort();
+    if (end === "background") {
+      assert.equal(approve(true, tab.id), false, "another visible conversation cannot approve");
+      assert.ok(invoke("openwork:browser:state").tabs[0].browserApproval);
+      controller.abort();
+    }
+    assert.equal((await opening).ok, false, end);
+    await flush();
+    assert.deepEqual(views()[0].webContents.loads, [], end);
+    assert.deepEqual(views()[0].webContents.destinations, [], end);
+    assert.equal(views()[0].webContents.isDestroyed(), true, end);
+    assert.deepEqual(invoke("openwork:browser:state").tabs, [], end);
+  }
+});
+
+test("the task timeout cancels the longer approval dialog and late acceptance cannot navigate", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { invoke, panel, views } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const opening = panel.browserTask({ sessionId: "A", operation: "open", args: { url: "https://slow.example/" } });
+  await flush();
+  const tab = invoke("openwork:browser:state").tabs[0];
+  t.mock.timers.tick(30_000);
+  assert.equal((await opening).code, "timeout");
+  assert.equal(invoke("openwork:browser:approve", tab.id, tab.browserApproval.id, true), false);
+  assert.deepEqual(views()[0].webContents.loads, []);
+  assert.deepEqual(views()[0].webContents.destinations, []);
+  assert.deepEqual(invoke("openwork:browser:state").tabs, []);
+});
+
+test("task navigation reuses only exact-origin consent in the same tab", async () => {
+  const { invoke, panel, views, approve } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const opening = panel.browserTask({ sessionId: "A", operation: "open", args: { url: "http://127.0.0.1:4173/" } });
+  await flush(); approve();
+  const { tabId } = await opening;
+  const navigate = (url) => panel.browserTask({ sessionId: "A", operation: "navigate", args: { tabId, url } });
+  assert.equal((await navigate("http://127.0.0.1:4173/next")).ok, true);
+  const before = [...views()[0].webContents.loads];
+  for (const url of ["http://127.0.0.1:4174/", "https://127.0.0.1:4173/", "http://localhost:4173/", "http://127.0.0.1.example:4173/", "http://2130706433:4175/", "http://[::1]:4173/"]) {
+    const navigating = navigate(url);
+    await flush();
+    assert.deepEqual(views()[0].webContents.loads, before);
+    approve(false);
+    assert.equal((await navigating).code, "user_denied");
+  }
+  const accepted = navigate("http://localhost:4173/approved");
+  await flush(); approve();
+  assert.equal((await accepted).ok, true);
+  assert.equal(views()[0].webContents.destinations.at(-1), "http://localhost:4173/approved");
+});
+
+test("the request hook holds a cross-origin main-frame redirect before any target request", async (t) => {
+  for (const outcome of ["deny", "allow", "cancel", "close", "background"]) {
+    const { invoke, panel, views, approve } = createPanel();
+    invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+    const start = "https://redirect.example/";
+    const destination = "http://127.0.0.1:4173/private";
+    t.mock.method(navigation, "load", async (url, contents) => {
+      if (url !== start) return;
+      if ((await contents.request(destination)).cancel) throw new Error("redirect blocked");
+      contents.url = destination;
+    });
+    const controller = new AbortController();
+    const opening = panel.browserTask({ sessionId: "A", operation: "open", args: { url: start } }, { signal: controller.signal });
+    await flush(); approve();
+    await flush();
+    assert.deepEqual(views()[0].webContents.destinations, [start]);
+    assert.match(invoke("openwork:browser:state").tabs[0].browserApproval.message, /http:\/\/127.0.0.1:4173/);
+    const tab = invoke("openwork:browser:state").tabs[0];
+    if (outcome === "allow" || outcome === "deny") approve(outcome === "allow");
+    if (outcome === "cancel") controller.abort();
+    if (outcome === "close") invoke("openwork:browser:closeTab", tab.id);
+    if (outcome === "background") {
+      invoke("openwork:browser:setVisibleSession", "B");
+      assert.equal(approve(true, tab.id), false);
+      assert.deepEqual(views()[0].webContents.destinations, [start]);
+      controller.abort();
+    }
+    assert.equal((await opening).ok, outcome === "allow", outcome);
+    assert.deepEqual(views()[0].webContents.destinations, outcome === "allow" ? [start, destination] : [start], outcome);
+    t.mock.restoreAll();
+  }
+});
+
+test("navigation grants do not cross tabs or conversations and canceled approval cannot be revived", async () => {
+  const { invoke, panel, views, approve } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const opening = panel.browserTask({ sessionId: "A", operation: "open", args: { url: "https://owned.example/" } });
+  await flush(); approve();
+  const first = await opening;
+  assert.equal((await panel.browserTask({ sessionId: "B", operation: "navigate", args: { tabId: first.tabId, url: "https://owned.example/next" } })).code, "wrong_conversation");
+  for (const sessionId of ["A", "B"]) {
+    const second = panel.browserTask({ sessionId, operation: "open", args: { url: "https://owned.example/second" } });
+    await flush();
+    const tab = invoke("openwork:browser:state").tabs.at(-1);
+    assert.ok(tab.browserApproval, "the first tab's grant is not reused");
+    assert.deepEqual(views().at(-1).webContents.loads, []);
+    invoke("openwork:browser:closeSessionTabs", sessionId);
+    assert.equal((await second).ok, false);
+    assert.equal(invoke("openwork:browser:approve", tab.id, tab.browserApproval.id, true), false);
+    assert.deepEqual(views().at(-1).webContents.destinations, []);
+  }
+});
+
+test("managed policy denial precedes loading and is rechecked after navigation acceptance", async () => {
+  let blocked = true;
+  const { invoke, panel, views, approve } = createPanel(async ({ url, hasUpload }) => {
+    if (url !== "about:blank" && (blocked || hasUpload)) throw new Error("managed denial");
+  });
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const open = () => panel.browserTask({ sessionId: "A", operation: "open", args: { url: "http://localhost:4173/" } });
+  assert.equal((await open()).code, "website_blocked");
+  assert.equal(views().length, 0);
+  blocked = false;
+  const revoked = open();
+  await flush(); blocked = true; approve();
+  assert.equal((await revoked).code, "website_blocked");
+  assert.deepEqual(views()[0].webContents.loads, []);
+  blocked = false;
+  const accepted = open();
+  await flush();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  approve();
+  assert.equal((await accepted).ok, true);
+  const contents = views()[1].webContents;
+  assert.deepEqual(await contents.request("http://localhost:4173/upload", { resourceType: "xhr", method: "POST", uploadData: [{}] }), { cancel: true });
+  blocked = true;
+  assert.deepEqual(await contents.request("https://cdn.example/image", { resourceType: "image" }), { cancel: true });
+  assert.deepEqual(await contents.request("http://localhost:4173/next"), { cancel: true });
+  assert.deepEqual(contents.destinations, ["http://localhost:4173/"]);
+});
+
+test("takeover cancels pending navigation, permits manual browsing without grants, and requires fresh consent on resume", async () => {
+  const { invoke, panel, views, approve } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const { tabId } = invoke("openwork:browser:createTab", "about:blank", "A");
+  await flush();
+  const url = "http://localhost:4173/";
+  const navigate = () => panel.browserTask({ sessionId: "A", operation: "navigate", args: { tabId, url } });
+  const pending = navigate();
+  await flush();
+  const approvalId = invoke("openwork:browser:state").tabs[0].browserApproval.id;
+  invoke("openwork:browser:taskControl", tabId, "pause");
+  assert.equal((await pending).ok, false);
+  assert.deepEqual(views()[0].webContents.destinations, []);
+  assert.equal((await navigate()).code, "paused");
+  assert.deepEqual(await views()[0].webContents.request("https://late-redirect.example/"), { cancel: true }, "a late task redirect is not manual browsing");
+  invoke("openwork:browser:navigate", url);
+  await flush();
+  assert.deepEqual(views()[0].webContents.destinations, [url], "manual takeover navigation is still available");
+  invoke("openwork:browser:taskControl", tabId, "resume");
+  assert.equal(invoke("openwork:browser:approve", tabId, approvalId, true), false);
+  const resumed = navigate();
+  await flush();
+  assert.deepEqual(views()[0].webContents.destinations, [url]);
+  approve(false);
+  assert.equal((await resumed).code, "user_denied");
+});
+
+test("a request already waiting on managed policy cannot become manual traffic after takeover", async () => {
+  let release;
+  const { invoke, panel, views, approve } = createPanel(async ({ url, method }) => {
+    if (method && url.endsWith("/held")) await new Promise((resolve) => { release = resolve; });
+  });
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const opening = panel.browserTask({ sessionId: "A", operation: "open", args: { url: "https://owned.example/" } });
+  await flush(); approve();
+  const { tabId } = await opening;
+  const request = views()[0].webContents.request("https://other.example/held");
+  await flush();
+  invoke("openwork:browser:taskControl", tabId, "pause");
+  invoke("openwork:browser:taskControl", tabId, "resume");
+  release();
+  assert.deepEqual(await request, { cancel: true });
+  assert.deepEqual(views()[0].webContents.destinations, ["https://owned.example/"]);
+  assert.equal(invoke("openwork:browser:state").tabs[0].browserApproval, null);
+});
+
+test("hiding a tab during post-acceptance policy checking withholds navigation and its grant", async () => {
+  let hold = false, release;
+  const { invoke, panel, views, approve } = createPanel(async () => {
+    if (hold) await new Promise((resolve) => { release = resolve; });
+  });
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const opening = panel.browserTask({ sessionId: "A", operation: "open", args: { url: "http://localhost:4173/" } });
+  await flush();
+  hold = true;
+  approve();
+  await flush();
+  invoke("openwork:browser:hide");
+  hold = false;
+  release();
+  assert.equal((await opening).code, "needs_attention");
+  assert.deepEqual(views()[0].webContents.loads, []);
+  assert.deepEqual(views()[0].webContents.destinations, []);
+  assert.equal(views()[0].webContents.isDestroyed(), true);
+});
+
+test("task popups inherit the navigation gate but no grants, including late popups after pause", async () => {
+  const { invoke, panel, views, approve } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const url = "https://owned.example/";
+  const opening = panel.browserTask({ sessionId: "A", operation: "open", args: { url } });
+  await flush(); approve();
+  const { tabId } = await opening;
+  const popup = () => views()[0].webContents.windowOpenHandler({ url, disposition: "foreground-tab" }).createWindow({});
+  const child = popup();
+  const pending = child.request(url);
+  await flush();
+  assert.deepEqual(child.destinations, []);
+  approve(false);
+  assert.deepEqual(await pending, { cancel: true });
+  invoke("openwork:browser:taskControl", tabId, "pause");
+  const lateChild = popup();
+  assert.deepEqual(await lateChild.request(url), { cancel: true });
+  assert.deepEqual(lateChild.destinations, []);
+});
+
+test("adopting a manual popup guards its existing opener without sharing the popup's grant", async () => {
+  const { invoke, panel, views, approve } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const url = "https://related.example/";
+  const privateUrl = "http://127.0.0.1:4173/private";
+  const openerTab = invoke("openwork:browser:createTab", url, "A");
+  await flush();
+  const opener = views()[0].webContents;
+  const popup = opener.windowOpenHandler({ url, disposition: "foreground-tab" }).createWindow({});
+  await popup.loadURL(url);
+  const popupId = invoke("openwork:browser:state").activeTabId;
+  const adopting = panel.browserTask({ sessionId: "A", operation: "open", args: { tabId: popupId, url } });
+  await flush(); approve();
+  assert.equal((await adopting).ok, true);
+
+  // This is the destination hook Chromium invokes when the adopted popup sets
+  // window.opener.location. The pre-existing opener must not remain unguarded.
+  assert.deepEqual(await opener.request(privateUrl), { cancel: true });
+  assert.deepEqual(opener.destinations, [url]);
+  invoke("openwork:browser:selectTab", openerTab.tabId);
+  const sameOrigin = opener.request(url);
+  await flush();
+  assert.ok(invoke("openwork:browser:state").tabs[0].browserApproval, "the popup's grant does not authorize its opener");
+  approve(false);
+  assert.deepEqual(await sameOrigin, { cancel: true });
+  const privateNavigation = opener.request(privateUrl);
+  await flush();
+  assert.match(invoke("openwork:browser:state").tabs[0].browserApproval.message, /http:\/\/127.0.0.1:4173/);
+  assert.deepEqual(opener.destinations, [url], "the private destination is held until its own approval");
+  approve();
+  assert.deepEqual(await privateNavigation, { cancel: false });
+  assert.deepEqual(opener.destinations, [url, privateUrl]);
+});
+
+test("parent observations preserve popup approval and grants, but deliberate lifecycle endings still revoke them", async () => {
+  for (const ending of ["cancel", "takeover", "close"]) {
+    const { invoke, panel, views, approve } = createPanel();
+    invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+    const url = "https://parent.example/";
+    const opening = panel.browserTask({ sessionId: "A", operation: "open", args: { url } });
+    await flush(); approve();
+    const { tabId } = await opening;
+    const parent = views()[0].webContents;
+    const page = { title: "Parent", text: "Parent page", elements: [], viewport: { width: 800, height: 600 } };
+    parent.executeJavaScriptInIsolatedWorld = async () => page;
+    const observe = (options) => panel.browserTask({ sessionId: "A", operation: "observe", args: { tabId } }, options);
+    const firstObservation = observe();
+    await flush(); approve();
+    assert.equal((await firstObservation).ok, true);
+
+    const child = parent.windowOpenHandler({ url, disposition: "foreground-tab" }).createWindow({});
+    const pending = child.request("http://localhost:4173/preview");
+    await flush();
+    const childId = invoke("openwork:browser:state").activeTabId;
+    const approvalId = invoke("openwork:browser:state").tabs.at(-1).browserApproval.id;
+    assert.equal((await observe()).ok, true);
+    assert.equal(invoke("openwork:browser:state").tabs.at(-1).browserApproval?.id, approvalId, "observing the parent preserves the pending popup review");
+    assert.deepEqual(child.destinations, []);
+    approve();
+    assert.deepEqual(await pending, { cancel: false });
+    assert.equal((await observe()).ok, true);
+    assert.deepEqual(await child.request("http://localhost:4173/next"), { cancel: false }, "observing the parent preserves the popup's accepted grant");
+
+    const canceledNavigation = child.request("https://another.example/");
+    await flush();
+    const canceledApprovalId = invoke("openwork:browser:state").tabs.at(-1).browserApproval.id;
+    if (ending === "cancel") {
+      let finish;
+      parent.executeJavaScriptInIsolatedWorld = () => new Promise((resolve) => { finish = () => resolve(page); });
+      const controller = new AbortController();
+      const inFlight = observe({ signal: controller.signal });
+      await flush();
+      controller.abort();
+      assert.equal((await inFlight).ok, false);
+      finish();
+    }
+    if (ending === "takeover") invoke("openwork:browser:taskControl", tabId, "pause");
+    if (ending === "close") invoke("openwork:browser:closeTab", tabId);
+    assert.deepEqual(await canceledNavigation, { cancel: true }, ending);
+    assert.equal(invoke("openwork:browser:approve", childId, canceledApprovalId, true), false, ending);
+    assert.deepEqual(await child.request("http://localhost:4173/after-ending"), { cancel: true }, "a surviving popup remains guarded after its parent's lifetime ends");
+    assert.deepEqual(child.destinations, ["http://localhost:4173/preview", "http://localhost:4173/next"], ending);
+  }
 });

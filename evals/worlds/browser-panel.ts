@@ -128,6 +128,18 @@ function stringField(value: unknown): string {
   return value;
 }
 
+/** Explicit human-created initial state, not an automation navigation or consent grant. */
+async function seedBrowserTab(seed: Seed, app: Surface, url: string, ownerSessionId: string | null) {
+  const { tabId } = await seed.evalIn(app, browserScript((url, ownerSessionId) => window.__OPENWORK_ELECTRON__.browser.createTab(url, ownerSessionId), [url, ownerSessionId]));
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const targets = (await listTargets(app.handle.cdpUrl)).filter((target) => target.type === "page" && target.url === url);
+    if (targets.length === 1) return { tabId, targetId: targets[0].id };
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("The seeded browser page did not finish opening.");
+}
+
 /**
  * A page origin the app can always reach from its own host: the embedded
  * OpenWork server. Any HTTP response renders as a page in the built-in
@@ -256,17 +268,10 @@ export async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string,
       throw new Error("The session view did not come back on screen.");
     },
 
-    /** Arrange a shared human-created page; automation requires a conversation. */
-    async openTab(name: string): Promise<BuiltinBrowserTab> {
+    /** Arrange a human-created page, shared by default; grants are never seeded. */
+    async openTab(name: string, ownerSessionId: string | null = null): Promise<BuiltinBrowserTab> {
       const url = `${origin}/?viewport-probe=${encodeURIComponent(name)}`;
-      const { tabId } = await seed.evalIn(app, browserScript((url) => window.__OPENWORK_ELECTRON__.browser.createTab(url, null), [url]));
-      const deadline = Date.now() + 15_000;
-      while (Date.now() < deadline) {
-        const targets = (await listTargets(app.handle.cdpUrl)).filter((target) => target.type === "page" && target.url === url);
-        if (targets.length === 1) return { tabId, targetId: targets[0].id, name };
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      throw new Error("The shared browser page did not finish opening.");
+      return { ...await seedBrowserTab(seed, app, url, ownerSessionId), name };
     },
 
     /** Open a page that reports only whether an HttpOnly session cookie arrived. */
@@ -538,7 +543,7 @@ export async function transcriptLinkWorld(seed: Seed) {
   const reading = { ...world.session, title: "Reading a shared link" };
   await world.renameSession(reading.sessionId, reading.title);
   const neighbor = await world.openSession("Unrelated browser research");
-  const neighborTab = await world.openTabAs("link-neighbor", neighbor.sessionId);
+  const neighborTab = await world.openTab("link-neighbor", neighbor.sessionId);
   const origin = await embeddedServerUrl(seed, app);
   const linkUrl = `${origin}/?link-context=alpha%20beta&encoded=%2Fkeep%3Fyes%3D1#thread-link`;
   const note = "Keep this note in its own conversation.";
@@ -639,7 +644,7 @@ export async function builtinBrowserWorld(seed: Seed, options: { workspacePath?:
 /** Leave the emulation fault behind before the body; recovery is a real user act. */
 export async function browserViewportWorld(seed: Seed) {
   const base = await builtinBrowserWorld(seed);
-  const tab = browserTabHandle(await control(base.app, "browser.open_url", { url: `${base.origin}/?viewport-probe=first`, provider: "builtin" }));
+  const tab = await seedBrowserTab(seed, base.app, `${base.origin}/?viewport-probe=first`, base.session.sessionId);
   const surface = await attachBuiltinTab(base.app, tab.targetId);
   try {
     const deadline = Date.now() + 15_000;

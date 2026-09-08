@@ -63,8 +63,25 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     // scripted fetches and CDP navigation; window navigation events do not.
     browserSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
       if (["about:", "data:", "blob:"].some((scheme) => details.url.startsWith(scheme))) { callback({ cancel: false }); return; }
-      Promise.resolve(checkPolicy({ url: details.url, method: details.method, hasUpload: Boolean(details.uploadData?.length) }))
-        .then(() => callback({ cancel: false }), () => callback({ cancel: true }));
+      const tab = [...browserTabs.values()].find((item) => item.view.webContents.id === details.webContentsId);
+      const owner = registry.ownerOf(tab?.tabId);
+      const guard = details.resourceType === "mainFrame" ? taskHost.navigationGuard(tab?.tabId) : null;
+      const request = { url: details.url, method: details.method, hasUpload: Boolean(details.uploadData?.length) };
+      Promise.resolve().then(async () => {
+        await checkPolicy(request);
+        if (guard) {
+          const validate = await guard(details.url);
+          await checkPolicy(request);
+          return validate;
+        }
+      })
+        .then((validate) => {
+          try {
+            validate?.();
+            if (tab && details.resourceType === "mainFrame" && (getBrowserTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed() || registry.ownerOf(tab.tabId) !== owner)) throw new Error("Browser navigation owner changed");
+          } catch { callback({ cancel: true }); return; }
+          callback({ cancel: false });
+        }, () => callback({ cancel: true }));
     });
   }
   // tabId -> { tabId, view, favicon, background }. Order, ownership, the active
@@ -196,8 +213,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   /**
    * Open a URL for an agent. The tab belongs to the conversation that asked
    * (`ownerSessionId`). When that conversation is on screen the tab surfaces as
-   * before; otherwise it loads silently in the background — sized, focused,
-   * and painting — without disturbing whatever the user is reading.
+   * before; a new origin waits for review without contacting the destination
+   * or switching the visible conversation.
    */
   async function openBrowserUrlForAutomation(rawUrl, provider = "auto", { ownerSessionId = null } = {}) {
     const requestedProvider = String(provider || "auto").trim().toLowerCase();
@@ -217,12 +234,20 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     };
   }
 
-  async function openBrowserTab(url, ownerSessionId, signal = undefined) {
+  async function openBrowserTab(url, ownerSessionId, signal = undefined, beforeLoad = undefined) {
     signal?.throwIfAborted();
     const tab = createBrowserTab("about:blank", { select: true, initializeBlank: false, ownerSessionId, automationProtected: true });
-    const stop = () => { if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop(); };
+    const stop = () => {
+      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop();
+      closeBrowserTab(tab.tabId);
+    };
     signal?.addEventListener("abort", stop, { once: true });
-    try { await tab.view.webContents.loadURL(url); signal?.throwIfAborted(); return tab; }
+    try {
+      await beforeLoad?.(tab);
+      signal?.throwIfAborted();
+      if (getBrowserTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed() || registry.ownerOf(tab.tabId) !== ownerSessionId) throw new BrowserTaskError("tab_closed", "The browser tab closed or changed owner before navigation.");
+      await tab.view.webContents.loadURL(url); signal?.throwIfAborted(); return tab;
+    }
     catch (error) {
       // No usable handle was returned; retries must not retain abandoned pages.
       closeBrowserTab(tab.tabId);
@@ -625,9 +650,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return !!tab && browserViewVisible && registry.onScreenTabId() === tabId
       && window()?.contentView.children.includes(tab.view) === true && tab.view.getVisible();
   }
-  function confirmBrowserAction({ tabId, title, message, detail, signal, approveLabel = "Allow once" }) {
+  function confirmBrowserAction({ tabId, title, message, detail, signal, approveLabel = "Allow once", waitForVisible = false }) {
     const tab = getBrowserTab(tabId);
-    if (!tab || !browserTabVisible(tabId) || signal?.aborted) return Promise.resolve(false);
+    const owner = registry.ownerOf(tabId);
+    if (!tab || (!waitForVisible && !browserTabVisible(tabId)) || signal?.aborted) return Promise.resolve(false);
     if (approvals.has(tabId)) return Promise.resolve(false);
     return new Promise((resolve) => {
       const id = createBrowserTabId();
@@ -637,7 +663,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         if (approvals.get(tabId)?.id !== id) return;
         approvals.delete(tabId); tab.browserApproval = null;
         if (!tab.view.webContents.isDestroyed()) tab.view.setVisible(true);
-        sendBrowserState(); resolve(allowed && browserTabVisible(tabId));
+        sendBrowserState(); resolve(allowed && !signal?.aborted && getBrowserTab(tabId) === tab && registry.ownerOf(tabId) === owner && browserTabVisible(tabId));
       };
       const canceled = () => finish(false);
       const timer = setTimeout(canceled, 60_000);
@@ -807,6 +833,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         // Electron supplies the opener-linked webContents. Retain it: creating
         // a different one leaves the synchronous window.open handshake waiting.
         const popup = createBrowserTab("about:blank", { select: disposition !== "background-tab", initializeBlank: false, ownerSessionId: registry.ownerOf(tabId), contentsOptions: options });
+        taskHost.inheritNavigation(tabId, popup);
         if (disposition === "background-tab") runDetachedTask("load background browser popup", () => popup.view.webContents.loadURL(targetUrl));
         return popup.view.webContents;
       } };
@@ -872,6 +899,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       scheduleWebMcpToolCountRefresh(tabId);
     });
     view.webContents.on("focus", () => resetViewportEmulation(view));
+    view.webContents.on("before-input-event", (_event, input) => { if (input.type === "keyDown") taskHost.manualNavigation(tabId); });
+    view.webContents.on("before-mouse-event", (_event, input) => { if (input.type === "mouseDown") taskHost.manualNavigation(tabId); });
     view.webContents.once("destroyed", () => {
       // CDP Target.closeTarget and page-initiated close bypass our tab-strip
       // handler; they must release the native parent and owner state too.
@@ -1359,17 +1388,23 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       getActiveWebContents(); // Reject navigation while suspension is pending.
       const view = getActiveBrowserView()
         ?? createBrowserTab("about:blank", { select: true, ownerSessionId: registry.visibleSessionId() }).view;
+      taskHost.manualNavigation(tabForView(view)?.tabId);
       runDetachedTask("navigate browser tab", () => view.webContents.loadURL(normalizeBrowserUrl(url)));
     });
     ipcMain.handle("openwork:browser:back", () => {
+      taskHost.manualNavigation(registry.onScreenTabId());
       const webContents = getActiveWebContents();
       if (webContents?.canGoBack()) webContents.goBack();
     });
     ipcMain.handle("openwork:browser:forward", () => {
+      taskHost.manualNavigation(registry.onScreenTabId());
       const webContents = getActiveWebContents();
       if (webContents?.canGoForward()) webContents.goForward();
     });
-    ipcMain.handle("openwork:browser:reload", () => getActiveWebContents()?.reload());
+    ipcMain.handle("openwork:browser:reload", () => {
+      taskHost.manualNavigation(registry.onScreenTabId());
+      getActiveWebContents()?.reload();
+    });
     ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
       lastBrowserBounds = bounds;
       const view = getActiveBrowserView();

@@ -104,6 +104,76 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
   const grants = new Map();
   const pausedSessions = new Set();
   const opening = new Map();
+  const navigations = new Map();
+  function trackNavigation(sessionId, tab, signal = undefined) {
+    const previous = navigations.get(tab.tabId);
+    const sameTab = previous?.tab === tab && previous.sessionId === sessionId;
+    // Popup lifetimes follow deliberate cancellation/closure, not the routine
+    // replacement of an operation scope when its parent is observed again.
+    const lifetime = sameTab && !previous.lifetime.signal.aborted ? previous.lifetime : new AbortController();
+    if (signal?.aborted) lifetime.abort(signal.reason);
+    else signal?.addEventListener("abort", () => lifetime.abort(signal.reason), { once: true, signal: lifetime.signal });
+    const controller = new AbortController();
+    const scope = { tab, sessionId, controller, lifetime, manual: false,
+      signal: AbortSignal.any([lifetime.signal, controller.signal]),
+      origins: sameTab && !previous.signal.aborted ? previous.origins : new Set() };
+    previous?.controller.abort();
+    navigations.set(tab.tabId, scope);
+    return scope;
+  }
+  function checkNavigation(scope) {
+    scope.signal.throwIfAborted();
+    const { tab, sessionId } = scope;
+    if (getTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed()) fail("tab_closed", "The browser tab closed while navigation was pending.");
+    if (ownerOf(tab.tabId) !== sessionId || navigations.get(tab.tabId) !== scope) fail("wrong_conversation", "The browser navigation owner changed.");
+    if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control. Resume before continuing.");
+    if (!enabled()) fail("browser_disabled", "Browser control was disabled while navigation was pending.");
+  }
+  async function authorizeNavigation(scope, value, waitForVisible = false) {
+    const url = browserTaskUrl(value);
+    checkNavigation(scope);
+    if (!await allowed(url.href)) fail("website_blocked", "Your organization does not allow this website.");
+    checkNavigation(scope);
+    const needsConsent = !scope.origins.has(url.origin);
+    if (needsConsent) {
+      if (!waitForVisible && !isVisible(scope.tab.tabId)) fail("needs_attention", "Select this tab to review navigation, then retry.");
+      publish(scope.tab.tabId, "needs_attention", "Website navigation");
+      const accepted = await confirm({ tabId: scope.tab.tabId, title: "Allow website navigation?",
+        message: `Allow this conversation to connect to ${url.origin} in this tab?`,
+        detail: "This permits navigation and redirects to this exact origin in this tab until takeover, cancellation or tab closure. It may send data using the browser's signed-in account. Reading pages and performing actions require separate approval. Organization restrictions still apply.",
+        approveLabel: "Allow origin in this tab", signal: scope.signal, waitForVisible });
+      checkNavigation(scope);
+      if (!accepted) fail("user_denied", "Website navigation was not allowed.");
+      if (!await allowed(url.href)) fail("website_blocked", "Your organization does not allow this website.");
+      checkNavigation(scope);
+      if (!isVisible(scope.tab.tabId)) fail("needs_attention", "The tab is no longer visible. Review navigation again.");
+      scope.origins.add(url.origin);
+    }
+    // The request hook rechecks the full managed policy (including uploads)
+    // after consent. Give it a synchronous final ownership/cancellation check.
+    return () => {
+      checkNavigation(scope);
+      if (needsConsent && !isVisible(scope.tab.tabId)) {
+        scope.origins.delete(url.origin);
+        fail("needs_attention", "The tab is no longer visible. Review navigation again.");
+      }
+    };
+  }
+  function navigationGuard(tabId) {
+    const scope = navigations.get(tabId);
+    // Pausing alone must not turn a late task redirect into manual browsing.
+    // Only subsequent user input/navigation enables manual mode, without grants.
+    if (!scope || (scope.manual && pausedSessions.has(scope.sessionId) && ownerOf(tabId) === scope.sessionId)) return null;
+    return (url) => authorizeNavigation(scope, url);
+  }
+  function manualNavigation(tabId) {
+    const scope = navigations.get(tabId);
+    if (scope && pausedSessions.has(scope.sessionId) && ownerOf(tabId) === scope.sessionId) scope.manual = true;
+  }
+  function inheritNavigation(parentId, tab) {
+    const scope = navigations.get(parentId);
+    if (scope && navigationGuard(parentId)) trackNavigation(scope.sessionId, tab, scope.lifetime.signal);
+  }
   function stateFor(tabId) {
     if (!states.has(tabId)) states.set(tabId, { status: "idle", operation: null, observation: null, controller: null });
     return states.get(tabId);
@@ -129,7 +199,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (grants.has(key)) return;
     if (!isVisible(tab.tabId)) fail("needs_attention", "Select this tab in its conversation's browser panel to review website access, then retry.");
     publish(tab.tabId, "needs_attention", "Website access");
-    const accepted = await confirm({ tabId: tab.tabId, title: "Allow website access?", message: `Allow this conversation to read ${url.origin}?`, detail: "It can read pages and site tool descriptions using the built-in browser's signed-in account. Website content is untrusted. Actions that change the page require separate approval.", signal });
+    const accepted = await confirm({ tabId: tab.tabId, title: "Allow website access?", message: `Allow this conversation to read ${url.origin}?`, approveLabel: "Allow reading this origin", detail: "For this conversation until desktop restart, it can read pages and site tool descriptions using the built-in browser's signed-in account. Website content is untrusted. Actions that change the page require separate approval.", signal });
     signal.throwIfAborted();
     if (!accepted) fail("user_denied", "Website access was not allowed.");
     if (!await allowed(url.href) || tab.view.webContents.getURL() !== url.href) fail("page_changed", "The page changed or access was blocked while approval was pending. Observe the current page.");
@@ -139,7 +209,12 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
   function pause(tabId, reason = "Paused by you") {
     const owner = ownerOf(tabId);
     if (owner) { pausedSessions.add(owner); opening.get(owner)?.abort(new BrowserTaskError("paused", "The user has taken over this browser conversation.")); }
-    for (const item of tabsFor(owner)) { const sibling = states.get(item.tabId); sibling?.controller?.abort(); if (sibling) sibling.observation = null; publish(item.tabId, "paused", reason); }
+    for (const item of tabsFor(owner)) {
+      const navigation = navigations.get(item.tabId);
+      if (navigation) { navigation.manual = false; navigation.lifetime.abort(); }
+      if (!item.view.webContents.isDestroyed()) item.view.webContents.stop();
+      const sibling = states.get(item.tabId); sibling?.controller?.abort(); if (sibling) sibling.observation = null; publish(item.tabId, "paused", reason);
+    }
     const state = stateFor(tabId); state.observation = null;
     state.controller?.abort(new BrowserTaskError("paused", "Browser control paused. The user must resume it in the browser panel."));
     publish(tabId, "paused", reason);
@@ -148,9 +223,13 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     const owner = ownerOf(tabId);
     if (tabsFor(owner).some((item) => stateFor(item.tabId).controller)) return;
     pausedSessions.delete(owner);
-    for (const item of tabsFor(owner)) { stateFor(item.tabId).observation = null; publish(item.tabId, "idle"); }
+    for (const item of tabsFor(owner)) {
+      if (navigations.has(item.tabId)) trackNavigation(owner, item);
+      stateFor(item.tabId).observation = null; publish(item.tabId, "idle");
+    }
   }
   function invalidate(tabId, { closed = false } = {}) {
+    if (closed) { navigations.get(tabId)?.lifetime.abort(); navigations.delete(tabId); }
     const state = states.get(tabId); if (!state) return;
     state.observation = null;
     if (closed) { state.controller?.abort(); states.delete(tabId); }
@@ -186,6 +265,11 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       if (!enabled()) fail("browser_disabled", "Enable OpenWork Browser in Library, or ask your organization to allow browser control.");
       if (operation === "tabs") return { ok: true, provider: "builtin", externalBrowsers: "unsupported", tabs: tabsFor(sessionId).map((item) => ({ tabId: item.tabId, url: safeUrl(item.view.webContents.getURL()), title: item.view.webContents.getTitle().slice(0, 300), visible: isVisible(item.tabId), ...stateFor(item.tabId), observation: undefined, controller: undefined })) };
       if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control. Resume in the browser panel before continuing.");
+      // Existing same-origin opener/popup pages can navigate each other. Enroll
+      // every owned tab before dispatch, without copying any tab's grants.
+      for (const item of tabsFor(sessionId)) {
+        if (!navigations.has(item.tabId)) trackNavigation(sessionId, item);
+      }
       if (operation === "open") {
         if (args.provider && !["builtin", "auto"].includes(args.provider)) fail("unsupported_browser", "External browser control is not connected. Use the built-in browser or open the requested external browser yourself.");
         const url = browserTaskUrl(args.url);
@@ -206,14 +290,23 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         openingController.signal.throwIfAborted();
         if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control. Resume in the browser panel before continuing.");
         if (!tab) {
-          dispatched = true;
           tab = await Promise.race([
-            openTab(url.href, sessionId, openingController.signal),
+            openTab(url.href, sessionId, openingController.signal, async (created) => {
+              const validate = await authorizeNavigation(trackNavigation(sessionId, created, openingController.signal), url.href, true);
+              validate();
+              dispatched = true;
+            }),
             canceled,
           ]);
           openingController.signal.throwIfAborted();
         }
         else if (tab.view.webContents.getURL() !== url.href) fail("different_page", "Use navigate to change the selected tab's page.");
+        else {
+          if (stateFor(tab.tabId).controller) fail("busy", "A browser operation is already running in this tab.");
+          const validate = await Promise.race([authorizeNavigation(trackNavigation(sessionId, tab, openingController.signal), url.href), canceled]);
+          validate();
+        }
+        publish(tab.tabId, "idle");
         return { ok: true, provider: "builtin", tabId: tab.tabId, url: safeUrl(tab.view.webContents.getURL()), visible: isVisible(tab.tabId), next: "observe" };
       }
       tab = await resolve(sessionId, args.tabId, ["navigate", "pause", "handoff"].includes(operation));
@@ -222,6 +315,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       if (pausedSessions.has(sessionId) || state.status === "paused") fail("paused", "The user has browser control. Resume in the browser panel before continuing.");
       if (state.controller) fail("busy", "A browser operation is already running in this tab. Wait for its result; do not queue another action.");
       const controller = new AbortController(); state.controller = controller;
+      const navigationScope = trackNavigation(sessionId, tab, controller.signal);
       abort = () => controller.abort(signal?.reason); signal?.addEventListener("abort", abort, { once: true });
       if (signal?.aborted) abort();
       timer = setTimeout(() => controller.abort(new BrowserTaskError("timeout", "Browser operation timed out. Observe the page before deciding what remains.")), MAX_OPERATION_MS);
@@ -242,8 +336,8 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         }
         if (operation === "navigate") {
           const url = browserTaskUrl(args.url);
-          if (!await allowed(url.href)) fail("website_blocked", "Your organization does not allow this website.");
-          controller.signal.throwIfAborted();
+          const validate = await authorizeNavigation(navigationScope, url.href);
+          validate();
           state.observation = null; dispatched = true;
           const stop = () => { if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop(); };
           controller.signal.addEventListener("abort", stop, { once: true });
@@ -315,5 +409,5 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       if (state && abort) state.controller = null;
     }
   }
-  return { request, pause, resume, invalidate, stateFor };
+  return { request, pause, resume, invalidate, stateFor, navigationGuard, inheritNavigation, manualNavigation };
 }

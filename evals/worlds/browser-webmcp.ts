@@ -1,9 +1,8 @@
-import { control } from "@openwork/behaviors";
 import { browserScript } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
 import { configureBrowserFixtureModel, startBrowserFixture } from "@openwork/env";
 import type { Den, Seed } from "@openwork/env";
-import { attachBuiltinTab, browserTabHandle, builtinBrowserWorld } from "./browser-panel.ts";
+import { builtinBrowserWorld } from "./browser-panel.ts";
 
 function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
 
@@ -31,9 +30,8 @@ export async function browserWebMcpWorld(seed: Seed) {
       });
       if (!response.ok) throw new Error('Fixture model reload failed');
     }, [`${enginePath}/instance/dispose`]), { awaitPromise: true, timeoutMs: 35_000 });
-    const tab = browserTabHandle(await control(base.app, "browser.open_url", { url: `${origin}/`, provider: "builtin" }));
-    const site = stack.use(await attachBuiltinTab(base.app, tab.targetId));
-    return { ...base, origin, enginePath, tab, site, async [Symbol.asyncDispose]() { await stack.disposeAsync(); } };
+    // Leave the browser unmounted: the discovery turn must request its first tab.
+    return { ...base, origin, enginePath, async [Symbol.asyncDispose]() { await stack.disposeAsync(); } };
   } catch (error) { await stack.disposeAsync(); throw error; }
 }
 
