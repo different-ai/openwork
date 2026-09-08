@@ -45,6 +45,16 @@ test("A reviewer can inspect two runs and a DocShot with honest results and priv
   const original = await get(`/r/${world.passed}/assets/${source.asset}`);
   expect(await original.text()).toContain("internal diagnostics fixture");
   expect((await get(`/r/${world.passed}`, false)).status).toBe(401);
+  for (const authorization of [
+    "Basic invalid",
+    `${world.headers.authorization.slice(0, -1)}!`,
+  ]) {
+    const unauthorized = await fetch(`${world.baseUrl}/r/${world.passed}`, {
+      headers: { authorization },
+      signal: AbortSignal.timeout(10_000),
+    });
+    expect(unauthorized.status).toBe(401);
+  }
   expect((await get(mediaPath, false)).status).toBe(401);
   expect(
     (await get(`/r/${world.passed}/assets/${source.asset}`, false)).status,
@@ -55,7 +65,7 @@ test("A reviewer can inspect two runs and a DocShot with honest results and priv
   expect((await get(`/r/${"0".repeat(32)}`)).status).toBe(404);
   evidence.recordAssertionEvidence(
     "The same access boundary protects pages, images, and source records",
-    "Authenticated requests return the image and original diagnostics. Anonymous requests return 401 for all three; missing reports and unreferenced assets return 404.",
+    "Authenticated requests return the image and original diagnostics. Anonymous requests return 401 for all three, as do incorrect credentials of equal or different length; missing reports and unreferenced assets return 404.",
     true,
   );
 

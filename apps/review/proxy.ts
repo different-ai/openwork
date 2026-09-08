@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
@@ -11,13 +11,11 @@ export function proxy(request: NextRequest) {
       status: 503,
     });
   if (password) {
-    const expected = `Basic ${Buffer.from(`review:${password}`).toString("base64")}`;
-    const hash = (value: string) => createHash("sha256").update(value).digest();
+    const expected = Buffer.from(`Basic ${Buffer.from(`review:${password}`).toString("base64")}`);
+    const supplied = Buffer.from(request.headers.get("authorization") ?? "");
     if (
-      !timingSafeEqual(
-        hash(request.headers.get("authorization") ?? ""),
-        hash(expected),
-      )
+      supplied.length !== expected.length ||
+      !timingSafeEqual(supplied, expected)
     ) {
       return new NextResponse("Sign in to review this evidence.", {
         status: 401,
