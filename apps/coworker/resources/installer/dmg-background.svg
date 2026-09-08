@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="760" height="600" viewBox="0 0 760 600">
+  <rect width="760" height="600" fill="#f3f4f6"/>
+  <!-- A quiet architectural backdrop rewards a closer look. -->
+  <image data-decoration="office-activity" x="0" y="61" width="760" height="507" opacity=".12" xlink:href="office-activity-outline.png"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif">
+    <image data-brand="white-coworker" x="30" y="20" width="48" height="48" xlink:href="../../public/open-coworker.svg"/>
+    <text x="80" y="48" font-size="14" font-weight="600" letter-spacing="-.2" fill="#303744">Open Coworker</text>
+    <text x="720" y="48" text-anchor="end" font-size="11.5" font-weight="450" fill="#737c8b">Local by default</text>
+
+    <text x="380" y="118" text-anchor="middle" font-size="30" font-weight="650" letter-spacing="-.9" fill="#171c26">Welcome to your new team</text>
+    <text x="380" y="148" text-anchor="middle" font-size="14" font-weight="450" fill="#687181">Drag Open Coworker into Applications.</text>
+
+    <!-- Native Finder icons and their labels sit inside these quiet inset surfaces. -->
+    <rect x="76" y="190" width="208" height="192" rx="28" fill="#e9ecf1"/>
+    <rect x="76" y="188" width="208" height="192" rx="28" fill="#ffffff" fill-opacity=".8" stroke="#ffffff" stroke-width="1.5"/>
+    <text x="180" y="214" text-anchor="middle" font-size="10" font-weight="550" letter-spacing="1.4" fill="#89919e">01 · DRAG</text>
+
+    <rect x="476" y="190" width="208" height="192" rx="28" fill="#e9ecf1"/>
+    <rect x="476" y="188" width="208" height="192" rx="28" fill="#ffffff" fill-opacity=".8" stroke="#ffffff" stroke-width="1.5"/>
+    <text x="580" y="214" text-anchor="middle" font-size="10" font-weight="550" letter-spacing="1.4" fill="#89919e">02 · DROP HERE</text>
+
+    <path d="M338 282h82m-8-8 8 8-8 8" fill="none" stroke="#aab3c1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <path d="M76 409h608" stroke="#dce0e6" stroke-width="1"/>
+    <text x="380" y="438" text-anchor="middle" font-size="13" font-weight="550" fill="#434c5b">Launch Open Coworker from Applications.</text>
+    <text x="380" y="461" text-anchor="middle" font-size="11.5" font-weight="450" fill="#7d8695">Once it’s in place, you can eject this installer.</text>
+  </g>
+</svg>

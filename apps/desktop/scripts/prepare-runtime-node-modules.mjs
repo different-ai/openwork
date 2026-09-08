@@ -8,6 +8,8 @@ const desktopRoot = resolve(dirnameHere, "..");
 const requiredRoots = [{
   name: "@modelcontextprotocol/sdk",
   resolveTarget: "@modelcontextprotocol/sdk/validation/ajv",
+}, {
+  name: "@openwork/browser-tabs",
 }];
 
 function packageRoot(name, fromPackageJson, resolveTarget = name) {

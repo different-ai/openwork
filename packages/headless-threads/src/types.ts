@@ -19,7 +19,18 @@ export interface HeadlessThreadModel {
 export type HeadlessThreadStatus =
   | { type: "idle" }
   | { type: "busy" }
-  | { type: "retry"; attempt: number; message: string; next: number };
+  | {
+      type: "retry";
+      attempt: number;
+      message: string;
+      next: number;
+      /**
+       * Why the engine is retrying, in its own vocabulary, when it says so:
+       * `free_tier_limit` for the free model's shared limit, `account_rate_limit`
+       * for an account's. Null for an ordinary provider hiccup.
+       */
+      reason: string | null;
+    };
 
 export interface HeadlessThreadTodo {
   content: string;
@@ -34,8 +45,22 @@ export interface HeadlessThreadMessagePart {
   tool?: string;
   callId?: string;
   toolStatus?: string;
+  /** Exact arguments admitted by the engine for this tool call. */
+  toolInput?: Record<string, unknown>;
+  /** Exact result preserved by OpenWork, including MCP App transport data. */
+  toolOutput?: unknown;
+  toolError?: string;
+  toolMetadata?: Record<string, unknown>;
+  toolStartedAt?: number;
+  toolCompletedAt?: number;
   synthetic?: boolean;
   ignored?: boolean;
+}
+
+/** The provider and model that produced an assistant message, as the engine recorded them. */
+export interface HeadlessThreadMessageModel {
+  providerId: string;
+  modelId: string;
 }
 
 export interface HeadlessThreadMessage {
@@ -44,8 +69,16 @@ export interface HeadlessThreadMessage {
   /** The user message this assistant response belongs to. */
   parentId: string | null;
   createdAt: number | null;
+  /**
+   * When the engine closed this message. An assistant message with neither a
+   * completion time nor an error was cut off before it finished — the engine
+   * stopped while it was still writing.
+   */
+  completedAt: number | null;
   error: HeadlessThreadMessageError | null;
   usage: HeadlessThreadUsage | null;
+  /** Set on assistant messages once the engine has bound the reply to a model. */
+  model: HeadlessThreadMessageModel | null;
   parts: HeadlessThreadMessagePart[];
 }
 
@@ -53,6 +86,13 @@ export interface HeadlessThreadMessageError {
   name: string;
   message: string;
   retryable: boolean | null;
+  /**
+   * The provider's own error type when the engine relayed its response body,
+   * e.g. `FreeUsageLimitError` or `insufficient_quota`; null when the body
+   * carried none. The engine's `name` (`APIError`) says how the call failed,
+   * this says why the provider refused it.
+   */
+  providerError: string | null;
 }
 
 export interface HeadlessThreadUsage {
@@ -89,9 +129,22 @@ export interface HeadlessThread {
 export interface HeadlessThreadTurnInput {
   prompt: string;
   model?: HeadlessThreadModel;
+  /** Native tool permissions for this session's turn; omitted preserves the engine's defaults. */
+  tools?: Record<string, boolean>;
+  /** Explicit native agent; an unknown name is rejected rather than defaulted. */
+  agent?: string;
   /** Stable engine message id used to make prompt admission idempotent. */
   messageId?: string;
   signal?: AbortSignal;
+}
+
+/**
+ * Redo one turn under the message id it already has. The engine forgets the
+ * earlier attempt (the message and every reply it produced) and runs the same
+ * prompt again, so the thread never carries the message twice.
+ */
+export interface HeadlessThreadRetryInput extends HeadlessThreadTurnInput {
+  messageId: string;
 }
 
 /**
@@ -106,6 +159,8 @@ export interface HeadlessTurnAcceptance {
   messageId: string | null;
   /** True when the engine already held this exact user message. */
   alreadyPresent: boolean;
+  /** True when `retryTurn` removed an earlier attempt before the engine accepted this one. */
+  retried?: boolean;
 }
 
 export interface HeadlessThreadWaitInput {
@@ -151,14 +206,30 @@ export interface HeadlessTranscriptToolCall {
   name: string;
   callId: string | null;
   status: string | null;
+  input: Record<string, unknown>;
+  output: unknown;
+  error: string | null;
+  metadata: Record<string, unknown>;
+  startedAt?: number;
+  completedAt?: number;
 }
 
 export interface HeadlessTranscriptMessage {
   id: string;
   role: string;
+  /** The user message this reply belongs to; null for user messages. */
+  parentId: string | null;
   createdAt: number | null;
+  /** When the engine closed the message; null while it is still being written or when it was cut off. */
+  completedAt: number | null;
+  /** Why this reply ended without an answer; null when it did not fail. */
+  error: HeadlessThreadMessageError | null;
   text: string;
   reasoning: string;
+  /** Which model answered; null for user messages and replies the engine has not attributed yet. */
+  model: HeadlessThreadMessageModel | null;
+  /** What this reply cost in tokens, as the engine reported it; null for user messages and until the engine reports it. */
+  usage: HeadlessThreadUsage | null;
   toolCalls: HeadlessTranscriptToolCall[];
 }
 
@@ -181,6 +252,12 @@ export interface AgentSessionClient {
 }
 
 export interface HeadlessThreadClient extends AgentSessionClient {
+  /**
+   * Run the thread's last turn again under the same message id. Only the last
+   * turn can be redone: a later user message means there is nothing to retry.
+   * A message the engine never held is simply sent.
+   */
+  retryTurn(threadId: string, input: HeadlessThreadRetryInput): Promise<HeadlessTurnAcceptance>;
   waitForThread(threadId: string, input: HeadlessThreadWaitInput): Promise<HeadlessThreadWaitResult>;
   waitUntilIdle(threadId: string, input: HeadlessThreadWaitInput): Promise<HeadlessThreadWaitResult>;
   exportTranscript(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadTranscript>;

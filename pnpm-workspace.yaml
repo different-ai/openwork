@@ -127,3 +127,5 @@ patchedDependencies:
   '@better-auth/sso@1.7.0-beta.10': patches/@better-auth__sso@1.7.0-beta.10.patch
   '@modelcontextprotocol/client@2.0.0': patches/@modelcontextprotocol__client@2.0.0.patch
   '@modelcontextprotocol/sdk': patches/@modelcontextprotocol__sdk.patch
+  'app-builder-lib@26.15.3': patches/app-builder-lib@26.15.3.patch
+  'opencode-chrome-devtools@1.0.4': patches/opencode-chrome-devtools@1.0.4.patch

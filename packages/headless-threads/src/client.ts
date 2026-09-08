@@ -18,7 +18,9 @@ import type {
   HeadlessThread,
   HeadlessThreadClient,
   HeadlessThreadClientOptions,
+  HeadlessThreadRetryInput,
   HeadlessThreadSnapshot,
+  HeadlessThreadStatus,
   HeadlessThreadTranscript,
   HeadlessThreadTurnInput,
   HeadlessThreadWaitInput,
@@ -34,6 +36,7 @@ import {
   threadStatusesSchema,
   threadTodosSchema,
   toSnapshot,
+  toStatus,
   toThread,
 } from "./wire.js";
 
@@ -177,28 +180,39 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     );
   }
 
-  async function getThreadSnapshot(threadId: string, input?: { signal?: AbortSignal; limit?: number }): Promise<HeadlessThreadSnapshot> {
+  /** One thread's status alone: the cheapest read, enough to know whether a turn is still running. */
+  async function readStatus(threadId: string, signal?: AbortSignal): Promise<HeadlessThreadStatus> {
+    const statusPath = `${opencodePath}/session/status`;
+    const statuses = sdkJson(
+      threadStatusesSchema,
+      await opencode.session.status(undefined, { signal: requestSignal(signal) }),
+      "GET",
+      statusPath,
+    );
+    const status = statuses[threadId];
+    return status === undefined ? { type: "idle" } : toStatus(status);
+  }
+
+  async function getThreadSnapshot(
+    threadId: string,
+    input?: { signal?: AbortSignal; limit?: number; status?: HeadlessThreadStatus },
+  ): Promise<HeadlessThreadSnapshot> {
     const encodedThreadId = encodeURIComponent(threadId);
     const sessionPath = `${opencodePath}/session/${encodedThreadId}`;
     const messagesPath = `${sessionPath}/message`;
     const todosPath = `${sessionPath}/todo`;
-    const statusPath = `${opencodePath}/session/status`;
-    const [sessionResult, messagesResult, todosResult, statusResult] = await Promise.all([
+    // Status is asked first: it is the read that decides what the rest of the snapshot means.
+    // A status the caller just read is not read again.
+    const [status, sessionResult, messagesResult, todosResult] = await Promise.all([
+      input?.status === undefined ? readStatus(threadId, input?.signal) : Promise.resolve(input.status),
       opencode.session.get({ sessionID: threadId }, { signal: requestSignal(input?.signal) }),
       opencode.session.messages({ sessionID: threadId, limit: input?.limit }, { signal: requestSignal(input?.signal) }),
       opencode.session.todo({ sessionID: threadId }, { signal: requestSignal(input?.signal) }),
-      opencode.session.status(undefined, { signal: requestSignal(input?.signal) }),
     ]);
     const session = sdkJson(sessionSchema, sessionResult, "GET", sessionPath);
     const messages = sdkJson(threadMessagesSchema, messagesResult, "GET", messagesPath);
     const todos = sdkJson(threadTodosSchema, todosResult, "GET", todosPath);
-    const statuses = sdkJson(threadStatusesSchema, statusResult, "GET", statusPath);
-    return toSnapshot(threadSnapshotSchema.parse({
-      session,
-      messages,
-      todos,
-      status: statuses[threadId] ?? { type: "idle" },
-    }));
+    return toSnapshot(threadSnapshotSchema.parse({ session, messages, todos }), status);
   }
 
   async function createThread(input: CreateThreadInput): Promise<HeadlessThread> {
@@ -224,23 +238,64 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     return toThread(session, workspaceId, prompt !== undefined);
   }
 
-  async function sendTurn(threadId: string, input: HeadlessThreadTurnInput): Promise<HeadlessTurnAcceptance> {
+  async function promptTurn(threadId: string, input: HeadlessThreadTurnInput, signal?: AbortSignal): Promise<void> {
     const model = input.model ?? options.defaultModel;
-    const messages = await readMessages(threadId, input.signal);
-    const messageCountBefore = messages.length;
-    if (input.messageId && messages.some((message) => message.info.id === input.messageId && message.info.role === "user")) {
-      return { threadId, acceptedAt: now(), messageCountBefore, messageId: input.messageId, alreadyPresent: true };
-    }
     const path = `${opencodePath}/session/${encodeURIComponent(threadId)}/prompt_async`;
     const result = await opencode.session.promptAsync({
       sessionID: threadId,
       parts: [{ type: "text", text: input.prompt }],
       ...(input.messageId === undefined ? {} : { messageID: input.messageId }),
+      ...(input.tools === undefined ? {} : { tools: input.tools }),
+      ...(input.agent === undefined ? {} : { agent: input.agent }),
       ...(model === undefined ? {} : { model: { providerID: model.providerId, modelID: model.modelId } }),
       ...(model?.variant === undefined ? {} : { variant: model.variant }),
-    }, { signal: requestSignal(input.signal) });
+    }, { signal: requestSignal(signal) });
     sdkSuccess(result, "POST", path);
+  }
+
+  async function sendTurn(threadId: string, input: HeadlessThreadTurnInput): Promise<HeadlessTurnAcceptance> {
+    const messages = await readMessages(threadId, input.signal);
+    const messageCountBefore = messages.length;
+    if (input.messageId && messages.some((message) => message.info.id === input.messageId && message.info.role === "user")) {
+      return { threadId, acceptedAt: now(), messageCountBefore, messageId: input.messageId, alreadyPresent: true };
+    }
+    await promptTurn(threadId, input, input.signal);
     return { threadId, acceptedAt: now(), messageCountBefore, messageId: input.messageId ?? null, alreadyPresent: false };
+  }
+
+  async function retryTurn(threadId: string, input: HeadlessThreadRetryInput): Promise<HeadlessTurnAcceptance> {
+    const messages = await readMessages(threadId, input.signal);
+    const index = messages.findIndex((message) => message.info.id === input.messageId && message.info.role === "user");
+    if (index === -1) {
+      // The engine never held the message (the earlier attempt failed before it was sent): a plain send.
+      await promptTurn(threadId, input, input.signal);
+      return { threadId, acceptedAt: now(), messageCountBefore: messages.length, messageId: input.messageId, alreadyPresent: false, retried: false };
+    }
+    const attempt = messages.slice(index);
+    if (attempt.slice(1).some((message) => message.info.role === "user")) {
+      const path = `${opencodePath}/session/${encodeURIComponent(threadId)}/message/${encodeURIComponent(input.messageId)}`;
+      throw new HeadlessThreadError({
+        code: "not_last_turn",
+        message: "Only the last turn of a thread can be retried",
+        method: "DELETE",
+        path,
+        status: 409,
+        body: { code: "not_last_turn", messageId: input.messageId },
+      });
+    }
+    // The message and everything the engine wrote after it belong to the attempt being redone.
+    // Removing them (newest first) leaves no reply an observer could mistake for the new one;
+    // the engine then recreates the message under the same id, so the thread holds it once.
+    for (const message of [...attempt].reverse()) {
+      const path = `${opencodePath}/session/${encodeURIComponent(threadId)}/message/${encodeURIComponent(message.info.id)}`;
+      sdkSuccess(
+        await opencode.session.deleteMessage({ sessionID: threadId, messageID: message.info.id }, { signal: requestSignal(input.signal) }),
+        "DELETE",
+        path,
+      );
+    }
+    await promptTurn(threadId, input, input.signal);
+    return { threadId, acceptedAt: now(), messageCountBefore: index, messageId: input.messageId, alreadyPresent: false, retried: true };
   }
 
   async function waitForThread(threadId: string, input: HeadlessThreadWaitInput): Promise<HeadlessThreadWaitResult> {
@@ -252,35 +307,50 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     let polls = 0;
     let observedRunning = false;
 
+    // While the engine reports the thread running, only its status is read each
+    // poll: the transcript cannot settle the wait yet, and re-reading a growing
+    // thread every few hundred milliseconds is what made long turns expensive.
+    // The full snapshot is read once the status says the turn may be over, and
+    // for the result the caller gets back.
+    let snapshot: HeadlessThreadSnapshot | null = null;
+    const finish = (outcome: HeadlessThreadWaitResult["outcome"], last: HeadlessThreadSnapshot): HeadlessThreadWaitResult => ({
+      outcome,
+      snapshot: last,
+      waitedMs: now() - startedAt,
+      polls,
+      observedRunning,
+      terminalError: outcome === "failed"
+        ? assistantReplyForTurn(last.messages, { messageId, messageCountBefore })?.error ?? null
+        : null,
+    });
+
     for (;;) {
       if (input.signal?.aborted) {
-        const snapshot = await getThreadSnapshot(threadId);
-        return { outcome: "aborted", snapshot, waitedMs: now() - startedAt, polls, observedRunning, terminalError: null };
+        return finish("aborted", await getThreadSnapshot(threadId));
       }
-      const snapshot = await getThreadSnapshot(threadId, { signal: input.signal });
+      try {
+        const status = await readStatus(threadId, input.signal);
+        snapshot = isRunning(status) ? null : await getThreadSnapshot(threadId, { signal: input.signal, status });
+      } catch (cause) {
+        // An abort that lands while a poll is in flight is the caller's stop, not a failure of the thread.
+        if (!input.signal?.aborted) throw cause;
+        return finish("aborted", await getThreadSnapshot(threadId));
+      }
       polls += 1;
-      const finish = (outcome: HeadlessThreadWaitResult["outcome"]): HeadlessThreadWaitResult => ({
-        outcome,
-        snapshot,
-        waitedMs: now() - startedAt,
-        polls,
-        observedRunning,
-        terminalError: outcome === "failed"
-          ? assistantReplyForTurn(snapshot.messages, { messageId, messageCountBefore })?.error ?? null
-          : null,
-      });
 
-      if (isRunning(snapshot.status)) {
+      if (snapshot === null) {
         observedRunning = true;
       } else {
         const reply = assistantReplyForTurn(snapshot.messages, { messageId, messageCountBefore });
-        if (reply?.error) return finish("failed");
-        if (reply) return finish("settled");
+        if (reply?.error) return finish("failed", snapshot);
+        // The assistant placeholder can arrive before the busy status. Wait
+        // for its completion timestamp rather than settling an empty turn.
+        if (reply && reply.completedAt !== null) return finish("settled", snapshot);
       }
 
-      if (input.signal?.aborted) return finish("aborted");
+      if (input.signal?.aborted) return finish("aborted", snapshot ?? await getThreadSnapshot(threadId));
       const remaining = deadline - now();
-      if (remaining <= 0) return finish("timeout");
+      if (remaining <= 0) return finish("timeout", snapshot ?? await getThreadSnapshot(threadId));
       await sleep(Math.min(interval, remaining));
     }
   }
@@ -296,14 +366,17 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
         const snapshot = await getThreadSnapshot(threadId);
         return { outcome: "aborted", snapshot, waitedMs: now() - startedAt, polls, observedRunning, terminalError: null };
       }
-      const snapshot = await getThreadSnapshot(threadId, { signal: input.signal });
+      // Status alone decides idleness; the transcript is read once, for the result.
+      const status = await readStatus(threadId, input.signal);
       polls += 1;
-      if (!isRunning(snapshot.status)) {
+      if (!isRunning(status)) {
+        const snapshot = await getThreadSnapshot(threadId, { signal: input.signal, status });
         return { outcome: "settled", snapshot, waitedMs: now() - startedAt, polls, observedRunning, terminalError: null };
       }
       observedRunning = true;
       const remaining = deadline - now();
       if (remaining <= 0) {
+        const snapshot = await getThreadSnapshot(threadId, { signal: input.signal, status });
         return { outcome: "timeout", snapshot, waitedMs: now() - startedAt, polls, observedRunning, terminalError: null };
       }
       await sleep(Math.min(interval, remaining));
@@ -325,5 +398,5 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     return toTranscript(await getThreadSnapshot(threadId, input));
   }
 
-  return { createThread, sendTurn, waitForThread, waitUntilIdle, getThreadSnapshot, abortThread, exportTranscript };
+  return { createThread, sendTurn, retryTurn, waitForThread, waitUntilIdle, getThreadSnapshot, abortThread, exportTranscript };
 }

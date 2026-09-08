@@ -110,8 +110,8 @@ self-service deletion endpoint) must be documented with exact identities.
 
 The spec boundary ratchet (`scripts/spec-boundary-ratchet.mjs`) rejects new
 files that import product source (`../../apps|packages|ee`) or that never cross
-a product boundary (`app()`, `chrome()`, `server()`, `spec.world()`, or a
-world import); a file with no boundary is also called out for `node:fs` and
+a product boundary (`app()`, `coworker()`, `chrome()`, `server()`,
+`spec.world()`, or a world import); a file with no boundary is also called out for `node:fs` and
 `node:child_process`. Its `specs/boundary-ratchet.baseline.json`
 grandfathers legacy files and only shrinks. Cleanup deletes them, moves unit
 tests next to their module, or folds their assertions into a journey spec.

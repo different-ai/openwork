@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 
 import { createHeadlessThreadClient } from "./client.js";
 import { HeadlessThreadError } from "./errors.js";
-import type { HeadlessFetch, HeadlessThreadStatus } from "./types.js";
+import type { HeadlessFetch } from "./types.js";
 
 type RecordedRequest = {
   method: string;
@@ -13,9 +13,14 @@ type RecordedRequest = {
   redirect: RequestRedirect | undefined;
   signal: AbortSignal | undefined;
 };
-type MessageWire = { info: { id: string; role: string; parentID?: string; time?: { created: number }; error?: unknown; tokens?: unknown; cost?: number }; parts: unknown[] };
+type MessageWire = { info: { id: string; role: string; parentID?: string; providerID?: string; modelID?: string; time?: { created: number; completed?: number }; error?: unknown; tokens?: unknown; cost?: number }; parts: unknown[] };
+/** The engine's status as it goes over the wire; a retry may carry the engine's reason and remedy copy. */
+type StatusWire =
+  | { type: "idle" }
+  | { type: "busy" }
+  | { type: "retry"; attempt: number; message: string; next: number; action?: { reason: string; provider: string; title: string; message: string; label: string; link?: string } };
 /** One poll's worth of thread state, consumed in order by snapshot reads. */
-type Beat = { status: HeadlessThreadStatus; messages: MessageWire[] };
+type Beat = { status: StatusWire; messages: MessageWire[] };
 
 const SESSION_ID = "ses_1";
 const BASE_URL = "http://openwork.test";
@@ -42,7 +47,7 @@ function serverUrl(server: Server): string {
 
 function reply(id: string, role: string, text?: string, parentID?: string): MessageWire {
   return {
-    info: { id, role, time: { created: 1 }, ...(parentID ? { parentID } : {}) },
+    info: { id, role, time: { created: 1, ...(role === "assistant" ? { completed: 2 } : {}) }, ...(parentID ? { parentID } : {}) },
     parts: text === undefined ? [] : [{ id: `prt_${id}`, type: "text", text }],
   };
 }
@@ -78,8 +83,6 @@ function createOpenworkDouble(input?: { beats?: Beat[]; messages?: MessageWire[]
       return Response.json(session);
     }
     if (method === "GET" && parsed.pathname === `/workspace/ws_1/opencode/session/${SESSION_ID}`) {
-      activeBeat = beats[Math.min(beatIndex, beats.length - 1)];
-      beatIndex += 1;
       return Response.json(session);
     }
     if (method === "GET" && parsed.pathname === `/workspace/ws_1/opencode/session/${SESSION_ID}/message`) {
@@ -89,6 +92,9 @@ function createOpenworkDouble(input?: { beats?: Beat[]; messages?: MessageWire[]
       return Response.json([]);
     }
     if (method === "GET" && parsed.pathname === "/workspace/ws_1/opencode/session/status") {
+      // Every poll reads the status once, so the status read is the beat of the engine's clock.
+      activeBeat = beats[Math.min(beatIndex, beats.length - 1)];
+      beatIndex += 1;
       const status = activeBeat?.status;
       return Response.json(status === undefined || status.type === "idle" ? {} : { [SESSION_ID]: status });
     }
@@ -98,10 +104,18 @@ function createOpenworkDouble(input?: { beats?: Beat[]; messages?: MessageWire[]
     if (method === "POST" && parsed.pathname === `/workspace/ws_1/opencode/session/${SESSION_ID}/abort`) {
       return Response.json(input?.abortResult ?? true);
     }
+    const deleted = /^\/workspace\/ws_1\/opencode\/session\/ses_1\/message\/([^/]+)$/.exec(parsed.pathname);
+    if (method === "DELETE" && deleted) {
+      const messageId = decodeURIComponent(deleted[1] ?? "");
+      const index = messages.findIndex((message) => message.info.id === messageId);
+      if (index === -1) return Response.json({ code: "not_found", message: "Message not found" }, { status: 404 });
+      messages.splice(index, 1);
+      return Response.json(true);
+    }
     return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
   };
 
-  return { fetchImpl, requests, snapshotReads: () => beatIndex };
+  return { fetchImpl, requests, messages, snapshotReads: () => beatIndex };
 }
 
 /** A clock that only moves when the client sleeps, so waits are instant. */
@@ -247,6 +261,8 @@ describe("sendTurn", () => {
     const acceptance = await createClient(double).sendTurn(SESSION_ID, {
       prompt: "They also lost the receipt.",
       model: { providerId: "anthropic", modelId: "claude-sonnet-5" },
+      tools: { coworker_worker_spawn: false },
+      agent: "progress-summary",
     });
 
     expect(acceptance).toEqual({
@@ -263,6 +279,8 @@ describe("sendTurn", () => {
     expect(double.requests[1]?.body).toEqual({
       parts: [{ type: "text", text: "They also lost the receipt." }],
       model: { providerID: "anthropic", modelID: "claude-sonnet-5" },
+      tools: { coworker_worker_spawn: false },
+      agent: "progress-summary",
     });
   });
 
@@ -333,6 +351,82 @@ describe("sendTurn", () => {
   });
 });
 
+describe("retryTurn", () => {
+  const failed: MessageWire = {
+    info: { id: "msg_reply", role: "assistant", parentID: "msg_ask", time: { created: 2, completed: 3 }, error: { name: "APIError", data: { message: "503 overloaded" } } },
+    parts: [],
+  };
+
+  test("forgets the earlier attempt newest first, then prompts again under the same message id", async () => {
+    const double = createOpenworkDouble({
+      messages: [reply("msg_1", "user", "Earlier"), reply("msg_2", "assistant", "Done.", "msg_1"), reply("msg_ask", "user", "Run the report."), failed],
+    });
+
+    const acceptance = await createClient(double).retryTurn(SESSION_ID, {
+      prompt: "Run the report.",
+      messageId: "msg_ask",
+      model: { providerId: "anthropic", modelId: "claude-sonnet-5" },
+    });
+
+    expect(acceptance).toEqual({
+      threadId: SESSION_ID,
+      acceptedAt: 0,
+      messageCountBefore: 2,
+      messageId: "msg_ask",
+      alreadyPresent: false,
+      retried: true,
+    });
+    expect(double.requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+      "GET /workspace/ws_1/opencode/session/ses_1/message",
+      "DELETE /workspace/ws_1/opencode/session/ses_1/message/msg_reply",
+      "DELETE /workspace/ws_1/opencode/session/ses_1/message/msg_ask",
+      "POST /workspace/ws_1/opencode/session/ses_1/prompt_async",
+    ]);
+    expect(double.requests[3]?.body).toEqual({
+      parts: [{ type: "text", text: "Run the report." }],
+      messageID: "msg_ask",
+      model: { providerID: "anthropic", modelID: "claude-sonnet-5" },
+    });
+    // The earlier exchange is untouched; only the retried turn was removed before the engine recreates it.
+    expect(double.messages.map((message) => message.info.id)).toEqual(["msg_1", "msg_2"]);
+  });
+
+  test("sends a message the engine never held instead of deleting anything", async () => {
+    const double = createOpenworkDouble({ messages: [reply("msg_1", "user", "Earlier"), reply("msg_2", "assistant", "Done.", "msg_1")] });
+
+    const acceptance = await createClient(double).retryTurn(SESSION_ID, { prompt: "Run it.", messageId: "msg_new" });
+
+    expect(acceptance).toMatchObject({ messageCountBefore: 2, messageId: "msg_new", alreadyPresent: false, retried: false });
+    expect(double.requests.map(({ method }) => method)).toEqual(["GET", "POST"]);
+    expect(double.requests[1]?.body).toEqual({ parts: [{ type: "text", text: "Run it." }], messageID: "msg_new" });
+  });
+
+  test("refuses to redo a turn that a later message has already followed", async () => {
+    const double = createOpenworkDouble({
+      messages: [reply("msg_ask", "user", "First."), failed, reply("msg_later", "user", "Second.")],
+    });
+
+    await expect(createClient(double).retryTurn(SESSION_ID, { prompt: "First.", messageId: "msg_ask" })).rejects.toMatchObject({
+      code: "not_last_turn",
+      status: 409,
+    });
+    expect(double.requests.map(({ method }) => method)).toEqual(["GET"]);
+    expect(double.messages).toHaveLength(3);
+  });
+
+  test("surfaces a refused deletion as a headless thread error and sends nothing", async () => {
+    const double = createOpenworkDouble({ messages: [reply("msg_ask", "user", "First."), failed] });
+    const fetchImpl: HeadlessFetch = async (url, init) => {
+      if (init?.method === "DELETE") return Response.json({ code: "busy", message: "Session is busy" }, { status: 409 });
+      return double.fetchImpl(url, init);
+    };
+    const client = createHeadlessThreadClient({ baseUrl: BASE_URL, workspaceId: "ws_1", token: "owt_test", fetch: fetchImpl });
+
+    await expect(client.retryTurn(SESSION_ID, { prompt: "First.", messageId: "msg_ask" })).rejects.toBeInstanceOf(HeadlessThreadError);
+    expect(double.requests.map(({ method }) => method)).toEqual(["GET"]);
+  });
+});
+
 describe("getThreadSnapshot", () => {
   test("reads session, messages, todos, and status in parallel", async () => {
     const requests: string[] = [];
@@ -358,11 +452,12 @@ describe("getThreadSnapshot", () => {
 
     const pending = client.getThreadSnapshot(SESSION_ID);
     await allStarted;
+    // All four go out together; the status read leads because it decides what the rest means.
     expect(requests).toEqual([
+      "/workspace/ws_1/opencode/session/status",
       "/workspace/ws_1/opencode/session/ses_1",
       "/workspace/ws_1/opencode/session/ses_1/message",
       "/workspace/ws_1/opencode/session/ses_1/todo",
-      "/workspace/ws_1/opencode/session/status",
     ]);
     releaseRequests();
 
@@ -378,6 +473,138 @@ describe("getThreadSnapshot", () => {
 
     expect(snapshot.status).toEqual({ type: "idle" });
   });
+
+  test("carries the engine's reason for a retry and leaves its remedy copy behind", async () => {
+    // The engine names the free model's shared limit and attaches an upsell; a client gets the reason only.
+    const double = createOpenworkDouble({
+      beats: [{
+        status: {
+          type: "retry",
+          attempt: 2,
+          message: "Free usage exceeded, subscribe to Go",
+          next: 9_000,
+          action: { reason: "free_tier_limit", provider: "opencode", title: "Free limit reached", message: "Subscribe to OpenCode Go…", label: "subscribe", link: "https://example.invalid/go" },
+        },
+        messages: [reply("msg_1", "user")],
+      }],
+    });
+
+    const snapshot = await createClient(double).getThreadSnapshot(SESSION_ID);
+
+    expect(snapshot.status).toEqual({ type: "retry", attempt: 2, message: "Free usage exceeded, subscribe to Go", next: 9_000, reason: "free_tier_limit" });
+    expect(JSON.stringify(snapshot.status)).not.toMatch(/OpenCode Go|example\.invalid|Free limit reached/);
+  });
+
+  test("reads an ordinary retry as one without a reason", async () => {
+    const double = createOpenworkDouble({
+      beats: [{ status: { type: "retry", attempt: 1, message: "rate limited", next: 5 }, messages: [reply("msg_1", "user")] }],
+    });
+
+    const snapshot = await createClient(double).getThreadSnapshot(SESSION_ID);
+
+    expect(snapshot.status).toEqual({ type: "retry", attempt: 1, message: "rate limited", next: 5, reason: null });
+  });
+
+  test("reads the engine's APIError shape: isRetryable and the provider's own error type", async () => {
+    const failed = reply("msg_failed", "assistant", undefined, "msg_1");
+    failed.info.error = {
+      name: "APIError",
+      data: {
+        message: "Error from provider (Console): Rate limit exceeded. Please try again later.",
+        statusCode: 429,
+        isRetryable: true,
+        responseBody: '{"type":"error","error":{"type":"FreeUsageLimitError","message":"Error from provider (Console): Rate limit exceeded. Please try again later."}}',
+      },
+    };
+    const openAiShaped = reply("msg_failed_2", "assistant", undefined, "msg_2");
+    openAiShaped.info.error = {
+      name: "APIError",
+      data: { message: "You exceeded your current quota.", statusCode: 429, isRetryable: false, responseBody: '{"error":{"message":"You exceeded your current quota.","type":"insufficient_quota","code":"insufficient_quota"}}' },
+    };
+    const bodyless = reply("msg_failed_3", "assistant", undefined, "msg_3");
+    bodyless.info.error = { name: "APIError", data: { message: "503 overloaded", statusCode: 503, isRetryable: true, responseBody: "<html>Bad gateway</html>" } };
+    const double = createOpenworkDouble({ messages: [reply("msg_1", "user"), failed, reply("msg_2", "user"), openAiShaped, reply("msg_3", "user"), bodyless] });
+
+    const snapshot = await createClient(double).getThreadSnapshot(SESSION_ID);
+
+    expect(snapshot.messages.map((message) => message.error)).toEqual([
+      null,
+      { name: "APIError", message: "Error from provider (Console): Rate limit exceeded. Please try again later.", retryable: true, providerError: "FreeUsageLimitError" },
+      null,
+      { name: "APIError", message: "You exceeded your current quota.", retryable: false, providerError: "insufficient_quota" },
+      null,
+      { name: "APIError", message: "503 overloaded", retryable: true, providerError: null },
+    ]);
+  });
+
+  test("preserves tool input, result, error, and MCP App metadata from the native wire state", async () => {
+    const appResult = { content: [{ type: "text", text: "Team pulse" }], _meta: { receipt: "fixed" } };
+    const double = createOpenworkDouble({
+      messages: [{
+        info: { id: "msg_tool", role: "assistant", time: { created: 1 } },
+        parts: [{
+          id: "prt_tool",
+          type: "tool",
+          tool: "chapter_notes_open_team_pulse",
+          callID: "call_tool",
+          state: {
+            status: "completed",
+            input: { team: "operations" },
+            output: "Team pulse",
+            error: "",
+            metadata: { openworkMcpApp: appResult },
+          },
+        }],
+      }],
+    });
+
+    const snapshot = await createClient(double).getThreadSnapshot(SESSION_ID);
+
+    expect(snapshot.messages[0]?.parts[0]).toMatchObject({
+      toolInput: { team: "operations" },
+      toolOutput: "Team pulse",
+      toolError: "",
+      toolMetadata: { openworkMcpApp: appResult },
+    });
+  });
+
+  test("attributes assistant replies to the model the engine recorded and leaves user turns unattributed", async () => {
+    const double = createOpenworkDouble({
+      messages: [
+        { info: { id: "msg_user", role: "user", time: { created: 1 } }, parts: [{ id: "prt_user", type: "text", text: "Ping" }] },
+        {
+          info: { id: "msg_reply", role: "assistant", parentID: "msg_user", providerID: "openwork", modelID: "fable", time: { created: 2 } },
+          parts: [{ id: "prt_reply", type: "text", text: "Pong" }],
+        },
+        // A reply the engine accepted but has not bound to a model yet carries no attribution.
+        { info: { id: "msg_pending", role: "assistant", parentID: "msg_user", time: { created: 3 } }, parts: [] },
+      ],
+    });
+
+    const snapshot = await createClient(double).getThreadSnapshot(SESSION_ID);
+
+    expect(snapshot.messages.map((message) => message.model)).toEqual([
+      null,
+      { providerId: "openwork", modelId: "fable" },
+      null,
+    ]);
+    const transcript = await createClient(double).exportTranscript(SESSION_ID);
+    expect(transcript.messages[1]?.model).toEqual({ providerId: "openwork", modelId: "fable" });
+  });
+
+  test("tells a finished reply from one the engine was cut off while writing", async () => {
+    const double = createOpenworkDouble({
+      messages: [
+        { info: { id: "msg_user", role: "user", time: { created: 1 } }, parts: [{ id: "prt_user", type: "text", text: "Ping" }] },
+        { info: { id: "msg_done", role: "assistant", parentID: "msg_user", time: { created: 2, completed: 5 } }, parts: [{ id: "prt_done", type: "text", text: "Pong" }] },
+        { info: { id: "msg_cut", role: "assistant", parentID: "msg_user", time: { created: 6 } }, parts: [{ id: "prt_cut", type: "text", text: "Po" }] },
+      ],
+    });
+
+    const transcript = await createClient(double).exportTranscript(SESSION_ID);
+
+    expect(transcript.messages.map((message) => message.completedAt)).toEqual([null, 5, null]);
+  });
 });
 
 describe("waitForThread", () => {
@@ -388,6 +615,9 @@ describe("waitForThread", () => {
     const double = createOpenworkDouble({
       beats: [
         { status: { type: "idle" }, messages: [reply("msg_1", "user")] },
+        // A completed tool step is not the final reply: the latest assistant
+        // placeholder still has no completion timestamp.
+        { status: { type: "idle" }, messages: [reply("msg_1", "user"), reply("msg_tool", "assistant", "Checked the source."), { info: { id: "msg_2", role: "assistant", time: { created: 1 } }, parts: [] }] },
         { status: { type: "busy" }, messages: [reply("msg_1", "user")] },
         { status: { type: "retry", attempt: 1, message: "rate limited", next: 5 }, messages: [reply("msg_1", "user")] },
         { status: { type: "idle" }, messages: [reply("msg_1", "user"), reply("msg_2", "assistant", "Answer.")] },
@@ -397,10 +627,31 @@ describe("waitForThread", () => {
     const result = await createClient(double).waitForThread(SESSION_ID, { timeoutMs: 10_000, pollIntervalMs: 100 });
 
     expect(result.outcome).toBe("settled");
-    expect(result.polls).toBe(4);
+    expect(result.polls).toBe(5);
     expect(result.observedRunning).toBe(true);
-    expect(result.waitedMs).toBe(300);
+    expect(result.waitedMs).toBe(400);
     expect(result.snapshot.status).toEqual({ type: "idle" });
+  });
+
+  test("polls a running turn by its status alone and reads the transcript once it may have settled", async () => {
+    const double = createOpenworkDouble({
+      beats: [
+        { status: { type: "busy" }, messages: [reply("msg_1", "user")] },
+        { status: { type: "busy" }, messages: [reply("msg_1", "user")] },
+        { status: { type: "idle" }, messages: [reply("msg_1", "user"), reply("msg_2", "assistant", "Answer.")] },
+      ],
+    });
+
+    const result = await createClient(double).waitForThread(SESSION_ID, { timeoutMs: 10_000, pollIntervalMs: 100 });
+
+    expect(result.outcome).toBe("settled");
+    expect(result.polls).toBe(3);
+    const reads = (suffix: string) => double.requests.filter((request) => request.method === "GET" && request.path.endsWith(suffix)).length;
+    // Three status reads, but the growing transcript was read only when the status stopped saying busy.
+    expect(reads("/session/status")).toBe(3);
+    expect(reads(`/session/${SESSION_ID}/message`)).toBe(1);
+    expect(reads(`/session/${SESSION_ID}/todo`)).toBe(1);
+    expect(result.snapshot.messages.at(-1)?.id).toBe("msg_2");
   });
 
   test("ignores an assistant reply that predates the turn being waited on", async () => {
@@ -455,6 +706,30 @@ describe("waitForThread", () => {
 
     expect(result.outcome).toBe("aborted");
     expect(result.polls).toBe(0);
+  });
+
+  test("an abort that lands while a poll is in flight reads as aborted, not as a failed request", async () => {
+    const controller = new AbortController();
+    let polls = 0;
+    const double = createOpenworkDouble({ beats: [{ status: { type: "busy" }, messages: [reply("msg_1", "user")] }] });
+    const fetchImpl: HeadlessFetch = async (url, init) => {
+      if (new URL(url).pathname.endsWith("/session/status") && init?.signal) {
+        polls += 1;
+        // The caller stops while this read is in flight: the request itself rejects with the abort.
+        if (polls === 2) {
+          controller.abort();
+          throw new DOMException("This operation was aborted", "AbortError");
+        }
+      }
+      return double.fetchImpl(url, init);
+    };
+    const client = createHeadlessThreadClient({ baseUrl: BASE_URL, workspaceId: "ws_1", token: "owt_test", fetch: fetchImpl, sleep: async () => {} });
+
+    const result = await client.waitForThread(SESSION_ID, { timeoutMs: 10_000, pollIntervalMs: 100, signal: controller.signal });
+
+    expect(result.outcome).toBe("aborted");
+    expect(result.polls).toBe(1);
+    expect(result.observedRunning).toBe(true);
   });
 
   test("aborting mid-wait stops polling after the in-flight beat and never calls abortThread implicitly", async () => {
@@ -516,7 +791,11 @@ describe("waitForThread", () => {
   test("reports a terminal assistant error", async () => {
     const failed = reply("msg_failed", "assistant", undefined, "msg_run_1");
     failed.info.error = { name: "ProviderAuthError", data: { message: "Reconnect the provider." } };
-    const double = createOpenworkDouble({ beats: [{ status: { type: "idle" }, messages: [failed] }] });
+    const double = createOpenworkDouble({ beats: [{ status: { type: "idle" }, messages: [
+      reply("msg_tool_step", "assistant", "Checked the source.", "msg_run_1"),
+      failed,
+      reply("msg_other", "assistant", "Unrelated reply", "msg_other_user"),
+    ] }] });
 
     const result = await createClient(double).waitForThread(SESSION_ID, {
       timeoutMs: 1_000,
@@ -579,7 +858,8 @@ describe("failures", () => {
     if (!(error instanceof HeadlessThreadError)) throw new Error("expected a HeadlessThreadError");
     expect(error.code).toBe("request_failed");
     expect(error.method).toBe("GET");
-    expect(error.path).toBe("/workspace/ws_1/opencode/session/ses_1");
+    // The status read is asked first, so it is the one whose bound trips.
+    expect(error.path).toBe("/workspace/ws_1/opencode/session/status");
     expect(error.status).toBeNull();
   });
 
