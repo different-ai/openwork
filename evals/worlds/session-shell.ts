@@ -1,7 +1,7 @@
 import { browserScript } from "@openwork/cdp";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
-import { engineSessionProbe, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
+import { engineSessionProbe, observeSidebarExpansion, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
 import { resolveEvalEngine } from "@openwork/env";
 import type { Seed } from "@openwork/env";
 import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
@@ -197,6 +197,43 @@ export async function sidebarOverflow(seed: Seed) {
   const workspace = await seed.workspace(app, workspacePath);
   const sessions = await seed.sessions(app, [longTitle]);
   return { app, workspace, workspacePath, sessions, longTitle };
+}
+
+export async function sidebarExpansion(seed: Seed, mode: "workspace" | "group" | "ungrouped") {
+  const app = await seed.desktop({ name: `sidebar-${mode}-expansion` });
+  await app.client.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 600, deviceScaleFactor: 1, mobile: false });
+  const workspace = await seed.workspace(app, seed.tmpPath(`sidebar-${mode}`));
+  const sessions = await seed.sessions(app, Array.from({ length: 20 }, (_, index) => `Expansion task ${String(index + 1).padStart(2, "0")}`));
+  const [neighbor] = await seed.sessions(app, ["Neighbor task"]);
+  if (!neighbor) throw new Error("Sidebar expansion neighbor was not created");
+  const groups = mode === "workspace" ? [] : [
+    ...(mode === "group" ? [{ id: "grp_expansion", label: "Expansion group" }] : []),
+    { id: "grp_neighbor", label: "Neighbor group" },
+  ];
+  const assignments = mode === "workspace" ? {} : Object.fromEntries([
+    ...sessions.flatMap(session => mode === "group" ? [[session.sessionId, "grp_expansion"]] : []),
+    [neighbor.sessionId, "grp_neighbor"],
+  ]);
+  // Persist real group state and manual order before reload; no component/store imports.
+  await seed.evalIn(app, browserScript(async (workspaceId, groups, assignments, ids) => {
+    const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    if (!info?.baseUrl) throw new Error("Sidebar seed needs the local server");
+    const response = await fetch(`${info.baseUrl.replace(/\/+$/, "")}/workspace/${encodeURIComponent(workspaceId)}/session-groups`, {
+      method: "PUT", headers: { Authorization: `Bearer ${info.ownerToken ?? info.clientToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ state: { groups, assignments } }), signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error(`Sidebar group seed failed: ${response.status}`);
+    localStorage.setItem("openwork.react.sessionManagement", JSON.stringify({ state: {
+      pinnedIds: [], unreadIds: [], orderByWorkspace: { [workspaceId]: ids },
+      groupsByWorkspace: { [workspaceId]: { groups, assignments, collapsedGroupIds: [] } },
+    }, version: 0 }));
+  }, [workspace.workspaceId, groups, assignments, [...sessions.map(session => session.sessionId), neighbor.sessionId]]));
+  await app.client.send("Page.reload");
+  await waitFor(app, () => Boolean(document.querySelector('[data-sidebar-session-id]')) && Boolean(window.__openworkControl), {
+    timeoutMs: 60_000, label: "sidebar expansion fixture reloaded",
+  });
+  const observation = await observeSidebarExpansion(app);
+  return { app, workspace, sessions, neighbor, observation, [Symbol.asyncDispose]: () => observation[Symbol.asyncDispose]() };
 }
 
 export async function sidebarWorkspaceTitles(seed: Seed) {
