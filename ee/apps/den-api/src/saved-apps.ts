@@ -23,7 +23,9 @@ export async function shareSavedApp(context: PluginArchActorContext, appId: stri
   const resource: { context: PluginArchActorContext; resourceId: DenTypeId<"configObject">; resourceKind: "config_object" } = {
     context, resourceId: normalizeDenTypeId("configObject", view.configObjectId), resourceKind: "config_object",
   }
-  await requirePluginArchResourceRole({ ...resource, role: "manager" })
+  // Sharing a saved app with a teammate uses the existing signed-in session.
+  // Keep manager authorization without the step-up required by general access management.
+  await requirePluginArchResourceRole({ ...resource, requireFreshSession: false, role: "manager" })
   const organizationId = context.organizationContext.organization.id
   const [member] = await db.select({ id: MemberTable.id }).from(MemberTable)
     .innerJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
@@ -33,7 +35,7 @@ export async function shareSavedApp(context: PluginArchActorContext, appId: stri
   const grants = await listResourceAccess(resource)
   // Repeated shares must not downgrade an existing editor or manager grant.
   if (!grants.items.some((grant) => grant.orgMembershipId === member.id && !grant.removedAt)) {
-    await createResourceAccessGrant({ ...resource, value: { orgMembershipId: member.id, orgWide: false, role: "viewer" } })
+    await createResourceAccessGrant({ ...resource, requireFreshSession: false, value: { orgMembershipId: member.id, orgWide: false, role: "viewer" } })
   }
   const id = normalizeDenTypeId("artifactView", view.id)
   await db.insert(DashboardAppTable).values({ organization_id: organizationId, member_id: member.id, artifact_view_id: id })

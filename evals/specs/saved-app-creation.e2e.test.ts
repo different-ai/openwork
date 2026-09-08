@@ -1,7 +1,7 @@
 import { expect } from "vitest";
 import { saveWorkflow, runWorkflow } from "@openwork/behaviors";
 import { spec } from "@openwork/testkit";
-import { creationPrompt, creationReply, field, record, savedAppCreation } from "../worlds/saved-apps.ts";
+import { creationPrompt, creationReply, field, record, savedAppCreation, savedAppSharing } from "../worlds/saved-apps.ts";
 
 const test = spec.world(savedAppCreation, { timeout: 900_000 });
 
@@ -196,6 +196,7 @@ test("create, preview, save and reopen an app without changing already-open resu
 
   // Keep an exact preview mounted while another client changes the saved app.
   await world.open(`/dashboard${originalPath}`);
+  await user.see({ text: "Saved app" }, { timeoutMs: 30_000 });
   await probe.eventually(() => world.previewText(), { within: 30_000, label: "original preview mounted", until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
   await world.showDetails();
   const mountedText = await world.previewText();
@@ -295,6 +296,59 @@ test("create, preview, save and reopen an app without changing already-open resu
   });
   evidence.recordAssertionEvidence("Members can delete their own apps but cannot delete another member's private app", "The member created and retired their own saved app, removing its placement and workflow selection while preserving historical results; deleting the admin's app was rejected and that app stayed saved.", true);
 
+  const beforeDelete = await readWorkflow();
+  const beforeDeleteSnapshots = (await probe.api(world.den.admin, `/v1/workflows/${world.configObjectId}/snapshots`)).body;
+  await step("an admin cancels deletion in the app and confirms it on the dashboard", async () => {
+    await world.open(dashboardAppPath);
+    await user.click("App options for Team briefing");
+    await user.click("Delete Team briefing");
+    await user.see({ text: "Delete “Team briefing”?" });
+    await user.see({ text: "This removes the saved app from everyone’s dashboards and the app list. Its workflow and past results stay available." });
+    await user.screenshot();
+    await user.click("Cancel");
+    expect((await readApp()).onDashboard).toBe(true);
+    await world.open("/dashboard");
+    await user.click("App options for Team briefing");
+    await user.click("Delete Team briefing");
+    await user.click("Delete app");
+    await user.see({ text: "Make this dashboard yours" }, { timeoutMs: 30_000 });
+    await user.reload();
+    await user.see({ text: "Make this dashboard yours" }, { timeoutMs: 30_000 });
+    expect(record((await probe.api(world.den.admin, "/v1/apps")).body).items).toEqual([]);
+    expect((await readApp(originalPath))).toMatchObject({ onDashboard: false, view: { status: "retired", activeRevisionId: null }, payload: { data: { topic: "Launch briefing" } } });
+    expect((await readWorkflow()).currentVersion).toEqual(beforeDelete.currentVersion);
+    expect((await probe.api(world.den.admin, `/v1/workflows/${world.configObjectId}/snapshots`)).body).toEqual(beforeDeleteSnapshots);
+    expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
+    const readd = await seed.api(world.den.admin, `/v1/apps/${appId}/dashboard`, { method: "POST", body: JSON.stringify({ added: true }) });
+    expect(readd.response.status).toBe(404);
+    await user.screenshot();
+  });
+  evidence.recordAssertionEvidence("Admins can delete their own apps from the dashboard after a clear confirmation", "Delete is available in the open app and dashboard. Cancel preserves it; confirming removes it across reloads while retaining the workflow, historical results, and unrelated company dashboard.", true);
+
+  await step("Dashboard Add opens a creation conversation", async () => {
+    await world.open("/dashboard");
+    await user.click({ role: "button", label: "Add" });
+    await user.see("Choose an existing app");
+    await user.screenshot();
+    await user.click("Create with OpenWork");
+    await probe.eventually(() => probe.composer(), { within: 30_000, label: "app creation prompt", until: (composer) => JSON.stringify(composer).includes("Create a reusable app for my dashboard that") });
+    await user.screenshot();
+  });
+});
+
+spec.world(savedAppSharing, { timeout: 900_000 })("share dashboard apps with an aged authenticated desktop session", async ({ world, user, probe, seed, step, evidence }) => {
+  const { appId } = world;
+  const colleague = world.den.members.colleague;
+  if (!colleague) throw new Error("The second identity was not provisioned.");
+  const companyBefore = (await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body;
+  const readApp = async () => {
+    const response = await probe.api(world.den.admin, `/v1/apps/${appId}`);
+    expect(response.response.status, response.text).toBe(200);
+    return record(response.body);
+  };
+  await world.open("/dashboard");
+  await user.see({ role: "button", label: "Share" });
+
   // Use a separate workflow so sharing the selected app cannot grant indirect access to this one.
   const privateInput = { topic: "Private planning" };
   const privateCode = 'return { topic: input.topic };';
@@ -334,17 +388,37 @@ test("create, preview, save and reopen an app without changing already-open resu
   expect(unpinCompanion.response.status, unpinCompanion.text).toBe(200);
   expect((await probe.api(colleague, `/v1/apps/${companionAppId}`)).response.status).toBe(403);
 
-  await step("share dashboard apps with a teammate", async () => {
+  await step("share dashboard apps with a teammate without a second login", async () => {
     await world.open("/dashboard");
+    await user.reload();
+    await user.see("Open Private planning");
+    const signedIn = await world.desktopIdentity();
+    expect(signedIn).toMatchObject({ email: world.den.admin.email, usesAdminToken: true });
+    await world.ageSession(signedIn.sessionId);
+    const aged = await world.desktopIdentity();
+    expect(aged).toMatchObject({ sessionId: signedIn.sessionId, userId: signedIn.userId, email: signedIn.email, usesAdminToken: true });
+    expect(Date.now() - Date.parse(aged.createdAt)).toBeGreaterThanOrEqual(19 * 60_000);
+    expect(Date.parse(aged.expiresAt)).toBeGreaterThan(Date.now());
+    const expectOrdinaryGrantReauth = async () => {
+      const denied = await seed.api(world.den.admin, `/v1/config-objects/${privateWorkflowId}/access`, {
+        method: "POST", body: JSON.stringify({ orgWide: true, role: "viewer" }),
+      });
+      expect(denied.response.status, denied.text).toBe(403);
+      expect(denied.body).toMatchObject({ error: "reauth", reason: "fresh_auth_required" });
+      expect((await probe.api(colleague, `/v1/workflows/${privateWorkflowId}`)).response.status).toBe(403);
+    };
+    await expectOrdinaryGrantReauth();
     await user.click({ role: "button", label: "Share" });
     await user.see({ text: "Share your dashboard" });
     await user.click("Cancel");
+    await user.notSee({ text: "Share your dashboard" });
     expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
     const deniedShare = await seed.api(colleague, `/v1/apps/${appId}/share`, {
       method: "POST", body: JSON.stringify({ email: world.den.admin.email }),
     });
     expect(deniedShare.response.status).toBe(403);
     await user.click({ role: "button", label: "Share" });
+    await user.see({ text: "Share your dashboard" });
     await user.click({ role: "checkbox", label: "Private planning" });
     await user.screenshot();
     await user.type({ label: "Teammate’s email" }, "unknown@openwork.test");
@@ -354,14 +428,16 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.type({ label: "Teammate’s email" }, colleague.email, { replace: true });
     await user.click("Share apps");
     await user.see({ text: `Shared 1 app with ${colleague.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
+    expect(await world.desktopIdentity()).toEqual(aged);
+    await expectOrdinaryGrantReauth();
     const sharedApp = await probe.api(colleague, `/v1/apps/${appId}`);
     expect(sharedApp.response.status, sharedApp.text).toBe(200);
-    expect(sharedApp.body).toMatchObject({ onDashboard: true, canManage: false, view: { id: appId }, payload: { data: { topic: "Next week’s briefing" } } });
+    expect(sharedApp.body).toMatchObject({ onDashboard: true, canManage: false, view: { id: appId }, payload: { data: { topic: "Launch briefing" } } });
     const sharedWorkflow = await probe.api(colleague, `/v1/workflows/${world.configObjectId}`);
     expect(sharedWorkflow.response.status, sharedWorkflow.text).toBe(200);
     const companion = await probe.api(colleague, `/v1/apps/${companionAppId}`);
     expect(companion.response.status, companion.text).toBe(200);
-    expect(companion.body).toMatchObject({ onDashboard: false, canManage: false, view: { id: companionAppId }, payload: { data: { topic: "Next week’s briefing" } } });
+    expect(companion.body).toMatchObject({ onDashboard: false, canManage: false, view: { id: companionAppId }, payload: { data: { topic: "Launch briefing" } } });
     const repeat = await seed.api(world.den.admin, `/v1/apps/${appId}/share`, {
       method: "POST", body: JSON.stringify({ email: colleague.email }),
     });
@@ -383,6 +459,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.screenshot();
     await user.click("Done");
   });
+  evidence.recordAssertionEvidence("An authenticated desktop can share dashboard apps without a second login after its session becomes stale", "The desktop's actual bearer session still authenticated as the same admin after its creation time was aged by 20 minutes. Ordinary access grants returned fresh_auth_required before and after sharing without exposing the private workflow. Dashboard Share succeeded through the UI with the same session ID and aged creation time, without a login or session refresh.", true);
   evidence.recordAssertionEvidence("Dashboard Share grants a teammate view access and adds the selected app to their dashboard", "Cancel and an unknown email left the app private. Sharing made one saved app visible on the recipient dashboard without manager access; repeat sharing did not duplicate it, the unchecked app and its separate workflow remained private, viewers could not reshare, and company dashboards stayed unchanged.", true);
   evidence.recordAssertionEvidence("Sharing includes the workflow, saved results, and sibling apps without adding every sibling to the dashboard", "The recipient could read the workflow and the latest saved result in both the selected app and its previously inaccessible companion. Both appeared in the accessible app list, but only the selected app was on their dashboard; the separate private workflow stayed inaccessible.", true);
 
@@ -390,43 +467,4 @@ test("create, preview, save and reopen an app without changing already-open resu
   expect(cleanupCompanion.response.status, cleanupCompanion.text).toBe(200);
   const cleanupPrivate = await seed.api(world.den.admin, `/v1/artifact-views/${privateAppId}/retire`, { method: "POST" });
   expect(cleanupPrivate.response.status, cleanupPrivate.text).toBe(200);
-
-  const beforeDelete = await readWorkflow();
-  const beforeDeleteSnapshots = (await probe.api(world.den.admin, `/v1/workflows/${world.configObjectId}/snapshots`)).body;
-  await step("an admin cancels deletion in the app and confirms it on the dashboard", async () => {
-    await world.open(dashboardAppPath);
-    await user.click("App options for Team briefing");
-    await user.click("Delete Team briefing");
-    await user.see({ text: "Delete “Team briefing”?" });
-    await user.see({ text: "This removes the saved app from everyone’s dashboards and the app list. Its workflow and past results stay available." });
-    await user.screenshot();
-    await user.click("Cancel");
-    expect((await readApp()).onDashboard).toBe(true);
-    await world.open("/dashboard");
-    await user.click("App options for Team briefing");
-    await user.click("Delete Team briefing");
-    await user.click("Delete app");
-    await user.see({ text: "Make this dashboard yours" }, { timeoutMs: 30_000 });
-    await user.reload();
-    await user.see({ text: "Make this dashboard yours" }, { timeoutMs: 30_000 });
-    expect(record((await probe.api(world.den.admin, "/v1/apps")).body).items).toEqual([]);
-    expect((await readApp(originalPath))).toMatchObject({ onDashboard: false, view: { status: "retired", activeRevisionId: null }, payload: { data: { topic: "Launch briefing" } } });
-    expect((await readWorkflow()).currentVersion).toEqual(beforeDelete.currentVersion);
-    expect((await probe.api(world.den.admin, `/v1/workflows/${world.configObjectId}/snapshots`)).body).toEqual(beforeDeleteSnapshots);
-    expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
-    const readd = await seed.api(world.den.admin, `/v1/apps/${appId}/dashboard`, { method: "POST", body: JSON.stringify({ added: true }) });
-    expect(readd.response.status).toBe(404);
-    await user.screenshot();
-  });
-  evidence.recordAssertionEvidence("Admins can delete their own apps from the dashboard after a clear confirmation", "Delete is available in the open app and dashboard. Cancel preserves it; confirming removes it across reloads while retaining the workflow, historical results, and unrelated company dashboard.", true);
-
-  await step("Dashboard Add opens a creation conversation", async () => {
-    await world.open("/dashboard");
-    await user.click({ role: "button", label: "Add" });
-    await user.see("Choose an existing app");
-    await user.screenshot();
-    await user.click("Create with OpenWork");
-    await probe.eventually(() => probe.composer(), { within: 30_000, label: "app creation prompt", until: (composer) => JSON.stringify(composer).includes("Create a reusable app for my dashboard that") });
-    await user.screenshot();
-  });
 });

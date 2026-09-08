@@ -2547,9 +2547,9 @@ export async function listMeLibraryConnectionItems(input: {
   })
 }
 
-export async function createResourceAccessGrant(input: { context: PluginArchActorContext; value: AccessGrantWrite } & ResourceTarget) {
+export async function createResourceAccessGrant(input: { context: PluginArchActorContext; requireFreshSession?: boolean; value: AccessGrantWrite } & ResourceTarget) {
   await ensureResourceInOrganization(input.context, input)
-  await requirePluginArchResourceRole({ context: input.context, resourceId: input.resourceId, resourceKind: input.resourceKind, role: "manager" })
+  await requirePluginArchResourceRole({ context: input.context, requireFreshSession: input.requireFreshSession, resourceId: input.resourceId, resourceKind: input.resourceKind, role: "manager" })
   if (input.value.orgWide === true && !isPluginArchOrgAdmin(input.context)) {
     throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can grant org-wide access.")
   }

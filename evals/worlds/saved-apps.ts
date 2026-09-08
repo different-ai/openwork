@@ -1,7 +1,8 @@
 import { browserScript } from "@openwork/cdp";
-import type { Seed } from "@openwork/env";
-import { go, runWorkflow, saveWorkflow } from "@openwork/behaviors";
+import { queryDenDatabase, type Seed } from "@openwork/env";
+import { denFetch, go, runWorkflow, saveWorkflow } from "@openwork/behaviors";
 import { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
+import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import { configureProvider } from "./chat.ts";
 
 export const creationPrompt = "Create a reusable app for my dashboard that shows a weekly briefing using my existing Weekly briefing workflow.";
@@ -23,12 +24,20 @@ export function field(value: unknown, key: string): string {
 
 export async function savedAppCreation(seed: Seed) {
   const den = await seed.den({
-    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_DASHBOARDS_ENABLED: "true" },
+    env: {
+      DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_DASHBOARDS_ENABLED: "true",
+      // Whitespace bypasses the dev script's empty-value Redis default, then
+      // normalizes to unconfigured. SQL session aging must not hit a warm cache.
+      DATABASE_REDIS_URL: " ",
+    },
     org: { name: `Saved Apps ${Date.now()}`, members: { colleague: { name: "Colleague" } } },
     mocks: {
       tracker: seed.mock({ allowUnauthenticatedMcp: true, appToolName: "search_issues_using_jql" }),
     },
   });
+  if (!den.placement || (den.placement.kind === "local" && !den.database)) {
+    throw new Error("Session aging requires a disposable Den with its own database, not an attached server.");
+  }
   const connection = await seed.orgConnection(den.admin, {
     name: "Issue tracker", url: den.mocks.tracker.mcpUrl,
     authType: "none", credentialMode: "shared", access: { orgWide: true },
@@ -135,6 +144,31 @@ export async function savedAppCreation(seed: Seed) {
   };
   return {
     app, den, proxy, resetProxy, workspace, configObjectId, dashboardId, rpc, run,
+    async desktopIdentity() {
+      const token = await evaluate(app.client, () => localStorage.getItem("openwork.den.authToken"));
+      if (typeof token !== "string" || !token) throw new Error("The desktop has no authenticated Den session.");
+      const response = await denFetch(den.ref, "/v1/me", { headers: { authorization: `Bearer ${token}` } });
+      if (response.response.status !== 200) throw new Error(`Desktop identity request failed (${response.response.status}).`);
+      const body = record(response.body);
+      return {
+        sessionId: field(body.session, "id"), createdAt: field(body.session, "createdAt"),
+        expiresAt: field(body.session, "expiresAt"), userId: field(body.user, "id"),
+        email: field(body.user, "email"), usesAdminToken: token === den.admin.token,
+      };
+    },
+    async ageSession(sessionId: string) {
+      const id = `0x${Buffer.from(sessionId).toString("hex")}`;
+      const statement = `UPDATE session SET created_at=DATE_SUB(NOW(3), INTERVAL 20 MINUTE) WHERE CAST(id AS BINARY)=${id};`;
+      if (den.placement?.kind === "daytona") {
+        await execInSandbox(defaultDaytonaExec, den.placement.sandboxId,
+          `echo ${Buffer.from(statement).toString("base64")} | base64 -d | mysql -h127.0.0.1 -uroot -ppassword -N openwork_den`,
+          { timeoutMs: 30_000, context: "Saved-app desktop session aging" });
+      } else if (den.database) {
+        await queryDenDatabase(den.database.url, statement);
+      } else {
+        throw new Error("Session aging requires the disposable Den database.");
+      }
+    },
     open: (path: string) => go(app, path),
     previewText: async () => String(await inPreview("read")),
     showDetails: () => inPreview("details"),
@@ -148,4 +182,20 @@ export async function savedAppCreation(seed: Seed) {
       return field(next.revisions[0], "id");
     },
   };
+}
+
+export async function savedAppSharing(seed: Seed) {
+  const world = await savedAppCreation(seed);
+  const built = await world.rpc("save_artifact_view", {
+    configObjectId: world.configObjectId, title: "Team briefing",
+    reactSource: 'export default function Briefing({data}) { return <p>{data.topic}</p> }',
+  });
+  const view = record(record(built.structuredContent).view);
+  const appId = field(view, "id");
+  if (!Array.isArray(view.revisions) || !view.revisions[0]) throw new Error("Sharing app has no revision.");
+  const saved = await seed.api(world.den.admin, `/v1/apps/${appId}/save`, {
+    method: "POST", body: JSON.stringify({ revisionId: field(view.revisions[0], "id"), title: "Team briefing", useInWorkflow: true, expectedActiveRevisionId: null }),
+  });
+  if (saved.response.status !== 200) throw new Error(`Sharing app setup failed: ${saved.text}`);
+  return { ...world, appId };
 }
