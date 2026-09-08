@@ -3827,7 +3827,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Get my managed inference access
    *
-   * Returns the signed-in joined member's access and person-wide weekly free allowance, without credentials or administrative settings.
+   * Returns the signed-in joined member's access and person-wide weekly free allowance, without credentials or administrative settings. The catalog describes registered, enabled managed aliases for discovery only; clients must intersect it with their available, policy-filtered provider models. Plan allowances describe the current paid tier or the entry paid tier offered on upgrade; a null price requires review on the billing page.
    */
   public getV1InferenceAccess<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<

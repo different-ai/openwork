@@ -22,11 +22,11 @@ import { t } from "@/i18n";
 import { readDenSettings } from "@/app/lib/den";
 import { modelEquals, resolveProviderDisplayName } from "../../../../app/utils";
 import type { ModelOption, ModelRef } from "../../../../app/types";
-import { isRecommendedModel } from "../../../../app/defaults";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { useDenAuth } from "../../cloud/den-auth-provider";
-import { InferenceAllowanceSummary, useInferenceAccess } from "../../cloud/inference-access-provider";
-import { markExplicitModelChoice } from "@/app/lib/inference-access";
+import { InferenceAllowanceSummary, OwnProviderAction, useInferenceAccess } from "../../cloud/inference-access-provider";
+import { managedModelAccessLabel, managedModelRecommendation, managedModelRecommendations, markExplicitModelChoice, modelSelectionUpgradeReason } from "@/app/lib/inference-access";
+import { modelRefKey, useModelCollectionsStore } from "../models/model-collections-store";
 import { usePlatform } from "../../../kernel/platform";
 import {
   OPENWORK_MODELS_PROVIDER_ID,
@@ -121,6 +121,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   const [refreshingOrganizationModels, setRefreshingOrganizationModels] = useState(false);
   const denAuth = useDenAuth();
   const inference = useInferenceAccess();
+  const requested = inference.pickerRequest?.sessionId === props.sessionId ? inference.pickerRequest?.model : undefined;
   const platform = usePlatform();
   const organizationModelsSettingsUrl = props.organizationModelsSettingsUrl;
   const organizationProviderLabel = useMemo(
@@ -136,9 +137,9 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   // Reset on open
   useEffect(() => {
     if (props.open) {
-      props.setQuery("");
+      props.setQuery(requested?.modelID ?? "");
     }
-  }, [props.open]);
+  }, [props.open, requested?.modelID]);
 
   // Focus search
   useEffect(() => {
@@ -151,17 +152,22 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   const filteredOptions = useMemo(() => {
     const q = props.query.trim().toLowerCase();
     if (!q) return props.options;
-    return props.options.filter(
-      (o) =>
+    return props.options.filter((o) => {
+      const recommendation = managedModelRecommendation(inference.access, o);
+      return (
         o.title.toLowerCase().includes(q) ||
         o.providerID.toLowerCase().includes(q) ||
         o.modelID.toLowerCase().includes(q) ||
-        (o.description ?? "").toLowerCase().includes(q),
-    );
-  }, [props.options, props.query]);
+        (o.description ?? "").toLowerCase().includes(q) ||
+        [recommendation?.displayName, recommendation?.providerName, recommendation?.summary, ...(recommendation?.capabilities ?? [])].some((text) => text?.toLowerCase().includes(q))
+      );
+    });
+  }, [props.options, props.query, inference.access]);
 
   // Group by provider
   const providerGroups = useMemo<ProviderGroup[]>(() => {
+    const recommendations = managedModelRecommendations(inference.access, props.options);
+    const ranks = new Map(recommendations.map((option, index) => [modelRefKey(option), index]));
     const map = new Map<string, ProviderGroup>();
     for (const opt of filteredOptions) {
       let group = map.get(opt.providerID);
@@ -178,7 +184,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
         };
         map.set(opt.providerID, group);
       }
-      if (isRecommendedModel(opt.modelID)) {
+      if (ranks.has(modelRefKey(opt))) {
         group.recommended.push(opt);
       } else {
         group.other.push(opt);
@@ -189,16 +195,17 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     }
     const groups = [...map.values()];
     for (const group of groups) {
-      group.recommended.sort((a, b) => a.title.localeCompare(b.title));
+      group.recommended.sort((a, b) => (ranks.get(modelRefKey(a)) ?? 0) - (ranks.get(modelRefKey(b)) ?? 0));
       group.other.sort((a, b) => a.title.localeCompare(b.title));
     }
     return groups.sort((a, b) => {
       if (a.isDisabled !== b.isDisabled) return a.isDisabled ? 1 : -1;
+      if ((a.id === OPENWORK_MODELS_PROVIDER_ID) !== (b.id === OPENWORK_MODELS_PROVIDER_ID)) return a.id === OPENWORK_MODELS_PROVIDER_ID ? -1 : 1;
       if (a.isNew !== b.isNew) return a.isNew ? -1 : 1;
       if (a.hasCurrent !== b.hasCurrent) return a.hasCurrent ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
-  }, [filteredOptions, props.current, disabledSet]);
+  }, [filteredOptions, props.current, props.options, disabledSet, inference.access]);
 
   // Auto-expand on search
   useEffect(() => {
@@ -244,11 +251,12 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   }, []);
 
   const handleSelect = (opt: ModelOption) => {
-    if (!inference.checkSelection(opt, props.sessionId)) {
+    if (!inference.checkSelection(opt, props.sessionId, props.options.filter((option) => !disabledSet.has(option.providerID)), props.current)) {
       props.onClose({ restorePromptFocus: false });
       return;
     }
     markExplicitModelChoice();
+    useModelCollectionsStore.getState().recordRecent(opt);
     props.onSelect({ providerID: opt.providerID, modelID: opt.modelID });
   };
 
@@ -287,13 +295,14 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
         if (!open) props.onClose();
       }}
     >
-      <DialogContent className="flex max-h-[calc(100vh-2rem)] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
+      <DialogContent data-testid="all-models-picker" className="flex max-h-[calc(100vh-2rem)] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("models.title")}</DialogTitle>
           <DialogDescription>
             {resolveModelPickerSubtitle(props.subtitle)}
           </DialogDescription>
           <InferenceAllowanceSummary available={props.options.some((option) => option.providerID === "openwork")} />
+          {requested ? <p role="status" className="text-sm text-muted-foreground" data-testid="requested-model-ready">Select {managedModelRecommendation(inference.access, requested)?.displayName ?? requested.title ?? requested.modelID} to use it. Your model and draft are unchanged.</p> : null}
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col">
@@ -305,6 +314,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               type="text"
               className="h-10 w-full rounded-xl border border-dls-border bg-dls-surface pl-9 pr-3 text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
               placeholder={t("models.search_placeholder")}
+              aria-label="Search all models"
               value={props.query}
               onChange={(e) => props.setQuery(e.target.value)}
             />
@@ -319,7 +329,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                     <span>{OPENWORK_MODELS_PROVIDER_NAME}</span>
                   </div>
                   <div className="truncate text-[11px] text-dls-secondary">
-                    Included on your plan — pending workspace reload.
+                    Pending workspace reload.
                   </div>
                 </div>
               </div>
@@ -345,9 +355,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                   </Button>
                 ) : null}
                 {emptyState.showConnectProvider ? (
-                  <Button variant="outline" onClick={props.onOpenSettings}>
-                    {t("models.connect_provider")}
-                  </Button>
+                  <OwnProviderAction onBeforeOpen={() => props.onClose({ restorePromptFocus: false })} />
                 ) : null}
               </div>
             ) : (
@@ -357,6 +365,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                   group={group}
                   expanded={expandedProviders.has(group.id)}
                   current={props.current}
+                  requested={requested}
                   canToggleProvider={!!props.onToggleProvider}
                   onToggleExpand={() => toggleProvider(group.id)}
                   onToggleProvider={props.onToggleProvider}
@@ -370,6 +379,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
 
         {/* Footer */}
         <DialogFooter className="shrink-0">
+          {!props.restrictToCloud && !emptyState?.showConnectProvider ? <OwnProviderAction onBeforeOpen={() => props.onClose({ restorePromptFocus: false })} /> : null}
           <DialogClose render={<Button variant="outline" />}>
             {t("models.done")}
           </DialogClose>
@@ -387,6 +397,7 @@ function ProviderAccordion({
   group,
   expanded,
   current,
+  requested,
   canToggleProvider,
   onToggleExpand,
   onToggleProvider,
@@ -396,6 +407,7 @@ function ProviderAccordion({
   group: ProviderGroup;
   expanded: boolean;
   current: ModelRef;
+  requested?: ModelRef;
   canToggleProvider: boolean;
   onToggleExpand: () => void;
   onToggleProvider?: (providerId: string, enabled: boolean) => void;
@@ -413,6 +425,7 @@ function ProviderAccordion({
           type="button"
           className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-dls-hover"
           onClick={onToggleExpand}
+          aria-expanded={expanded}
         >
           <Chevron size={14} className="shrink-0 text-dls-secondary" />
           <ProviderIcon providerId={group.id} size={18} className="shrink-0 text-dls-text" />
@@ -462,7 +475,7 @@ function ProviderAccordion({
                 Recommended
               </div>
               {group.recommended.map((opt) => (
-                <DefaultModelRow key={opt.modelID} opt={opt} current={current} onSelect={onSelect} recommended />
+                <DefaultModelRow key={opt.modelID} opt={opt} current={current} requested={requested} onSelect={onSelect} />
               ))}
             </>
           ) : null}
@@ -474,7 +487,7 @@ function ProviderAccordion({
                 </div>
               ) : null}
               {group.other.map((opt) => (
-                <DefaultModelRow key={opt.modelID} opt={opt} current={current} onSelect={onSelect} />
+                <DefaultModelRow key={opt.modelID} opt={opt} current={current} requested={requested} onSelect={onSelect} />
               ))}
             </>
           ) : null}
@@ -489,27 +502,37 @@ function ProviderAccordion({
 /* ------------------------------------------------------------------ */
 
 function DefaultModelRow({
-  opt, current, onSelect, recommended,
+  opt, current, requested, onSelect,
 }: {
-  opt: ModelOption; current: ModelRef; onSelect: (opt: ModelOption) => void; recommended?: boolean;
+  opt: ModelOption; current: ModelRef; requested?: ModelRef; onSelect: (opt: ModelOption) => void;
 }) {
   const active = modelEquals(current, { providerID: opt.providerID, modelID: opt.modelID });
+  const highlighted = requested ? modelEquals(requested, opt) : false;
+  const { access } = useInferenceAccess();
+  const favorites = useModelCollectionsStore((state) => state.favorites);
+  const favorite = favorites.some((model) => modelEquals(model, opt));
+  const recommendation = managedModelRecommendation(access, opt);
+  const name = recommendation?.displayName ?? opt.title;
+  const accessLabel = managedModelAccessLabel(access, opt);
 
   return (
-    <button
-      type="button"
-      className={[
-        "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
-        active ? "bg-green-3/50" : "hover:bg-dls-hover",
-      ].join(" ")}
-      onClick={() => onSelect(opt)}
-    >
-      {recommended ? <Star size={12} className="shrink-0 text-amber-9" /> : <div className="w-3 shrink-0" />}
-      <div className="min-w-0 flex-1">
-        <span className={["text-[12px]", active ? "font-medium text-dls-text" : "text-dls-text"].join(" ")}>{opt.title}</span>
-        <span className="ml-2 font-mono text-[10px] text-dls-secondary/60">{opt.modelID}</span>
-      </div>
-      {active ? <Check size={14} className="shrink-0 text-green-11" /> : null}
-    </button>
+    <div className={`flex items-center gap-1 rounded-lg ${active ? "bg-green-3/50" : ""} ${highlighted ? "ring-2 ring-ring" : ""}`} data-requested={highlighted || undefined}>
+      <button type="button" disabled={opt.disabled} data-testid={`model-option-${opt.providerID}-${opt.modelID}`} data-checked={active}
+        aria-description={recommendation?.summary}
+        aria-label={`${name}${accessLabel ? `, ${accessLabel}` : ""}${active ? ", current model" : ""}${modelSelectionUpgradeReason(access, opt) === "free_allowance_exhausted" ? ", allowance used up" : ""}${modelSelectionUpgradeReason(access, opt) ? ", opens upgrade options without changing your model" : ""}`}
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-dls-hover focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" onClick={() => onSelect(opt)}>
+        <span className="min-w-0 flex-1">
+          <span className="block text-xs font-medium text-dls-text">{name}</span>
+          {recommendation?.summary ? <span className="block text-xs text-muted-foreground">{recommendation.summary}</span> : null}
+          {recommendation?.capabilities.length ? <span className="block text-[11px] text-muted-foreground">{recommendation.capabilities.join(" · ")}</span> : null}
+          <span className="block truncate font-mono text-[10px] text-dls-secondary/60">{opt.modelID}</span>
+        </span>
+        {accessLabel ? <span data-testid="model-access-label" className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{accessLabel}</span> : null}
+        {active ? <Check size={14} className="shrink-0 text-green-11" /> : null}
+      </button>
+      <button type="button" className="shrink-0 rounded-md p-1 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" aria-label={favorite ? `Remove ${name} from favorites` : `Add ${name} to favorites`} onClick={() => useModelCollectionsStore.getState().toggleFavorite(opt)}>
+        <Star size={14} fill={favorite ? "currentColor" : "none"} />
+      </button>
+    </div>
   );
 }

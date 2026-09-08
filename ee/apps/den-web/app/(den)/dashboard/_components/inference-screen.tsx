@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference";
+import { managedModelCatalog } from "@openwork/types/den/inference";
 import { DenButton } from "../../_components/ui/button";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { DenCard } from "../../_components/ui/card";
@@ -18,24 +18,6 @@ import { getBillingRoute, getCustomLlmProvidersRoute, getOrgAccessFlags } from "
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
-/**
- * Editorial detail per model: what a knowledge worker should reach for it for,
- * and the vendor monogram shown in the lineup table. Keyed by model alias so
- * unmapped models still render with sane defaults.
- */
-const MODEL_DETAILS: Record<string, { bestFor: string; monogram: string } | undefined> = {
-  "openai/gpt-5.6-luna": { bestFor: "Everyday knowledge work", monogram: "OA" },
-  "moonshotai/kimi-k3": { bestFor: "Research & synthesis", monogram: "MS" },
-  "z-ai/glm-5.2": { bestFor: "Multi-step tasks", monogram: "ZA" },
-  "moonshotai/kimi-k2.7-code": { bestFor: "Spreadsheets & scripts", monogram: "MS" },
-  "tencent/hy3-preview": { bestFor: "Long documents", monogram: "TC" },
-  "moonshotai/kimi-k2.6": { bestFor: "Everyday drafting", monogram: "MS" },
-  "deepseek/deepseek-v4-flash": { bestFor: "Quick summaries", monogram: "DS" },
-  "minimax/minimax-m2.7": { bestFor: "Tools & integrations", monogram: "MM" },
-  "minimax/minimax-m3": { bestFor: "Images & screenshots", monogram: "MM" },
-  "z-ai/glm-5.1": { bestFor: "Balanced default", monogram: "ZA" },
-};
-
 type LineupModel = {
   id: string;
   name: string;
@@ -43,17 +25,13 @@ type LineupModel = {
   monogram: string;
 };
 
-const MODEL_LINEUP: LineupModel[] = Object.entries(INFERENCE_MODEL_ALIASES)
-  .filter(([, model]) => model.enabled)
-  .map(([id, model]) => {
-    const detail = MODEL_DETAILS[id];
-    return {
-      id,
-      name: model.displayName.replace(/^OpenWork:\s*/, ""),
-      bestFor: detail?.bestFor ?? "General knowledge work",
-      monogram: detail?.monogram ?? id.split("/")[0].slice(0, 2).toUpperCase(),
-    };
-  });
+// Keep the upgrade page's task guidance aligned with the managed picker catalog.
+const MODEL_LINEUP: LineupModel[] = managedModelCatalog().map((model) => ({
+  id: model.modelID,
+  name: model.displayName,
+  bestFor: model.summary,
+  monogram: model.providerName.slice(0, 2).toUpperCase(),
+}));
 
 const MODEL_COLUMNS: readonly DenTableColumn<LineupModel>[] = [
   {
@@ -73,7 +51,7 @@ const MODEL_COLUMNS: readonly DenTableColumn<LineupModel>[] = [
   },
   {
     key: "bestFor",
-    header: "Best for",
+    header: "Use for",
     width: "190px",
     render: (model) => <span className="text-[13px] text-gray-500">{model.bestFor}</span>,
   },

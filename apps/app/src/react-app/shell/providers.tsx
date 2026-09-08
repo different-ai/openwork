@@ -65,10 +65,12 @@ function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
           <BrandThemeProvider>
             <RestrictionNoticeProvider>
               <LocalProvider>
-                <AutomationRunnerBridge />
-                <GlobalQueueDrainerBridge />
-                <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
-                <Toaster />
+                <InferenceAccessProvider>
+                  <AutomationRunnerBridge />
+                  <GlobalQueueDrainerBridge />
+                  <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
+                  <Toaster />
+                </InferenceAccessProvider>
               </LocalProvider>
             </RestrictionNoticeProvider>
           </BrandThemeProvider>
@@ -99,9 +101,7 @@ export function AppProviders({ children }: AppProvidersProps) {
       <ServerProvider defaultUrl={defaultUrl}>
         <ArchitectureMismatchGate>
           <DenAuthProvider>
-            <InferenceAccessProvider>
-              <EnterpriseAwareAppProviders>{children}</EnterpriseAwareAppProviders>
-            </InferenceAccessProvider>
+            <EnterpriseAwareAppProviders>{children}</EnterpriseAwareAppProviders>
           </DenAuthProvider>
         </ArchitectureMismatchGate>
       </ServerProvider>

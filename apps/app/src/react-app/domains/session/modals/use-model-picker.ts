@@ -112,7 +112,6 @@ export function useModelPicker(input: UseModelPickerInput) {
 
   const modelOptions = useMemo(() => {
     const data = providerListQuery.data;
-    if (!data?.all) return [];
 
     // Flag models from recently-added providers so they appear in the
     // "Recently added" section at the top of the picker.

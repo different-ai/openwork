@@ -114,9 +114,107 @@ export const INFERENCE_MODEL_ALIASES = {
     enabled: true,
     usageFactor: 1,
   },
+  "openai/gpt-6-astra": {
+    upstreamModel: "openai/gpt-6-astra",
+    displayName: "OpenWork: GPT-6 Astra",
+    enabled: true,
+    usageFactor: 1,
+  },
 } as const;
 
 export type InferenceModelAlias = keyof typeof INFERENCE_MODEL_ALIASES;
+
+export type ManagedModelRecommendation = {
+  modelID: string;
+  displayName: string;
+  providerName: string;
+  summary: string;
+  recommended: boolean;
+  rank: number;
+  capabilities: string[];
+};
+
+type ManagedModelMetadata = Omit<ManagedModelRecommendation, "modelID" | "displayName">;
+
+// Task captions describe model capabilities, not benchmark rankings. Capabilities
+// follow the checked-in managed models; the four defaults were also checked
+// against public OpenRouter discovery on 2026-09-08. Keep this outside the
+// generated aliases so catalog refreshes preserve presentation choices.
+const MANAGED_MODEL_METADATA = new Map<string, ManagedModelMetadata>([
+  ["openai/gpt-5.6-luna", {
+    providerName: "OpenAI",
+    summary: "Everyday questions, writing, and lightweight tasks",
+    recommended: true, rank: 1, capabilities: ["reasoning", "tools", "images", "documents"],
+  }],
+  ["openai/gpt-6-astra", {
+    providerName: "OpenAI",
+    summary: "Complex analysis, software engineering, and deep research",
+    recommended: true, rank: 2, capabilities: ["reasoning", "tools", "images", "documents"],
+  }],
+  ["moonshotai/kimi-k2.7-code", {
+    providerName: "Moonshot AI",
+    summary: "Code changes and end-to-end programming tasks",
+    recommended: true, rank: 3, capabilities: ["reasoning", "tools", "images"],
+  }],
+  ["z-ai/glm-5.2", {
+    providerName: "Z.ai",
+    summary: "Long-running tasks, reasoning, and project-level coding",
+    recommended: true, rank: 4, capabilities: ["reasoning", "tools"],
+  }],
+  ["moonshotai/kimi-k3", {
+    providerName: "Moonshot AI",
+    summary: "Visual understanding, coding, and planning",
+    recommended: false, rank: 5, capabilities: ["reasoning", "tools", "images"],
+  }],
+  ["minimax/minimax-m3", {
+    providerName: "MiniMax",
+    summary: "Reasoning with text, images, and video",
+    recommended: false, rank: 6, capabilities: ["reasoning", "tools", "images", "video"],
+  }],
+  ["deepseek/deepseek-v4-flash", {
+    providerName: "DeepSeek",
+    summary: "Text reasoning and tool-assisted tasks",
+    recommended: false, rank: 7, capabilities: ["reasoning", "tools"],
+  }],
+  ["moonshotai/kimi-k2.6", {
+    providerName: "Moonshot AI",
+    summary: "Reasoning over text and images with tools",
+    recommended: false, rank: 8, capabilities: ["reasoning", "tools", "images"],
+  }],
+  ["z-ai/glm-5.1", {
+    providerName: "Z.ai",
+    summary: "Text reasoning and tool-assisted tasks",
+    recommended: false, rank: 9, capabilities: ["reasoning", "tools"],
+  }],
+  ["minimax/minimax-m2.7", {
+    providerName: "MiniMax",
+    summary: "Text reasoning and tool-assisted tasks",
+    recommended: false, rank: 10, capabilities: ["reasoning", "tools"],
+  }],
+  ["tencent/hy3-preview", {
+    providerName: "Tencent",
+    summary: "Preview model for text reasoning and tool use",
+    recommended: false, rank: 11, capabilities: ["reasoning", "tools"],
+  }],
+]);
+
+// Discovery metadata is not an entitlement or a provider configuration. Clients
+// must intersect this catalog with their currently available, policy-filtered models.
+export function managedModelCatalog(options: { freeModelID?: string } = {}): ManagedModelRecommendation[] {
+  return Object.entries(INFERENCE_MODEL_ALIASES).flatMap(([modelID, alias]) => {
+    const metadata = MANAGED_MODEL_METADATA.get(modelID);
+    if (!alias.enabled || !metadata) return [];
+    return [{
+      modelID,
+      displayName: alias.displayName.replace(/^OpenWork: /, ""),
+      ...metadata,
+      // Free admission accepts text and function tools, not multimodal inputs.
+      capabilities: modelID === options.freeModelID
+        ? metadata.capabilities.filter((capability) => capability === "reasoning" || capability === "tools")
+        : [...metadata.capabilities],
+    }];
+  }).sort((left, right) => left.rank - right.rank || left.modelID.localeCompare(right.modelID));
+}
 
 export type InferenceOrganizationMetadata = {
   enabled: true;
@@ -187,7 +285,21 @@ export type InferenceAccess = {
   resetsAt: string | null;
   reason: InferenceAccessReason | null;
   canUpgrade?: boolean;
+  catalog?: ManagedModelRecommendation[];
+  // Current paid tier, or the entry paid tier offered on upgrade. A null price
+  // means the configured billing SKU's price must be reviewed on the billing page.
+  plan?: { name: string; priceLabel: string | null; usageLabel: string };
 };
+
+export function inferencePlanPresentation(tier: InferenceTier = "tier1"): NonNullable<InferenceAccess["plan"]> {
+  const limits = INFERENCE_TIER_LIMITS[tier];
+  const usd = (amount: number) => `$${amount / INFERENCE_USAGE_CONVERSION_FACTOR}`;
+  return {
+    name: "OpenWork Models",
+    priceLabel: null,
+    usageLabel: `Shared workspace usage allowances: ${usd(limits.five_hour)} per member / 5 hours, ${usd(limits.weekly)} per member / week, and ${usd(limits.monthly)} per member / month.`,
+  };
+}
 
 // Den writes inferenceFree.offerAllowed explicitly, including false on admin
 // disable. Missing paid metadata alone never authorizes the free upstream key.

@@ -19,8 +19,8 @@ import {
 import { useWorkspace } from "@/react-app/shell/workspace-provider";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
-import { InferenceAllowanceSummary, useInferenceAccess } from "@/react-app/domains/cloud/inference-access-provider";
-import { markExplicitModelChoice, modelSelectionUpgradeReason } from "@/app/lib/inference-access";
+import { InferenceAllowanceSummary, OwnProviderAction, useInferenceAccess } from "@/react-app/domains/cloud/inference-access-provider";
+import { managedModelAccessLabel, managedModelRecommendation, managedModelRecommendations, markExplicitModelChoice, modelSelectionUpgradeReason } from "@/app/lib/inference-access";
 import {
   OPENWORK_MODELS_PROVIDER_ID,
   OPENWORK_MODELS_PROVIDER_NAME,
@@ -44,7 +44,7 @@ import {
   CommandList,
   CommandPanel,
 } from "@/components/ui/command";
-import { openModelPickerEvent, openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
+import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener";
 import { newProvidersEvent } from "@/app/lib/provider-events";
 import { usePlatform } from "@/react-app/kernel/platform";
 import {
@@ -241,10 +241,11 @@ export function ModelSelect({
   behaviorOptions = [],
   onBehaviorChange,
 }: ModelSelectProps) {
-  const [pane, setPane] = React.useState<"root" | "model" | "effort" | "favorites">("root");
+  const [pane, setPane] = React.useState<"model" | "effort">("model");
   const [search, setSearch] = React.useState("");
   const [thinkingFor, setThinkingFor] = React.useState<ModelOption | null>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const thinkingBackRef = React.useRef<HTMLButtonElement>(null);
   const platform = usePlatform();
   const denAuth = useDenAuth();
   const inference = useInferenceAccess();
@@ -259,8 +260,6 @@ export function ModelSelect({
     }),
     [behaviorLabel, behaviorOptions, behaviorValue, catalogOptions, value],
   );
-  const checkDesktopRestriction = useCheckDesktopRestriction();
-  const canAddProviders = !checkDesktopRestriction({ restriction: "allowCustomProviders" });
   const shortcutOs = resolveThinkingModeShortcutOs(
     platform.os,
     typeof navigator === "undefined" ? "" : navigator.platform,
@@ -288,6 +287,7 @@ export function ModelSelect({
     }
 
     if (pane !== "model") {
+      thinkingBackRef.current?.focus();
       return;
     }
 
@@ -319,32 +319,39 @@ export function ModelSelect({
       return option && !favoriteKeys.has(modelRefKey(model)) ? [option] : [];
     });
   }, [favoriteKeys, optionsByKey, recent]);
-  const groups = React.useMemo(() => {
-    const quickGroups: ModelSelectGroup[] = [];
-    if (favoriteOptions.length > 0) {
-      quickGroups.push({
-        value: "Favorites",
-        items: favoriteOptions.map((option) => ({ id: `favorite:${modelRefKey(option)}`, option })),
-      });
-    }
-    if (recentOptions.length > 0) {
-      quickGroups.push({
-        value: "Recent",
-        items: recentOptions.map((option) => ({ id: `recent:${modelRefKey(option)}`, option })),
-      });
-    }
-    return [...quickGroups, ...groupByProvider(modelOptions)];
-  }, [favoriteOptions, modelOptions, recentOptions]);
+  const recommendations = managedModelRecommendations(inference.access, modelOptions);
+  const groups: ModelSelectGroup[] = [];
+  const shown = new Set<string>();
+  const query = search.trim().toLowerCase();
+  const addGroup = (label: string, options: readonly ModelOption[]) => {
+    const items = options.filter((option) => {
+      const recommendation = managedModelRecommendation(inference.access, option);
+      return !option.disabled && !shown.has(modelRefKey(option)) && (!query || [
+        option.providerID, option.modelID, option.title, option.description,
+        recommendation?.displayName, recommendation?.providerName, recommendation?.summary, ...(recommendation?.capabilities ?? []),
+      ].some((text) => text?.toLowerCase().includes(query)));
+    }).map((option) => {
+      const id = modelRefKey(option);
+      shown.add(id);
+      return { id, option };
+    });
+    if (items.length) groups.push({ value: label, items });
+  };
+  addGroup("Recommended by OpenWork", recommendations);
+  addGroup("Current model", selectedOption ? [selectedOption] : []);
+  addGroup("Favorites", favoriteOptions);
+  addGroup("Recent", recentOptions.slice(0, 3));
+  const remaining = modelOptions.filter((option) => query || recommendations.length === 0 || option.providerID !== "openwork");
+  for (const group of groupByProvider(remaining)) addGroup(group.value, group.items.map((item) => item.option));
   const selectedThinkingOptions = selectedOption ? thinkingOptionsFor(selectedOption) : [];
   const effectiveBehaviorLabel = behaviorLabel ?? selectedOption?.behaviorLabel ?? "Default";
-  const currentFavorite = favoriteOptions.find((option) => isSameModel(value, option)) ?? favoriteOptions[0] ?? null;
-  const nextFavorite = nextFavoriteModel(favorites.filter((model) => !modelSelectionUpgradeReason(inference.access, model)), value);
+  const nextFavorite = nextFavoriteModel(favoriteOptions.filter((model) => !model.disabled && !modelSelectionUpgradeReason(inference.access, model)), value);
   const showBehavior = !hideValue
     && selectedThinkingOptions.length > 0
     && Boolean(effectiveBehaviorLabel);
 
   const applyModel = (option: ModelOption, behavior?: string | null) => {
-    if (!inference.checkSelection(option, sessionId)) { onOpenChange(false); return; }
+    if (!inference.checkSelection(option, sessionId, modelOptions, value)) { onOpenChange(false); return; }
     markExplicitModelChoice();
     useModelCollectionsStore.getState().recordRecent(option);
     onChange({ providerID: option.providerID, modelID: option.modelID }, behavior);
@@ -353,18 +360,11 @@ export function ModelSelect({
     }
     setSearch("");
     setThinkingFor(null);
-    setPane("root");
+    setPane("model");
     onOpenChange(false);
   };
 
   const handleSelect = (option: ModelOption) => {
-    if (!inference.checkSelection(option, sessionId)) { onOpenChange(false); return; }
-    const thinking = thinkingOptionsFor(option);
-    if (thinking.length > 0 && onBehaviorChange) {
-      setThinkingFor(option);
-      setPane("effort");
-      return;
-    }
     applyModel(option);
   };
 
@@ -379,7 +379,7 @@ export function ModelSelect({
     if (isSameModel(value, thinkingFor)) {
       onBehaviorChange?.(option.value);
       setThinkingFor(null);
-      setPane("root");
+      setPane("model");
       onOpenChange(false);
       return;
     }
@@ -397,13 +397,6 @@ export function ModelSelect({
     applyModel(option, compatibleBehavior);
   };
 
-  const handleConnectProvider = React.useCallback(() => {
-    onOpenChange(false);
-    setSearch("");
-    setPane("root");
-    window.dispatchEvent(new Event(openProviderAuthEvent));
-  }, [onOpenChange]);
-
   return (
     <Popover
       open={open}
@@ -411,12 +404,12 @@ export function ModelSelect({
         onOpenChange(nextOpen);
 
         if (nextOpen) {
-          setPane("root");
+          setPane("model");
           setThinkingFor(null);
         } else {
           setSearch("");
           setThinkingFor(null);
-          setPane("root");
+          setPane("model");
         }
       }}
     >
@@ -449,102 +442,22 @@ export function ModelSelect({
         </TooltipContent>
       </Tooltip>
       <PopoverContent
-        className="w-80 overflow-hidden rounded-2xl bg-popover p-0 shadow-xl ring-1 ring-foreground/5 dark:ring-foreground/10"
+        className="w-96 max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl bg-popover p-0 shadow-xl ring-1 ring-foreground/5 dark:ring-foreground/10"
         align="start"
         initialFocus={false}
+        data-testid="managed-model-picker"
+        aria-label="Choose a model"
       >
-        <InferenceAllowanceSummary className="px-3 pt-2" available={catalogOptions.some((option) => option.providerID === "openwork")} />
-        {pane === "root" ? (
-          <div data-slot="model-select-root" className="space-y-0.5 p-2">
-            <button
-              type="button"
-              disabled={!selectedOption || selectedThinkingOptions.length === 0 || !onBehaviorChange}
-              className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent disabled:cursor-default disabled:opacity-50"
-              onClick={() => {
-                if (!selectedOption) return;
-                setThinkingFor(selectedOption);
-                setPane("effort");
-              }}
-            >
-              <span className="min-w-0 flex-1 font-medium text-foreground">Effort</span>
-              <span className="max-w-24 truncate text-muted-foreground">
-                {selectedThinkingOptions.length > 0 ? effectiveBehaviorLabel : "Unavailable"}
-              </span>
-              <kbd className="hidden shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-sans text-[10px] leading-none text-muted-foreground sm:inline-flex">
-                {shortcutLabel}
-              </kbd>
-              <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-            </button>
-            <button
-              type="button"
-              disabled={favoriteOptions.length === 0}
-              className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent disabled:cursor-default disabled:opacity-50"
-              onClick={() => setPane("favorites")}
-            >
-              <span className="min-w-0 flex-1 font-medium text-foreground">Favorites</span>
-              <span className="max-w-36 truncate text-muted-foreground">
-                {currentFavorite?.title ?? "None"}
-              </span>
-              <kbd className="hidden shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-sans text-[10px] leading-none text-muted-foreground sm:inline-flex">
-                {favoriteShortcutLabel}
-              </kbd>
-              <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-            </button>
-            <button
-              type="button"
-              className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent"
-              onClick={() => setPane("model")}
-            >
-              <span className="min-w-0 flex-1 font-medium text-foreground">Model</span>
-              <span className="max-w-36 truncate text-muted-foreground">
-                {selectedOption?.title ?? value.modelID ?? "Select model"}
-              </span>
-              <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-            </button>
-          </div>
-        ) : pane === "favorites" ? (
-          <div data-slot="model-favorites-submenu" className="flex max-h-(--available-height) flex-col">
-            <div className="flex items-center gap-2 border-b border-border px-2 py-1.5">
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg px-1 py-1 text-left hover:bg-accent"
-                onClick={() => setPane("root")}
-              >
-                <ChevronLeft className="size-4 shrink-0 text-muted-foreground" />
-                <span className="text-sm font-medium">Favorites</span>
-              </button>
-              <button
-                type="button"
-                disabled={!nextFavorite}
-                className="cursor-pointer rounded-lg px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-50"
-                onClick={cycleFavorite}
-              >
-                Next · {favoriteModelShortcutLabel}
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-1">
-              {favoriteOptions.map((option) => (
-                <button
-                  key={modelRefKey(option)}
-                  type="button"
-                  className="flex w-full cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
-                  onClick={() => handleSelect(option)}
-                >
-                  <ProviderIcon providerId={option.providerID} providerName={option.description} className="size-3.5 opacity-70" size={14} />
-                  <span className="min-w-0 flex-1 truncate text-foreground">{option.title}</span>
-                  {isSameModel(value, option) ? <Check className="size-3.5 shrink-0 text-muted-foreground" /> : null}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : pane === "effort" && thinkingFor ? (
+        {pane === "effort" && thinkingFor ? (
           <div data-slot="model-thinking-submenu" className="flex max-h-(--available-height) flex-col">
             <button
+              ref={thinkingBackRef}
               type="button"
+              aria-label="Back to models"
               className="flex cursor-pointer items-center gap-2 border-b border-border px-3 py-2 text-left hover:bg-accent"
               onClick={() => {
                 setThinkingFor(null);
-                setPane(isSameModel(value, thinkingFor) ? "root" : "model");
+                setPane("model");
               }}
             >
               <ChevronLeft className="size-4 shrink-0 text-muted-foreground" />
@@ -561,6 +474,7 @@ export function ModelSelect({
                   <button
                     key={option.value}
                     type="button"
+                    aria-pressed={selected}
                     className="flex w-full cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
                     onClick={() => applyThinking(option)}
                   >
@@ -572,33 +486,23 @@ export function ModelSelect({
             </div>
           </div>
         ) : (
-          <div className="flex max-h-[min(var(--available-height),28rem)] flex-col">
-            <button
-              type="button"
-              className="flex cursor-pointer items-center gap-2 border-b border-border px-3 py-1.5 text-left hover:bg-accent"
-              onClick={() => {
-                setSearch("");
-                setPane("root");
-              }}
-            >
-              <ChevronLeft className="size-4 shrink-0 text-muted-foreground" />
-              <span className="text-sm font-medium">Model</span>
-            </button>
-            <Command items={groups} value={search} onValueChange={setSearch}>
+          <div className="flex max-h-[min(var(--available-height),36rem)] flex-col">
+            <Command items={groups} filter={null} value={search} onValueChange={setSearch}>
               <div className="flex min-h-0 flex-1 flex-col">
               <CommandHeader className="p-1.5 pb-1">
-                <CommandInput ref={searchInputRef} placeholder="Search models..." className="h-9 text-sm" />
+                <CommandInput ref={searchInputRef} placeholder="Search all models..." aria-label="Search all models" className="h-9 text-sm" />
               </CommandHeader>
+              <InferenceAllowanceSummary className="px-3 pb-2" available={catalogOptions.some((option) => option.providerID === "openwork")} />
               {openWorkModelsSyncing ? (
                 <div className="mx-1 mb-1 flex items-center gap-2 rounded-md border border-amber-6/60 bg-amber-2/40 px-2 py-1.5">
                   <ProviderIcon providerId={OPENWORK_MODELS_PROVIDER_ID} providerName={OPENWORK_MODELS_PROVIDER_NAME} className="size-3.5 shrink-0 text-amber-11" size={14} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-xs font-medium text-foreground">{OPENWORK_MODELS_PROVIDER_NAME}</span>
-                    <span className="block truncate text-[11px] text-muted-foreground">Included — pending workspace reload…</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">Pending workspace reload…</span>
                   </span>
                 </div>
               ) : null}
-              <CommandPanel className="h-0 min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
+              <CommandPanel className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
                 <CommandEmpty>No models found.</CommandEmpty>
                 <CommandList className="not-empty:scroll-py-1 not-empty:p-1">
                   {(group: ModelSelectGroup) => (
@@ -607,25 +511,35 @@ export function ModelSelect({
                       <CommandCollection>
                         {(item: ModelSelectItem) => {
                           const option = item.option;
-                          const hasThinking = Boolean(onBehaviorChange) && thinkingOptionsFor(option).length > 0;
+                          const selected = isSameModel(value, option);
+                          const recommendation = managedModelRecommendation(inference.access, option);
+                          const name = recommendation?.displayName ?? option.title;
+                          const accessLabel = managedModelAccessLabel(inference.access, option);
                           const favorite = favoriteKeys.has(modelRefKey(option));
                           return (
                             <CommandItem
                               className="min-h-0 gap-2 rounded-lg px-2 py-1.5"
                               key={item.id}
-                              value={`${option.providerID}:${option.modelID} ${option.title} ${option.description ?? ""}`}
+                              value={`${option.providerID}:${option.modelID} ${name} ${option.title} ${option.description ?? ""} ${recommendation?.summary ?? ""} ${recommendation?.capabilities.join(" ") ?? ""}`}
                               onClick={() => handleSelect(option)}
-                              data-checked={isSameModel(value, option)}
+                              data-checked={selected}
+                              data-testid={`model-option-${option.providerID}-${option.modelID}`}
+                              aria-description={recommendation?.summary}
+                              aria-label={`${name}${accessLabel ? `, ${accessLabel}` : ""}${selected ? ", current model" : ""}${modelSelectionUpgradeReason(inference.access, option) === "free_allowance_exhausted" ? ", allowance used up" : ""}${modelSelectionUpgradeReason(inference.access, option) ? ", opens upgrade options without changing your model" : ""}`}
                             >
                               <ProviderIcon providerId={option.providerID} providerName={option.description} className="size-3.5 opacity-70" size={14} />
                               <span className="min-w-0 flex-1">
-                                <span className="block truncate text-foreground">{option.title}</span>
-                                <span className="block truncate text-xs text-muted-foreground">{option.description ?? getProviderDisplayName(option.providerID)}</span>
+                                <span className="block truncate text-foreground">{name}</span>
+                                <span className="block truncate text-xs text-muted-foreground">{recommendation?.summary || option.description || getProviderDisplayName(option.providerID)}</span>
+                                {recommendation?.capabilities.length ? <span className="block truncate text-[11px] text-muted-foreground">{recommendation.capabilities.join(" · ")}</span> : null}
                               </span>
+                              {accessLabel ? <span data-testid="model-access-label" className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{accessLabel}</span> : null}
                               <button
                                 type="button"
                                 className="cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                                aria-label={favorite ? `Remove ${option.title} from favorites` : `Add ${option.title} to favorites`}
+                                aria-label={favorite ? `Remove ${name} from favorites` : `Add ${name} to favorites`}
+                                aria-pressed={favorite}
+                                onKeyDown={(event) => event.stopPropagation()}
                                 onPointerDown={(event) => {
                                   event.preventDefault();
                                   event.stopPropagation();
@@ -638,7 +552,7 @@ export function ModelSelect({
                               >
                                 <Star className="size-3.5" fill={favorite ? "currentColor" : "none"} />
                               </button>
-                              {hasThinking ? <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+                              {selected ? <Check className="size-3.5 shrink-0 text-muted-foreground" /> : null}
                             </CommandItem>
                           );
                         }}
@@ -647,13 +561,16 @@ export function ModelSelect({
                   )}
                 </CommandList>
               </CommandPanel>
-              {canAddProviders ? (
-                <div className="border-t border-border px-2 py-1">
-                  <button type="button" className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onClick={handleConnectProvider}>
-                    Connect more providers
-                  </button>
-                </div>
-              ) : null}
+              {!hideValue && selectedOption && selectedThinkingOptions.length > 0 && onBehaviorChange ? <div className="border-t border-border px-2 py-1" data-testid="selected-model-detail">
+                <button type="button" aria-label={`Thinking and effort for ${selectedOption.title}`} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring" onClick={() => {
+                  setThinkingFor(selectedOption);
+                  setPane("effort");
+                }}>
+                  <span className="min-w-0 flex-1 truncate">{selectedOption.title} · {effectiveBehaviorLabel}</span>
+                  <kbd className="text-muted-foreground">{shortcutLabel}</kbd>
+                  <ChevronRight className="size-3.5" />
+                </button>
+              </div> : null}
               <div className="border-t border-border px-2 py-1">
                 <button
                   type="button"
@@ -661,13 +578,17 @@ export function ModelSelect({
                   onClick={() => {
                     onOpenChange(false);
                     setSearch("");
-                    setPane("root");
+                    setPane("model");
                     window.dispatchEvent(new CustomEvent(openModelPickerEvent, sessionId ? { detail: { sessionId } } : undefined));
                   }}
                 >
                   <Settings2 className="size-3.5" />
-                  All models
+                  See all models
                 </button>
+                {favoriteOptions.length > 0 ? <button type="button" disabled={!nextFavorite} className="flex w-full items-center justify-between rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent disabled:opacity-50" aria-label="Cycle favorite models" onClick={cycleFavorite}>
+                  <span>Next favorite</span><kbd>{favoriteShortcutLabel}</kbd>
+                </button> : null}
+                <OwnProviderAction onBeforeOpen={() => onOpenChange(false)} />
               </div>
               </div>
             </Command>

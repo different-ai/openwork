@@ -27,6 +27,8 @@ import {
   freeInferenceAccess,
   freeInferenceWindow,
   inferenceAccessMode,
+  inferencePlanPresentation,
+  managedModelCatalog,
 } from "@openwork/types/den/inference"
 import type { InferenceAccess, InferenceOrganizationMetadata, InferenceTier, InferenceWindowType } from "@openwork/types/den/inference"
 import { db } from "./db.js"
@@ -238,16 +240,21 @@ export async function getMemberInferenceAccess(input: {
     .where(and(eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, input.organizationId),
       eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt))).limit(1)
   const mode = row ? inferenceAccessMode(row.metadata) : "not_eligible"
+  const metadata = row?.metadata?.inference
+  const presentation = {
+    catalog: managedModelCatalog(mode === "free" ? { freeModelID: env.inferenceFree.modelID } : {}),
+    plan: inferencePlanPresentation(mode === "paid" && isRecord(metadata) && metadata.tier === "tier2" ? "tier2" : "tier1"),
+  }
   const now = new Date()
-  if (mode !== "free" || !env.inferenceFree.enabled) return freeInferenceAccess({ config: env.inferenceFree, mode, now })
+  if (mode !== "free" || !env.inferenceFree.enabled) return { ...freeInferenceAccess({ config: env.inferenceFree, mode, now }), ...presentation }
   try {
     const [bucket] = await db.select().from(InferenceFreeUsageBucketTable).where(and(
       eq(InferenceFreeUsageBucketTable.user_id, input.userId),
       eq(InferenceFreeUsageBucketTable.window_start_at, freeInferenceWindow(now).start),
     )).limit(1)
-    return freeInferenceAccess({ config: env.inferenceFree, mode, bucket, now })
+    return { ...freeInferenceAccess({ config: env.inferenceFree, mode, bucket, now }), ...presentation }
   } catch {
-    return { ...freeInferenceAccess({ config: env.inferenceFree, mode, now }), kind: "unavailable", reason: "accounting_unavailable", usedUsd: null, reservedUsd: null, remainingUsd: null }
+    return { ...freeInferenceAccess({ config: env.inferenceFree, mode, now }), ...presentation, kind: "unavailable", reason: "accounting_unavailable", usedUsd: null, reservedUsd: null, remainingUsd: null }
   }
 }
 

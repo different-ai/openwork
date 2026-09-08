@@ -42,6 +42,16 @@ const inferenceProviderMissingSchema = z.object({
   message: z.string(),
 }).meta({ ref: "InferenceProviderMissingError" })
 
+const managedModelRecommendationSchema = z.object({
+  modelID: z.string(),
+  displayName: z.string(),
+  providerName: z.string(),
+  summary: z.string(),
+  recommended: z.boolean(),
+  rank: z.number(),
+  capabilities: z.array(z.string()),
+}).meta({ ref: "ManagedModelRecommendation" })
+
 const inferenceAccessResponseSchema = z.object({
   access: z.object({
     kind: z.enum(["paid", "free", "exhausted", "unavailable"]),
@@ -53,6 +63,12 @@ const inferenceAccessResponseSchema = z.object({
     resetsAt: z.string().nullable(),
     reason: z.enum(INFERENCE_ACCESS_REASONS).nullable(),
     canUpgrade: z.boolean(),
+    catalog: z.array(managedModelRecommendationSchema).optional(),
+    plan: z.object({
+      name: z.string(),
+      priceLabel: z.string().nullable(),
+      usageLabel: z.string(),
+    }).optional(),
   }),
   upgradePath: z.literal("/dashboard/billing").nullable(),
 }).meta({ ref: "InferenceAccessResponse" })
@@ -63,7 +79,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Inference"],
       summary: "Get my managed inference access",
-      description: "Returns the signed-in joined member's access and person-wide weekly free allowance, without credentials or administrative settings.",
+      description: "Returns the signed-in joined member's access and person-wide weekly free allowance, without credentials or administrative settings. The catalog describes registered, enabled managed aliases for discovery only; clients must intersect it with their available, policy-filtered provider models. Plan allowances describe the current paid tier or the entry paid tier offered on upgrade; a null price requires review on the billing page.",
       responses: {
         200: jsonResponse("Managed inference access returned successfully.", inferenceAccessResponseSchema),
         401: jsonResponse("Sign in to read inference access.", unauthorizedSchema),

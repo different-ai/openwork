@@ -22,11 +22,15 @@ describe("Marketplace onboarding page", () => {
     expect(screen).toContain("completeSetup(orgId)");
   });
 
-  test("offers OpenWork Models and Bring your Own Keys as the model path", () => {
+  test("leads with managed models and keeps a quiet direct provider setup link", () => {
     expect(screen).toContain("onboarding-choice-openwork-models");
     expect(screen).toContain("onboarding-choice-byok");
     expect(screen).toContain("Explore models");
-    expect(screen).toContain("Bring your Own Keys");
+    expect(screen).toContain("Use my own provider…");
+    expect(screen).toContain("getCustomLlmProvidersRoute(orgSlug)");
+    expect(screen).not.toContain("Bring your Own Keys");
+    expect(screen).not.toContain("KeyRound");
+    expect(screen.indexOf('data-testid="onboarding-choice-byok"')).toBeGreaterThan(screen.indexOf("Complete and open the app"));
     expect(screen).toContain("/openwork-mark.svg");
   });
 
