@@ -109,6 +109,18 @@ function partValues(value: Record<string, unknown>): unknown[] {
   return text === undefined ? [] : [{ type: "text", text }];
 }
 
+function nativeV2ToolOutput(state: Record<string, unknown>): string | undefined {
+  if (Array.isArray(state.content)) {
+    const text = state.content.flatMap((item) => {
+      if (!isRecord(item) || readString(item, "type") !== "text") return [];
+      const content = readString(item, "text");
+      return content === undefined ? [] : [content];
+    });
+    if (text.length > 0) return text.join("\n");
+  }
+  return typeof state.result === "string" ? state.result : undefined;
+}
+
 function parsePart(value: unknown, engine: EngineSessionProbeEngine): EngineSessionProbePart | null {
   if (!isRecord(value)) return null;
   const state = readRecord(value, "state") ?? {};
@@ -122,7 +134,8 @@ function parsePart(value: unknown, engine: EngineSessionProbeEngine): EngineSess
       : readString(value, "callID") ?? readString(value, "callId") ?? readString(value, "toolCallId") ?? "",
     status: readString(state, "status") ?? "",
     input: readRecord(state, "input") ?? readRecord(value, "input") ?? {},
-    output: readString(state, "output") ?? readString(metadata, "output") ?? readString(value, "output") ?? "",
+    output: readString(state, "output") ?? readString(metadata, "output") ?? readString(value, "output")
+      ?? (engine === "v2" ? nativeV2ToolOutput(state) : undefined) ?? "",
   };
 }
 
