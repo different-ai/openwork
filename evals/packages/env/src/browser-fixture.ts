@@ -149,7 +149,7 @@ export interface BrowserFixtureState {
   uploads: number;
   originPolicyCallbacks: number;
   originPolicyReports: Array<{ page: string; nativeOriginAgentCluster: boolean; spoofedOriginAgentCluster: boolean; spoofedDomainMatchesHost: boolean; directOriginKeyed: boolean; forgedOriginKeyed: boolean; reason: string; registration: string; execution: string }>;
-  discovery: { waiting: number; released: number; resumed: number; callbacks: number };
+  discovery: { waiting: number; released: number; canceled: number; resumed: number; callbacks: number };
   model: { requests: number; toolNames: string[]; receivedSaveResult: boolean; observedSaved: boolean };
 }
 
@@ -160,7 +160,7 @@ export async function startBrowserFixture(app: Surface, { requireSignIn = true }
     const records=[],signals=[],popups=[],privileges=[],pageRequests=[],frameInputs=[],originPolicyReports=[];
     let signInCount=0,sessionReads=0,frameClicks=0,uploads=0,inputValue='',originPolicyCallbacks=0;
     let holdDiscovery=false;
-    const discovery={waiting:0,released:0,resumed:0,callbacks:0},pendingDiscovery=new Set();
+    const discovery={waiting:0,released:0,canceled:0,resumed:0,callbacks:0},pendingDiscovery=new Set();
     const model={requests:0,toolNames:[],receivedSaveResult:false,observedSaved:false};
     const page=${browserScriptValue(fixturePage)},framesPage=${browserScriptValue(framesPage)},framePage=${browserScriptValue(framePage)};
     const originPolicyPage=${browserScriptValue(originPolicyPage)};
@@ -177,7 +177,7 @@ export async function startBrowserFixture(app: Surface, { requireSignIn = true }
         if(!holdDiscovery||url.searchParams.get('executing')!=='true'){res.end(JSON.stringify({delayed:false}));return;}
         discovery.waiting++;pendingDiscovery.add(res);
         const timer=setTimeout(()=>{pendingDiscovery.delete(res);res.writeHead(504);res.end();},20000);
-        res.on('close',()=>{clearTimeout(timer);pendingDiscovery.delete(res);});return;
+        res.on('close',()=>{clearTimeout(timer);if(pendingDiscovery.delete(res)&&!res.writableEnded)discovery.canceled++;});return;
       }
       if(req.method==='GET'&&url.pathname==='/favicon.ico'){res.writeHead(204);res.end();return;}
       if(req.method==='POST'){
@@ -263,7 +263,7 @@ export async function readBrowserFixtureState(app: Surface, origin: string): Pro
     pageRequests: array(state.pageRequests).map((item) => { const row = object(item); return { path: string(row.path), signedIn: boolean(row.signedIn) }; }),
     privileges: array(state.privileges).map((item) => { const row = object(item); return { page: string(row.page), require: string(row.require), process: string(row.process), Buffer: string(row.Buffer), ...(row.blocked === undefined ? {} : { blocked: boolean(row.blocked) }) }; }),
     model: { requests: number(model.requests), toolNames: array(model.toolNames).map(string), receivedSaveResult: boolean(model.receivedSaveResult), observedSaved: boolean(model.observedSaved) },
-    discovery: { waiting: number(discovery.waiting), released: number(discovery.released), resumed: number(discovery.resumed), callbacks: number(discovery.callbacks) },
+    discovery: { waiting: number(discovery.waiting), released: number(discovery.released), canceled: number(discovery.canceled), resumed: number(discovery.resumed), callbacks: number(discovery.callbacks) },
     originPolicyCallbacks: number(state.originPolicyCallbacks),
     originPolicyReports: array(state.originPolicyReports).map((item) => {
       const row = object(item);

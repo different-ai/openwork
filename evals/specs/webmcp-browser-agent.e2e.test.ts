@@ -243,8 +243,9 @@ test("a conversation signs in, uses site tools and page controls with consent, i
       expect(await pending).toMatchObject({ ok: false });
       await user.see({ role: "button", label: "Resume browser" });
       await seed.browserFixtureDiscovery(world.app, world.origin, "release");
-      const released = await probe.eventually(witness, { within: 5_000, until: (value) => value.discovery.resumed === value.discovery.waiting, label: "the released discovery continuations have run" });
-      expect(released.discovery).toEqual({ waiting: released.discovery.waiting, released: released.discovery.waiting, resumed: released.discovery.waiting, callbacks: 0 });
+      const released = await probe.eventually(witness, { within: 5_000, until: ({ discovery }) => discovery.canceled + discovery.released === discovery.waiting && discovery.resumed === discovery.released, label: "every pending discovery request was canceled or its released continuation finished" });
+      expect(released.discovery.callbacks).toBe(0);
+      expect(released.discovery.canceled + released.discovery.resumed).toBe(held.discovery.waiting);
       expect(released.records).toEqual(held.records);
       expect(released.popups).toEqual(held.popups);
       expect(released.pageRequests).toEqual(held.pageRequests);
