@@ -198,11 +198,15 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     await agent.run("session.open", { sessionId: world.neighbor.sessionId });
     await user.see("composer", { editable: true });
     await user.notSee({ text: world.opening });
-    await expectTargets([...oldTargets, world.latestTool], false);
+    // Return before the inactive transcript's 15-second GC window. The slower
+    // palette isolation checks below deliberately belong to the cold path.
     await agent.run("session.open", { sessionId: world.session.sessionId });
     await user.see({ text: world.closing });
     expect(await orderedHistory()).toEqual(world.history);
     await expectTargets([...oldTargets, world.latestTool]);
+    await agent.run("session.open", { sessionId: world.neighbor.sessionId });
+    await user.see("composer", { editable: true });
+    await expectTargets([...oldTargets, world.latestTool], false);
   });
 
   await step("cold reload keeps the bounded history tail ordered and old and new tool links usable", async () => {
@@ -212,6 +216,7 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     const retainedHistory = world.history.filter(text => JSON.stringify(bounded.body).includes(text));
     expect(retainedHistory.length).toBeGreaterThan(0);
     expect(retainedHistory.length).toBeLessThan(world.history.length);
+    await agent.run("session.open", { sessionId: world.session.sessionId });
     await user.reload();
     await user.see({ text: world.closing }, { timeoutMs: 60_000 });
     expect(await orderedHistory()).toEqual(retainedHistory);
