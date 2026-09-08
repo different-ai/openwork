@@ -220,9 +220,14 @@ test("managed responses preserve completion, partial work, and cancellation", { 
   expect((await chat({ model: "unknown/model" })).status).toBe(404);
   expect((await chat({ models: ["another/model"] })).status).toBe(400);
   expect(world.witness.requests.length).toBe(beforeInvalid);
+  await world.denyManagedModels();
+  const denied = await chat();
+  expect(denied.status).toBe(403);
+  expect(await denied.json()).toMatchObject({ error: { code: "managed_models_disabled_for_dpa" } });
+  expect(world.witness.requests.length).toBe(beforeInvalid);
   expect(world.logs()).not.toContain("private fixture prompt");
   expect(world.logs()).not.toContain("private provider error payload");
   expect(world.logs()).not.toContain(key);
   expect(world.logs()).not.toContain(providerKey);
-  claim("The existing routing boundary and content-free diagnostics remain intact", "Invalid credentials, unknown models and alternate-model selection do not reach upstream. Real service stdout/stderr excludes fixture prompt, private provider error, member bearer and provider credential sentinels; structured reporter behavior has separate supporting tests.");
+  claim("The existing routing boundary and content-free diagnostics remain intact", "Invalid credentials, unknown models, alternate-model selection and a freshly DPA-blocked organization do not reach upstream. Real service stdout/stderr excludes fixture prompt, private provider error, member bearer and provider credential sentinels; structured reporter behavior has separate supporting tests.");
 });

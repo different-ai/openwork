@@ -78,6 +78,9 @@ export async function managedInference(place: Place) {
     await sql.execute("INSERT INTO inference_keys (id,organization_id,org_membership_id,key_hash,status) VALUES (?,?,?,?,'active')", [keyId, organizationId, memberId, createHash("sha256").update(key).digest("hex")]);
     return {
       url, witness, identity, logs: () => logs,
+      async denyManagedModels() {
+        await sql.execute("UPDATE organization SET metadata=? WHERE id=?", [JSON.stringify({ inference: { enabled: true, tier: "tier1" }, dpaSigned: true }), organizationId]);
+      },
       async [Symbol.asyncDispose]() { await stack.disposeAsync(); },
     };
   } catch (error) { await stack.disposeAsync(); throw error; }
