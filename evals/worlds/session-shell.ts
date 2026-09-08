@@ -328,30 +328,79 @@ export async function archiveSessions(seed: Seed, { place }: { place: Place }) {
     smallModel: `${providerId}/${modelId}`,
     commands: { "archive-witness": { template: "Archive command witness task." } },
   });
-  await seed.evalIn(app, "location.reload(); true");
-  const [b1] = await seed.sessions(app, ["Archive other workspace"]);
-  await seed.evalIn(app, `async (workspaceId) => {
-    location.hash = "/workspace/" + encodeURIComponent(workspaceId) + "/session";
-    const deadline = Date.now() + 30000;
-    while (Date.now() < deadline) {
-      if (window.__openwork?.slice?.("route")?.selectedWorkspaceId === workspaceId) return true;
-      await new Promise(resolve => setTimeout(resolve, 100));
+  // Seed each owning engine once; UI task creation can race route changes and create extra sessions.
+  async function createSession(workspaceId: string, title: string, parentID?: string): Promise<ShellSession & { workspaceId: string }> {
+    const result = await seed.evalIn(app, `async (workspaceId, title, parentID) => {
+      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+      const response = await fetch(info.baseUrl.replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session", {
+        method: "POST", headers: { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken), "Content-Type": "application/json" },
+        body: JSON.stringify(parentID ? { title, parentID } : { title }), signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok) throw new Error("Could not seed " + title + " in " + workspaceId + ": " + response.status);
+      const session = await response.json();
+      return { sessionId: session.id, title: session.title };
+    }`, { args: [workspaceId, title, parentID ?? null], awaitPromise: true, timeoutMs: 20_000 });
+    if (!isRecord(result) || typeof result.sessionId !== "string" || !result.sessionId || typeof result.title !== "string") {
+      throw new Error(`Missing archive session ${title}: ${JSON.stringify(result)}`);
     }
-    throw new Error("Archive workspace did not become selected");
-  }`, { args: [workspaceA.workspaceId], awaitPromise: true, timeoutMs: 35_000 });
-  const [a1, a2] = await seed.sessions(app, ["Chat A", "Archive idle neighbor"]);
-  if (!a1 || !a2 || !b1) throw new Error("Archive world did not create all three sessions.");
-  const child = await seed.evalIn(app, `async (workspaceId, parentID) => {
-    const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
-    const response = await fetch(info.baseUrl.replace(/\\/+$/, "") + "/workspace/" + workspaceId + "/opencode/session", {
-      method: "POST", headers: { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken), "Content-Type": "application/json" },
-      body: JSON.stringify({ title: "Archive child task", parentID }), signal: AbortSignal.timeout(15000),
-    });
-    if (!response.ok) throw new Error("Could not seed child: " + response.status);
-    const session = await response.json();
-    return { sessionId: session.id, title: session.title };
-  }`, { args: [workspaceA.workspaceId, a1.sessionId], awaitPromise: true, timeoutMs: 20_000 });
-  if (!isRecord(child) || typeof child.sessionId !== "string" || typeof child.title !== "string") throw new Error("Missing child session");
+    return { sessionId: result.sessionId, title: result.title, workspaceId };
+  }
+  const a1 = await createSession(workspaceA.workspaceId, "Chat A");
+  const a2 = await createSession(workspaceA.workspaceId, "Archive idle neighbor");
+  const b1 = await createSession(workspaceB.workspaceId, "Archive other workspace");
+  const child = await createSession(workspaceA.workspaceId, "Archive child task", a1.sessionId);
+
+  const previousTimeOrigin = await seed.evalIn(app, "performance.timeOrigin");
+  if (typeof previousTimeOrigin !== "number") throw new Error("Archive document time origin was unavailable.");
+  await seed.evalIn(app, `(workspaceId) => {
+    history.replaceState(history.state, "", "#/workspace/" + encodeURIComponent(workspaceId) + "/session");
+    location.reload();
+    return true;
+  }`, { args: [workspaceB.workspaceId] });
+  // Expansion is not persisted: let B render after reload, then leave both groups open on A's start route.
+  for (const phase of [
+    { workspaceId: workspaceB.workspaceId, sessions: [b1] },
+    { workspaceId: workspaceA.workspaceId, sessions: [a1, a2, b1] },
+  ]) {
+    if (phase.workspaceId === workspaceA.workspaceId) {
+      await seed.evalIn(app, `(workspaceId) => {
+        location.hash = "/workspace/" + encodeURIComponent(workspaceId) + "/session";
+        return true;
+      }`, { args: [workspaceA.workspaceId] });
+    }
+    const deadline = Date.now() + 60_000;
+    let ready = false;
+    let lastState: unknown = null;
+    while (Date.now() < deadline) {
+      lastState = await seed.evalIn(app, `(previousTimeOrigin, workspaceId, sessionsJson) => {
+        const route = window.__openwork?.slice?.("route");
+        const rows = JSON.parse(sessionsJson).map((session) => {
+          const row = document.querySelector('[data-sidebar-workspace-id="' + session.workspaceId + '"] [data-sidebar-session-id="' + session.sessionId + '"]');
+          return {
+            sessionId: session.sessionId,
+            loaded: route?.sessionsByWorkspaceId?.[session.workspaceId]?.some(item => item.id === session.sessionId) === true,
+            visible: Boolean(row?.getClientRects().length),
+          };
+        });
+        return {
+          hash: location.hash, selectedWorkspaceId: route?.selectedWorkspaceId, rows,
+          ready: performance.timeOrigin !== previousTimeOrigin && Boolean(window.__openworkControl)
+            && route?.loading === false && route.selectedWorkspaceId === workspaceId
+            && location.hash === "#/workspace/" + encodeURIComponent(workspaceId) + "/session"
+            && rows.every(row => row.loaded && row.visible),
+        };
+      }`, {
+        args: [previousTimeOrigin, phase.workspaceId, JSON.stringify(phase.sessions)],
+        timeoutMs: Math.min(5_000, Math.max(1, deadline - Date.now())),
+      }).catch((error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }));
+      if (isRecord(lastState) && lastState.ready === true) {
+        ready = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, Math.min(250, Math.max(0, deadline - Date.now()))));
+    }
+    if (!ready) throw new Error(`Archive workspace ${phase.workspaceId} route and sidebar did not become ready: ${JSON.stringify(lastState)}`);
+  }
 
   // Faults live at the HTTP boundary, not in product stores or archive code.
   // The local desktop's loopback OpenCode requests use the renderer fetch.
@@ -468,10 +517,10 @@ export async function archiveSessions(seed: Seed, { place }: { place: Place }) {
     app,
     workspaceA,
     workspaceB,
-    a1: { ...a1, workspaceId: workspaceA.workspaceId },
-    a2: { ...a2, workspaceId: workspaceA.workspaceId },
-    b1: { ...b1, workspaceId: workspaceB.workspaceId },
-    child: { sessionId: child.sessionId, title: child.title, workspaceId: workspaceA.workspaceId },
+    a1,
+    a2,
+    b1,
+    child,
     workspaceBName,
     facts,
     networkFault,
