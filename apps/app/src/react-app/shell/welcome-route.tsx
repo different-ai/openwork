@@ -14,7 +14,6 @@ import {
 } from "../../app/lib/desktop";
 import { isDesktopRuntime } from "../../app/utils";
 import { canCreateWorkspaces } from "../../app/lib/workspace-creation-policy";
-import { createClient, unwrap } from "../../app/lib/opencode";
 import { useLocal } from "../kernel/local-provider";
 import { usePlatform } from "../kernel/platform";
 import { WelcomePage } from "../domains/onboarding/welcome-page";
@@ -32,11 +31,11 @@ import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { JoinOrganizationDialog } from "../domains/cloud/join-organization-dialog";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { captureAnalyticsEvent } from "../../app/lib/analytics";
-import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../../app/lib/openwork-server";
+import { createOpenworkServerClient } from "../../app/lib/openwork-server";
 import { buildDenAuthUrl, DEFAULT_DEN_BASE_URL, readDenSettings } from "../../app/lib/den";
 import { markDesktopSignInInitiated } from "../../app/lib/den-sign-in-intent";
 import { denSettingsChangedEvent } from "../../app/lib/den-session-events";
-import { writeActiveWorkspaceId, writeLastSessionFor, writeWorkspaceProjectDimension } from "./session-memory";
+import { writeActiveWorkspaceId, writeWorkspaceProjectDimension } from "./session-memory";
 import { workspaceSessionRoute } from "./workspace-routes";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 import { shouldHoldWelcomeForDenSession } from "./welcome-den-session";
@@ -73,7 +72,6 @@ type WelcomeState = {
   attributionStep: boolean;
   pendingRoute: string | null;
   pendingWorkspaceId: string | null;
-  pendingSessionId: string | null;
 };
 
 type WelcomeAction =
@@ -85,7 +83,7 @@ type WelcomeAction =
   | { type: "remote:start" }
   | { type: "remote:error"; error: string }
   | { type: "remote:finish" }
-  | { type: "provider-step"; workspaceId: string; sessionId: string | null }
+  | { type: "provider-step"; workspaceId: string }
   | { type: "attribution-step"; route: string };
 
 const initialWelcomeState: WelcomeState = {
@@ -98,7 +96,6 @@ const initialWelcomeState: WelcomeState = {
   attributionStep: false,
   pendingRoute: null,
   pendingWorkspaceId: null,
-  pendingSessionId: null,
 };
 
 function welcomeReducer(state: WelcomeState, action: WelcomeAction): WelcomeState {
@@ -120,7 +117,7 @@ function welcomeReducer(state: WelcomeState, action: WelcomeAction): WelcomeStat
     case "remote:finish":
       return { ...state, remoteBusy: false };
     case "provider-step":
-      return { ...state, providerStep: true, pendingWorkspaceId: action.workspaceId, pendingSessionId: action.sessionId };
+      return { ...state, providerStep: true, pendingWorkspaceId: action.workspaceId };
     case "attribution-step":
       return { ...state, providerStep: false, attributionStep: true, pendingRoute: action.route };
   }
@@ -179,8 +176,6 @@ export function WelcomeRoute() {
       try {
         const workspaceName = folderNameFromPath(folder);
         let list: WorkspaceList | null = null;
-        let sessionBaseUrl = "";
-        let sessionToken = "";
         try {
           const { normalizedBaseUrl, resolvedToken, resolvedHostToken } =
             await resolveOpenworkConnection();
@@ -195,8 +190,6 @@ export function WelcomeRoute() {
               name: workspaceName,
               preset: "starter",
             });
-            sessionBaseUrl = normalizedBaseUrl;
-            sessionToken = resolvedToken;
           }
         } catch {
           list = null;
@@ -210,7 +203,6 @@ export function WelcomeRoute() {
           "";
         let targetWorkspaceId = createdId;
         let targetWorkspace = list.workspaces.find((workspace: WorkspaceInfo) => workspace.id === createdId) ?? null;
-        let targetSessionId: string | null = null;
         if (createdId) {
           await workspaceSetSelected(createdId).catch(() => undefined);
           await workspaceSetRuntimeActive(createdId).catch(() => undefined);
@@ -222,25 +214,6 @@ export function WelcomeRoute() {
             workspace: targetWorkspace,
             allWorkspaces: list.workspaces,
           }).catch(() => undefined);
-          const fresh = await resolveOpenworkConnection().catch(() => null);
-          if (fresh?.normalizedBaseUrl && fresh.resolvedToken) {
-            sessionBaseUrl = fresh.normalizedBaseUrl;
-            sessionToken = fresh.resolvedToken;
-          }
-        }
-        if (targetWorkspaceId && sessionBaseUrl && sessionToken) {
-          try {
-            const workspacePath = targetWorkspace?.path?.trim() || folder;
-            const session = unwrap(await createClient(
-              `${(buildOpenworkWorkspaceBaseUrl(sessionBaseUrl, targetWorkspaceId) ?? sessionBaseUrl).replace(/\/+$/, "")}/opencode`,
-              workspacePath || undefined,
-              { token: sessionToken, mode: "openwork" },
-            ).session.create({ directory: workspacePath || undefined }));
-            targetSessionId = session.id;
-            captureAnalyticsEvent("task_created", { source: "onboarding", workspace_type: "local" });
-          } catch {
-            // Best-effort first task creation.
-          }
         }
         if (targetWorkspaceId) {
           writeActiveWorkspaceId(targetWorkspaceId);
@@ -249,11 +222,12 @@ export function WelcomeRoute() {
               label: projectLabel,
             });
           }
-          if (targetSessionId) writeLastSessionFor(targetWorkspaceId, targetSessionId);
         }
         dispatch({ type: "close" });
         // Show the provider selection step before navigating to the session.
-        dispatch({ type: "provider-step", workspaceId: targetWorkspaceId, sessionId: targetSessionId });
+        // Keep the new-task screen stable. The first explicit submission
+        // creates a session, just like any other empty workspace.
+        dispatch({ type: "provider-step", workspaceId: targetWorkspaceId });
 
       } catch (error) {
         dispatch({
@@ -363,8 +337,8 @@ export function WelcomeRoute() {
   const finishOnboarding = useCallback(() => {
     markOnboardingComplete();
     navigate(state.pendingRoute ?? "/session", { replace: true });
-    if (state.pendingSessionId) focusPromptSoon();
-  }, [markOnboardingComplete, navigate, state.pendingRoute, state.pendingSessionId]);
+    focusPromptSoon();
+  }, [markOnboardingComplete, navigate, state.pendingRoute]);
 
   const handleAttributionSubmit = useCallback(
     (source: AttributionSource, aiPrompt?: string) => {
@@ -440,7 +414,7 @@ export function WelcomeRoute() {
             // always opened a bare sign-up page — payment before value.
             platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"));
             const route = state.pendingWorkspaceId
-              ? workspaceSessionRoute(state.pendingWorkspaceId, state.pendingSessionId)
+              ? workspaceSessionRoute(state.pendingWorkspaceId)
               : "/session";
             dispatch({ type: "attribution-step", route });
           }}
@@ -448,13 +422,13 @@ export function WelcomeRoute() {
             markOpenWorkModelsStartupPromoShown();
             hideOpenWorkModelsPromo();
             const route = state.pendingWorkspaceId
-              ? workspaceSessionRoute(state.pendingWorkspaceId, state.pendingSessionId)
+              ? workspaceSessionRoute(state.pendingWorkspaceId)
               : "/session";
             dispatch({ type: "attribution-step", route: `${route}?onboarding=1` });
           }}
           onSkip={() => {
             const route = state.pendingWorkspaceId
-              ? workspaceSessionRoute(state.pendingWorkspaceId, state.pendingSessionId)
+              ? workspaceSessionRoute(state.pendingWorkspaceId)
               : "/session";
             dispatch({ type: "attribution-step", route });
           }}

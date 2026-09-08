@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect } from "react";
-import { Dithering } from "@paper-design/shaders-react";
+import { FileText, FolderOpen, Globe } from "lucide-react";
 
 import { t } from "../../../i18n";
 import { useBootState } from "../../shell/boot-state";
@@ -56,23 +56,6 @@ export function WelcomePage({
       <ScrollArea className="relative z-10">
         <ScrollAreaViewport>
           <div className="relative flex min-h-dvh items-center justify-center px-6 py-16">
-            {/* Paper first-load spec: subtle black pixel-dither mosaic over a
-                near-white ground. `dark:invert` flips the pixels to white so
-                the texture survives dark mode. */}
-            <div className="pointer-events-none absolute inset-0 overflow-hidden opacity-[0.1] dark:invert">
-              <Dithering
-                className="size-full"
-                speed={0.01}
-                shape="warp"
-                type="2x2"
-                size={20.3}
-                scale={1.19}
-                frame={264559.21}
-                colorBack="#00000000"
-                colorFront="#000000"
-              />
-            </div>
-
             <div className="relative z-10 w-full max-w-[720px] rounded-3xl border border-border bg-background px-8 pb-12 pt-10 sm:px-16 sm:pb-16 sm:pt-14">
               <div className="flex items-center gap-2.5">
                 <img
@@ -97,7 +80,23 @@ export function WelcomePage({
                 </p>
               </div>
 
-              <div className="mt-11 flex flex-col gap-3">
+              <div className="mt-7 grid gap-4 border-y border-border py-5" aria-label="What you can do">
+                {[
+                  { icon: FileText, title: "Turn notes into finished work", description: "Draft briefs, summarize documents, and work with spreadsheets." },
+                  { icon: FolderOpen, title: "Work in your own folders", description: "Keep each project’s files and tasks together in a workspace." },
+                  { icon: Globe, title: "Bring your tools into the conversation", description: "Use the browser and discover connections when a task needs them." },
+                ].map(({ icon: Icon, title, description }) => (
+                  <div key={title} className="flex items-start gap-3">
+                    <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{title}</p>
+                      <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{description}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-7 flex flex-col gap-3">
                 {onTeamSignIn ? (
                   <Button
                     type="button"
@@ -124,6 +123,10 @@ export function WelcomePage({
                     ? t("welcome.creating_workspace")
                     : (getStartedLabel || t("welcome.use_without_cloud"))}
                 </Button>
+
+                <p className="text-xs leading-5 text-muted-foreground">
+                  Without Cloud, choose a folder on this computer. Sign in to use your team’s shared tools and settings.
+                </p>
 
                 <div className="pt-2">
                   <button

@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useState } from "react";
-import { ArrowRight, X, Zap } from "lucide-react";
+import { ArrowRight, FileText, FolderOpen, Globe, Table2, X, Zap } from "lucide-react";
 
 import { DEFAULT_MODEL } from "@/app/constants";
 import type { ComposerAttachment } from "@/app/types";
@@ -21,28 +21,33 @@ type HeroSuggestion = {
   title: string;
   description: string;
   prompt: string;
+  icon?: typeof FileText;
 };
 
 const DEFAULT_SUGGESTIONS: HeroSuggestion[] = [
   {
-    title: "Summarize my week",
-    description: "Pull highlights from email and calendar.",
-    prompt: "Summarize my week: pull the highlights from my connected email and calendar and give me a short digest of what happened and what needs my attention.",
+    title: "Explore this workspace",
+    description: "Find your bearings before making changes.",
+    prompt: "Give me an overview of the files in this workspace and suggest one useful first task. Don’t change any files yet.",
+    icon: FolderOpen,
   },
   {
     title: "Clean up a spreadsheet",
-    description: "Drop in a CSV and describe the result you want.",
-    prompt: "Create a sample CSV file with 20 rows of fake customer data (name, email, company, revenue). Then show me a summary of the data.",
+    description: "Start with your file and the result you want.",
+    prompt: "Help me clean up a spreadsheet. Ask me which file to use and what needs fixing, then show me the proposed changes before editing it.",
+    icon: Table2,
   },
   {
     title: "Draft a document",
-    description: "Reports, emails, or briefs from a few bullet points.",
+    description: "Turn rough notes into a brief or report.",
     prompt: "Draft a one-page project brief. Ask me for the bullet points you need, then turn them into a clear, well-structured document.",
+    icon: FileText,
   },
   {
-    title: "Automate a web task",
-    description: "Use the built-in browser for repetitive steps.",
-    prompt: "Open craigslist.org in the browser and search for couches for sale. Show me the top 5 results with prices.",
+    title: "Work with a website",
+    description: "Research or plan a repetitive browser task.",
+    prompt: "Help me with a browser task. Ask which website and what result I want, then propose the steps before taking action.",
+    icon: Globe,
   },
 ];
 
@@ -65,6 +70,7 @@ export type SessionEmptyHeroProps = {
  */
 export function SessionEmptyHero(props: SessionEmptyHeroProps) {
   const [prompt, setPrompt] = useState("");
+  const [selectedSuggestion, setSelectedSuggestion] = useState<string | null>(null);
   const orgRestrictions = useOrgRestrictions();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const canAddProviders = !checkDesktopRestriction({ restriction: "allowCustomProviders" });
@@ -107,8 +113,9 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     props.onRunTask(trimmedPrompt, attachments);
   };
 
-  const fillPrompt = (value: string) => {
-    setPrompt(value);
+  const fillPrompt = (suggestion: HeroSuggestion) => {
+    setPrompt(suggestion.prompt);
+    setSelectedSuggestion(suggestion.title);
     window.dispatchEvent(new Event("openwork:focusPrompt"));
   };
 
@@ -118,7 +125,7 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
         <h2 className="text-[24px] font-semibold leading-[30px] tracking-[-0.02em] text-foreground">
           What do you need done?
         </h2>
-        <p className="text-[13px] text-muted-foreground">Describe it in plain language</p>
+        <p className="text-[13px] text-muted-foreground">Start with the outcome. Add files or choose a tool when you need one.</p>
       </div>
 
       <NewTaskComposer
@@ -137,7 +144,7 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
           <span>Using the free starter model.</span>
           <button
             type="button"
-            className="flex items-center gap-1 font-medium text-blue-10 transition-colors hover:text-blue-11"
+            className="flex items-center gap-1 font-medium text-foreground transition-colors hover:underline"
             onClick={() => platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"))}
           >
             Get frontier models with no API keys
@@ -157,10 +164,10 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
       {!showModelsHint && canAddProviders && props.providerCount === 0 && props.onOpenProviderAuth ? (
         <button
           type="button"
-          className="flex w-full items-start gap-3 rounded-xl border border-blue-7/50 bg-blue-2/40 p-3.5 text-left transition-colors hover:bg-blue-3/50"
+          className="flex w-full items-start gap-3 rounded-xl border border-border bg-background p-3.5 text-left transition-colors hover:bg-accent"
           onClick={props.onOpenProviderAuth}
         >
-          <Zap className="mt-0.5 size-4 shrink-0 text-blue-10" />
+          <Zap className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <div>
             <div className="text-[13px] font-medium text-foreground">Connect a model provider</div>
             <div className="mt-0.5 text-[12px] text-muted-foreground">
@@ -170,20 +177,37 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
         </button>
       ) : null}
 
-      <div className="grid gap-2 sm:grid-cols-2">
-        {suggestions.map((suggestion) => (
-          <button
-            key={suggestion.title}
-            type="button"
-            className="rounded-xl border border-border bg-background p-3.5 text-left transition-colors hover:bg-accent"
-            onClick={() => fillPrompt(suggestion.prompt)}
-          >
-            <div className="truncate text-[13px] font-medium text-foreground">{suggestion.title}</div>
-            <div className="mt-0.5 line-clamp-2 text-[12px] leading-[17px] text-muted-foreground">
-              {suggestion.description}
-            </div>
-          </button>
-        ))}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+          <span>Start with an example</span>
+          <span>Edit before you send</span>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {suggestions.map((suggestion) => (
+            <button
+              key={suggestion.title}
+              type="button"
+              className="rounded-xl border border-border bg-background p-3.5 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              disabled={Boolean(prompt.trim()) || props.busy}
+              onClick={() => fillPrompt(suggestion)}
+            >
+              <div className="flex items-center gap-2 text-[13px] font-medium text-foreground">
+                {suggestion.icon ? <suggestion.icon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : null}
+                <span className="truncate">{suggestion.title}</span>
+              </div>
+              <div className="mt-0.5 line-clamp-2 text-[12px] leading-[17px] text-muted-foreground">
+                {suggestion.description}
+              </div>
+            </button>
+          ))}
+        </div>
+        <p className="min-h-5 text-xs leading-5 text-muted-foreground" role="status" aria-live="polite">
+          {prompt.trim()
+            ? selectedSuggestion
+              ? "Example added to your draft. Make it yours, then choose Run task. Clear your draft to choose another."
+              : "Your draft is safe. Clear it to choose an example."
+            : "Examples fill your draft. Nothing runs until you choose Run task."}
+        </p>
       </div>
     </div>
   );
