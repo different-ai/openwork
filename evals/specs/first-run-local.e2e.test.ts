@@ -138,7 +138,7 @@ fresh("a new installation requires verified sign-in for UI and automated tasks a
       });
     }
     await user.on(restarted).click({ testId: "account-status-menu" });
-    await user.on(restarted).click("Sign out");
+    await user.on(restarted).click({ role: "menuitem", text: "Log out" });
     await user.on(restarted).see({ role: "button", text: "Sign in to OpenWork" }, { timeoutMs: 30_000 });
     await user.on(restarted).notSee("Use Without Cloud");
     await user.on(restarted).notSee("composer");
