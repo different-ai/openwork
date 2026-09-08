@@ -114,18 +114,20 @@ function createProviderAuthTestStore(
     token: "engine-token",
     mode: "openwork",
   });
-  const openworkClient = createOpenworkServerClient({
+  let serverHostToken = "host-token";
+  let openworkClient = createOpenworkServerClient({
     baseUrl: "https://server.example",
     token: "server-token",
-    hostToken: "host-token",
+    hostToken: serverHostToken,
   });
-  const workspace = {
+  let workspace: WorkspaceDisplay = {
     id: "workspace_test",
     name: "Test workspace",
     path: "/tmp/workspace_test",
     preset: "default",
     workspaceType: "local",
-  } satisfies WorkspaceDisplay;
+  };
+  let runtimeWorkspaceId = "ws_1";
   let providers: ProviderListItem[] = [];
   let providerDefaults: Record<string, string> = {};
   let providerConnectedIds: string[] = [];
@@ -141,13 +143,13 @@ function createProviderAuthTestStore(
     checkDesktopAppRestriction: () => false,
     selectedWorkspaceDisplay: () => workspace,
     providerBaseUrl: () => "https://engine.example",
-    selectedWorkspaceRoot: () => "/tmp/workspace_test",
-    runtimeWorkspaceId: () => "ws_1",
+    selectedWorkspaceRoot: () => workspace.path,
+    runtimeWorkspaceId: () => runtimeWorkspaceId,
     openworkServer: {
       getSnapshot: () => ({
         openworkServerStatus: "connected",
         openworkServerClient: openworkClient,
-        openworkServerAuth: { token: "server-token", hostToken: "host-token" },
+        openworkServerAuth: { token: "server-token", hostToken: serverHostToken },
         openworkServerCapabilities: {
           config: configCapabilities,
           providerSync: configCapabilities.providerSync,
@@ -174,6 +176,18 @@ function createProviderAuthTestStore(
   return {
     store,
     reloadCount: () => reloadCount,
+    selectWorkspace: (id: string, path: string) => {
+      workspace = { ...workspace, id, path };
+      runtimeWorkspaceId = id;
+    },
+    rotateServerHostToken: (hostToken: string) => {
+      serverHostToken = hostToken;
+      openworkClient = createOpenworkServerClient({
+        baseUrl: "https://server.example",
+        token: "server-token",
+        hostToken,
+      });
+    },
   };
 }
 
@@ -269,6 +283,19 @@ function installProviderSyncFetch(
   });
 }
 
+async function waitForRequestCount(
+  requests: RecordedRequest[],
+  pathname: string,
+  expected: number,
+) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (requests.filter((request) => new URL(request.url).pathname === pathname).length >= expected) {
+      return;
+    }
+    await Bun.sleep(1);
+  }
+}
+
 describe("cloud provider sync in gateway mode", () => {
   beforeEach(() => {
     process.env.VITE_OPENWORK_DEPLOYMENT = "web";
@@ -325,6 +352,24 @@ describe("cloud provider sync in gateway mode", () => {
     expect(store.getSnapshot().importedCloudProviders.lpr_test?.providerId).toBe("lpr_test");
     expect(store.getSnapshot().providerAuthError).toBeNull();
     expect(reloadCount()).toBe(0);
+  });
+
+  test("keeps automatic client sync scoped to the selected workspace", async () => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installProviderSyncFetch(requests);
+    const { store, selectWorkspace } = createProviderAuthTestStore();
+
+    store.syncFromOptions();
+    await waitForRequestCount(requests, "/api/den/v1/llm-providers", 1);
+    selectWorkspace("ws_2", "/tmp/workspace_2");
+    store.syncFromOptions();
+    await waitForRequestCount(requests, "/api/den/v1/llm-providers", 2);
+
+    expect(
+      requests.filter((request) => new URL(request.url).pathname === "/api/den/v1/llm-providers"),
+    ).toHaveLength(2);
   });
 
   test("does not spin imports when workspace config is read-only", async () => {
@@ -392,6 +437,40 @@ describe("cloud provider sync in server-capability mode", () => {
     expect(await store.runCloudProviderSync("settings_cloud_opened")).toEqual({ outcome: "handled_server_side" });
     expect(requests.filter((request) => new URL(request.url).pathname === "/cloud-provider-sync/run")).toHaveLength(1);
     expect(requests.filter((request) => request.url.includes("/v1/llm-providers"))).toHaveLength(0);
+  });
+
+  test("keeps automatic server sync stable across workspace switches and invalidates account or server changes", async () => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installProviderSyncFetch(requests);
+    const { store, selectWorkspace, rotateServerHostToken } = createProviderAuthTestStore({
+      read: true,
+      write: true,
+      providerSync: true,
+    });
+
+    store.syncFromOptions();
+    await waitForRequestCount(requests, "/cloud-provider-sync/run", 1);
+    expect(await store.runCloudProviderSync("app_launch")).toEqual({ outcome: "handled_server_side" });
+
+    selectWorkspace("ws_2", "/tmp/workspace_2");
+    store.syncFromOptions();
+    expect(await store.runCloudProviderSync("app_launch")).toEqual({ outcome: "handled_server_side" });
+    expect(
+      requests.filter((request) => new URL(request.url).pathname === "/cloud-provider-sync/run"),
+    ).toHaveLength(1);
+
+    storage.setItem("openwork.den.activeOrgId", "org_changed");
+    store.syncFromOptions();
+    expect(await store.runCloudProviderSync("app_launch")).toEqual({ outcome: "handled_server_side" });
+
+    rotateServerHostToken("host-token-rotated");
+    store.syncFromOptions();
+    expect(await store.runCloudProviderSync("app_launch")).toEqual({ outcome: "handled_server_side" });
+    expect(
+      requests.filter((request) => new URL(request.url).pathname === "/cloud-provider-sync/run"),
+    ).toHaveLength(3);
   });
 
   test("shares same-context runs and coalesces a changed context into one trailing request", async () => {
