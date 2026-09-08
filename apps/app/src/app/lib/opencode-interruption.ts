@@ -1,9 +1,15 @@
 import type { Client } from "../types";
 import { isPromptAdmissionUnknown, unwrap } from "./opencode";
 
+type Submission = {
+  messageID?: string;
+  settled: boolean;
+  error?: unknown;
+  cancel: () => void;
+};
 type Turn = {
   generation: number;
-  submissions: Set<Promise<unknown>>;
+  submissions: Set<Submission>;
   interruption?: Promise<void>;
   stopping: boolean;
   needsStop: boolean;
@@ -23,18 +29,28 @@ function turnFor(baseUrl: string, sessionID: string) {
 
 /** Shared by visible panes and the background queue. A successor cannot enter
  * the engine while Stop is still cancelling its predecessor's children. */
-export async function submitAfterInterruption<T>(baseUrl: string, sessionID: string, send: (afterStop: boolean) => Promise<T>): Promise<T> {
+export async function submitAfterInterruption<T>(baseUrl: string, sessionID: string, send: (afterStop: boolean) => Promise<T>, messageID?: string): Promise<T> {
   const turn = turnFor(baseUrl, sessionID);
   const generation = turn.generation;
   const interruption = turn.interruption;
   await interruption;
   if (turn.generation !== generation) throw new Error("Send cancelled by Stop.");
-  const pending = send(interruption !== undefined);
-  turn.submissions.add(pending);
+  let cancel!: () => void;
+  const cancelled = new Promise<never>((_, reject) => {
+    cancel = () => reject(new Error("Send cancelled by Stop."));
+  });
+  const submission: Submission = {
+    messageID, settled: false, cancel,
+  };
+  const pending = send(interruption !== undefined).then(
+    (result) => { submission.settled = true; return result; },
+    (error: unknown) => { submission.settled = true; submission.error = error; throw error; },
+  );
+  turn.submissions.add(submission);
   try {
-    return await pending;
+    return await Promise.race([pending, cancelled]);
   } finally {
-    turn.submissions.delete(pending);
+    turn.submissions.delete(submission);
   }
 }
 
@@ -58,8 +74,10 @@ export function interruptSessionTurn(
   options: { timeoutMs?: number; admissionUnknown?: boolean; onStopped?: () => void } = {},
 ): Promise<void> {
   const turn = turnFor(baseUrl, sessionID);
-  if (turn.stopping && turn.interruption) return turn.interruption;
+  // Share the cancellation request, not permission for intervening sends to
+  // survive another explicit Stop.
   turn.generation += 1;
+  if (turn.stopping && turn.interruption) return turn.interruption;
   turn.stopping = true;
   turn.needsStop = true;
   const pending = [...turn.submissions];
@@ -78,6 +96,7 @@ export function interruptSessionTurn(
     turn.needsStop = false;
   }).finally(() => {
     clearTimeout(timer);
+    controller.abort(new Error("Stop operation finished."));
     turn.stopping = false;
     for (const listener of turn.listeners) listener();
   });
@@ -92,7 +111,7 @@ async function stopForegroundTree(
   client: Client,
   rootID: string,
   directory: string | undefined,
-  pending: readonly Promise<unknown>[],
+  pending: readonly Submission[],
   signal: AbortSignal,
   admissionUnknown: boolean,
 ) {
@@ -116,7 +135,20 @@ async function stopForegroundTree(
     // child. Only the final authoritative idle check establishes settlement.
     unwrap(await client.session.abort({ sessionID, directory }, options));
   };
-  const root = unwrap(await client.session.get({ sessionID: rootID, directory }, options));
+  // Stop must reach the engine even when session/transcript reads are broken.
+  // Read concurrently to retain child references, but never gate the root abort
+  // on discovery. Failed discovery still prevents claiming a complete handoff.
+  const [aborted, rootResult, childResult] = await Promise.allSettled([
+    abort(rootID),
+    client.session.get({ sessionID: rootID, directory }, options).then(unwrap),
+    children(rootID),
+  ]);
+  // Do not let a fast discovery failure cancel an abort still in flight.
+  if (aborted.status === "rejected") throw aborted.reason;
+  if (rootResult.status === "rejected") throw rootResult.reason;
+  if (childResult.status === "rejected") throw childResult.reason;
+  const root = rootResult.value;
+  const before = childResult.value;
   if (root.id !== rootID || (directory !== undefined && root.directory !== directory)) {
     throw new Error("Could not verify the conversation's workspace. Stop was not confirmed.");
   }
@@ -141,15 +173,42 @@ async function stopForegroundTree(
       await stop(id);
     }
   };
-  const before = await children(rootID);
-  // Stop active work promptly, even if an older shell/send has not returned.
-  await abort(rootID);
-  const settled = await Promise.allSettled(pending);
+  const waiting = new Set(pending);
+  const reconciled = new Set<Submission>();
+  while (waiting.size > 0) {
+    signal.throwIfAborted();
+    for (const submission of waiting) if (submission.settled) waiting.delete(submission);
+    if (waiting.size === 0) break;
+    if ([...waiting].some((submission) => submission.messageID !== undefined)) {
+      const messages = unwrap(await client.session.messages({ sessionID: rootID, directory }, options));
+      const statuses = unwrap(await client.session.status({ directory }, options));
+      signal.throwIfAborted();
+      if (!statuses[rootID] || statuses[rootID].type === "idle") {
+        for (const submission of waiting) {
+          const id = submission.messageID;
+          if (id === undefined) continue;
+          const admitted = messages.some(({ info }) => info.id === id && info.sessionID === rootID && info.role === "user");
+          const terminal = messages.some(({ info, parts }) => info.role === "assistant" && info.sessionID === rootID
+            && info.parentID === id && typeof info.time.completed === "number" && info.finish !== "tool-calls"
+            && !parts.some((part) => part.type === "tool" && ["pending", "running"].includes(part.state.status)));
+          // Exact terminal evidence reconciles a lost response, not an absent
+          // message or an idle snapshot on its own. Reject only the UI wait;
+          // never replay the request, and still stop/verify the child tree below.
+          if (admitted && terminal) {
+            reconciled.add(submission);
+            submission.cancel();
+            waiting.delete(submission);
+          }
+        }
+      }
+    }
+    if (waiting.size > 0) await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  }
   signal.throwIfAborted();
   await stop(rootID, before);
   // A lost admission response is not proof that the old POST cannot arrive
   // later. Do not claim a clean handoff or replay that prompt.
-  if (admissionUnknown || settled.some((result) => result.status === "rejected" && isPromptAdmissionUnknown(result.reason))) {
+  if (admissionUnknown || pending.some((submission) => !reconciled.has(submission) && isPromptAdmissionUnknown(submission.error))) {
     throw new Error("The previous message's acceptance is still unknown. Check acceptance, then retry Stop.");
   }
   while (true) {

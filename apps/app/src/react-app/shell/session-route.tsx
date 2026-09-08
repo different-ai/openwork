@@ -1374,7 +1374,7 @@ export function SessionRoute() {
 
                 if (draft.mode === "shell") {
                   onPrepared?.();
-                  await shellInSession(opencodeClient, targetSessionId, text);
+                  await shellInSession(opencodeClient, targetSessionId, text, { messageID: draft.messageId });
                   return;
                 }
 
@@ -1382,6 +1382,7 @@ export function SessionRoute() {
                   onPrepared?.();
                   const result = await opencodeClient.session.command({
                     sessionID: targetSessionId,
+                    messageID: draft.messageId,
                     command: draft.command.name,
                     arguments: draft.command.arguments,
                   });
@@ -1415,7 +1416,7 @@ export function SessionRoute() {
                 }
                 // Remember what this conversation used last so returning to it
                 // (or splitting it beside another session) keeps its own model.
-                if (sendModel) {
+                if (sendModel && getQueuedSendGeneration(targetSessionId) === generation) {
                   useSessionModelStore.getState().setModel(targetSessionId, sendModel, sendVariant ?? null);
                 }
               },
@@ -1709,13 +1710,14 @@ export function SessionRoute() {
                 trackTaskStarted(targetSessionId, telemetryDimensions);
                 if (draft.mode === "shell") {
                   onPrepared?.();
-                  await shellInSession(workspaceOpencodeClient, targetSessionId, text);
+                  await shellInSession(workspaceOpencodeClient, targetSessionId, text, { messageID: draft.messageId });
                   return;
                 }
                 if (draft.command) {
                   onPrepared?.();
                   const result = await workspaceOpencodeClient.session.command({
                     sessionID: targetSessionId,
+                    messageID: draft.messageId,
                     command: draft.command.name,
                     arguments: draft.command.arguments,
                   });
@@ -1744,7 +1746,7 @@ export function SessionRoute() {
                   if (isPromptAdmissionUnknown(result.error)) throw result.error;
                   throw new Error(serializeSDKError(result.error));
                 }
-                if (sendModel) {
+                if (sendModel && getQueuedSendGeneration(targetSessionId) === generation) {
                   useSessionModelStore.getState().setModel(targetSessionId, sendModel, sendVariant ?? null);
                 }
               },

@@ -1869,7 +1869,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setError(null);
     try {
       const result = await submitAfterInterruption(props.opencodeBaseUrl, props.sessionId,
-        () => props.onSendDraft({ ...nextDraft, messageId }, props.sessionId, onPrepared));
+        () => props.onSendDraft({ ...nextDraft, messageId }, props.sessionId, onPrepared), messageId);
       dispatchQueuedDrain(props.sessionId, { type: "send_result", itemId, outcome: result.outcome, at: Date.now() });
       if (getQueuedSendGeneration(props.sessionId) !== generation) return result;
       if (result.outcome === "blocked" || result.outcome === "cancelled") return result;

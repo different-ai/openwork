@@ -111,13 +111,14 @@ async function performQueuedDraftSend(
   );
 
   if (draft.mode === "shell") {
-    await shellInSession(opencodeClient, sessionId, text);
+    await shellInSession(opencodeClient, sessionId, text, { messageID: draft.messageId });
     return;
   }
 
   if (draft.command) {
     const result = await opencodeClient.session.command({
       sessionID: sessionId,
+      messageID: draft.messageId,
       command: draft.command.name,
       arguments: draft.command.arguments,
     });
@@ -149,6 +150,7 @@ async function performQueuedDraftSend(
     if (isPromptAdmissionUnknown(result.error)) throw result.error;
     throw new Error(serializeSDKError(result.error));
   }
+  assertQueuedSendCurrent(sessionId, generation);
   if (sendModel) {
     useSessionModelStore.getState().setModel(sessionId, sendModel, sendVariant ?? null);
   }
@@ -351,7 +353,7 @@ async function attemptDrain(sessionId: string) {
 
   try {
     await submitAfterInterruption(context.opencodeBaseUrl, sessionId,
-      () => performQueuedDraftSend(context, sessionId, draft, generation));
+      () => performQueuedDraftSend(context, sessionId, draft, generation), draft.messageId);
     dispatchQueuedDrain(sessionId, {
       type: "send_result",
       itemId: nextItem.id,
