@@ -5,13 +5,15 @@ import { connect } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { serve, writeWebResponse } from "./serve-node.js";
 
+const processEvents: EventEmitter = process;
+
 describe("serve", () => {
   test("handles a malformed raw Node TRACE request without an unhandled rejection", async () => {
     const unhandled: unknown[] = [];
     const onUnhandledRejection = (error: unknown) => {
       unhandled.push(error);
     };
-    process.on("unhandledRejection", onUnhandledRejection);
+    processEvents.on("unhandledRejection", onUnhandledRejection);
     let fetchCalls = 0;
     const server = await serve({
       hostname: "127.0.0.1",
@@ -57,7 +59,7 @@ describe("serve", () => {
       expect(fetchCalls).toBe(0);
       expect(unhandled).toEqual([]);
     } finally {
-      process.off("unhandledRejection", onUnhandledRejection);
+      processEvents.off("unhandledRejection", onUnhandledRejection);
       await server.stop();
     }
   });
@@ -99,7 +101,7 @@ describe("serve", () => {
     const onUncaughtException = (error: unknown) => {
       uncaught.push(error);
     };
-    process.on("uncaughtException", onUncaughtException);
+    processEvents.on("uncaughtException", onUncaughtException);
 
     const encoder = new TextEncoder();
     const server = await serve({
@@ -137,7 +139,7 @@ describe("serve", () => {
       expect(health.status).toBe(200);
       expect(await health.json()).toEqual({ ok: true });
     } finally {
-      process.off("uncaughtException", onUncaughtException);
+      processEvents.off("uncaughtException", onUncaughtException);
       await server.stop();
     }
   });

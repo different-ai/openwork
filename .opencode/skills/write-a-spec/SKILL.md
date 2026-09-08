@@ -24,6 +24,9 @@ them. Model setup as resources in dependency order: `needs()` → `server()` →
 - `server()` boots or reuses Den and provisions isolated organizations.
 - `app()` boots a signed-in desktop. Use `profileDir` for caller-owned profile
   continuity and `localServerDelayMs` for deterministic startup races.
+- `coworker()` boots the packaged Open Coworker app the same way; it is that
+  app's product boundary, and its journeys arrange fixtures through
+  `worlds/coworker.ts` rather than importing product source.
 - `inviteMember()` adds a named member to an existing Den.
 - `faultProxy()` injects `faults.status()` or `faults.latency()` and exposes the
   `requests` log for assertions about attempts and recovery.

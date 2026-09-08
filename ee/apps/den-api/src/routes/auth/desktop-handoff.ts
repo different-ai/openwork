@@ -17,7 +17,7 @@ import { CLOUD_INSTANCE_BACKEND } from "../../workers/cloud-constants.js"
 
 const createGrantSchema = z.object({
   next: z.string().trim().max(128).optional().describe("Optional continuation hint for handoff clients."),
-  desktopScheme: z.literal("openwork").optional().describe("The registered OpenWork desktop URL scheme."),
+  desktopScheme: z.enum(["openwork", "opencoworker"]).optional().describe("The registered OpenWork or Open Coworker desktop URL scheme."),
   returnUrl: z.string().trim().max(2048).optional().describe("Optional HTTPS OpenWork Cloud web return URL. Accepted only for multi-organization Cloud instances after server-side origin validation."),
 }).meta({ ref: "DesktopHandoffGrantCreateBody" })
 
@@ -186,10 +186,11 @@ export function resolveDesktopDenBaseUrl(request: Request) {
 }
 
 function buildOpenworkDeepLink(input: {
+  scheme: "openwork" | "opencoworker"
   grant: string
   denBaseUrl: string
 }) {
-  const url = new URL("openwork://den-auth")
+  const url = new URL(`${input.scheme}://den-auth`)
   url.searchParams.set("grant", input.grant)
   url.searchParams.set("denBaseUrl", input.denBaseUrl)
   return url.toString()
@@ -445,6 +446,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       grant,
       expiresAt: expiresAt.toISOString(),
       openworkUrl: buildOpenworkDeepLink({
+        scheme: input.desktopScheme ?? "openwork",
         grant,
         denBaseUrl,
       }),

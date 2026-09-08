@@ -3,7 +3,7 @@ const { readFileSync } = require("node:fs");
 const test = require("node:test");
 const { runInNewContext } = require("node:vm");
 
-const { installWebMcpRuntime } = require("./browser-content-preload.cjs");
+const { installWebMcpRuntime } = require("../../../packages/browser-tabs/browser-content-preload.cjs");
 
 function createRealm(policy = null) {
   class TestDocument {
@@ -189,7 +189,7 @@ test("the isolated preload exposes only a payload-free check, not a policy-repor
       { contentWindow: child, src: "https://child.example/", getAttribute: () => "tools 'src'" },
     ],
   };
-  runInNewContext(readFileSync(require.resolve("./browser-content-preload.cjs"), "utf8"), {
+  runInNewContext(readFileSync(require.resolve("../../../packages/browser-tabs/browser-content-preload.cjs"), "utf8"), {
     require: () => ({
       ipcRenderer: {
         on: (channel, handler) => listeners.set(channel, handler),

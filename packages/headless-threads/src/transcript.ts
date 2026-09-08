@@ -33,6 +33,12 @@ function toToolCalls(message: HeadlessThreadMessage): HeadlessTranscriptToolCall
       name: part.tool ?? "",
       callId: part.callId ?? null,
       status: part.toolStatus ?? null,
+      input: part.toolInput ?? {},
+      output: part.toolOutput,
+      error: part.toolError ?? null,
+      metadata: part.toolMetadata ?? {},
+      ...(part.toolStartedAt === undefined ? {} : { startedAt: part.toolStartedAt }),
+      ...(part.toolCompletedAt === undefined ? {} : { completedAt: part.toolCompletedAt }),
     }));
 }
 
@@ -40,9 +46,14 @@ export function toTranscriptMessage(message: HeadlessThreadMessage): HeadlessTra
   return {
     id: message.id,
     role: message.role,
+    parentId: message.parentId,
     createdAt: message.createdAt,
+    completedAt: message.completedAt,
+    error: message.error,
     text: joinPartText(message, "text"),
     reasoning: joinPartText(message, "reasoning"),
+    model: message.model,
+    usage: message.role === "assistant" ? message.usage : null,
     toolCalls: toToolCalls(message),
   };
 }
@@ -81,9 +92,9 @@ export function assistantReplyForTurn(messages: HeadlessThreadMessage[], input: 
   messageCountBefore: number;
 }): HeadlessThreadMessage | null {
   if (input.messageId) {
-    return messages.find((message) => message.role === "assistant" && message.parentId === input.messageId) ?? null;
+    return messages.filter((message) => message.role === "assistant" && message.parentId === input.messageId).at(-1) ?? null;
   }
-  return messages.slice(input.messageCountBefore).find((message) => message.role === "assistant") ?? null;
+  return messages.slice(input.messageCountBefore).filter((message) => message.role === "assistant").at(-1) ?? null;
 }
 
 /**

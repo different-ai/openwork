@@ -39,7 +39,7 @@ export interface ElectronSurfaceOptions {
   /** Retained launch startup observation budget. */
   startupTimeoutMs?: number;
   /** Root package script used for a source Electron launch. Setting this bypasses explicit and ambient binaries. */
-  devCommand?: "dev" | "dev:electron";
+  devCommand?: "dev" | "dev:electron" | "dev:coworker";
   /** Skip host-side sidecar/helper preparation when the caller intentionally uses existing resources. */
   prepareSharedResources?: boolean;
 }

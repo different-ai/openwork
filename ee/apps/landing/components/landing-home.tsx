@@ -5,6 +5,7 @@ import { ArrowRight, Globe, Monitor, SquareTerminal } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { BrandLogo } from "./lp-brand-logos";
+import { CoworkerAction } from "./coworker-announcement-actions";
 import { LandingAppDemoPanel } from "./landing-app-demo-panel";
 import {
   defaultLandingDemoFlowId,
@@ -81,6 +82,11 @@ export function LandingHome(props: Props) {
           >
             <div className="relative min-w-0 lg:pt-2">
               <div className="relative">
+              <CoworkerAction href="/coworker" action="announcement" placement="homepage" className="mb-7 inline-flex max-w-full items-center gap-3 rounded-2xl border border-black/10 bg-white/70 px-4 py-3 text-sm text-[var(--lp-ink)] transition-colors hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4">
+                <span className="rounded-full bg-[#e4ecff] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider">New</span>
+                <span>Meet Open Coworker. <span className="text-gray-600">Your work. Better together.</span></span>
+                <ArrowRight size={16} className="shrink-0" aria-hidden="true" />
+              </CoworkerAction>
               <p className="mono mb-5 text-[11px] leading-relaxed tracking-[0.1em] text-[var(--lp-body)] sm:text-xs">
                 SOVEREIGN AI FOR KNOWLEDGE WORKERS
               </p>
