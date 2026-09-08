@@ -25,6 +25,25 @@ import {
 
 const t0 = 1_000_000;
 
+test("an immediate follow-up cannot inherit its interrupted predecessor's busy observation", () => {
+  let state = reduceQueuedDrain(INITIAL_QUEUED_DRAIN_STATE, { type: "send_started", itemId: "old" });
+  state = reduceQueuedDrain(state, { type: "busy_observed" });
+  state = reduceQueuedDrain(state, { type: "send_result", itemId: "old", outcome: "sent", at: t0 });
+  expect(canAdmitNextQueuedItem(reduceQueuedDrain(state, { type: "stop_confirmed" }))).toBe(true);
+  state = reduceQueuedDrain(state, { type: "send_started", itemId: "new", steer: true });
+  state = reduceQueuedDrain(state, { type: "busy_observed" });
+  expect(state.phase).toEqual({ kind: "sending", itemId: "new", busySeen: true });
+  state = reduceQueuedDrain(state, { type: "stop_confirmed" });
+  expect(state.phase).toEqual({ kind: "sending", itemId: "new", busySeen: false });
+  state = reduceQueuedDrain(state, { type: "send_result", itemId: "new", outcome: "sent", at: t0 + 10 });
+  expect(state.phase).toEqual({ kind: "awaiting_observation", itemId: "new", admittedAt: t0 + 10 });
+  expect(reduceQueuedDrain(state, { type: "idle_reconciled", observedAt: t0 })).toBe(state);
+  expect(canAdmitNextQueuedItem(state)).toBe(false);
+  state = reduceQueuedDrain(state, { type: "busy_observed" });
+  state = reduceQueuedDrain(state, { type: "idle_reconciled", observedAt: t0 + 20 });
+  expect(canAdmitNextQueuedItem(state)).toBe(true);
+});
+
 function admit(state: QueuedDrainState, itemId: string, at: number): QueuedDrainState {
   const sending = reduceQueuedDrain(state, { type: "send_started", itemId });
   expect(sending.phase).toEqual({ kind: "sending", itemId, busySeen: false });

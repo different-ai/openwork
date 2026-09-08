@@ -277,6 +277,7 @@ export async function delegatedQuestionHandoff(seed: Seed) {
     answer: "Unrelated outline",
     alternative: "Unrelated checklist",
   };
+  const followup = { prompt: "Leave the delegated task stopped and prepare a fresh summary", reply: "Fresh summary finished after stopping the child." };
   const base = await splitPaneQuestions(seed, "delegated-question-handoff", [
     {
       promptMarker: rootPrompt, latestUserTurn: true,
@@ -298,6 +299,7 @@ export async function delegatedQuestionHandoff(seed: Seed) {
         ],
       }] } }],
     })),
+    { promptMarker: followup.prompt, latestUserTurn: true, finalReply: followup.reply, steps: [] },
   ], {
     permission: { question: "allow", task: "allow" },
     // Both engines deny questions for general by default; v2 migrates task to subagent.
@@ -305,7 +307,7 @@ export async function delegatedQuestionHandoff(seed: Seed) {
   });
   const root = await seedSessionRetry(seed, base.app, { title: "Delegated question parent" });
   const other = await seedSessionRetry(seed, base.app, { title: "Unrelated question root" });
-  return { ...base, engine, delegationTool, root: { ...root, prompt: rootPrompt }, child, unrelated: { ...other, ...unrelated } };
+  return { ...base, engine, delegationTool, followup, root: { ...root, prompt: rootPrompt }, child, unrelated: { ...other, ...unrelated } };
 }
 
 /** Real native permissions and a provider retry, without synthetic UI events. */

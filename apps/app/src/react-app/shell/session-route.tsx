@@ -18,7 +18,7 @@ import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
 import { createClient, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
-import { isOpencodeV2BaseUrl, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
+import { createClientV2, isOpencodeV2BaseUrl, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
 import { getNativeSessionMessages } from "@/app/lib/opencode-session-native";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
@@ -1612,7 +1612,8 @@ export function SessionRoute() {
     }
 
     const workspaceRoot = paneEndpoint.workspaceRoot;
-    const workspaceOpencodeClient = createClient(
+    const createEngineClient = isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl) ? createClientV2 : createClient;
+    const workspaceOpencodeClient = createEngineClient(
       endpoint.opencodeBaseUrl,
       workspaceRoot || undefined,
       { token: endpoint.token, mode: "openwork" },

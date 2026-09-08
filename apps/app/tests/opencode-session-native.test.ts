@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { Message, Part, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
-import { createClient, createPromptMessageID, hasAcceptedPromptMessage, type FieldsResult } from "../src/app/lib/opencode";
+import { createClient, createPromptMessageID, hasAcceptedPromptMessage, unwrap, type FieldsResult } from "../src/app/lib/opencode";
+import { interruptSessionTurn, sessionNeedsStop, submitAfterInterruption } from "../src/app/lib/opencode-interruption";
+import { createClientV2 } from "../src/app/lib/opencode-v2-adapter";
 import {
   composeNativeSessionSnapshot,
   deleteNativeSession,
@@ -54,6 +56,41 @@ function operations(overrides: Partial<NativeSessionOperations> = {}): NativeSes
     delete: async () => result(true),
     ...overrides,
   };
+}
+
+async function withSessionFetch(
+  respond: (request: Request) => Response | Promise<Response>,
+  run: (requests: Request[]) => Promise<void>,
+) {
+  const originalFetch = globalThis.fetch;
+  const requests: Request[] = [];
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Promise.resolve(respond(request));
+    },
+  });
+  try {
+    await run(requests);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+function delegatedTool(childID: string, state: Record<string, unknown> = {}, tool = "task") {
+  return {
+    type: "tool", tool, id: `part_${childID}`, callID: `call_${childID}`,
+    state: { status: "running", input: {}, metadata: { sessionId: childID }, time: { start: 1 }, ...state },
+  };
+}
+
+function turnMessages(sessionID: string, parts: ReturnType<typeof delegatedTool>[] = [], messageID = "msg_current") {
+  return [
+    { info: { id: messageID, sessionID, role: "user", time: { created: 1 } }, parts: [] },
+    { info: { id: `${messageID}_reply`, sessionID, role: "assistant", time: { created: 2 } }, parts },
+  ];
 }
 
 describe("native OpenCode session operations", () => {
@@ -166,5 +203,374 @@ describe("native OpenCode session operations", () => {
         todo: async () => failedResult({ code: "engine_unavailable" }, 503),
       }),
     })).rejects.toMatchObject({ status: 503, code: "engine_unavailable" });
+  });
+});
+
+describe("native Stop and follow-up handoff", () => {
+  test("v2 interrupts the native subagent before admitting the next prompt", async () => {
+    const baseUrl = endpoint.opencodeBaseUrl.replace("opencode", "opencode2");
+    const rootID = "ses_v2_stop";
+    const childID = "ses_v2_child";
+    const events: string[] = [];
+    await withSessionFetch((request) => {
+      const path = new URL(request.url).pathname;
+      const [, id, action] = path.match(/\/api\/session\/([^/]+)(?:\/([^/]+))?$/) ?? [];
+      if (id === "active") return Response.json({ data: {} });
+      if (!action) return Response.json({ data: {
+        id, title: "Native turn", location: { directory: session.directory }, time: { created: 1, updated: 2 },
+        ...(id === childID ? { parentID: rootID } : {}),
+      } });
+      if (action === "message") return Response.json({ data: [
+        { id: "msg_user", type: "user", time: { created: 1 }, content: [] },
+        { id: "msg_assistant", type: "assistant", time: { created: 2 }, content: id === rootID ? [{
+          type: "tool", id: "call_child", name: "subagent", time: { created: 2, ran: 2 },
+          state: { status: "running", input: { agent: "explore" }, metadata: { sessionID: childID } },
+        }] : [] },
+      ] });
+      if (action === "interrupt") { events.push(`interrupt:${id}`); return Response.json({ data: { interrupted: true } }); }
+      if (action === "model") return Response.json({ data: {} });
+      if (action === "prompt") { events.push(`prompt:${id}`); return Response.json({ data: {} }); }
+      throw new Error(`Unexpected v2 request: ${request.method} ${path}`);
+    }, async (requests) => {
+      const client = createClientV2(baseUrl, session.directory, { token: endpoint.token, mode: "openwork" });
+      const stop = interruptSessionTurn(baseUrl, client, rootID, session.directory);
+      const next = submitAfterInterruption(baseUrl, rootID, async () => unwrap(await client.session.promptAsync({
+        sessionID: rootID, model: { providerID: "mock", modelID: "mock" }, parts: [{ type: "text", text: "new turn" }],
+      })));
+      await Promise.all([stop, next]);
+      expect(events).toEqual([`interrupt:${rootID}`, `interrupt:${rootID}`, `interrupt:${childID}`, `prompt:${rootID}`]);
+      expect(requests.every((request) => new URL(request.url).pathname.includes("/opencode2/api/"))).toBe(true);
+    });
+  });
+
+  test("unknown admission stays fenced even after the visible run stops", async () => {
+    const root = { ...session, id: "ses_unknown_stop" };
+    let sends = 0;
+    await withSessionFetch((request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith(`/session/${root.id}`)) return Response.json(root);
+      if (path.endsWith("/message")) return Response.json(turnMessages(root.id));
+      if (path.endsWith("/abort")) return Response.json(true);
+      if (path.endsWith("/status")) return Response.json({});
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    }, async (requests) => {
+      const client = createClient(endpoint.opencodeBaseUrl, root.directory);
+      await expect(interruptSessionTurn(endpoint.opencodeBaseUrl, client, root.id, root.directory, { admissionUnknown: true }))
+        .rejects.toThrow("acceptance is still unknown");
+      await expect(submitAfterInterruption(endpoint.opencodeBaseUrl, root.id, async () => { sends += 1; }))
+        .rejects.toThrow("acceptance is still unknown");
+      expect(sends).toBe(0);
+      expect(requests.filter((request) => request.method === "POST")).toHaveLength(2);
+      expect(sessionNeedsStop(endpoint.opencodeBaseUrl, root.id)).toBe(true);
+    });
+  });
+
+  test("stops only the current foreground tree and holds follow-up through delayed child abort and authoritative idle", async () => {
+    const root = { ...session, id: "ses_tree" };
+    const baseUrl = endpoint.opencodeBaseUrl;
+    const childAbort = Promise.withResolvers<Response>();
+    const childReached = Promise.withResolvers<void>();
+    const idle = Promise.withResolvers<Response>();
+    const idleReached = Promise.withResolvers<void>();
+    const aborted: string[] = [];
+    const sent: boolean[] = [];
+    let admissionReconciled = false;
+    let statusReads = 0;
+    const sessions: Record<string, Session> = {
+      [root.id]: root,
+      ses_child: { ...session, id: "ses_child", parentID: root.id },
+      ses_nested: { ...session, id: "ses_nested", parentID: "ses_child" },
+      ses_late: { ...session, id: "ses_late", parentID: root.id },
+    };
+    await withSessionFetch((request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/status")) {
+        if (++statusReads === 1) return Response.json({ ses_nested: { type: "busy" }, ses_unrelated: { type: "busy" } });
+        idleReached.resolve();
+        return idle.promise;
+      }
+      const [, id, action] = path.match(/\/session\/([^/]+)(?:\/([^/]+))?$/) ?? [];
+      if (request.method === "POST" && action === "prompt_async") return new Response(null, { status: 204 });
+      if (request.method === "POST" && action === "abort" && id) {
+        aborted.push(id);
+        if (id === "ses_child") { childReached.resolve(); return childAbort.promise; }
+        return Response.json(true);
+      }
+      if (action === "message" && id === root.id) return Response.json([
+        ...turnMessages(root.id, [delegatedTool("ses_old")], "msg_old"),
+        ...turnMessages(root.id, [
+          delegatedTool("ses_child"),
+          delegatedTool("ses_completed", { status: "completed", output: "done" }),
+          delegatedTool("ses_background_input", { input: { background: true } }),
+          delegatedTool("ses_background_metadata", { metadata: { sessionID: "ses_background_metadata", background: true } }),
+          delegatedTool("ses_not_a_task", {}, "read"),
+          delegatedTool(root.id),
+          ...(aborted.includes(root.id) ? [delegatedTool("ses_late", { status: "error", error: "cancelled" })] : []),
+        ]),
+      ]);
+      if (action === "message" && id === "ses_child") return Response.json(turnMessages(id, [
+        delegatedTool("ses_nested", { metadata: { sessionID: "ses_nested" } }, "subagent"),
+      ]));
+      if (action === "message" && id && sessions[id]) return Response.json(turnMessages(id));
+      if (!action && id && sessions[id]) return Response.json(sessions[id]);
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    }, async (requests) => {
+      const client = createClient(baseUrl, root.directory, { token: endpoint.token, mode: "openwork" });
+      const stop = interruptSessionTurn(baseUrl, client, root.id, root.directory, {
+        timeoutMs: 1_000, onStopped: () => { admissionReconciled = true; },
+      });
+      const followUp = submitAfterInterruption(baseUrl, root.id, async (afterStop) => {
+        expect(admissionReconciled).toBe(true);
+        sent.push(afterStop);
+        return unwrap(await client.session.promptAsync({ sessionID: root.id, parts: [{ type: "text", text: "follow-up" }] }));
+      });
+      try {
+        await childReached.promise;
+        expect(sent).toEqual([]);
+        expect(sessionNeedsStop(baseUrl, root.id)).toBe(true);
+        childAbort.resolve(Response.json(true));
+        await idleReached.promise;
+        expect(aborted).toEqual([root.id, root.id, "ses_child", "ses_nested", "ses_late"]);
+        expect(sent).toEqual([]);
+        expect(sessionNeedsStop(baseUrl, root.id)).toBe(true);
+        // Busy sessions outside this turn must neither be stopped nor hold the fence.
+        idle.resolve(Response.json({ [root.id]: { type: "idle" }, ses_unrelated: { type: "busy" }, ses_old: { type: "busy" } }));
+        await Promise.all([stop, followUp]);
+        expect(sent).toEqual([true]);
+        expect(sessionNeedsStop(baseUrl, root.id)).toBe(false);
+        expect(requests.filter((request) => /\/session\/ses_[^/]+$/.test(new URL(request.url).pathname))
+          .map((request) => new URL(request.url).pathname.split("/").at(-1)))
+          .toEqual([root.id, "ses_child", "ses_nested", "ses_late"]);
+        for (const request of requests) {
+          expect(request.url.startsWith(`${baseUrl}/session/`)).toBe(true);
+          expect(request.headers.get("Authorization")).toBe(`Bearer ${endpoint.token}`);
+          if (!request.url.endsWith("/prompt_async")) expect(new URL(request.url).searchParams.get("directory")).toBe(root.directory);
+        }
+      } finally {
+        childAbort.resolve(Response.json(true));
+        idle.resolve(Response.json({}));
+        await Promise.allSettled([stop, followUp]);
+      }
+    });
+  });
+
+  test("refuses cross-directory and wrong-parent children without aborting them or admitting follow-up", async () => {
+    for (const mismatch of ["directory", "parentID"]) {
+      const root = { ...session, id: `ses_owner_${mismatch}` };
+      const child = { ...session, id: "ses_foreign", parentID: root.id, [mismatch]: "other-owner" };
+      const sent: boolean[] = [];
+      await withSessionFetch((request) => {
+        const path = new URL(request.url).pathname;
+        if (path.endsWith(`/session/${root.id}`)) return Response.json(root);
+        if (path.endsWith(`/session/${child.id}`)) return Response.json(child);
+        if (path.endsWith(`/session/${root.id}/message`)) return Response.json(turnMessages(root.id, [delegatedTool(child.id)]));
+        if (path.endsWith(`/session/${root.id}/abort`)) return Response.json(true);
+        throw new Error(`Unexpected request: ${request.method} ${path}`);
+      }, async (requests) => {
+        const client = createClient(endpoint.opencodeBaseUrl, root.directory);
+        await expect(interruptSessionTurn(endpoint.opencodeBaseUrl, client, root.id, root.directory, { timeoutMs: 1_000 }))
+          .rejects.toThrow("Could not verify the delegated session owner");
+        expect(sessionNeedsStop(endpoint.opencodeBaseUrl, root.id)).toBe(true);
+        await expect(submitAfterInterruption(endpoint.opencodeBaseUrl, root.id, async (afterStop) => { sent.push(afterStop); }))
+          .rejects.toThrow("Could not verify the delegated session owner");
+        expect(sent).toEqual([]);
+        expect(requests.filter((request) => request.method === "POST").map((request) => new URL(request.url).pathname))
+          .toEqual(Array(2).fill(`/workspace/ws-native/opencode/session/${root.id}/abort`));
+      });
+    }
+  });
+
+  test("false abort with authoritative busy times out, keeps sends blocked, and releases only on explicit Stop retry", async () => {
+    const root = { ...session, id: "ses_retry" };
+    const baseUrl = endpoint.opencodeBaseUrl;
+    const sent: boolean[] = [];
+    let busy = true;
+    let statusReads = 0;
+    await withSessionFetch((request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith(`/session/${root.id}`)) return Response.json(root);
+      if (path.endsWith("/message")) return Response.json(turnMessages(root.id));
+      if (path.endsWith("/abort")) return Response.json(false);
+      if (path.endsWith("/status")) { statusReads += 1; return Response.json({ [root.id]: { type: busy ? "busy" : "idle" } }); }
+      if (path.endsWith("/prompt_async")) return new Response(null, { status: 204 });
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    }, async (requests) => {
+      const client = createClient(baseUrl, root.directory);
+      const send = async (afterStop: boolean) => {
+        sent.push(afterStop);
+        return unwrap(await client.session.promptAsync({ sessionID: root.id, parts: [{ type: "text", text: "follow-up" }] }));
+      };
+      const stop = interruptSessionTurn(baseUrl, client, root.id, root.directory, { timeoutMs: 25 });
+      const followUp = submitAfterInterruption(baseUrl, root.id, send);
+      for (const outcome of await Promise.allSettled([stop, followUp])) {
+        if (outcome.status !== "rejected" || !(outcome.reason instanceof Error)) {
+          throw new Error("Stop and follow-up must both reject on timeout");
+        }
+        expect(outcome.reason.message).toContain("timed out. Retry Stop before sending");
+      }
+      expect(statusReads).toBeGreaterThan(0);
+      expect(sessionNeedsStop(baseUrl, root.id)).toBe(true);
+      busy = false;
+      await expect(submitAfterInterruption(baseUrl, root.id, send)).rejects.toThrow("Retry Stop before sending");
+      expect(sent).toEqual([]);
+      expect(requests.filter((request) => request.url.endsWith("/prompt_async"))).toHaveLength(0);
+      const retry = interruptSessionTurn(baseUrl, client, root.id, root.directory, { timeoutMs: 1_000 });
+      const retriedFollowUp = submitAfterInterruption(baseUrl, root.id, send);
+      await Promise.all([retry, retriedFollowUp]);
+      expect(sessionNeedsStop(baseUrl, root.id)).toBe(false);
+      expect(sent).toEqual([true]);
+      expect(requests.filter((request) => request.url.endsWith("/prompt_async"))).toHaveLength(1);
+    });
+  });
+
+  test("drains old preflight before follow-up and cancels sends that had not entered preflight at Stop", async () => {
+    const root = { ...session, id: "ses_preflight" };
+    const baseUrl = endpoint.opencodeBaseUrl;
+    const preflight = Promise.withResolvers<Response>();
+    const preflightReached = Promise.withResolvers<void>();
+    const firstAbort = Promise.withResolvers<void>();
+    const events: string[] = [];
+    await withSessionFetch(async (request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/todo")) { preflightReached.resolve(); return preflight.promise; }
+      if (path.endsWith(`/session/${root.id}`)) return Response.json(root);
+      if (path.endsWith("/message")) return Response.json(turnMessages(root.id));
+      if (path.endsWith("/abort")) { events.push("abort"); firstAbort.resolve(); return Response.json(true); }
+      if (path.endsWith("/status")) { events.push("idle"); return Response.json({}); }
+      if (path.endsWith("/prompt_async")) {
+        const body = await request.json();
+        events.push(body.messageID);
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    }, async () => {
+      const client = createClient(baseUrl, root.directory);
+      const send = async (messageID: string) => unwrap(await client.session.promptAsync({ sessionID: root.id, messageID, parts: [] }));
+      const old = submitAfterInterruption(baseUrl, root.id, async () => {
+        unwrap(await client.session.todo({ sessionID: root.id }));
+        return send("msg_old_preflight");
+      });
+      await preflightReached.promise;
+      const notStarted = submitAfterInterruption(baseUrl, root.id, () => send("msg_never_started"));
+      const stop = interruptSessionTurn(baseUrl, client, root.id, root.directory, { timeoutMs: 1_000 });
+      const cancelled = expect(notStarted).rejects.toThrow("Send cancelled by Stop");
+      const followUp = submitAfterInterruption(baseUrl, root.id, () => send("msg_follow_up"));
+      try {
+        await firstAbort.promise;
+        await cancelled;
+        expect(events).toEqual(["abort"]);
+        preflight.resolve(Response.json([]));
+        await Promise.all([old, stop, followUp]);
+        expect(events).toEqual(["abort", "msg_old_preflight", "abort", "idle", "msg_follow_up"]);
+        expect(sessionNeedsStop(baseUrl, root.id)).toBe(false);
+      } finally {
+        preflight.resolve(Response.json([]));
+        await Promise.allSettled([old, stop, followUp, notStarted]);
+      }
+    });
+  });
+
+  test("re-aborts a mid-send predecessor admitted after the first abort before allowing follow-up", async () => {
+    const root = { ...session, id: "ses_mid_send" };
+    const baseUrl = endpoint.opencodeBaseUrl;
+    const admission = Promise.withResolvers<Response>();
+    const dispatched = Promise.withResolvers<void>();
+    const firstAbort = Promise.withResolvers<void>();
+    const events: string[] = [];
+    let busy = false;
+    await withSessionFetch(async (request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith(`/session/${root.id}`)) return Response.json(root);
+      if (path.endsWith("/message")) return Response.json(turnMessages(root.id));
+      if (path.endsWith("/abort")) { busy = false; events.push("abort"); firstAbort.resolve(); return Response.json(true); }
+      if (path.endsWith("/status")) { events.push("status"); return Response.json({ [root.id]: { type: busy ? "busy" : "idle" } }); }
+      if (path.endsWith("/prompt_async")) {
+        const body = await request.json();
+        if (body.messageID === "msg_old") {
+          events.push("old-dispatched");
+          dispatched.resolve();
+          const response = await admission.promise;
+          busy = true;
+          events.push("old-admitted");
+          return response;
+        }
+        events.push("follow-up");
+        busy = true;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    }, async () => {
+      const client = createClient(baseUrl, root.directory);
+      const send = async (messageID: string) => unwrap(await client.session.promptAsync({ sessionID: root.id, messageID, parts: [] }));
+      const old = submitAfterInterruption(baseUrl, root.id, () => send("msg_old"));
+      await dispatched.promise;
+      const stop = interruptSessionTurn(baseUrl, client, root.id, root.directory, { timeoutMs: 1_000 });
+      const followUp = submitAfterInterruption(baseUrl, root.id, () => send("msg_follow_up"));
+      try {
+        await firstAbort.promise;
+        expect(events).toEqual(["old-dispatched", "abort"]);
+        admission.resolve(new Response(null, { status: 204 }));
+        await Promise.all([old, stop, followUp]);
+        expect(events).toEqual(["old-dispatched", "abort", "old-admitted", "abort", "status", "follow-up"]);
+        expect(busy).toBe(true);
+        expect(sessionNeedsStop(baseUrl, root.id)).toBe(false);
+      } finally {
+        admission.resolve(new Response(null, { status: 204 }));
+        await Promise.allSettled([old, stop, followUp]);
+      }
+    });
+  });
+
+  test("shares duplicate Stop across clients and trailing slashes without fencing another workspace, engine, or session", async () => {
+    const root = { ...session, id: "ses_scope" };
+    const baseUrl = endpoint.opencodeBaseUrl;
+    const idle = Promise.withResolvers<Response>();
+    const idleReached = Promise.withResolvers<void>();
+    const sent: string[] = [];
+    const targets = [
+      { baseUrl: baseUrl.replace("ws-native", "ws-other"), sessionID: root.id },
+      { baseUrl: baseUrl.replace("worker.example", "engine.example"), sessionID: root.id },
+      { baseUrl, sessionID: "ses_other" },
+    ];
+    await withSessionFetch((request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith(`/session/${root.id}`)) return Response.json(root);
+      if (path.endsWith("/message")) return Response.json(turnMessages(root.id));
+      if (path.endsWith("/abort")) return Response.json(true);
+      if (path.endsWith("/status")) { idleReached.resolve(); return idle.promise; }
+      if (path.endsWith("/prompt_async")) { sent.push(request.url); return new Response(null, { status: 204 }); }
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    }, async (requests) => {
+      const client = createClient(baseUrl, root.directory);
+      const otherClient = createClient(baseUrl, root.directory);
+      const stop = interruptSessionTurn(baseUrl, client, root.id, root.directory, { timeoutMs: 1_000 });
+      expect(interruptSessionTurn(`${baseUrl}/`, otherClient, root.id, root.directory, { timeoutMs: 1_000 })).toBe(stop);
+      const followUp = submitAfterInterruption(`${baseUrl}/`, root.id, async (afterStop) => {
+        expect(afterStop).toBe(true);
+        return unwrap(await otherClient.session.promptAsync({ sessionID: root.id, parts: [] }));
+      });
+      try {
+        await idleReached.promise;
+        expect(sessionNeedsStop(`${baseUrl}/`, root.id)).toBe(true);
+        for (const target of targets) {
+          expect(sessionNeedsStop(target.baseUrl, target.sessionID)).toBe(false);
+          const independentClient = createClient(target.baseUrl, root.directory);
+          await submitAfterInterruption(target.baseUrl, target.sessionID, async (afterStop) => {
+            expect(afterStop).toBe(false);
+            return unwrap(await independentClient.session.promptAsync({ sessionID: target.sessionID, parts: [] }));
+          });
+        }
+        expect(sent).toEqual(targets.map((target) => `${target.baseUrl}/session/${target.sessionID}/prompt_async`));
+        expect(requests.filter((request) => new URL(request.url).pathname.endsWith("/abort"))).toHaveLength(2);
+        idle.resolve(Response.json({}));
+        await Promise.all([stop, followUp]);
+        expect(sent.at(-1)).toBe(`${baseUrl}/session/${root.id}/prompt_async`);
+        expect(sent).toHaveLength(4);
+        expect(sessionNeedsStop(baseUrl, root.id)).toBe(false);
+      } finally {
+        idle.resolve(Response.json({}));
+        await Promise.allSettled([stop, followUp]);
+      }
+    });
   });
 });

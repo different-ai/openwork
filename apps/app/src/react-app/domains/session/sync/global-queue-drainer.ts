@@ -3,6 +3,8 @@ import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { markTaskRunStart } from "@/app/lib/analytics";
 import { createClient, createPromptMessageID, hasAcceptedPromptMessage, isPromptAdmissionUnknown } from "@/app/lib/opencode";
 import { shellInSession } from "@/app/lib/opencode-session";
+import { submitAfterInterruption } from "@/app/lib/opencode-interruption";
+import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import { composeNativeSessionSnapshot } from "@/app/lib/opencode-session-native";
 import type { ComposerDraft, ModelRef } from "@/app/types";
 import { readStoredDefaultModel } from "@/react-app/kernel/model-config";
@@ -101,7 +103,8 @@ async function performQueuedDraftSend(
   const sessionModelSelection = getSessionModelSelection(sessionId);
   const sendModel = sessionModelSelection?.model ?? readStoredDefaultModelSafely() ?? context.model;
   const sendVariant = sessionModelSelection ? sessionModelSelection.variant : context.variant;
-  const opencodeClient = createClient(
+  const createEngineClient = isOpencodeV2BaseUrl(context.opencodeBaseUrl) ? createClientV2 : createClient;
+  const opencodeClient = createEngineClient(
     context.opencodeBaseUrl,
     context.workspaceRoot || undefined,
     { token: context.openworkToken, mode: "openwork" },
@@ -347,7 +350,8 @@ async function attemptDrain(sessionId: string) {
   useComposerStateStore.getState().removeQueuedDraft(sessionId, nextItem.id);
 
   try {
-    await performQueuedDraftSend(context, sessionId, draft, generation);
+    await submitAfterInterruption(context.opencodeBaseUrl, sessionId,
+      () => performQueuedDraftSend(context, sessionId, draft, generation));
     dispatchQueuedDrain(sessionId, {
       type: "send_result",
       itemId: nextItem.id,

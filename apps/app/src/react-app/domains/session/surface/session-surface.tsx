@@ -7,9 +7,9 @@ import { Check, CirclePause, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
+import { interruptSessionTurn, sessionNeedsStop, submitAfterInterruption, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
 import { createClient, createPromptMessageID, hasAcceptedPromptMessage, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
-import { abortSessionSafe } from "@/app/lib/opencode-session";
 import { composeNativeSessionSnapshot } from "@/app/lib/opencode-session-native";
 import { setThemeMode } from "@/app/theme";
 import { t } from "@/i18n";
@@ -1300,7 +1300,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const liveStatus = statusState ?? snapshot?.status ?? IDLE_STATUS;
   const preparingCloudTools = props.cloudMcpSubmissionState.status === "checking" ||
     props.cloudMcpSubmissionState.status === "repairing";
-  const chatStreaming = sending || liveStatus.type === "busy" || liveStatus.type === "retry";
+  const needsStop = useSyncExternalStore(
+    useCallback((listener) => subscribeSessionInterruption(props.opencodeBaseUrl, props.sessionId, listener), [props.opencodeBaseUrl, props.sessionId]),
+    useCallback(() => sessionNeedsStop(props.opencodeBaseUrl, props.sessionId), [props.opencodeBaseUrl, props.sessionId]),
+  );
+  const chatStreaming = needsStop || sending || liveStatus.type === "busy" || liveStatus.type === "retry";
   // A busy status is a claim that decays: the sync layer revalidates it
   // continuously against /session/status, and once that validation keeps
   // failing (network drop, sleep, dead engine) the transcript must present
@@ -1864,7 +1868,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setPendingSendSessions([...pendingSendsRef.current.values()]);
     setError(null);
     try {
-      const result = await props.onSendDraft({ ...nextDraft, messageId }, props.sessionId);
+      const result = await submitAfterInterruption(props.opencodeBaseUrl, props.sessionId,
+        () => props.onSendDraft({ ...nextDraft, messageId }, props.sessionId));
       dispatchQueuedDrain(props.sessionId, { type: "send_result", itemId, outcome: result.outcome, at: Date.now() });
       if (getQueuedSendGeneration(props.sessionId) !== generation) return result;
       if (result.outcome === "blocked" || result.outcome === "cancelled") return result;
@@ -1899,7 +1904,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       pendingSendsRef.current.delete(submissionId);
       setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
-  }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length, sessionOwner, setError]);
+  }, [appendComposerHistory, props.onSendDraft, props.opencodeBaseUrl, props.sessionId, props.workspaceId, renderedMessages.length, sessionOwner, setError]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
@@ -2073,23 +2078,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // passes the workspace root), so the abort must target the same scope —
     // without it the server resolves the default project, finds no live run,
     // and answers `200: false` while the stream keeps going (#2014).
-    const aborted = await abortSessionSafe(
-      opencodeClient,
-      props.sessionId,
-      props.workspaceRoot.trim() || undefined,
-      {
-        source: "composer.stop",
-        initiator: "user",
-        reason: "stop active session run",
-      },
-    );
-    if (!aborted) {
-      setError({ message: t("session.stop_failed") });
-      return;
+    try {
+      await interruptSessionTurn(props.opencodeBaseUrl, opencodeClient, props.sessionId,
+        props.workspaceRoot.trim() || undefined, {
+          admissionUnknown: phase.kind === "admission_unknown",
+          onStopped: () => dispatchQueuedDrain(props.sessionId, { type: "stop_confirmed" }),
+        });
+    } catch (error) {
+      setError({ message: error instanceof Error ? error.message : t("session.stop_failed") });
+      return false;
     }
     captureAnalyticsEvent("task_run_stopped", {});
     await snapshotQuery.refetch();
-  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceRoot, snapshotQuery.refetch, setError]);
+    return true;
+  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.opencodeBaseUrl, props.sessionId, props.workspaceRoot, snapshotQuery.refetch, setError]);
 
   const checkUnknownAdmission = useCallback(async (notify = false) => {
     const phase = getQueuedDrainState(props.sessionId).phase;
@@ -2396,10 +2398,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     sideEffect: "mutation",
     disabled: !chatStreaming && queuedDrainState.phase.kind !== "sending" && queuedDrainState.phase.kind !== "admission_unknown",
     targetRef: composerShellRef,
-    execute: async () => {
-      await handleAbort();
-      return true;
-    },
+    execute: handleAbort,
   }), [chatStreaming, handleAbort, queuedDrainState.phase.kind]);
   useControlAction(props.isControlTarget ? composerStopControlAction : null);
 
@@ -3077,7 +3076,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onSend={handleSend}
         onSteer={handleSteer}
         onQueue={handleQueue}
-        onStop={handleAbort}
+        onStop={async () => { await handleAbort(); }}
         busy={chatStreaming}
         steering={steering}
         submissionPreparing={preparingCloudTools || sending}
