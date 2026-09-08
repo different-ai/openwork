@@ -82,7 +82,7 @@ test("managed model discovery keeps the task unchanged until an explicit eligibl
     await user.see({ role: "button", label: "Back to models" });
     await user.see({ role: "button", label: "Low" });
     await user.click({ role: "button", label: "Low" });
-    await user.see({ role: "button", label: "Change model" }, { text: /Luna.*Low/ });
+    await user.see({ role: "button", label: "Change model" }, { text: /Luna[\s\S]*Low/ });
     await user.notSee({ testId: "inference-upgrade-dialog" });
   });
   const selectedLuna = (await probe.composer()).selectedModelLabel;

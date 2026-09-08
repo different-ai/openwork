@@ -143,22 +143,22 @@ type ManagedModelMetadata = Omit<ManagedModelRecommendation, "modelID" | "displa
 const MANAGED_MODEL_METADATA = new Map<string, ManagedModelMetadata>([
   ["openai/gpt-5.6-luna", {
     providerName: "OpenAI",
-    summary: "Everyday questions, writing, and lightweight tasks",
+    summary: "Everyday writing and small tasks",
     recommended: true, rank: 1, capabilities: ["reasoning", "tools", "images", "documents"],
   }],
   ["openai/gpt-6-astra", {
     providerName: "OpenAI",
-    summary: "Complex analysis, software engineering, and deep research",
+    summary: "Analysis, coding, and research",
     recommended: true, rank: 2, capabilities: ["reasoning", "tools", "images", "documents"],
   }],
   ["moonshotai/kimi-k2.7-code", {
     providerName: "Moonshot AI",
-    summary: "Code changes and end-to-end programming tasks",
+    summary: "Code changes and programming",
     recommended: true, rank: 3, capabilities: ["reasoning", "tools", "images"],
   }],
   ["z-ai/glm-5.2", {
     providerName: "Z.ai",
-    summary: "Long-running tasks, reasoning, and project-level coding",
+    summary: "Reasoning and project-level coding",
     recommended: true, rank: 4, capabilities: ["reasoning", "tools"],
   }],
   ["moonshotai/kimi-k3", {
