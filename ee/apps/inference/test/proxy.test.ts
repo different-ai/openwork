@@ -193,6 +193,7 @@ function createTestServer(options: TestServerOptions = {}) {
       }
       return {
         ok: true,
+        admittedAt: new Date("2026-09-08T12:00:00.123Z"),
         bucketIds: {},
         bucketLimits: {},
       }
@@ -542,6 +543,7 @@ test("rewrites approved model aliases before forwarding JSON requests", async ()
   const trace = body.trace
   assert.ok(isRecord(trace))
   assert.equal(trace.generation_name, "z-ai/glm-5.2")
+  assert.equal(trace.usage_started_at, "2026-09-08T12:00:00.123Z")
 
   const report = requireRequestReport(reports)
   assert.equal(report.organizationId, "organization_123")

@@ -20,7 +20,7 @@ function object(value: unknown): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value));
 }
 
-async function createModelsWorld(seed: Seed, analyticsUpgrade: boolean) {
+async function createModelsWorld(seed: Seed, analyticsUpgrade: boolean, usageSettlement = false) {
   if (!analyticsUpgrade && process.env.OPENWORK_EVAL_DEN_API_URL) throw new Error("DPA proof requires a fresh isolated Den, not a reused service");
   const egressFile = seed.tmpPath("models-egress") + ".jsonl";
   const dpaWitnessPort = analyticsUpgrade ? null : await allocateFreePort();
@@ -54,6 +54,7 @@ async function createModelsWorld(seed: Seed, analyticsUpgrade: boolean) {
     OPENWORK_DEV_MODE: "1", DATABASE_URL: databaseUrl, DB_MODE: "mysql",
     ...isolatedEnv, ...fixtureSecrets, SENTRY_DSN: "", NEXT_PUBLIC_SENTRY_DSN: "",
     PORT: String(inferencePort), MODELS_WITNESS_PORT: String(witnessPort),
+    ...(usageSettlement ? { MODELS_USAGE_FIXTURE: "1", INFERENCE_WEBHOOK_SECRET: "paid-usage-fixture-secret" } : {}),
     MODELS_DPA_ORG_ID: orgId,
     OPENROUTER_UPSTREAM_URL: `http://127.0.0.1:${witnessPort}`,
   };
@@ -176,4 +177,8 @@ export async function modelsAnalyticsWorld(seed: Seed) {
 
 export async function modelsInferenceWorld(seed: Seed) {
   return createModelsWorld(seed, false);
+}
+
+export async function paidUsageWorld(seed: Seed) {
+  return createModelsWorld(seed, false, true);
 }

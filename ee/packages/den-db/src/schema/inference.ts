@@ -3,6 +3,7 @@ import {
   bigint,
   index,
   int,
+  json,
   mysqlEnum,
   mysqlTable,
   timestamp,
@@ -124,6 +125,15 @@ export const InferenceUsageLedgerEntryTable = mysqlTable(
     output_tokens: int("output_tokens"),
     total_tokens: int("total_tokens"),
     event_type: varchar("event_type", { length: 64 }).notNull(),
+    provider_usage: json("provider_usage").$type<{
+      source: "openrouter_otlp"
+      status: "priced" | "unpriced"
+      requestModel: string | null
+      responseModel: string | null
+      inputCost: number | null
+      outputCost: number | null
+      currency: string | null
+    }>(),
     occurred_at: timestamp("occurred_at", { fsp: 3 }).notNull(),
     created_at: timestamps.created_at,
   },

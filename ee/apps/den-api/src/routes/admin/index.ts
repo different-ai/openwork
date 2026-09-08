@@ -1428,6 +1428,13 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       }
 
       const resetAmount = await db.transaction(async (tx) => {
+        const memberships = await tx.select({ organizationId: MemberTable.organizationId }).from(MemberTable)
+          .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
+        if (memberships.length === 0) return 0
+        // Same order as admission/settlement: policies before ledger, buckets and charges.
+        await tx.select({ id: InferenceOrgLimitPolicyTable.id }).from(InferenceOrgLimitPolicyTable)
+          .where(inArray(InferenceOrgLimitPolicyTable.organization_id, memberships.map((member) => member.organizationId)))
+          .orderBy(asc(InferenceOrgLimitPolicyTable.organization_id), asc(InferenceOrgLimitPolicyTable.window_type)).for("update")
         const charges = await tx
           .select({
             id: InferenceUsageLedgerBucketChargeTable.id,
@@ -1461,7 +1468,8 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
             .where(eq(InferenceOrgUsageBucketTable.id, bucketId))
         }
         if (charges.length > 0) {
-          await tx.delete(InferenceUsageLedgerBucketChargeTable).where(inArray(
+          // Keep the identity so retries cannot resurrect intentionally forgiven usage.
+          await tx.update(InferenceUsageLedgerBucketChargeTable).set({ amount: 0 }).where(inArray(
             InferenceUsageLedgerBucketChargeTable.id,
             charges.map((charge) => charge.id),
           ))

@@ -44,13 +44,11 @@ function createWebhookTestServer() {
   const organizationId = createDenTypeId("organization")
   const orgMembershipId = createDenTypeId("member")
   const inferenceKeyId = createDenTypeId("inferenceKey")
-  const ledgerEntryId = createDenTypeId("inferenceUsageLedgerEntry")
-  const bucketId = createDenTypeId("inferenceOrgUsageBucket")
   const reports: OpenRouterUnknownModelUsageReport[] = []
   const insertedEntries: {
     openworkRequestId: string
     externalEventId: string | null
-    costAmount: number
+    costAmount: number | null
     modelId: string
     providerId: string
     inputTokens: number | null
@@ -59,11 +57,7 @@ function createWebhookTestServer() {
   }[] = []
   const bucketCharges: { amount: number }[] = []
   const calls = {
-    ensureUsableBuckets: 0,
-    findLedgerEntryByExternalEventId: 0,
-    findOpenRouterUsageLedgerEntry: 0,
-    insertOpenRouterUsageLedgerEntry: 0,
-    chargeBuckets: 0,
+    settleUsage: 0,
   }
 
   registerWebhookRoutes(app, {
@@ -76,28 +70,13 @@ function createWebhookTestServer() {
       return {
         id: inferenceKeyId,
         status: "active",
+        revoked_at: null,
         organization_id: organizationId,
         org_membership_id: orgMembershipId,
       }
     },
-    async ensureUsableBuckets(_organizationId, _occurredAt) {
-      calls.ensureUsableBuckets += 1
-      return {
-        ok: true,
-        bucketIds: { monthly: bucketId },
-        bucketLimits: { monthly: 1_000_000 },
-      }
-    },
-    async findLedgerEntryByExternalEventId(_externalEventId) {
-      calls.findLedgerEntryByExternalEventId += 1
-      return null
-    },
-    async findOpenRouterUsageLedgerEntry(_openworkRequestId) {
-      calls.findOpenRouterUsageLedgerEntry += 1
-      return null
-    },
-    async insertOpenRouterUsageLedgerEntry(input) {
-      calls.insertOpenRouterUsageLedgerEntry += 1
+    async settleUsage(input) {
+      calls.settleUsage += 1
       insertedEntries.push({
         openworkRequestId: input.span.openworkRequestId,
         externalEventId: input.span.externalEventId,
@@ -108,11 +87,9 @@ function createWebhookTestServer() {
         outputTokens: input.span.usageMetadata.outputTokens,
         totalTokens: input.span.usageMetadata.totalTokens,
       })
-      return { id: ledgerEntryId }
-    },
-    async chargeBuckets(input) {
-      calls.chargeBuckets += 1
+      if (input.costAmount === null) return "deferred"
       bucketCharges.push({ amount: input.costAmount })
+      return "ingested"
     },
   })
 
@@ -161,7 +138,7 @@ function createWebhookTestServer() {
   return { app, reports, insertedEntries, bucketCharges, calls, organizationId, usagePayload }
 }
 
-test("reports fatal Sentry diagnostics and skips deduction when OpenRouter usage reports an unknown model", async () => {
+test("retains unknown model usage without deduction and reports bounded provider facts", async () => {
   const { app, reports, insertedEntries, bucketCharges, calls, organizationId, usagePayload } = createWebhookTestServer()
   const response = await app.fetch(webhookRequest(usagePayload({
     requestId: "request-unknown",
@@ -175,13 +152,11 @@ test("reports fatal Sentry diagnostics and skips deduction when OpenRouter usage
   assert.equal(response.status, 200)
   const payload = await responseJson(response)
   assert.equal(payload.ingested, 0)
-  assert.equal(payload.skipped, 1)
-  assert.equal(calls.ensureUsableBuckets, 0)
-  assert.equal(calls.findLedgerEntryByExternalEventId, 0)
-  assert.equal(calls.findOpenRouterUsageLedgerEntry, 0)
-  assert.equal(calls.insertOpenRouterUsageLedgerEntry, 0)
-  assert.equal(calls.chargeBuckets, 0)
-  assert.equal(insertedEntries.length, 0)
+  assert.equal(payload.skipped, 0)
+  assert.equal(payload.deferred, 1)
+  assert.equal(calls.settleUsage, 1)
+  assert.equal(insertedEntries.length, 1)
+  assert.equal(insertedEntries[0]?.costAmount, null)
   assert.equal(bucketCharges.length, 0)
   assert.equal(reports.length, 1)
 
@@ -220,11 +195,7 @@ test("deducts usage without Sentry diagnostics when OpenRouter usage reports a k
   assert.equal(payload.ingested, 1)
   assert.equal(payload.skipped, 0)
   assert.equal(reports.length, 0)
-  assert.equal(calls.ensureUsableBuckets, 1)
-  assert.equal(calls.findLedgerEntryByExternalEventId, 1)
-  assert.equal(calls.findOpenRouterUsageLedgerEntry, 1)
-  assert.equal(calls.insertOpenRouterUsageLedgerEntry, 1)
-  assert.equal(calls.chargeBuckets, 1)
+  assert.equal(calls.settleUsage, 1)
   assert.deepEqual(insertedEntries, [{
     openworkRequestId: "request-known",
     externalEventId: "event-known",
@@ -236,4 +207,41 @@ test("deducts usage without Sentry diagnostics when OpenRouter usage reports a k
     totalTokens: 24,
   }])
   assert.deepEqual(bucketCharges, [{ amount: 1 }])
+})
+
+test("blank provider prices remain unpriced rather than fabricated zero charges", async () => {
+  const { app, calls, insertedEntries, bucketCharges, usagePayload } = createWebhookTestServer()
+  const payload = usagePayload({ requestId: "blank-price", eventId: "blank-price", generationId: "blank-price", requestModel: "z-ai/glm-5.2", responseModel: "z-ai/glm-5.2" })
+  const span = payload.resourceSpans[0]!.scopeSpans[0]!.spans[0]!
+  span.attributes = span.attributes.map((attr) => attr.key === "gen_ai.usage.input_cost" || attr.key === "gen_ai.usage.output_cost" ? attribute(attr.key, " ") : attr)
+  const response = await app.fetch(webhookRequest(payload))
+  assert.equal(response.status, 200)
+  assert.equal((await responseJson(response)).deferred, 1)
+  assert.equal(calls.settleUsage, 1)
+  assert.equal(insertedEntries[0]?.costAmount, null)
+  assert.equal(bucketCharges.length, 0)
+})
+
+test("rejects malformed numeric usage consistently across resource, scope and span attributes", async () => {
+  for (const [key, value] of [
+    ["gen_ai.usage.input_cost", "-1"],
+    ["gen_ai.usage.input_cost", "Infinity"],
+    ["gen_ai.usage.input_tokens", "-1"],
+    ["gen_ai.usage.output_tokens", "1.5"],
+    ["gen_ai.usage.total_tokens", "2147483648"],
+  ]) {
+    for (const level of ["resource", "scope", "span"]) {
+      const { app, calls, usagePayload } = createWebhookTestServer()
+      const payload = usagePayload({ requestId: "invalid-numeric", eventId: "invalid-numeric", generationId: "invalid-numeric", requestModel: "z-ai/glm-5.2", responseModel: "z-ai/glm-5.2" })
+      const attributes = payload.resourceSpans[0]!.scopeSpans[0]!.spans[0]!.attributes.filter((attr) => attr.key !== key)
+      attributes.push(attribute(key!, value!))
+      const response = await app.fetch(webhookRequest({ resourceSpans: [{
+        resource: { attributes: level === "resource" ? attributes : [] },
+        scopeSpans: [{ scope: { attributes: level === "scope" ? attributes : [] }, spans: [{ startTimeUnixNano: "1700000000000000000", attributes: level === "span" ? attributes : [] }] }],
+      }] }))
+      assert.equal(response.status, 400, `${level} ${key}=${value}`)
+      assert.deepEqual(await responseJson(response), { ok: false, ingested: 0, skipped: 0, deferred: 0, invalid: 1, failed: 0 })
+      assert.equal(calls.settleUsage, 0)
+    }
+  }
 })

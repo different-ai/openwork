@@ -18,7 +18,7 @@ import { completeChatResponse, inferenceError, readResponseJson, relayChatStream
 
 type JsonObject = Record<string, unknown>
 type PreparedBody = {
-  body: JsonObject
+  body: JsonObject & { trace: JsonObject }
   incomingModel: string
   modelAlias: string
   upstreamModel: string | null
@@ -426,7 +426,7 @@ async function prepareBody(request: Request, input: {
   body.model = model.upstreamModel
   body.user = input.orgMembershipId
   body.session_id = input.openworkRequestId
-  body.trace = {
+  const trace = {
     trace_id: input.openworkRequestId,
     trace_name: "OpenWork Inference",
     generation_name: model.alias,
@@ -436,7 +436,7 @@ async function prepareBody(request: Request, input: {
   }
 
   return {
-    body,
+    body: { ...body, trace },
     incomingModel: model.alias,
     modelAlias: model.alias,
     upstreamModel: model.upstreamModel,
@@ -642,7 +642,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       const upstreamInit: ProxyRequestInit = {
         method: c.req.method,
         headers: sanitizeHeaders(c.req.raw, providerKey.encrypted_api_key, openworkRequestId),
-        body: JSON.stringify(prepared.body),
+        body: JSON.stringify({ ...prepared.body, trace: { ...prepared.body.trace, usage_started_at: limits.admittedAt.toISOString() } }),
         duplex: "half",
         signal: abort.signal,
         redirect: "error",
