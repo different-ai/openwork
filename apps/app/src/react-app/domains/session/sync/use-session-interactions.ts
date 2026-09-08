@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { unwrap } from "@/app/lib/opencode";
+import { isOpencodeV2Client } from "@/app/lib/opencode-v2-adapter";
 import type { Client, PendingPermission, PendingQuestion, TodoItem } from "@/app/types";
 import { t } from "@/i18n";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
@@ -77,24 +78,29 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
 
   useEffect(() => {
     if (!client || !workspaceId || interactionSessionIds.length === 0) return;
-    let cancelled = false;
+    const controller = new AbortController();
     const directory = workspaceRoot || undefined;
     void (async () => {
       const snapshotStartedAt = Date.now();
       try {
         let legacyPermissions: Parameters<typeof seedPermissionState>[2] = [];
         let legacyReadSucceeded = false;
-        try {
-          legacyPermissions = unwrap(await client.permission.list({ directory }));
-          legacyReadSucceeded = true;
-        } catch {
-          // Older/newer OpenCode permission APIs can fail independently.
+        // The v2 compatibility list sweeps every session; the scoped reads below
+        // already return its native requests. V1 still needs both protocols.
+        if (!isOpencodeV2Client(client)) {
+          try {
+            legacyPermissions = unwrap(await client.permission.list({ directory }, { signal: controller.signal }));
+            legacyReadSucceeded = true;
+          } catch {
+            // Older/newer OpenCode permission APIs can fail independently.
+          }
         }
+        if (controller.signal.aborted) return;
 
         const v2Reads = await Promise.all(interactionSessionIds.map(async (permissionSessionId) => {
           try {
             const permissions = unwrap(
-              await client.v2.session.permission.list({ sessionID: permissionSessionId }),
+              await client.v2.session.permission.list({ sessionID: permissionSessionId }, { signal: controller.signal }),
             ).data;
             return { permissionSessionId, permissions, succeeded: true };
           } catch {
@@ -102,7 +108,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
           }
         }));
 
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         for (const read of v2Reads) {
           if (!legacyReadSucceeded && !read.succeeded) continue;
           seedPermissionState(
@@ -118,19 +124,19 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
       }
     })();
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [client, interactionSessionIds, workspaceId, workspaceRoot]);
 
   useEffect(() => {
     if (!client || !workspaceId || interactionSessionIds.length === 0) return;
-    let cancelled = false;
+    const controller = new AbortController();
     const directory = workspaceRoot || undefined;
     void (async () => {
       const snapshotStartedAt = Date.now();
       try {
-        const list = unwrap(await client.question.list({ directory }));
-        if (cancelled) return;
+        const list = unwrap(await client.question.list({ directory }, { signal: controller.signal }));
+        if (controller.signal.aborted) return;
         for (const questionSessionId of interactionSessionIds) {
           seedQuestionState(workspaceId, questionSessionId, list, { snapshotStartedAt });
         }
@@ -140,7 +146,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
       }
     })();
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [client, interactionSessionIds, workspaceId, workspaceRoot]);
 

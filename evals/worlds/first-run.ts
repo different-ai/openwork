@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { chmod, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { app as startApp, server as startServer } from "@openwork/env";
+import { app as startApp, server as startServer, resolveEvalEngine } from "@openwork/env";
 import { SkipError } from "@openwork/env";
 import type { Place, Seed } from "@openwork/env";
 import { createAndSelectWorkspace, evalIn, go, waitFor as waitForBehavior } from "@openwork/behaviors";
@@ -153,6 +153,97 @@ export async function parentChildPermissionWorld(seed: Seed) {
     throw new Error(`Child permission seed failed: ${JSON.stringify(seeded)}`);
   }
   return base;
+}
+
+export async function scopedPermissionRefreshWorld(seed: Seed) {
+  const base = await workspaceWorld(seed);
+  const sessions = await seed.sessions(base.app, Array.from({ length: 8 }, (_, index) => `Permission scope ${index}`));
+  const [unrelated, selected] = sessions;
+  if (!unrelated || !selected) throw new Error("Permission scope sessions were not created");
+  const engine = resolveEvalEngine();
+  const prefix = `/workspace/${encodeURIComponent(base.workspace.workspaceId)}/${engine === "v2" ? "opencode2" : "opencode"}`;
+  const debuggerUrl = base.app.client.webSocketDebuggerUrl;
+  if (!debuggerUrl) throw new Error("Permission witness needs a desktop CDP endpoint");
+  const socket = new WebSocket(debuggerUrl);
+  const ready = Promise.withResolvers<void>();
+  const commands = new Map<number, ReturnType<typeof Promise.withResolvers<void>>>();
+  const reads: { sessionId: string; networkId: string; calibration: boolean; held: boolean }[] = [];
+  const finished = new Set<string>();
+  let nextId = 1;
+  let failure: Error | undefined;
+  const command = async (method: string, params = {}) => {
+    const id = nextId++;
+    const result = Promise.withResolvers<void>();
+    commands.set(id, result);
+    const timeout = setTimeout(() => result.reject(new Error(`Permission witness timed out: ${method}`)), 15_000);
+    try {
+      socket.send(JSON.stringify({ id, method, params }));
+      await result.promise;
+    } finally {
+      clearTimeout(timeout);
+      commands.delete(id);
+    }
+  };
+  const readyTimeout = setTimeout(() => ready.reject(new Error("Permission witness did not connect")), 15_000);
+  socket.addEventListener("open", () => ready.resolve());
+  socket.addEventListener("error", () => {
+    failure = new Error("Permission witness connection failed");
+    ready.reject(failure);
+  });
+  socket.addEventListener("message", (event) => {
+    const message: unknown = JSON.parse(String(event.data));
+    if (!isRecord(message)) return;
+    if (typeof message.id === "number") {
+      const pending = commands.get(message.id);
+      if (message.error) pending?.reject(new Error("Permission witness command failed"));
+      else pending?.resolve();
+    }
+    const params = message.params;
+    if (!isRecord(params)) return;
+    if (message.method === "Network.loadingFinished" && typeof params.requestId === "string") finished.add(params.requestId);
+    if (message.method !== "Fetch.requestPaused" || typeof params.requestId !== "string") return;
+    const request = params.request;
+    if (!isRecord(request) || typeof request.url !== "string") return;
+    const url = new URL(request.url);
+    const match = url.pathname.slice(prefix.length).match(/^\/api\/session\/([^/]+)\/permission$/);
+    const sessionId = match?.[1] ? decodeURIComponent(match[1]) : "";
+    if (request.method === "GET" && sessionId && typeof params.networkId === "string") {
+      // Hold every read of one unrelated root, not just a single lucky request.
+      // The calibration proves the fault is active without relying on timing.
+      const held = sessionId === unrelated.sessionId;
+      reads.push({ sessionId, networkId: params.networkId, calibration: url.searchParams.has("scope-calibration"), held });
+      if (held) return;
+    }
+    void command("Fetch.continueRequest", { requestId: params.requestId }).catch((error: Error) => { failure = error; });
+  });
+  const dispose = async () => {
+    clearTimeout(readyTimeout);
+    try { if (socket.readyState === WebSocket.OPEN) await command("Fetch.disable"); }
+    finally { socket.close(); }
+  };
+  try {
+    await ready.promise;
+    clearTimeout(readyTimeout);
+    await command("Network.enable");
+    await command("Fetch.enable", { patterns: [{ urlPattern: `*${prefix}/api/session/*/permission*`, requestStage: "Request" }] });
+    await seed.evalIn(base.app, browserScript(async (path) => {
+      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+      void fetch(info.baseUrl + path, {
+        headers: { Authorization: `Bearer ${info.ownerToken}` }, signal: AbortSignal.timeout(120_000),
+      }).catch(() => undefined);
+    }, [`${prefix}/api/session/${encodeURIComponent(unrelated.sessionId)}/permission?scope-calibration=1`]), { awaitPromise: true });
+    return {
+      ...base, selected, unrelated, engine,
+      permissionReads() {
+        if (failure) throw failure;
+        return reads.map((read) => ({ sessionId: read.sessionId, calibration: read.calibration, held: read.held, completed: finished.has(read.networkId) }));
+      },
+      async [Symbol.asyncDispose]() { await dispose(); },
+    };
+  } catch (error) {
+    await dispose();
+    throw error;
+  }
 }
 
 export async function artifactCodeBrowserWorld(seed: Seed) {

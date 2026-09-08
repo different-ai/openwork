@@ -1313,6 +1313,12 @@ export function isOpencodeV2BaseUrl(baseUrl: string): boolean {
   }
 }
 
+const v2Clients = new WeakSet<ReturnType<typeof createClient>>();
+
+export function isOpencodeV2Client(client: ReturnType<typeof createClient>): boolean {
+  return v2Clients.has(client);
+}
+
 export function createClientV2(
   opencode2BaseUrl: string,
   directory: string | undefined,
@@ -1794,6 +1800,7 @@ export function createClientV2(
   Object.assign(compatibilityClient.find, adapter.find);
   Object.assign(compatibilityClient.mcp, adapter.mcp);
   Object.assign(compatibilityClient.event, adapter.event);
+  v2Clients.add(compatibilityClient);
   return compatibilityClient;
 }
 

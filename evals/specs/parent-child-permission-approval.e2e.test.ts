@@ -1,9 +1,41 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { parentChildPermissionWorld } from "../worlds/first-run.ts";
+import { parentChildPermissionWorld, scopedPermissionRefreshWorld } from "../worlds/first-run.ts";
 import { delegatedQuestionHandoff } from "../worlds/chat.ts";
 
 const test = spec.world(parentChildPermissionWorld);
+
+const scopeTest = spec.world(scopedPermissionRefreshWorld, { timeout: 600_000 });
+
+scopeTest("switching and creating threads hydrate permissions without waiting for unrelated roots", async ({ world, user, agent, probe, step }) => {
+  await probe.eventually(() => world.permissionReads(), {
+    within: 15_000, label: "the unrelated permission endpoint is held open",
+    until: (reads) => reads.some((read) => read.calibration && read.held && !read.completed),
+  });
+  const assertScoped = async (sessionId: string, before: number) => {
+    const reads = await probe.eventually(() => world.permissionReads().slice(before), {
+      within: 15_000, label: "the selected thread finishes its scoped permission read while the unrelated request is held",
+      until: (reads) => reads.some((read) => read.sessionId === sessionId && read.completed),
+    });
+    expect(reads.filter((read) => !read.calibration).map((read) => read.sessionId)).toEqual([sessionId]);
+    expect(world.permissionReads().filter((read) => read.sessionId === world.unrelated.sessionId))
+      .toEqual([{ sessionId: world.unrelated.sessionId, calibration: true, held: true, completed: false }]);
+    expect(await probe.hash()).toContain(`/session/${sessionId}`);
+    await user.see("composer", { editable: true });
+    console.info(`[permission-scope] ${world.engine}: 1 scoped read, 0 unrelated reads, calibration still held`);
+  };
+  await step("switching reads only the selected root, not the other seven roots", async () => {
+    const before = world.permissionReads().length;
+    await user.click({ text: world.selected.title });
+    await assertScoped(world.selected.sessionId, before);
+  });
+  await step("a newly created thread hydrates without sweeping existing roots", async () => {
+    const before = world.permissionReads().length;
+    const sessionId = await agent.createSession("Fresh permission scope");
+    await assertScoped(sessionId, before);
+    await user.screenshot();
+  });
+});
 
 test("a parent task surfaces and resolves its child session permission request", async ({ user, probe, step }) => {
   await step("The parent exposes the child request", async () => {
