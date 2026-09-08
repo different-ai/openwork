@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { ArrowUpRight, ShieldAlert } from "lucide-react"
 
 import {
@@ -20,12 +20,9 @@ import { statusKey } from "@/react-app/domains/session/sync/session-sync"
 import { useQueryCacheState } from "@/react-app/infra/query-cache-state"
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
 
-export const ActiveSubagentTasksContext = createContext<ReadonlySet<string>>(new Set())
-
 type SubagentRunLineProps = {
   part: TaskToolPart
   className?: string
-  liveSummary?: boolean
   parentActive?: boolean
 }
 
@@ -69,12 +66,10 @@ function agentName(slug: string): string {
  * session in the main chat surface. Without that route, details stay limited
  * to safe task/output labels, never raw prompts or payloads.
  */
-export function SubagentRunLine({ part, className, liveSummary = false, parentActive = true }: SubagentRunLineProps) {
+export function SubagentRunLine({ part, className, parentActive = true }: SubagentRunLineProps) {
   const [open, setOpen] = useState(false)
   const { onOpenSubagentSession, syncDegraded, workspaceId } = useMessageList()
   const childSessionId = taskChildSessionId(part)
-  const carriedTasks = useContext(ActiveSubagentTasksContext)
-  const history = !liveSummary && carriedTasks.has(part.toolCallId)
   const child = useSessionActivityStore((state) => (
     childSessionId
       ? state.recordsByWorkspaceId[workspaceId]?.[childSessionId]
@@ -104,14 +99,14 @@ export function SubagentRunLine({ part, className, liveSummary = false, parentAc
   useEffect(() => {
     // While run liveness is unconfirmed the counter must not tick; the
     // module-scoped anchor resumes the true elapsed time on recovery.
-    if (!inFlight || startedAt === null || syncDegraded || history) return
+    if (!inFlight || startedAt === null || syncDegraded) return
     const update = () => {
       setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)))
     }
     update()
     const interval = window.setInterval(update, 1000)
     return () => window.clearInterval(interval)
-  }, [inFlight, startedAt, part.toolCallId, syncDegraded, history])
+  }, [inFlight, startedAt, part.toolCallId, syncDegraded])
   const title = part.input?.description?.trim().slice(0, 160) || "Sub-agent task"
   const agent = agentName(part.input?.subagent_type ?? "")
   const status = permissionPending
@@ -128,15 +123,6 @@ export function SubagentRunLine({ part, className, liveSummary = false, parentAc
     : isFailed
       ? "Task failed"
       : "Completed"
-
-  if (history) {
-    return (
-      <div data-subagent-history={part.toolCallId} className={cn("flex min-w-0 max-w-full flex-col gap-0.5 text-sm text-muted-foreground", className)}>
-        <span className="truncate">{title} · {agent} agent</span>
-        <span className="text-xs text-muted-foreground/70">Delegated task - activity below</span>
-      </div>
-    )
-  }
 
   const lines = (
     <>

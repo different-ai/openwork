@@ -1633,7 +1633,7 @@ export async function taskActivity(seed: Seed) {
   const app = await seed.desktop({ name: "task-activity-shimmer" });
   const workspace = await seed.workspace(app, seed.tmpPath("task-activity-shimmer"));
   const session = await seedSessionRetry(seed, app);
-  await arrangeControl(seed, app, "eval.task_activity.seed");
+  await arrangeControl(seed, app, "eval.task_activity.seed", { withFollowup: true });
   return { app, workspace, session };
 }
 

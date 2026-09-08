@@ -453,9 +453,9 @@ function createSessionErrorEvalMessages(sessionId: string, error: unknown = SESS
   ];
 }
 
-function createSubagentActivityEvalMessages(sessionId: string, childSessionId?: string): UIMessage[] {
+function createSubagentActivityEvalMessages(sessionId: string, childSessionId?: string, withFollowup = false): UIMessage[] {
   const now = Date.now();
-  return [
+  const messages: UIMessage[] = [
     {
       id: `${sessionId}:eval-subagent-user`,
       role: "user",
@@ -482,6 +482,15 @@ function createSubagentActivityEvalMessages(sessionId: string, childSessionId?: 
       metadata: { opencode: { created: now + 1 } },
     },
   ];
+  if (withFollowup) {
+    messages.push({
+      id: `${sessionId}:eval-subagent-followup`,
+      role: "user",
+      parts: [{ type: "text", text: "What is the update?" }],
+      metadata: { opencode: { created: now + 2 } },
+    });
+  }
+  return messages;
 }
 
 function createChatLoadingEvalMessages(sessionId: string): UIMessage[] {
@@ -1556,13 +1565,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
       description: "Dev-only eval hook that renders a deterministic running delegated-task row.",
       sideEffect: "mutation",
       disabled: !props.sessionId,
-      args: [{ name: "childSessionId", type: "string", description: "Optional child session represented by the task row." }],
+      args: [
+        { name: "childSessionId", type: "string", description: "Optional child session represented by the task row." },
+        { name: "withFollowup", type: "boolean", description: "Include a user follow-up after the delegated task." },
+      ],
       execute: (args) => {
         const rawChildSessionId = args && typeof args === "object" ? Reflect.get(args, "childSessionId") : undefined;
         const childSessionId = typeof rawChildSessionId === "string" && rawChildSessionId.trim()
           ? rawChildSessionId.trim()
           : undefined;
-        setEvalMarkdownMessages(createSubagentActivityEvalMessages(props.sessionId, childSessionId));
+        const withFollowup = Boolean(args && typeof args === "object" && Reflect.get(args, "withFollowup") === true);
+        setEvalMarkdownMessages(createSubagentActivityEvalMessages(props.sessionId, childSessionId, withFollowup));
         useSessionActivityStore.getState().setRunStatus(
           props.workspaceId,
           props.sessionId,

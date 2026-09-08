@@ -91,7 +91,7 @@ import { CodeModeTool } from "@/components/chat/code-mode-tool"
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
 import { hasPreservedMcpAppResult, McpAppFrame } from "@/components/chat/mcp-app-frame"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
-import { ActiveSubagentTasksContext, SubagentRunLine } from "@/components/chat/subagent-run-line"
+import { SubagentRunLine } from "@/components/chat/subagent-run-line"
 import { ToolAggregateGroup } from "@/components/chat/tool-aggregate-group"
 import {
   CurrentToolLifecycleProvider,
@@ -117,7 +117,7 @@ import {
 } from "@/lib/build-in-tools"
 import type { ThreadStatus } from "@/lib/messages"
 import { useSessionActivityStore, type SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store"
-import { activeDelegatedTasks, delegatedActivityTitle, hasNoNewActivity, lastTaskProgressAt } from "@/react-app/domains/session/status/session-progress"
+import { activeDelegatedTasks, hasNoNewActivity, lastTaskProgressAt } from "@/react-app/domains/session/status/session-progress"
 import { revalidateWorkspaceSessionSync } from "@/react-app/domains/session/sync/session-sync"
 import { useWorkspaceMaybe } from "@/react-app/shell/workspace-provider"
 import { formatElapsedSeconds, formatToolCallDuration } from "@/lib/tool-call-duration"
@@ -135,6 +135,8 @@ const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
 
 /** Above this many step rows a finished turn folds into one summary line. */
 const COLLAPSED_STEP_RUN_MIN_ROWS = 4
+
+const ParentRunActiveContext = React.createContext(true)
 
 function MessageTimestamp({ message, className }: { message: UIMessage; className?: string }) {
   const created = getMessageCreated(message)
@@ -187,11 +189,12 @@ class ToolMessage extends React.Component<ToolMessageProps, { failed: boolean }>
 
 const ToolMessageInner = ({ part }: ToolMessageProps) => {
   const { connectorIdentities, onMcpReconnect, onMcpReopenAuthorization, onMcpRetry } = useMessageList()
+  const parentActive = React.useContext(ParentRunActiveContext)
   const resolveLifecycle = useCurrentToolLifecycleResolver()
   const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
 
   // Delegated work has its own lifecycle, even after a parent follow-up/error.
-  if (isTaskToolPart(part)) return <SubagentRunLine part={part} />
+  if (isTaskToolPart(part)) return <SubagentRunLine part={part} parentActive={parentActive} />
 
   if (part.type === "dynamic-tool") {
     const calls = codeModeToolCalls(part)
@@ -1479,7 +1482,6 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
   const { workspaceId, sessionId } = useMessageList()
   const workspace = useWorkspaceMaybe()
   const tasks = React.useMemo(() => activeDelegatedTasks(messages), [messages])
-  const carriedTaskIds = React.useMemo(() => new Set(tasks.map((part) => part.toolCallId)), [tasks])
   const [observedAt] = React.useState(() => Date.now())
   const lastProgressAt = useSessionActivityStore((state) => {
     const records = state.recordsByWorkspaceId[workspaceId]
@@ -1496,7 +1498,6 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
   const runActive = status === "submitted" || status === "streaming" || status === "retrying"
   const syncDegraded = syncHealth?.degraded === true
   const activityActive = runActive || tasks.length > 0
-  const delegationTitle = useSessionActivityStore((state) => delegatedActivityTitle(tasks, state.recordsByWorkspaceId[workspaceId], syncDegraded, runActive))
   const runStartedAtRef = React.useRef<number | null>(null)
   const [runElapsedSeconds, setRunElapsedSeconds] = React.useState(0)
   // Anchor the counter to the user message that started the run (server
@@ -1560,7 +1561,7 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
   )
 
   return (
-    <ActiveSubagentTasksContext.Provider value={carriedTaskIds}>
+    <ParentRunActiveContext.Provider value={runActive}>
     <CurrentToolLifecycleProvider
       activityStatus={activityStatus}
       currentToolCallIds={currentToolCallIds}
@@ -1595,12 +1596,6 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
         )
         })}
 
-        {tasks.length > 0 ? (
-          <Message data-testid="active-subagents" className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
-            <div className="text-sm font-medium">{delegationTitle}</div>
-            {tasks.map((part) => <SubagentRunLine key={part.toolCallId} part={part} liveSummary parentActive={runActive} />)}
-          </Message>
-        ) : null}
         {noNewActivity ? (
           <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-1 px-2 md:px-10">
             <div data-loading-message="no-new-activity" role="status" className="text-sm text-amber-11">No new activity</div>
@@ -1614,6 +1609,6 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
         {error && !hasSessionErrorMessage ? <ErrorMessage error={error} /> : null}
       </div>
     </CurrentToolLifecycleProvider>
-    </ActiveSubagentTasksContext.Provider>
+    </ParentRunActiveContext.Provider>
   )
 }

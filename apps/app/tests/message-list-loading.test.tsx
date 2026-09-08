@@ -100,14 +100,14 @@ const delegated: UIMessage = { id: "assistant", role: "assistant", parts: [task]
 const followup: UIMessage = { id: "followup", role: "user", parts: [{ type: "text", text: "What is the update?" }] };
 
 describe("task-linked meaningful progress", () => {
-  test("carries old active tasks below the latest user follow-up without a second live card", () => {
+  test.each<ThreadStatus>(["streaming", "ready"])("keeps delegated tasks before the follow-up while the parent is %s", (status) => {
     const messages = [userMessage, delegated, followup];
     expect(activeDelegatedTasks(messages)).toEqual([task]);
-    const html = renderList(messages, "streaming");
-    expect(html).toContain("Running 1 subagent");
-    expect(html.indexOf('data-testid="active-subagents"')).toBeGreaterThan(html.indexOf("What is the update?"));
+    const html = renderList(messages, status);
     expect(html.match(/data-subagent-run="delegation"/g)).toHaveLength(1);
-    expect(html).toContain('data-subagent-history="delegation"');
+    expect(html.indexOf('data-subagent-run="delegation"')).toBeLessThan(html.indexOf("What is the update?"));
+    expect(html).not.toContain('data-testid="active-subagents"');
+    expect(html).not.toContain("data-subagent-history");
     expect(html).not.toContain('data-loading-message="working"');
     expect(html).not.toContain("PRIVATE TASK PROMPT");
   });
@@ -116,15 +116,17 @@ describe("task-linked meaningful progress", () => {
     expect(activeDelegatedTasks([delegated, delegated, followup])).toEqual([task]);
     const completed: UIMessage = { ...delegated, parts: [{ ...task, state: "output-available", output: "PRIVATE RESULT" }] };
     expect(activeDelegatedTasks([delegated, followup, completed])).toEqual([]);
-    const html = renderList([userMessage, completed], "ready");
+    const html = renderList([userMessage, completed, followup], "ready");
     expect(html).not.toContain('data-testid="active-subagents"');
     expect(html).toContain("Completed");
+    expect(html.match(/data-subagent-run="delegation"/g)).toHaveLength(1);
+    expect(html.indexOf('data-subagent-run="delegation"')).toBeLessThan(html.indexOf("What is the update?"));
     expect(html).not.toContain("PRIVATE RESULT");
   });
 
   test("does not claim an unobserved child is running after its parent stops", () => {
     const html = renderList([userMessage, delegated, followup], "ready");
-    expect(html).toContain("Subagent activity · 1 task");
+    expect(html).toContain('data-subagent-activity="waiting-result"');
     expect(html).toContain("Waiting for task result");
     expect(html).not.toContain("Running 1 subagent");
     expect(html).not.toContain("Completed");
@@ -165,12 +167,12 @@ describe("task-linked meaningful progress", () => {
       expect(html).not.toContain('data-testid="session-error-resume"');
       expect(revalidate).toHaveBeenCalledTimes(1);
       expect(revalidate).toHaveBeenCalledWith({ workspaceId: "ws", baseUrl: "http://localhost/test-engine" });
-      const inspect = container.querySelector<HTMLButtonElement>('[data-testid="active-subagents"] button');
+      const inspect = container.querySelector<HTMLButtonElement>('[data-subagent-run="delegation"] button');
       if (!inspect) throw new Error("Missing child inspection button");
       await act(async () => { inspect.click(); });
       expect(inspectChild).toHaveBeenCalledTimes(1);
       expect(inspectChild).toHaveBeenCalledWith("child");
-      expect(container.querySelectorAll('[data-subagent-history] button')).toHaveLength(0);
+      expect(container.querySelectorAll('[data-subagent-history], [data-testid="active-subagents"]')).toHaveLength(0);
       await act(async () => { root.render(view()); });
       expect(revalidate).toHaveBeenCalledTimes(1);
       await act(async () => { store.observeTranscript("ws", "child", [output]); });
@@ -178,7 +180,7 @@ describe("task-linked meaningful progress", () => {
       expect(lastTaskProgressAt(1_000, [task], records)).toBe(62_000);
       html = container.innerHTML;
       expect(html).not.toContain('data-loading-message="no-new-activity"');
-      expect(html).toContain("Running 1 subagent");
+      expect(html).toContain('data-subagent-activity="shimmer"');
       expect(html).not.toContain("PRIVATE OUTPUT");
       expect(html).toContain("Last activity: Response updated");
       clock.mockReturnValue(123_000);
@@ -198,7 +200,7 @@ describe("task-linked meaningful progress", () => {
       expect(container.innerHTML).not.toContain('data-loading-message="no-new-activity"');
       expect(container.innerHTML).toContain("Retrying");
       await act(async () => { store.setRunStatus("ws", "child", { type: "idle" }); });
-      expect(container.innerHTML).toContain("Subagent activity · 1 task");
+      expect(container.innerHTML).toContain('data-subagent-activity="waiting-result"');
       expect(container.innerHTML).not.toContain("Completed");
       expect(container.innerHTML).toContain("Waiting for task result");
     } finally {

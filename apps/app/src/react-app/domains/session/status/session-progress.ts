@@ -17,25 +17,6 @@ export function activeDelegatedTasks(messages: UIMessage[]): TaskToolPart[] {
   return [...calls.values()].filter(isToolPartInFlight);
 }
 
-export function delegatedActivityTitle(tasks: TaskToolPart[], children: Record<string, {
-  runActive: boolean; runStatusAt: number; retrying: boolean; errorActive: boolean;
-  waitingPermissionIds: string[]; waitingQuestionIds: string[];
-}> | undefined, disconnected: boolean, parentActive = true): string {
-  const count = tasks.length;
-  const noun = count === 1 ? "subagent" : "subagents";
-  if (disconnected) return `Checking ${count} ${noun}`;
-  const running = tasks.filter((task) => {
-    const id = taskChildSessionId(task);
-    const child = id ? children?.[id] : undefined;
-    return (!child && parentActive) || (child && !child.errorActive && !child.retrying
-      && child.waitingPermissionIds.length === 0 && child.waitingQuestionIds.length === 0
-      && (child.runActive || (parentActive && child.runStatusAt === 0)));
-  }).length;
-  if (running === count) return `Running ${count} ${noun}`;
-  if (running > 0) return `Running ${running} ${running === 1 ? "subagent" : "subagents"} · ${count - running} waiting`;
-  return `Subagent activity · ${count} ${count === 1 ? "task" : "tasks"}`;
-}
-
 /** Fixed tool categories keep context useful without reflecting arguments or payloads. */
 function safeToolActivity(part: UIMessage["parts"][number]): string {
   if (!isToolUIPart(part)) return "Tool activity received";
