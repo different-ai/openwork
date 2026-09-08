@@ -156,6 +156,10 @@ function isSameTab(left: PanelTab, right: PanelTab) {
       left.url === right.url &&
       left.favicon === right.favicon &&
       left.status === right.status &&
+      left.keepActive === right.keepActive &&
+      left.automationProtected === right.automationProtected &&
+      left.suspensionBlockedReason === right.suspensionBlockedReason &&
+      left.restoreError === right.restoreError &&
       left.canGoBack === right.canGoBack &&
       left.canGoForward === right.canGoForward &&
       left.ownerSessionId === right.ownerSessionId
@@ -199,6 +203,10 @@ function mergePersistedSessions(
         url: "",
         favicon: null,
         status: "ready",
+        keepActive: false,
+        automationProtected: false,
+        suspensionBlockedReason: null,
+        restoreError: null,
         canGoBack: false,
         canGoForward: false,
         ownerSessionId: sessionId,

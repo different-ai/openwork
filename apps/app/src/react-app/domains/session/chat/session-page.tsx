@@ -766,7 +766,7 @@ export function SessionPage(props: SessionPageProps) {
   const openBrowserUrlControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "browser.open_url",
     label: "Open URL in built-in browser",
-    description: "Create or select an OpenWork built-in browser tab, navigate it to a URL, and return the CDP handle for browser automation.",
+    description: "Open a built-in browser tab and return its tab_id and protected CDP handle. Protection lasts through running and queued browser work until browser.release_tab declares that work finished. After release, use browser.restore_tab with tabId before any further CDP call and use the returned target_id.",
     sideEffect: "navigation",
     requiresArgs: true,
     args: [
@@ -791,6 +791,43 @@ export function SessionPage(props: SessionPageProps) {
     },
   }), [openOwnerSidePanel, props.selectedSessionId]);
   useControlAction(openBrowserUrlControlAction);
+  const restoreBrowserTabControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "browser.restore_tab",
+    label: "Restore browser tab",
+    description: "Reacquire a protected CDP handle for a tab owned by this conversation. Reload a suspended tab from its saved URL, retaining tab_id but returning a new target_id. Always use the returned handle, never an old CDP target after release. Protection lasts until browser.release_tab.",
+    sideEffect: "mutation",
+    requiresArgs: true,
+    args: [{ name: "tabId", type: "string", required: true, description: "The logical tab_id returned by browser.open_url or browser.restore_tab." }],
+    disabled: !isElectronRuntime(),
+    execute: async (args, helpers) => {
+      const tabId = controlStringArg(args, "tabId");
+      if (!tabId) return { ok: false, error: "Missing tabId." };
+      const restoreTab = window.__OPENWORK_ELECTRON__?.browser?.restoreTab;
+      if (!restoreTab) return { ok: false, error: "Built-in browser is not available." };
+      const ownerSessionId = helpers.origin?.sessionId ?? props.selectedSessionId ?? null;
+      // Native validates exact ownership before returning any page metadata.
+      return restoreTab(tabId, ownerSessionId);
+    },
+  }), [props.selectedSessionId]);
+  useControlAction(restoreBrowserTabControlAction);
+  const releaseBrowserTabControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "browser.release_tab",
+    label: "Release browser tab",
+    description: "Declare all running and queued browser work on this conversation's tab finished. Remove its automation protection without closing or changing the current document, allowing safe memory reclamation. Before any later CDP call, use browser.restore_tab(tabId) and its returned handle; the old target may no longer exist.",
+    sideEffect: "mutation",
+    requiresArgs: true,
+    args: [{ name: "tabId", type: "string", required: true, description: "The logical tab_id whose browser work is finished." }],
+    disabled: !isElectronRuntime(),
+    execute: async (args, helpers) => {
+      const tabId = controlStringArg(args, "tabId");
+      if (!tabId) return { ok: false, error: "Missing tabId." };
+      const releaseTab = window.__OPENWORK_ELECTRON__?.browser?.releaseTab;
+      if (!releaseTab) return { ok: false, error: "Built-in browser is not available." };
+      const ownerSessionId = helpers.origin?.sessionId ?? props.selectedSessionId ?? null;
+      return releaseTab(tabId, ownerSessionId);
+    },
+  }), [props.selectedSessionId]);
+  useControlAction(releaseBrowserTabControlAction);
   const setBrowserProxyControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "browser.set_proxy",
     label: "Set built-in browser proxy",

@@ -6,6 +6,8 @@ import {
   ArrowRight,
   Globe,
   Loader2,
+  Moon,
+  Pin,
   Plus,
   RotateCw,
   X,
@@ -135,14 +137,16 @@ function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
             event.preventDefault();
             showBrowserTabContextMenu();
           } : undefined}
-          title={tab.label}
+          title={tab.type === "browser" ? `${tab.label}${tab.status === "suspended" ? " (suspended)" : tab.status === "restoring" ? " (reloading)" : ""}${tab.keepActive ? " (keep active)" : ""}` : tab.label}
           aria-label={`Select tab: ${tab.label}`}
         >
           {tab.type === "browser" ? (
-            tab.favicon ? (
-              <img src={tab.favicon} alt="" className="size-3.5 shrink-0 rounded-[2px]" />
-            ) : tab.status === "loading" ? (
+            tab.status === "suspended" ? (
+              <Moon />
+            ) : tab.status === "loading" || tab.status === "restoring" ? (
               <Loader2 className="animate-spin" />
+            ) : tab.favicon ? (
+              <img src={tab.favicon} alt="" className="size-3.5 shrink-0 rounded-[2px]" />
             ) : (
               <Globe />
             )
@@ -174,6 +178,10 @@ function BrowserPanelContent({
 }: BrowserPanelContentProps) {
   const isAvailable = Boolean(getElectronBrowser());
   const [urlInput, setUrlInput] = React.useState(tab.url);
+  const [retrying, setRetrying] = React.useState(false);
+  const restoreError = tab.restoreError;
+  const isRestoring = retrying || tab.status === "restoring";
+  const hideNativePage = Boolean(restoreError) || isRestoring;
   const urlFocusedRef = React.useRef(false);
   const contentRef = React.useRef<HTMLDivElement>(null);
   const urlInputRef = React.useRef<HTMLInputElement>(null);
@@ -201,9 +209,47 @@ function BrowserPanelContent({
     void getElectronBrowser()?.forward?.();
   }, []);
 
-  const reload = React.useCallback(() => {
-    void getElectronBrowser()?.reload?.();
-  }, []);
+  const retryRestore = async () => {
+    const browser = getElectronBrowser();
+    if (!browser?.selectTab) return;
+    setRetrying(true);
+    try {
+      // UI selection restores without taking an automation lifetime lease.
+      await browser.selectTab(tab.id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  const reload = () => {
+    if (tab.status === "suspended" || restoreError) {
+      void retryRestore();
+      return;
+    }
+    void getElectronBrowser()?.reload?.().catch((error: unknown) => {
+      toast.error(error instanceof Error ? error.message : String(error));
+    });
+  };
+
+  const suspend = async () => {
+    try {
+      await getElectronBrowser()?.suspendTab?.(tab.id);
+    } catch (error) {
+      // A refusal must never be treated as a close.
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const toggleKeepActive = async () => {
+    try {
+      await getElectronBrowser()?.setKeepActive?.(tab.id, !tab.keepActive);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  };
 
   const handleUrlKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
@@ -216,12 +262,13 @@ function BrowserPanelContent({
   React.useLayoutEffect(() => {
     const browser = getElectronBrowser();
     const content = contentRef.current;
-    if (!browser || !content || !isAvailable) {
+    if (!browser || !content || !isAvailable || hideNativePage) {
+      if (hideNativePage) void browser?.hide?.();
       return;
     }
 
     const bounds = computeBounds(content);
-    if (bounds.width < 1 || bounds.height < 1) {
+    if (bounds.width < 1 || bounds.height < 1 || sameBounds(lastBoundsRef.current, bounds)) {
       return;
     }
 
@@ -263,7 +310,7 @@ function BrowserPanelContent({
     const syncBounds = () => {
       const bounds = computeBounds(content);
 
-      if (bounds.width < 1 || bounds.height < 1 || hasNativeBrowserOccluder()) {
+      if (hideNativePage || bounds.width < 1 || bounds.height < 1 || hasNativeBrowserOccluder()) {
         if (shownRef.current) {
           browser.hide?.();
           shownRef.current = false;
@@ -319,7 +366,7 @@ function BrowserPanelContent({
       shownRef.current = false;
       lastBoundsRef.current = null;
     };
-  }, [isAvailable, sessionId]);
+  }, [hideNativePage, isAvailable, sessionId]);
 
   return (
     <>
@@ -365,18 +412,20 @@ function BrowserPanelContent({
                     variant="ghost"
                     size="icon-sm"
                     onClick={reload}
+                    disabled={isRestoring}
                     aria-label="Reload page"
                   >
-                    {tab.status === "loading" ? <Loader2 className="animate-spin" /> : <RotateCw />}
+                    {tab.status === "loading" || isRestoring ? <Loader2 className="animate-spin" /> : <RotateCw />}
                   </Button>
                 )}
               />
               <TooltipContent>Reload</TooltipContent>
             </Tooltip>
-            <InputGroup className="mx-1 h-7 flex-1 rounded-md">
+            <InputGroup className="mx-1 h-7 min-w-0 flex-1 rounded-md">
               <InputGroupInput
                 ref={urlInputRef}
                 type="text"
+                disabled={isRestoring}
                 className="h-7"
                 value={urlInput}
                 onChange={(event) => setUrlInput(event.target.value)}
@@ -396,6 +445,26 @@ function BrowserPanelContent({
                 <Globe />
               </InputGroupAddon>
             </InputGroup>
+            <Tooltip>
+              <TooltipTrigger render={(
+                <Button variant="ghost" size="icon-sm" onClick={suspend}
+                  disabled={tab.status === "suspended" || isRestoring}
+                  aria-label="Suspend tab">
+                  <Moon />
+                </Button>
+              )} />
+              <TooltipContent>{tab.suspensionBlockedReason ? `Cannot suspend: ${tab.suspensionBlockedReason}` : "Suspend tab to free memory"}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger render={(
+                <Button variant="ghost" size="icon-sm" onClick={toggleKeepActive}
+                  aria-label="Keep active" aria-pressed={tab.keepActive}
+                  className={tab.keepActive ? "bg-accent text-accent-foreground" : undefined}>
+                  <Pin />
+                </Button>
+              )} />
+              <TooltipContent>{tab.keepActive ? "Allow this tab to suspend" : "Keep active: prevent memory suspension"}</TooltipContent>
+            </Tooltip>
           </>
         ) : (
           <p className="px-2 text-sm text-muted-foreground">
@@ -413,7 +482,18 @@ function BrowserPanelContent({
         </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
-        {isAvailable ? <div ref={contentRef} className="h-full overflow-hidden" /> : null}
+        {isAvailable ? (
+          <div ref={contentRef} className="flex h-full items-center justify-center overflow-hidden">
+            {tab.status === "suspended" || isRestoring || restoreError ? (
+              <div className="flex max-w-sm flex-col items-center gap-3 p-6 text-center" role="status">
+                {isRestoring ? <Loader2 className="size-6 animate-spin text-muted-foreground" /> : <Moon className="size-6 text-muted-foreground" />}
+                <p className="text-sm font-medium">{isRestoring ? "Reloading tab" : restoreError ? "Couldn't reload this tab" : "Tab suspended"}</p>
+                <p className="max-w-full break-words text-sm text-muted-foreground">{isRestoring ? "Opening the saved URL. This is a new page, not a saved document." : restoreError || "This tab is saved without a live page to free memory. Select it to reload its URL."}</p>
+                {!isRestoring ? <Button variant="outline" size="sm" onClick={retryRestore}>{restoreError ? "Retry reload" : "Reload tab"}</Button> : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </>
   );
@@ -677,7 +757,7 @@ export function SidePanel({
         {activeTab?.type === "browser" ? (
           <>
             <LoginSyncCard />
-            <BrowserPanelContent sessionId={sessionId} tab={activeTab} onClose={onClose} />
+            <BrowserPanelContent key={activeTab.id} sessionId={sessionId} tab={activeTab} onClose={onClose} />
           </>
         ) : activeTab?.type === "app" ? (
           <div className="min-h-0 flex-1 overflow-hidden"><AppArtifact key={activeTab.id} appId={activeTab.appId} revisionId={activeTab.revisionId} receiptId={activeTab.receiptId} onClose={onClose} /></div>

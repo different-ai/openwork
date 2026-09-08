@@ -24,7 +24,12 @@ export type BrowserPanelTab = {
   label: string;
   url: string;
   favicon: string | null;
-  status: "loading" | "ready";
+  status: "suspended" | "restoring" | "loading" | "ready";
+  keepActive: boolean;
+  automationProtected: boolean;
+  suspensionBlockedReason: string | null;
+  /** Failed URL reload; the logical tab remains available for retry. */
+  restoreError: string | null;
   canGoBack: boolean;
   canGoForward: boolean;
   /** Conversation (session) that opened the tab; null for shared/legacy tabs. */
@@ -39,6 +44,9 @@ export type BrowserStatePayload = {
   /** The conversation whose tabs may take the screen. */
   visibleSessionId?: string | null;
   tabs?: BrowserPanelTab[];
+  /** Allocated native pages, not logical tabs or Chromium processes. */
+  liveTabCount: number;
+  tabLimit: number;
   /** Actual native hierarchy and bounds, included by getState (not state events). */
   nativeViews?: Array<{ tabId: string; attached: boolean; aboveApp: boolean; bounds: Bounds }>;
 };
@@ -52,6 +60,7 @@ export type BrowserPanelOwnerPayload = {
 export type OpenBrowserUrlResult = {
   provider: "builtin";
   browser_url: string;
+  /** Protected until releaseTab; restoreTab must reacquire it after release. */
   target_id: string;
   tab_id: string;
   url: string;

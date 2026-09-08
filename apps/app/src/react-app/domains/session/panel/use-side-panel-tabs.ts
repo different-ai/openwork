@@ -85,7 +85,9 @@ export function useCloseTab() {
       const nextTab = usePanelTabStore.getState().sessions[sessionId]?.tabs.find((entry) => entry.id === nextTabId);
 
       if (nextTab?.type === "browser") {
-        void getElectronBrowser()?.selectTab?.(nextTab.id);
+        void getElectronBrowser()?.selectTab?.(nextTab.id).catch((error: unknown) => {
+          toast.error(error instanceof Error ? error.message : String(error));
+        });
       }
     }
   }, [closeTab]);
@@ -105,7 +107,10 @@ export function useSelectTab() {
     selectTab(sessionId, tabId);
 
     if (tab.type === "browser") {
-      void getElectronBrowser()?.selectTab?.(tabId);
+      void getElectronBrowser()?.selectTab?.(tabId).catch((error: unknown) => {
+        // Selection retains the saved tab even when its URL cannot reload.
+        toast.error(error instanceof Error ? error.message : String(error));
+      });
     }
   }, [selectTab]);
 }

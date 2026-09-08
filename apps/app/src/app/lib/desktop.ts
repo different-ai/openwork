@@ -261,6 +261,11 @@ declare global {
         closeAllTabs?: () => Promise<string[]>;
         closeSessionTabs?: (sessionId: string) => Promise<string[]>;
         selectTab?: (tabId: string) => Promise<string>;
+        suspendTab?: (tabId: string) => Promise<string>;
+        /** Exact owner required; null is only for explicitly shared tabs. */
+        restoreTab?: (tabId: string, sessionId: string | null) => Promise<OpenBrowserUrlResult>;
+        releaseTab?: (tabId: string, sessionId: string | null) => Promise<{ tabId: string; released: true }>;
+        setKeepActive?: (tabId: string, keepActive: boolean) => Promise<void>;
         reorderTabs?: (tabIds: string[]) => Promise<BrowserPanelTab[]>;
         listTabs?: () => Promise<BrowserPanelTab[]>;
         setProxy?: (proxy?: string | null) => Promise<BrowserProxyState>;

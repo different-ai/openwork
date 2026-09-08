@@ -15,3 +15,44 @@ Today, the supported path is the first-party `OpenWork Browser` extension.
 - Keep `OpenWork Browser` enabled in `Settings > Library`.
 
 Then go back to the session view and ask OpenWork to open a website.
+
+## Keep Tabs Without Keeping Every Page in Memory
+
+Desktop retains browser tabs when their native pages are suspended. A moon marks a
+suspended tab. Selecting it reloads its saved URL; this is not a saved document
+snapshot. If reloading fails, the tab stays available with **Retry reload**.
+
+Use **Suspend tab** in the browser toolbar to free memory, or **Keep active** to
+prevent suspension. OpenWork refuses suspension when a page cannot safely be
+reloaded, including protected automation work. A refusal shows an error and
+does not close the tab. Turning off **Keep active** only permits suspension; it
+does not immediately discard the page.
+
+When opening or restoring a page would exceed 12 live tabs, OpenWork first tries
+to suspend an eligible inactive tab, starting with the least recently used.
+If every page is protected, it asks you to close an unused tab instead. Up to
+100 logical tabs can remain open, including suspended tabs.
+
+This first version only reclaims clean, static HTTP pages whose reload is known
+to be a GET. Scripts, controls or possible input, frames, media, capture,
+downloads, meaningful navigation history, and unknown page state keep a page
+live. Even explicit **Suspend tab** respects those protections. Many interactive
+websites will therefore remain live after release. Shared logins survive, but
+suspension is not a promise to preserve scroll position, history, or document
+state, nor to save tabs across an app restart.
+
+## Browser Automation Lifecycle
+
+`browser.open_url` returns a logical `tab_id` and a protected CDP handle
+(`browser_url` and `target_id`). Protection lasts until explicit release, not an
+idle timeout, so running and queued browser work can safely keep using it.
+
+When all browser calls on that tab are finished, call `openwork_execute` with
+`browser.release_tab` and `{ tabId: tab_id }`. Release does not close the tab or
+change its current document; it permits safe memory reclamation.
+
+Before doing more work after release, call `browser.restore_tab` with
+`{ tabId: tab_id }`. Use the returned CDP handle, never the old target. Restore
+keeps the logical tab ID but creates a new CDP target if the native page was
+suspended. The returned handle is protected until the next release. Restore and
+release only operate on tabs owned by the requesting conversation.

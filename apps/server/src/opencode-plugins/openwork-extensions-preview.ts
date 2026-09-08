@@ -129,8 +129,10 @@ To open settings or navigate the app, use openwork_execute with ids from openwor
 // that browser_* tools never drive the OpenWork app itself.
 const OPENWORK_BROWSER_INSTRUCTION =
   `## Built-in Browser (external websites)
-For web browsing tasks, ALWAYS start with openwork_execute id browser.open_url. It creates/selects a built-in OpenWork browser tab and returns browser_url plus target_id. Use that exact browser_url and target_id for every later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot call.
-Do not call browser_navigate without a target_id returned by browser.open_url; a target titled "OpenWork" or whose URL contains ":5173/#/" is the app itself, not a web page.`;
+For new web browsing tasks, start with openwork_execute id browser.open_url. It opens a built-in OpenWork browser tab and returns tab_id, browser_url, and target_id. Use that exact browser_url and target_id for every browser_snapshot, browser_click, browser_fill, browser_eval, browser_navigate, and browser_screenshot call.
+Every returned browser handle stays protected from memory suspension through running and queued browser work until you explicitly release it. When all browser work on a tab is finished, call openwork_execute id browser.release_tab with { tabId: tab_id }. Release does not close or change the current document; it allows safe memory reclamation. Never release while browser calls are running or queued.
+Before using a released tab again, call openwork_execute id browser.restore_tab with { tabId: tab_id } and use its returned browser_url and target_id, never the old CDP target. Restore retains the logical tab_id, reloads the saved URL if suspended (not a document snapshot), and protects the new handle until release. Restore and release require this conversation's exact ownership; never try another conversation's tab.
+Do not call browser_navigate without a target_id returned by browser.open_url or browser.restore_tab; a target titled "OpenWork" or whose URL contains ":5173/#/" is the app itself, not a web page.`;
 
 type OpenWorkWorkspace = z.infer<typeof workspaceSchema>;
 type SessionInfo = z.infer<typeof sessionInfoSchema>;

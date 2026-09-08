@@ -58,7 +58,7 @@ export const openworkPanelTabSchema = z.object({
   kind: z.enum(["browser", "artifact"]),
   label: z.string(),
   url: z.string().optional(),
-  status: z.enum(["loading", "ready"]).optional(),
+  status: z.enum(["suspended", "restoring", "loading", "ready"]).optional(),
 })
 export type OpenworkPanelTab = z.infer<typeof openworkPanelTabSchema>
 

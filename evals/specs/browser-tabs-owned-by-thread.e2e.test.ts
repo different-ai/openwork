@@ -4,7 +4,7 @@ import { eventually, spec } from "@openwork/testkit";
 import { builtinBrowserWorld, transcriptLinkWorld } from "../worlds/browser-panel.ts";
 
 const test = spec.world(async (seed) => {
-  const world = await builtinBrowserWorld(seed);
+  const world = await builtinBrowserWorld(seed, { OPENWORK_EVAL_BROWSER_LOGIN_SYNC: "1" });
   return { ...world, withTranscriptLink: () => transcriptLinkWorld(seed, world) };
 });
 
@@ -19,6 +19,135 @@ const conversation = (title: string): Target => ({ text: title });
 // The desktop lays a hidden conversation's tab out at this viewport (see
 // @openwork/browser-tabs) so the agent sees a desktop-sized page.
 const BACKGROUND_TAB_VIEWPORT = { width: 1280, height: 800 };
+
+test("memory saver reclaims only released safe pages and restores their identity without leaking native resources", async ({ world, user, agent, step }) => {
+  const reading = { ...world.session, title: "Reading with memory saver" };
+  await world.renameSession(reading.sessionId, reading.title);
+  const research = await world.openSession("Saved browser research");
+  await user.click(conversation(reading.title));
+  const origin = await world.staticWitnessUrl();
+  const neighbor = await world.openTabAs("protected", reading.sessionId, `${origin}/?page=protected`);
+  await user.click({ role: "button", label: "Suspend tab" });
+  await user.see({ text: /Cannot suspend browser tab: automation/ });
+  const saved = await world.openTabAs("saved", research.sessionId, `${origin}/?page=saved`);
+  const stateOfSaved = () => world.readBrowserState().then(state => state.tabs.find(tab => tab.id === saved.tabId));
+  await world.tabCommandAs("browser.release_tab", saved.tabId, research.sessionId);
+  await eventually(stateOfSaved, { within: 15_000,
+    until: tab => tab?.status === "ready" && tab.automationProtected === false && tab.suspensionBlockedReason === null,
+    label: "the real static HTTP response is eligible after automation releases it" });
+
+  await step("Pressure saves a released background page, never its older protected neighbor", async () => {
+    for (let index = 0; index < 10; index += 1) await world.openTabAs(`memory-${index}`, reading.sessionId);
+    expect(await world.readBrowserState()).toMatchObject({ liveTabCount: 12, tabLimit: 12, backgroundWindowCount: 1 });
+    await world.openTabAs("memory-overflow", reading.sessionId);
+    const state = await world.readBrowserState();
+    expect(state.tabs).toHaveLength(13);
+    expect(state).toMatchObject({ liveTabCount: 12, backgroundWindowCount: 0, backgroundWindowVisible: false });
+    expect(state.nativeViews).toHaveLength(12);
+    expect(state.tabs.filter(tab => tab.status === "suspended").map(tab => tab.id)).toEqual([saved.tabId]);
+    expect(state.tabs.find(tab => tab.id === neighbor.tabId)).toMatchObject({ automationProtected: true, ownerSessionId: reading.sessionId });
+    expect(state.nativeViews.some(view => view.tabId === saved.tabId)).toBe(false);
+    const pages = await world.pageTargets();
+    expect(pages.some(page => page.id === saved.targetId)).toBe(false);
+    expect(pages.some(page => page.id === neighbor.targetId)).toBe(true);
+    for (const tab of state.tabs.filter(tab => tab.id !== neighbor.tabId && tab.id !== saved.tabId)) {
+      await user.hover({ role: "button", label: `Select tab: ${tab.label}` });
+      await user.click({ role: "button", label: `Close tab: ${tab.label}` });
+    }
+  });
+
+  const baseline = await eventually(() => world.readBrowserState(), { within: 15_000,
+    until: state => state.tabs.length === 2 && state.liveTabCount === 1 && state.backgroundWindowCount === 0,
+    label: "only the saved logical tab and the live protected neighbor remain" });
+  const baselinePages = await world.pageTargets();
+  const neighborState = baseline.tabs.find(tab => tab.id === neighbor.tabId);
+  if (!neighborState) throw new Error("Protected neighbor missing.");
+  await user.click(conversation(research.title));
+  const ready = () => eventually(stateOfSaved, { within: 15_000,
+    until: tab => tab?.status === "ready" && tab.restoreError === null
+      && (tab.automationProtected === true || tab.suspensionBlockedReason === null),
+    label: "the saved logical tab reloads its HTTP URL" });
+  const restored = await ready();
+  if (!restored) throw new Error("Saved browser tab missing.");
+  let handle = await world.tabHandle(restored);
+  expect(handle.targetId).not.toBe(saved.targetId);
+  expect(restored).toMatchObject({ id: saved.tabId, url: `${origin}/?page=saved`, ownerSessionId: research.sessionId, automationProtected: false });
+
+  await step("A user pin refuses suspension without releasing the live page", async () => {
+    await user.click({ role: "button", label: "Keep active" });
+    await user.click({ role: "button", label: "Suspend tab" });
+    await user.see({ text: /Cannot suspend browser tab: keep-active/ });
+    expect(await stateOfSaved()).toMatchObject({ status: "ready", keepActive: true, suspensionBlockedReason: "keep-active" });
+    expect((await world.tabHandle(restored)).targetId).toBe(handle.targetId);
+    await user.click({ role: "button", label: "Keep active" });
+  });
+
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    await step(`Suspend/restore cycle ${cycle + 1} preserves identity and reclaims pages and hosts`, async () => {
+      await agent.run("browser.release_tab", { tabId: saved.tabId });
+      await eventually(stateOfSaved, { within: 15_000, until: tab => tab?.suspensionBlockedReason === null,
+        label: "the released page is safe to suspend" });
+      await user.click({ role: "button", label: "Suspend tab" });
+      await user.see({ text: "Tab suspended" });
+      await world.refreshBrowserLayout(research.sessionId);
+      await user.click({ role: "button", label: "Close side panel" });
+      await user.click({ role: "button", label: "Open side panel" });
+      await user.see({ text: "Tab suspended" });
+      expect(await stateOfSaved()).toMatchObject({ status: "suspended", ownerSessionId: research.sessionId });
+      expect((await world.pageTargets()).some(page => page.id === handle.targetId)).toBe(false);
+      if (cycle === 0) {
+        await user.click({ role: "button", label: `Select tab: ${restored.label}` });
+        expect(await ready()).toMatchObject({ id: saved.tabId, ownerSessionId: research.sessionId, automationProtected: false });
+        const selected = await world.tabHandle(restored);
+        expect(selected.targetId).not.toBe(handle.targetId);
+        handle = selected;
+        await user.click({ role: "button", label: "Suspend tab" });
+        await user.see({ text: "Tab suspended" });
+      }
+      await user.click(conversation(reading.title));
+      await eventually(async () => {
+        const state = await world.readBrowserState();
+        expect(state).toMatchObject({ liveTabCount: 1, backgroundWindowCount: 0, backgroundWindowVisible: false, visibleWindowCount: 1 });
+        expect(state.nativeViews.map(view => view.tabId)).toEqual([neighbor.tabId]);
+        expect(state.tabs.map(tab => tab.id)).toEqual(baseline.tabs.map(tab => tab.id));
+        expect(state.tabs.find(tab => tab.id === neighbor.tabId)).toEqual(neighborState);
+        expect(await world.pageTargets()).toEqual(baselinePages);
+        return true;
+      }, { within: 15_000, label: "suspension and returning to the neighbor remove every unused page and host" });
+      const before = await stateOfSaved();
+      await expect(agent.run("browser.restore_tab", { tabId: saved.tabId })).rejects.toThrow(/owner/i);
+      expect(await stateOfSaved()).toEqual(before);
+      expect(await world.pageTargets()).toEqual(baselinePages);
+      if (cycle === 1) {
+        const result = await world.tabCommandAs("browser.restore_tab", saved.tabId, research.sessionId);
+        expect(result).toMatchObject({ tab_id: saved.tabId, owner_session_id: research.sessionId });
+        expect(await stateOfSaved()).toMatchObject({ automationProtected: true, suspensionBlockedReason: "automation" });
+        expect(result).toMatchObject({ target_id: (await world.tabHandle(restored)).targetId });
+      }
+      await user.click(conversation(research.title));
+      await ready();
+      const next = await world.tabHandle(restored);
+      expect(next.tabId).toBe(saved.tabId);
+      expect(next.targetId).not.toBe(handle.targetId);
+      expect(await world.readBrowserState()).toMatchObject({ liveTabCount: 2, backgroundWindowCount: 1, visibleWindowCount: 1 });
+      handle = next;
+    });
+  }
+
+  await step("An interactive HTTP page refuses suspension and preserves its typed input", async () => {
+    expect(await agent.run("browser.restore_tab", { tabId: saved.tabId }))
+      .toMatchObject({ tab_id: saved.tabId, target_id: handle.targetId, owner_session_id: research.sessionId });
+    await world.installInputProbe(handle);
+    expect(await world.clickAndType(handle, "keep this input")).toEqual({ clicks: 1, value: "keep this input" });
+    await agent.run("browser.release_tab", { tabId: saved.tabId });
+    await user.click({ role: "button", label: "Suspend tab" });
+    await user.see({ text: /Cannot suspend browser tab: interaction/ });
+    expect(await stateOfSaved()).toMatchObject({ status: "ready", automationProtected: false, suspensionBlockedReason: "interaction" });
+    expect((await world.tabHandle(restored)).targetId).toBe(handle.targetId);
+    expect(await world.readInputProbe(handle)).toEqual({ clicks: 1, value: "keep this input" });
+    expect((await world.tabHandle(neighborState)).targetId).toBe(neighbor.targetId);
+  });
+});
 
 test("the global tab limit rejects new pages without disturbing live tabs, and closing a tab makes room", async ({ world, user, agent, step }) => {
   const reading = { ...world.session, title: "Reading at capacity" };
@@ -45,7 +174,7 @@ test("the global tab limit rejects new pages without disturbing live tabs, and c
 
   await step("The new-tab button explains how to make room without allocating a page", async () => {
     await user.click({ role: "button", label: "New tab" });
-    await user.see({ text: /OpenWork has 12 browser tabs open\. Close an unused browser tab in any conversation, then try again\./ });
+    await user.see({ text: /OpenWork has 12 browser tabs open with protected live pages\. Close an unused browser tab or release its automation handle, then try again\./ });
     const rejected = await world.readBrowserState();
     expect(rejected.tabs).toEqual(full.tabs);
     expect(rejected).toMatchObject({ activeTabId: readingTab.tabId, visibleSessionId: reading.sessionId,

@@ -26,6 +26,11 @@ export interface BrowserTabState {
   label: string;
   url: string;
   ownerSessionId: string | null;
+  status?: "loading" | "ready" | "suspended" | "restoring";
+  keepActive?: boolean;
+  automationProtected?: boolean;
+  suspensionBlockedReason?: string | null;
+  restoreError?: string | null;
 }
 
 export interface BrowserState {
@@ -33,6 +38,7 @@ export interface BrowserState {
   visibleSessionId: string | null;
   visibleWindowCount: number;
   tabLimit: number;
+  liveTabCount: number;
   backgroundWindowCount: number;
   backgroundWindowVisible: boolean;
   tabs: BrowserTabState[];
@@ -77,7 +83,7 @@ function parseBrowserState(value: unknown): BrowserState {
   if (typeof value.visibleWindowCount !== "number" || typeof value.backgroundWindowVisible !== "boolean") {
     throw new Error("The desktop bridge did not report native window visibility.");
   }
-  if (typeof value.tabLimit !== "number" || typeof value.backgroundWindowCount !== "number") {
+  if (typeof value.tabLimit !== "number" || typeof value.liveTabCount !== "number" || typeof value.backgroundWindowCount !== "number") {
     throw new Error("The desktop bridge did not report browser capacity and background host count.");
   }
   return {
@@ -85,6 +91,7 @@ function parseBrowserState(value: unknown): BrowserState {
     visibleSessionId: typeof value.visibleSessionId === "string" ? value.visibleSessionId : null,
     visibleWindowCount: value.visibleWindowCount,
     tabLimit: value.tabLimit,
+    liveTabCount: value.liveTabCount,
     backgroundWindowCount: value.backgroundWindowCount,
     backgroundWindowVisible: value.backgroundWindowVisible,
     nativeViews: value.nativeViews.map((view) => {
@@ -99,13 +106,18 @@ function parseBrowserState(value: unknown): BrowserState {
         bounds: { ...parseViewport(view.bounds), x: view.bounds.x, y: view.bounds.y },
       };
     }),
-    tabs: value.tabs.map((tab) => {
+    tabs: value.tabs.map((tab): BrowserTabState => {
       if (!isRecord(tab)) throw new Error("Browser state listed a malformed tab.");
       return {
         id: stringField(tab.id),
         label: stringField(tab.label),
         url: stringField(tab.url),
         ownerSessionId: typeof tab.ownerSessionId === "string" ? tab.ownerSessionId : null,
+        status: tab.status === "loading" || tab.status === "ready" || tab.status === "suspended" || tab.status === "restoring" ? tab.status : undefined,
+        keepActive: typeof tab.keepActive === "boolean" ? tab.keepActive : undefined,
+        automationProtected: typeof tab.automationProtected === "boolean" ? tab.automationProtected : undefined,
+        suspensionBlockedReason: typeof tab.suspensionBlockedReason === "string" || tab.suspensionBlockedReason === null ? tab.suspensionBlockedReason : undefined,
+        restoreError: typeof tab.restoreError === "string" || tab.restoreError === null ? tab.restoreError : undefined,
       };
     }),
   };
@@ -332,6 +344,42 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
     /** The page origin the built-in browser can always reach: the embedded OpenWork server. */
     origin,
 
+    // This existing eval witness serves script/control-free HTTP 200 HTML inside
+    // Electron's host (including Daytona). Desktop shutdown owns its disposal.
+    staticWitnessUrl: () => loginWitnessUrl(seed, app),
+
+    async tabCommandAs(id: "browser.release_tab" | "browser.restore_tab", tabId: string, sessionId: string) {
+      const result = await seed.evalIn(app, browserScript(value => window.__openworkControl.command(value), [
+        { id, args: { tabId }, origin: { sessionId } },
+      ]), { awaitPromise: true, timeoutMs: 30_000 });
+      if (!isRecord(result) || result.ok !== true) {
+        throw new Error(`Tab command failed: ${isRecord(result) ? String(result.error) : "no response"}`);
+      }
+      return result.result;
+    },
+
+    /** Exercise the native layout IPC that resize/show effects send, not selection. */
+    async refreshBrowserLayout(sessionId: string) {
+      await seed.evalIn(app, browserScript(async sessionId => {
+        const { setBounds, show } = window.__OPENWORK_ELECTRON__.browser;
+        if (typeof setBounds !== "function" || typeof show !== "function") throw new Error("Native browser layout IPC unavailable.");
+        for (const width of [480, 520]) {
+          const bounds = { x: 700, y: 100, width, height: 600 };
+          await setBounds(bounds);
+          await show(bounds, sessionId);
+        }
+      }, [sessionId]), { awaitPromise: true });
+    },
+
+    /** Keep the HTTP document/history intact; native preload must latch these controls. */
+    async installInputProbe(tab: BuiltinBrowserTab) {
+      await withTabClient(app, tab.targetId, client => evaluate(client, () => {
+        document.body.innerHTML = '<button id="hit" style="position:fixed;inset:0 0 50% 0">hit</button><input id="field" style="position:fixed;top:60%;left:10px">';
+        window.__clicks = 0;
+        document.getElementById("hit")?.addEventListener("click", () => { window.__clicks += 1; });
+      }));
+    },
+
     /**
      * Seed a Firefox-shaped cookie store the import dialog can find, so the
      * journey drives the real import against a known set of logins.
@@ -520,8 +568,8 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
   };
 }
 
-export function builtinBrowserWorld(seed: Seed) {
-  return createBuiltinBrowserWorld(seed);
+export function builtinBrowserWorld(seed: Seed, env?: Record<string, string>) {
+  return createBuiltinBrowserWorld(seed, env);
 }
 
 export async function browserLoginSyncWorld(seed: Seed) {
