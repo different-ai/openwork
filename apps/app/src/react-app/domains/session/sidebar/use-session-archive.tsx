@@ -222,6 +222,7 @@ export function useSessionArchive(input: {
       if (navigated) route.input.navigateToWorkspaceSession(workspace.id, null, { replace: true });
       closeDialog(true);
       toast.success("Session archived", {
+        duration: 10_000,
         action: {
           label: "Undo",
           onClick: () => {

@@ -28,7 +28,8 @@ test("archiving exits only the viewed conversation, and working sessions require
     const facts = await probe.eventually(() => world.facts(), {
       within: 30_000, label: `${target.title} archived=${expected}`,
       until: facts => facts.sessions.find(session => session.sessionId === target.sessionId)?.archived === expected
-        && facts.activeRows.includes(target.sessionId) !== expected,
+        && facts.activeRows.includes(target.sessionId) !== expected
+        && (!expected || !facts.tabs.includes(target.sessionId)),
     });
     expect(facts.sessions.find(session => session.sessionId === target.sessionId)?.workspaceId).toBe(target.workspaceId);
     expect(facts.sessions.map(session => session.sessionId).sort()).toEqual(initialIds);

@@ -1013,7 +1013,11 @@ export function SessionPage(props: SessionPageProps) {
       workspaceTitle: workspaceName,
       primarySessionId: props.selectedSessionId,
       sessionsKnown: workspaceGroup?.status === "ready",
-      sessions: (workspaceGroup?.sessions ?? []).map((session) => ({
+      sessions: (workspaceGroup?.sessions ?? []).filter((session) => (
+        !session.time?.archived
+        || session.id === props.selectedSessionId
+        || (splitSession?.workspaceId === props.selectedWorkspaceId && splitSession.sessionId === session.id)
+      )).map((session) => ({
         workspaceId: props.selectedWorkspaceId,
         sessionId: session.id,
         title: getDisplaySessionTitle(session.title),
@@ -1025,6 +1029,7 @@ export function SessionPage(props: SessionPageProps) {
     props.selectedWorkspaceId,
     props.sidebar.workspaceSessionGroups,
     syncWorkbench,
+    splitSession,
     workspaceName,
   ]);
   useEffect(() => {
