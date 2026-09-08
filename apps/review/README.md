@@ -15,25 +15,38 @@ OPENWORK_EVAL_REVIEW=1 pnpm evals:pr specs/evidence-review.test.ts
 ```
 
 The journey boots the production app with isolated local storage and checks
-composed reports, failed and incomplete evidence, private images, and source
-records through HTTP. Its inputs are explicitly synthetic fixtures; they do
-not claim to have tested the example behaviors shown in the report.
+composed reports, failed and incomplete evidence, images, source records, and
+rejection of production deployments through HTTP. Its inputs are explicitly
+synthetic fixtures; they do not claim to have tested the example behaviors shown
+in the report.
 
 For development, create a directory and set `OPENWORK_REVIEW_LOCAL_DIR` to its
 absolute path in both the app and publisher environments. Run
 `pnpm --filter @openwork/review-app dev` (port 3011). `uploadReview()` also accepts
 local storage through this environment variable, using the same manifest-last
-write behavior. Production always requires `OPENWORK_REVIEW_PASSWORD`; HTTP
-Basic username is `review`. Keep local development bound to loopback.
+write behavior. Local development has no login; keep it bound to loopback.
 
 ## Deploy once to Vercel
 
 Create a project with root directory `apps/review`, enable source files outside
 that directory, and connect a **private** Vercel Blob store. Configure
-`BLOB_READ_WRITE_TOKEN` and `OPENWORK_REVIEW_PASSWORD` for the app. Deployment
-Protection may additionally restrict access to team members. Pages, original
-JSON, and images all share the app's access boundary; Blob URLs are never sent
-to the browser. Unconfigured production instances return 503.
+`BLOB_READ_WRITE_TOKEN` for the Preview environment. Enable **Vercel Authentication**
+under Deployment Protection with **Standard Protection** (or All Deployments).
+Deploy with `vercel deploy --target preview` and use that protected preview URL
+for `OPENWORK_REVIEW_URL`.
+
+Teammates open the PR's report link using their existing Vercel account with
+access to this project. There is no app password. Vercel authenticates requests
+before they reach pages, original JSON, or images; private Blob URLs are never
+sent to the browser. Keep Deployment Protection enabled and the review domain
+out of protection exceptions. Vercel deployments outside Preview return 503,
+because Standard Protection does not protect production domains.
+
+The local journey verifies app behavior after Vercel authentication. Verify
+the hosted boundary with an anonymous request to the preview: report, JSON,
+and image routes must return Vercel's authentication response. An authenticated
+request (or `vercel curl` for verification) must reach the app with no Basic
+authorization header. See [Vercel Authentication](https://vercel.com/docs/deployment-protection/methods-to-protect-deployments/vercel-authentication).
 
 The app only rebuilds when it or its dependencies change. Report publication
 uploads data to the existing app; it never creates a deployment.

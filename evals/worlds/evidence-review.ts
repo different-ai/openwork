@@ -12,7 +12,9 @@ import type { TestRunRecord } from "@openwork/test-artifacts";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
 /** Synthetic report inputs exercise the real publisher and production HTTP app. */
-export async function reviewWorld() {
+export async function reviewWorld(
+  environment: "preview" | "production" = "preview",
+) {
   const directory = await mkdtemp(join(tmpdir(), "openwork-review-world-"));
   const storage = join(directory, "reports");
   await mkdir(storage);
@@ -182,7 +184,6 @@ export async function reviewWorld() {
     });
   });
   const baseUrl = `http://127.0.0.1:${port}`;
-  const password = "isolated-review-fixture";
   const child = spawn(
     process.execPath,
     [
@@ -198,7 +199,8 @@ export async function reviewWorld() {
       env: {
         ...process.env,
         OPENWORK_REVIEW_LOCAL_DIR: storage,
-        OPENWORK_REVIEW_PASSWORD: password,
+        VERCEL: "1",
+        VERCEL_ENV: environment,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -228,7 +230,7 @@ export async function reviewWorld() {
       const response = await fetch(baseUrl, {
         signal: AbortSignal.timeout(1000),
       }).catch(() => null);
-      if (response?.status === 401) break;
+      if (response?.status === (environment === "preview" ? 200 : 503)) break;
       if (Date.now() > deadline || child.exitCode !== null)
         throw new Error(
           `Review app did not start. Run its build first.\n${logs}`,
@@ -241,9 +243,6 @@ export async function reviewWorld() {
   }
   return {
     baseUrl,
-    headers: {
-      authorization: `Basic ${Buffer.from(`review:${password}`).toString("base64")}`,
-    },
     passed,
     incomplete,
     failed,

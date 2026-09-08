@@ -10,13 +10,14 @@ test("A reviewer can inspect two runs and a DocShot with honest results and priv
   console.log(
     "placement: local (isolated production review app; no external services)",
   );
-  const get = (path: string, authenticated = true) =>
+  const get = (path: string) =>
     fetch(`${world.baseUrl}${path}`, {
-      headers: authenticated ? world.headers : {},
       signal: AbortSignal.timeout(10_000),
     });
   const page = await get(`/r/${world.passed}`);
   expect(page.status).toBe(200);
+  expect(page.headers.get("www-authenticate")).toBeNull();
+  expect(page.headers.get("cache-control")).toContain("private");
   const html = await page.text();
   expect(html).toContain("Sharing a skill, from link to access");
   expect(html).toContain("A shared skill can be opened");
@@ -44,28 +45,13 @@ test("A reviewer can inspect two runs and a DocShot with honest results and priv
   expect((await media.arrayBuffer()).byteLength).toBeGreaterThan(1000);
   const original = await get(`/r/${world.passed}/assets/${source.asset}`);
   expect(await original.text()).toContain("internal diagnostics fixture");
-  expect((await get(`/r/${world.passed}`, false)).status).toBe(401);
-  for (const authorization of [
-    "Basic invalid",
-    `${world.headers.authorization.slice(0, -1)}!`,
-  ]) {
-    const unauthorized = await fetch(`${world.baseUrl}/r/${world.passed}`, {
-      headers: { authorization },
-      signal: AbortSignal.timeout(10_000),
-    });
-    expect(unauthorized.status).toBe(401);
-  }
-  expect((await get(mediaPath, false)).status).toBe(401);
-  expect(
-    (await get(`/r/${world.passed}/assets/${source.asset}`, false)).status,
-  ).toBe(401);
   expect(
     (await get(`/r/${world.passed}/assets/not-referenced.json`)).status,
   ).toBe(404);
   expect((await get(`/r/${"0".repeat(32)}`)).status).toBe(404);
   evidence.recordAssertionEvidence(
-    "The same access boundary protects pages, images, and source records",
-    "Authenticated requests return the image and original diagnostics. Anonymous requests return 401 for all three, as do incorrect credentials of equal or different length; missing reports and unreferenced assets return 404.",
+    "Preview pages, images, and source records need no second login",
+    "Requests reaching the preview app return the page, image, and original diagnostics without Basic authentication. Responses are private; missing reports and unreferenced assets return 404. Hosted Vercel authentication is verified separately.",
     true,
   );
 
@@ -88,6 +74,25 @@ test("A reviewer can inspect two runs and a DocShot with honest results and priv
   evidence.recordAssertionEvidence(
     "Incomplete, failed, and reference evidence cannot become a passing report",
     "A skipped run, declared gap, and pending visual check render Incomplete; a failed assertion overrides passed execution; a DocShot-only report renders Reference.",
+    true,
+  );
+
+  await using production = await reviewWorld("production");
+  for (const path of [
+    "/",
+    `/r/${production.passed}`,
+    `/r/${production.passed}/assets/report.json`,
+    `/r/${production.passed}/assets/${image.asset}`,
+  ]) {
+    const response = await fetch(`${production.baseUrl}${path}`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    expect(response.status).toBe(503);
+    expect(response.headers.get("cache-control")).toContain("private");
+  }
+  evidence.recordAssertionEvidence(
+    "Production deployments cannot serve review evidence",
+    "The home page, report, JSON, and image routes all return 503 when the app runs in Vercel's production environment, where Standard Protection can leave production domains public.",
     true,
   );
 });
