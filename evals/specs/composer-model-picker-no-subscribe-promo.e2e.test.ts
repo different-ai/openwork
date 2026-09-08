@@ -2,7 +2,7 @@ import { spec } from "@openwork/testkit";
 import { expect } from "vitest";
 import { modelPicker } from "../worlds/chat.ts";
 
-const test = spec.world(modelPicker, { scope: "file", timeout: 360_000 });
+const test = spec.world(modelPicker, { timeout: 360_000 });
 
 test("managed model discovery keeps the task unchanged until an explicit eligible selection", async ({ world, user, probe, step }) => {
   const draft = "Keep this model-picker draft. Do not send it.";
