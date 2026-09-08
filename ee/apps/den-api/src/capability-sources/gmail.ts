@@ -107,9 +107,13 @@ export function encodeMimeHeaderValue(value: string): string {
   return words.map((word) => `=?UTF-8?B?${Buffer.from(word, "utf8").toString("base64")}?=`).join(" ")
 }
 
+export function normalizeGmailHeaderValue(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim()
+}
+
 function mimeHeaderLine(name: string, value: string): string {
   if (!name || /[^\x21-\x39\x3b-\x7e]/.test(name)) throw new Error("Invalid MIME header name")
-  const sanitized = value.replace(/[\r\n]+/g, " ").trim()
+  const sanitized = normalizeGmailHeaderValue(value)
   const line = `${name}: ${name.toLowerCase() === "subject" ? encodeMimeHeaderValue(sanitized) : sanitized}`
   const lines: string[] = []
   let current = ""

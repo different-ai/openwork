@@ -9,7 +9,7 @@ import { env } from "../../env.js"
 import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { decodeFileContent } from "../../capability-sources/binary-content.js"
-import { buildGmailDraftRaw, gmailDraftUrl, gmailThreadUrl, readGmailDraftIds } from "../../capability-sources/gmail.js"
+import { buildGmailDraftRaw, gmailDraftUrl, gmailThreadUrl, normalizeGmailHeaderValue, readGmailDraftIds } from "../../capability-sources/gmail.js"
 import type { GmailDraftAttachment, GmailDraftQuote } from "../../capability-sources/gmail.js"
 import { gmailFileInputPreflight, gmailFileInputPreflightSchema } from "../../capability-sources/gmail-file-input.js"
 import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
@@ -55,7 +55,7 @@ const GMAIL_METADATA_CONCURRENCY = 4
 
 const CONNECT_GOOGLE_ACCOUNT_MESSAGE = "Connect your Google account first: open Settings > Library > Connections and connect the Google Workspace connection, or use OpenWork Cloud > Your Connections."
 
-const draftHeaderSchema = z.string().refine((value) => !/[\r\n]/.test(value), "Draft headers must not contain CR or LF.").trim()
+const draftHeaderSchema = z.string().overwrite(normalizeGmailHeaderValue)
 
 const draftMetadataSchema = z.object({
   to: draftHeaderSchema.min(3).max(320).describe("Recipient email address."),

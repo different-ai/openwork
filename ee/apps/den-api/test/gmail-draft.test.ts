@@ -266,9 +266,9 @@ describe("buildGmailDraftRaw", () => {
 
   test("renders escaped structured history without adding visible quote prefixes in HTML", () => {
     const quote = googleWorkspaceApi.buildGmailQuote({
-      from: '<img src=x onerror="unsafe()"> & Ada <ada@example.com>',
-      date: '<script>unsafe()</script>',
-      body: "Original <script>unsafe()</script> & text\r\n\r\n**Keep original markdown**",
+      from: '<IMG src=x onerror="unsafe()"> & Ada <ada@example.com>',
+      date: '<SCRIPT>unsafe()</SCRIPT>',
+      body: "Original <ScRiPt>unsafe()</ScRiPt> & text\r\n\r\n**Keep original markdown**",
     })
     for (const attachments of [[], [{ filename: "notes.txt", mimeType: "text/plain", content: Buffer.from("notes") }]]) {
       const raw = gmail.buildGmailDraftRaw({
@@ -276,7 +276,7 @@ describe("buildGmailDraftRaw", () => {
         cc: "ada@acme.test",
         bcc: "hidden@acme.test",
         subject: "Re: Follow up",
-        body: "Please **review** <img src=x onerror=unsafe()> & confirm.",
+        body: "Please **review** <ImG src=x onerror=unsafe()> & confirm.",
         quote,
         headers: [
           { name: "In-Reply-To", value: "<original@example.com>" },
@@ -285,9 +285,9 @@ describe("buildGmailDraftRaw", () => {
         attachments,
       })
       const { plain, html } = decodeAlternativeBodies(raw)
-      expect(plain).toBe(`Please review <img src=x onerror=unsafe()> & confirm.\n\n${quote.attribution}\n> Original <script>unsafe()</script> & text\n> \n> **Keep original markdown**`)
-      expect(html).toBe('<div>Please review &lt;img src=x onerror=unsafe()&gt; &amp; confirm.</div><div><br></div><div class="gmail_quote"><div dir="ltr" class="gmail_attr">On &lt;script&gt;unsafe()&lt;/script&gt;, &lt;img src=x onerror="unsafe()"&gt; &amp; Ada &lt;ada@example.com&gt; wrote:</div><blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex"><div>Original &lt;script&gt;unsafe()&lt;/script&gt; &amp; text</div><div><br></div><div>**Keep original markdown**</div></blockquote></div>')
-      expect(html).not.toMatch(/<script|<img|<div>&gt;/)
+      expect(plain).toBe(`Please review <ImG src=x onerror=unsafe()> & confirm.\n\n${quote.attribution}\n> Original <ScRiPt>unsafe()</ScRiPt> & text\n> \n> **Keep original markdown**`)
+      expect(html).toBe('<div>Please review &lt;ImG src=x onerror=unsafe()&gt; &amp; confirm.</div><div><br></div><div class="gmail_quote"><div dir="ltr" class="gmail_attr">On &lt;SCRIPT&gt;unsafe()&lt;/SCRIPT&gt;, &lt;IMG src=x onerror="unsafe()"&gt; &amp; Ada &lt;ada@example.com&gt; wrote:</div><blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex"><div>Original &lt;ScRiPt&gt;unsafe()&lt;/ScRiPt&gt; &amp; text</div><div><br></div><div>**Keep original markdown**</div></blockquote></div>')
+      expect(html).not.toMatch(/<script|<img|<div>&gt;/i)
       const decoded = decodeRaw(raw)
       expect(decoded).toContain("Cc: ada@acme.test\r\nBcc: hidden@acme.test\r\n")
       expect(decoded).toContain("In-Reply-To: <original@example.com>\r\nReferences: <earlier@example.com> <original@example.com>\r\n")
