@@ -13,7 +13,8 @@ export function describeGroupPresentation({ events, executions, interactions, ac
   unavailable?: boolean;
 }): { line: string; activeSlugs: string[] } {
   if (interactions.length) return { activeSlugs: [], line: `${listNames([...new Set(interactions.map((entry) => entry.slug))].map(nameFor))} waiting for you` };
-  if (unavailable) return { activeSlugs: [], line: "Activity unavailable" };
+  if (unavailable) return { activeSlugs: [], line: "Reconnecting to activity" };
+  if (executions.some((execution) => execution.state === "waiting-person")) return { activeSlugs: [], line: "Waiting for you" };
   const activeSlugs = [...new Set(executions
     .filter((execution) => execution.state === "running" && execution.available && execution.nativeStatus === "busy")
     .map((execution) => execution.slug))];
@@ -23,6 +24,7 @@ export function describeGroupPresentation({ events, executions, interactions, ac
   if (running.some((execution) => execution.nativeStatus === "retry")) return { activeSlugs, line: "Waiting for the AI model" };
   if (running.some((execution) => execution.nativeStatus === "idle")) return { activeSlugs, line: running.some((execution) => execution.pendingCoworkers > 0 || execution.pendingWorkers > 0) ? "Waiting for requested work" : "Waiting for a reply" };
   if (executions.some((execution) => execution.state === "queued")) return { activeSlugs, line: "Waiting to start" };
+  if (executions.some((execution) => execution.state === "succeeded")) return { activeSlugs, line: "Replies ready" };
   if (active) return { activeSlugs, line: turn?.status === "running" ? "Waiting for a reply" : "Choosing who should respond\u2026" };
 
   const latest = events.findLast((event) => event.kind === "user" || event.kind === "coworker");

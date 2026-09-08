@@ -7,10 +7,11 @@
  * written through a temp file and rename; timeline appends are serialized per
  * group so two turns never interleave a line. Groups are archived, not deleted.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isDocumentId } from "./documents.mjs";
+import { isNothingToAdd } from "../src/lib/groups.ts";
 
 export const GROUPS_DIR = ".groups";
 export const GROUP_SCHEMA_VERSION = 1;
@@ -347,13 +348,16 @@ export async function updateGroupTurn(coworkersDir, id, turnId, patch = {}, { no
  * Continue, and one quiet line says so in the timeline. Finished replies are
  * never touched, so nothing that was said is lost or repeated.
  */
-export async function reconcileInterruptedGroupTurns(coworkersDir, { activeTurnIds = new Set(), nameFor = (slug) => slug, now = Date.now() } = {}) {
+export async function reconcileInterruptedGroupTurns(coworkersDir, { activeTurnIds = new Set(), isActive = (turn) => activeTurnIds.has(turn.id), nameFor = (slug) => slug, now = Date.now() } = {}) {
   const groups = await listGroups(coworkersDir);
   const recovered = [];
   for (const group of groups) {
-    const interrupted = group.turns.filter((turn) => (turn.status === "routing" || turn.status === "running") && !activeTurnIds.has(turn.id));
-    if (interrupted.length === 0) continue;
-    await mutateGroup(coworkersDir, group.id, (current) => {
+    const interrupted = await mutateGroup(coworkersDir, group.id, async (current) => {
+      const interrupted = [];
+      for (const turn of current.turns) {
+        if ((turn.status === "routing" || turn.status === "running") && !await isActive(turn, current)) interrupted.push(turn);
+      }
+      if (!interrupted.length) return { next: current, result: interrupted };
       const turns = current.turns.map((turn) => {
         if (!interrupted.some((candidate) => candidate.id === turn.id)) return turn;
         const speakers = turn.speakers.map((speaker) =>
@@ -363,7 +367,7 @@ export async function reconcileInterruptedGroupTurns(coworkersDir, { activeTurnI
         );
         return { ...turn, speakers, status: "partial", updatedAt: now };
       });
-      return { next: { ...current, turns, updatedAt: now }, result: current };
+      return { next: { ...current, turns, updatedAt: now }, result: interrupted };
     });
     for (const turn of interrupted) {
       const unfinished = turn.speakers.filter((speaker) => speaker.status === "queued" || speaker.status === "running").map((speaker) => nameFor(speaker.slug));
@@ -398,6 +402,7 @@ export function normalizeEvent(input, { now = Date.now() } = {}) {
   if (typeof input.clientMessageId === "string" && input.clientMessageId) event.clientMessageId = input.clientMessageId;
   if (typeof input.status === "string" && input.status) event.status = input.status;
   if (typeof input.threadId === "string" && input.threadId) event.threadId = input.threadId;
+  if (typeof input.executionId === "string" && input.executionId) event.executionId = input.executionId;
   // An action line links what the group did (an assignment, say) to where it lives.
   if (typeof input.action === "string" && input.action) event.action = input.action;
   if (typeof input.title === "string" && input.title) event.title = input.title;
@@ -410,7 +415,7 @@ export function normalizeEvent(input, { now = Date.now() } = {}) {
   return event;
 }
 
-export function parseTimeline(content) {
+export function parseTimeline(content, onTruncated = () => {}) {
   const lines = content.split("\n");
   const events = [];
   for (let index = 0; index < lines.length; index += 1) {
@@ -421,11 +426,26 @@ export function parseTimeline(content) {
       if (parsed && typeof parsed === "object" && EVENT_KINDS.has(parsed.kind) && typeof parsed.id === "string") events.push(parsed);
     } catch (error) {
       // Only a truncated final line (an interrupted append) is tolerated.
-      if (index === lines.length - 1 || (index === lines.length - 2 && lines[lines.length - 1] === "")) break;
+      if (index === lines.length - 1 || (index === lines.length - 2 && lines[lines.length - 1] === "")) {
+        onTruncated(lines.slice(0, index).join("\n") + (index ? "\n" : ""));
+        break;
+      }
       throw error;
     }
   }
   return events;
+}
+
+export function groupEventId(event) {
+  // Keep the shipped IDs so delivery recovery also deduplicates pre-receipt timeline events.
+  return `evt_${createHash("sha256").update(JSON.stringify([event.turnId, event.slug, event.part, event.kind, event.status, event.text])).digest("hex").slice(0, 24)}`;
+}
+
+export function groupReplyEvent(entry) {
+  if (!entry.groupReply || entry.state !== "succeeded" || !entry.result) return null;
+  const passed = isNothingToAdd(entry.result);
+  const event = { kind: passed ? "status" : "coworker", slug: entry.owner.slug, part: entry.owner.part ?? "reply", turnId: entry.owner.turnId, text: passed ? `${entry.groupReply.name} had nothing to add.` : entry.result, ...(passed ? { status: "passed" } : {}), threadId: entry.owner.threadId, executionId: entry.id };
+  return { ...event, id: groupEventId(event) };
 }
 
 export async function readGroupTimeline(coworkersDir, id, { limit = MAX_TIMELINE_READ } = {}) {
@@ -447,8 +467,17 @@ export async function appendGroupEvent(coworkersDir, id, input, { now = Date.now
     .catch(() => undefined)
     .then(async () => {
       await mkdir(path.dirname(target), { recursive: true });
+      let content = "";
+      try { content = await readFile(target, "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
+      let repaired;
+      const events = parseTimeline(content, (prefix) => { repaired = prefix; });
+      if (repaired !== undefined) {
+        const temporary = `${target}.${process.pid}.tmp`;
+        await writeFile(temporary, repaired, "utf8");
+        await rename(temporary, target);
+      } else if (content && !content.endsWith("\n")) await appendFile(target, "\n", "utf8");
       if (input.id) {
-        const existing = (await readGroupTimeline(coworkersDir, id, { limit: Number.MAX_SAFE_INTEGER })).find((entry) => entry.id === input.id || (input.kind === "user" && input.turnId && entry.kind === "user" && entry.turnId === input.turnId));
+        const existing = events.find((entry) => entry.id === input.id || (input.kind === "user" && input.turnId && entry.kind === "user" && entry.turnId === input.turnId));
         if (existing) return existing;
       }
       await appendFile(target, `${JSON.stringify(event)}\n`, "utf8");

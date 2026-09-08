@@ -108,6 +108,7 @@ export type GroupTimelineEvent = {
   slug?: string;
   turnId?: string;
   clientMessageId?: string;
+  executionId?: string;
   status?: string;
   threadId?: string;
   /** What an action line links to, e.g. `assignment`. */

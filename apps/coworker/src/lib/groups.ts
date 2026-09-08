@@ -261,8 +261,8 @@ export function planSpeakers(plan: RoutingPlan): NonNullable<GroupTurnPatch["spe
 
 export type GroupTurnDeps = {
   /** Sends the prompt to the coworker's group thread and resolves with its visible reply and the thread it ran on. */
-  ask: (slug: string, prompt: string, signal: AbortSignal, step: { turnId: string; part: GroupSpeakerPart }) => Promise<{ text: string; threadId: string }>;
-  append: (event: Omit<GroupTimelineEvent, "id" | "at">) => Promise<GroupTimelineEvent>;
+  ask: (slug: string, prompt: string, signal: AbortSignal, step: { turnId: string; part: GroupSpeakerPart }) => Promise<{ text: string; threadId: string; executionId?: string }>;
+  append: (event: Omit<GroupTimelineEvent, "id" | "at"> & { executionId?: string }) => Promise<GroupTimelineEvent>;
   /** Opens the turn record and the person's line; `created` is false when this message already has a turn. */
   begin: (input: { clientMessageId: string; prompt: string }) => Promise<{ turn: CoworkerGroupTurn; created: boolean; userEvent: GroupTimelineEvent | null }>;
   /** Writes one change to the turn record and returns the record as stored. */
@@ -306,7 +306,7 @@ async function runSpeakers(context: RunContext, turn: CoworkerGroupTurn, earlier
   };
   const pending = current.speakers.filter((speaker) => speaker.status !== "succeeded" && speaker.status !== "passed" && (!only || speaker.slug === only));
   const parallel = current.mode === "parallel" && pending.every((speaker) => speaker.part === "reply");
-  const asks = new Map<string, Promise<{ text: string; threadId: string }>>();
+  const asks = new Map<string, ReturnType<GroupTurnDeps["ask"]>>();
   const promptFor = (speaker: GroupParticipant, part: GroupSpeakerPart, brief: string, replies: readonly { name: string; text: string }[]) =>
     groupSpeakerPrompt({ group: context.group, speaker, participants: context.participants, message: context.message, recent: context.recent, earlierReplies: replies, nameFor, brief, part });
   if (parallel) {
@@ -322,7 +322,8 @@ async function runSpeakers(context: RunContext, turn: CoworkerGroupTurn, earlier
   }
   const stoppedNames: string[] = [];
   for (const entry of pending) {
-    if (signal.aborted) {
+    const key = `${entry.slug}:${entry.part}`;
+    if (signal.aborted && !asks.has(key)) {
       publish(await deps.record(current.id, { speaker: { slug: entry.slug, part: entry.part, status: "stopped", error: "Stopped.", endedAt: now() } }));
       stoppedNames.push(nameFor(entry.slug));
       continue;
@@ -332,7 +333,6 @@ async function runSpeakers(context: RunContext, turn: CoworkerGroupTurn, earlier
       publish(await deps.record(current.id, { speaker: { slug: entry.slug, part: entry.part, status: "failed", error: "That coworker is no longer in the group.", endedAt: now() } }));
       continue;
     }
-    const key = `${entry.slug}:${entry.part}`;
     const required = (current.dependsOn ?? []).filter(([later]) => later === entry.slug).map(([, earlier]) => earlier);
     if (required.some((slug) => !current.speakers.some((speaker) => speaker.slug === slug && speaker.part === "reply" && ["succeeded", "passed"].includes(speaker.status)))) {
       const error = "A required earlier reply did not finish. Retry that reply before continuing this step.";
@@ -346,10 +346,10 @@ async function runSpeakers(context: RunContext, turn: CoworkerGroupTurn, earlier
       const reply = await (started ?? deps.ask(speaker.slug, promptFor(speaker, entry.part, entry.brief, earlier), signal, { turnId: current.id, part: entry.part }));
       if (!reply.text) throw new Error(`${speaker.name} did not reply.`);
       if (isNothingToAdd(reply.text)) {
-        await deps.append({ kind: "status", slug: speaker.slug, part: entry.part, turnId: current.id, status: "passed", text: `${speaker.name} had nothing to add.` });
+        await deps.append({ kind: "status", slug: speaker.slug, part: entry.part, turnId: current.id, status: "passed", text: `${speaker.name} had nothing to add.`, executionId: reply.executionId });
         publish(await deps.record(current.id, { speaker: { slug: entry.slug, part: entry.part, status: "passed", threadId: reply.threadId, endedAt: now() } }));
       } else {
-        await deps.append({ kind: "coworker", slug: speaker.slug, part: entry.part, text: reply.text, turnId: current.id, threadId: reply.threadId });
+        await deps.append({ kind: "coworker", slug: speaker.slug, part: entry.part, text: reply.text, turnId: current.id, threadId: reply.threadId, executionId: reply.executionId });
         earlier.push({ name: speaker.name, text: reply.text });
         publish(await deps.record(current.id, { speaker: { slug: entry.slug, part: entry.part, status: "succeeded", threadId: reply.threadId, endedAt: now() } }));
       }
