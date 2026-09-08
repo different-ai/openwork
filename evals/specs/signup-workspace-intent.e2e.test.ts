@@ -386,7 +386,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await mobileUser.notSee({ role: "button", label: "Open menu" });
     await mobileUser.notSee({ testId: "den-org-sidebar" });
     await expectNoHorizontalOverflow(probe.on(mobile));
-    await mobileUser.press("Control+Home");
+    await mobileUser.hover({ text: "Give your team a head start." });
     await mobileUser.looks(["The top of the narrow Tools screen shows legible setup progress and the Give your team a head start heading without horizontal clipping"]);
     await mobileUser.hover({ role: "button", label: "Continue" });
     await mobileUser.looks(["The lower part of the narrow Tools screen shows readable tool cards and a clear Continue button without horizontal clipping"]);
