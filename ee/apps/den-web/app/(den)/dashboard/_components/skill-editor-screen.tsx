@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ArrowLeft, FileText } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
@@ -15,6 +15,7 @@ const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export function SkillEditorScreen({ pluginId, skillId }: { pluginId: string; skillId?: string }) {
   const router = useRouter();
+  const submittingRef = useRef(false);
   const { orgSlug } = useOrgDashboard();
   const skillQuery = useSkill(pluginId, skillId ?? "");
   const createSkill = useCreateSkill(pluginId);
@@ -38,6 +39,7 @@ export function SkillEditorScreen({ pluginId, skillId }: { pluginId: string; ski
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submittingRef.current) return;
     const draft = { name: name.trim(), description: description.trim(), body: body.trim() };
     if (!SKILL_NAME_PATTERN.test(draft.name) || draft.name.length > 64) {
       setValidationError("Name must use lowercase letters, numbers, and single hyphens only.");
@@ -53,6 +55,7 @@ export function SkillEditorScreen({ pluginId, skillId }: { pluginId: string; ski
     }
 
     setValidationError(null);
+    submittingRef.current = true;
     try {
       const saved = skillId
         ? await updateSkill.mutateAsync({ skillId, draft })
@@ -60,6 +63,8 @@ export function SkillEditorScreen({ pluginId, skillId }: { pluginId: string; ski
       router.push(getPluginSkillRoute(orgSlug, pluginId, saved.id));
     } catch {
       // React Query exposes the request error in the form below.
+    } finally {
+      submittingRef.current = false;
     }
   }
 
