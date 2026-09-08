@@ -1,7 +1,6 @@
 import "./globals.css";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import Script from "next/script";
-import type { ReactNode } from "react";
 import { BotIdClient } from "botid/client";
 import { WebMcpProvider } from "../components/webmcp-provider";
 import { StructuredData } from "../components/structured-data";
@@ -68,7 +67,7 @@ const protectedRoutes = [
 export default async function RootLayout({
   children
 }: {
-  children: ReactNode;
+  children: React.ReactNode;
 }) {
   const github = await getGithubData();
   return (
@@ -93,7 +92,7 @@ export default async function RootLayout({
       </head>
       <body className="overflow-x-hidden antialiased">
         <WebMcpProvider />
-        <DownloadProvider installers={github.installers}>{children}</DownloadProvider>
+        <DownloadProvider installers={github.installers}><>{children}</></DownloadProvider>
       </body>
     </html>
   );
