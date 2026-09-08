@@ -17,7 +17,11 @@ candidate, not a release claim.
 
 1. Open **Computer** in a saved discussion's header. New discussions start off.
 2. Review the selected computer and **This computer** / **Remote** placement in
-   the details popover. Resolve native setup if needed; granting macOS permissions
+   the details popover. **Set up permissions** opens an in-app Coworker guide,
+   not the generic OpenWork setup window. Accessibility and Screen Recording
+   show separate results from the bundled helper's fresh `--check` probe. Failed
+   checks are unverified, not granted. The guide rechecks while open, on return
+   to the app, and through **Check permissions**. Granting macOS permissions
    does not enable the discussion.
 3. Choose **Allow for this discussion**, then ask for the task normally.
 4. The coworker discovers available app identities and asks for a scoped session.
@@ -43,6 +47,21 @@ within a bounded execution; the model cannot resume them or repeat an interrupte
 action automatically. The popover remains the setup and review surface. Neither
 surface displays a computer screenshot or live computer video; window observations
 belong to the native tool flow, not a simulated preview.
+
+The guide's settings buttons run `ComputerUse permissions accessibility` or
+`ComputerUse permissions screenRecording` as a direct child, keeping the same
+responsible-app context as the probe and MCP session. Only this explicit action
+requests the corresponding macOS permission and opens its System Settings pane.
+It starts no control session. System Settings opening is not proof of permission;
+Coworker waits for a new probe. The native generic `setup` command remains for
+other clients. Native window approval and the task panel are unchanged.
+
+The guide names the shared **OpenWork Computer Use** helper, the possible
+responsible **Open Coworker** entry, version-dependent macOS pane naming and
+quit/reopen expectations. It distinguishes system-wide OS permissions from
+discussion opt-in and window-scoped consent, discloses model-bound observations,
+and explains that closing the guide is not Stop and revocation does not remove
+macOS permissions.
 
 Leaving the discussion stops its UI observer, not its work. A completed turn
 closes its native session; discussion opt-in can remain until revoked or the app
@@ -95,8 +114,9 @@ type ComputerAdapter = {
   readiness(): Promise<{
     readiness: "ready" | "setup-required" | "unsupported" | "unavailable";
     detail: string;
+    permissions?: { accessibility: boolean; screenRecording: boolean };
   }>;
-  setup(): Promise<void>;
+  setup(permission: "accessibility" | "screenRecording"): Promise<void>;
   connect(): Promise<{
     callTool(name: string, args: Record<string, unknown>, options?: {
       signal?: AbortSignal;

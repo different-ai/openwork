@@ -42,9 +42,9 @@ function fixture(options = {}) {
           return;
         }
         child.emit("spawn");
-        if (args[0] === "--check" && !options.checkHang) {
-          child.stdout.write(options.output ?? JSON.stringify({ ...permissions, ...options.permissions }));
-          child.exitCode = options.checkCode ?? 0;
+        if ((args[0] === "--check" && !options.checkHang) || (args[0] === "permissions" && !options.setupHang)) {
+          if (args[0] === "--check") child.stdout.write(options.output ?? JSON.stringify({ ...permissions, ...options.permissions }));
+          child.exitCode = args[0] === "--check" ? options.checkCode ?? 0 : options.setupCode ?? 0;
           child.emit("exit", child.exitCode);
           child.emit("close", child.exitCode);
         }
@@ -96,7 +96,8 @@ test("readiness is a fresh read-only protocol/permission probe with no private m
   assert.equal(f.adapter.protocol, "openwork.computer-use/1");
   const state = await f.adapter.readiness();
   assert.equal(state.readiness, "ready");
-  assert.deepEqual(Object.keys(state).sort(), ["detail", "readiness"]);
+  assert.deepEqual(Object.keys(state).sort(), ["detail", "permissions", "readiness"]);
+  assert.deepEqual(state.permissions, { accessibility: true, screenRecording: true });
   await f.adapter.readiness();
   assert.equal(f.spawned.length, 2);
   assert.equal(f.connections.length, 0);
@@ -112,7 +113,7 @@ test("unsupported OS and missing helper do not spawn, build, or request permissi
   for (const dependencies of [{ platform: "linux" }, { platform: "win32" }, { osRelease: "22.6.0" }, { osRelease: "unknown" }]) {
     const f = fixture({ dependencies });
     assert.equal((await f.adapter.readiness()).readiness, "unsupported");
-    await assert.rejects(f.adapter.setup(), /macOS 14/);
+    await assert.rejects(f.adapter.setup("accessibility"), /macOS 14/);
     await assert.rejects(f.adapter.connect(), /macOS 14/);
     assert.equal(f.spawned.length, 0);
   }
@@ -127,6 +128,7 @@ test("permission denial is setup-required, not missing or unsupported", async ()
     const f = fixture({ permissions: { ...denied, ok: false } });
     const state = await f.adapter.readiness();
     assert.equal(state.readiness, "setup-required");
+    assert.deepEqual(state.permissions, { accessibility: true, screenRecording: true, ...denied });
     if (denied.accessibility === false) assert.match(state.detail, /Accessibility/);
     if (denied.screenRecording === false) assert.match(state.detail, /Screen Recording/);
     await assert.rejects(f.adapter.connect(), /permission/);
@@ -141,7 +143,9 @@ test("invalid protocol, malformed output, spawn errors and failed checks are una
     { checkCode: 1 }, { spawnError: true }, { output: "x".repeat(16_385) }, { permissions: { ok: false } },
   ]) {
     const f = fixture(options);
-    assert.equal((await f.adapter.readiness()).readiness, "unavailable");
+    const state = await f.adapter.readiness();
+    assert.equal(state.readiness, "unavailable");
+    assert.equal(state.permissions, undefined);
     await assert.rejects(f.adapter.connect());
     assert.equal(f.connections.length, 0);
   }
@@ -158,17 +162,23 @@ test("stalled probes kill only their own child and report unconfirmed terminatio
   }
 });
 
-test("explicit setup launches the same native child context and reuses its GUI", async () => {
+test("explicit setup requests only the chosen permission in the same helper context, without a GUI or control session", async () => {
   const f = fixture({ permissions: { ok: false, accessibility: false } });
-  await Promise.all([f.adapter.setup(), f.adapter.setup()]);
-  assert.deepEqual(f.spawned.map(({ args }) => args), [["--check"], ["setup"]]);
+  for (const invalid of [undefined, "setup", "mcp", "Privacy_AllFiles"]) await assert.rejects(f.adapter.setup(invalid), /Choose Accessibility/);
+  assert.equal(f.spawned.length, 0);
+  await Promise.all([f.adapter.setup("accessibility"), f.adapter.setup("accessibility")]);
+  assert.deepEqual(f.spawned.map(({ args }) => args), [["--check"], ["permissions", "accessibility"]]);
   assert.equal(f.spawned[0].command, f.spawned[1].command);
   assert.equal(f.spawned[1].options.stdio, "ignore");
-  assert.equal(f.children[1].unreferenced, true);
-  await f.adapter.setup();
-  await f.adapter.setup();
-  assert.deepEqual(f.children[1].signals, ["SIGUSR1", "SIGUSR1"]);
-  assert.equal(f.spawned.filter(({ args }) => args[0] === "setup").length, 1);
+  await f.adapter.setup("screenRecording");
+  assert.deepEqual(f.spawned.at(-1).args, ["permissions", "screenRecording"]);
+  assert.equal((await f.adapter.readiness()).permissions.accessibility, false, "opening settings does not grant permission");
+  assert.equal(f.connections.length, 0);
+  const failed = fixture({ setupCode: 1 });
+  await assert.rejects(failed.adapter.setup("accessibility"), /Could not open macOS/);
+  const hung = fixture({ setupHang: true });
+  await assert.rejects(hung.adapter.setup("screenRecording"), /timed out/);
+  assert.deepEqual(hung.children[1].signals, ["SIGKILL"]);
 });
 
 test("connections are dedicated, allowlist-bound and return raw MCP results only to their caller", async () => {

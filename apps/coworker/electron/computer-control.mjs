@@ -138,7 +138,10 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
     try {
       const status = await bounded(target.readiness(), cleanupMs);
       if (!["ready", "setup-required", "unsupported", "unavailable"].includes(status?.readiness) || typeof status.detail !== "string") throw new Error("Invalid readiness.");
-      return { readiness: status.readiness, detail: status.detail };
+      const permissions = status.permissions;
+      if (permissions !== undefined && (typeof permissions?.accessibility !== "boolean" || typeof permissions?.screenRecording !== "boolean")) throw new Error("Invalid permissions.");
+      return { readiness: status.readiness, detail: status.detail,
+        ...(permissions ? { permissions: { accessibility: permissions.accessibility, screenRecording: permissions.screenRecording } } : {}) };
     } catch { return { readiness: "unavailable", detail: "The selected computer's service is unavailable." }; }
   }
   function revise(grant, expectedRevision) {
@@ -232,6 +235,7 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
       targets: statuses.map(({ target, readiness, detail }) => ({ id: target.id, label: target.label, placement: target.placement, available: readiness === "ready" && !busyReason,
         ...(readiness !== "ready" ? { reason: detail } : busyReason ? { reason: busyReason } : {}) })),
       enabled: grant.enabled, readiness: selected.readiness,
+      ...(selected.permissions ? { permissions: selected.permissions } : {}),
       detail: current?.cleanupPending ? "Stopping computer control. Native release has not yet been confirmed." : selected.detail,
       session: current?.session ? { ...current.session, ...(current.closing ? { state: "stopping" } : {}) } : null,
       ...(current?.cleanupPending ? { cleanupPending: true } : {}),
@@ -266,11 +270,12 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
       if (lease?.grant === grant) await cleanup(lease);
       return view(grant);
     },
-    async setup({ targetId = defaultTarget.id } = {}) {
+    async setup({ targetId = defaultTarget.id, permission } = {}) {
       if (closed || resetting || lease) throw new Error("Stop computer control before opening native permission setup.");
+      if (!["accessibility", "screenRecording"].includes(permission)) throw new Error("Choose Accessibility or Screen Recording settings.");
       const target = targets.get(targetId);
       if (!target) throw new Error("Choose a known computer.");
-      await target.setup();
+      await target.setup(permission);
     },
     async execute(slug, { name, args, context, cancel = false }) {
       if (!Object.hasOwn(COMPUTER_TOOLS, name) || !context?.sessionID || !context.messageID || !context.callID || !context.directory) throw new Error("A trusted native computer tool context is required.");

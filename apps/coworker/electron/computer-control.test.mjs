@@ -36,7 +36,7 @@ function fixture(overrides = {}) {
     async close() { closes++; await overrides.close?.(); },
   };
   const adapter = { id: "this-mac", label: "This Mac", placement: "desktop", protocol: COMPUTER_PROTOCOL,
-    readiness: async () => ({ readiness: "ready", detail: "Native service ready." }), setup: async () => { setups++; },
+    readiness: async () => ({ readiness: "ready", detail: "Native service ready.", permissions: { accessibility: true, screenRecording: true } }), setup: async () => { setups++; },
     connect: async () => { connects++; if (overrides.connect) await overrides.connect(); return transport; } };
   const broker = createComputerControl({ adapters: [adapter, ...(overrides.adapters ?? [])], cleanupMs: 20, operationMs: overrides.operationMs ?? 1000, pollMs: 2,
     discussionFor: async (slug, threadId) => {
@@ -124,16 +124,25 @@ test("computer IPC accepts only the actual main window at the expected renderer 
 
 test("opt-in and revisions isolate conversations and coworkers; remote never falls back to local", async () => {
   const f = fixture();
+  await assert.rejects(f.broker.setup({ permission: "mcp" }), /Choose Accessibility/);
+  await f.broker.setup({ permission: "accessibility" });
+  const setup = await f.snapshot();
+  assert.deepEqual(setup.permissions, { accessibility: true, screenRecording: true });
+  assert.equal(setup.enabled, false);
+  assert.equal(setup.session, null);
+  assert.deepEqual(f.counts(), { connects: 0, closes: 0, setups: 1 });
   await assert.rejects(f.execute("discover"), /disabled/);
   assert.equal((await f.enable("remote")).enabled, false);
   const remote = await f.snapshot();
   assert.equal(remote.targetId, "remote"); assert.equal(remote.readiness, "unavailable");
+  assert.equal(remote.permissions, undefined, "another target cannot borrow this Mac's verified permissions");
   assert.match(remote.detail, /compatible remote service/);
   await assert.rejects(f.execute("discover"), /disabled/);
   assert.equal(f.counts().connects, 0);
   const enabled = await f.enable();
   await assert.rejects(f.broker.stop({ ...f.scope, expectedRevision: enabled.revision - 1 }), /settings changed/);
   await f.execute("open", openArgs);
+  await assert.rejects(f.broker.setup({ permission: "screenRecording" }), /Stop computer control/);
   for (const other of [{ slug: "scout", threadId: "two" }, { slug: "editor", threadId: "one" }]) {
     assert.equal((await f.broker.snapshot(other)).session, null);
     await assert.rejects(f.enable("this-mac", other), /Another discussion/);
@@ -158,7 +167,7 @@ test("an injected remote target pins all calls and setup to that adapter without
   assert.equal(snapshot.targetId, cloud.adapter.id);
   assert.equal(snapshot.detail, "The remote computer is ready.");
   assert.deepEqual(snapshot.targets.map((item) => item.id), ["this-mac", cloud.adapter.id]);
-  await f.broker.setup({ targetId: cloud.adapter.id });
+  await f.broker.setup({ targetId: cloud.adapter.id, permission: "accessibility" });
   assert.equal(cloud.counts().setups, 1); assert.equal(f.counts().setups, 0);
   await f.execute("open", openArgs);
   await f.execute("observe", { include_image: false });

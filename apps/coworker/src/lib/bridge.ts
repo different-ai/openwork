@@ -403,12 +403,15 @@ export type BrowserCommand =
   | { action: "select" | "close" | "takeover"; tabId: string }
   | { action: "resume"; handoffId: string };
 
+export type ComputerPermission = "accessibility" | "screenRecording";
+
 export type ComputerSnapshot = {
   revision: number;
   targetId: string;
   targets: Array<{ id: string; label: string; placement: "desktop" | "cloud"; available: boolean; reason?: string }>;
   enabled: boolean;
   readiness: "ready" | "setup-required" | "unsupported" | "unavailable";
+  permissions?: Record<ComputerPermission, boolean>;
   detail: string;
   session: null | {
     state: string;
@@ -451,7 +454,7 @@ export const coworkerBridge = {
     snapshot: (slug: string, threadId: string) => invoke<ComputerSnapshot>("computer.snapshot", { slug, threadId }),
     configure: (input: { slug: string; threadId: string; expectedRevision: number; enabled: boolean; targetId: string }) => invoke<ComputerSnapshot>("computer.configure", input),
     stop: (input: { slug: string; threadId: string; expectedRevision: number }) => invoke<ComputerSnapshot>("computer.stop", input),
-    setup: (targetId?: string) => invoke<void>("computer.setup", targetId === undefined ? {} : { targetId }),
+    setup: (targetId: string, permission: ComputerPermission) => invoke<void>("computer.setup", { targetId, permission }),
   },
   collaboration: {
     receipts: (scope: { slug?: string; threadId?: string; groupId?: string }) => invoke<CollaborationReceipt[]>("collaboration.receipts", scope),

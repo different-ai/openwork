@@ -62,8 +62,8 @@ export function createLocalComputerAdapter({
   const env = Object.fromEntries(["HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER", "TMPDIR"]
     .filter((key) => typeof process.env[key] === "string" && !process.env[key].startsWith("()"))
     .map((key) => [key, process.env[key]]));
-  let setupProcess = null;
   let setupPending = null;
+  let setupPermission = null;
 
   async function inspect() {
     // Darwin 23 is macOS 14. Never start a newer native binary on an older OS.
@@ -113,12 +113,13 @@ export function createLocalComputerAdapter({
         throw new Error("Invalid permission status.");
       }
       if (!state.supported) return { readiness: "unsupported", detail: "Computer Use is not supported on this Mac." };
+      const permissions = { accessibility: state.accessibility, screenRecording: state.screenRecording };
       if (!state.accessibility || !state.screenRecording) {
         const missing = [!state.accessibility && "Accessibility", !state.screenRecording && "Screen Recording"].filter(Boolean);
-        return { binary, readiness: "setup-required", detail: `Computer Use needs ${missing.join(" and ")} permission. Open setup to review access.` };
+        return { binary, permissions, readiness: "setup-required", detail: `Computer Use needs ${missing.join(" and ")} permission. Open setup to review access.` };
       }
       if (!state.ok) throw new Error("Helper is not ready.");
-      return { binary, readiness: "ready", detail: "Computer Use is ready. Each app session still requires your approval." };
+      return { binary, permissions, readiness: "ready", detail: "Computer Use is ready. Each app session still requires your approval." };
     } catch {
       return { readiness: "unavailable", detail: "The Computer Use helper could not report a valid permission status. Rebuild or reinstall Coworker." };
     }
@@ -130,39 +131,37 @@ export function createLocalComputerAdapter({
     placement: "desktop",
     protocol: protocolVersion,
     async readiness() {
-      const { readiness, detail } = await inspect();
-      return { readiness, detail };
+      const { readiness, detail, permissions } = await inspect();
+      return { readiness, detail, ...(permissions ? { permissions } : {}) };
     },
-    setup() {
-      if (setupPending) return setupPending;
+    async setup(permission) {
+      if (!["accessibility", "screenRecording"].includes(permission)) throw new Error("Choose Accessibility or Screen Recording settings.");
+      if (setupPending) {
+        if (setupPermission !== permission) throw new Error("Finish the current macOS permission request first.");
+        return setupPending;
+      }
+      setupPermission = permission;
       setupPending = (async () => {
         const state = await inspect();
         if (!state.binary) throw new Error(state.detail);
-        if (setupProcess && setupProcess.exitCode === null && setupProcess.signalCode === null) {
-          if (!setupProcess.kill("SIGUSR1")) throw new Error("Could not reopen Computer Use setup.");
-          return;
-        }
         // Match --check and MCP's responsible application. Do not use LaunchServices.
-        const child = spawnChild(state.binary, ["setup"], { env, stdio: "ignore" });
-        setupProcess = child;
-        const exited = new Promise((resolve) => child.once("close", resolve));
-        child.once("exit", () => { if (setupProcess === child) setupProcess = null; });
-        const started = new Promise((resolve, reject) => {
-          child.once("spawn", resolve);
-          child.on("error", () => {
-            if (setupProcess === child) setupProcess = null;
-            reject(new Error("Could not start Computer Use setup."));
-          });
+        const child = spawnChild(state.binary, ["permissions", permission], { env, stdio: "ignore" });
+        let failed = false;
+        child.on("error", () => { failed = true; });
+        const exited = new Promise((resolve) => {
+          child.once("close", resolve);
         });
         try {
-          await bounded(() => started, limits.probe);
-          child.unref();
+          const code = await bounded(() => exited, limits.call);
+          if (failed || code !== 0) throw new Error("Could not open macOS permission settings. Open System Settings > Privacy & Security manually.");
         } catch (error) {
-          child.kill("SIGKILL");
-          await bounded(() => exited, limits.close);
+          if (child.exitCode === null && child.signalCode === null) {
+            child.kill("SIGKILL");
+            await bounded(() => exited, limits.close);
+          }
           throw error;
         }
-      })().finally(() => { setupPending = null; });
+      })().finally(() => { setupPending = null; setupPermission = null; });
       return setupPending;
     },
     async connect() {

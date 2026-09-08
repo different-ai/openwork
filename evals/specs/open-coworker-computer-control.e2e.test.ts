@@ -42,6 +42,11 @@ test("A saved Coworker discussion controls only an approved disposable window an
     await user.click({ testId: "coworker-computer-control" });
     await user.see({ testId: "coworker-computer-popover" });
     await user.see({ testId: "coworker-computer-status" }, { text: "Off for this discussion", timeoutMs: 20_000 });
+    await user.click({ testId: "coworker-computer-setup" });
+    await user.see({ testId: "coworker-computer-setup-dialog" });
+    await user.click({ role: "button", label: "Close computer setup" });
+    await user.click({ testId: "coworker-computer-control" });
+    await user.see({ testId: "coworker-computer-status" }, { text: "Off for this discussion" });
     if ((await world.ui()).setupRequired) throw new SkipError("Accessibility and Screen Recording granted by a person to Coworker's actual bundled helper; no fixture input was attempted");
     expect(await world.ui()).toMatchObject({ target: "this-mac", placement: "This computer", canAllow: true, canStop: false,
       targets: [{ id: "this-mac", disabled: false }, { id: "remote", disabled: true }] });
