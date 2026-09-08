@@ -687,17 +687,17 @@ test("reclamation selects only eligible inactive LRU views and the budget is nat
 
 test("input, loading, media, capture, downloads, POST and unknown documents refuse manual suspension", async () => {
   const cases = [
-    ["interaction", (contents) => contents.emit("before-input-event")],
-    ["loading", (contents) => contents.emit("did-start-loading")],
-    ["media-or-capture", (contents) => contents.emit("media-started-playing")],
-    ["media-or-capture", (contents) => browserSession.permissionCheck(contents)],
-    ["download", (contents) => browserSession["will-download"](null, new EventEmitter(), contents)],
-    ["unsafe-navigation", (contents) => contents.emit("did-navigate-in-page", contents.url, true)],
-    ["unknown-document", (contents) => { contents.emit("did-navigate", contents.url, 200); }],
-    ["unsafe-navigation", (contents) => contents.emit("preload-error")],
-    ["document-history", (contents) => { contents.canGoBack = () => true; }],
+    { reason: "interaction", change: (contents) => contents.emit("before-input-event") },
+    { reason: "loading", change: (contents) => contents.emit("did-start-loading") },
+    { reason: "media-or-capture", change: (contents) => contents.emit("media-started-playing") },
+    { reason: "media-or-capture", change: (contents) => browserSession.permissionCheck(contents) },
+    { reason: "download", change: (contents) => browserSession["will-download"](null, new EventEmitter(), contents) },
+    { reason: "unsafe-navigation", change: (contents) => contents.emit("did-navigate-in-page", contents.url, true) },
+    { reason: "unknown-document", change: (contents) => { contents.emit("did-navigate", contents.url, 200); } },
+    { reason: "unsafe-navigation", change: (contents) => contents.emit("preload-error") },
+    { reason: "document-history", change: (contents) => { contents.canGoBack = () => true; } },
   ];
-  for (const [reason, change] of cases) {
+  for (const { reason, change } of cases) {
     const panel = createPanel();
     const { tabId } = await panel.invoke("openwork:browser:createTab", "https://static.example", "A");
     const contents = panel.views()[0].webContents;
@@ -1096,6 +1096,7 @@ test("UI restore failures retain the logical URL and retry an existing view once
     assert.equal(views().length, 2, "a failed native page stays allocated for retry");
   }
   const contents = views()[1].webContents;
+  /** @type {() => void} */
   let complete;
   contents.loadURL = (url) => {
     attempts += 1;
@@ -1158,8 +1159,9 @@ test("background UI restore failure publishes an error without a refresh retry l
 });
 
 test("completed automation leases allow user viewport resets but never allow reclamation", async (t) => {
+  /** @type {() => void} */
   let finishDiscovery;
-  mockTargets(t, () => new Promise((resolve) => { finishDiscovery = resolve; }));
+  mockTargets(t, () => new Promise((resolve) => { finishDiscovery = () => resolve(); }));
   const panel = createPanel(undefined, 9222);
   const { invoke, views, commands } = panel;
   await invoke("openwork:browser:show", PANEL_BOUNDS, "A");
@@ -1226,6 +1228,7 @@ test("concurrent restores reserve live slots and pin both identities before asyn
     saved.push(tabId);
   }
   for (let i = 0; i < 10; i++) await invoke("openwork:browser:createTab", "about:blank", "B");
+  /** @type {() => void} */
   let finishLoad;
   t.after(() => { delete controls.onCreate; });
   controls.onCreate = (view) => {
@@ -1254,6 +1257,7 @@ test("isolated preload keeps ordinary navigation free of sync IPC and bounds arm
     const ipc = new Map();
     const reports = [];
     const syncCalls = [];
+    /** @type {unknown} */
     let syncResult = false;
     let observe;
     let queued = [];
@@ -1398,7 +1402,7 @@ test("isolated preload keeps ordinary navigation free of sync IPC and bounds arm
     assert.equal(page.scans.disconnected, true);
     assert.deepEqual(page.scans, stopped, "interaction permanently stops DOM scan work");
   }
-  for (const [name, attributes] of [["script", []], ["input", []], ["img", ["onerror"]]]) {
+  for (const { name, attributes } of [{ name: "script", attributes: [] }, { name: "input", attributes: [] }, { name: "img", attributes: ["onerror"] }]) {
     const page = preload();
     const removed = page.element("div", [page.element(name, [], attributes)]);
     page.observe([{ target: page.body, addedNodes: [], removedNodes: [removed] }]);

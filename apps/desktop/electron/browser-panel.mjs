@@ -33,6 +33,9 @@ const MENU_OVERLAY_HEIGHT = 176;
 const MENU_OVERLAY_READY_TIMEOUT_MS = 2000;
 
 export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy }) {
+  function traceLifecycle(stage) {
+    if (process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC === "1") console.info("[browser-lifecycle]", stage);
+  }
   let policyRequestHookInstalled = false;
   function installPolicyRequestHook() {
     if (policyRequestHookInstalled) return;
@@ -454,9 +457,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       // ERR_ABORTED and fail the agent's request before the page ever opens.
       const tab = await createBrowserTabUnlocked("about:blank", { select: true, initializeBlank: false, ownerSessionId, automationProtected: true }, request);
       try {
+        traceLifecycle("open: load marker");
         await tab.view.webContents.loadURL(browserTargetMarkerUrl(tab.tabId));
+        traceLifecycle("open: resolve marker target");
         const targetId = await resolveBrowserCdpTargetId(tab.tabId);
+        traceLifecycle("open: load destination");
         await tab.view.webContents.loadURL(url);
+        traceLifecycle("open: destination loaded");
         if (browserTabs.get(tab.tabId) !== tab || tab.view.webContents.isDestroyed()) throw new Error("Browser tab was closed.");
         tab.targetId = targetId;
         return browserHandle(tab, targetId);
@@ -912,6 +919,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   function allocateBrowserView(tab, { select = true, initializeBlank = false } = {}) {
+    traceLifecycle("allocate: begin");
     installPolicyRequestHook();
     const { tabId } = tab;
     const ownerSessionId = registry.ownerOf(tabId);
@@ -925,6 +933,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         partition: BROWSER_SESSION_PARTITION,
       },
     });
+    traceLifecycle("allocate: view created");
     Object.assign(tab, { view, background: false, backgroundDebuggerOwned: false, safety: null,
       reloadSafe: false, unsafeNavigation: false, requestIsGet: false, requestUrl: null,
       interacted: false, mediaUsed: false, loading: false });
@@ -1091,6 +1100,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   function backgroundBrowserWindow() {
     if (!backgroundWindow || backgroundWindow.isDestroyed()) {
+      traceLifecycle("background: create host");
       backgroundWindow = new BrowserWindow({
         ...BACKGROUND_TAB_VIEWPORT,
         show: false,
@@ -1099,6 +1109,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         skipTaskbar: true,
         webPreferences: { backgroundThrottling: false, sandbox: true },
       });
+      traceLifecycle("background: host created");
     }
     return backgroundWindow;
   }
@@ -1121,17 +1132,21 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const webContents = tab.view.webContents;
     if (webContents.isDestroyed()) return;
     tab.background = true;
+    traceLifecycle("background: detach view");
     detachBrowserView(tab.view);
     tab.view.setBounds({ x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT });
     backgroundBrowserWindow().contentView.addChildView(tab.view);
+    traceLifecycle("background: view attached");
     const cdp = webContents.debugger;
     runDetachedTask("emulate background browser tab", async () => {
       if (webContents.isDestroyed() || tab.view?.webContents !== webContents || !tab.background) return;
       if (!cdp.isAttached()) { cdp.attach("1.3"); tab.backgroundDebuggerOwned = true; }
+      traceLifecycle("background: debugger attached");
       if (!tab.backgroundDebuggerOwned) return;
       for (const { method, params } of backgroundTabEmulationCommands()) {
         if (webContents.isDestroyed() || tab.view?.webContents !== webContents || !tab.background) return;
         await cdp.sendCommand(method, params);
+        traceLifecycle(`background: ${method}`);
       }
     });
   }

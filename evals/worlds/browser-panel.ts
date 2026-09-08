@@ -234,7 +234,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
           const { sandboxId, meta } = app.handle;
           if (!sandboxId || !meta?.log || !/^\/tmp\/[\w.-]+$/.test(meta.log)) return "No remote Electron log handle";
           const { stdout } = await promisify(execFile)("daytona", ["exec", sandboxId, "--", `tail -c 24000 ${meta.log}`], { timeout: 10_000, maxBuffer: 64 * 1024 });
-          return stdout.split(/\r?\n/).filter(line => /browser-panel\.mjs|Object has been destroyed|uncaught|unhandled|FATAL|SIGSEGV|SIGABRT|render-process-gone/i.test(line)).map(safeText);
+          return stdout.split(/\r?\n/).filter(line => /browser-lifecycle|browser-panel\.mjs|Object has been destroyed|uncaught|unhandled|FATAL|SIGSEGV|SIGABRT|render-process-gone/i.test(line)).map(safeText);
         }),
       ]);
       return { initialAppTargetId, currentAppTargetId: app.client.targetId, existingAppSocket, targets, nativeLog };
