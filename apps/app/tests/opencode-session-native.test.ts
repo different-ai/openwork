@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Message, Part, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
-import type { FieldsResult } from "../src/app/lib/opencode";
+import { createClient, createPromptMessageID, hasAcceptedPromptMessage, type FieldsResult } from "../src/app/lib/opencode";
 import {
   composeNativeSessionSnapshot,
   deleteNativeSession,
@@ -57,6 +57,42 @@ function operations(overrides: Partial<NativeSessionOperations> = {}): NativeSes
 }
 
 describe("native OpenCode session operations", () => {
+  test("acceptance requires an exact native user-message GET, never absence or another message", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    let response = new Response(null, { status: 404 });
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: async (input: RequestInfo | URL, init?: RequestInit) => {
+        requests.push(new Request(input, init));
+        return response;
+      },
+    });
+    try {
+      const client = createClient(endpoint.opencodeBaseUrl, session.directory, { token: endpoint.token, mode: "openwork" });
+      const messageID = createPromptMessageID();
+      expect(await hasAcceptedPromptMessage(client, session.id, messageID)).toBe(false);
+      for (const info of [
+        { id: "msg_other", sessionID: session.id, role: "user" },
+        { id: messageID, sessionID: "ses_other", role: "user" },
+        { id: messageID, sessionID: session.id, role: "assistant" },
+      ]) {
+        response = Response.json({ info, parts: [] });
+        expect(await hasAcceptedPromptMessage(client, session.id, messageID)).toBe(false);
+      }
+      response = Response.json({ info: { id: messageID, sessionID: session.id, role: "user" }, parts: [] });
+      expect(await hasAcceptedPromptMessage(client, session.id, messageID)).toBe(true);
+      expect(requests).toHaveLength(5);
+      for (const request of requests) {
+        expect(request.method).toBe("GET");
+        const url = new URL(request.url);
+        expect(`${url.origin}${url.pathname}`).toBe(`${endpoint.opencodeBaseUrl}/session/${session.id}/message/${messageID}`);
+        expect(url.searchParams.get("directory")).toBe(session.directory);
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
   test("uses the resolved mounted endpoint and its workspace token", async () => {
     let receivedEndpoint: typeof endpoint | null = null;
     await getNativeSession(endpoint, session.id, undefined, {

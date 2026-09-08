@@ -1,5 +1,7 @@
 /** @jsxImportSource react */
 import { create } from "zustand";
+import type { UIMessage } from "ai";
+import { transcriptProgress } from "./session-progress";
 
 import { t } from "../../../../i18n";
 
@@ -10,7 +12,13 @@ type SessionMessageRole = "assistant" | "system" | "user";
 type SessionActivityRecord = {
   status: SessionActivityStatus;
   runActive: boolean;
+  retrying: boolean;
   runStatusAt: number;
+  runStartedAt: number;
+  lastProgressAt: number;
+  progressRevision: string | null;
+  progressParts: Record<string, string>;
+  latestActivity: string | null;
   assistantOutput: boolean;
   errorActive: boolean;
   errorMessage: string | null;
@@ -42,6 +50,7 @@ type SessionActivityStore = {
     options?: { snapshotStartedAt?: number },
   ) => void;
   setRunStatus: (workspaceId: string, sessionId: string, status: unknown) => void;
+  observeTranscript: (workspaceId: string, sessionId: string, messages: UIMessage[], snapshot?: boolean) => void;
   markMessageRole: (workspaceId: string, sessionId: string, messageId: string, role: SessionMessageRole) => void;
   markAssistantOutput: (workspaceId: string, sessionId: string, messageId?: string, options?: { allowUnknownMessageRole?: boolean }) => void;
   setWaitingRequest: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestId: string, waiting: boolean) => void;
@@ -55,7 +64,13 @@ type SessionActivityStore = {
 const createRecord = (): SessionActivityRecord => ({
   status: "idle",
   runActive: false,
+  retrying: false,
   runStatusAt: 0,
+  runStartedAt: 0,
+  lastProgressAt: 0,
+  progressRevision: null,
+  progressParts: {},
+  latestActivity: null,
   assistantOutput: false,
   errorActive: false,
   errorMessage: null,
@@ -129,7 +144,12 @@ function sameActivityRecord(
 ): boolean {
   return current.status === status
     && current.runActive === next.runActive
+    && current.retrying === next.retrying
     && current.runStatusAt === next.runStatusAt
+    && current.runStartedAt === next.runStartedAt
+    && current.lastProgressAt === next.lastProgressAt
+    && current.progressRevision === next.progressRevision
+    && current.latestActivity === next.latestActivity
     && current.assistantOutput === next.assistantOutput
     && current.errorActive === next.errorActive
     && current.errorMessage === next.errorMessage
@@ -232,6 +252,8 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
           return {
             ...record,
             runActive,
+            retrying: normalized === "retry",
+            runStartedAt: runActive && !record.runActive ? Date.now() : record.runStartedAt,
             assistantOutput: runActive && record.runActive ? record.assistantOutput : false,
             errorActive: runActive ? false : record.errorActive,
             errorMessage: runActive ? null : record.errorMessage,
@@ -261,6 +283,8 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
         ...record,
         runActive,
         runStatusAt: snapshotStartedAt ?? record.runStatusAt,
+        retrying: normalized === "retry",
+        runStartedAt: runActive && !record.runActive ? Date.now() : record.runStartedAt,
         assistantOutput: runActive && (assistantOutput ?? record.assistantOutput),
         errorActive: runActive ? false : record.errorActive,
         errorMessage: runActive ? null : record.errorMessage,
@@ -281,12 +305,29 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
         ...record,
         runActive,
         runStatusAt: Date.now(),
+        retrying: normalized === "retry",
+        runStartedAt: runActive && !record.runActive ? Date.now() : record.runStartedAt,
         assistantOutput: runActive && record.runActive ? record.assistantOutput : false,
         errorActive: runActive ? false : record.errorActive,
         errorMessage: runActive ? null : record.errorMessage,
         compacting: runActive ? record.compacting : false,
         waitingPermissionIds: runActive ? record.waitingPermissionIds : [],
         waitingQuestionIds: runActive ? record.waitingQuestionIds : [],
+      };
+    }));
+  },
+  observeTranscript: (workspaceId, sessionId, messages, snapshot = false) => {
+    set((state) => updateRecord(state, workspaceId, sessionId, (record) => {
+      const progress = transcriptProgress(messages, record.progressParts);
+      if (record.progressRevision === progress.revision) return record;
+      return {
+        ...record,
+        progressRevision: progress.revision,
+        progressParts: progress.parts,
+        latestActivity: progress.label ?? record.latestActivity,
+        lastProgressAt: progress.label
+          ? Math.max(record.lastProgressAt, snapshot && record.progressRevision === null ? progress.timestamp : Date.now())
+          : record.lastProgressAt,
       };
     }));
   },
@@ -344,6 +385,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       errorActive: true,
       errorMessage: message ? message : "Session failed",
       runActive: false,
+      retrying: false,
       runStatusAt: Date.now(),
       assistantOutput: false,
       compacting: false,

@@ -244,6 +244,29 @@ describe("session error resilience", () => {
     )
   }
 
+  test.each(["upstream_incomplete", "upstream_interrupted", "upstream_malformed_stream", "upstream_malformed_response", "upstream_timeout"])("renders the %s safety warning with Resume without exposing diagnostics", (code) => {
+    const error = {
+      name: "APIError",
+      data: {
+        message: `${code}: Connection closed before completion`,
+        statusCode: 200,
+        isRetryable: false,
+        responseBody: '{"request_id":"managed-interruption-diagnostic"}',
+      },
+    }
+    const presentation = presentOpencodeSessionError(error)
+    expect(presentation).toMatchObject({ kind: "provider-incomplete", title: "The model response was interrupted" })
+    expect(presentation.recoveryPrompt).toContain("do not repeat side effects")
+    const html = renderErrorTranscriptWithResume(error)
+    expect(html).toContain('data-testid="session-error-interruption-warning"')
+    expect(html).toContain("The response may contain partial text or incomplete tool calls. Review them before continuing.")
+    expect(html).toContain('data-testid="session-error-resume"')
+    expect(html).not.toContain('data-testid="session-error-details-toggle"')
+    expect(html).not.toContain(code)
+    expect(html).not.toContain("Status: 200")
+    expect(html).not.toContain("managed-interruption-diagnostic")
+  })
+
   test("offers Resume on the error card for an engine abort", () => {
     const html = renderErrorTranscriptWithResume({
       name: "MessageAbortedError",
@@ -262,6 +285,8 @@ describe("session error resilience", () => {
 
     expect(html).toContain("Task interrupted")
     expect(html).toContain('data-testid="session-error-interrupted"')
+    expect(html).not.toContain('data-testid="session-error-interruption-warning"')
+    expect(html).not.toContain("Output and files already produced are kept")
     expect(html).not.toContain("border-destructive/30")
     expect(html).not.toContain("bg-destructive/5")
   })
@@ -460,6 +485,17 @@ describe("session error technical details", () => {
     // Collapsed by default: the payload is not in the DOM until opened.
     expect(html).not.toContain('data-testid="session-error-details"')
     expect(html).not.toContain("Status: 429")
+  })
+
+  test("keeps managed interruption guidance visible when Resume is unavailable", () => {
+    const html = renderErrorTranscript({
+      name: "APIError",
+      data: { message: "upstream_incomplete: Connection closed before completion" },
+    }, false)
+    expect(html).toContain("The response may contain partial text or incomplete tool calls. Review them before continuing.")
+    expect(html).not.toContain('data-testid="session-error-resume"')
+    expect(html).not.toContain('data-testid="session-error-details-toggle"')
+    expect(html).not.toContain("upstream_incomplete")
   })
 
   test("storage errors show guidance without technical codes outside developer mode", () => {

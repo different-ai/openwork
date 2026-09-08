@@ -2,14 +2,15 @@ import { expect, test } from "bun:test";
 
 import {
   canAdmitNextQueuedItem,
+  assertQueuedSendCurrent,
   claimQueuedSend,
   dispatchQueuedDrain,
   getQueuedDrainState,
+  getQueuedSendGeneration,
   INITIAL_QUEUED_DRAIN_STATE,
   nextObservationProbeAt,
   QUEUE_ADMISSION_OBSERVATION_TIMEOUT_MS,
   QUEUE_ADMISSION_PROBE_RETRY_MS,
-  QUEUE_SEND_ATTEMPT_LIMIT,
   reduceQueuedDrain,
   resetQueuedDrainForTests,
   subscribeQueuedDrain,
@@ -77,18 +78,10 @@ test("a message accepted by admission whose upstream dispatch fails still releas
   expect(state.lastResolution).toEqual({ itemId: "item-1", resolution: "completed" });
   expect(canAdmitNextQueuedItem(state)).toBe(true);
 
-  // Contrast: a send whose transport THREW was never admitted — it stays
-  // retryable and halts as a terminal failure once attempts are exhausted,
-  // instead of retrying forever or silently dropping the item.
-  let failing = INITIAL_QUEUED_DRAIN_STATE;
-  for (let attempt = 1; attempt <= QUEUE_SEND_ATTEMPT_LIMIT; attempt += 1) {
-    failing = reduceQueuedDrain(failing, { type: "send_started", itemId: "item-2" });
-    failing = reduceQueuedDrain(failing, { type: "send_error", itemId: "item-2" });
-    if (attempt < QUEUE_SEND_ATTEMPT_LIMIT) {
-      expect(failing.lastResolution).toEqual({ itemId: "item-2", resolution: "retryable_unknown" });
-      expect(canAdmitNextQueuedItem(failing)).toBe(true);
-    }
-  }
+  // Only a definite rejection/preflight failure is retryable, and even that
+  // requires explicit user action. An uncertain POST uses send_unknown.
+  let failing = reduceQueuedDrain(INITIAL_QUEUED_DRAIN_STATE, { type: "send_started", itemId: "item-2" });
+  failing = reduceQueuedDrain(failing, { type: "send_error", itemId: "item-2" });
   expect(failing.phase).toEqual({ kind: "halted", itemId: "item-2", reason: "terminal_failure" });
   expect(failing.lastResolution).toEqual({ itemId: "item-2", resolution: "terminal_failure" });
   // Negative half: a terminal failure never self-heals into a send.
@@ -96,6 +89,72 @@ test("a message accepted by admission whose upstream dispatch fails still releas
   // An explicit user retry — and only that — releases it.
   failing = reduceQueuedDrain(failing, { type: "user_retry" });
   expect(canAdmitNextQueuedItem(failing)).toBe(true);
+});
+
+test("unknown admission survives idle, busy, retry, Stop, and remount until the exact message is observed", () => {
+  resetQueuedDrainForTests();
+  const sessionId = "ses_unknown";
+  expect(claimQueuedSend(sessionId, "item-1")).toBe(true);
+  dispatchQueuedDrain(sessionId, { type: "send_unknown", itemId: "item-1", messageID: "msg_exact", at: t0 });
+  const held = getQueuedDrainState(sessionId);
+  const unsubscribe = subscribeQueuedDrain(sessionId, () => {});
+  unsubscribe();
+  for (const event of [
+    { type: "idle_reconciled", observedAt: t0 + 60_000 },
+    { type: "busy_observed" },
+    { type: "user_retry" },
+    { type: "queue_cleared" },
+    { type: "admission_observed", itemId: "item-1", messageID: "msg_other", at: t0 + 1 },
+    { type: "admission_observed", itemId: "item-other", messageID: "msg_exact", at: t0 + 1 },
+  ] satisfies Parameters<typeof dispatchQueuedDrain>[1][]) {
+    dispatchQueuedDrain(sessionId, event);
+    expect(getQueuedDrainState(sessionId)).toBe(held);
+    expect(claimQueuedSend(sessionId, "item-1", true)).toBe(false);
+    expect(claimQueuedSend(sessionId, "item-2", true)).toBe(false);
+  }
+  expect(nextObservationProbeAt(held, null)).toBe(t0 + QUEUE_ADMISSION_OBSERVATION_TIMEOUT_MS);
+  dispatchQueuedDrain(sessionId, { type: "admission_observed", itemId: "item-1", messageID: "msg_exact", at: t0 + 100_000 });
+  expect(canAdmitNextQueuedItem(getQueuedDrainState(sessionId))).toBe(false);
+  dispatchQueuedDrain(sessionId, { type: "idle_reconciled", observedAt: t0 + 60_000 });
+  expect(canAdmitNextQueuedItem(getQueuedDrainState(sessionId))).toBe(false);
+  dispatchQueuedDrain(sessionId, { type: "idle_reconciled", observedAt: t0 + 110_000 });
+  expect(claimQueuedSend(sessionId, "item-2")).toBe(true);
+  resetQueuedDrainForTests();
+});
+
+test("send now shares the current claim with the idle drain and every split pane", () => {
+  resetQueuedDrainForTests();
+  const sessionId = "ses_steer";
+  expect(claimQueuedSend(sessionId, "item-1")).toBe(true);
+  expect(claimQueuedSend(sessionId, "item-1", true)).toBe(false);
+  expect(claimQueuedSend(sessionId, "item-2", true)).toBe(false);
+  dispatchQueuedDrain(sessionId, { type: "send_result", itemId: "item-1", outcome: "sent", at: t0 });
+  expect(claimQueuedSend(sessionId, "item-1", true)).toBe(false);
+  dispatchQueuedDrain(sessionId, { type: "busy_observed" });
+  expect(claimQueuedSend(sessionId, "item-2", true)).toBe(true);
+  expect(claimQueuedSend(sessionId, "item-2")).toBe(false);
+  expect(claimQueuedSend(sessionId, "item-3", true)).toBe(false);
+  dispatchQueuedDrain(sessionId, { type: "send_error", itemId: "item-2" });
+  expect(claimQueuedSend(sessionId, "item-2")).toBe(false);
+  expect(claimQueuedSend(sessionId, "item-3", true)).toBe(false);
+  // Explicit Send now can retry a definite rejection, never an unknown POST.
+  expect(claimQueuedSend(sessionId, "item-2", true)).toBe(true);
+  resetQueuedDrainForTests();
+});
+
+test("Stop invalidates preflight and late requeue without erasing a possibly admitted POST", () => {
+  resetQueuedDrainForTests();
+  const sessionId = "ses_stop";
+  expect(claimQueuedSend(sessionId, "item-1")).toBe(true);
+  const generation = getQueuedSendGeneration(sessionId);
+  assertQueuedSendCurrent(sessionId, generation);
+  dispatchQueuedDrain(sessionId, { type: "queue_cleared" });
+  expect(() => assertQueuedSendCurrent(sessionId, generation)).toThrow("Send cancelled by Stop.");
+  expect(getQueuedSendGeneration(sessionId)).not.toBe(generation);
+  expect(claimQueuedSend(sessionId, "item-2", true)).toBe(false);
+  dispatchQueuedDrain(sessionId, { type: "send_unknown", itemId: "item-1", messageID: "msg_exact", at: t0 });
+  expect(getQueuedDrainState(sessionId).phase.kind).toBe("admission_unknown");
+  resetQueuedDrainForTests();
 });
 
 test("an event-stream disconnect and reconnect during admission is healed by level reconciliation", () => {

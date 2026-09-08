@@ -91,7 +91,7 @@ import { CodeModeTool } from "@/components/chat/code-mode-tool"
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
 import { hasPreservedMcpAppResult, McpAppFrame } from "@/components/chat/mcp-app-frame"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
-import { SubagentRunLine } from "@/components/chat/subagent-run-line"
+import { ActiveSubagentTasksContext, SubagentRunLine } from "@/components/chat/subagent-run-line"
 import { ToolAggregateGroup } from "@/components/chat/tool-aggregate-group"
 import {
   CurrentToolLifecycleProvider,
@@ -109,13 +109,17 @@ import {
   isReadToolPart,
   isSkillToolPart,
   isTaskToolPart,
+  taskChildSessionId,
   isTodoWriteToolPart,
   isWebFetchToolPart,
   isWebSearchToolPart,
   isWriteToolPart,
 } from "@/lib/build-in-tools"
 import type { ThreadStatus } from "@/lib/messages"
-import type { SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store"
+import { useSessionActivityStore, type SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store"
+import { activeDelegatedTasks, delegatedActivityTitle, hasNoNewActivity, lastTaskProgressAt } from "@/react-app/domains/session/status/session-progress"
+import { revalidateWorkspaceSessionSync } from "@/react-app/domains/session/sync/session-sync"
+import { useWorkspaceMaybe } from "@/react-app/shell/workspace-provider"
 import { formatElapsedSeconds, formatToolCallDuration } from "@/lib/tool-call-duration"
 import { collectLatestAssistantToolParts } from "@/lib/latest-assistant-tool-parts"
 import { isToolPartInFlight } from "@/lib/tool-activity"
@@ -185,6 +189,9 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   const { connectorIdentities, onMcpReconnect, onMcpReopenAuthorization, onMcpRetry } = useMessageList()
   const resolveLifecycle = useCurrentToolLifecycleResolver()
   const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
+
+  // Delegated work has its own lifecycle, even after a parent follow-up/error.
+  if (isTaskToolPart(part)) return <SubagentRunLine part={part} />
 
   if (part.type === "dynamic-tool") {
     const calls = codeModeToolCalls(part)
@@ -289,10 +296,6 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
 
   if (part.type === "dynamic-tool" && isAutomationProposalToolPart(part)) {
     return <OpenWorkAutomationProposalTool part={part} />
-  }
-
-  if (isTaskToolPart(part)) {
-    return <SubagentRunLine part={part} />
   }
 
   // Failed calls use the same sentence line with the "failures are
@@ -832,6 +835,7 @@ const MessageComponent = React.memo(
         <ErrorMessage
           error={getMessagesText([message]) || "Session failed"}
           description={presentation?.description}
+          showDescriptionOnResume={presentation?.kind === "provider-incomplete"}
           resumePrompt={presentation?.recoveryPrompt}
           technicalDetails={presentation?.technicalDetails}
         />
@@ -925,7 +929,9 @@ ReconnectingMessage.displayName = "ReconnectingMessage"
 interface ErrorMessageProps {
   error: string | null
   description?: string | null
-  /** Set only for interrupted runs (aborted / provider timeout) that can resume. */
+  /** Keep safety guidance visible without expanding ordinary interruption rows. */
+  showDescriptionOnResume?: boolean
+  /** Set only for interrupted runs that can resume. */
   resumePrompt?: string | null
   /** Error type, status, provider, code, response body — for bug reports and support. */
   technicalDetails?: string | null
@@ -993,7 +999,7 @@ function SessionErrorTechnicalDetails({ details, tone }: { details: string; tone
   )
 }
 
-function ErrorMessage({ error, description, resumePrompt, technicalDetails }: ErrorMessageProps) {
+function ErrorMessage({ error, description, showDescriptionOnResume, resumePrompt, technicalDetails }: ErrorMessageProps) {
   const { onResumeInterrupted, developerMode } = useMessageList()
   // Status codes, provider names, and response bodies are for developers,
   // admins, and support — not the plain-language card end users see. They
@@ -1022,6 +1028,11 @@ function ErrorMessage({ error, description, resumePrompt, technicalDetails }: Er
             {t("session.resume_interrupted")}
           </button>
         </div>
+        {showDescriptionOnResume && description ? (
+          <p data-testid="session-error-interruption-warning" className="text-sm text-muted-foreground whitespace-pre-wrap">
+            {description}
+          </p>
+        ) : null}
         {details ? <SessionErrorTechnicalDetails details={details} tone="line" /> : null}
       </Message>
     )
@@ -1035,7 +1046,7 @@ function ErrorMessage({ error, description, resumePrompt, technicalDetails }: Er
             <AlertTriangle aria-hidden="true" size={16} className="mt-0.5 shrink-0 text-destructive" />
             <div className="flex flex-col gap-1">
               <p className="whitespace-pre-wrap text-destructive">{error}</p>
-              {description && !resumePrompt ? (
+              {description && (!resumePrompt || showDescriptionOnResume) ? (
                 <p className="text-sm text-destructive/80 whitespace-pre-wrap">{description}</p>
               ) : null}
             </div>
@@ -1465,9 +1476,27 @@ export function shouldShowRunReconnecting(status: ThreadStatus, syncDegraded: bo
 }
 
 export function MessageList({ messages, status, activityStatus, retryStatus, syncHealth }: MessageListProps) {
+  const { workspaceId, sessionId } = useMessageList()
+  const workspace = useWorkspaceMaybe()
+  const tasks = React.useMemo(() => activeDelegatedTasks(messages), [messages])
+  const carriedTaskIds = React.useMemo(() => new Set(tasks.map((part) => part.toolCallId)), [tasks])
+  const [observedAt] = React.useState(() => Date.now())
+  const lastProgressAt = useSessionActivityStore((state) => {
+    const records = state.recordsByWorkspaceId[workspaceId]
+    const own = records?.[sessionId]
+    return lastTaskProgressAt(Math.max(own?.runStartedAt || observedAt, own?.lastProgressAt ?? 0), tasks, records)
+  })
+  const childBlocked = useSessionActivityStore((state) => tasks.some((part) => {
+    const id = taskChildSessionId(part)
+    const child = id ? state.recordsByWorkspaceId[workspaceId]?.[id] : undefined
+    return (child?.waitingPermissionIds.length ?? 0) > 0 || (child?.waitingQuestionIds.length ?? 0) > 0
+      || child?.compacting || child?.retrying
+  }))
   const isStreaming = status === "streaming" || status === "retrying"
   const runActive = status === "submitted" || status === "streaming" || status === "retrying"
   const syncDegraded = syncHealth?.degraded === true
+  const activityActive = runActive || tasks.length > 0
+  const delegationTitle = useSessionActivityStore((state) => delegatedActivityTitle(tasks, state.recordsByWorkspaceId[workspaceId], syncDegraded, runActive))
   const runStartedAtRef = React.useRef<number | null>(null)
   const [runElapsedSeconds, setRunElapsedSeconds] = React.useState(0)
   // Anchor the counter to the user message that started the run (server
@@ -1483,7 +1512,7 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
     return null
   }, [messages, runActive])
   React.useEffect(() => {
-    if (!runActive) {
+    if (!activityActive) {
       runStartedAtRef.current = null
       setRunElapsedSeconds(0)
       return
@@ -1502,7 +1531,7 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
     updateElapsed()
     const interval = window.setInterval(updateElapsed, 1000)
     return () => window.clearInterval(interval)
-  }, [runActive, runStartedAt, syncDegraded])
+  }, [activityActive, runStartedAt, syncDegraded])
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
@@ -1511,14 +1540,27 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
     [messages],
   )
   const hasVisibleToolActivity = latestAssistantToolParts.some(isToolPartInFlight)
-  const showReconnecting = shouldShowRunReconnecting(status, syncDegraded)
-  const showLoading = !showReconnecting && shouldShowMessageListLoading(status, messages.length, hasVisibleToolActivity)
+  const waiting = activityStatus === "waiting" || activityStatus === "compacting" || childBlocked
+  const showReconnecting = !waiting && !retryStatus && shouldShowRunReconnecting(status, syncDegraded)
+  const noNewActivity = hasNoNewActivity({
+    active: activityActive && activityStatus !== "error", waiting, retrying: status === "retrying" || Boolean(retryStatus),
+    disconnected: syncDegraded, lastProgressAt, now: Date.now(),
+  })
+  const showLoading = !waiting && !noNewActivity && !showReconnecting && tasks.length === 0
+    && shouldShowMessageListLoading(status, messages.length, hasVisibleToolActivity)
+  const baseUrl = workspace?.opencodeBaseUrl
+  React.useEffect(() => {
+    if (!noNewActivity || !baseUrl) return
+    // Revalidate existing state only. Silence never aborts or resubmits work.
+    void revalidateWorkspaceSessionSync({ workspaceId, baseUrl })
+  }, [noNewActivity, workspaceId, sessionId, baseUrl])
   const currentToolCallIds = React.useMemo(
     () => new Set(latestAssistantToolParts.map((part) => part.toolCallId)),
     [latestAssistantToolParts],
   )
 
   return (
+    <ActiveSubagentTasksContext.Provider value={carriedTaskIds}>
     <CurrentToolLifecycleProvider
       activityStatus={activityStatus}
       currentToolCallIds={currentToolCallIds}
@@ -1553,11 +1595,25 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
         )
         })}
 
+        {tasks.length > 0 ? (
+          <Message data-testid="active-subagents" className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
+            <div className="text-sm font-medium">{delegationTitle}</div>
+            {tasks.map((part) => <SubagentRunLine key={part.toolCallId} part={part} liveSummary parentActive={runActive} />)}
+          </Message>
+        ) : null}
+        {noNewActivity ? (
+          <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-1 px-2 md:px-10">
+            <div data-loading-message="no-new-activity" role="status" className="text-sm text-amber-11">No new activity</div>
+            <p className="text-xs text-muted-foreground">No new progress has been received for over a minute. The task may still be running.</p>
+            {baseUrl ? <button type="button" className="text-xs underline underline-offset-2" onClick={() => void revalidateWorkspaceSessionSync({ workspaceId, baseUrl })}>Check activity</button> : null}
+          </Message>
+        ) : null}
         {showLoading && <LoadingMessage elapsedSeconds={runElapsedSeconds} />}
         {showReconnecting && <ReconnectingMessage lastConfirmedAt={syncHealth?.lastConfirmedAt ?? null} />}
         {retryStatus ? <RetryMessage status={retryStatus} /> : null}
         {error && !hasSessionErrorMessage ? <ErrorMessage error={error} /> : null}
       </div>
     </CurrentToolLifecycleProvider>
+    </ActiveSubagentTasksContext.Provider>
   )
 }

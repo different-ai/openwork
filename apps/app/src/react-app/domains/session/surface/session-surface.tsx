@@ -7,7 +7,7 @@ import { Check, CirclePause, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
-import { createClient, unwrap } from "@/app/lib/opencode";
+import { createClient, createPromptMessageID, hasAcceptedPromptMessage, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe } from "@/app/lib/opencode-session";
 import { composeNativeSessionSnapshot } from "@/app/lib/opencode-session-native";
@@ -61,6 +61,7 @@ import {
   claimQueuedSend,
   dispatchQueuedDrain,
   getQueuedDrainState,
+  getQueuedSendGeneration,
   nextObservationProbeAt,
   subscribeQueuedDrain,
 } from "./queued-drain-machine";
@@ -1151,7 +1152,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const opencodeClient = useMemo(
     () => isOpencodeV2BaseUrl(props.opencodeBaseUrl)
       ? createClientV2(props.opencodeBaseUrl, props.workspaceRoot || undefined, { token: props.openworkToken })
-      : createClient(props.opencodeBaseUrl, undefined, { token: props.openworkToken, mode: "openwork" }),
+      : createClient(props.opencodeBaseUrl, props.workspaceRoot.trim() || undefined, { token: props.openworkToken, mode: "openwork" }),
     [props.opencodeBaseUrl, props.openworkToken, props.workspaceRoot],
   );
 
@@ -1342,7 +1343,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const remaining = (pendingMessages ?? []).filter(({ draft: pending, previousMessageIds }) => {
       const match = baseRenderedMessages.find((message) => message.role === "user"
         && !matchedIds.has(message.id)
-        && (message.id === pending.messageId || (!previousMessageIds.includes(message.id)
+        && (message.id === pending.messageId || (isOpencodeV2BaseUrl(props.opencodeBaseUrl) && !previousMessageIds.includes(message.id)
           && message.parts.some((part) => part.type === "text" && part.text === (pending.resolvedText ?? pending.text)))));
       if (!match) return true;
       matchedIds.add(match.id);
@@ -1354,7 +1355,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       ...item,
       previousMessageIds: [...item.previousMessageIds, ...matchedIds],
     })) : remaining;
-  }, [baseRenderedMessages, pendingMessages]);
+  }, [baseRenderedMessages, pendingMessages, props.opencodeBaseUrl]);
   useEffect(() => {
     if (!pendingMessages || pendingMessages.length === unmatchedPendingMessages.length) return;
     useComposerStateStore.setState((state) => ({
@@ -1842,13 +1843,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Core sender shared by initial send and steered follow-ups. OpenCode
   // accepts follow-up user turns mid-run (steering) — the running loop picks
   // up the new message — so this is safe to call while the agent is busy.
-  const sendDraft = useCallback(async (nextDraft: ComposerDraft) => {
+  const sendDraft = useCallback(async (nextDraft: ComposerDraft, itemId: string): Promise<CloudMcpSubmissionResult | { outcome: "unknown" }> => {
+    const messageId = nextDraft.messageId ?? createPromptMessageID();
+    const generation = getQueuedSendGeneration(props.sessionId);
     const submissionId = Symbol();
     pendingSendsRef.current.set(submissionId, sessionOwner);
     setPendingSendSessions([...pendingSendsRef.current.values()]);
     setError(null);
     try {
-      const result = await props.onSendDraft(nextDraft, props.sessionId);
+      const result = await props.onSendDraft({ ...nextDraft, messageId }, props.sessionId);
+      dispatchQueuedDrain(props.sessionId, { type: "send_result", itemId, outcome: result.outcome, at: Date.now() });
+      if (getQueuedSendGeneration(props.sessionId) !== generation) return result;
       if (result.outcome === "blocked" || result.outcome === "cancelled") return result;
       // Only report a run after the pre-send gate released the exact queued
       // submission and the route accepted or sent it.
@@ -1859,6 +1864,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       return result;
     } catch (nextError) {
+      if (isPromptAdmissionUnknown(nextError)) {
+        dispatchQueuedDrain(props.sessionId, { type: "send_unknown", itemId, messageID: messageId, at: Date.now() });
+        if (activeSessionOwnerRef.current === sessionOwner) setAwaitingAssistantBaseline(null);
+        return { outcome: "unknown" };
+      }
+      if (getQueuedSendGeneration(props.sessionId) !== generation) {
+        dispatchQueuedDrain(props.sessionId, { type: "send_result", itemId, outcome: "cancelled", at: Date.now() });
+        return { outcome: "cancelled", reason: "context_changed" };
+      }
+      dispatchQueuedDrain(props.sessionId, { type: "send_error", itemId });
       const parsed = parseSessionError(nextError);
       captureAnalyticsEvent("task_send_failed", {});
       setError(parsed);
@@ -1885,10 +1900,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const originalDraft = draft;
     const text = originalDraft.trim();
     if (!text && attachments.length === 0) return;
-    const nextDraft = {
-      ...buildDraft(text, attachments),
-      messageId: `msg_${(Date.now() * 4096).toString(16)}${crypto.randomUUID().replaceAll("-", "").slice(0, 14)}`,
-    };
+    const nextDraft = { ...buildDraft(text, attachments), messageId: createPromptMessageID() };
+    // Immediate sends and queued sends share the same slot across all panes.
+    dispatchQueuedDrain(props.sessionId, { type: "user_retry" });
+    if (!claimQueuedSend(props.sessionId, nextDraft.messageId, true)) return;
     const sentAttachments = attachments;
     const savedComposer = useComposerStateStore.getState().sessions[props.sessionId];
     clearComposer();
@@ -1925,12 +1940,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }));
     if (sentAttachments.length) setAttachmentsUploading(true);
     try {
-      const result = await sendDraft(nextDraft);
+      const result = await sendDraft(nextDraft, nextDraft.messageId);
       if (result.outcome === "blocked" || result.outcome === "cancelled") {
         restore();
         return;
       }
-      if (nextDraft.command || nextDraft.mode === "shell") removePending();
+      if (result.outcome !== "unknown" && (nextDraft.command || nextDraft.mode === "shell")) removePending();
       sentAttachments.forEach(revokeAttachmentPreview);
     } catch {
       restore();
@@ -1997,39 +2012,48 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [sendingQueued, setSendingQueued] = useState(false);
   const sendQueuedDraftNow = useCallback(async (id: string) => {
     if (drainingQueueRef.current || sendingQueued) return;
-    const item = queuedItems.find((queued) => queued.id === id);
+    const item = getComposerQueuedDrafts(useComposerStateStore.getState(), props.sessionId).find((queued) => queued.id === id);
     const target = withoutRevertTarget(item?.draft ?? null);
     if (!item || !target) return;
+    if (!claimQueuedSend(props.sessionId, item.id, true)) return;
+    const generation = getQueuedSendGeneration(props.sessionId);
     setSendingQueued(true);
     removeQueuedDraftFromStore(props.sessionId, id);
     try {
-      const result = await sendDraft(target);
+      const result = await sendDraft(target, item.id);
       if (result.outcome === "blocked" || result.outcome === "cancelled") {
-        prependQueuedDrafts(props.sessionId, [{ id: item.id, draft: target }]);
+        if (getQueuedSendGeneration(props.sessionId) === generation) {
+          prependQueuedDrafts(props.sessionId, [{ id: item.id, draft: target }]);
+        } else {
+          target.attachments.forEach(revokeAttachmentPreview);
+        }
         return;
       }
       target.attachments.forEach(revokeAttachmentPreview);
     } catch {
-      prependQueuedDrafts(props.sessionId, [{ id: item.id, draft: target }]);
+      if (getQueuedSendGeneration(props.sessionId) === generation) {
+        prependQueuedDrafts(props.sessionId, [{ id: item.id, draft: target }]);
+      }
     } finally {
       setSendingQueued(false);
     }
   }, [
     prependQueuedDrafts,
     props.sessionId,
-    queuedItems,
     removeQueuedDraftFromStore,
     sendDraft,
     sendingQueued,
   ]);
 
   const handleAbort = useCallback(async () => {
-    if (!chatStreaming) return;
+    const phase = getQueuedDrainState(props.sessionId).phase;
+    if (!chatStreaming && phase.kind !== "sending" && phase.kind !== "admission_unknown") return;
     setError(null);
     // Stop means stop: drop queued follow-ups before aborting, otherwise the
     // queue-drain effect below re-prompts the agent the moment the abort
     // lands and the session reports idle (#2014).
-    queuedItems.forEach((item) => item.draft.attachments.forEach(revokeAttachmentPreview));
+    getComposerQueuedDrafts(useComposerStateStore.getState(), props.sessionId)
+      .forEach((item) => item.draft.attachments.forEach(revokeAttachmentPreview));
     clearQueuedDrafts(props.sessionId);
     dispatchQueuedDrain(props.sessionId, { type: "queue_cleared" });
     // The prompt was sent through a directory-scoped client (session-route
@@ -2052,7 +2076,24 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
     captureAnalyticsEvent("task_run_stopped", {});
     await snapshotQuery.refetch();
-  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceRoot, queuedItems, snapshotQuery.refetch, setError]);
+  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceRoot, snapshotQuery.refetch, setError]);
+
+  const checkUnknownAdmission = useCallback(async (notify = false) => {
+    const phase = getQueuedDrainState(props.sessionId).phase;
+    if (phase.kind !== "admission_unknown") return;
+    try {
+      if (await hasAcceptedPromptMessage(opencodeClient, props.sessionId, phase.messageID)) {
+        dispatchQueuedDrain(props.sessionId, {
+          type: "admission_observed", itemId: phase.itemId, messageID: phase.messageID, at: Date.now(),
+        });
+        if (notify) toast.success("Message acceptance confirmed. Nothing was resent.");
+      } else if (notify) {
+        toast.info("Acceptance is still unknown. The message has not been resent; check again later.");
+      }
+    } catch {
+      if (notify) toast.error("Could not check acceptance. The message has not been resent; check again when connected.");
+    }
+  }, [opencodeClient, props.sessionId]);
 
   const handleDismissError = useCallback(() => {
     setError(null);
@@ -2094,6 +2135,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
       lastObservationProbeAtRef.current = startedAt;
       void (async () => {
         try {
+          const phase = getQueuedDrainState(props.sessionId).phase;
+          if (phase.kind === "admission_unknown") {
+            await checkUnknownAdmission();
+            return;
+          }
           const result = await snapshotQuery.refetch();
           const probed = result.data?.session.id === props.sessionId ? result.data.status : null;
           if (!probed) return;
@@ -2111,7 +2157,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       })();
     }, Math.max(0, probeAt - Date.now()));
     return () => window.clearTimeout(timer);
-  }, [observationProbeVersion, props.sessionId, queuedDrainState, snapshotQuery.refetch]);
+  }, [checkUnknownAdmission, observationProbeVersion, props.sessionId, queuedDrainState, snapshotQuery.refetch]);
 
   useEffect(() => {
     if (drainingQueueRef.current || sendingQueued) return;
@@ -2119,7 +2165,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (queuedItems.length === 0) return;
     if (chatStreaming || liveStatus.type !== "idle") return;
     if (!canAdmitNextQueuedItem(queuedDrainState)) return;
-    const nextItem = queuedItems[0];
+    const nextItem = getComposerQueuedDrafts(useComposerStateStore.getState(), props.sessionId)[0];
     if (!nextItem) return;
     const nextDraft = withoutRevertTarget(nextItem.draft);
     if (!nextDraft) return;
@@ -2129,17 +2175,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // per-session (not per-surface), so a split view of this session cannot
     // deliver the same queued item twice.
     if (!claimQueuedSend(props.sessionId, nextItem.id)) return;
+    const generation = getQueuedSendGeneration(props.sessionId);
     drainingQueueRef.current = true;
     removeQueuedDraftFromStore(props.sessionId, nextItem.id);
     void (async () => {
       try {
-        const result = await sendDraft(nextDraft);
-        dispatchQueuedDrain(props.sessionId, {
-          type: "send_result",
-          itemId: nextItem.id,
-          outcome: result.outcome,
-          at: Date.now(),
-        });
+        const result = await sendDraft(nextDraft, nextItem.id);
+        if (getQueuedSendGeneration(props.sessionId) !== generation) {
+          nextDraft.attachments.forEach(revokeAttachmentPreview);
+          return;
+        }
         if (result.outcome === "blocked") {
           cloudQueueBlockedRef.current = true;
           prependQueuedDrafts(props.sessionId, [{ id: nextItem.id, draft: nextDraft }]);
@@ -2149,8 +2194,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
           nextDraft.attachments.forEach(revokeAttachmentPreview);
         }
       } catch {
-        dispatchQueuedDrain(props.sessionId, { type: "send_error", itemId: nextItem.id });
-        prependQueuedDrafts(props.sessionId, [{ id: nextItem.id, draft: nextDraft }]);
+        if (getQueuedSendGeneration(props.sessionId) === generation) {
+          prependQueuedDrafts(props.sessionId, [{ id: nextItem.id, draft: nextDraft }]);
+        }
       } finally {
         drainingQueueRef.current = false;
       }
@@ -2321,13 +2367,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     label: "Send the composer prompt",
     description: "Send the currently visible composer draft to the active session.",
     sideEffect: "mutation",
-    disabled: sessionModelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle",
+    disabled: sessionModelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle" || queuedDrainState.phase.kind === "admission_unknown",
     targetRef: composerShellRef,
     execute: async () => {
       await handleSend();
       return true;
     },
-  }), [attachments.length, draft, handleSend, model.transitionState, sessionModelUnavailable]);
+  }), [attachments.length, draft, handleSend, model.transitionState, queuedDrainState.phase.kind, sessionModelUnavailable]);
   useControlAction(props.isControlTarget ? composerSendControlAction : null);
 
   const composerStopControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -2335,13 +2381,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     label: "Stop the current run",
     description: "Stop the current streaming session run.",
     sideEffect: "mutation",
-    disabled: !chatStreaming,
+    disabled: !chatStreaming && queuedDrainState.phase.kind !== "sending" && queuedDrainState.phase.kind !== "admission_unknown",
     targetRef: composerShellRef,
     execute: async () => {
       await handleAbort();
       return true;
     },
-  }), [chatStreaming, handleAbort]);
+  }), [chatStreaming, handleAbort, queuedDrainState.phase.kind]);
   useControlAction(props.isControlTarget ? composerStopControlAction : null);
 
   const listSkills = useCallback(async (): Promise<SkillCard[]> => {
@@ -2536,21 +2582,25 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [resuming, setResuming] = useState(false);
   const handleResumeInterrupted = useCallback(async (recoveryPrompt: string) => {
     await resumeGuardRef.current.run(async () => {
+      const messageID = createPromptMessageID();
+      dispatchQueuedDrain(props.sessionId, { type: "user_retry" });
+      if (!claimQueuedSend(props.sessionId, messageID, true)) return;
       setResuming(true);
       try {
         await sendDraft({
+          messageId: messageID,
           mode: "prompt",
           parts: [{ type: "text", text: recoveryPrompt }],
           attachments: [],
           text: recoveryPrompt,
-        });
+        }, messageID);
       } catch {
         // sendDraft already surfaced the failure on the session error state.
       } finally {
         setResuming(false);
       }
     });
-  }, [sendDraft]);
+  }, [props.sessionId, sendDraft]);
   const handleResumeUnknownOutcome = useCallback(() => {
     void handleResumeInterrupted(interruptedTaskRecoveryPrompt);
   }, [handleResumeInterrupted]);
@@ -2822,6 +2872,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
           {/* Chat column: tighter than the composer (800px) so messages
                keep a comfortable reading width and don't feel "too big". */}
           <div ref={contentRef} className="mx-auto w-full max-w-[720px]">
+            {queuedDrainState.phase.kind === "admission_unknown" ? (
+              <div role="alert" className="mb-4 rounded-xl border border-dls-border bg-dls-hover/60 px-4 py-3 text-sm">
+                <p className="font-medium">Message acceptance is unknown</p>
+                <p className="mt-1 text-dls-secondary">It may already be running. Sending is paused to avoid duplicates. Check acceptance or stop the run; Stop does not resend the message.</p>
+                <div className="mt-3 flex gap-3">
+                  <button type="button" className="underline" onClick={() => void checkUnknownAdmission(true)}>Check acceptance</button>
+                  <button type="button" className="underline" onClick={() => void handleAbort()}>Stop</button>
+                </div>
+              </div>
+            ) : null}
             {revertMessageId ? (
               <RevertedMessagesBanner
                 hiddenCount={revertedMessageCount}
@@ -2923,7 +2983,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 </OpenTargetProvider>
               </DevProfiler>
             )}
-            {admissionOutcomeUnresolved && renderedMessages.length > 0 ? (
+            {admissionOutcomeUnresolved && queuedDrainState.phase.kind !== "admission_unknown" && renderedMessages.length > 0 ? (
               <AdmissionOutcomeUnknownCard
                 resuming={resuming}
                 onResume={handleResumeUnknownOutcome}
@@ -3009,7 +3069,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         steering={steering}
         submissionPreparing={preparingCloudTools || sending}
         queuedCount={queuedItems.length}
-        disabled={model.transitionState !== "idle" || sessionModelUnavailable}
+        disabled={model.transitionState !== "idle" || sessionModelUnavailable || queuedDrainState.phase.kind === "admission_unknown"}
         modelUnavailable={sessionModelUnavailable}
         modelUnavailableMessage={sessionModelUnavailable ? props.modelUnavailableMessage : null}
         organizationModelsEmpty={props.organizationModelsEmpty}

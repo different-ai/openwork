@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import { createPromptMessageID } from "../../../../app/lib/opencode";
 import type { ComposerAttachment, ComposerDraft } from "../../../../app/types";
 import type { ComposerMentionKind } from "./composer/mention-encoding";
 
@@ -99,7 +100,7 @@ function getWritableSession(state: ComposerStateStore, sessionId: string): Compo
 }
 
 function createQueuedItem(draft: ComposerDraft, id?: string): QueuedComposerItem {
-  return { id: id ?? crypto.randomUUID(), draft };
+  return { id: id ?? crypto.randomUUID(), draft: { ...draft, messageId: draft.messageId ?? createPromptMessageID() } };
 }
 
 export const useComposerStateStore = create<ComposerStateStore>((set) => ({
@@ -199,7 +200,7 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
     const next = current.map((item) => {
       if (item.id !== id) return item;
       changed = true;
-      return { ...item, draft };
+      return { ...item, draft: { ...draft, messageId: item.draft.messageId } };
     });
     if (!changed) return state;
     return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: next } };
@@ -226,7 +227,7 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
   prependQueuedDrafts: (sessionId, items) => set((state) => {
     if (items.length === 0) return state;
     const current = state.queuedDrafts[sessionId] ?? EMPTY_QUEUED_DRAFTS;
-    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: [...items, ...current] } };
+    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: [...items.map((item) => createQueuedItem(item.draft, item.id)), ...current] } };
   }),
   clearSession: (sessionId) => set((state) => {
     if (!state.sessions[sessionId]) return state;

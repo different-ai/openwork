@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 import type { UIMessage } from "ai";
 
@@ -17,6 +17,7 @@ import {
 } from "../src/react-app/domains/session/sync/parse-tool-parts";
 import { parseOpenWorkSessionCreateResult } from "../src/components/tools/openwork-session-create";
 import { codeModeToolCalls } from "../src/lib/code-mode-tools";
+import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
 
 afterEach(() => {
   getReactQueryClient().clear();
@@ -330,6 +331,8 @@ describe("tool part mapper", () => {
     const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
     const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
     const release = trackWorkspaceSessionSync(syncInput, "session-a");
+    const clock = spyOn(Date, "now").mockReturnValue(1_000);
+    useSessionActivityStore.getState().removeSession("workspace-a", "session-a");
 
     try {
       __applySessionSyncEventForTest(syncInput, {
@@ -358,7 +361,24 @@ describe("tool part mapper", () => {
         state: "input-streaming",
         input: { content: "hello", filePath: "src/main.ts" },
       });
+      const activity = () => useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]?.["session-a"];
+      expect(activity()?.lastProgressAt).toBe(1_000);
+      clock.mockReturnValue(2_000);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: { part: writeToolPart("running", { content: "hello", filePath: "src/main.ts" }) },
+      });
+      expect(activity()?.lastProgressAt).toBe(1_000);
+      clock.mockReturnValue(3_000);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: { part: writeToolPart("completed", { content: "hello", filePath: "src/main.ts" }) },
+      });
+      expect(activity()?.lastProgressAt).toBe(3_000);
+      expect(activity()?.latestActivity).toBe("Tool result received");
+      expect(activity()?.progressParts).not.toHaveProperty("hello");
     } finally {
+      clock.mockRestore();
       release();
       cleanup();
     }

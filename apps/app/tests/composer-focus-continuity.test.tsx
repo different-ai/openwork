@@ -89,7 +89,18 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
   document.write("<!doctype html><html><body></body></html>");
   document.close();
   Object.defineProperty(document, "compatMode", { configurable: true, value: "CSS1Compat" });
-  const fetchStub = async () => new Response("{}", { headers: { "content-type": "application/json" } });
+  let acceptedMessageId: string | null = null;
+  const acceptanceRequests: Request[] = [];
+  const fetchStub = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    if (new URL(request.url).pathname.includes(`/session/${sessionId}/message/`)) {
+      acceptanceRequests.push(request);
+      return acceptedMessageId
+        ? Response.json({ info: { id: acceptedMessageId, sessionID: sessionId, role: "user" }, parts: [] })
+        : new Response(null, { status: 404 });
+    }
+    return Response.json({});
+  };
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchStub });
   Object.defineProperty(window, "fetch", { configurable: true, value: fetchStub });
   window.localStorage.setItem("openwork.shell-config", JSON.stringify({ starterCards: false }));
@@ -101,6 +112,7 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
   }));
   const { SessionSurface } = await import("../src/react-app/domains/session/surface/session-surface");
   const { snapshotKey, transcriptKey } = await import("../src/react-app/domains/session/sync/session-sync");
+  const { getQueuedDrainState, resetQueuedDrainForTests } = await import("../src/react-app/domains/session/surface/queued-drain-machine");
   const queryClient = getReactQueryClient();
   queryClient.clear();
   queryClient.setQueryData(snapshotKey(workspaceId, sessionId), createSnapshot({ type: "busy" }, 1));
@@ -249,6 +261,50 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
     expect(container.textContent?.split("First message auto-send").length).toBe(2);
     expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(0);
 
+    const { PromptAdmissionUnknownError } = await import("../src/app/lib/opencode");
+    submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Uncertain send"));
+    await act(async () => send());
+    const uncertainId = sentDrafts[3]?.messageId;
+    if (!uncertainId) throw new Error("Expected the canonical draft identity");
+    expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()[0]?.draft.messageId).toBe(uncertainId);
+    expect(sentDrafts[3]).not.toHaveProperty("messageID");
+    expect(editor.textContent).toBe("");
+    await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Newer uncertain draft"));
+    await act(async () => submission.reject(new PromptAdmissionUnknownError({ messageID: uncertainId })));
+    expect(editor.textContent).toBe("Newer uncertain draft");
+    expect(getQueuedDrainState(sessionId).phase).toMatchObject({ kind: "admission_unknown", messageID: uncertainId });
+    expect(Object.values(useComposerStateStore.getState().failedDrafts).flat()).toHaveLength(0);
+    expect(useComposerStateStore.getState().queuedDrafts[sessionId]).toBeUndefined();
+    await act(async () => queryClient.setQueryData(transcriptKey(workspaceId, sessionId), [{
+      id: "other-identical-prompt", role: "user", parts: [{ type: "text", text: "Uncertain send" }],
+    }]));
+    await waitFor(() => container.textContent?.split("Uncertain send").length === 3, "the unrelated same-text turn beside the pending bubble");
+    expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(1);
+    const checkAcceptance = () => {
+      const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "Check acceptance");
+      if (!button) throw new Error("Expected the read-only acceptance check");
+      button.click();
+    };
+    await act(async () => checkAcceptance());
+    expect(getQueuedDrainState(sessionId).phase.kind).toBe("admission_unknown");
+    expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(1);
+    acceptedMessageId = uncertainId;
+    await act(async () => checkAcceptance());
+    expect(getQueuedDrainState(sessionId).phase.kind).toBe("awaiting_observation");
+    for (const request of acceptanceRequests) {
+      expect(request.method).toBe("GET");
+      expect(new URL(request.url).pathname).toBe(`/opencode/session/${sessionId}/message/${uncertainId}`);
+      expect(new URL(request.url).searchParams.get("directory")).toBe("/tmp/project-focus-continuity");
+    }
+    expect(acceptanceRequests).toHaveLength(2);
+    await act(async () => queryClient.setQueryData(transcriptKey(workspaceId, sessionId), [{
+      id: uncertainId, role: "user", parts: [{ type: "text", text: "Uncertain send" }],
+    }]));
+    await waitFor(() => Object.values(useComposerStateStore.getState().pendingMessages).flat().length === 0, "the exact observed turn to replace the pending bubble");
+    expect(editor.textContent).toBe("Newer uncertain draft");
+    expect(sentDrafts).toHaveLength(4);
+
     const { NewTaskComposer } = await import("../src/react-app/domains/session/chat/new-task-composer");
     const creation = Promise.withResolvers<void>();
     let creations = 0;
@@ -279,6 +335,7 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
     expect(creations).toBe(1);
   } finally {
     await act(async () => root.unmount());
+    resetQueuedDrainForTests();
     useComposerStateStore.setState({ sessions: {}, queuedDrafts: {}, history: {}, pendingMessages: {}, failedDrafts: {} });
     queryClient.clear();
     container.remove();

@@ -17,7 +17,7 @@ import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
-import { createClient, unwrap } from "@/app/lib/opencode";
+import { createClient, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { isOpencodeV2BaseUrl, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
 import { getNativeSessionMessages } from "@/app/lib/opencode-session-native";
@@ -138,6 +138,7 @@ import {
 import { openModelPickerEvent, openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
 import { markComposerAutoSend } from "@/react-app/domains/session/surface/composer-auto-send";
 import { sendWithRevertRollback } from "@/react-app/domains/session/surface/safe-edit-resend";
+import { assertQueuedSendCurrent, getQueuedSendGeneration } from "@/react-app/domains/session/surface/queued-drain-machine";
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
 import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types";
@@ -1302,6 +1303,8 @@ export function SessionRoute() {
       onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
+        const generation = getQueuedSendGeneration(targetSessionId);
+        const assertCurrent = () => assertQueuedSendCurrent(targetSessionId, generation);
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!text && draft.attachments.length === 0) {
           return { outcome: "cancelled", reason: "context_changed" };
@@ -1323,6 +1326,7 @@ export function SessionRoute() {
           skipGate: true,
           send: async () => {
             await sendWithRevertRollback({
+              assertCurrent,
               revertMessageId: draft.revertMessageId,
               abort: () => abortSessionSafe(opencodeClient, targetSessionId, selectedWorkspaceRoot || undefined, {
                 source: "session.edit_resend.before_revert",
@@ -1386,11 +1390,13 @@ export function SessionRoute() {
                 }
 
                 const parts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
+                assertCurrent();
                 const system = await buildOpenworkSessionSystemContext(client, {
                   workspaceId: selectedWorkspaceId,
                   cacheKey: targetSessionId,
                   runtimeKey: environmentRuntimeKey,
                 });
+                assertCurrent();
                 const result = await opencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
                   messageID: draft.messageId,
@@ -1401,6 +1407,7 @@ export function SessionRoute() {
                   system,
                 });
                 if (result.error) {
+                  if (isPromptAdmissionUnknown(result.error)) throw result.error;
                   throw new Error(serializeSDKError(result.error));
                 }
                 // Remember what this conversation used last so returning to it
@@ -1648,6 +1655,8 @@ export function SessionRoute() {
       onApplyEnvironmentChanges: undefined,
       onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || session.sessionId;
+        const generation = getQueuedSendGeneration(targetSessionId);
+        const assertCurrent = () => assertQueuedSendCurrent(targetSessionId, generation);
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!targetSessionId || (!text && draft.attachments.length === 0)) {
           return { outcome: "cancelled", reason: "context_changed" };
@@ -1659,6 +1668,7 @@ export function SessionRoute() {
           skipGate: true,
           send: async () => {
             await sendWithRevertRollback({
+              assertCurrent,
               revertMessageId: draft.revertMessageId,
               abort: () => abortSessionSafe(workspaceOpencodeClient, targetSessionId, workspaceRoot || undefined, {
                 source: "session.edit_resend.before_revert",
@@ -1707,11 +1717,13 @@ export function SessionRoute() {
                   return;
                 }
                 const parts = await draftToParts(draft, workspaceRoot, targetSessionId, endpoint);
+                assertCurrent();
                 const system = await buildOpenworkSessionSystemContext(endpoint.client, {
                   workspaceId: workspace.id,
                   cacheKey: targetSessionId,
                   runtimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
                 });
+                assertCurrent();
                 const result = await workspaceOpencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
                   messageID: draft.messageId,
@@ -1721,7 +1733,10 @@ export function SessionRoute() {
                   ...(sendVariant ? { variant: sendVariant } : {}),
                   system,
                 });
-                if (result.error) throw new Error(serializeSDKError(result.error));
+                if (result.error) {
+                  if (isPromptAdmissionUnknown(result.error)) throw result.error;
+                  throw new Error(serializeSDKError(result.error));
+                }
                 if (sendModel) {
                   useSessionModelStore.getState().setModel(targetSessionId, sendModel, sendVariant ?? null);
                 }

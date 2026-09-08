@@ -126,7 +126,7 @@ const backgroundDeltaFlushMs = 100;
 // timeout: elapsed time never marks a task done.
 const activeSessionStatusReconcileIntervalMs = 250;
 
-type SessionStatusSource = "stream" | "connect-reconcile" | "active-reconcile";
+type SessionStatusSource = "stream" | "connect-reconcile" | "active-reconcile" | "snapshot";
 
 function developerDiagnosticsEnabled() {
   if (typeof window === "undefined") return false;
@@ -251,7 +251,7 @@ export const permissionKey = (workspaceId: string, sessionId: string) =>
 export const questionKey = (workspaceId: string, sessionId: string) =>
   ["react-session-questions", workspaceId, sessionId] as const;
 
-function syncKey(input: SyncOptions) {
+function syncKey(input: Pick<SyncOptions, "workspaceId" | "baseUrl">) {
   return `${input.workspaceId}:${input.baseUrl}`;
 }
 
@@ -1131,6 +1131,8 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID), (current = []) =>
       upsertMessage(current, next),
     );
+    useSessionActivityStore.getState().observeTranscript(workspaceId, info.sessionID,
+      queryClient.getQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID)) ?? []);
     return;
   }
 
@@ -1212,6 +1214,8 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       return next;
     });
     if (pending) entry.pendingDeltas.delete(part.id);
+    useSessionActivityStore.getState().observeTranscript(workspaceId, part.sessionID,
+      queryClient.getQueryData<UIMessage[]>(transcriptKey(workspaceId, part.sessionID)) ?? []);
     return;
   }
 
@@ -1329,6 +1333,8 @@ function commitDeltas(entry: SyncEntry, workspaceId: string, items: PendingDelta
         return result.messages;
       },
     );
+    useSessionActivityStore.getState().observeTranscript(workspaceId, sessionId,
+      queryClient.getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? []);
   }
 }
 
@@ -1412,16 +1418,7 @@ function applySessionRunStatus(
   }
   const observedAt = perfNow();
   if (live) {
-    entry.liveSessionIds.add(sessionId);
-    if (!wasTrackedLive) {
-      entry.runActiveObservedAt.set(sessionId, observedAt);
-      recordSessionCompletionMark("run-active", {
-        sessionID: sessionId,
-        source: options.source ?? "stream",
-        status: status.type,
-      });
-    }
-    scheduleActiveSessionStatusReconciliation(entry);
+    trackLiveSession(entry, sessionId, status, options.source ?? "stream");
   } else {
     entry.liveSessionIds.delete(sessionId);
     clearActiveSessionStatusReconcileTimer(entry);
@@ -1500,13 +1497,24 @@ async function reconcileSessionPermissions(entry: SyncEntry, sessionId: string) 
   }
 }
 
+// Snapshot-only busy observations need the same validation as stream edges.
+function trackLiveSession(entry: SyncEntry, sessionId: string, status: SessionStatus, source: SessionStatusSource) {
+  if (!entry.liveSessionIds.has(sessionId)) {
+    entry.liveSessionIds.add(sessionId);
+    entry.runActiveObservedAt.set(sessionId, perfNow());
+    recordSessionCompletionMark("run-active", { sessionID: sessionId, source, status: status.type });
+  }
+  scheduleActiveSessionStatusReconciliation(entry);
+}
+
 async function reconcileSessionRunStatuses(
   entry: SyncEntry,
   input: SyncOptions,
   signal: AbortSignal,
-  source: Exclude<SessionStatusSource, "stream">,
+  source: Exclude<SessionStatusSource, "stream" | "snapshot">,
 ) {
   const startedAt = Date.now();
+  const key = syncKey(input);
   const sequences = new Map(entry.nativeSequenceBySession);
   if (source === "connect-reconcile") {
     const records = useSessionActivityStore.getState().recordsByWorkspaceId[input.workspaceId] ?? {};
@@ -1524,12 +1532,17 @@ async function reconcileSessionRunStatuses(
     // presenting a confident ticking "Working" row. Aborted fetches are
     // lifecycle noise (dispose, generation rotation), not failures.
     if (!signal.aborted) {
-      useWorkspaceSyncStreamStore.getState().publishReconcileFailure(syncKey(input));
+      useWorkspaceSyncStreamStore.getState().publishReconcileFailure(key);
     }
     return;
   }
   if (signal.aborted) return;
-  useWorkspaceSyncStreamStore.getState().publishReconcileSuccess(syncKey(input), startedAt);
+  const streamStore = useWorkspaceSyncStreamStore.getState();
+  const recovered = (streamStore.reconcileHealthByKey[key]?.consecutiveFailures ?? 0) > 0;
+  streamStore.publishReconcileSuccess(key, startedAt);
+  // Reachability recovered with this credential: wake a parked stream rather
+  // than waiting out the outage's backoff. Healthy streams ignore the nudge.
+  if (recovered) entry.notifyStreamGenerationChanged?.();
 
   // Level-triggered convergence on every SSE (re)connect: sessions the fetch
   // reports live are seeded busy (heals a subscriber that missed the busy
@@ -1594,12 +1607,30 @@ function scheduleActiveSessionStatusReconciliation(entry: SyncEntry) {
  * retry backoff or the next watchdog tick: reconnect any parked stream with
  * fresh backoff and revalidate run statuses immediately, so a run that ended
  * or kept working while the machine was offline settles within one fetch.
+ * Resolving means the probe settled; reconcileHealthByKey carries failures.
  */
+export async function revalidateWorkspaceSessionSync(input: Pick<SyncOptions, "workspaceId" | "baseUrl">) {
+  const entry = syncs.get(syncKey(input));
+  if (!entry) return;
+  entry.notifyStreamGenerationChanged?.();
+  // Own the immediate probe so disposal cancels it and an older active poll
+  // cannot overwrite its result. This only reads status; it never resends.
+  entry.statusReconcileAbort?.abort();
+  if (entry.statusReconcileTimer) clearTimeout(entry.statusReconcileTimer);
+  entry.statusReconcileTimer = null;
+  const controller = new AbortController();
+  entry.statusReconcileAbort = controller;
+  try {
+    await reconcileSessionRunStatuses(entry, entry.input, controller.signal, "connect-reconcile");
+  } finally {
+    if (entry.statusReconcileAbort === controller) entry.statusReconcileAbort = null;
+    scheduleActiveSessionStatusReconciliation(entry);
+  }
+}
+
 function revalidateWorkspaceSyncs() {
   for (const entry of syncs.values()) {
-    entry.notifyStreamGenerationChanged?.();
-    const controller = new AbortController();
-    void reconcileSessionRunStatuses(entry, entry.input, controller.signal, "connect-reconcile");
+    void revalidateWorkspaceSessionSync(entry.input);
   }
 }
 
@@ -1753,6 +1784,13 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
     );
     if (snapshotStartedAt >= (record?.runStatusAt ?? 0)) {
       queryClient.setQueryData(statusKey(workspaceId, snapshot.session.id), status);
+      if (isLiveStatus(status)) {
+        for (const entry of syncs.values()) {
+          if (entry.input.workspaceId === workspaceId) {
+            trackLiveSession(entry, snapshot.session.id, status, "snapshot");
+          }
+        }
+      }
     }
   }
 
@@ -1769,6 +1807,8 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
   ));
 
   queryClient.setQueryData(todoKey(workspaceId, snapshot.session.id), snapshot.todos);
+  useSessionActivityStore.getState().observeTranscript(workspaceId, snapshot.session.id,
+    queryClient.getQueryData<UIMessage[]>(key) ?? [], true);
 }
 
 /**

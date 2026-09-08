@@ -74,6 +74,9 @@ describe("composer state store", () => {
 
     const items = getComposerQueuedDrafts(useComposerStateStore.getState(), "session-a");
     const ids = items.map((item) => item.id);
+    const messageIDs = items.map((item) => item.draft.messageId);
+    expect(new Set(messageIDs).size).toBe(3);
+    for (const messageID of messageIDs) expect(messageID).toMatch(/^msg_[0-9a-f]{26}$/);
     reorderQueuedDrafts("session-a", [ids[2] ?? "", ids[0] ?? "", ids[1] ?? ""]);
     expect(queuedTexts("session-a")).toEqual(["third", "first", "second"]);
 
@@ -81,6 +84,12 @@ describe("composer state store", () => {
     expect(secondId).toBeTruthy();
     updateQueuedDraft("session-a", secondId ?? "", draft("first edited"));
     expect(queuedTexts("session-a")).toEqual(["third", "first edited", "second"]);
+    const reordered = getComposerQueuedDrafts(useComposerStateStore.getState(), "session-a");
+    expect(reordered.map((item) => item.draft.messageId)).toEqual([messageIDs[2], messageIDs[0], messageIDs[1]]);
+    const first = reordered[0]!;
+    useComposerStateStore.getState().removeQueuedDraft("session-a", first.id);
+    useComposerStateStore.getState().prependQueuedDrafts("session-a", [first]);
+    expect(getComposerQueuedDrafts(useComposerStateStore.getState(), "session-a")[0]?.draft.messageId).toBe(first.draft.messageId);
   });
 
   test("carries an edit boundary until clear, replacement, or session switch", () => {
