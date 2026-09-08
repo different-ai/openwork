@@ -1108,74 +1108,143 @@ export function translateV2Event(
   return null;
 }
 
-async function* translateV2Events(
+function translateV2Events(
   response: Response,
   signal: AbortSignal | undefined,
   fetchSession: (sessionID: string, signal: AbortSignal) => Promise<Session | null>,
   directory?: string,
 ): AsyncGenerator<OpencodeEvent> {
-  if (!response.body) return;
-  const reader = response.body.getReader();
+  const reader = response.body?.getReader();
   const decoder = new TextDecoder();
   const state = createV2EventTranslationState();
   const discoveredForks = new Set<string>();
-  let buffer = "";
-  try {
-    while (!signal?.aborted) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      buffer += decoder.decode(chunk.value, { stream: true });
-      const lines = buffer.split(/\r?\n/);
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.startsWith("data:")) continue;
-        const text = line.slice("data:".length).trim();
-        if (!text) continue;
-        let event: unknown;
-        try {
-          event = JSON.parse(text);
-          if (typeof event === "string") event = JSON.parse(event);
-        } catch {
-          continue;
-        }
-        const eventDirectory = isRecord(event) ? readString(readRecord(event, "location") ?? {}, "directory") : undefined;
-        if (directory && (!eventDirectory || normalizeDirectoryPath(directory) !== normalizeDirectoryPath(eventDirectory))) continue;
-        if (isRecord(event) && event.type === "session.forked") {
-          const sessionID = readSessionID(eventProperties(event));
-          if (!sessionID || discoveredForks.has(sessionID)) continue;
-          // Fork events contain ancestry, not a session. In particular their
-          // parentID must not turn the new root conversation into a task child.
-          const timeout = AbortSignal.timeout(2_000);
-          const lookupSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
-          let onAbort = () => {};
-          const aborted = new Promise<null>((resolve) => {
-            onAbort = () => resolve(null);
-            lookupSignal.addEventListener("abort", onAbort, { once: true });
-            if (lookupSignal.aborted) onAbort();
-          });
-          try {
-            // Desktop IPC may not cancel its transport; still bound SSE delay.
-            const info = await Promise.race([fetchSession(sessionID, lookupSignal), aborted]);
-            if (lookupSignal.aborted || !info || info.id !== sessionID || !info.directory) continue;
-            if (eventDirectory && normalizeDirectoryPath(info.directory) !== normalizeDirectoryPath(eventDirectory)) continue;
-            discoveredForks.add(sessionID);
-            yield { type: "session.created", properties: { info } };
-          } catch {
-            // Deleted sessions and unavailable lookups must not end the SSE
-            // stream. A replay or the normal list refresh can discover it later.
-          } finally {
-            lookupSignal.removeEventListener("abort", onAbort);
-          }
-          continue;
-        }
-        const translated = translateV2Event(event, state);
-        if (!translated) continue;
-        for (const item of translated) yield item;
-      }
+  const lookups = new Map<string, AbortController>();
+  const discoveries: Session[] = [];
+  const reads: ({ chunk: ReadableStreamReadResult<Uint8Array> } | { error: unknown })[] = [];
+  let reading = false;
+  let ended = !reader;
+  let stopped = false;
+  let wake: (() => void) | undefined;
+  const notify = () => { wake?.(); wake = undefined; };
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    signal?.removeEventListener("abort", stop);
+    for (const lookup of lookups.values()) lookup.abort();
+    lookups.clear();
+    discoveries.length = 0;
+    reads.length = 0;
+    void reader?.cancel().catch(() => {});
+    reader?.releaseLock();
+    notify();
+  };
+  signal?.addEventListener("abort", stop, { once: true });
+  if (signal?.aborted) stop();
+
+  const discover = async (sessionID: string, eventDirectory: string | undefined) => {
+    const lookup = new AbortController();
+    lookups.set(sessionID, lookup);
+    const timeout = setTimeout(() => lookup.abort(), 2_000);
+    let onAbort = () => {};
+    const aborted = new Promise<null>((resolve) => {
+      onAbort = () => resolve(null);
+      lookup.signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      // IPC may ignore cancellation; bound discovery without holding up SSE.
+      const info = await Promise.race([fetchSession(sessionID, lookup.signal), aborted]);
+      if (lookup.signal.aborted || !info || info.id !== sessionID || !info.directory) return;
+      if (eventDirectory && normalizeDirectoryPath(info.directory) !== normalizeDirectoryPath(eventDirectory)) return;
+      discoveredForks.add(sessionID);
+      discoveries.push(info);
+    } catch {
+      // A later replay can retry deleted sessions and unavailable lookups.
+    } finally {
+      clearTimeout(timeout);
+      lookup.signal.removeEventListener("abort", onAbort);
+      lookups.delete(sessionID);
+      notify();
     }
-  } finally {
-    reader.releaseLock();
-  }
+  };
+
+  let buffer = "";
+  const stream = (async function* (): AsyncGenerator<OpencodeEvent> {
+    try {
+      while (!stopped) {
+        const discovery = discoveries.shift();
+        if (discovery) { yield { type: "session.created", properties: { info: discovery } }; continue; }
+        const read = reads.shift();
+        if (!read) {
+          if (ended && lookups.size === 0) break;
+          if (!ended && !reading && reader) {
+            reading = true;
+            // One handler per read and one replaceable waiter, not a race that
+            // keeps attaching listeners to a held lookup on every SSE chunk.
+            void reader.read().then(
+              (chunk) => { if (!stopped) reads.push({ chunk }); notify(); },
+              (error: unknown) => { if (!stopped) reads.push({ error }); notify(); },
+            );
+          }
+          await new Promise<void>((resolve) => { wake = resolve; });
+          continue;
+        }
+        reading = false;
+        if ("error" in read) throw read.error;
+        const { chunk } = read;
+        if (chunk.done) { ended = true; continue; }
+        buffer += decoder.decode(chunk.value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (stopped) return;
+          if (!line.startsWith("data:")) continue;
+          const text = line.slice("data:".length).trim();
+          if (!text) continue;
+          let event: unknown;
+          try {
+            event = JSON.parse(text);
+            if (typeof event === "string") event = JSON.parse(event);
+          } catch {
+            continue;
+          }
+          const eventDirectory = isRecord(event) ? readString(readRecord(event, "location") ?? {}, "directory") : undefined;
+          if (directory && (!eventDirectory || normalizeDirectoryPath(directory) !== normalizeDirectoryPath(eventDirectory))) continue;
+          if (isRecord(event) && event.type === "session.forked") {
+            const sessionID = readSessionID(eventProperties(event));
+            if (!sessionID || discoveredForks.has(sessionID) || lookups.has(sessionID)) continue;
+            // Fork events contain ancestry, not a session. In particular their
+            // parentID must not turn the new root conversation into a task child.
+            void discover(sessionID, eventDirectory);
+            continue;
+          }
+          const translated = translateV2Event(event, state);
+          if (!translated) continue;
+          for (const item of translated) {
+            if (stopped) return;
+            if (item.type === "session.deleted") {
+              const sessionID = readString(item.properties, "sessionID");
+              if (sessionID) {
+                lookups.get(sessionID)?.abort();
+                // Neither a completed lookup nor a stale fork replay may
+                // recreate a session after its deletion has been emitted.
+                discoveredForks.add(sessionID);
+                const index = discoveries.findIndex((info) => info.id === sessionID);
+                if (index !== -1) discoveries.splice(index, 1);
+              }
+            }
+            yield item;
+          }
+        }
+      }
+    } finally {
+      stop();
+    }
+  })();
+  // Async-generator return normally queues behind next(), which may be waiting
+  // on a quiet SSE connection. Cancel first so it can enter its finally block.
+  const returnStream = stream.return.bind(stream);
+  stream.return = (value) => { stop(); return returnStream(value); };
+  return stream;
 }
 
 function createWebFetch(auth: { token?: string }): typeof globalThis.fetch {

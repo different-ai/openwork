@@ -160,6 +160,22 @@ function jsonResponse(value: unknown, status = 200): Response {
   });
 }
 
+function eventStream() {
+  let send = (..._events: unknown[]) => {};
+  let close = () => {};
+  let fail = (_error: Error) => {};
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      send = (...events) => controller.enqueue(new TextEncoder().encode(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")));
+      close = () => controller.close();
+      fail = (error) => controller.error(error);
+    },
+    cancel() { cancelled = true; },
+  });
+  return { response: new Response(body), send, close, fail, body, get cancelled() { return cancelled; } };
+}
+
 describe("OpenCode v2 event translation", () => {
   test("renders an admitted user message before execution using its persisted identity", () => {
     const state = createV2EventTranslationState();
@@ -1149,11 +1165,11 @@ describe("OpenCode v2 client compatibility", () => {
       const received = [];
       for await (const event of subscription.stream) received.push(event);
       expect(received).toHaveLength(2);
-      expect(received[0]).toEqual({ type: "session.created", properties: { info: {
+      expect(received.find((event) => event.type === "session.created")).toEqual({ type: "session.created", properties: { info: {
         id: info.id, title: info.title, slug: info.slug, projectID: info.projectID,
         directory: info.location.directory, version: info.version, time: info.time,
       } } });
-      expect(received[1]?.type).toBe("permission.asked");
+      expect(received[0]?.type).toBe("permission.asked");
       expect(requests.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
         ["GET", "/workspace/owned/opencode2/api/event"], ["GET", "/workspace/owned/opencode2/api/session/ses_fork"],
       ]);
@@ -1163,17 +1179,130 @@ describe("OpenCode v2 client compatibility", () => {
     } finally { globalThis.fetch = originalFetch; }
   });
 
+  test("held fork discovery does not block permission or text, wakes a waiting reader, and deduplicates replays", async () => {
+    const originalFetch = globalThis.fetch;
+    const source = eventStream();
+    const controller = new AbortController();
+    const lookup = Promise.withResolvers<Response>();
+    const requests: Request[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.endsWith("/api/event")) return source.response;
+      requests.push(request);
+      return lookup.promise;
+    };
+    try {
+      const subscription = await createClientV2("http://opencode.test/opencode2", "/workspace", {}).event.subscribe({}, { signal: controller.signal });
+      source.send(nativeForkEvent);
+      source.send(nativeForkEvent);
+      source.send(capturedPermissionAsked);
+      const started = Date.now();
+      expect((await subscription.stream.next()).value?.type).toBe("permission.asked");
+      const data = { sessionID: "ses_other", assistantMessageID: "msg_other", ordinal: 0 };
+      source.send({ type: "session.text.started", location: { directory: "/workspace" }, data });
+      expect((await subscription.stream.next()).value?.type).toBe("message.updated");
+      expect((await subscription.stream.next()).value?.type).toBe("message.part.updated");
+      for (let index = 0; index < 100; index += 1) {
+        source.send({ type: "session.text.delta", location: { directory: "/workspace" }, data: { ...data, delta: "text" } });
+        expect((await subscription.stream.next()).value).toMatchObject({
+          type: "message.part.delta", properties: { sessionID: "ses_other", delta: "text" },
+        });
+      }
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.signal.aborted).toBe(false);
+
+      const pending = subscription.stream.next();
+      await delay(0);
+      lookup.resolve(jsonResponse({ data: { id: "ses_fork", title: "Late fork", location: { directory: "/workspace" } } }));
+      expect((await pending).value).toMatchObject({
+        type: "session.created", properties: { info: { id: "ses_fork", title: "Late fork" } },
+      });
+      // Discovery must not discard the outstanding SSE read or refetch success.
+      source.send(nativeForkEvent);
+      source.send(capturedPermissionReplied);
+      expect((await subscription.stream.next()).value?.type).toBe("permission.replied");
+      expect(requests).toHaveLength(1);
+      await subscription.stream.return(undefined);
+      expect(source.cancelled).toBe(true);
+      expect(source.body.locked).toBe(false);
+    } finally {
+      controller.abort();
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test.each(["pending", "queued"])("deletion discards %s fork discovery without affecting another lookup", async (phase) => {
+    const originalFetch = globalThis.fetch;
+    const source = eventStream();
+    const controller = new AbortController();
+    const lookup = Promise.withResolvers<Response>();
+    const otherLookup = Promise.withResolvers<Response>();
+    const requests: Request[] = [];
+    const info = { id: "ses_fork", title: "Deleted fork", location: { directory: "/workspace" } };
+    const deleted = {
+      type: "session.deleted", location: { directory: "/workspace" },
+      data: phase === "pending" ? { sessionID: "ses_fork" } : { info: { id: "ses_fork" } },
+    };
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.endsWith("/api/event")) return source.response;
+      requests.push(request);
+      if (request.url.endsWith("/api/session/ses_fork")) return lookup.promise;
+      if (request.url.endsWith("/api/session/ses_other")) return otherLookup.promise;
+      throw new Error(`Unexpected request: ${request.url}`);
+    };
+    try {
+      const subscription = await createClientV2("http://opencode.test/opencode2", "/workspace", {}).event.subscribe({}, { signal: controller.signal });
+      // One SSE chunk lets lookup completion queue while parsing is paused at
+      // the permission yield, before the matching deletion is translated.
+      source.send(
+        nativeForkEvent,
+        { ...nativeForkEvent, data: { ...nativeForkEvent.data, sessionID: "ses_other" } },
+        { ...deleted, location: { directory: "/other" } },
+        { ...deleted, location: undefined },
+        capturedPermissionAsked, deleted, capturedPermissionReplied,
+      );
+      expect((await subscription.stream.next()).value?.type).toBe("permission.asked");
+      expect(requests).toHaveLength(2);
+      expect(requests.every((request) => !request.signal.aborted)).toBe(true);
+      if (phase === "queued") {
+        lookup.resolve(jsonResponse({ data: info }));
+        await delay(0);
+      }
+      expect((await subscription.stream.next()).value).toMatchObject({
+        type: "session.deleted", properties: { sessionID: "ses_fork" },
+      });
+      if (phase === "pending") expect(requests[0]?.signal.aborted).toBe(true);
+      expect(requests[1]?.signal.aborted).toBe(false);
+      expect((await subscription.stream.next()).value?.type).toBe("permission.replied");
+      // The deleted lookup's transport ignores cancellation and returns stale
+      // metadata; only the unrelated fork may still be discovered.
+      lookup.resolve(jsonResponse({ data: info }));
+      otherLookup.resolve(jsonResponse({ data: { ...info, id: "ses_other", title: "Kept fork" } }));
+      expect((await subscription.stream.next()).value).toMatchObject({
+        type: "session.created", properties: { info: { id: "ses_other", title: "Kept fork" } },
+      });
+      source.send(nativeForkEvent, capturedPermissionAsked);
+      expect((await subscription.stream.next()).value?.type).toBe("permission.asked");
+      expect(requests).toHaveLength(2);
+      source.close();
+      expect(await subscription.stream.next()).toEqual({ done: true, value: undefined });
+      expect(source.body.locked).toBe(false);
+    } finally { controller.abort(); globalThis.fetch = originalFetch; }
+  });
+
   test.each(["deleted", "unavailable", "network", "missing", "wrong-id", "foreign", "unscoped", "timeout"])(
     "skips a %s fork lookup, continues the stream, and allows recovery on replay", async (failure) => {
       const originalFetch = globalThis.fetch;
+      const source = eventStream();
+      const controller = new AbortController();
       let lookups = 0;
       let lookupSignal: AbortSignal | undefined;
       const info = { id: "ses_fork", title: "Recovered fork", location: { directory: "/workspace" }, time: { created: 100, updated: 200 } };
       globalThis.fetch = async (input, init) => {
         const request = input instanceof Request ? input : new Request(input, init);
-        if (request.url.endsWith("/api/event")) return new Response(
-          [nativeForkEvent, capturedPermissionAsked, nativeForkEvent].map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
-        );
+        if (request.url.endsWith("/api/event")) return source.response;
         lookups += 1;
         if (lookups > 1) return jsonResponse({ data: info });
         lookupSignal = request.signal;
@@ -1189,39 +1318,63 @@ describe("OpenCode v2 client compatibility", () => {
       };
       try {
         const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
-        const subscription = await client.event.subscribe();
+        const subscription = await client.event.subscribe({}, { signal: controller.signal });
+        source.send(nativeForkEvent);
+        source.send(capturedPermissionAsked);
         const started = Date.now();
         expect((await subscription.stream.next()).value?.type).toBe("permission.asked");
-        expect(Date.now() - started).toBeLessThan(3_000);
-        if (failure === "timeout") expect(lookupSignal?.aborted).toBe(true);
+        expect(Date.now() - started).toBeLessThan(1_000);
+        if (failure === "timeout") {
+          expect(lookupSignal?.aborted).toBe(false);
+          await new Promise<void>((resolve) => lookupSignal?.addEventListener("abort", () => resolve(), { once: true }));
+          expect(Date.now() - started).toBeLessThan(3_000);
+        }
+        // Replay after failure has settled, not while the first lookup is live.
+        await delay(0);
+        source.send(nativeForkEvent);
         expect((await subscription.stream.next()).value).toMatchObject({
           type: "session.created", properties: { info: { id: info.id, title: info.title } },
         });
+        source.close();
         expect(await subscription.stream.next()).toEqual({ done: true, value: undefined });
+        expect(source.body.locked).toBe(false);
         expect(lookups).toBe(2);
-      } finally { globalThis.fetch = originalFetch; }
+      } finally { controller.abort(); globalThis.fetch = originalFetch; }
     },
   );
 
-  test("aborting a subscription cancels its fork lookup without emitting a session", async () => {
+  test.each(["abort", "return", "read error"])("%s cleans up a waiting subscription and its fork lookup without emitting a session", async (action) => {
     const originalFetch = globalThis.fetch;
     const controller = new AbortController();
+    const source = eventStream();
     const dispatched = Promise.withResolvers<Request>();
+    const lookup = Promise.withResolvers<Response>();
     globalThis.fetch = async (input, init) => {
       const request = input instanceof Request ? input : new Request(input, init);
-      if (request.url.endsWith("/api/event")) return new Response(`data: ${JSON.stringify(nativeForkEvent)}\n\n`);
+      if (request.url.endsWith("/api/event")) return source.response;
       dispatched.resolve(request);
-      return new Promise<Response>((_resolve, reject) => {
-        request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
-      });
+      return lookup.promise;
     };
     try {
       const subscription = await createClientV2("http://opencode.test/opencode2", "/workspace", {}).event.subscribe({}, { signal: controller.signal });
+      source.send(nativeForkEvent);
       const pending = subscription.stream.next();
       const request = await dispatched.promise;
-      controller.abort();
-      expect(await pending).toEqual({ done: true, value: undefined });
+      await delay(0);
+      if (action === "read error") {
+        const error = new Error("SSE read failed");
+        source.fail(error);
+        await expect(pending).rejects.toBe(error);
+      } else {
+        if (action === "abort") controller.abort();
+        else expect(await subscription.stream.return(undefined)).toEqual({ done: true, value: undefined });
+        expect(await pending).toEqual({ done: true, value: undefined });
+      }
       expect(request.signal.aborted).toBe(true);
+      expect(source.cancelled).toBe(action !== "read error");
+      expect(source.body.locked).toBe(false);
+      lookup.resolve(jsonResponse({ data: { id: "ses_fork", location: { directory: "/workspace" } } }));
+      expect(await subscription.stream.next()).toEqual({ done: true, value: undefined });
     } finally { controller.abort(); globalThis.fetch = originalFetch; }
   });
 
