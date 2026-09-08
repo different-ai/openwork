@@ -15,6 +15,7 @@ import {
 } from "@openwork/behaviors";
 import {
   callFunctionOnSurface,
+  addInitScript,
   callFunction, connect, debuggerUrlFor, listTargets,
   clickAt,
   dumpScreenState,
@@ -469,7 +470,7 @@ export class SeedChannel implements Seed {
       const web = this.#runtime.stack.use(await chrome({
         name: "spec-web",
         host: this.#runtime.place.host(),
-        startUrl: options.den.ref.webUrl,
+        startUrl: options.signedInAs === undefined ? options.den.ref.webUrl : "about:blank",
         headless: options.headless,
       }));
       if (options.viewport) await setViewport(web, {
@@ -479,22 +480,15 @@ export class SeedChannel implements Seed {
       if (options.signedInAs !== undefined) {
         const session = sessionFromWebOptions(options);
         const denOrigin = new URL(options.den.ref.webUrl).origin;
-        let lastHref = "unobserved";
-        const waitForDen = () => eventually(async () => {
-          const observation = await evaluateOnSurface(web, browserScript((denOrigin) => (location.origin === denOrigin && document.readyState !== "loading" ? "" : location.href), [denOrigin]));
-          if (typeof observation === "string") lastHref = observation;
-          return observation === "";
-        }, { within: 30_000, intervalMs: 250, label: "Den origin document" });
-        try {
-          await waitForDen();
-        } catch {
-          await navigate(web.client, options.den.ref.webUrl);
-          await waitForDen().catch(() => { throw new Error(`Den origin document did not load; last observed location.href: ${lastHref}`); });
-        }
-        await callFunctionOnSurface(web, (token) => {
-          localStorage.setItem("openwork:web:auth-token", token);
-          return true;
-        }, [session.token]);
+        // Seed before hydration: a running anonymous page can otherwise clear the token.
+        await using initialSession = await addInitScript(web.client, browserScript((origin, token) => {
+          if (location.origin === origin) localStorage.setItem("openwork:web:auth-token", token);
+        }, [denOrigin, session.token]));
+        await navigate(web.client, new URL(options.startPath ?? "/", options.den.ref.webUrl).toString());
+        await eventually(() => evaluateOnSurface(web, browserScript((origin) =>
+          location.origin === origin && document.readyState !== "loading", [denOrigin])),
+        { within: 30_000, intervalMs: 250, label: "Seeded Den origin document" });
+        return web;
       }
       const startPath = options.startPath ?? "/";
       await navigate(web.client, new URL(startPath, options.den.ref.webUrl).toString());

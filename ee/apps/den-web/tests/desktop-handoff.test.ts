@@ -49,6 +49,7 @@ test("restores only fresh tab-scoped setup with a user and a known route", () =>
     { ...pending, at: Date.now() + 60_000 },
     { ...pending, setup: { organizationId: "org-1", route: "https://outside.test" } },
     { ...pending, desktopScheme: "openwork://" },
+    { ...pending, desktopScheme: "untrusted-app" },
     { ...pending, setup: { route: "/dashboard/onboarding" } },
   ]) expect(parseSetupContinuation(JSON.stringify(invalid))).toBeNull();
   expect(parseSetupContinuation("not json")).toBeNull();

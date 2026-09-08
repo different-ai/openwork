@@ -392,6 +392,8 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await mobileUser.looks(["The lower part of the narrow Tools screen shows readable tool cards and a clear Continue button without horizontal clipping"]);
     await mobileUser.click({ role: "button", label: "Continue" });
     await mobileUser.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    await mobileUser.reload();
+    await mobileUser.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
     await mobileUser.notSee({ testId: "download-openwork-card" });
     await mobileUser.notSee({ role: "button", label: "Email me the download link" });
     await mobileUser.see({ testId: "onboarding-choice-openwork-models" });
@@ -430,7 +432,7 @@ desktopTest("desktop-origin signup completes the questions before issuing a fres
     if (!isRecord(result.body) || !isRecord(result.body.inference)) throw new Error("Expected inference state");
     expect(result.body.inference.enabled).toBe(false);
   };
-  const desktopUrl = new URL("/?mode=sign-up&desktopAuth=1&desktopScheme=openwork&intent=models", world.den.ref.webUrl).toString();
+  const desktopUrl = new URL("/?mode=sign-up&desktopAuth=1&desktopScheme=untrusted-app&intent=models", world.den.ref.webUrl).toString();
   let orgId = "";
 
   await step("desktop signup starts full setup rather than returning immediately", async () => {
@@ -459,6 +461,15 @@ desktopTest("desktop-origin signup completes the questions before issuing a fres
     if (!isRecord(org) || typeof org.id !== "string") throw new Error("Expected created org");
     orgId = org.id;
     noHandoff();
+    for (const desktopScheme of ["untrusted-app", "https", "openwork-untrusted"]) {
+      const rejected = await seed.api(world.den.admin, "/v1/auth/desktop-handoff", {
+        method: "POST", body: JSON.stringify({ desktopScheme }),
+      });
+      expect(rejected.response.status).toBe(400);
+      expect(rejected.body).not.toHaveProperty("grant");
+      expect(rejected.body).not.toHaveProperty("openworkUrl");
+    }
+    evidence.recordAssertionEvidence("Untrusted desktop schemes cannot obtain a grant or return URL", "Direct authenticated grant requests for an arbitrary app, HTTPS, and an OpenWork lookalike scheme all returned 400 without a grant or URL. The browser also began with an untrusted scheme query parameter; normal completion below must still dispatch only to openwork.", true);
   });
 
   await step("resuming People and reloading Tools restore the setup org after a shared-session switch", async () => {

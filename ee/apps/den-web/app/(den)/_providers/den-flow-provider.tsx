@@ -1992,10 +1992,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     const stored = parseSetupContinuation(window.sessionStorage.getItem(SETUP_CONTINUATION_KEY));
-    const requestedScheme = params.get("desktopScheme")?.trim() ?? "";
     persistContinuation(params.get("desktopAuth") === "1"
       ? { userId: stored?.userId ?? null, setup: stored?.setup ?? null, at: Date.now(),
-          desktopScheme: /^[a-z][a-z0-9+.-]*$/i.test(requestedScheme) ? requestedScheme : "openwork" }
+          desktopScheme: "openwork" }
       : stored);
     setWebAuthRequested(params.get("webAuth") === "1");
     const requestedWebReturnUrl = params.get("webAuthReturn")?.trim() ?? "";

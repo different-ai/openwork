@@ -13,7 +13,7 @@ export function parseSetupContinuation(raw: string | null): SetupContinuation | 
     const value: unknown = JSON.parse(raw);
     if (typeof value !== "object" || value === null
       || !("userId" in value) || !(value.userId === null || typeof value.userId === "string")
-      || !("desktopScheme" in value) || !(value.desktopScheme === null || (typeof value.desktopScheme === "string" && /^[a-z][a-z0-9+.-]*$/i.test(value.desktopScheme)))
+      || !("desktopScheme" in value) || !(value.desktopScheme === null || value.desktopScheme === "openwork")
       || !("at" in value) || typeof value.at !== "number" || !Number.isFinite(value.at)
       || value.at > Date.now() || Date.now() - value.at > 24 * 60 * 60 * 1000
       || !("setup" in value)) return null;
