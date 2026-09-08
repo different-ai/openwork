@@ -22,6 +22,7 @@ export type NotificationKind =
   | "system";
 
 export type NotificationAction =
+  | { type: "open-settings"; panel: "updates"; workspaceId?: string }
   | { type: "open-model-picker"; providerIds: string[] }
   | { type: "reload-engine" }
   | { type: "open-extensions-marketplace"; pluginName?: string }
@@ -86,6 +87,11 @@ function isKind(value: unknown): value is NotificationKind {
 function isAction(value: unknown): value is NotificationAction {
   if (typeof value !== "object" || value === null) return false;
   const type = Reflect.get(value, "type");
+  if (type === "open-settings") {
+    const workspaceId = Reflect.get(value, "workspaceId");
+    return Reflect.get(value, "panel") === "updates"
+      && (workspaceId === undefined || (typeof workspaceId === "string" && workspaceId.trim().length > 0));
+  }
   if (type === "reload-engine") return true;
   if (type === "open-extensions-marketplace") return true;
   if (type === "install-marketplace-plugin") return true;
@@ -94,6 +100,10 @@ function isAction(value: unknown): value is NotificationAction {
     return Array.isArray(providerIds) && providerIds.every((id) => typeof id === "string");
   }
   return false;
+}
+
+export function notificationSettingsPath(action: Extract<NotificationAction, { type: "open-settings" }>) {
+  return `${action.workspaceId ? `/workspace/${encodeURIComponent(action.workspaceId)}` : ""}/settings/${action.panel}`;
 }
 
 /** Rebuild persisted entries defensively so corrupt storage never breaks boot. */

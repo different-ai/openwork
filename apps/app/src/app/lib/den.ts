@@ -1674,10 +1674,6 @@ export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
     return;
   }
 
-  if (readDenBootstrapConfig().installationRequiresSignin) {
-    void window.__OPENWORK_ELECTRON__?.invokeDesktop?.("installationSessionVerify", null).catch(() => undefined);
-  }
-
   if (import.meta.env.DEV) {
     warnOnUnexpectedActiveOrgDrop({
       previousActiveOrgId: readDenSettings().activeOrgId,

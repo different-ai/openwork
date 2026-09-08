@@ -5,6 +5,7 @@ import type { UIMessage } from "ai"
 import { act } from "react"
 import { createRoot } from "react-dom/client"
 import { renderToStaticMarkup } from "react-dom/server"
+import { unavailableDesktopFreeStatus } from "../src/app/lib/inference-access"
 
 import { MessageList } from "../src/components/chat/message-list"
 import { MessageListProvider } from "../src/components/chat/message-list-provider"
@@ -27,6 +28,21 @@ afterEach(() => {
 })
 
 describe("session error resilience", () => {
+  test("keeps late free Luna version failures typed and non-resumable without a false unsent promise", () => {
+    const status = { ...unavailableDesktopFreeStatus(), state: "update_required", code: "desktop_update_required", currentVersion: "1.0.0", minimumVersion: "1.0.1" }
+    const error = { name: "APIError", data: { statusCode: 426, providerID: "openwork-free", responseBody: JSON.stringify({ error: status }) } }
+    const presentation = presentOpencodeSessionError(error)
+    expect(presentation.kind).toBe("desktop-free-access")
+    expect(presentation.title).toBe("Update OpenWork to use free Luna")
+    expect(presentation.recoveryPrompt).toBeNull()
+    expect(presentation.description).not.toContain("Your message has not been sent")
+    expect(presentation.description).toContain("No message will be retried automatically")
+    expect(sessionErrorPresentationFromUIMessage(createSessionErrorUIMessage("turn", presentation))).toEqual(presentation)
+    expect(presentOpencodeSessionError(error, "Session failed", "openwork").desktopFree).toBeUndefined()
+    const capacity = presentOpencodeSessionError({ ...error, data: { ...error.data, statusCode: 423, responseBody: JSON.stringify({ error: { code: "anonymous_capacity_exceeded" } }) } })
+    expect(capacity.title).toBe("Free Luna temporarily unavailable")
+    expect(capacity.inference).toBeUndefined()
+  })
   test.each(["free_allowance_exhausted", "managed_model_requires_upgrade"])("recognizes structured 402 %s through engine wrappers without retry", (code) => {
     const error = { name: "APIError", data: { statusCode: 402, providerID: "openwork", responseBody: JSON.stringify({ error: { code, resetsAt: "2026-09-14T00:00:00Z" } }) } }
     for (const wrapped of [error, JSON.stringify(error), new Error(JSON.stringify(error)), { name: "UnknownError", data: { message: JSON.stringify(error) } }, { cause: error }]) {

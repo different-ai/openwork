@@ -17,21 +17,24 @@ function profile(t) {
   } };
 }
 
-test("only an exact legacy record permits optional sign-in", () => {
+test("old required or malformed cohorts no longer impose sign-in", () => {
   assert.equal(installationRequiresSignin('{"version":1,"cohort":"legacy"}'), false);
   for (const raw of ["", "{", "null", "[]", '{"version":2,"cohort":"legacy"}', '{"version":1,"cohort":"required"}', '{"requireSignin":false}', '{"version":1,"cohort":"legacy"} trailing']) {
-    assert.equal(installationRequiresSignin(raw), true, raw);
+    assert.equal(installationRequiresSignin(raw), false, raw);
   }
 });
 
-test("fresh installation stays required after workspace manufacture, restart, and retained-state reinstall", (t) => {
+test("fresh installation creates no cohort record and leaves a retained required record intact", (t) => {
   const input = profile(t);
-  assert.equal(initializeInstallationAccess(input), true);
+  assert.equal(initializeInstallationAccess(input), false);
+  assert.equal(existsSync(input.userDataPath), false);
+  mkdirSync(input.userDataPath);
   const marker = path.join(input.userDataPath, INSTALLATION_ACCESS_FILENAME);
-  const original = readFileSync(marker, "utf8");
+  const original = '{"version":1,"cohort":"required"}';
+  writeFileSync(marker, original);
   writeFileSync(path.join(input.userDataPath, "openwork-workspaces.json"), '{"workspaces":[]}');
   writeFileSync(input.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH, '{"baseUrl":"https://app.openworklabs.com","requireSignin":false}');
-  assert.equal(initializeInstallationAccess(input), true);
+  assert.equal(initializeInstallationAccess(input), false);
   assert.equal(readFileSync(marker, "utf8"), original);
 });
 
@@ -52,12 +55,12 @@ for (const evidence of ["empty-directory", "openwork-workspaces.json", "workspac
   });
 }
 
-test("corrupt marker fails closed without rewriting it or other profile data", (t) => {
+test("corrupt historical marker is ignored without rewriting it or other profile data", (t) => {
   const input = profile(t);
   mkdirSync(input.userDataPath);
   const marker = path.join(input.userDataPath, INSTALLATION_ACCESS_FILENAME);
   writeFileSync(marker, "{truncated");
-  assert.equal(initializeInstallationAccess(input), true);
+  assert.equal(initializeInstallationAccess(input), false);
   assert.equal(readFileSync(marker, "utf8"), "{truncated");
 });
 

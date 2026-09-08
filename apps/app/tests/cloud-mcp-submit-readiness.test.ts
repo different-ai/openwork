@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import type { ComposerSubmissionResult } from "../src/app/types";
+import { DESKTOP_FREE_LUNA_MODEL, preflightDesktopFreeSubmission, unavailableDesktopFreeStatus } from "../src/app/lib/inference-access";
+import type { DesktopFreeAccessStatus } from "@openwork/types/desktop-free-access";
 
 import type {
   OpenworkCloudMcpFailure,
@@ -16,6 +19,51 @@ import {
 } from "../src/react-app/domains/connections/cloud-mcp-submit-readiness";
 
 const PROVIDER_MODEL = { provider: "openwork", model: "gpt-5" };
+
+describe("desktop free composer preflight", () => {
+  test.each(["update_required", "unavailable", "exhausted"] as const)("blocks %s without inventing a Cloud MCP failure", async (state) => {
+    const status = { ...unavailableDesktopFreeStatus(), state };
+    let sends = 0;
+    let notices = 0;
+    const result: ComposerSubmissionResult | null = await preflightDesktopFreeSubmission({ model: DESKTOP_FREE_LUNA_MODEL,
+      client: { desktopFreePreflight: async () => status }, isCurrent: () => true, onBlocked: () => { notices++; } });
+    if (!result) sends++;
+    expect(result).toEqual({ outcome: "blocked", reason: "desktop-free-access", status });
+    expect(result && "issue" in result).toBe(false);
+    expect(sends).toBe(0);
+    expect(notices).toBe(1);
+  });
+
+  test("reads fresh for each send, bypasses paid/BYOK, and cancels stale identity or endpoint reads", async () => {
+    let reads = 0;
+    let current = true;
+    let settle: ((status: DesktopFreeAccessStatus) => void) | undefined;
+    const input = { model: DESKTOP_FREE_LUNA_MODEL,
+      client: { desktopFreePreflight: () => { reads++; return new Promise<DesktopFreeAccessStatus>((resolve) => { settle = resolve; }); } },
+      isCurrent: () => current, onBlocked: () => { throw new Error("Stale result must not notify"); } };
+    for (const providerID of ["openwork", "lpr_byok", "openai"]) {
+      expect(await preflightDesktopFreeSubmission({ ...input, model: { ...DESKTOP_FREE_LUNA_MODEL, providerID } })).toBeNull();
+    }
+    expect(reads).toBe(0);
+    const pending = preflightDesktopFreeSubmission(input);
+    current = false;
+    settle!({ ...unavailableDesktopFreeStatus(), state: "update_required" });
+    expect(await pending).toEqual({ outcome: "cancelled", reason: "context_changed" });
+    current = true;
+    for (let i = 0; i < 2; i++) {
+      const ready = preflightDesktopFreeSubmission(input);
+      settle!({ ...unavailableDesktopFreeStatus(), state: "ready", minimumVersion: "1.0.0" });
+      expect(await ready).toBeNull();
+    }
+    expect(reads).toBe(3);
+  });
+
+  test("network failure is unavailable, not an update instruction", async () => {
+    const result = await preflightDesktopFreeSubmission({ model: DESKTOP_FREE_LUNA_MODEL,
+      client: { desktopFreePreflight: async () => { throw new Error("offline"); } }, isCurrent: () => true, onBlocked: () => undefined });
+    expect(result).toEqual({ outcome: "blocked", reason: "desktop-free-access", status: unavailableDesktopFreeStatus() });
+  });
+});
 
 function failure(input?: Partial<OpenworkCloudMcpFailure>): OpenworkCloudMcpFailure {
   return {

@@ -19,7 +19,7 @@ import {
 import { useWorkspace } from "@/react-app/shell/workspace-provider";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
-import { InferenceAllowanceSummary, OwnProviderAction, useInferenceAccess } from "@/react-app/domains/cloud/inference-access-provider";
+import { DesktopFreeModelOffers, InferenceAllowanceSummary, OwnProviderAction, useInferenceAccess } from "@/react-app/domains/cloud/inference-access-provider";
 import { managedModelAccessLabel, managedModelRecommendation, managedModelRecommendations, markExplicitModelChoice, modelPickerView, modelSelectionUpgradeReason } from "@/app/lib/inference-access";
 import {
   OPENWORK_MODELS_PROVIDER_ID,
@@ -257,8 +257,8 @@ export function ModelSelect({
       value: behaviorValue,
       label: behaviorLabel,
       options: behaviorOptions,
-    }), { access: inference.access, signedIn: denAuth.isSignedIn, target: "session" }),
-    [behaviorLabel, behaviorOptions, behaviorValue, catalogOptions, value, inference.access, denAuth.isSignedIn],
+    }), { access: inference.access, signedIn: denAuth.isSignedIn, target: "session", desktopFree: inference.desktopFreeEnabled }),
+    [behaviorLabel, behaviorOptions, behaviorValue, catalogOptions, value, inference.access, inference.desktopFreeEnabled, denAuth.isSignedIn],
   );
   const selectedTitle = catalogOptions.find((option) => isSameModel(value, option))?.title ?? value.modelID;
   React.useEffect(() => {
@@ -435,7 +435,7 @@ export function ModelSelect({
         >
           <span className="flex min-w-0 max-w-56 items-center gap-1.5">
             <span className="truncate">
-              {hideValue || (!denAuth.isSignedIn && isCloudManagedProviderKey(value.providerID))
+              {hideValue || (managedOnly && !selectedOption) || (!denAuth.isSignedIn && isCloudManagedProviderKey(value.providerID))
                 ? "Select model"
                 : selectedTitle}
             </span>
@@ -508,7 +508,7 @@ export function ModelSelect({
                 <CommandInput ref={searchInputRef} placeholder="Search all models..." aria-label="Search all models" className="h-9 text-sm" />
                 {managedOnly ? <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">OpenWork models</p> : null}
               </CommandHeader>
-              <InferenceAllowanceSummary className="px-3 pb-2" available={catalogOptions.some((option) => option.providerID === "openwork")} />
+              <InferenceAllowanceSummary className="px-3 pb-2" available={inference.desktopFreeEnabled || catalogOptions.some((option) => option.providerID === "openwork")} />
               {openWorkModelsSyncing ? (
                 <div className="mx-1 mb-1 flex items-center gap-2 rounded-md border border-amber-6/60 bg-amber-2/40 px-2 py-1.5">
                   <ProviderIcon providerId={OPENWORK_MODELS_PROVIDER_ID} providerName={OPENWORK_MODELS_PROVIDER_NAME} className="size-3.5 shrink-0 text-amber-11" size={14} />
@@ -578,6 +578,7 @@ export function ModelSelect({
                     </CommandGroup>
                   )}
                 </CommandList>
+                <DesktopFreeModelOffers query={search} sessionId={sessionId} currentModel={value} onBeforeOpen={() => onOpenChange(false)} />
               </CommandPanel>
               {!hideValue && selectedOption && selectedThinkingOptions.length > 0 && onBehaviorChange ? <div className="border-t border-border px-2 py-1" data-testid="selected-model-detail">
                 <button type="button" aria-label={`Thinking and effort for ${selectedOption.title}`} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring" onClick={() => {

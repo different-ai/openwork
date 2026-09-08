@@ -1,6 +1,9 @@
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 
 import { markTaskRunStart } from "@/app/lib/analytics";
+import { desktopFreeStatusFromError, isDesktopFreeModel, preflightDesktopFreeSubmission } from "@/app/lib/inference-access";
+import { readDenSettings } from "@/app/lib/den";
+import { notifyDesktopFreeBlocked } from "@/react-app/shell/notifications";
 import { createClient } from "@/app/lib/opencode";
 import { shellInSession } from "@/app/lib/opencode-session";
 import { composeNativeSessionSnapshot } from "@/app/lib/opencode-session-native";
@@ -97,6 +100,22 @@ async function performQueuedDraftSend(
   const sessionModelSelection = getSessionModelSelection(sessionId);
   const sendModel = sessionModelSelection?.model ?? readStoredDefaultModelSafely() ?? context.model;
   const sendVariant = sessionModelSelection ? sessionModelSelection.variant : context.variant;
+  const identity = readDenSettings();
+  const isCurrent = () => {
+    const current = getQueuedSendContext(sessionId);
+    const settings = readDenSettings();
+    const selection = getSessionModelSelection(sessionId);
+    const model = selection?.model ?? readStoredDefaultModelSafely() ?? current?.model;
+    const variant = selection ? selection.variant : current?.variant;
+    return startRefs > 0 && Boolean(current && sameContext(context, current))
+      && identity.authToken === settings.authToken && identity.activeOrgId === settings.activeOrgId && identity.baseUrl === settings.baseUrl
+      && model?.providerID === sendModel?.providerID && model?.modelID === sendModel?.modelID && variant === sendVariant;
+  };
+  const blocked = await preflightDesktopFreeSubmission({
+    model: sendModel, client: context.client, isCurrent,
+    onBlocked: (status) => notifyDesktopFreeBlocked(status, context.workspaceId),
+  });
+  if (blocked) return blocked;
   const opencodeClient = createClient(
     context.opencodeBaseUrl,
     context.workspaceRoot || undefined,
@@ -113,6 +132,7 @@ async function performQueuedDraftSend(
       sessionID: sessionId,
       command: draft.command.name,
       arguments: draft.command.arguments,
+      ...(sendModel && isDesktopFreeModel(sendModel) ? { model: `${sendModel.providerID}/${sendModel.modelID}` } : {}),
     });
     if (result.error) throw new Error(serializeSDKError(result.error));
     return;
@@ -127,6 +147,7 @@ async function performQueuedDraftSend(
     cacheKey: sessionId,
     runtimeKey: context.environmentRuntimeKey,
   });
+  if (isDesktopFreeModel(sendModel) && !isCurrent()) return { outcome: "cancelled", reason: "context_changed" };
   const result = await opencodeClient.session.promptAsync({
     sessionID: sessionId,
     parts,
@@ -321,7 +342,13 @@ async function attemptDrain(sessionId: string) {
   useComposerStateStore.getState().removeQueuedDraft(sessionId, nextItem.id);
 
   try {
-    await performQueuedDraftSend(context, sessionId, draft);
+    const result = await performQueuedDraftSend(context, sessionId, draft);
+    if (result) {
+      // Both an access block and a context change need an explicit retry.
+      dispatchQueuedDrain(sessionId, { type: "desktop_free_blocked", itemId: nextItem.id });
+      useComposerStateStore.getState().prependQueuedDrafts(sessionId, [{ id: nextItem.id, draft }]);
+      return;
+    }
     dispatchQueuedDrain(sessionId, {
       type: "send_result",
       itemId: nextItem.id,
@@ -336,8 +363,15 @@ async function attemptDrain(sessionId: string) {
       { type: "busy" },
     );
     markTaskRunStart(sessionId);
-  } catch {
-    dispatchQueuedDrain(sessionId, { type: "send_error", itemId: nextItem.id });
+  } catch (error) {
+    const model = getSessionModelSelection(sessionId)?.model ?? readStoredDefaultModelSafely() ?? context.model;
+    const status = isDesktopFreeModel(model) ? desktopFreeStatusFromError(error) : null;
+    if (status) {
+      notifyDesktopFreeBlocked(status, context.workspaceId);
+      dispatchQueuedDrain(sessionId, { type: "desktop_free_blocked", itemId: nextItem.id });
+    } else {
+      dispatchQueuedDrain(sessionId, { type: "send_error", itemId: nextItem.id });
+    }
     useComposerStateStore.getState().prependQueuedDrafts(sessionId, [{ id: nextItem.id, draft }]);
   } finally {
     watched.sendInFlight = false;

@@ -7,6 +7,8 @@ import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
 import { observeModelsTaskEvent } from "@/app/lib/models-task-analytics";
 import { refreshInferenceAccess } from "@/app/lib/inference-access";
+import { notifyDesktopFreeBlocked } from "@/react-app/shell/notifications";
+import { dispatchQueuedDrain, getQueuedDrainState } from "../surface/queued-drain-machine";
 import { getSessionModelSelection } from "../surface/session-model-store";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
@@ -864,6 +866,11 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       const providerID = latestAssistantProvider(queryClient.getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? [])
         ?? getSessionModelSelection(sessionId)?.model.providerID;
       const errorPresentation = presentOpencodeSessionError(sessionError, "Session failed", providerID);
+      if (errorPresentation.desktopFree) {
+        const { phase } = getQueuedDrainState(sessionId);
+        dispatchQueuedDrain(sessionId, { type: "desktop_free_blocked", itemId: "itemId" in phase ? phase.itemId : sessionId });
+        notifyDesktopFreeBlocked(errorPresentation.desktopFree, workspaceId, false);
+      }
       const errorText = describeOpencodeSessionError(sessionError, "Session failed", providerID);
       refreshInferenceAccess();
       const runStartedAt = takeTaskRunStart(sessionId);

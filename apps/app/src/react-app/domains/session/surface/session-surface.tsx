@@ -24,6 +24,7 @@ import type {
 import type {
   ComposerAttachment,
   ComposerDraft,
+  ComposerSubmissionResult,
   ComposerPart,
   McpServerEntry,
   McpStatusMap,
@@ -42,7 +43,6 @@ import { isConnectDirectMcpServerName } from "@/react-app/domains/connections/cl
 import { attemptSilentMcpReauth } from "@/react-app/domains/connections/mcp-silent-reauth";
 import type {
   CloudMcpSubmissionGateState,
-  CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
 import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
@@ -76,8 +76,8 @@ import {
   resolveAdmissionOutcome,
 } from "./session-admission-outcome";
 import { describeOpencodeSessionError, interruptedTaskRecoveryPrompt, presentOpencodeSessionError } from "@/react-app/domains/session/sync/session-error";
-import { InferenceErrorActions } from "@/react-app/domains/cloud/inference-access-provider";
-import { refreshInferenceAccess } from "@/app/lib/inference-access";
+import { DesktopFreeErrorActions, InferenceErrorActions } from "@/react-app/domains/cloud/inference-access-provider";
+import { isDesktopFreeModel, refreshInferenceAccess } from "@/app/lib/inference-access";
 import { createSessionErrorUIMessage } from "@/react-app/domains/session/sync/usechat-adapter";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
@@ -573,7 +573,7 @@ export type SessionSurfaceProps = {
   onRefreshOrganizationModels?: () => void | Promise<void>;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef, variant?: string | null) => void;
-  onSendDraft: (draft: ComposerDraft, sessionId: string) => Promise<CloudMcpSubmissionResult>;
+  onSendDraft: (draft: ComposerDraft, sessionId: string) => Promise<ComposerSubmissionResult>;
   cloudMcpSubmissionState: CloudMcpSubmissionGateState;
   onOpenConnect: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
@@ -836,9 +836,10 @@ function parseSessionError(thrown: unknown): SessionError {
   return { message: raw || "Failed to send prompt." };
 }
 
-function SessionErrorCard({ error, sessionId, developerMode, onDismiss, onChangeModel, onOpenModelPicker }: {
+function SessionErrorCard({ error, sessionId, workspaceId, developerMode, onDismiss, onChangeModel, onOpenModelPicker }: {
   error: SessionError;
   sessionId: string;
+  workspaceId: string;
   developerMode: boolean;
   onDismiss: () => void;
   onChangeModel?: (model: { providerID: string; modelID: string }) => void;
@@ -855,6 +856,7 @@ function SessionErrorCard({ error, sessionId, developerMode, onDismiss, onChange
               <p className="mt-1 text-sm text-red-11">{presentation.description}</p>
             ) : null}
             {presentation.inference ? <InferenceErrorActions {...presentation.inference} sessionId={sessionId} onOpenModelPicker={onOpenModelPicker} /> : null}
+            {presentation.desktopFree ? <DesktopFreeErrorActions status={presentation.desktopFree} sessionId={sessionId} workspaceId={workspaceId} /> : null}
             {error.kind === "model-not-found" ? (
               <div className="mt-2 flex flex-wrap gap-2">
                 {error.suggestions && error.suggestions.length > 0 ? (
@@ -1129,7 +1131,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const sending = pendingSendSessions.includes(props.sessionId);
   const cloudQueueBlockedRef = useRef(false);
   const evalSnapshotFailureRef = useRef(false);
-  // Shared with promote-to-send so a manual send-now cannot race the idle drain.
+  // Local drain re-entry guard; the shared claim owns cross-surface exclusivity.
   const drainingQueueRef = useRef(false);
   // Admission-aware drain state. It lives in a module-level per-session store
   // (not a ref) so an in-flight admission survives navigating away and back.
@@ -1937,31 +1939,37 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // draft cannot be delivered twice.
   const [sendingQueued, setSendingQueued] = useState(false);
   const sendQueuedDraftNow = useCallback(async (id: string) => {
-    if (drainingQueueRef.current || sendingQueued) return;
-    const item = queuedItems.find((queued) => queued.id === id);
+    const item = getComposerQueuedDrafts(useComposerStateStore.getState(), props.sessionId).find((queued) => queued.id === id);
     const target = withoutRevertTarget(item?.draft ?? null);
     if (!item || !target) return;
+    if (!claimQueuedSend(props.sessionId, id, { manual: true })) return;
     setSendingQueued(true);
     removeQueuedDraftFromStore(props.sessionId, id);
     try {
       const result = await sendDraft(target);
       if (result.outcome === "blocked" || result.outcome === "cancelled") {
         prependQueuedDrafts(props.sessionId, [{ id: item.id, draft: target }]);
-        return;
       }
+      if ((result.outcome === "blocked" && "reason" in result && result.reason === "desktop-free-access")
+        || (result.outcome === "cancelled" && isDesktopFreeModel(sessionModel.selectedModel))) {
+        dispatchQueuedDrain(props.sessionId, { type: "desktop_free_blocked", itemId: item.id });
+      } else {
+        dispatchQueuedDrain(props.sessionId, { type: "send_result", itemId: item.id, outcome: result.outcome, at: Date.now() });
+      }
+      if (result.outcome === "blocked" || result.outcome === "cancelled") return;
       target.attachments.forEach(revokeAttachmentPreview);
     } catch {
       prependQueuedDrafts(props.sessionId, [{ id: item.id, draft: target }]);
+      dispatchQueuedDrain(props.sessionId, { type: "send_error", itemId: item.id });
     } finally {
       setSendingQueued(false);
     }
   }, [
     prependQueuedDrafts,
     props.sessionId,
-    queuedItems,
     removeQueuedDraftFromStore,
     sendDraft,
-    sendingQueued,
+    sessionModel.selectedModel,
   ]);
 
   const handleAbort = useCallback(async () => {
@@ -2082,9 +2090,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
           at: Date.now(),
         });
         if (result.outcome === "blocked") {
-          cloudQueueBlockedRef.current = true;
+          if ("reason" in result && result.reason === "desktop-free-access") {
+            dispatchQueuedDrain(props.sessionId, { type: "desktop_free_blocked", itemId: nextItem.id });
+          } else {
+            cloudQueueBlockedRef.current = true;
+          }
           prependQueuedDrafts(props.sessionId, [{ id: nextItem.id, draft: nextDraft }]);
         } else if (result.outcome === "cancelled") {
+          if (isDesktopFreeModel(sessionModel.selectedModel)) dispatchQueuedDrain(props.sessionId, { type: "desktop_free_blocked", itemId: nextItem.id });
           prependQueuedDrafts(props.sessionId, [{ id: nextItem.id, draft: nextDraft }]);
         } else {
           nextDraft.attachments.forEach(revokeAttachmentPreview);
@@ -2096,7 +2109,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         drainingQueueRef.current = false;
       }
     })();
-  }, [chatStreaming, cloudQueueRetryVersion, liveStatus.type, prependQueuedDrafts, props.sessionId, queuedDrainState, queuedItems, removeQueuedDraftFromStore, sendDraft, sendingQueued]);
+  }, [chatStreaming, cloudQueueRetryVersion, liveStatus.type, prependQueuedDrafts, props.sessionId, queuedDrainState, queuedItems, removeQueuedDraftFromStore, sendDraft, sendingQueued, sessionModel.selectedModel]);
 
   useEffect(() => {
     if (props.cloudMcpSubmissionState.status !== "failed") {
@@ -2769,6 +2782,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
             {error && snapshot && snapshot.messages.length > 0 ? (
               <SessionErrorCard
                 sessionId={props.sessionId}
+                workspaceId={props.workspaceId}
                 developerMode={props.developerMode}
                 error={error}
                 onDismiss={handleDismissError}
@@ -2787,6 +2801,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 {error ? (
                   <SessionErrorCard
                     sessionId={props.sessionId}
+                    workspaceId={props.workspaceId}
                     developerMode={props.developerMode}
                     error={error}
                     onDismiss={handleDismissError}
@@ -2808,6 +2823,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
             ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 && error ? (
               <SessionErrorCard
                 sessionId={props.sessionId}
+                workspaceId={props.workspaceId}
                 developerMode={props.developerMode}
                 error={error}
                 onDismiss={handleDismissError}

@@ -89,10 +89,8 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     readDenBootstrapSnapshot,
     readDenBootstrapSnapshot,
   );
-  const requireSignin = bootstrap.requireSignin || bootstrap.installationRequiresSignin === true;
-  const authenticated = bootstrap.installationRequiresSignin
-    ? denAuth.status === "signed_in"
-    : denAuth.isSignedIn;
+  const requireSignin = bootstrap.requireSignin;
+  const authenticated = denAuth.isSignedIn;
   const path = location.pathname.toLowerCase();
   const onSignin = path === "/signin" || path.startsWith("/signin/");
   const onOnboarding = path === "/onboarding" || path.startsWith("/onboarding/");
@@ -206,7 +204,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
           >
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">{t("den.cloud_unavailable_title")}</p>
-              <p className="text-xs text-muted-foreground">{t(bootstrap.installationRequiresSignin ? "den.installation_session_unverified" : "den.cloud_unavailable_body")}</p>
+              <p className="text-xs text-muted-foreground">{t("den.cloud_unavailable_body")}</p>
             </div>
             <Button
               type="button"

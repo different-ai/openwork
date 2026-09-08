@@ -51,7 +51,7 @@ export type QueuedDrainPhase =
   | { kind: "sending"; itemId: string; busySeen: boolean }
   | { kind: "awaiting_observation"; itemId: string; admittedAt: number }
   | { kind: "running"; itemId: string }
-  | { kind: "halted"; itemId: string; reason: "needs_input" | "terminal_failure" };
+  | { kind: "halted"; itemId: string; reason: "needs_input" | "terminal_failure" | "desktop-free-access" };
 
 export type QueuedItemResolution =
   | "admitted_running"
@@ -69,7 +69,8 @@ export type QueuedDrainState = {
 };
 
 export type QueuedDrainEvent =
-  | { type: "send_started"; itemId: string }
+  | { type: "desktop_free_blocked"; itemId: string }
+  | { type: "send_started"; itemId: string; manual?: boolean }
   | { type: "send_result"; itemId: string; outcome: "sent" | "accepted" | "blocked" | "cancelled"; at: number }
   | { type: "send_error"; itemId: string }
   | { type: "busy_observed" }
@@ -104,11 +105,13 @@ function resolved(
 export function reduceQueuedDrain(state: QueuedDrainState, event: QueuedDrainEvent): QueuedDrainState {
   const { phase } = state;
   switch (event.type) {
+    case "desktop_free_blocked":
+      return resolved(state, { kind: "halted", itemId: event.itemId, reason: "desktop-free-access" }, event.itemId, "needs_input");
     case "send_started": {
-      if (phase.kind !== "ready") return state;
-      const attempts = (state.attemptsByItemId[event.itemId] ?? 0) + 1;
+      if (phase.kind !== "ready" && (!event.manual || phase.kind === "sending")) return state;
+      const attempts = event.manual ? 1 : (state.attemptsByItemId[event.itemId] ?? 0) + 1;
       return {
-        phase: { kind: "sending", itemId: event.itemId, busySeen: false },
+        phase: { kind: "sending", itemId: event.itemId, busySeen: phase.kind === "running" },
         attemptsByItemId: { ...state.attemptsByItemId, [event.itemId]: attempts },
         lastResolution: state.lastResolution,
       };
@@ -249,12 +252,12 @@ export function dispatchQueuedDrain(sessionId: string, event: QueuedDrainEvent):
   return next;
 }
 
-/** Atomically claim the send slot for one queued item. Returns false when
- * another surface (for example a split view of the same session) already
- * holds a non-ready phase, so a queued item can never be sent twice. */
-export function claimQueuedSend(sessionId: string, itemId: string): boolean {
-  if (!canAdmitNextQueuedItem(getQueuedDrainState(sessionId))) return false;
-  const next = dispatchQueuedDrain(sessionId, { type: "send_started", itemId });
+/** Claim before notifying subscribers. Manual sends can retry a halt or steer
+ * an admitted run, but never steal an in-flight send or publish an interim ready. */
+export function claimQueuedSend(sessionId: string, itemId: string, options?: { manual?: boolean }): boolean {
+  const { phase } = getQueuedDrainState(sessionId);
+  if (phase.kind === "sending" || (phase.kind !== "ready" && !options?.manual)) return false;
+  const next = dispatchQueuedDrain(sessionId, { type: "send_started", itemId, manual: options?.manual });
   return next.phase.kind === "sending" && next.phase.itemId === itemId;
 }
 

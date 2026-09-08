@@ -7,7 +7,7 @@ import * as den from "../src/app/lib/den";
 import type { DenAuthStore } from "../src/react-app/domains/cloud/den-auth-provider";
 import { denSettingsChangedEvent } from "../src/app/lib/den-session-events";
 import { MODEL_PREF_KEY } from "../src/app/constants";
-import { explicitModelChoiceKey, FREE_LUNA_MODEL, markExplicitModelChoice, modelSelectionUpgradeReason, shouldSelectInitialLuna } from "../src/app/lib/inference-access";
+import { explicitModelChoiceKey, FREE_LUNA_MODEL, DESKTOP_FREE_LUNA_MODEL, markExplicitModelChoice, modelPickerView, modelSelectionUpgradeReason, shouldSelectInitialLuna, unavailableDesktopFreeStatus } from "../src/app/lib/inference-access";
 import { LOCAL_PREFERENCES_KEY } from "../src/react-app/kernel/local-preferences-storage";
 import { readModelPreferenceBeforeRepair, readStoredDefaultModel, writeStoredDefaultModel } from "../src/react-app/kernel/model-config";
 import { resolveEntitledOrgDefaultModel } from "../src/react-app/domains/connections/provider-auth/provider-policy";
@@ -33,6 +33,72 @@ const modelOption = (modelID: string, providerID = "openwork", title = modelID):
   behaviorTitle: "Effort", behaviorLabel: "Default", behaviorDescription: "", behaviorValue: null,
   behaviorOptions: [{ value: "low", label: "Low", description: "" }, { value: "high", label: "High", description: "" }],
   isFree: false,
+});
+
+test("anonymous picker uses the native Luna identity, keeps offers read-only, and discards stale endpoint status", async () => {
+  const utils = await import("../src/app/utils");
+  const promo = await import("../src/react-app/domains/cloud/openwork-models-promo");
+  const server = await import("../src/app/lib/openwork-server");
+  const settings = { ...den.readDenSettings(), baseUrl: den.HOSTED_DEFAULT_DEN_BASE_URL, activeOrgId: null, authToken: null };
+  const status = { ...unavailableDesktopFreeStatus(), state: "ready" as const, currentVersion: "1.0.1", minimumVersion: "1.0.1",
+    allowance: { limitUsd: 1, usedUsd: 0.1, reservedUsd: 0.1, remainingUsd: 0.8, resetsAt: "2026-09-14T00:00:00Z" },
+    catalog: [{ modelID: "fixture-paid", displayName: "Catalog offer", providerName: "Fixture", summary: "Read-only offer", capabilities: ["Reasoning"], recommended: true, rank: 1 }] };
+  const pending: Array<(value: typeof status) => void> = [];
+  const originalClient = server.createOpenworkServerClient({ baseUrl: "http://127.0.0.1:1" });
+  const spies = [
+    spyOn(utils, "isDesktopRuntime").mockReturnValue(true),
+    spyOn(promo, "useOpenWorkModelsPromoEligibility").mockReturnValue(true),
+    spyOn(den, "readDenSettings").mockImplementation(() => settings),
+    spyOn(auth, "useDenAuth").mockReturnValue({ status: "signed_out", user: null, verifiedIdentity: null, isSignedIn: false, error: null, refresh: async () => undefined }),
+    spyOn(desktopConfig, "useCheckDesktopRestriction").mockReturnValue(() => false),
+    spyOn(server, "createOpenworkServerClient").mockImplementation(() => ({ ...originalClient, desktopFreeStatus: () => new Promise((resolve) => pending.push(resolve)) })),
+  ];
+  const selected: ModelRef[] = [];
+  const opened: string[] = [];
+  const free = modelOption(DESKTOP_FREE_LUNA_MODEL.modelID, DESKTOP_FREE_LUNA_MODEL.providerID, "Free Luna");
+  const options = [free, modelOption(FREE_LUNA_MODEL.modelID), modelOption("fixture-paid"), modelOption("big-pickle", "opencode"), modelOption("own", "lpr_own")];
+  let inference: ReturnType<typeof useInferenceAccess> | undefined;
+  function Probe() {
+    inference = useInferenceAccess();
+    const [open, setOpen] = useState(true);
+    const [query, setQuery] = useState("");
+    return createElement(ModelPickerModal, { open, options, current: options[3], query, setQuery, target: "session", sessionId: "guest-task",
+      onSelect: (model) => selected.push(model), onClose: () => setOpen(false), onOpenSettings: () => undefined, onBehaviorChange: () => undefined });
+  }
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(createElement(PlatformProvider, { value: { ...createDefaultPlatform(), openLink: (url: string) => { opened.push(url); } }, children: createElement(InferenceAccessProvider, { children: createElement(Probe) }) })));
+    await act(async () => inference!.setDesktopFreeEndpointKey(JSON.stringify(["http://127.0.0.1:1", "fixture-a", "one"])));
+    await act(async () => inference!.setDesktopFreeEndpointKey(JSON.stringify(["http://127.0.0.1:2", "fixture-b", "two"])));
+    await act(async () => pending[0](status));
+    expect(inference!.desktopFree).toBeNull();
+    await act(async () => pending[1](status));
+    expect(inference!.desktopFree?.state).toBe("ready");
+    expect(document.querySelector('[data-testid="all-models-picker"]')?.getAttribute("data-model-scope")).toBe("openwork");
+    expect(document.querySelector('[data-testid="inference-allowance"]')?.textContent).toContain("USD 1 per week per installation");
+    expect(document.querySelector('[data-testid="inference-allowance"]')?.textContent).toContain("Estimated remaining");
+    expect(document.querySelector(`[data-testid="model-option-openwork-${FREE_LUNA_MODEL.modelID}"]`)).toBeNull();
+    expect(document.querySelector('[data-testid="model-option-opencode-big-pickle"]')).toBeNull();
+    expect(document.querySelector('[data-testid="model-option-openwork-fixture-paid"]')).toBeNull();
+    expect(document.querySelector('[data-testid="desktop-free-model-offers"] [aria-label*="favorites"]')).toBeNull();
+    expect(document.querySelector(`[data-testid="model-option-openwork-free-${FREE_LUNA_MODEL.modelID}"]`)).not.toBeNull();
+    await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="desktop-free-model-offers"] button')!.click(); });
+    expect(selected).toEqual([]);
+    expect(document.querySelector('[data-testid="inference-upgrade-dialog"]')?.textContent).toContain("Unlock Catalog offer");
+    await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="inference-signin-upgrade"]')!.click(); });
+    expect(opened).toEqual([promo.getOpenWorkModelsActionUrl(false)]);
+    await act(async () => inference!.setDesktopFreeEndpointKey(null));
+    expect(inference!.desktopFree).toBeNull();
+    expect(document.querySelector('[data-testid="inference-upgrade-dialog"]')).toBeNull();
+    expect(modelPickerView(options, { access: null, signedIn: false, target: "session", desktopFree: false }).options).toBe(options);
+    expect(modelPickerView(options, { access: null, signedIn: false, target: "default", desktopFree: true }).options.some((option) => option.providerID === "lpr_own")).toBe(true);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    for (const spy of spies) spy.mockRestore();
+  }
 });
 
 describe("model picker subtitle", () => {
@@ -172,7 +238,7 @@ test("member access ignores stale organization reads and opens upgrades only on 
     await act(async () => {
       expect(inference?.checkSelection({ providerID: "openwork", modelID: "openai/gpt-5.6-luna" })).toBe(false);
     });
-    expect(document.querySelector('[data-testid="inference-upgrade-dialog"]')?.textContent).toContain("Your free Luna allowance is used up");
+    expect(document.querySelector('[data-testid="inference-upgrade-dialog"]')?.textContent).toContain("Free Luna allowance reached");
     expect(document.querySelector('[data-testid="inference-upgrade-plan"]')?.textContent).toContain("Fixture plan · Server price");
     expect(document.querySelector('[data-testid="inference-upgrade-plan"]')?.textContent).toContain("Server usage limits");
     const upgrade = Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "View upgrade");
@@ -304,7 +370,7 @@ test("managed compact picker hides own models without changing stored choices an
     await click('[aria-label="Change model"]');
     expect(document.querySelector('[data-testid="managed-model-picker"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="managed-model-picker"]')?.getAttribute("data-model-scope")).toBe("openwork");
-    expect(document.querySelector('[aria-label="Change model"]')?.textContent).toContain("Big Pickle");
+    expect(document.querySelector('[aria-label="Change model"]')?.textContent).toContain("Select model");
     expect(document.querySelector('[data-testid="managed-model-picker"]')?.textContent).not.toContain("Big Pickle");
     expect(document.querySelector('[data-testid="managed-model-picker"]')?.textContent).not.toContain("My own model");
     expect(document.querySelector('[data-testid="selected-model-detail"]')).toBeNull();
@@ -527,7 +593,7 @@ describe("initial Luna and automatic organization default repair", () => {
   const pendingLuna = (access: InferenceAccess | null, variant: string | null = null) => {
     const original = readModelPreferenceBeforeRepair({ model: readStoredDefaultModel(), variant });
     return shouldSelectInitialLuna({
-      installationRequiresSignin: true, signedIn: true, access, modelAvailable: true,
+      eligible: access?.kind === "free", status: { ...unavailableDesktopFreeStatus(), state: "ready", minimumVersion: "1.0.0" }, modelAvailable: true,
       emptyFirstTask: true, setupComplete: false,
       explicitChoice: localStorage.getItem(explicitModelChoiceKey) !== null,
       currentModel: original.model, variant: original.variant,

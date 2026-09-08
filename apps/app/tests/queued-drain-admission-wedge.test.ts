@@ -24,6 +24,74 @@ import {
 
 const t0 = 1_000_000;
 
+test("desktop free blocks survive idle reconciliation and require explicit queue retry", () => {
+  const blocked = reduceQueuedDrain(INITIAL_QUEUED_DRAIN_STATE, { type: "desktop_free_blocked", itemId: "free-item" });
+  expect(blocked.phase).toEqual({ kind: "halted", itemId: "free-item", reason: "desktop-free-access" });
+  expect(canAdmitNextQueuedItem(blocked)).toBe(false);
+  expect(reduceQueuedDrain(blocked, { type: "idle_reconciled", observedAt: t0 })).toBe(blocked);
+  expect(reduceQueuedDrain(blocked, { type: "busy_observed" })).toBe(blocked);
+  expect(canAdmitNextQueuedItem(reduceQueuedDrain(blocked, { type: "user_retry" }))).toBe(true);
+});
+
+test.each(["first", "chosen"])("manual retry of %s claims before a synchronous drainer can submit", async (targetId) => {
+  resetQueuedDrainForTests();
+  const sessionId = "ses_manual_retry";
+  const queued = ["first", "chosen", "last"];
+  const uploads: string[] = [];
+  const submissions: string[] = [];
+  const observedPhases: string[] = [];
+  dispatchQueuedDrain(sessionId, { type: "desktop_free_blocked", itemId: targetId });
+  const unsubscribe = subscribeQueuedDrain(sessionId, () => {
+    observedPhases.push(getQueuedDrainState(sessionId).phase.kind);
+    const next = queued[0];
+    if (next && claimQueuedSend(sessionId, next)) {
+      queued.shift();
+      uploads.push(next);
+      submissions.push(next);
+    }
+  });
+  const sendNow = async (id: string) => {
+    const index = queued.indexOf(id);
+    if (index < 0 || !claimQueuedSend(sessionId, id, { manual: true })) return;
+    queued.splice(index, 1);
+    uploads.push(id);
+    await Promise.resolve();
+    submissions.push(id);
+    dispatchQueuedDrain(sessionId, { type: "send_result", itemId: id, outcome: "sent", at: t0 });
+  };
+  try {
+    const pending = sendNow(targetId);
+    expect(getQueuedDrainState(sessionId).phase).toEqual({ kind: "sending", itemId: targetId, busySeen: false });
+    expect(claimQueuedSend(sessionId, targetId, { manual: true })).toBe(false);
+    expect(claimQueuedSend(sessionId, "last", { manual: true })).toBe(false);
+    await Promise.all([pending, sendNow(targetId)]);
+    expect(uploads).toEqual([targetId]);
+    expect(submissions).toEqual([targetId]);
+    expect(queued).toEqual(["first", "chosen", "last"].filter((id) => id !== targetId));
+    expect(observedPhases).toEqual(["sending", "awaiting_observation"]);
+  } finally {
+    unsubscribe();
+    resetQueuedDrainForTests();
+  }
+});
+
+test("manual promotion still steers an admitted run without losing its busy observation", () => {
+  resetQueuedDrainForTests();
+  const sessionId = "ses_manual_steer";
+  try {
+    expect(claimQueuedSend(sessionId, "running-item")).toBe(true);
+    dispatchQueuedDrain(sessionId, { type: "send_result", itemId: "running-item", outcome: "sent", at: t0 });
+    dispatchQueuedDrain(sessionId, { type: "busy_observed" });
+    expect(claimQueuedSend(sessionId, "chosen", { manual: true })).toBe(true);
+    expect(getQueuedDrainState(sessionId).phase).toEqual({ kind: "sending", itemId: "chosen", busySeen: true });
+    dispatchQueuedDrain(sessionId, { type: "send_result", itemId: "chosen", outcome: "sent", at: t0 + 1 });
+    expect(getQueuedDrainState(sessionId).phase).toEqual({ kind: "running", itemId: "chosen" });
+    expect(claimQueuedSend(sessionId, "last")).toBe(false);
+  } finally {
+    resetQueuedDrainForTests();
+  }
+});
+
 function admit(state: QueuedDrainState, itemId: string, at: number): QueuedDrainState {
   const sending = reduceQueuedDrain(state, { type: "send_started", itemId });
   expect(sending.phase).toEqual({ kind: "sending", itemId, busySeen: false });

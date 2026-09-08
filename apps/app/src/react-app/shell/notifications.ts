@@ -10,9 +10,13 @@
 // Direct feedback for user actions (e.g. "skill installed") should keep using
 // `toast` from @/components/ui/sonner and stay out of the center.
 import { toast } from "@/components/ui/sonner";
+import type { DesktopFreeAccessStatus } from "@openwork/types/desktop-free-access";
+import { desktopFreeNotice } from "@/app/lib/inference-access";
 import { t } from "@/i18n";
 import {
   useNotificationStore,
+  notificationSettingsPath,
+  type NotificationAction,
   type NotificationInput,
 } from "@/react-app/kernel/notification-store";
 
@@ -60,6 +64,17 @@ export function drainPendingMarketplacePlugin(): string | null {
 
 export function notifyEvent(input: NotificationInput): void {
   useNotificationStore.getState().add(input);
+}
+
+export function notifyDesktopFreeBlocked(status: DesktopFreeAccessStatus, workspaceId?: string, beforeAcceptance = true) {
+  const notice = desktopFreeNotice(status, beforeAcceptance);
+  const action: NotificationAction | undefined = status.state === "update_required"
+    ? { type: "open-settings", panel: "updates", workspaceId } : undefined;
+  notifyEvent({ kind: status.state === "update_required" ? "update" : "system", severity: "warning", ...notice,
+    dedupeKey: `desktop-free-access:${workspaceId ?? ""}:${status.state}`, action, actionLabel: action ? "Update" : undefined });
+  // Direct submission feedback always shows the exact block, not a burst summary.
+  toast.warning(notice.title, { id: "desktop-free-access", description: notice.body,
+    action: action ? { label: "Update", onClick: () => { window.location.hash = notificationSettingsPath(action); } } : undefined });
 }
 
 const ALERT_TOAST_ID = "openwork-notification-alert";

@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import {
   useNotificationStore,
+  notificationSettingsPath,
   type AppNotification,
   type NotificationSeverity,
 } from "@/react-app/kernel/notification-store";
@@ -115,7 +116,9 @@ export function NotificationBell({ variant = "icon" }: { variant?: "icon" | "sid
       if (!action) return;
       setOpen(false);
       markAllRead();
-      if (action.type === "open-model-picker") {
+      if (action.type === "open-settings") {
+        navigate(notificationSettingsPath(action));
+      } else if (action.type === "open-model-picker") {
         requestOpenModelPicker(action.providerIds);
       } else if (action.type === "reload-engine") {
         void reloadCoordinator.reloadWorkspaceEngine();

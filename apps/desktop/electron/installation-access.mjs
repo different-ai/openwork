@@ -1,61 +1,13 @@
-import { lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import { desktopBootstrapPath, legacyDesktopBootstrapPath, openworkServerConfigPath } from "@openwork/paths";
-
 export const INSTALLATION_ACCESS_FILENAME = "installation-access.v1.json";
 
-/** Invalid existing records fail closed; never infer legacy from newly created state. */
-export function installationRequiresSignin(raw) {
-  try {
-    const record = JSON.parse(raw);
-    return !(record?.version === 1 && record.cohort === "legacy");
-  } catch {
-    return true;
-  }
+/** Historical cohort records no longer impose public-desktop sign-in policy. */
+export function installationRequiresSignin(_raw) {
+  return false;
 }
 
-function existed(filePath) {
-  try {
-    lstatSync(filePath);
-    return true;
-  } catch (error) {
-    if (error.code === "ENOENT") return false;
-    throw error; // An unreadable profile is not a positively fresh installation.
-  }
-}
-
-/** Call before Electron, migration, or runtime initialization can create profile evidence. */
-export function initializeInstallationAccess({ userDataPath, env, homeDir }) {
-  const marker = path.join(userDataPath, INSTALLATION_ACCESS_FILENAME);
-  if (existed(marker)) {
-    try { return installationRequiresSignin(readFileSync(marker, "utf8")); }
-    catch { return true; } // Preserve corrupt/unreadable bytes for recovery.
-  }
-  const options = { env, homeDir, userDataDir: userDataPath };
-  const serverEnv = env.OPENWORK_DEV_MODE === "1"
-    ? { ...env, HOME: path.join(userDataPath, "openwork-dev-data", "home") }
-    : env;
-  const serverPath = openworkServerConfigPath({ env: serverEnv });
-  const legacy = [
-    userDataPath, // Includes old empty profiles, Electron storage, and Tauri snapshots.
-    env.OPENWORK_DESKTOP_WORKSPACE_STATE_PATH,
-    env.OPENWORK_SERVER_TOKEN_STORE_PATH,
-    env.OPENWORK_TOKEN_STORE,
-    path.join(path.dirname(serverPath), "tokens.json"),
-    serverPath,
-    desktopBootstrapPath(options),
-    ...(!env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim() && env.OPENWORK_DEV_MODE !== "1"
-      ? [legacyDesktopBootstrapPath(options)] : []),
-  ].filter(Boolean).some(existed);
-  mkdirSync(userDataPath, { recursive: true });
-  try {
-    // Exclusive creation: no renderer setter and no later reclassification.
-    writeFileSync(marker, `${JSON.stringify({ version: 1, cohort: legacy ? "legacy" : "required" })}\n`, { flag: "wx", mode: 0o600 });
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-    return installationRequiresSignin(readFileSync(marker, "utf8"));
-  }
-  return !legacy;
+/** Kept inert for existing callers: no reading, deleting, or rewriting durable state. */
+export function initializeInstallationAccess(_options) {
+  return false;
 }
 
 function denHttpUrl(value) {

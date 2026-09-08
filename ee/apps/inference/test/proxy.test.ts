@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { test } from "node:test"
 import { Hono } from "hono"
 import type { InferenceHandledErrorReport, InferenceReporter, InferenceRequestReport } from "../src/inference-reporting.js"
@@ -33,6 +34,7 @@ type CapturedReports = {
 }
 
 type TestServerOptions = {
+  requireDesktopFree?: typeof import("../src/desktop-free-access.js").requireMemberFreeDesktop
   settleFreeInference?: typeof import("../src/free-allowance.js").settleFreeInference
   accessMode?: ReturnType<typeof inferenceAccessMode>
   missingUser?: boolean
@@ -192,10 +194,33 @@ function createTestServer(options: TestServerOptions = {}) {
     freeUpstreamApiKey: "free-provider-key",
     reserveFreeInference: options.reserveFreeInference,
     settleFreeInference: options.settleFreeInference,
+    // These existing tests isolate member accounting; desktop admission has
+    // separate cryptographic tests, plus the real missing-proof guard below.
+    requireDesktopFree: options.requireDesktopFree ?? (async () => null),
   })
 
   return { app, upstreamRequests, calls, reports }
 }
+
+test("member-free bearer alone cannot discover or spend, while paid remains independent", async () => {
+  const { requireMemberFreeDesktop } = await import("../src/desktop-free-access.js")
+  let reservations = 0
+  const free = createTestServer({
+    accessMode: "free", requireDesktopFree: requireMemberFreeDesktop,
+    reserveFreeInference: async () => { reservations++; throw new Error("must not reserve") },
+  })
+  const models = await free.app.fetch(inferenceRequest({ path: "/api/v1/models", method: "GET", headers: authHeaders() }))
+  assert.equal(models.status, 401)
+  const chat = await free.app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, messages: [{ role: "user", content: "hi" }] }) }))
+  assert.equal(chat.status, 401)
+  assert.equal(reservations, 0)
+  assert.equal(free.upstreamRequests.length, 0)
+  assert.equal(free.calls.getOpenRouterProviderKey, 0)
+  assert.equal(free.calls.ensureUsableBuckets, 0)
+  const paid = createTestServer({ requireDesktopFree: async () => { throw new Error("paid must not enter desktop gate") } })
+  assert.equal((await paid.app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, messages: [] }) }))).status, 200)
+  assert.equal(paid.upstreamRequests.length, 1)
+})
 
 test("analytics storage failures preserve exact streamed bytes and upstream status", async () => {
   const { observeModelResponse } = await import("../src/task-analytics.js")
@@ -1146,7 +1171,7 @@ test("raw request limits count actual UTF-8 bytes regardless of content-length, 
   const text = JSON.stringify({ ...lunaBody, messages: [{ role: "user", content: "\u{1f680}\u00e9" }] })
   const bytes = new TextEncoder().encode(text)
   const request = new Request("https://inference.invalid", { method: "POST", body: new ReadableStream({ start(controller) { for (const byte of bytes) controller.enqueue(new Uint8Array([byte])); controller.close() } }), duplex: "half" })
-  assert.deepEqual(await readFreeRequest(request), { ok: true, value: JSON.parse(text) })
+  assert.deepEqual(await readFreeRequest(request), { ok: true, value: JSON.parse(text), bodyHash: createHash("sha256").update(text).digest("hex") })
   const tooLarge = new Request("https://inference.invalid", { method: "POST", headers: { "content-length": "1" }, body: " ".repeat(FREE_REQUEST_MAX_BYTES + 1) })
   const result = await readFreeRequest(tooLarge)
   assert.equal(result.ok, false)

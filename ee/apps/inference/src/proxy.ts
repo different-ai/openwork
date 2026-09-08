@@ -19,6 +19,8 @@ import { prepareFreeRequest, readFreeRequest } from "./free-request.js"
 import type { FreeRequestPricing } from "./free-request.js"
 import type { reserveFreeInference, settleFreeInference } from "./free-allowance.js"
 import { meterFreeResponse } from "./free-response.js"
+import { requireMemberFreeDesktop } from "./desktop-free-access.js"
+import { desktopFreeHash } from "./desktop-free-proof.js"
 
 type JsonObject = Record<string, unknown>
 type PreparedBody = {
@@ -85,6 +87,7 @@ type ProxyDependencies = {
   freeUpstreamApiKey?: string
   reserveFreeInference?: typeof reserveFreeInference
   settleFreeInference?: typeof settleFreeInference
+  requireDesktopFree?: typeof requireMemberFreeDesktop
 }
 
 function readInferenceBearerKey(request: Request) {
@@ -548,6 +551,18 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     if (!inferenceKey) {
       logProxyError("Invalid inference API key", { path: c.req.path, method: c.req.method })
       return c.json({ error: { message: "Invalid OpenWork inference API key.", type: "authentication_error", code: "invalid_api_key" } }, 401)
+    }
+
+    if (inferenceKey.accessMode === "free") {
+      let bodyHash = desktopFreeHash("")
+      if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+        const parsed = await readFreeRequest(c.req.raw.clone())
+        if (!parsed.ok) return freeError(parsed.status, parsed.code, parsed.message,
+          freeInferenceAccess({ config: dependencies.freeConfig ?? env.freeInference, mode: inferenceKey.accessMode }))
+        bodyHash = parsed.bodyHash
+      }
+      const blocked = await (dependencies.requireDesktopFree ?? requireMemberFreeDesktop)(c, bodyHash)
+      if (blocked) return blocked
     }
 
     if (c.req.path === modelsPath && c.req.method === "GET") {
