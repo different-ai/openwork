@@ -1596,13 +1596,6 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
         )
         })}
 
-        {noNewActivity ? (
-          <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-1 px-2 md:px-10">
-            <div data-loading-message="no-new-activity" role="status" className="text-sm text-amber-11">No new activity</div>
-            <p className="text-xs text-muted-foreground">No new progress has been received for over a minute. The task may still be running.</p>
-            {baseUrl ? <button type="button" className="text-xs underline underline-offset-2" onClick={() => void revalidateWorkspaceSessionSync({ workspaceId, baseUrl })}>Check activity</button> : null}
-          </Message>
-        ) : null}
         {showLoading && <LoadingMessage elapsedSeconds={runElapsedSeconds} />}
         {showReconnecting && <ReconnectingMessage lastConfirmedAt={syncHealth?.lastConfirmedAt ?? null} />}
         {retryStatus ? <RetryMessage status={retryStatus} /> : null}
