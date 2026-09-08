@@ -24,16 +24,17 @@ import {
   type GrantedConsentMap,
 } from "./granted-dashboard-store";
 import { McpAppTile, type DashboardLaunchEndpoint } from "./mcp-app-tile";
+import { DashboardApps, type CreateDashboardApp } from "./dashboard-apps";
 
 /**
- * A read-only Desktop projection of the dashboards the signed-in member's
- * organization granted them. Dashboard authoring and app selection belong to
- * Den; Desktop only renders the resulting tiles and stores per-user consent.
+ * Personal apps alongside the dashboards shared by the organization.
+ * Company definitions stay in Den; personal placement belongs to each member.
  */
-export function DashboardPage({ fallbackEndpoints }: {
+export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
+  onCreateApp: CreateDashboardApp;
   /** Other workspace MCP runtimes tiles may launch through when the primary one lacks their server. */
   fallbackEndpoints?: DashboardLaunchEndpoint[];
-} = {}) {
+}) {
   const denAuth = useDenAuth();
   // The active org lives in den settings, which change outside React; track
   // them through the settings-changed event so an org switch swaps the board
@@ -94,11 +95,13 @@ export function DashboardPage({ fallbackEndpoints }: {
       grantedDashboards={grantedReady ? grantedQuery.data ?? [] : []}
       grantedError={grantedReady && grantedQuery.error ? true : false}
       fallbackEndpoints={fallbackEndpoints}
+      onCreateApp={onCreateApp}
     />
   );
 }
 
-function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, grantedError, fallbackEndpoints }: {
+function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, grantedError, fallbackEndpoints, onCreateApp }: {
+  onCreateApp: CreateDashboardApp;
   consentScopeKey: string;
   cacheScopeKey: string;
   /** Organization-managed dashboards granted to this member, rendered read-only. */
@@ -125,9 +128,7 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
       data-dashboard-cache-scope={cacheScopeKey}
       data-dashboard-consent-scope={consentScopeKey}
     >
-      <p className="mb-4 text-sm text-muted-foreground">
-        MCP app dashboards assigned to you by your organization.
-      </p>
+      <DashboardApps key={consentScopeKey} onCreateApp={onCreateApp} />
       {grantedError ? (
         <p className="mb-4 text-xs text-muted-foreground" role="status">
           Your organization&apos;s dashboards could not be loaded right now.
@@ -137,12 +138,12 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
         <section key={dashboard.id} className="mb-6" data-granted-dashboard={dashboard.id}>
           <header className="mb-2 flex items-baseline gap-2">
             <h2 className="text-sm font-medium">{dashboard.name}</h2>
-            <span className="text-xs text-muted-foreground">Managed by your organization</span>
+            <span className="text-xs text-muted-foreground">From your company</span>
           </header>
           {dashboard.elements.length === 0 ? (
             <p className="text-xs text-muted-foreground">This dashboard has no apps yet.</p>
           ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-4">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,320px),1fr))] gap-4">
               {dashboard.elements.map((element) => {
                 const id = grantedEntryId(dashboard.id, element);
                 return (
@@ -165,9 +166,9 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
         <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon"><Blocks /></EmptyMedia>
-            <EmptyTitle>No dashboards assigned</EmptyTitle>
+            <EmptyTitle>No company apps yet</EmptyTitle>
             <EmptyDescription>
-              Organization admins create dashboards and assign MCP apps in OpenWork.
+              Apps shared by your company will appear here.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

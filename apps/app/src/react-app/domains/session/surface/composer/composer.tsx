@@ -117,6 +117,7 @@ type ComposerProps = {
   /** Render inline in a page (new-task hero): no sticky dock chrome or inner max-width, aligning with sibling content. */
   flush?: boolean;
   topAccessory?: ReactNode;
+  runModeControl?: ReactNode;
 };
 
 const FLUSH_PROMPT_EVENT = "openwork:flushPromptDraft";
@@ -1650,6 +1651,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     document.body,
                   ) : null}
                 </div>
+                {props.runModeControl}
                 <button
                   type="button"
                   className={`inline-flex h-9 max-h-9 w-9 shrink-0 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-3 ${

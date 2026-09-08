@@ -22,9 +22,10 @@ import {
   type OpenworkServerInfo,
   type WorkspaceList,
 } from "@/app/lib/desktop";
-import { createClient } from "@/app/lib/opencode";
+import { createClient, unwrap } from "@/app/lib/opencode";
+import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
 import { getNativeSession } from "@/app/lib/opencode-session-native";
-import { createOpenworkServerClient, type OpenworkServerClient } from "@/app/lib/openwork-server";
+import { createOpenworkServerClient, OpenworkServerError, type OpenworkServerClient } from "@/app/lib/openwork-server";
 import { readDenBootstrapConfig } from "@/app/lib/den";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
@@ -66,6 +67,7 @@ import {
   stabilizeRouteWorkspaceOrder,
   type RouteSession,
   type RouteWorkspace,
+  v2RouteSessionList,
 } from "./route-workspaces";
 import {
   readActiveWorkspaceId,
@@ -87,7 +89,7 @@ import {
 
 export type UseWorkspaceRouteStateInput = {
   developerMode: boolean;
-  workspaceRoute?: "session" | "automations" | "dashboard";
+  workspaceRoute?: "session" | "automations" | "dashboard" | "apps";
   /** Invoked when the openwork-server settings-changed event fires (the route bumps its settings version). */
   onServerSettingsChanged: () => void;
   /** Receives the local openwork-server host info discovered during refresh. */
@@ -163,6 +165,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       navigate(automationsRoute(), options);
       return;
     }
+    if (workspaceRoute === "apps") {
+      if (/^(?:\/apps|\/dashboard\/apps)(?:\/|$)/.test(location.pathname)) return;
+      navigate("/apps", options);
+      return;
+    }
     if (workspaceRoute === "dashboard") {
       if (/^\/dashboard(?:\/|$)/.test(location.pathname)) return;
       navigate(dashboardRoute(), options);
@@ -180,6 +187,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const [client, setClient] = useState<OpenworkServerClient | null>(null);
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
+  const [engineV2ChatRouting, setEngineV2ChatRouting] = useState(false);
+  const [engineRoutingReady, setEngineRoutingReady] = useState(false);
+  const engineV2ChatRoutingRef = useRef(engineV2ChatRouting);
+  engineV2ChatRoutingRef.current = engineV2ChatRouting;
+  const previousEngineV2ChatRoutingRef = useRef<boolean | null>(null);
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
   const [workspaceOrderIds, setWorkspaceOrderIds] = useState<string[]>(() => readWorkspaceOrderIds());
   const [sessionsByWorkspaceId, setSessionsByWorkspaceId] = useState<Record<string, RouteSession[]>>({});
@@ -341,7 +353,10 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           }));
         }
         try {
-          const fetchedItems = await listRouteSessions(endpoint);
+          // The sidebar lists from whichever engine chat is routed to.
+          const fetchedItems = workspace.workspaceType !== "remote" && engineV2ChatRoutingRef.current
+            ? await listRouteSessions(endpoint, v2RouteSessionList)
+            : await listRouteSessions(endpoint);
           const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
           const items = workspaceRoot && !isRemoteOpenworkWorkspace
             ? fetchedItems.filter((session) =>
@@ -740,6 +755,8 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   }, [selectedWorkspaceId]);
   const handleRuntimeSessionCreated = useCallback((session: Session) => {
     if (!selectedWorkspaceId) return;
+    const workspace = workspacesRef.current.find((item) => item.id === selectedWorkspaceId);
+    if (workspace?.path && normalizeDirectoryPath(session.directory) !== normalizeDirectoryPath(workspace.path)) return;
     rememberPendingCreatedSession(selectedWorkspaceId, session.id);
     setSessionsByWorkspaceId((current) => {
       const list = current[selectedWorkspaceId] ?? [];
@@ -997,7 +1014,49 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   // local workspaces it's the user's local OpenWork server.
   const selectedWorkspaceEndpoint = useWorkspaceServerClient(selectedWorkspace, { baseUrl, token });
   const selectedWorkspaceServerToken = selectedWorkspaceEndpoint?.token ?? "";
-  const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
+  const defaultOpencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
+  const opencode2BaseUrl = selectedWorkspaceEndpoint ? `${selectedWorkspaceEndpoint.mountedBaseUrl}/opencode2` : "";
+  const routingServerUrl = selectedWorkspaceEndpoint?.baseUrl ?? "";
+  const routingServerToken = selectedWorkspaceEndpoint?.token ?? "";
+  useEffect(() => {
+    if (!routingServerUrl || !routingServerToken) {
+      setEngineV2ChatRouting(false);
+      return;
+    }
+    const openworkClient = createOpenworkServerClient({ baseUrl: routingServerUrl, token: routingServerToken });
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const status = await openworkClient.getEngineV2PreviewStatus();
+        if (!cancelled) {
+          setEngineV2ChatRouting(status.enabled && status.chatRouting);
+          setEngineRoutingReady(true);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        // Older servers do not expose the preview endpoint and use v1.
+        if (error instanceof OpenworkServerError && error.status === 404) setEngineRoutingReady(true);
+        console.warn("[opencode-v2] failed to read chat routing status; retaining the current engine", error);
+      }
+    };
+    setEngineV2ChatRouting(false);
+    setEngineRoutingReady(false);
+    void refresh();
+    window.addEventListener("openwork-server-settings-changed", refresh);
+    const interval = window.setInterval(() => { void refresh(); }, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener("openwork-server-settings-changed", refresh);
+    };
+  }, [routingServerUrl, routingServerToken]);
+  useEffect(() => {
+    const previous = previousEngineV2ChatRoutingRef.current;
+    previousEngineV2ChatRoutingRef.current = engineV2ChatRouting;
+    if (previous === null || previous === engineV2ChatRouting || !selectedWorkspaceId) return;
+    void reloadWorkspaceSessions(selectedWorkspaceId);
+  }, [engineV2ChatRouting, reloadWorkspaceSessions, selectedWorkspaceId]);
+  const opencodeBaseUrl = engineV2ChatRouting ? opencode2BaseUrl : defaultOpencodeBaseUrl;
   const selectedWorkspaceError = errorsByWorkspaceId[selectedWorkspaceId] ?? null;
   const selectedSessionKnown = Boolean(
     selectedSessionId &&
@@ -1011,6 +1070,8 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         selectedWorkspaceEndpoint.workspaceId,
         selectedWorkspaceEndpoint.token,
         routeRefreshVersion,
+        engineV2ChatRouting,
+        engineRoutingReady,
       ])
     : "";
   const modernRouteSessionLoadPending = Boolean(
@@ -1042,7 +1103,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     });
   }, [selectedSessionId, selectedWorkspaceId]);
   useEffect(() => {
-    if (!modernRouteSessionLoadKey || !selectedWorkspaceEndpoint || !selectedSessionId) {
+    if (!engineRoutingReady || !modernRouteSessionLoadKey || !selectedWorkspaceEndpoint || !selectedSessionId) {
       setModernRouteSessionResolution(null);
       return;
     }
@@ -1058,7 +1119,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         if (cancelled) return;
         try {
-          const session = await getNativeSession(selectedWorkspaceEndpoint, selectedSessionId);
+          const session = engineV2ChatRouting
+            ? unwrap(await createClientV2(opencode2BaseUrl, selectedWorkspaceRoot || undefined, {
+                token: selectedWorkspaceServerToken,
+              }).session.get({ sessionID: selectedSessionId }))
+            : await getNativeSession(selectedWorkspaceEndpoint, selectedSessionId);
           if (cancelled) return;
           if (session.id !== selectedSessionId) {
             setModernRouteSessionResolution({
@@ -1126,13 +1191,17 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
 
   const opencodeClient = useMemo(
     () =>
-      opencodeBaseUrl && selectedWorkspaceServerToken && !selectedWorkspaceError
-        ? createClient(opencodeBaseUrl, selectedWorkspaceRoot || undefined, {
-            token: selectedWorkspaceServerToken,
-            mode: "openwork",
-          })
+      engineRoutingReady && opencodeBaseUrl && selectedWorkspaceServerToken && !selectedWorkspaceError
+        ? engineV2ChatRouting
+          ? createClientV2(opencodeBaseUrl, selectedWorkspaceRoot || undefined, {
+              token: selectedWorkspaceServerToken,
+            })
+          : createClient(opencodeBaseUrl, selectedWorkspaceRoot || undefined, {
+              token: selectedWorkspaceServerToken,
+              mode: "openwork",
+            })
         : null,
-    [opencodeBaseUrl, selectedWorkspaceError, selectedWorkspaceRoot, selectedWorkspaceServerToken],
+    [engineRoutingReady, engineV2ChatRouting, opencodeBaseUrl, selectedWorkspaceError, selectedWorkspaceRoot, selectedWorkspaceServerToken],
   );
   useEffect(() => {
     if (!developerMode || !opencodeClient) return;

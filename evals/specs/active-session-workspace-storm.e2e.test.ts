@@ -1,13 +1,16 @@
+import { browserScript } from "@openwork/testkit";
 import { readFile } from "node:fs/promises";
 import { expect } from "vitest";
 import {
   control,
+  engineSessionProbe,
   evalIn,
   go,
   selectModel,
   waitFor,
   writeComposerText,
 } from "@openwork/behaviors";
+import { resolveEvalEngine } from "@openwork/env";
 import { screenshot, validate } from "@openwork/test-evidence";
 import {
   app,
@@ -28,6 +31,8 @@ import type { App } from "@openwork/testkit";
 const providerId = "active-session-storm-mock";
 const modelId = "mock-agent-workload-model";
 const modelName = "Active session storm model";
+const evalEngine = resolveEvalEngine();
+const shellToolName = evalEngine === "v2" ? "shell" : "bash";
 const workspaceCount = 3;
 const e2eTestsEnabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const daytonaEnabled = process.env.OPENWORK_EVAL_DAYTONA === "1";
@@ -127,31 +132,6 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
-function parseSessionFacts(value: unknown): SessionFacts {
-  if (!isRecord(value) || typeof value.ok !== "boolean" || typeof value.status !== "number") {
-    throw new Error(`Invalid session facts: ${JSON.stringify(value)}`);
-  }
-  const tools: ToolFact[] = [];
-  if (Array.isArray(value.tools)) {
-    for (const candidate of value.tools) {
-      if (!isRecord(candidate) || typeof candidate.tool !== "string" || typeof candidate.status !== "string") continue;
-      tools.push({
-        tool: candidate.tool,
-        status: candidate.status,
-        input: isRecord(candidate.input) ? candidate.input : {},
-        output: typeof candidate.output === "string" ? candidate.output : "",
-      });
-    }
-  }
-  return {
-    ok: value.ok,
-    status: value.status,
-    sessionId: typeof value.sessionId === "string" ? value.sessionId : "",
-    text: typeof value.text === "string" ? value.text : "",
-    tools,
-  };
-}
-
 function parseSurfaceFacts(value: unknown): SurfaceFacts {
   if (!isRecord(value)) throw new Error(`Invalid session surface facts: ${JSON.stringify(value)}`);
   return {
@@ -213,7 +193,7 @@ function buildPlans(runId: string): WorkspacePlan[] {
 }
 
 function agentWorkloads(plans: WorkspacePlan[]) {
-  return plans.map((plan) => ({
+  const workloads = plans.map((plan) => ({
     promptMarker: plan.marker,
     finalReply: plan.finalReply,
     steps: [
@@ -273,13 +253,25 @@ function agentWorkloads(plans: WorkspacePlan[]) {
       },
     ],
   }));
+  if (evalEngine === "v1") return workloads;
+  return workloads.map((workload) => ({
+    ...workload,
+    steps: workload.steps.map((step) => ({
+      tool: shellToolName,
+      arguments: {
+        command: step.arguments.command,
+        timeout: step.arguments.timeout,
+        workdir: step.arguments.workdir,
+      },
+    })),
+  }));
 }
 
 async function listWorkspaces(desktopApp: App): Promise<WorkspaceListing> {
-  const value = await evalIn(desktopApp, `(async () => {
+  const value = await evalIn(desktopApp, async () => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
-    const response = await fetch(String(info.baseUrl).replace(/\\/+$/, "") + "/workspaces", {
+    const response = await fetch(String(info.baseUrl).replace(/\/+$/, "") + "/workspaces", {
       headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
       signal: AbortSignal.timeout(15000),
     });
@@ -287,10 +279,10 @@ async function listWorkspaces(desktopApp: App): Promise<WorkspaceListing> {
     const items = Array.isArray(body?.items) ? body.items : [];
     return {
       ok: response.ok,
-      ids: items.map((item) => String(item?.id ?? "")).filter(Boolean),
+      ids: items.map((item: { id?: unknown }) => String(item?.id ?? "")).filter(Boolean),
       activeId: typeof body?.activeId === "string" ? body.activeId : null,
     };
-  })()`, { awaitPromise: true, timeoutMs: 20_000 });
+  }, { awaitPromise: true, timeoutMs: 20_000 });
   if (!isRecord(value) || value.ok !== true || !Array.isArray(value.ids)) {
     throw new Error(`Listing workspaces failed: ${JSON.stringify(value)}`);
   }
@@ -315,16 +307,16 @@ async function createWorkspace(desktopApp: App, path: string): Promise<string> {
 }
 
 async function configureWorkspaces(desktopApp: App, plans: WorkspacePlan[], baseUrl: string): Promise<void> {
-  const result = await evalIn(desktopApp, `(async () => {
+  const result = await evalIn(desktopApp, browserScript(async (value, providerId, inputValue, modelId, modelName, inputProviderId, inputModelId, inputValue2) => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
-    const root = String(info.baseUrl).replace(/\\/+$/, "");
+    const root = String(info.baseUrl).replace(/\/+$/, "");
     const headers = {
       Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
       "Content-Type": "application/json",
     };
     const outcomes = [];
-    for (const workspaceId of ${JSON.stringify(plans.map((plan) => plan.workspaceId))}) {
+    for (const workspaceId of value) {
       const config = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
         method: "PATCH",
         headers,
@@ -332,12 +324,12 @@ async function configureWorkspaces(desktopApp: App, plans: WorkspacePlan[], base
           opencode: {
             permission: { edit: "allow", write: "allow", read: "allow", bash: "allow" },
             provider: {
-              [${JSON.stringify(providerId)}]: {
+              [providerId]: {
                 npm: "@ai-sdk/openai-compatible",
                 name: "Active session storm mock",
-                options: { baseURL: ${JSON.stringify(`${baseUrl}/v1`)}, apiKey: "sk-active-session-storm" },
+                options: { baseURL: inputValue, apiKey: "sk-active-session-storm" },
                 models: {
-                  [${JSON.stringify(modelId)}]: { name: ${JSON.stringify(modelName)}, tool_call: true },
+                  [modelId]: { name: modelName, tool_call: true },
                 },
               },
             },
@@ -357,18 +349,18 @@ async function configureWorkspaces(desktopApp: App, plans: WorkspacePlan[], base
       outcomes.push({ workspaceId, stage: "reload", status: reload.status, text: reload.ok ? "ok" : (await reload.text()).slice(0, 300) });
     }
     const raw = localStorage.getItem("openwork.preferences");
-    let preferences = {};
+    let preferences: Record<string, unknown> = {};
     try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
     if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
     localStorage.setItem("openwork.preferences", JSON.stringify({
       ...preferences,
-      defaultModel: { providerID: ${JSON.stringify(providerId)}, modelID: ${JSON.stringify(modelId)} },
+      defaultModel: { providerID: inputProviderId, modelID: inputModelId },
       modelVariant: null,
       providerStepCompleted: true,
     }));
-    localStorage.setItem("openwork.defaultModel", ${JSON.stringify(`${providerId}/${modelId}`)});
+    localStorage.setItem("openwork.defaultModel", inputValue2);
     return { outcomes };
-  })()`, { awaitPromise: true, timeoutMs: 240_000 });
+  }, [plans.map((plan) => plan.workspaceId), providerId, `${baseUrl}/v1`, modelId, modelName, providerId, modelId, `${providerId}/${modelId}`]), { awaitPromise: true, timeoutMs: 240_000 });
   if (!isRecord(result) || !Array.isArray(result.outcomes)) {
     throw new Error(`Workspace provider configuration failed: ${JSON.stringify(result)}`);
   }
@@ -379,98 +371,70 @@ async function configureWorkspaces(desktopApp: App, plans: WorkspacePlan[], base
 async function openExactSessionRoute(desktopApp: App, plan: WorkspacePlan): Promise<void> {
   const route = `/workspace/${plan.workspaceId}/session/${plan.sessionId}`;
   await go(desktopApp, route, { timeoutMs: 60_000 });
-  await waitFor(desktopApp, `(() => {
-    const current = window.__openworkControl?.snapshot().route.split("?")[0].replace(/\\/+$/, "") ?? "";
-    return current === ${JSON.stringify(route)}
-      && (localStorage.getItem("openwork.react.activeWorkspace") ?? "") === ${JSON.stringify(plan.workspaceId)}
-      && document.querySelector("[data-session-surface-id]")?.getAttribute("data-session-surface-id") === ${JSON.stringify(plan.sessionId)};
-  })()`, { timeoutMs: 60_000, label: `exact route ${route}` });
+  await waitFor(desktopApp, browserScript((inputRoute, workspaceId, sessionId) => {
+    const current = window.__openworkControl?.snapshot().route.split("?")[0].replace(/\/+$/, "") ?? "";
+    return current === inputRoute
+      && (localStorage.getItem("openwork.react.activeWorkspace") ?? "") === workspaceId
+      && document.querySelector<HTMLElement>("[data-session-surface-id]")?.getAttribute("data-session-surface-id") === sessionId;
+  }, [route, plan.workspaceId, plan.sessionId]), { timeoutMs: 60_000, label: `exact route ${route}` });
 }
 
 async function readSessionFacts(desktopApp: App, workspaceId: string, sessionId: string): Promise<SessionFacts> {
-  const value = await evalIn(desktopApp, `(async () => {
-    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-    if (!info?.running || !info.baseUrl) return { ok: false, status: 0, error: "local_server_unavailable" };
-    const base = String(info.baseUrl).replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)})
-      + "/opencode/session";
-    const encodedSessionId = encodeURIComponent(${JSON.stringify(sessionId)});
-    const options = {
-      headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
-      signal: AbortSignal.timeout(15000),
-    };
-    const responses = await Promise.all([
-      fetch(base + "/" + encodedSessionId, options),
-      fetch(base + "/" + encodedSessionId + "/message?limit=50", options),
-      fetch(base + "/" + encodedSessionId + "/todo", options),
-      fetch(base + "/status", options),
-    ]);
-    const failed = responses.find((response) => !response.ok);
-    if (failed) return { ok: false, status: failed.status, sessionId: ${JSON.stringify(sessionId)}, text: "", tools: [] };
-    const [session, messageWires, todos, statuses] = await Promise.all(responses.map((response) => response.json()));
-    const item = { session, messages: messageWires, todos, status: statuses?.[session?.id] ?? { type: "idle" } };
-    const messages = Array.isArray(item?.messages) ? item.messages : [];
-    const text = messages.flatMap((message) => Array.isArray(message?.parts) ? message.parts : [])
-      .flatMap((part) => typeof part?.text === "string" ? [part.text] : []).join("\\n");
-    const tools = messages.flatMap((message) => Array.isArray(message?.parts) ? message.parts : [])
-      .flatMap((part) => {
-        if (!part || typeof part.tool !== "string") return [];
-        const state = part.state && typeof part.state === "object" ? part.state : {};
-        const output = typeof state.output === "string"
-          ? state.output
-          : typeof state.metadata?.output === "string"
-            ? state.metadata.output
-            : "";
-        return [{
-          tool: part.tool,
-          status: typeof state.status === "string" ? state.status : "",
-          input: state.input && typeof state.input === "object" && !Array.isArray(state.input) ? state.input : {},
-          output,
-        }];
-      });
-    return {
-      ok: true,
-      status: responses[0].status,
-      sessionId: typeof item?.session?.id === "string" ? item.session.id : "",
-      text,
-      tools,
-    };
-  })()`, { awaitPromise: true, timeoutMs: 20_000 });
-  return parseSessionFacts(value);
+  const probe = engineSessionProbe({
+    engine: evalEngine,
+    surface: desktopApp,
+    workspaceId,
+  });
+  const snapshot = await probe.snapshot(sessionId);
+  if (!snapshot.ok) return { ok: false, status: snapshot.status, sessionId, text: "", tools: [] };
+  const parts = snapshot.data.messages.flatMap((message) => message.parts);
+  return {
+    ok: true,
+    status: snapshot.status,
+    sessionId: snapshot.data.session?.id ?? "",
+    text: parts.flatMap((part) => part.text ? [part.text] : []).join("\n"),
+    tools: parts.flatMap((part) => part.tool ? [{
+      tool: part.tool,
+      status: part.status,
+      input: part.input,
+      output: part.output,
+    }] : []),
+  };
 }
 
 async function readSurfaceFacts(desktopApp: App, marker: string): Promise<SurfaceFacts> {
-  const value = await evalIn(desktopApp, `(() => {
+  const value = await evalIn(desktopApp, browserScript((marker) => {
     const body = document.body.innerText ?? "";
-    const authActions = [...document.querySelectorAll("button, a")]
+    const authActions = [...document.querySelectorAll<HTMLElement>("button, a")]
       .map((element) => (element.textContent ?? "").trim())
       .filter((text) => /^(sign in|reconnect|connect again|log in)$/i.test(text));
     return {
       route: window.__openworkControl?.snapshot().route ?? window.location.hash,
-      sessionId: document.querySelector("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? "",
+      sessionId: document.querySelector<HTMLElement>("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? "",
       authActions,
       crash: /aw, snap|renderer process gone|application error|uncaught exception/i.test(body),
-      bodyHasMarker: body.includes(${JSON.stringify(marker)}),
+      bodyHasMarker: body.includes(marker),
       bodyHasToolActivity: body.includes("Hold workspace") || body.includes("sleep "),
     };
-  })()`);
+  }, [marker]));
   return parseSurfaceFacts(value);
 }
 
 async function readEngineRuntimeFacts(desktopApp: App): Promise<EngineRuntimeFacts> {
   return parseEngineRuntimeFacts(await evalIn(
     desktopApp,
-    `window.__OPENWORK_ELECTRON__.invokeDesktop("runtimeStatus")`,
+    () => (window.__OPENWORK_ELECTRON__.invokeDesktop("runtimeStatus")),
     { awaitPromise: true, timeoutMs: 15_000 },
   ));
 }
 
 async function readWorkspaceFileFacts(desktopApp: App, plan: WorkspacePlan): Promise<WorkspaceFileFacts> {
-  const value = await evalIn(desktopApp, `(async () => {
+  const value = await evalIn(desktopApp, browserScript(async (workspaceId, value) => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return { status: 0, content: "" };
     const response = await fetch(
-      String(info.baseUrl).replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(${JSON.stringify(plan.workspaceId)})
-        + "/files/content?path=" + encodeURIComponent(${JSON.stringify(plan.filePath.split("/").pop() ?? "")}),
+      String(info.baseUrl).replace(/\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId)
+        + "/files/content?path=" + encodeURIComponent(value),
       {
         headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
         signal: AbortSignal.timeout(10000),
@@ -478,7 +442,7 @@ async function readWorkspaceFileFacts(desktopApp: App, plan: WorkspacePlan): Pro
     );
     const body = await response.json().catch(() => ({}));
     return { status: response.status, content: typeof body?.content === "string" ? body.content : "" };
-  })()`, { awaitPromise: true, timeoutMs: 15_000 });
+  }, [plan.workspaceId, plan.filePath.split("/").pop() ?? ""]), { awaitPromise: true, timeoutMs: 15_000 });
   if (!isRecord(value) || typeof value.status !== "number") {
     throw new Error(`Invalid workspace file facts: ${JSON.stringify(value)}`);
   }
@@ -500,7 +464,7 @@ async function readEngineLogSignals(desktopApp: App): Promise<string[]> {
 }
 
 function slowToolRunning(facts: SessionFacts): boolean {
-  return facts.tools.some((tool) => tool.tool.endsWith("bash")
+  return facts.tools.some((tool) => tool.tool.endsWith(shellToolName)
     && (tool.status === "running" || tool.status === "pending")
     && typeof tool.input.command === "string"
     && tool.input.command.includes("sleep "));
@@ -511,71 +475,26 @@ function sessionCorpus(facts: SessionFacts): string {
 }
 
 async function allowVisibleToolPermission(desktopApp: App): Promise<boolean> {
-  const clicked = await evalIn(desktopApp, `(() => {
+  const clicked = await evalIn(desktopApp, () => {
     const button = [...document.querySelectorAll("button")]
       .find((candidate) => (candidate.textContent ?? "").trim() === "Allow for session" && !candidate.disabled);
     if (!(button instanceof HTMLButtonElement)) return false;
     button.click();
     return true;
-  })()`);
+  });
   if (clicked === true) await sleep(250);
   return clicked === true;
 }
 
 async function approvePendingToolPermissions(desktopApp: App, plan: WorkspacePlan): Promise<number> {
-  const result = await evalIn(desktopApp, `(async () => {
-    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-    if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
-    const root = String(info.baseUrl).replace(/\\/+$/, "")
-      + "/workspace/" + encodeURIComponent(${JSON.stringify(plan.workspaceId)}) + "/opencode";
-    const headers = {
-      Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
-      "Content-Type": "application/json",
-    };
-    const sessionId = ${JSON.stringify(plan.sessionId)};
-    const candidates = [];
-    const v2 = await fetch(root + "/api/session/" + encodeURIComponent(sessionId) + "/permission", {
-      headers,
-      signal: AbortSignal.timeout(10000),
-    });
-    if (v2.ok) {
-      const requests = await v2.json();
-      for (const request of Array.isArray(requests) ? requests : []) {
-        if (typeof request?.id === "string") candidates.push({ id: request.id, protocol: "v2" });
-      }
-    }
-    if (candidates.length === 0) {
-      const legacy = await fetch(root + "/permission", { headers, signal: AbortSignal.timeout(10000) });
-      if (legacy.ok) {
-        const requests = await legacy.json();
-        for (const request of Array.isArray(requests) ? requests : []) {
-          if (typeof request?.id === "string" && request?.sessionID === sessionId) {
-            candidates.push({ id: request.id, protocol: "legacy" });
-          }
-        }
-      }
-    }
-    const replies = [];
-    for (const candidate of candidates) {
-      const path = candidate.protocol === "v2"
-        ? "/api/session/" + encodeURIComponent(sessionId) + "/permission/" + encodeURIComponent(candidate.id) + "/reply"
-        : "/permission/" + encodeURIComponent(candidate.id) + "/reply";
-      const response = await fetch(root + path, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ reply: "once" }),
-        signal: AbortSignal.timeout(10000),
-      });
-      replies.push({ id: candidate.id, protocol: candidate.protocol, status: response.status });
-    }
-    return { replies };
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
-  if (!isRecord(result) || !Array.isArray(result.replies)) {
-    throw new Error(`Permission approval failed for ${plan.sessionId}: ${JSON.stringify(result)}`);
-  }
-  const failures = result.replies.filter((reply) => !isRecord(reply) || typeof reply.status !== "number" || reply.status < 200 || reply.status >= 300);
+  const statuses = await engineSessionProbe({
+    engine: evalEngine,
+    surface: desktopApp,
+    workspaceId: plan.workspaceId,
+  }).approvePendingPermissions(plan.sessionId);
+  const failures = statuses.filter((status) => status < 200 || status >= 300);
   if (failures.length > 0) throw new Error(`Permission replies failed for ${plan.sessionId}: ${JSON.stringify(failures)}`);
-  return result.replies.length;
+  return statuses.length;
 }
 
 async function waitForSlowTool(desktopApp: App, plan: WorkspacePlan): Promise<SessionFacts> {
@@ -642,8 +561,8 @@ test.skipIf(!runnable)(
     // The already-mounted model store predates these workspace configs. Reload
     // once, before any session exists, so every workspace sees the same mock
     // provider without perturbing an in-flight engine event subscription.
-    await evalIn(desktopApp, "location.reload(); true");
-    await waitFor(desktopApp, "Boolean(window.__openworkControl)", {
+    await evalIn(desktopApp, () => { location.reload(); return true; });
+    await waitFor(desktopApp, () => (Boolean(window.__openworkControl)), {
       timeoutMs: 60_000,
       label: "desktop reloaded with the storm model preference",
     });
@@ -656,7 +575,7 @@ test.skipIf(!runnable)(
     const workloadStartedAt = new Date().toISOString();
     for (const plan of plans) {
       await go(desktopApp, `/workspace/${plan.workspaceId}/session`);
-      await waitFor(desktopApp, `(localStorage.getItem("openwork.react.activeWorkspace") ?? "") === ${JSON.stringify(plan.workspaceId)}`, {
+      await waitFor(desktopApp, browserScript((workspaceId) => ((localStorage.getItem("openwork.react.activeWorkspace") ?? "") === workspaceId), [plan.workspaceId]), {
         timeoutMs: 60_000,
         label: `workspace ${plan.index} active before task creation`,
       });
@@ -695,7 +614,7 @@ test.skipIf(!runnable)(
 
     evidence.recordAssertionEvidence(
       "All three originating workspaces reached a live slow tool concurrently",
-      `${plans.map((plan) => `${plan.workspaceId}/${plan.sessionId}`).join(", ")} each exposed a pending or running bash sleep before route switching began; configured slow duration=${slowToolMs}ms.`,
+      `${plans.map((plan) => `${plan.workspaceId}/${plan.sessionId}`).join(", ")} each exposed a pending or running ${shellToolName} sleep before route switching began; configured slow duration=${slowToolMs}ms.`,
       plans.length === workspaceCount && plans.every((plan) => Boolean(plan.workspaceId && plan.sessionId)),
     );
     const engineBeforeStorm = await readEngineRuntimeFacts(desktopApp);
@@ -709,7 +628,7 @@ test.skipIf(!runnable)(
     const liveShot = await screenshot(desktopApp);
     const liveValidation = await validate(liveShot, [
       "The active workspace session visibly shows its deterministic workload prompt or marker",
-      "The session visibly shows live agent activity such as Thinking, a running tool, or a bash command",
+      "The session visibly shows live agent activity such as Thinking, a running tool, or a shell command",
       "No sign-in, reconnect, or application crash screen is visible",
     ]);
     expect(liveValidation.ok, liveValidation.why).toBe(true);
@@ -774,7 +693,7 @@ test.skipIf(!runnable)(
       engineBeforeStorm.enginePid !== null && engineAfterStorm.enginePid !== null,
     );
 
-    const expectedTools = ["bash", "bash", "bash", "bash", "bash", "bash"];
+    const expectedTools = Array.from({ length: 6 }, () => shellToolName);
     for (const plan of plans) {
       await openExactSessionRoute(desktopApp, plan);
       const complete = await eventually(

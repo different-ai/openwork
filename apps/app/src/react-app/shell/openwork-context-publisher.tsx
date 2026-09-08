@@ -30,6 +30,7 @@ export function OpenworkContextPublisher() {
     capturedAt: new Date().toISOString(),
     workbench: {
       revision,
+      sideChats: useWorkbenchStore.getState().sideChats,
       primary,
       tabs,
       secondary,

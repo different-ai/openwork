@@ -33,13 +33,6 @@ type SettingsExtensionControllerInput = {
     onInstall: (apiKey: string) => void | Promise<void>;
     onTestGenerate: (input: { apiKey: string; prompt: string }) => void | Promise<void>;
   };
-  voiceExtension: {
-    busy: boolean;
-    status: string | null;
-    error: string | null;
-    onSaveApiKey: (apiKey: string) => void | Promise<void>;
-    onTestSession: () => void | Promise<void>;
-  };
   localProvider: {
     busy: boolean;
     status: string | null;
@@ -62,7 +55,7 @@ export function useSettingsExtensionController(input: SettingsExtensionControlle
     hostOpenworkServerClient: input.hostOpenworkServerClient,
     restartLocalServer: input.restartLocalServer,
     computerUse: {
-      connected: input.mcpServers.some((server) => server.name === "computer-use"),
+      connected: input.enablementContext.mcpStatuses?.["computer-use"]?.status === "connected",
       connecting: input.mcpConnectingName === entry.name,
       onConnect: () => input.connectMcp(entry),
       onRefresh: input.refreshMcpServers,
@@ -70,10 +63,6 @@ export function useSettingsExtensionController(input: SettingsExtensionControlle
     },
     imageExtension: {
       ...input.imageExtension,
-      envKeyDetected: hasOpenAiEnv(input),
-    },
-    voiceExtension: {
-      ...input.voiceExtension,
       envKeyDetected: hasOpenAiEnv(input),
     },
     localProvider: input.localProvider,

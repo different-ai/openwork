@@ -194,7 +194,7 @@ function ConfigurationLoadingState() {
       description="OpenWork is loading this repository's connector configuration."
       colors={["#DBEAFE", "#0F172A", "#1D4ED8", "#BFDBFE"]}
     >
-      <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-center shadow-sm">
+      <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-center shadow-xs">
         <LoaderCircle className="mx-auto h-6 w-6 animate-spin text-gray-400" />
         <p className="mt-3 text-[14px] text-gray-500">Loading connector configuration…</p>
       </div>
@@ -520,7 +520,7 @@ function Toggle({
       onClick={() => onChange(!checked)}
       className={`relative inline-flex h-6 w-[42px] shrink-0 items-center rounded-full transition-colors ${
         checked ? "bg-[#0f172a]" : "bg-gray-200"
-      } ${busy ? "opacity-60" : ""} focus:outline-none focus:ring-2 focus:ring-[#0f172a]/20 focus:ring-offset-2`}
+      } ${busy ? "opacity-60" : ""} focus:outline-hidden focus:ring-2 focus:ring-[#0f172a]/20 focus:ring-offset-2`}
     >
       <span
         className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-[0_2px_6px_-1px_rgba(15,23,42,0.3)] transition-transform ${
@@ -1098,7 +1098,7 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
                   No Claude-compatible plugins detected
                 </p>
                 <p className="mx-auto mt-2 max-w-[440px] text-[13px] leading-6 text-gray-500">
-                  OpenWork currently only supports Claude-compatible plugins and marketplaces. Add <code className="rounded bg-gray-100 px-1 py-0.5 text-[11px]">.claude-plugin/marketplace.json</code> or <code className="rounded bg-gray-100 px-1 py-0.5 text-[11px]">.claude-plugin/plugin.json</code> to this repository.
+                  OpenWork currently only supports Claude-compatible plugins and marketplaces. Add <code className="rounded-sm bg-gray-100 px-1 py-0.5 text-[11px]">.claude-plugin/marketplace.json</code> or <code className="rounded-sm bg-gray-100 px-1 py-0.5 text-[11px]">.claude-plugin/plugin.json</code> to this repository.
                 </p>
               </div>
             )}

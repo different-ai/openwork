@@ -72,6 +72,7 @@ test("parseArgs validates values, exclusivity, and unknown flags", () => {
   assert.throws(() => parseArgs(["--publish", "--pr", "1", "--den", "x"]), /mutually exclusive with --den/);
   assert.throws(() => parseArgs(["app-smoke", "--local", "--daytona"]), /--local is mutually exclusive with --daytona/);
   assert.throws(() => parseArgs(["app-smoke", "--local", "--den", "https:\/\/den.example"]), /--local is mutually exclusive with --den/);
+  assert.throws(() => parseArgs(["--list", "--publish", "--pr", "42"]), /mutually exclusive/);
   assert.throws(() => parseArgs(["--unknown"]), /Unknown flag: --unknown/);
 });
 
@@ -86,9 +87,10 @@ test("explicit local placement removes inherited remote provisioning inputs", ()
     OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX: "prepared-desktop",
     OPENWORK_EVAL_DEN_API_URL: "https://den-api.example.test",
     OPENWORK_EVAL_DEN_WEB_URL: "https://den.example.test",
+    OPENWORK_EVAL_ENGINE: "v2",
   }, () => { throw new Error("probe called"); });
 
-  assert.deepEqual(resolved, { env: { PATH: "/bin" }, placement: "local", reason: "--local" });
+  assert.deepEqual(resolved, { env: { PATH: "/bin", OPENWORK_EVAL_ENGINE: "v2" }, placement: "local", reason: "--local" });
 });
 
 test("explicit attached Den placement does not probe Daytona", () => {
@@ -125,6 +127,7 @@ test("ambient Daytona placement preserves the caller environment without probing
   const ambient = {
     OPENWORK_EVAL_DAYTONA: "1",
     OPENWORK_EVAL_DEN_API_URL: "https://den.example.test",
+    OPENWORK_EVAL_ENGINE: "v2",
   };
   assert.deepEqual(resolveRunEnvironment(parseArgs(["app-smoke"]), ambient, () => {
     throw new Error("probe called");
@@ -202,4 +205,16 @@ test("worldSnapshotsSince returns only snapshots written during the run, newest 
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+
+test("scenario names and explicit paths resolve alongside legacy specs", () => {
+  const scenario = new URL("../../scenarios/onboarding/e2e.test.ts", import.meta.url).pathname;
+  const legacy = new URL("../specs/signup-workspace-intent.e2e.test.ts", import.meta.url).pathname;
+  const files = [scenario, legacy];
+  assert.deepEqual(resolveTestNames(["onboarding"], files), [scenario]);
+  assert.deepEqual(resolveTestNames(["scenarios/onboarding/e2e.test.ts"], files), [scenario]);
+  assert.deepEqual(resolveTestNames(["signup-workspace-intent"], files), [legacy]);
+  assert.deepEqual(resolveTestNames(["onboarding", "scenarios/onboarding/e2e.test.ts"], files), [scenario]);
+  assert.throws(() => resolveTestNames(["missing"], files), /No test matches/);
 });

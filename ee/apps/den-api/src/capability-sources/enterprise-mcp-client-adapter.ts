@@ -274,6 +274,7 @@ export async function completeExternalMcpAuth(
   member?: ExternalMcpMemberContext,
   diagnosticReferenceId?: string,
   signedState?: string,
+  responseIssuer?: string,
 ): Promise<void> {
   if (!signedState) throw new Error("The enterprise MCP OAuth callback requires its signed state transaction.")
   await runEnterpriseMcpOperation({
@@ -284,6 +285,7 @@ export async function completeExternalMcpAuth(
       redirectUri,
       code,
       authorizationId: signedState,
+      responseIssuer,
     }),
   })
 }

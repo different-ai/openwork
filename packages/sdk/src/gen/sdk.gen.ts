@@ -39,6 +39,7 @@ import type {
   DeleteV1DesktopPoliciesByDesktopPolicyIdErrors,
   DeleteV1DesktopPoliciesByDesktopPolicyIdResponses,
   DeleteV1DesktopPoliciesByKeyByExternalKeyResponses,
+  DeleteV1InferenceAnalyticsLangfuseResponses,
   DeleteV1LlmProvidersByKeyByExternalKeyResponses,
   DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdErrors,
   DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponses,
@@ -127,6 +128,8 @@ import type {
   GetV1AdminUsersResponses,
   GetV1ApiKeysErrors,
   GetV1ApiKeysResponses,
+  GetV1AppsByAppIdResponses,
+  GetV1AppsResponses,
   GetV1AppVersionResponses,
   GetV1AuthBootstrapStatusResponses,
   GetV1AuthLoginOptionsErrors,
@@ -219,6 +222,9 @@ import type {
   GetV1DesktopPoliciesResponses,
   GetV1DiagnosticsEgressErrors,
   GetV1DiagnosticsEgressResponses,
+  GetV1InferenceAnalyticsActivityResponses,
+  GetV1InferenceAnalyticsConsumptionResponses,
+  GetV1InferenceAnalyticsSettingsResponses,
   GetV1InferenceErrors,
   GetV1InferenceResponses,
   GetV1InstallByPlatformErrors,
@@ -383,6 +389,8 @@ import type {
   PatchApiAuthScimV2GroupsByGroupIdResponses,
   PatchApiAuthScimV2UsersByUserIdErrors,
   PatchApiAuthScimV2UsersByUserIdResponses,
+  PatchV1AdminOrganizationsByOrganizationIdDpaErrors,
+  PatchV1AdminOrganizationsByOrganizationIdDpaResponses,
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsErrors,
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses,
   PatchV1AdminOrganizationsByOrganizationIdPlanErrors,
@@ -399,6 +407,7 @@ import type {
   PatchV1DashboardsByDashboardIdResponses,
   PatchV1DesktopPoliciesByDesktopPolicyIdErrors,
   PatchV1DesktopPoliciesByDesktopPolicyIdResponses,
+  PatchV1InferenceAnalyticsSettingsResponses,
   PatchV1InferenceErrors,
   PatchV1InferenceResponses,
   PatchV1LlmProvidersByLlmProviderIdErrors,
@@ -434,6 +443,10 @@ import type {
   PostV1AdminUsersByUserIdInferenceUsageResetResponses,
   PostV1ApiKeysErrors,
   PostV1ApiKeysResponses,
+  PostV1AppsByAppIdDashboardResponses,
+  PostV1AppsByAppIdSaveResponses,
+  PostV1AppsByAppIdShareErrors,
+  PostV1AppsByAppIdShareResponses,
   PostV1ArtifactViewsByArtifactViewIdRetireErrors,
   PostV1ArtifactViewsByArtifactViewIdRetireResponses,
   PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateErrors,
@@ -526,6 +539,9 @@ import type {
   PostV1DirectUploadsGoogleWorkspaceDriveFilesResponses,
   PostV1DirectUploadsGoogleWorkspaceGmailDraftsErrors,
   PostV1DirectUploadsGoogleWorkspaceGmailDraftsResponses,
+  PostV1InferenceAnalyticsEventsResponses,
+  PostV1InferenceAnalyticsLangfuseConnectResponses,
+  PostV1InferenceAnalyticsLangfuseTestResponses,
   PostV1InstallConnectExchangeErrors,
   PostV1InstallConnectExchangeResponses,
   PostV1InstallConnectPreviewErrors,
@@ -912,6 +928,47 @@ export class DenClient extends HeyApiClient {
       url: "/v1/admin/organizations/{organizationId}/free-seats",
       ...options,
       ...params,
+    });
+  }
+
+  /**
+   * Record an organization DPA decision
+   *
+   * Allowlisted platform administrators only. Atomically updates the reserved metadata flag and records the authenticated actor and reason in the audit trail.
+   */
+  public patchV1AdminOrganizationsByOrganizationIdDpa<ThrowOnError extends boolean = false>(
+    parameters: {
+      organizationId: string;
+      dpaSigned?: boolean;
+      reason?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "organizationId" },
+            { in: "body", key: "dpaSigned" },
+            { in: "body", key: "reason" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1AdminOrganizationsByOrganizationIdDpaResponses,
+      PatchV1AdminOrganizationsByOrganizationIdDpaErrors,
+      ThrowOnError
+    >({
+      url: "/v1/admin/organizations/{organizationId}/dpa",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 
@@ -2792,6 +2849,155 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * List saved reusable apps
+   */
+  public getV1Apps<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetV1AppsResponses, unknown, ThrowOnError>({
+      url: "/v1/apps",
+      ...options,
+    });
+  }
+
+  /**
+   * Share a saved app with a teammate
+   */
+  public postV1AppsByAppIdShare<ThrowOnError extends boolean = false>(
+    parameters: {
+      appId: string;
+      email?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "appId" },
+            { in: "body", key: "email" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1AppsByAppIdShareResponses,
+      PostV1AppsByAppIdShareErrors,
+      ThrowOnError
+    >({
+      url: "/v1/apps/{appId}/share",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Open an app or an exact draft preview
+   */
+  public getV1AppsByAppId<ThrowOnError extends boolean = false>(
+    parameters: {
+      appId: string;
+      revisionId?: string;
+      receiptId?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "appId" },
+            { in: "query", key: "revisionId" },
+            { in: "query", key: "receiptId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<GetV1AppsByAppIdResponses, unknown, ThrowOnError>({
+      url: "/v1/apps/{appId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Add or remove an app on your personal dashboard
+   */
+  public postV1AppsByAppIdDashboard<ThrowOnError extends boolean = false>(
+    parameters: {
+      appId: string;
+      added?: boolean;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "appId" },
+            { in: "body", key: "added" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<PostV1AppsByAppIdDashboardResponses, unknown, ThrowOnError>({
+      url: "/v1/apps/{appId}/dashboard",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Save an exact app revision for reuse
+   */
+  public postV1AppsByAppIdSave<ThrowOnError extends boolean = false>(
+    parameters: {
+      appId: string;
+      revisionId?: string;
+      title?: string;
+      useInWorkflow?: boolean;
+      expectedActiveRevisionId?: string | null;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "appId" },
+            { in: "body", key: "revisionId" },
+            { in: "body", key: "title" },
+            { in: "body", key: "useInWorkflow" },
+            { in: "body", key: "expectedActiveRevisionId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<PostV1AppsByAppIdSaveResponses, unknown, ThrowOnError>({
+      url: "/v1/apps/{appId}/save",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
    * List generated Artifact views for a Workflow
    */
   public getV1WorkflowsByConfigObjectIdViews<ThrowOnError extends boolean = false>(
@@ -3690,6 +3896,248 @@ export class DenClient extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    });
+  }
+
+  /**
+   * Read the OpenWork Models task analytics choice
+   */
+  public getV1InferenceAnalyticsSettings<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetV1InferenceAnalyticsSettingsResponses, unknown, ThrowOnError>({
+      url: "/v1/inference/analytics/settings",
+      ...options,
+    });
+  }
+
+  /**
+   * Choose whether to collect task analytics included with OpenWork Models
+   */
+  public patchV1InferenceAnalyticsSettings<ThrowOnError extends boolean = false>(
+    parameters?: {
+      enabled?: boolean;
+      consentVersion?: 1;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "enabled" },
+            { in: "body", key: "consentVersion" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<PatchV1InferenceAnalyticsSettingsResponses, unknown, ThrowOnError>({
+      url: "/v1/inference/analytics/settings",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  public postV1InferenceAnalyticsEvents<ThrowOnError extends boolean = false>(
+    parameters?: {
+      events?: Array<{
+        id: string;
+        type:
+          | "task.started"
+          | "task.completed"
+          | "task.failed"
+          | "task.cancelled"
+          | "tool.executed"
+          | "skill.loaded"
+          | "model.call";
+        timestamp: string;
+        sessionId: string;
+        taskId: string;
+        callId?: string;
+        durationMs?: number;
+        status?: "completed" | "failed" | "cancelled";
+        model?: string;
+        provider?: string;
+        inputTokens?: number;
+        outputTokens?: number;
+        cacheReadTokens?: number;
+        cacheWriteTokens?: number;
+        costUsd?: number;
+        usageComplete?: boolean;
+        tool?: string;
+        skill?: string;
+        skillVersion?: string;
+        mcp?: string;
+        metadata?: {
+          [key: string]: string | number | boolean;
+        };
+      }>;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "events" }] }]);
+    return (options?.client ?? this.client).post<PostV1InferenceAnalyticsEventsResponses, unknown, ThrowOnError>({
+      url: "/v1/inference/analytics/events",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Read task activity collected after the analytics choice
+   */
+  public getV1InferenceAnalyticsActivity<ThrowOnError extends boolean = false>(
+    parameters?: {
+      days?: number;
+      memberId?: string;
+      taskId?: string;
+      sessionId?: string;
+      before?: string;
+      beforeId?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "days" },
+            { in: "query", key: "memberId" },
+            { in: "query", key: "taskId" },
+            { in: "query", key: "sessionId" },
+            { in: "query", key: "before" },
+            { in: "query", key: "beforeId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<GetV1InferenceAnalyticsActivityResponses, unknown, ThrowOnError>({
+      url: "/v1/inference/analytics/activity",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Read provider-reported consumption for OpenWork Models
+   */
+  public getV1InferenceAnalyticsConsumption<ThrowOnError extends boolean = false>(
+    parameters?: {
+      days?: number;
+      memberId?: string;
+      taskId?: string;
+      sessionId?: string;
+      before?: string;
+      beforeId?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "days" },
+            { in: "query", key: "memberId" },
+            { in: "query", key: "taskId" },
+            { in: "query", key: "sessionId" },
+            { in: "query", key: "before" },
+            { in: "query", key: "beforeId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<GetV1InferenceAnalyticsConsumptionResponses, unknown, ThrowOnError>({
+      url: "/v1/inference/analytics/consumption",
+      ...options,
+      ...params,
+    });
+  }
+
+  public postV1InferenceAnalyticsLangfuseTest<ThrowOnError extends boolean = false>(
+    parameters?: {
+      host?: string;
+      publicKey?: string;
+      secretKey?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "host" },
+            { in: "body", key: "publicKey" },
+            { in: "body", key: "secretKey" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<PostV1InferenceAnalyticsLangfuseTestResponses, unknown, ThrowOnError>({
+      url: "/v1/inference/analytics/langfuse/test",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  public postV1InferenceAnalyticsLangfuseConnect<ThrowOnError extends boolean = false>(
+    parameters?: {
+      host?: string;
+      publicKey?: string;
+      secretKey?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "host" },
+            { in: "body", key: "publicKey" },
+            { in: "body", key: "secretKey" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1InferenceAnalyticsLangfuseConnectResponses,
+      unknown,
+      ThrowOnError
+    >({
+      url: "/v1/inference/analytics/langfuse/connect",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  public deleteV1InferenceAnalyticsLangfuse<ThrowOnError extends boolean = false>(
+    options?: Options<never, ThrowOnError>,
+  ) {
+    return (options?.client ?? this.client).delete<DeleteV1InferenceAnalyticsLangfuseResponses, unknown, ThrowOnError>({
+      url: "/v1/inference/analytics/langfuse",
+      ...options,
     });
   }
 
@@ -9733,6 +10181,7 @@ export class DenClient extends HeyApiClient {
       externalKey: string;
       name?: string;
       memberIds?: Array<string>;
+      grantsOrganizationAdmin?: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -9744,6 +10193,7 @@ export class DenClient extends HeyApiClient {
             { in: "path", key: "externalKey" },
             { in: "body", key: "name" },
             { in: "body", key: "memberIds" },
+            { in: "body", key: "grantsOrganizationAdmin" },
           ],
         },
       ],
@@ -9816,6 +10266,7 @@ export class DenClient extends HeyApiClient {
       teamId: string;
       name?: string;
       memberIds?: Array<string>;
+      grantsOrganizationAdmin?: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -9827,6 +10278,7 @@ export class DenClient extends HeyApiClient {
             { in: "path", key: "teamId" },
             { in: "body", key: "name" },
             { in: "body", key: "memberIds" },
+            { in: "body", key: "grantsOrganizationAdmin" },
           ],
         },
       ],
@@ -9856,6 +10308,7 @@ export class DenClient extends HeyApiClient {
     parameters?: {
       name?: string;
       memberIds?: Array<string>;
+      grantsOrganizationAdmin?: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -9866,6 +10319,7 @@ export class DenClient extends HeyApiClient {
           args: [
             { in: "body", key: "name" },
             { in: "body", key: "memberIds" },
+            { in: "body", key: "grantsOrganizationAdmin" },
           ],
         },
       ],

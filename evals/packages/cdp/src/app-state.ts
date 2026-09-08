@@ -1,3 +1,4 @@
+import { browserScript } from "./browser-script.ts";
 import { evaluate } from "./cdp.ts";
 import type { CdpClient, EvaluateOptions } from "./cdp.ts";
 
@@ -83,10 +84,10 @@ export function describeAppState(probe: AppStateProbe): string {
   return `route ${probe.route || "<unknown>"}, ${probe.controlReady ? "control ready" : "control missing"}, ${blocker}. Visible text: ${JSON.stringify(probe.text)}`;
 }
 
-const PROBE_EXPRESSION = `(() => {
+const PROBE_EXPRESSION = browserScript((value) => {
   const text = document.body?.innerText ?? "";
   const route = window.location.hash.replace(/^#/, "") || window.location.pathname;
-  const transitional = ${JSON.stringify([...APP_TRANSITIONAL_TEXTS])}
+  const transitional = value
     .find((message) => text.includes(message)) ?? null;
   const buttonLabels = [...document.querySelectorAll("button")].map((button) => (button.textContent ?? "").trim());
   const taskUi = text.includes("What do you need done?") || buttonLabels.includes("Run task");
@@ -95,12 +96,12 @@ const PROBE_EXPRESSION = `(() => {
   // The product's own active-workspace state; the route is only a fallback
   // because a selected workspace does not always appear in the hash.
   const stored = localStorage.getItem("openwork.react.activeWorkspace");
-  const routeMatch = (route.match(/\\/workspace\\/([^/?#]+)/) ?? [])[1] ?? null;
+  const routeMatch = (route.match(/\/workspace\/([^/?#]+)/) ?? [])[1] ?? null;
   const workspaceId = (stored && stored.length > 0 ? stored : null) ?? routeMatch;
   // Any settings/extensions surface inside a workspace is interactive too. The
   // settings shell always offers "Back to app" even when an organization
   // policy hides every tab but Cloud; the /extensions route renders the Library.
-  const settingsSurface = /\\/workspace\\/[^/?#]+\\/(settings|extensions)/.test(route)
+  const settingsSurface = /\/workspace\/[^/?#]+\/(settings|extensions)/.test(route)
     && (text.includes("Back to app") || text.includes("Library") || text.includes("Extensions") || text.includes("Preferences") || text.includes("Permissions"));
   const surface = welcome
     ? "welcome"
@@ -119,7 +120,7 @@ const PROBE_EXPRESSION = `(() => {
     route,
     text: text.slice(0, 300),
   };
-})()`;
+}, [[...APP_TRANSITIONAL_TEXTS]]);
 
 export async function probeAppState(client: CdpClient, opts: EvaluateOptions = {}): Promise<AppStateProbe> {
   return parseAppStateProbe(await evaluate(client, PROBE_EXPRESSION, opts));

@@ -5,7 +5,7 @@ import { isCollectibleArtifactTarget, type OpenTarget, type OpenTargetPreview } 
 
 export const PERSISTED_PANEL_TAB_STORE_KEY = "openwork:panel-tabs:v1";
 
-export type PanelTabType = "artifact" | "browser";
+export type PanelTabType = "artifact" | "browser" | "app";
 
 export type { BrowserPanelTab } from "../../../../app/lib/desktop-types";
 import type { BrowserPanelTab } from "../../../../app/lib/desktop-types";
@@ -18,7 +18,9 @@ export type ArtifactPanelTab = {
   target?: OpenTarget;
 }
 
-export type PanelTab = BrowserPanelTab | ArtifactPanelTab;
+export type AppPanelTab = { id: string; type: "app"; label: string; appId: string; revisionId?: string; receiptId?: string };
+
+export type PanelTab = BrowserPanelTab | ArtifactPanelTab | AppPanelTab;
 
 export type SessionPanelState = {
   tabs: PanelTab[];
@@ -142,6 +144,10 @@ function isSameTab(left: PanelTab, right: PanelTab) {
       && left.target?.id === right.target?.id
       && left.target?.updatedAt === right.target?.updatedAt
     );
+  }
+
+  if (left.type === "app" && right.type === "app") {
+    return left.label === right.label && left.appId === right.appId && left.revisionId === right.revisionId && left.receiptId === right.receiptId;
   }
 
   if (left.type === "browser" && right.type === "browser") {
@@ -286,7 +292,7 @@ export const usePanelTabStore = create<PanelTabStore>()(
         const mergedTabs: PanelTab[] = [];
 
         for (const tab of session.tabs) {
-          if (tab.type === "artifact") {
+          if (tab.type !== "browser") {
             mergedTabs.push(tab);
             continue;
           }

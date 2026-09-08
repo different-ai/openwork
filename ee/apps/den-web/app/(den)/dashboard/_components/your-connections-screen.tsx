@@ -197,7 +197,7 @@ function YourConnectionRow({
     <div
       ref={rowRef}
       tabIndex={highlighted ? -1 : undefined}
-      className={`outline-none transition ${highlighted ? "bg-blue-50/70 ring-2 ring-inset ring-blue-200" : ""}`}
+      className={`outline-hidden transition ${highlighted ? "bg-blue-50/70 ring-2 ring-inset ring-blue-200" : ""}`}
     >
       <div className="flex flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-1 items-center gap-3">

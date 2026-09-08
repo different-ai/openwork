@@ -18,7 +18,7 @@ import type {
   CreateCloudAutomation,
   UpdateAutomation,
 } from "@openwork/types/automations";
-import type { WorkflowDetail } from "@openwork/types/workflows";
+import { generatedArtifactViewSchema, savedAppDetailSchema, savedAppSummarySchema, type SaveApp, type WorkflowDetail } from "@openwork/types/workflows";
 
 // Re-export the shared schema under the local alias so React consumers
 // (e.g. the cloud domain's desktop-config provider) can import it alongside
@@ -3049,6 +3049,44 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         activeOrgSlug,
         defaultOrgId: activeOrgId,
       };
+    },
+
+    async listSavedApps(orgId: string) {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/apps", {
+        method: "GET", token, organizationId: orgId,
+      });
+      if (!isRecord(payload) || !Array.isArray(payload.items) || typeof payload.enabled !== "boolean") {
+        throw new Error("Your apps could not be loaded.");
+      }
+      return { enabled: payload.enabled, sharingEnabled: payload.sharingEnabled === true, items: payload.items.map((item) => savedAppSummarySchema.parse(item)) };
+    },
+    async getSavedApp(orgId: string, appId: string, options: { revisionId?: string; receiptId?: string } = {}) {
+      const params = new URLSearchParams();
+      if (options.revisionId) params.set("revisionId", options.revisionId);
+      if (options.receiptId) params.set("receiptId", options.receiptId);
+      return savedAppDetailSchema.parse(await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}?${params}`, {
+        method: "GET", token, organizationId: orgId,
+      }));
+    },
+    async saveApp(orgId: string, appId: string, input: SaveApp) {
+      return generatedArtifactViewSchema.parse(await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}/save`, {
+        method: "POST", token, organizationId: orgId, body: input,
+      }));
+    },
+    async deleteApp(orgId: string, appId: string) {
+      await requestJson<unknown>(baseUrls, `/v1/artifact-views/${encodeURIComponent(appId)}/retire`, {
+        method: "POST", token, organizationId: orgId,
+      });
+    },
+    async shareSavedApp(orgId: string, appId: string, email: string) {
+      await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}/share`, {
+        method: "POST", token, organizationId: orgId, body: { email },
+      });
+    },
+    async setAppOnDashboard(orgId: string, appId: string, added: boolean) {
+      await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}/dashboard`, {
+        method: "POST", token, organizationId: orgId, body: { added },
+      });
     },
 
     /** Organization-managed dashboards granted to the signed-in member. */

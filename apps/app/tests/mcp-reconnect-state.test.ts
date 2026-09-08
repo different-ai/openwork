@@ -70,3 +70,12 @@ describe("chat MCP reconnect state", () => {
     })
   })
 })
+
+
+test("authorization state does not leak across tasks with reused tool-call IDs", () => {
+  const first = chatMcpReconnectKey("call-1", "connection-1", "workspace/task-one");
+  const second = chatMcpReconnectKey("call-1", "connection-1", "workspace/task-two");
+  useChatMcpReconnectStore.getState().setRecord(first, { phase: "authorization_opened", authorizeUrl: "https://example.com/oauth", error: null });
+  expect(chatMcpReconnectRecord(second).phase).toBe("ready");
+  expect(chatMcpReconnectRecord(second).authorizeUrl).toBeNull();
+});

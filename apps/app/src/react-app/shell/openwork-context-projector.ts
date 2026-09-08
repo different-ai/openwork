@@ -123,9 +123,8 @@ export function buildOpenworkContext(
   const sessionPanelKind = panelOwnerSessionId
     ? input.ui.sidePanelState[panelOwnerSessionId] ?? null
     : null;
-  const voiceOpen = Object.values(input.ui.sidePanelState).includes("voice");
-  const sidePanelKind = voiceOpen ? "voice" : sessionPanelKind;
-  const ownerSessionId = sidePanelKind === "voice" ? null : panelOwnerSessionId;
+  const sidePanelKind = sessionPanelKind;
+  const ownerSessionId = panelOwnerSessionId;
   const sessionPanel = ownerSessionId ? input.panelSessions[ownerSessionId] : undefined;
   const screen = screenFromRoute(input.route);
   const provider: OpenworkProviderRef = { id: "openwork-ui", kind: "builtin" };

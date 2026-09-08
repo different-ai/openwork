@@ -16,19 +16,19 @@ function stringArrayField(value: Record<string, unknown>, key: string): string[]
   return Array.isArray(entries) ? entries.filter((entry): entry is string => typeof entry === "string").slice(0, 30) : [];
 }
 
-const SCREEN_DUMP_EXPRESSION = `(() => {
+const SCREEN_DUMP_EXPRESSION = () => {
   const hash = window.location.hash;
   return {
     hash,
     route: hash.replace(/^#/, "") || window.location.pathname,
     title: document.title,
     buttons: [...document.querySelectorAll("button")]
-      .map((button) => (button.textContent ?? "").replace(/\\s+/g, " ").trim())
+      .map((button) => (button.textContent ?? "").replace(/\s+/g, " ").trim())
       .filter(Boolean)
       .slice(0, 30),
     body: (document.body?.innerText ?? "").slice(0, 500),
   };
-})()`;
+};
 
 /** A short, best-effort snapshot suitable for appending to timeout errors. */
 export async function dumpScreenState(surface: Surface): Promise<string> {

@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm"
-import { index, int, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { boolean, index, int, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn } from "../columns"
 import { MemberTable, OrganizationTable } from "./org"
 
@@ -11,6 +11,7 @@ export const TeamTable = mysqlTable(
     name: varchar("name", { length: 255 }).notNull(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     memberCount: int("member_count").notNull().default(0),
+    grantsOrganizationAdmin: boolean("grants_organization_admin").notNull().default(false),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
       .notNull()

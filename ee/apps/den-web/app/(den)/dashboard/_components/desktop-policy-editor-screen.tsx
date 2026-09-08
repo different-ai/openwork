@@ -1,5 +1,7 @@
 "use client";
 
+import { ExecutionPolicyFields, validateExecutionPolicy } from "./execution-policy-fields";
+import { desktopExecutionPolicySchema, type DesktopExecutionPolicy } from "@openwork/types/den/desktop-policies";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -31,6 +33,7 @@ import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 type PolicyMode = "custom" | "restricted";
 
 type PolicyDraft = {
+  execution: DesktopExecutionPolicy;
   policyName: string;
   mode: PolicyMode;
   policy: Required<DesktopPolicyValue>;
@@ -44,6 +47,7 @@ type PolicyDraft = {
 };
 
 const EMPTY_DRAFT: PolicyDraft = {
+  execution: desktopExecutionPolicySchema.parse({}),
   policyName: "New desktop policy",
   mode: "custom",
   policy: { ...desktopPolicyDefaults },
@@ -66,7 +70,7 @@ const POLICY_MODES: Array<{ id: PolicyMode; name: string; description: string }>
     id: "restricted",
     name: "Restricted",
     description:
-      "Chat and organization-approved skills only. Locks the capabilities below so members cannot change desktop settings, add providers or models, add workspaces, or install extensions and MCP servers.",
+      "Members cannot change desktop settings, add providers or models, add workspaces, or install local extensions and MCP servers. Set command and browser restrictions below.",
   },
 ];
 const POLICY_MODE_HELP_ID = "desktop-policy-mode-help";
@@ -88,6 +92,7 @@ function draftFromPolicy(policy: DenDesktopPolicy): PolicyDraft {
   const onboardingPromptDescriptions = policy.policy.onboardingPromptDescriptions ?? [];
   const policyValue = requiredPolicyValue(policy.policy);
   return {
+    execution: policy.policy.execution ?? desktopExecutionPolicySchema.parse({}),
     policyName: policy.policyName,
     mode: isRestrictedDesktopPolicyValue(policyValue) ? "restricted" : "custom",
     policy: policyValue,
@@ -204,6 +209,7 @@ function policyDocumentFromDraft(draft: PolicyDraft): DesktopPolicyDocumentWrite
     ? getOnboardingPromptDescriptions(draft, onboardingPrompts.length)
     : undefined;
   return {
+    execution: validateExecutionPolicy(draft.execution),
     ...draft.policy,
     ...(draft.onboardingPromptsEnabled
       ? onboardingPrompts !== undefined
@@ -526,6 +532,8 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
               );
             })}
           </div>
+
+          <ExecutionPolicyFields value={draft.execution} disabled={formDisabled} onChange={(execution) => setDraft({ ...draft, execution })} />
 
           <div className="grid gap-4 rounded-[22px] border border-gray-200 bg-gray-50 px-5 py-4">
             <label className="flex items-start gap-3">

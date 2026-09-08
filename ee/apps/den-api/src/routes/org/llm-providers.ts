@@ -1,5 +1,6 @@
 import { declarativeDeleteSchema, declarativeResponses, externalKeyParamsSchema, isDuplicateEntry, type ResourceActionContext, type ResourceOrganizationContext } from "./declarative.js"
-import { and, desc, eq, inArray, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import {
   AuthUserTable,
   InvitationTable,
@@ -37,7 +38,8 @@ import {
 import { getModelsDevProvider, listModelsDevProviders } from "../../llm/models-dev.js"
 import type { MemberTeamsContext } from "../../middleware/member-teams.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
-import { repairMemberInferenceAccessIfNeeded } from "../../inference.js"
+import { organizationAllowsManagedModels, repairMemberInferenceAccessIfNeeded } from "../../inference.js"
+import { assertOrganizationManagedModelsAllowed } from "../../organization-metadata.js"
 import { listAccessibleLlmProviderAccess, listGrantedLlmProviderMemberIds } from "./llm-provider-access.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, ensureOrganizationAdminRole, idParamSchema, memberHasRole, orgAccessFailureStatus } from "./shared.js"
@@ -606,10 +608,11 @@ async function loadLlmProviders(input: {
         inArray(LlmProviderTable.id, accessibleProviderIds),
       )
 
+  const managedModelsAllowed = await organizationAllowsManagedModels(input.organizationId)
   const providers = await db
     .select()
     .from(LlmProviderTable)
-    .where(providerWhere)
+    .where(and(providerWhere, managedModelsAllowed ? undefined : sql`${LlmProviderTable.source} <> 'openwork'`))
     .orderBy(desc(LlmProviderTable.updatedAt))
 
   if (providers.length === 0) {
@@ -1395,6 +1398,25 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
           error: "forbidden",
           message: "You do not have access to this provider.",
         }, 403)
+      }
+
+      if (provider.source === "openwork") {
+        try {
+          await assertOrganizationManagedModelsAllowed(payload.organization.id)
+        } catch (error) {
+          if (!(error instanceof ManagedModelsPolicyError)) throw error
+          // A list/connect race must not abort older desktops' entire BYOK sync.
+          return c.json({
+            llmProvider: {
+              ...provider,
+              apiKey: null,
+              apiKeys: null,
+              models: [],
+              memberCredential: { state: "blocked" },
+              managedModelsPolicy: { allowed: false, code: error.code, message: error.message },
+            },
+          })
+        }
       }
 
       const models = await db

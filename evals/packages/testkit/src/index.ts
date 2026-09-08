@@ -1,4 +1,6 @@
-export { control, createDesktopHandoffGrant, evalIn, signInDesktopAs } from "@openwork/behaviors";
+export { browserScript } from "@openwork/cdp";
+export type { BrowserEvaluation, BrowserScript } from "@openwork/cdp";
+export { control, createDesktopHandoffGrant, evalIn, quitDesktop, signInDesktopAs } from "@openwork/behaviors";
 export { requestDenLoopback } from "@openwork/labs";
 export { desktop as relaunchDesktop, electronProfilePaths } from "@openwork/hosts";
 export type { DesktopHandle } from "@openwork/hosts";
@@ -14,3 +16,6 @@ export * from "./link.ts";
 export * from "./self-host.ts";
 export * from "./spec/index.ts";
 export * from "./state.ts";
+
+export { observeTranscript, readTranscriptMessages } from "./transcript-observer.ts";
+export { readSidebarOverflow } from "@openwork/behaviors";

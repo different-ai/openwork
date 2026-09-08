@@ -10,12 +10,11 @@ import {
   MemberTable,
   OrganizationTable,
 } from "@openwork-ee/den-db/schema"
-import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   createInferenceBearerKey,
   inferenceBearerKeyPrefix,
   inferenceBearerKeyStorageDigest,
-  type InferenceBearerKey,
 } from "@openwork-ee/utils/inference-bearer-key"
 import {
   INFERENCE_RESET_STRATEGY_BY_WINDOW_TYPE,
@@ -23,8 +22,10 @@ import {
   INFERENCE_WINDOW_DURATIONS_MS,
 } from "@openwork/types/den/inference"
 import type { InferenceOrganizationMetadata, InferenceTier, InferenceWindowType } from "@openwork/types/den/inference"
+import { assertManagedModelsAllowed, ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { assertOrganizationManagedModelsAllowed, updateOrganizationMetadata } from "./organization-metadata.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -32,6 +33,36 @@ type MemberId = typeof MemberTable.$inferSelect.id
 const OPENWORK_PROVIDER_ID = "openwork"
 const OPENROUTER_PROVIDER = "openrouter"
 const OPENROUTER_KEYS_URL = "https://openrouter.ai/api/v1/keys"
+
+// Read/repair surfaces omit only managed Models when policy cannot allow them.
+export async function organizationAllowsManagedModels(organizationId: OrgId): Promise<boolean> {
+  try {
+    await assertOrganizationManagedModelsAllowed(organizationId)
+    return true
+  } catch (error) {
+    if (error instanceof ManagedModelsPolicyError) return false
+    throw error
+  }
+}
+
+async function withManagedModelsAdmission(
+  organizationId: OrgId,
+  provision: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => Promise<void>,
+) {
+  await db.transaction(async (tx) => {
+    // Serialize admission with metadata marking; never do external I/O in this lock.
+    const [organization] = await tx
+      .select({ metadata: OrganizationTable.metadata })
+      .from(OrganizationTable)
+      .where(eq(OrganizationTable.id, organizationId))
+      .limit(1)
+      .for("update")
+      .catch(() => { throw new ManagedModelsPolicyError("managed_models_policy_unavailable") })
+    if (!organization) throw new ManagedModelsPolicyError("managed_models_policy_unavailable")
+    assertManagedModelsAllowed(organization.metadata)
+    await provision(tx)
+  })
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -57,9 +88,16 @@ export function readInferenceMetadata(metadata: Record<string, unknown> | null):
 function setInferenceMetadata(metadata: Record<string, unknown> | null, inference: InferenceOrganizationMetadata | null) {
   const next = { ...(metadata ?? {}) }
   if (inference) {
-    next.inference = inference
-  } else {
-    delete next.inference
+    next.inference = { ...(isRecord(next.inference) ? next.inference : {}), ...inference }
+  } else if (isRecord(next.inference)) {
+    const remaining = { ...next.inference }
+    delete remaining.enabled
+    delete remaining.tier
+    if (Object.keys(remaining).length > 0) {
+      next.inference = remaining
+    } else {
+      delete next.inference
+    }
   }
   return next
 }
@@ -138,41 +176,43 @@ async function deleteOpenWorkProviders(where: { organizationId: OrgId; memberId?
   })
 }
 
-async function createMemberInferenceKey(input: { organizationId: OrgId; memberId: MemberId }) {
+async function ensureMemberInferenceAccess(input: { organizationId: OrgId; memberId: MemberId }) {
+  await assertOrganizationManagedModelsAllowed(input.organizationId)
   const key = createInferenceBearerKey()
-  await db.insert(InferenceKeyTable).values({
-    id: createDenTypeId("inferenceKey"),
-    organization_id: input.organizationId,
-    org_membership_id: input.memberId,
-    name: "OpenWork Models",
-    key_hash: await inferenceBearerKeyStorageDigest(key),
-    key_prefix: inferenceBearerKeyPrefix(key),
-    status: "active",
-  })
-  return key
-}
-
-async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId; memberId: MemberId; inferenceKey: InferenceBearerKey }) {
+  const keyHash = await inferenceBearerKeyStorageDigest(key)
   const now = new Date()
-  const providerRows = await db
-    .select({ id: LlmProviderTable.id })
-    .from(LlmProviderTable)
-    .where(and(
-      eq(LlmProviderTable.organizationId, input.organizationId),
-      eq(LlmProviderTable.createdByOrgMembershipId, input.memberId),
-      eq(LlmProviderTable.source, "openwork"),
-      eq(LlmProviderTable.providerId, OPENWORK_PROVIDER_ID),
-    ))
-    .limit(1)
-
   const providerConfig = buildOpenWorkProviderConfig()
-  const providerId = providerRows[0]?.id ?? createDenTypeId("llmProvider")
 
-  await db.transaction(async (tx) => {
+  await withManagedModelsAdmission(input.organizationId, async (tx) => {
+    await tx
+      .update(InferenceKeyTable)
+      .set({ status: "revoked", revoked_at: now })
+      .where(and(eq(InferenceKeyTable.org_membership_id, input.memberId), eq(InferenceKeyTable.status, "active")))
+    await tx.insert(InferenceKeyTable).values({
+      id: createDenTypeId("inferenceKey"),
+      organization_id: input.organizationId,
+      org_membership_id: input.memberId,
+      name: "OpenWork Models",
+      key_hash: keyHash,
+      key_prefix: inferenceBearerKeyPrefix(key),
+      status: "active",
+    })
+    const providerRows = await tx
+      .select({ id: LlmProviderTable.id })
+      .from(LlmProviderTable)
+      .where(and(
+        eq(LlmProviderTable.organizationId, input.organizationId),
+        eq(LlmProviderTable.createdByOrgMembershipId, input.memberId),
+        eq(LlmProviderTable.source, "openwork"),
+        eq(LlmProviderTable.providerId, OPENWORK_PROVIDER_ID),
+      ))
+      .limit(1)
+    const providerId = providerRows[0]?.id ?? createDenTypeId("llmProvider")
+
     if (providerRows[0]) {
       await tx
         .update(LlmProviderTable)
-        .set({ name: "OpenWork Models", providerConfig, apiKey: input.inferenceKey.value, updatedAt: now })
+        .set({ name: "OpenWork Models", providerConfig, apiKey: key.value, updatedAt: now })
         .where(eq(LlmProviderTable.id, providerId))
       await tx.delete(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, providerId))
       await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, providerId))
@@ -185,7 +225,7 @@ async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId
         providerId: OPENWORK_PROVIDER_ID,
         name: "OpenWork Models",
         providerConfig,
-        apiKey: input.inferenceKey.value,
+        apiKey: key.value,
         createdAt: now,
         updatedAt: now,
       })
@@ -199,11 +239,6 @@ async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId
       createdAt: now,
     })
   })
-}
-
-async function ensureMemberInferenceAccess(input: { organizationId: OrgId; memberId: MemberId }) {
-  const key = await createMemberInferenceKey(input)
-  await ensureOpenWorkLlmProviderForMember({ ...input, inferenceKey: key })
 }
 
 async function memberHasOpenWorkInferenceAccess(input: { organizationId: OrgId; memberId: MemberId }) {
@@ -239,6 +274,7 @@ export async function repairMemberInferenceAccessIfNeeded(input: {
   organizationId: OrgId
   memberId: MemberId
 }): Promise<boolean> {
+  if (!await organizationAllowsManagedModels(input.organizationId)) return false
   const [organization] = await db
     .select({ metadata: OrganizationTable.metadata })
     .from(OrganizationTable)
@@ -254,12 +290,17 @@ export async function repairMemberInferenceAccessIfNeeded(input: {
     return false
   }
 
-  await revokeMemberInferenceKeys(input.memberId)
-  await ensureMemberInferenceAccess(input)
-  return true
+  try {
+    await ensureMemberInferenceAccess(input)
+    return true
+  } catch (error) {
+    if (error instanceof ManagedModelsPolicyError) return false
+    throw error
+  }
 }
 
 export async function syncInferenceForOrganizationMembers(input: { organizationId: OrgId }) {
+  if (!await organizationAllowsManagedModels(input.organizationId)) return
   const [organization] = await db
     .select({ metadata: OrganizationTable.metadata })
     .from(OrganizationTable)
@@ -293,6 +334,8 @@ export async function syncInferenceAfterMemberChange(input: {
     await deleteOpenWorkProviders({ organizationId: input.organizationId, memberId: input.memberId })
   }
 
+  if (!await organizationAllowsManagedModels(input.organizationId)) return
+
   const [organization] = await db
     .select({ metadata: OrganizationTable.metadata })
     .from(OrganizationTable)
@@ -306,7 +349,7 @@ export async function syncInferenceAfterMemberChange(input: {
   await syncInferenceLimitPolicies({ organizationId: input.organizationId, tier: inference.tier, memberCount: input.memberCount })
 
   if (input.change === "added") {
-    await ensureMemberInferenceAccess({ organizationId: input.organizationId, memberId: input.memberId })
+    await repairMemberInferenceAccessIfNeeded({ organizationId: input.organizationId, memberId: input.memberId })
   }
 }
 
@@ -395,6 +438,7 @@ function isOpenRouterKeyCreateResponse(value: unknown): value is OpenRouterKeyCr
 }
 
 async function createOpenRouterOrgApiKey(input: { organizationId: OrgId }) {
+  await assertOrganizationManagedModelsAllowed(input.organizationId)
   if (!env.openRouterManagementApiKey) {
     throw new Error("openrouter_management_api_key_missing")
   }
@@ -486,6 +530,7 @@ async function revokeOrgUpstreamProviderKeys(organizationId: OrgId) {
 }
 
 async function ensureOrgUpstreamProviderKey(organizationId: OrgId) {
+  await assertOrganizationManagedModelsAllowed(organizationId)
   const [existing] = await db
     .select({ id: InferenceOrgUpstreamProviderKeyTable.id })
     .from(InferenceOrgUpstreamProviderKeyTable)
@@ -502,29 +547,33 @@ async function ensureOrgUpstreamProviderKey(organizationId: OrgId) {
 
   const openRouterKey = await createOpenRouterOrgApiKey({ organizationId })
 
-  await db
-    .insert(InferenceOrgUpstreamProviderKeyTable)
-    .values({
-      id: createDenTypeId("inferenceOrgProviderKey"),
-      organization_id: organizationId,
-      provider: OPENROUTER_PROVIDER,
-      external_key_hash: openRouterKey.externalKeyHash,
-      external_workspace_id: openRouterKey.externalWorkspaceId,
-      encrypted_api_key: openRouterKey.key,
-      key_prefix: upstreamKeyPrefix(openRouterKey.key),
-      status: "active",
-      revoked_at: null,
-    })
-    .onDuplicateKeyUpdate({
-      set: {
+  // An already-transmitted external create cannot be rolled back atomically.
+  // If marking wins this lock, leave its unattached external key alone.
+  await withManagedModelsAdmission(organizationId, async (tx) => {
+    await tx
+      .insert(InferenceOrgUpstreamProviderKeyTable)
+      .values({
+        id: createDenTypeId("inferenceOrgProviderKey"),
+        organization_id: organizationId,
+        provider: OPENROUTER_PROVIDER,
         external_key_hash: openRouterKey.externalKeyHash,
         external_workspace_id: openRouterKey.externalWorkspaceId,
         encrypted_api_key: openRouterKey.key,
         key_prefix: upstreamKeyPrefix(openRouterKey.key),
         status: "active",
         revoked_at: null,
-      },
-    })
+      })
+      .onDuplicateKeyUpdate({
+        set: {
+          external_key_hash: openRouterKey.externalKeyHash,
+          external_workspace_id: openRouterKey.externalWorkspaceId,
+          encrypted_api_key: openRouterKey.key,
+          key_prefix: upstreamKeyPrefix(openRouterKey.key),
+          status: "active",
+          revoked_at: null,
+        },
+      })
+  })
 }
 
 async function getActiveUsageBuckets(organizationId: OrgId) {
@@ -553,13 +602,14 @@ async function getActiveUsageBuckets(organizationId: OrgId) {
 }
 
 export async function getInferenceStatus(organizationId: OrgId) {
+  const managedModelsAllowed = await organizationAllowsManagedModels(organizationId)
   const [organization] = await db
     .select({ metadata: OrganizationTable.metadata })
     .from(OrganizationTable)
     .where(eq(OrganizationTable.id, organizationId))
     .limit(1)
   const memberCount = await activeMemberCount(organizationId)
-  const inference = readInferenceMetadata(organization?.metadata ?? null)
+  const inference = managedModelsAllowed ? readInferenceMetadata(organization?.metadata ?? null) : null
   // Admin status reads are a natural repair point: org can show ENABLED in Den
   // while individual members are missing keys/providers after manual deletes.
   if (inference?.enabled === true) {
@@ -587,22 +637,10 @@ export async function getInferenceStatus(organizationId: OrgId) {
 }
 
 export async function setInferenceEnabled(input: { organizationId: OrgId; enabled: boolean; tier?: InferenceTier }) {
-  const [organization] = await db
-    .select({ metadata: OrganizationTable.metadata })
-    .from(OrganizationTable)
-    .where(eq(OrganizationTable.id, input.organizationId))
-    .limit(1)
-  if (!organization) {
-    return null
-  }
-
   if (!input.enabled) {
+    await updateOrganizationMetadata(input.organizationId, (metadata) => setInferenceMetadata(metadata, null))
     const members = await listOrgMembers(input.organizationId)
     await revokeOrgUpstreamProviderKeys(input.organizationId)
-    await db
-      .update(OrganizationTable)
-      .set({ metadata: setInferenceMetadata(organization.metadata, null) })
-      .where(eq(OrganizationTable.id, input.organizationId))
     if (members.length > 0) {
       await db
         .update(InferenceKeyTable)
@@ -613,12 +651,13 @@ export async function setInferenceEnabled(input: { organizationId: OrgId; enable
     return getInferenceStatus(input.organizationId)
   }
 
-  const tier = input.tier ?? readInferenceMetadata(organization.metadata)?.tier ?? "tier1"
+  await assertOrganizationManagedModelsAllowed(input.organizationId)
   await ensureOrgUpstreamProviderKey(input.organizationId)
-  await db
-    .update(OrganizationTable)
-    .set({ metadata: setInferenceMetadata(organization.metadata, { enabled: true, tier }) })
-    .where(eq(OrganizationTable.id, input.organizationId))
+  await updateOrganizationMetadata(input.organizationId, (metadata) => {
+    assertManagedModelsAllowed(metadata)
+    const tier = input.tier ?? readInferenceMetadata(metadata)?.tier ?? "tier1"
+    return setInferenceMetadata(metadata, { enabled: true, tier })
+  })
   await syncInferenceForOrganizationMembers({ organizationId: input.organizationId })
   return getInferenceStatus(input.organizationId)
 }

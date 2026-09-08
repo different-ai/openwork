@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
 import { control, evalIn, waitFor } from "./desktop.ts";
 
@@ -37,25 +38,25 @@ function messageText(error: unknown): string {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function readComposerState(app: Surface): Promise<ComposerState> {
-  const value = await evalIn(app, `(() => {
-    const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]')
-      ?? document.querySelector('[contenteditable="true"]');
+  const value = await evalIn(app, () => {
+    const editor = document.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]')
+      ?? document.querySelector<HTMLElement>('[contenteditable="true"]');
     const run = [...document.querySelectorAll("button")]
       .find((button) => (button.textContent ?? "").trim() === "Run task");
-    const model = document.querySelector('button[aria-label="Change model"]');
+    const model = document.querySelector<HTMLButtonElement>('button[aria-label="Change model"]');
     return {
       composerEditable: Boolean(editor),
       draftText: editor?.innerText ?? "",
       route: location.hash,
       runTaskVisible: Boolean(run),
       runTaskEnabled: Boolean(run && !run.disabled),
-      userMessageCount: document.querySelectorAll('[data-message-role="user"]').length,
-      assistantMessageCount: document.querySelectorAll('[data-message-role="assistant"]').length,
+      userMessageCount: document.querySelectorAll<HTMLElement>('[data-message-role="user"]').length,
+      assistantMessageCount: document.querySelectorAll<HTMLElement>('[data-message-role="assistant"]').length,
       selectedModelLabel: model?.textContent?.trim() ?? "",
       modelUnavailable: document.body.innerText.includes("Model no longer available")
         || document.body.innerText.includes("The model you were using is no longer available"),
     };
-  })()`);
+  });
   if (!isRecord(value)) throw new Error("Composer state was not an object.");
   return {
     composerEditable: value.composerEditable === true,
@@ -79,8 +80,8 @@ async function waitForComposerReady(app: Surface, timeoutMs: number): Promise<Co
       lastState = await readComposerState(app);
       lastError = null;
       if (lastState.composerEditable && (lastState.runTaskVisible
-        || await evalIn(app, `Boolean(window.__openworkControl?.listActions?.()
-          .find((entry) => entry.id === "composer.set_text" && entry.disabled === false))`).catch(() => false))) {
+        || await evalIn(app, () => (Boolean(window.__openworkControl?.listActions?.()
+          .find((entry) => entry.id === "composer.set_text" && entry.disabled === false)))).catch(() => false))) {
         return lastState;
       }
     } catch (error) {
@@ -102,16 +103,16 @@ async function tryWriteComposerText(app: Surface, text: string, readinessTimeout
   // contenteditable paste below stays as a fallback for surfaces that do not
   // register the action.
   let controlError = "composer.set_text was not available";
-  const hasControl = await evalIn(app, `Boolean(window.__openworkControl?.listActions?.()
-    .find((entry) => entry.id === "composer.set_text" && entry.disabled === false))`).catch(() => false);
+  const hasControl = await evalIn(app, () => (Boolean(window.__openworkControl?.listActions?.()
+    .find((entry) => entry.id === "composer.set_text" && entry.disabled === false)))).catch(() => false);
   if (hasControl === true) {
     try {
       await control(app, "composer.set_text", { text }, { timeoutMs: 120_000 });
-      await waitFor(app, `(() => {
-        const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]')
-          ?? document.querySelector('[contenteditable="true"]');
-        return Boolean(editor && (editor.innerText ?? "").includes(${JSON.stringify(text)}));
-      })()`, { timeoutMs: 30_000, label: "composer draft text via control" });
+      await waitFor(app, browserScript((text) => {
+        const editor = document.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]')
+          ?? document.querySelector<HTMLElement>('[contenteditable="true"]');
+        return Boolean(editor && (editor.innerText ?? "").includes(text));
+      }, [text]), { timeoutMs: 30_000, label: "composer draft text via control" });
       return;
     } catch (error) {
       controlError = messageText(error);
@@ -121,9 +122,9 @@ async function tryWriteComposerText(app: Surface, text: string, readinessTimeout
   let pasteError = "Could not paste text into the composer contenteditable.";
   try {
     await waitForComposerReady(app, readinessTimeoutMs);
-    const pasted = await evalIn(app, `(() => {
-      const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]')
-        ?? document.querySelector('[contenteditable="true"]');
+    const pasted = await evalIn(app, browserScript((text) => {
+      const editor = document.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]')
+        ?? document.querySelector<HTMLElement>('[contenteditable="true"]');
       if (!editor) return false;
       editor.focus();
       const selection = window.getSelection();
@@ -132,16 +133,16 @@ async function tryWriteComposerText(app: Surface, text: string, readinessTimeout
       selection?.removeAllRanges();
       selection?.addRange(range);
       const data = new DataTransfer();
-      data.setData("text/plain", ${JSON.stringify(text)});
+      data.setData("text/plain", text);
       editor.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data }));
       return true;
-    })()`);
+    }, [text]));
     if (pasted !== true) throw new Error(pasteError);
-    await waitFor(app, `(() => {
-      const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]')
-        ?? document.querySelector('[contenteditable="true"]');
-      return Boolean(editor && (editor.innerText ?? "").includes(${JSON.stringify(text)}));
-    })()`, { timeoutMs: 30_000, label: "composer draft text" });
+    await waitFor(app, browserScript((text) => {
+      const editor = document.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]')
+        ?? document.querySelector<HTMLElement>('[contenteditable="true"]');
+      return Boolean(editor && (editor.innerText ?? "").includes(text));
+    }, [text]), { timeoutMs: 30_000, label: "composer draft text" });
     return;
   } catch (error) {
     pasteError = messageText(error);
@@ -173,12 +174,12 @@ export async function writeComposerText(
 export async function sendComposerMessage(app: Surface, text: string): Promise<ComposerState> {
   const before = await waitForComposerReady(app, 60_000);
   await writeComposerText(app, text);
-  await waitFor(app, `Boolean([...document.querySelectorAll("button")]
-    .find((button) => (button.textContent ?? "").trim() === "Run task" && !button.disabled))`, {
+  await waitFor(app, () => (Boolean([...document.querySelectorAll("button")]
+    .find((button) => (button.textContent ?? "").trim() === "Run task" && !button.disabled))), {
     timeoutMs: 30_000,
     label: "enabled Run task button",
   });
-  const clicked = await evalIn(app, `(() => {
+  const clicked = await evalIn(app, () => {
     const button = [...document.querySelectorAll("button")]
       .find((entry) => (entry.textContent ?? "").trim() === "Run task" && !entry.disabled);
     if (button) {
@@ -186,9 +187,9 @@ export async function sendComposerMessage(app: Surface, text: string): Promise<C
       return true;
     }
     return false;
-  })()`);
+  });
   if (clicked !== true) throw new Error("Run task was no longer clickable; composer.send was not substituted.");
-  await waitFor(app, `document.querySelectorAll('[data-message-role="user"]').length > ${before.userMessageCount}`, {
+  await waitFor(app, browserScript((userMessageCount) => (document.querySelectorAll<HTMLElement>('[data-message-role="user"]').length > userMessageCount), [before.userMessageCount]), {
     timeoutMs: 60_000,
     label: "sent user message",
   });
@@ -199,15 +200,15 @@ export async function waitForAssistantReply(
   app: Surface,
   { timeoutMs }: { timeoutMs: number },
 ): Promise<AssistantReplyFacts> {
-  await waitFor(app, `(() => {
-    const messages = [...document.querySelectorAll('[data-message-role="assistant"]')];
+  await waitFor(app, () => {
+    const messages = [...document.querySelectorAll<HTMLElement>('[data-message-role="assistant"]')];
     return messages.some((message) => (message.innerText ?? "").trim().length > 0);
-  })()`, { timeoutMs, label: "assistant reply" });
-  const value = await evalIn(app, `(() => {
-    const messages = [...document.querySelectorAll('[data-message-role="assistant"]')];
+  }, { timeoutMs, label: "assistant reply" });
+  const value = await evalIn(app, () => {
+    const messages = [...document.querySelectorAll<HTMLElement>('[data-message-role="assistant"]')];
     const latest = messages[messages.length - 1];
     return { text: latest?.innerText?.trim() ?? "", assistantMessageCount: messages.length };
-  })()`);
+  });
   if (!isRecord(value)) throw new Error("Assistant reply facts were not an object.");
   return {
     text: stringField(value.text),

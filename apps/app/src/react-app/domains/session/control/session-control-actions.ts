@@ -3,7 +3,7 @@ import { useCallback, useMemo } from "react";
 
 import type { createClient } from "../../../../app/lib/opencode";
 import type { OpenworkServerClient, OpenworkWorkspaceInfo } from "../../../../app/lib/openwork-server";
-import { deleteNativeSession } from "../../../../app/lib/opencode-session-native";
+import { deleteRouteSession } from "../../../shell/route-workspaces";
 import { setSessionArchived } from "../../../../app/lib/opencode-session";
 import type { ResolvedWorkspaceEndpoint } from "../../../../app/lib/workspace-endpoint";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
@@ -33,6 +33,7 @@ type UseSessionControlActionsInput = {
   canCreateTask: boolean;
   openworkClient: OpenworkServerClient | null;
   opencodeClient: ReturnType<typeof createClient> | null;
+  archiveDisabledReason?: string;
   endpointForWorkspace: (workspace: SessionControlWorkspace | null | undefined) => ResolvedWorkspaceEndpoint | null;
   navigateToSession: (sessionId: string) => void;
   navigateToSessionRoot: () => void;
@@ -78,6 +79,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     openModelPicker,
     openworkClient,
     opencodeClient,
+    archiveDisabledReason,
     refreshRouteState,
     selectedSessionId,
     selectedWorkspaceId,
@@ -217,7 +219,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       if (!targetWorkspace) return { ok: false, error: "Session was not found in the current session list" };
       const endpoint = endpointForWorkspace(targetWorkspace);
       if (!endpoint) return { ok: false, error: "Workspace runtime is not connected" };
-      await deleteNativeSession(endpoint, sessionId);
+      await deleteRouteSession(endpoint, sessionId);
       if (selectedSessionId === sessionId) {
         navigateToSessionRoot();
       }
@@ -281,17 +283,18 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const archiveControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.archive",
     label: "Archive or unarchive a session",
-    description: "Archive a session (non-destructive, preserves context). Archived sessions move to the Archived section. Pass archived=false to unarchive.",
+    description: archiveDisabledReason ?? "Archive a session (non-destructive, preserves context). Archived sessions move to the Archived section. Pass archived=false to unarchive.",
     sideEffect: "mutation",
     requiresArgs: true,
     args: [
       { name: "sessionId", type: "string", required: true, description: "Session ID." },
       { name: "archived", type: "boolean", required: true, description: "true to archive, false to unarchive." },
     ],
-    disabled: !opencodeClient,
+    disabled: !opencodeClient || Boolean(archiveDisabledReason),
     execute: async (args) => {
       const sessionId = stringArg(args, "sessionId");
       const archived = booleanArg(args, "archived");
+      if (archiveDisabledReason) return { ok: false, error: archiveDisabledReason };
       if (!sessionId) return { ok: false, error: "sessionId is required" };
       if (!opencodeClient) return { ok: false, error: "OpenCode client is not connected" };
       const targetWorkspace = findSessionWorkspace(workspaces, sessionsByWorkspaceId, sessionId);
@@ -299,7 +302,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       await refreshRouteState();
       return { ok: true, sessionId, archived };
     },
-  }), [opencodeClient, refreshRouteState, selectedWorkspaceRoot, sessionsByWorkspaceId, workspaces]);
+  }), [archiveDisabledReason, opencodeClient, refreshRouteState, selectedWorkspaceRoot, sessionsByWorkspaceId, workspaces]);
   useControlAction(archiveControlAction);
 
   const groupCreateControlAction = useMemo<OpenworkControlAction>(() => ({

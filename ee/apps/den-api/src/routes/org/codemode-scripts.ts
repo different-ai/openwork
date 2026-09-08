@@ -9,6 +9,9 @@ import {
   workflowTestResultSchema,
   workflowVersionSchema,
   generatedArtifactViewSchema,
+  savedAppSummarySchema,
+  savedAppDetailSchema,
+  saveAppSchema,
 } from "@openwork/types/workflows"
 import {
   createWorkflowVersion,
@@ -40,6 +43,8 @@ import {
   listArtifactViewsForScript,
   retireArtifactView,
 } from "../../artifact-views.js"
+
+import { getSavedApp, listSavedApps, setAppOnDashboard, shareSavedApp } from "../../saved-apps.js"
 
 const capabilitySchema = z.object({ capabilityName: z.string(), scriptPath: z.string() })
 const scriptSchema = z.object({
@@ -133,6 +138,7 @@ function routeFailure(error: unknown) {
     return { status: error.status, body: { error: error.error, message: error.message } } as const
   }
   const message = error instanceof Error ? error.message : "Workflow request failed."
+  if (message === "app_changed_since_preview") return { status: 409, body: { error: message, message: "This app was saved elsewhere. Reopen it before saving your changes." } } as const
   if (message.includes("not_found")) return { status: 404, body: { error: "workflow_not_found", message } } as const
   if (message === "workflow_matching_test_receipt_required") {
     return {
@@ -167,19 +173,21 @@ function routeFailure(error: unknown) {
       },
     } as const
   }
-  const readOnlyPrefix = "workflow_requires_read_only_capabilities:"
-  if (message.startsWith(readOnlyPrefix)) {
-    const capability = message.slice(readOnlyPrefix.length)
-    return {
-      status: 400,
-      body: {
-        error: "workflow_requires_read_only_capabilities",
-        capability,
-        message: `${capability} can change data, so it cannot run unattended in a Workflow. Workflows may only call read-only tools; keep write actions in interactive Code Mode runs.`,
-      },
-    } as const
-  }
   return { status: 400, body: { error: "workflow_rejected", message } } as const
+}
+
+function appRouteFailure(error: unknown) {
+  const failure = routeFailure(error)
+  const code = error instanceof Error ? error.message : ""
+  if (code === "teammate_not_found") return { ...failure, body: { error: code, message: "No teammate with that email belongs to this organization. Ask an admin to invite them first." } }
+  const message = code.includes("not_found")
+    ? "This app is unavailable or you no longer have access."
+    : code === "artifact_view_schema_incompatible"
+      ? "The workflow’s results have changed. Ask OpenWork to update this app before saving."
+      : code === "artifact_view_revision_not_ready"
+        ? "This app is still being prepared. Wait for its preview before saving."
+        : null
+  return message ? { ...failure, body: { ...failure.body, message } } : failure
 }
 
 export const saveWorkflowOperationId = "saveWorkflow"
@@ -288,6 +296,104 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
             })
       } catch (error) {
         const failure = routeFailure(error)
+        return c.json(failure.body, failure.status)
+      }
+    },
+  )
+
+  app.get(
+    "/v1/apps",
+    describeRoute({ tags: ["Apps"], summary: "List saved reusable apps", responses: {
+      200: jsonResponse("Saved apps returned.", z.object({ enabled: z.boolean(), sharingEnabled: z.boolean(), items: z.array(savedAppSummarySchema) })),
+    } }),
+    orgMemberRoute(),
+    async (c) => {
+      if (!env.generatedArtifactViewsEnabled) return c.json({ enabled: false, sharingEnabled: false, items: [] })
+      try {
+        const { actorContext } = await contextFor(c)
+        return c.json({ enabled: true, sharingEnabled: true, items: await listSavedApps(actorContext) })
+      } catch (error) {
+        const failure = appRouteFailure(error)
+        return c.json(failure.body, failure.status)
+      }
+    },
+  )
+
+  app.post(
+    "/v1/apps/:appId/share",
+    describeRoute({ tags: ["Apps"], summary: "Share a saved app with a teammate", responses: {
+      200: jsonResponse("App shared to the teammate's dashboard.", z.object({ ok: z.literal(true) })),
+      403: jsonResponse("Only app managers can share.", forbiddenSchema),
+      404: jsonResponse("App or teammate not found.", notFoundSchema),
+    } }),
+    orgMemberRoute(),
+    jsonValidator(z.object({ email: z.string().trim().email().max(320) })),
+    async (c) => {
+      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
+      try {
+        const { actorContext } = await contextFor(c)
+        await shareSavedApp(actorContext, c.req.param("appId"), c.req.valid("json").email)
+        return c.json({ ok: true })
+      } catch (error) {
+        const failure = appRouteFailure(error)
+        return c.json(failure.body, failure.status)
+      }
+    },
+  )
+
+  app.get(
+    "/v1/apps/:appId",
+    describeRoute({ tags: ["Apps"], summary: "Open an app or an exact draft preview", responses: {
+      200: jsonResponse("App preview returned.", savedAppDetailSchema),
+    } }),
+    orgMemberRoute(),
+    queryValidator(z.object({ revisionId: z.string().trim().min(1).max(160).optional(), receiptId: z.string().trim().min(1).max(160).optional() })),
+    async (c) => {
+      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
+      try {
+        const { actorContext } = await contextFor(c)
+        return c.json(await getSavedApp({ context: actorContext, appId: c.req.param("appId"), ...c.req.valid("query") }))
+      } catch (error) {
+        const failure = appRouteFailure(error)
+        return c.json(failure.body, failure.status)
+      }
+    },
+  )
+
+  app.post(
+    "/v1/apps/:appId/dashboard",
+    describeRoute({ tags: ["Apps"], summary: "Add or remove an app on your personal dashboard", responses: {
+      200: jsonResponse("Dashboard updated.", z.object({ ok: z.literal(true) })),
+    } }),
+    orgMemberRoute(), jsonValidator(z.object({ added: z.boolean() })),
+    async (c) => {
+      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
+      try {
+        const { actorContext } = await contextFor(c)
+        await setAppOnDashboard(actorContext, c.req.param("appId"), c.req.valid("json").added)
+        return c.json({ ok: true })
+      } catch (error) {
+        const failure = appRouteFailure(error)
+        return c.json(failure.body, failure.status)
+      }
+    },
+  )
+
+  app.post(
+    "/v1/apps/:appId/save",
+    describeRoute({ tags: ["Apps"], summary: "Save an exact app revision for reuse", responses: {
+      200: jsonResponse("App saved.", generatedArtifactViewSchema),
+    } }),
+    orgMemberRoute(),
+    jsonValidator(saveAppSchema),
+    async (c) => {
+      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
+      try {
+        const { actorContext } = await contextFor(c)
+        const { revisionId, ...save } = c.req.valid("json")
+        return c.json(await activateArtifactViewRevision({ context: actorContext, artifactViewId: c.req.param("appId"), revisionId, save }))
+      } catch (error) {
+        const failure = appRouteFailure(error)
         return c.json(failure.body, failure.status)
       }
     },

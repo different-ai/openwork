@@ -18,6 +18,8 @@ export type DenOrgMember = {
   userId: string | null;
   inviteId: string | null;
   role: string;
+  effectiveRole: string;
+  adminTeams: { id: string; name: string }[];
   createdAt: string | null;
   joinedAt: string | null;
   isOwner: boolean;
@@ -46,6 +48,7 @@ export type DenOrgTeam = {
   updatedAt: string | null;
   memberIds: string[];
   managedByScim: boolean;
+  grantsOrganizationAdmin: boolean;
 };
 
 export type DenCurrentMemberTeam = {
@@ -217,6 +220,8 @@ export type DenOrgContext = {
     role: string;
     createdAt: string | null;
     isOwner: boolean;
+    directRole: string;
+    adminTeams: { id: string; name: string }[];
   };
   members: DenOrgMember[];
   invitations: DenOrgInvitation[];
@@ -298,6 +303,13 @@ function asIsoString(value: unknown): string | null {
 
 function asBoolean(value: unknown): boolean {
   return value === true;
+}
+
+function parseAdminTeams(value: unknown): { id: string; name: string }[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((team) => isRecord(team) && typeof team.id === "string" && typeof team.name === "string"
+    ? [{ id: team.id, name: team.name }]
+    : []);
 }
 
 function asString(value: unknown): string | null {
@@ -499,6 +511,14 @@ export function getMarketplaceOnboardingRoute(_orgSlug?: string | null): string 
   return `${getOrgDashboardRoute(_orgSlug)}/onboarding`;
 }
 
+export function getOnboardingToolsRoute(orgSlug?: string | null): string {
+  return `${getMarketplaceOnboardingRoute(orgSlug)}/tools`;
+}
+
+export function getOnboardingPeopleRoute(orgSlug?: string | null): string {
+  return `${getMarketplaceOnboardingRoute(orgSlug)}/people`;
+}
+
 export function getJoinOrgRoute(invitationId: string): string {
   return `/join-org?invite=${encodeURIComponent(invitationId)}`;
 }
@@ -509,6 +529,10 @@ export function getWorkspaceClaimRoute(token: string): string {
 
 export function getAnalyticsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/analytics`;
+}
+
+export function getModelsAnalyticsRoute(orgSlug?: string | null): string {
+  return `${getAnalyticsRoute(orgSlug)}/models`;
 }
 
 export function getManageMembersRoute(orgSlug?: string | null): string {
@@ -528,7 +552,7 @@ export function getBackgroundAgentsRoute(orgSlug?: string | null): string {
 }
 
 export function getWorkflowRunsRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/workflow-runs`;
+  return `${getAnalyticsRoute(orgSlug)}/workflow-runs`;
 }
 
 export function getAutomationsRoute(orgSlug?: string | null): string {
@@ -780,6 +804,8 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
             userId,
             inviteId: asString(entry.inviteId),
             role,
+            effectiveRole: asString(entry.effectiveRole) ?? role,
+            adminTeams: parseAdminTeams(entry.adminTeams),
             createdAt: asIsoString(entry.createdAt),
             joinedAt: asIsoString(entry.joinedAt),
             isOwner: asBoolean(entry.isOwner),
@@ -866,6 +892,7 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
             updatedAt: asIsoString(entry.updatedAt),
             memberIds,
             managedByScim: asBoolean(entry.managedByScim),
+            grantsOrganizationAdmin: asBoolean(entry.grantsOrganizationAdmin),
           } satisfies DenOrgTeam;
         })
         .filter((entry): entry is DenOrgTeam => entry !== null)
@@ -920,6 +947,8 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
       id: currentMemberId,
       userId: currentMemberUserId,
       role: currentMemberRole,
+      directRole: asString(currentMember.directRole) ?? currentMemberRole,
+      adminTeams: parseAdminTeams(currentMember.adminTeams),
       createdAt: asIsoString(currentMember.createdAt),
       isOwner: asBoolean(currentMember.isOwner),
     },

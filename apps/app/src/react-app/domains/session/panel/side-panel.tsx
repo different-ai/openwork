@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import {
+  Blocks,
   ArrowLeft,
   ArrowRight,
   Globe,
@@ -14,6 +15,7 @@ import { useDragControls } from "motion/react";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { PanelTab, PanelTabClose, PanelTabItem, PanelTabList } from "@/components/panel-tabs";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/sonner";
 import {
   InputGroup,
   InputGroupAddon,
@@ -22,6 +24,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { ArtifactIcon } from "../artifacts/artifact-icon";
+import { AppArtifact } from "../../apps/app-artifact";
 import { ArtifactPanel } from "../artifacts/artifact-panel";
 import {
   type BrowserPanelTab,
@@ -41,6 +44,7 @@ import {
   hasNativeBrowserOccluder,
   sameBounds,
 } from "./utils";
+import { LoginSyncCard } from "../../browser-logins/login-sync-card";
 
 type SidePanelProps = {
   sessionId: string;
@@ -50,7 +54,6 @@ type SidePanelProps = {
   isRemoteWorkspace?: boolean;
   onClose: () => void;
   onOpenExtensions?: () => void;
-  onOpenVoice?: () => void;
 };
 
 // HMR can remount this module without unmounting BrowserPanelContent, leaving
@@ -143,7 +146,7 @@ function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
             ) : (
               <Globe />
             )
-          ) : (
+          ) : tab.type === "app" ? <Blocks /> : (
             <ArtifactIcon type={tab.preview} />
           )}
           <span className="min-w-0 flex-1 truncate text-left">{tab.label}</span>
@@ -185,7 +188,9 @@ function BrowserPanelContent({
   }, [tab.id, tab.url]);
 
   const navigate = React.useCallback(() => {
-    void getElectronBrowser()?.navigate?.(urlInput);
+    void getElectronBrowser()?.navigate?.(urlInput).catch((error: unknown) => {
+      toast.error(error instanceof Error ? error.message : String(error));
+    });
   }, [urlInput]);
 
   const back = React.useCallback(() => {
@@ -272,7 +277,9 @@ function BrowserPanelContent({
         // Naming the conversation lets the native browser put that
         // conversation's tabs on screen and keep every other conversation's
         // tabs silently in the background.
-        browser.show?.(bounds, sessionId);
+        void browser.show?.(bounds, sessionId).catch((error: unknown) => {
+          toast.error(error instanceof Error ? error.message : String(error));
+        });
         shownRef.current = true;
         lastBoundsRef.current = bounds;
         return;
@@ -420,7 +427,6 @@ export function SidePanel({
   isRemoteWorkspace = false,
   onClose,
   onOpenExtensions,
-  onOpenVoice,
 }: SidePanelProps) {
   const { tabs } = useSessionPanelState(sessionId);
   const activeTab = useActivePanelTab(sessionId);
@@ -666,11 +672,15 @@ export function SidePanel({
           <PanelEmpty
             onOpenBrowser={isBrowserAvailable ? createTab : undefined}
             onOpenExtensions={onOpenExtensions}
-            onOpenVoice={onOpenVoice}
           />
         ) : null}
         {activeTab?.type === "browser" ? (
-          <BrowserPanelContent sessionId={sessionId} tab={activeTab} onClose={onClose} />
+          <>
+            <LoginSyncCard />
+            <BrowserPanelContent sessionId={sessionId} tab={activeTab} onClose={onClose} />
+          </>
+        ) : activeTab?.type === "app" ? (
+          <div className="min-h-0 flex-1 overflow-hidden"><AppArtifact key={activeTab.id} appId={activeTab.appId} revisionId={activeTab.revisionId} receiptId={activeTab.receiptId} onClose={onClose} /></div>
         ) : activeTab?.type === "artifact" ? (
           <div className="min-h-0 flex-1 overflow-hidden">
             <ArtifactPanel

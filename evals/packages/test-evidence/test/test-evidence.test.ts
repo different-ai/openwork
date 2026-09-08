@@ -130,6 +130,24 @@ test("test evidence writes a JSON artifact and lists it in the test run", async 
   }
 });
 
+test("test evidence records the selected engine in JSON and the HTML header", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openwork-test-evidence-engine-"));
+  const previous = process.env.OPENWORK_EVAL_ENGINE;
+  process.env.OPENWORK_EVAL_ENGINE = "v2";
+  try {
+    const testEvidence = createTestEvidence({ name: "engine lane", outDir: dir });
+    await testEvidence.close();
+
+    const testRun = await payload(dir);
+    assert.equal(testRun.engine, "v2");
+    assert.match(await readFile(join(dir, "index.html"), "utf8"), /engine v2/);
+  } finally {
+    if (previous === undefined) delete process.env.OPENWORK_EVAL_ENGINE;
+    else process.env.OPENWORK_EVAL_ENGINE = previous;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("test evidence accepts unchanged screenshots and only lets one validation use their pixel hash", async () => {
   const dir = await mkdtemp(join(tmpdir(), "openwork-test-evidence-retake-"));
   try {

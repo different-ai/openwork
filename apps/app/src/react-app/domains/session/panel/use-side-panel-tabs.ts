@@ -2,6 +2,7 @@ import * as React from "react";
 import { activeBrowserTabIdForSession, browserTabsForSession } from "@openwork/browser-tabs";
 
 import type { BrowserStatePayload } from "@/app/lib/desktop";
+import { toast } from "@/components/ui/sonner";
 
 import {
   type PanelTab,
@@ -56,8 +57,12 @@ export function useSidePanelTabs(sessionId: string) {
 }
 
 export function useCreateTab() {
-  return React.useCallback((url?: string, sessionId?: string | null) => {
-    void getElectronBrowser()?.createTab?.(url, sessionId);
+  return React.useCallback(async (url?: string, sessionId?: string | null) => {
+    try {
+      await getElectronBrowser()?.createTab?.(url, sessionId);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
   }, []);
 }
 

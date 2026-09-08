@@ -22,6 +22,7 @@ function testRunRecord(dir: string): TestRunRecord {
     createdAt: "2026-07-02T10:00:00.000Z",
     closedAt: "2026-07-02T10:01:00.000Z",
     gitSha: TEST_RUN_SHA,
+    engine: "v1",
     branch: "feat/proof",
     summary: {
       ok: true,

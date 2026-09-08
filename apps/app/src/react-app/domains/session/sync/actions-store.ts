@@ -8,6 +8,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { t } from "../../../../i18n";
+import { closeSessionBrowserTabs } from "../../../../app/lib/desktop";
 import { unwrap } from "../../../../app/lib/opencode";
 import {
   abortSession as abortSessionTyped,
@@ -33,8 +34,7 @@ import { addOpencodeCacheHint, safeStringify } from "../../../../app/utils";
 import { clearSessionDraft, LOCAL_SESSION_DRAFT_SCOPE, saveSessionDraft } from "./draft-store";
 import { firstLineLocalFileParts, isReadInlineablePath } from "./prompt-file-parts";
 import { composerAttachmentToFilePart } from "./attachment-file-part";
-import { computerMentionInstruction } from "../surface/composer/computer-mentions";
-import { appMentionInstruction } from "../surface/composer/app-mentions";
+import { mentionPromptParts } from "./mention-parts";
 
 type SessionModelConfig = {
   applyPendingSessionChoice: (sessionId: string) => void;
@@ -163,12 +163,10 @@ export function createSessionActionsStore(options: {
         parts.push({ type: "agent", name: part.name } as AgentPartInput);
         continue;
       }
-      if (part.type === "computer") {
-        parts.push({ type: "text", text: computerMentionInstruction(part.target), synthetic: true });
-        continue;
-      }
-      if (part.type === "app") {
-        parts.push({ type: "text", text: appMentionInstruction(part.name) } as TextPartInput);
+      if (part.type === "computer" || part.type === "app" || part.type === "skill" || part.type === "connect-skill") {
+        // The resolved user text already contains the visible mention label.
+        const [, instruction] = mentionPromptParts(part);
+        parts.push(instruction);
         continue;
       }
       if (part.type === "file") {
@@ -498,7 +496,8 @@ export function createSessionActionsStore(options: {
     const c = options.client();
     if (!c) return;
 
-    const compactShortcut = /^\/compact(?:\s+.*)?$/i.test(content);
+    const compactShortcut = !resolvedDraft.text.trimStart().startsWith("[connect-skill ")
+      && /^\/compact(?:\s+.*)?$/i.test(content);
     const compactCommand = resolvedDraft.command?.name === "compact" || compactShortcut;
     const commandName = compactCommand ? "compact" : (resolvedDraft.command?.name ?? null);
     if (compactCommand && !options.selectedSessionId()) {
@@ -799,7 +798,8 @@ export function createSessionActionsStore(options: {
     const root = options.selectedWorkspaceRoot().trim();
     const directory = toSessionTransportDirectory(root);
     const params = directory ? { sessionID: trimmed, directory } : { sessionID: trimmed };
-    unwrap(await c.session.delete(params));
+    const deleted = unwrap(await c.session.delete(params));
+    if (deleted) void closeSessionBrowserTabs(trimmed);
     clearSessionDraft(LOCAL_SESSION_DRAFT_SCOPE, options.selectedWorkspaceId().trim(), trimmed);
 
     options.setSessions(options.sessions().filter((s) => s.id !== trimmed));

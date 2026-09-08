@@ -35,6 +35,14 @@ describe("resolveEntitledOrgDefaultModel", () => {
     })).toBe(null);
   });
 
+  test("retains a remembered organization model when a refreshed catalog omits it", () => {
+    expect(resolveEntitledOrgDefaultModel(options, {
+      currentDefault: { providerID: "lpr_missing", modelID: "remembered-model" },
+      restrictToCloud: true,
+      checkRestriction: managedModelsPolicy,
+    })).toBe(null);
+  });
+
   test("returns null when no organization model is entitled", () => {
     expect(resolveEntitledOrgDefaultModel([
       { providerID: "openai", modelID: "gpt-5.5" },

@@ -131,27 +131,30 @@ function numberField(value: Record<string, unknown>, key: string): number | null
   return typeof value[key] === "number" && Number.isFinite(value[key]) ? value[key] : null;
 }
 
+export class TargetNotFoundError extends Error {}
+
 export async function locate(surface: Surface, target: Target): Promise<Located> {
   const parsed = JSON.stringify(parseTarget(target));
-  const value = await callFunctionOnSurface(surface, `(serialized) => {
-    const target = JSON.parse(serialized);
-    const matcher = (spec, candidate) => {
+  const value = await callFunctionOnSurface(surface, (serialized) => {
+    const target: ParsedTarget = JSON.parse(serialized);
+    const matcher = (spec: SerializedMatcher | undefined, candidate: unknown) => {
       if (!spec) return true;
       const actual = String(candidate ?? "").trim();
       if (spec.kind === "regexp") return new RegExp(spec.value, spec.flags ?? "").test(actual);
       return actual === spec.value.trim();
     };
-    const startsMatcher = (spec, candidate) => {
+    const startsMatcher = (spec: SerializedMatcher | undefined, candidate: unknown) => {
       if (!spec || spec.kind !== "string") return false;
       return String(candidate ?? "").trim().toLowerCase().startsWith(spec.value.trim().toLowerCase());
     };
-    const implicitRole = (element) => {
+    const implicitRole = (element: Element) => {
       const explicit = element.getAttribute("role");
       if (explicit) return explicit;
       const tag = element.tagName.toLowerCase();
       if (tag === "button") return "button";
+      if (tag === "select") return element instanceof HTMLSelectElement && (element.multiple || element.size > 1) ? "listbox" : "combobox";
       if (tag === "a" && element.hasAttribute("href")) return "link";
-      if (tag === "textarea" || element.isContentEditable) return "textbox";
+      if (tag === "textarea" || (element instanceof HTMLElement && element.isContentEditable)) return "textbox";
       if (tag === "input") {
         const type = (element.getAttribute("type") ?? "text").toLowerCase();
         if (type === "checkbox") return "checkbox";
@@ -159,25 +162,25 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       }
       return "";
     };
-    const associatedLabel = (element) => {
-      if (element.labels?.length) return [...element.labels].map((label) => label.innerText ?? label.textContent ?? "").join(" ").trim();
+    const associatedLabel = (element: Element) => {
+      if ((element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement || element instanceof HTMLButtonElement) && element.labels?.length) return [...element.labels].map((label) => label.innerText ?? label.textContent ?? "").join(" ").trim();
       const parent = element.closest("label");
       return (parent?.innerText ?? parent?.textContent ?? "").trim();
     };
-    const accessibleName = (element) => {
-      const labelledBy = (element.getAttribute("aria-labelledby") ?? "").split(/\\s+/).filter(Boolean)
+    const accessibleName = (element: Element) => {
+      const labelledBy = (element.getAttribute("aria-labelledby") ?? "").split(/\s+/).filter(Boolean)
         .map((id) => document.getElementById(id)?.innerText ?? document.getElementById(id)?.textContent ?? "").join(" ").trim();
       return (element.getAttribute("aria-label") ?? "").trim()
         || labelledBy
         || associatedLabel(element)
         || (element.getAttribute("placeholder") ?? "").trim()
-        || (element.innerText ?? element.textContent ?? "").trim();
+        || ((element instanceof HTMLElement ? element.innerText : null) ?? element.textContent ?? "").trim();
     };
-    const text = (element) => (element.innerText ?? element.textContent ?? "").trim();
-    const rendered = (element) => {
+    const text = (element: Element) => ((element instanceof HTMLElement ? element.innerText : null) ?? element.textContent ?? "").trim();
+    const rendered = (element: Element) => {
       const rect = element.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return false;
-      let current = element;
+      let current: Element | null = element;
       while (current instanceof Element) {
         const style = getComputedStyle(current);
         if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
@@ -189,37 +192,37 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       ? '[contenteditable="true"][data-lexical-editor="true"]'
       : target.text && !target.role && !target.label && !target.placeholder && !target.testId
         ? 'body *'
-        : 'button, a[href], input, textarea, [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="menuitem"], [role="tab"], [role="option"], [data-testid]';
-    const candidates = [...document.querySelectorAll(selector)].filter((element) => {
+        : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="menuitem"], [role="tab"], [role="option"], [data-testid]';
+    const candidates = [...document.querySelectorAll<HTMLElement>(selector)].filter((element: Element) => {
       if (target.role && implicitRole(element) !== target.role) return false;
-      if (target.placeholder !== undefined && element.getAttribute("placeholder") !== target.placeholder) return false;
+      if (target.placeholder !== undefined && (element.getAttribute("placeholder") ?? element.getAttribute("aria-placeholder")) !== target.placeholder) return false;
       if (target.testId !== undefined && element.getAttribute("data-testid") !== target.testId) return false;
       if (!matcher(target.label, accessibleName(element))) return false;
       return true;
     });
     let matches = candidates;
     if (target.text) {
-      const exact = candidates.filter((element) => matcher(target.text, text(element)))
-        .filter((element) => ![...element.children].some((child) => matcher(target.text, text(child))));
+      const exact = candidates.filter((element: Element) => matcher(target.text, text(element)))
+        .filter((element: Element) => ![...element.children].some((child) => matcher(target.text, text(child))));
       if (exact.length > 0) matches = exact;
       else {
-        const starts = candidates.filter((element) => rendered(element) && startsMatcher(target.text, text(element)))
-          .filter((element) => ![...element.children].some((child) => startsMatcher(target.text, text(child))));
+        const starts = candidates.filter((element: Element) => rendered(element) && startsMatcher(target.text, text(element)))
+          .filter((element: Element) => ![...element.children].some((child) => startsMatcher(target.text, text(child))));
         matches = starts.length === 1 ? starts : [];
       }
     }
     if (target.bare && !target.composer) {
-      const exact = candidates.filter((element) => matcher(target.bare, accessibleName(element)));
+      const exact = candidates.filter((element: Element) => matcher(target.bare, accessibleName(element)));
       if (exact.length > 0) matches = exact;
       else {
-        const starts = candidates.filter((element) => rendered(element) && startsMatcher(target.bare, text(element)))
-          .filter((element) => ![...element.children].some((child) => startsMatcher(target.bare, text(child))));
+        const starts = candidates.filter((element: Element) => rendered(element) && startsMatcher(target.bare, text(element)))
+          .filter((element: Element) => ![...element.children].some((child) => startsMatcher(target.bare, text(child))));
         matches = starts.length === 1 ? starts : [];
       }
     }
     const element = matches[target.nth];
     if (!element) {
-      const visibleCandidates = [...document.querySelectorAll('button, a[href], [role="button"], [role="link"]')]
+      const visibleCandidates = [...document.querySelectorAll<HTMLElement>('button, a[href], [role="button"], [role="link"]')]
         .filter(rendered)
         .slice(0, 8)
         .map((candidate) => {
@@ -231,7 +234,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
     element.scrollIntoView({ block: "center", inline: "center" });
     const rect = element.getBoundingClientRect();
     const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-    let current = element;
+    let current: Element | null = element;
     let styleVisible = true;
     while (current instanceof Element) {
       const style = getComputedStyle(current);
@@ -248,22 +251,22 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       name: accessibleName(element),
       visible: styleVisible && rect.width > 0 && rect.height > 0 && inViewport,
       hitTestOk,
-      editable: element.isContentEditable || !element.readOnly && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement),
-      value: typeof element.value === "string" ? element.value : "",
-      text: (element.isContentEditable ? element.innerText : element.innerText ?? element.value ?? element.textContent ?? "").trim(),
+      editable: element instanceof HTMLSelectElement ? !element.matches(":disabled") : (element instanceof HTMLElement && element.isContentEditable) || (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) && !element.readOnly,
+      value: (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) ? element.value : (element instanceof HTMLElement && element.isContentEditable) ? element.innerText : "",
+      text: ((element instanceof HTMLElement && element.isContentEditable) ? element.innerText : element.innerText ?? element.textContent ?? "").trim(),
       covering: hit && !hitTestOk ? {
         tag: hit.tagName.toLowerCase(),
-        text: (hit.innerText ?? hit.textContent ?? "").replace(/\\s+/g, " ").trim().slice(0, 160),
+        text: ((hit instanceof HTMLElement ? hit.innerText : null) ?? hit.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 160),
         role: implicitRole(hit),
       } : null,
     };
-  }`, [parsed]);
+  }, [parsed]);
   if (isRecord(value) && value.notFound === true) {
     const candidates = Array.isArray(value.candidates)
       ? value.candidates.filter((candidate): candidate is string => typeof candidate === "string").slice(0, 8)
       : [];
     const candidateDetail = candidates.length > 0 ? ` Visible button/link candidates: ${candidates.join(", ")}.` : "";
-    throw new Error(`Could not locate ${JSON.stringify(typeof target === "string" ? target : parseTarget(target))}.${candidateDetail}`);
+    throw new TargetNotFoundError(`Could not locate ${JSON.stringify(typeof target === "string" ? target : parseTarget(target))}.${candidateDetail}`);
   }
   if (!isRecord(value) || !isRecord(value.center) || !isRecord(value.rect)) {
     throw new Error(`Could not locate ${JSON.stringify(typeof target === "string" ? target : parseTarget(target))}.`);
@@ -353,7 +356,7 @@ export async function reload(surface: Surface, options: { timeoutMs?: number } =
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      if (await evaluateOnSurface(surface, "document.readyState === 'complete'", { timeoutMs: Math.min(2_000, Math.max(1, deadline - Date.now())) }) === true) return;
+      if (await evaluateOnSurface(surface, () => (document.readyState === 'complete'), { timeoutMs: Math.min(2_000, Math.max(1, deadline - Date.now())) }) === true) return;
     } catch {
       // Reload briefly destroys the execution context.
     }
@@ -387,4 +390,19 @@ export async function waitForLocated(
   }
   const detail = lastError instanceof Error ? ` ${lastError.message}` : "";
   throw new Error(`Timed out after ${timeoutMs}ms locating target.${detail}`);
+}
+
+/** Require every inspection in the interval to observe a missing or hidden target. */
+export async function assertAbsent(surface: Surface, target: Target, timeoutMs = 3000): Promise<void> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("Absence observation requires a positive duration");
+  const deadline = Date.now() + timeoutMs;
+  do {
+    try {
+      const found = await locate(surface, target);
+      if (found.visible) throw new Error(`Target remained visible: ${JSON.stringify(target)}`);
+    } catch (error) {
+      if (!(error instanceof TargetNotFoundError)) throw error;
+    }
+    await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
+  } while (Date.now() < deadline);
 }

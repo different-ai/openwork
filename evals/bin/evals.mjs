@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { journeyFiles, testName } from "./test-files.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
@@ -6,7 +7,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const evalsDir = fileURLToPath(new URL("..", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
-const testsDir = join(evalsDir, "specs");
 const worldsDir = join(evalsDir, "results/.worlds");
 
 const usage = `Usage: node evals/bin/evals.mjs [test-names...] [flags]
@@ -27,6 +27,7 @@ Judge then publish evidence:
   --force           Forward force to the publisher
 
 Other:
+  --list            List discoverable tests without booting resources
   --help, -h        Show this help
 
 Publish mode cannot be combined with test names, --with-llm-vision, --daytona,
@@ -81,6 +82,7 @@ export function parseArgs(args) {
     const arg = args[index];
     if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--with-llm-vision") options.withLlmVision = true;
+    else if (arg === "--list") options.list = true;
     else if (arg === "--local") options.local = true;
     else if (arg === "--daytona") options.daytona = true;
     else if (arg === "--publish") options.publish = true;
@@ -108,6 +110,7 @@ export function parseArgs(args) {
 
   if (options.publish) {
     const conflicts = [];
+    if (options.list) conflicts.push("--list");
     if (options.testNames.length > 0) conflicts.push("test names");
     if (options.withLlmVision) conflicts.push("--with-llm-vision");
     if (options.local) conflicts.push("--local");
@@ -133,6 +136,8 @@ export function parseArgs(args) {
   return options;
 }
 
+// The complete caller environment, including OPENWORK_EVAL_ENGINE, is passed
+// through below. Only these remote-placement inputs are removed by --local.
 const REMOTE_PLACEMENT_ENV = [
   "OPENWORK_EVAL_DAYTONA",
   "OPENWORK_EVAL_DAYTONA_SANDBOX",
@@ -179,24 +184,20 @@ export function resolveRunEnvironment(options, env = process.env, probe = dayton
   return { env: childEnv, placement: "local", reason: "daytona CLI missing or not authenticated" };
 }
 
-function testFiles(directory = testsDir) {
-  return readdirSync(directory, { recursive: true, withFileTypes: true })
-    .filter((entry) => entry.isFile() && /\.e2e\.test\.ts$/.test(entry.name))
-    .map((entry) => join(entry.parentPath, entry.name))
-    .sort();
-}
-
-export function resolveTestNames(names, files = testFiles()) {
+export function resolveTestNames(names, files = journeyFiles()) {
   const entries = files.map((file) => ({
     file,
     base: basename(file),
-    relative: relative(testsDir, file).split(sep).join("/"),
+    relative: testName(file),
   }));
   const resolved = [];
 
   for (const name of names) {
     const normalized = name.replace(/^\.\//, "").replace(/^specs\//, "");
     let matches = entries.filter((entry) => entry.relative === normalized);
+    if (matches.length === 0) {
+      matches = entries.filter((entry) => entry.relative === `scenarios/${normalized}/e2e.test.ts`);
+    }
     if (matches.length === 0) {
       matches = entries.filter((entry) =>
         entry.base === `${normalized}.e2e.test.ts`
@@ -384,6 +385,10 @@ export function main(argv = process.argv.slice(2)) {
     options = parseArgs(argv);
     if (options.help) {
       process.stdout.write(usage);
+      return 0;
+    }
+    if (options.list) {
+      process.stdout.write(journeyFiles().map(testName).join("\n") + "\n");
       return 0;
     }
     return options.publish ? publish(options) : run(options);

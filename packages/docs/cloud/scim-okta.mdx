@@ -12,7 +12,7 @@ You need:
 
 - A working, domain-verified, tested, and enabled
   [Okta SAML SSO](/cloud/sso-okta) connection.
-- An OpenWork owner, or a member who can manage security configuration.
+- An OpenWork owner or super-admin.
 - An Okta administrator who can configure provisioning for the SAML app.
 - An Okta plan that supports the provisioning and group-push features you
   intend to use.
@@ -147,6 +147,19 @@ After user provisioning works:
 
 Manage pushed groups in Okta, not in OpenWork. Manually created OpenWork teams
 remain independent.
+
+### Optional: grant organization Admin through an Okta group
+
+After verifying the pushed membership, an OpenWork owner or super-admin can
+approve the team to grant organization `Admin`. Neither the Okta group name nor
+SAML group attributes grant elevated access by themselves. Follow
+[Team Admin access](/cloud/members-and-rbac#team-admin-access) for the checkbox,
+membership controls, and reapproval rules when team sync is disabled or re-enabled.
+
+Test with a member who has no direct Admin role or other Admin team grant:
+confirm `Admin via {team name}`, remove them from the Okta group, wait for a
+successful group push, and confirm that inherited access is gone. Inspect the
+Okta **System Log** and OpenWork SCIM health if the change has not arrived.
 
 ## 7. Expand scope and enforce SSO
 

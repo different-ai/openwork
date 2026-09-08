@@ -3,7 +3,7 @@
 # the report to the run summary and artifacts, and fails when any spec is
 # flaky or below the pass-rate threshold so the failure-alert workflow files
 # a developer-facing issue.
-name: Nightly Flake Report
+name: Test reliability
 
 on:
   schedule:

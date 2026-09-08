@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 import type { Surface } from "@openwork/cdp";
 import {
@@ -225,11 +226,11 @@ async function deleteProvider(admin: DenSession, orgId: string, providerId: stri
 }
 
 async function configureWorkspaceOpenAi(appSurface: Surface, workspaceId: string, apiKey: string): Promise<void> {
-  const providerConfigured = await evalIn(appSurface, `(async () => {
+  const providerConfigured = await evalIn(appSurface, browserScript(async (inputWorkspaceId, inputApiKey) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return "missing local server credentials";
-    const request = async (path, init) => {
+    const request = async (path: string, init?: RequestInit) => {
       const response = await fetch("http://127.0.0.1:" + port + path, {
         ...init,
         headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
@@ -237,14 +238,14 @@ async function configureWorkspaceOpenAi(appSurface: Surface, workspaceId: string
       if (!response.ok) return path + " failed: " + response.status + " " + (await response.text()).slice(0, 300);
       return "ok";
     };
-    const workspaceId = ${JSON.stringify(workspaceId)};
+    const workspaceId = inputWorkspaceId;
     const patched = await request("/workspace/" + encodeURIComponent(workspaceId) + "/config", {
       method: "PATCH",
-      body: JSON.stringify({ opencode: { provider: { openai: { options: { apiKey: ${JSON.stringify(apiKey)} } } } } }),
+      body: JSON.stringify({ opencode: { provider: { openai: { options: { apiKey: inputApiKey } } } } }),
     });
     if (patched !== "ok") return patched;
     return request("/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST" });
-  })()`, { awaitPromise: true, timeoutMs: 60_000 });
+  }, [workspaceId, apiKey]), { awaitPromise: true, timeoutMs: 60_000 });
   expect(providerConfigured).toBe("ok");
 }
 
@@ -749,8 +750,8 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 45 * 60_000 }, asy
       appMate,
       `This is an automated connectivity check of the newly configured model. Reply with the verification code ${llmMarker} to confirm the model is reachable.`,
     );
-    await waitFor(appMate, `([...document.querySelectorAll('[data-message-role="assistant"]')]
-      .some((message) => (message.innerText ?? "").includes(${JSON.stringify(llmMarker)})))`, {
+    await waitFor(appMate, browserScript((llmMarker) => (([...document.querySelectorAll<HTMLElement>('[data-message-role="assistant"]')]
+      .some((message) => (message.innerText ?? "").includes(llmMarker)))), [llmMarker]), {
       timeoutMs: 300_000,
       label: `complete assistant verification code ${JSON.stringify(llmMarker)}`,
     });
@@ -763,10 +764,10 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 45 * 60_000 }, asy
     );
 
     await control(appMate, "session.create_task", undefined, { timeoutMs: 120_000 });
-    await waitFor(appMate, `(() => {
-      const editor = document.querySelector('[contenteditable="true"]');
-      return Boolean(editor && document.querySelectorAll('[data-message-role="user"]').length === 0);
-    })()`, { timeoutMs: 120_000, label: "fresh teammate skill session" });
+    await waitFor(appMate, () => {
+      const editor = document.querySelector<HTMLElement>('[contenteditable="true"]');
+      return Boolean(editor && document.querySelectorAll<HTMLElement>('[data-message-role="user"]').length === 0);
+    }, { timeoutMs: 120_000, label: "fresh teammate skill session" });
     const skillUseSince = new Date().toISOString();
     await sendComposerMessage(
       appMate,

@@ -45,7 +45,6 @@ describe("Den org sidebar information architecture", () => {
     const toolTester = indexOfNeedle('label: "Tool Tester"');
     const managedDashboards = indexOfNeedle('label: "Dashboards"');
     const advanced = indexOfNeedle('label: "Advanced"');
-    const workflowRuns = indexOfNeedle('label: "Workflow Runs"');
     const analytics = indexOfNeedle('label: "Analytics"');
     const workSection = indexOfNeedle('{ label: "Work", items: workItems }');
     const manageSection = indexOfNeedle('{ label: "Manage", items: manageItems }');
@@ -56,7 +55,8 @@ describe("Den org sidebar information architecture", () => {
     expect(connectors).toBeLessThan(toolTester);
     expect(toolTester).toBeLessThan(managedDashboards);
     expect(managedDashboards).toBeLessThan(advanced);
-    expect(workflowRuns).toBeLessThan(analytics);
+    expect(advanced).toBeLessThan(analytics);
+    expect(navigation).not.toContain('label: "Workflow Runs"');
     expect(workSection).toBeLessThan(manageSection);
     expect(manageSection).toBeLessThan(observabilitySection);
     expect(observabilitySection).toBeLessThan(teamSection);
@@ -74,6 +74,6 @@ describe("Den org sidebar information architecture", () => {
   });
 
   test("redirects the old Script runs path to Workflow runs", () => {
-    expect(legacyRunsPage).toContain('redirect("/dashboard/workflow-runs")');
+    expect(legacyRunsPage).toContain('redirect(getWorkflowRunsRoute())');
   });
 });

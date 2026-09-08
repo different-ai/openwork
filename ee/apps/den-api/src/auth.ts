@@ -1,6 +1,8 @@
 import * as crypto from "node:crypto";
+import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy";
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
+import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js";
 import { env } from "./env.js";
 import { appLogger } from "./observability/logger.js";
 import {
@@ -320,6 +322,15 @@ const RAW_BETTER_AUTH_MUTATION_DENIALS: readonly (readonly [string, string])[] =
   ["/organization/create-role", "Use the Den roles API to manage organization roles."],
   ["/organization/update-role", "Use the Den roles API to manage organization roles."],
   ["/organization/delete-role", "Use the Den roles API to manage organization roles."],
+  ["/organization/create-team", "Use the Den teams API to manage teams."],
+  ["/organization/update-team", "Use the Den teams API to manage teams."],
+  ["/organization/remove-team", "Use the Den teams API to manage teams."],
+  ["/organization/add-team-member", "Use the Den teams API to manage team membership."],
+  ["/organization/remove-team-member", "Use the Den teams API to manage team membership."],
+  ["/organization/add-member", "Use the Den invitation API to add members."],
+  ["/organization/invite-member", "Use the Den invitation API to invite members."],
+  ["/organization/cancel-invitation", "Use the Den invitation API to cancel invitations."],
+  ["/organization/accept-invitation", "Use the Den invitation API to accept invitations."],
   ["/sso/register", "Use the Den SSO API to manage SSO providers."],
   ["/sso/update-provider", "Use the Den SSO API to manage SSO providers."],
   ["/sso/delete-provider", "Use the Den SSO API to manage SSO providers."],
@@ -341,6 +352,10 @@ export function getRawBetterAuthMutationDenial(path: string) {
     error: "forbidden",
     message: denial[1],
   };
+}
+
+async function denyBetterAuthTeamMutation() {
+  throw new APIError("FORBIDDEN", { message: "Use the Den teams API to manage teams and their membership." });
 }
 
 function readStringProperty(value: unknown, propertyName: string) {
@@ -566,9 +581,15 @@ async function getOrganizationMemberRole(input: {
   if (!member) {
     return null;
   }
+  const authority = await resolveOrganizationMemberAuthority({
+    organizationId: normalizeDenTypeId("organization", input.organizationId),
+    memberId: member.id,
+  });
+  if (!authority) return null;
   return {
-    role: member.role,
-    isOwner: member.isOwner,
+    role: authority.directRole,
+    adminTeams: authority.adminTeams,
+    isOwner: hasRole(authority.directRole, ORGANIZATION_OWNER_ROLE),
   };
 }
 
@@ -757,6 +778,11 @@ export const auth = betterAuth({
             if (member?.isOwner) {
               throw new APIError("FORBIDDEN", {
                 message: "The organization owner cannot leave the workspace. Transfer ownership first.",
+              });
+            }
+            if (member?.adminTeams.length && !hasRole(member.role, ORGANIZATION_SUPER_ADMIN_ROLE)) {
+              throw new APIError("FORBIDDEN", {
+                message: "Ask a workspace owner or super-admin to remove your Admin team membership before leaving.",
               });
             }
           }
@@ -1094,12 +1120,37 @@ export const auth = betterAuth({
         });
       },
       organizationHooks: {
+        beforeCreateOrganization: async ({ organization }) => {
+          let metadata: Record<string, unknown>;
+          try {
+            metadata = readOrganizationMetadata(organization.metadata);
+          } catch {
+            throw new APIError("BAD_REQUEST", { message: "Organization metadata must be a JSON object." });
+          }
+          if ("dpaSigned" in metadata) {
+            throw new APIError("FORBIDDEN", { message: "dpaSigned is reserved for internal platform administration." });
+          }
+        },
+        beforeUpdateOrganization: async ({ organization }) => {
+          // A replacement without dpaSigned can erase it just as easily as an explicit false.
+          if ("metadata" in organization) {
+            throw new APIError("FORBIDDEN", { message: "Use the Den organization settings API to update workspace configuration." });
+          }
+        },
+        beforeCreateTeam: denyBetterAuthTeamMutation,
+        beforeUpdateTeam: denyBetterAuthTeamMutation,
+        beforeDeleteTeam: denyBetterAuthTeamMutation,
+        beforeAddTeamMember: denyBetterAuthTeamMutation,
+        beforeRemoveTeamMember: denyBetterAuthTeamMutation,
         afterCreateOrganization: async ({ organization }) => {
           await seedDefaultOrganizationRoles(
             normalizeDenTypeId("organization", organization.id),
           );
         },
         beforeAddMember: async ({ member }) => {
+          if (readStringProperty(member, "teamId")) {
+            await denyBetterAuthTeamMutation();
+          }
           const role = typeof member.role === "string" ? member.role : "";
           if (hasRole(role, ORGANIZATION_SUPER_ADMIN_ROLE)) {
             throw new APIError("FORBIDDEN", {
@@ -1121,6 +1172,9 @@ export const auth = betterAuth({
           }
         },
         beforeCreateInvitation: async ({ invitation, inviter }) => {
+          if (readStringProperty(invitation, "teamId")) {
+            await denyBetterAuthTeamMutation();
+          }
           const organizationId = readStringProperty(invitation, "organizationId");
           if (!organizationId) {
             return;
@@ -1285,6 +1339,8 @@ export const auth = betterAuth({
       },
     }),
     scim({
+      // Group names are metadata, never organization role assignments.
+      mapGroupToRoles: () => [],
       storeSCIMToken: SCIM_TOKEN_STORAGE_STRATEGY,
       requiredRole: [ORGANIZATION_OWNER_ROLE, ORGANIZATION_SUPER_ADMIN_ROLE, ORGANIZATION_ADMIN_ROLE],
       beforeSCIMTokenGenerated: async ({ member }) => {

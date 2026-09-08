@@ -13,10 +13,8 @@ const page = read("dashboard", "(admin)", "onboarding", "page.tsx");
 const publicInstallers = read("_lib", "public-installers.ts");
 
 describe("Marketplace onboarding page", () => {
-  test("reuses the landing download card and den choice cards", () => {
+  test("keeps real platform downloads and release assets", () => {
     expect(screen).toContain("DownloadOpenWorkCard");
-    expect(screen).toContain("DenChoiceCard");
-    expect(screen).toContain("DenSectionHeader");
     expect(screen).toContain("DenBadge");
     expect(page).toContain("getPublicInstallers");
     expect(publicInstallers).toContain('name.startsWith("openwork-cloud-")');

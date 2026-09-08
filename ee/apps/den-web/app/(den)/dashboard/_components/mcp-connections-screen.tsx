@@ -1406,7 +1406,7 @@ function GoogleWorkspaceDialog({
                         <input
                           type="checkbox"
                           data-feature={permission.key}
-                          className="h-4 w-4 rounded border-gray-300 text-gray-900"
+                          className="h-4 w-4 rounded-sm border-gray-300 text-gray-900"
                           checked={features.includes(permission.key)}
                           disabled={loadingConfig}
                           onChange={() => toggleFeature(permission.key)}
@@ -2889,11 +2889,11 @@ function AddConnectionDialog({
                     aria-checked={optionalScopeSelectionState === "some" ? "mixed" : optionalScopeSelectionState === "all"}
                     data-testid="toggle-all-optional-permissions"
                     onClick={() => setRequestedScopes((current) => toggleAllOptionalScopes(current, optionalScopes))}
-                    className="flex w-full items-center gap-2 border-b border-gray-200 pb-2 text-left font-medium text-gray-700 transition hover:text-gray-950 focus:outline-none focus:ring-2 focus:ring-gray-900/10"
+                    className="flex w-full items-center gap-2 border-b border-gray-200 pb-2 text-left font-medium text-gray-700 transition hover:text-gray-950 focus:outline-hidden focus:ring-2 focus:ring-gray-900/10"
                   >
                     <span
                       aria-hidden="true"
-                      className={`flex h-4 w-4 items-center justify-center rounded border transition ${
+                      className={`flex h-4 w-4 items-center justify-center rounded-sm border transition ${
                         optionalScopeSelectionState === "none"
                           ? "border-gray-300 bg-white"
                           : "border-blue-600 bg-blue-600 text-white"

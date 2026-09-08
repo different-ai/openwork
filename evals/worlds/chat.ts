@@ -1,10 +1,12 @@
+import { browserScript } from "@openwork/cdp";
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
-import { evalIn } from "@openwork/behaviors";
-import type { Seed } from "@openwork/env";
+import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
+import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
 import type { MockAgentWorkload } from "@openwork/labs";
+import { chatContinuity } from "./chat-continuity.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 
@@ -78,21 +80,22 @@ function sendStream(response: ServerResponse, chunks: unknown[], intervalMs = 0)
   writeNext();
 }
 
-async function configureProvider(
+export async function configureProvider(
   seed: Seed,
   app: Awaited<ReturnType<Seed["desktop"]>>,
   workspaceId: string,
   providerId: string,
   modelId: string,
   opencode: Record<string, unknown>,
+  engine = resolveEvalEngine(),
 ): Promise<void> {
   // TODO(primitive): configure a workspace provider and select its model.
-  const result = await seed.evalIn(app, `async (workspaceId, providerId, modelId, defaultModel, opencodeJson) => {
+  const result = await seed.evalIn(app, browserScript(async (workspaceId, providerId, modelId, defaultModel, opencodeJson) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return "missing local server credentials";
     const opencode = JSON.parse(opencodeJson);
-    const request = async (path, init) => {
+    const request = async (path: string, init?: RequestInit) => {
       const response = await fetch("http://127.0.0.1:" + port + path, {
         ...init,
         headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
@@ -111,7 +114,7 @@ async function configureProvider(
     const reloaded = await request("/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST" });
     if (reloaded !== "ok") return reloaded;
     const raw = localStorage.getItem("openwork.preferences");
-    let preferences = {};
+    let preferences: Record<string, unknown> = {};
     try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
     if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
     localStorage.setItem("openwork.preferences", JSON.stringify({
@@ -123,29 +126,35 @@ async function configureProvider(
     localStorage.setItem("openwork.defaultModel", defaultModel);
     localStorage.removeItem("openwork.sessionModels." + workspaceId);
     return "ok";
-  }`, {
-    args: [workspaceId, providerId, modelId, `${providerId}/${modelId}`, JSON.stringify(opencode)],
-    awaitPromise: true,
-    timeoutMs: 120_000,
-  });
+  }, [workspaceId, providerId, modelId, `${providerId}/${modelId}`, JSON.stringify(opencode)]), { awaitPromise: true, timeoutMs: 120_000 });
   if (result !== "ok") throw new Error(`Provider configuration failed: ${String(result)}`);
-  await seed.evalIn(app, "location.reload(); true");
-  const ready = await seed.evalIn(app, `async (workspaceId) => {
+  await seed.evalIn(app, () => { location.reload(); return true; });
+  const ready = await seed.evalIn(app, browserScript(async (workspaceId, engine, providerId, modelId) => {
     const deadline = Date.now() + 60000;
     while (Date.now() < deadline) {
-      const port = localStorage.getItem("openwork.server.port");
-      const token = localStorage.getItem("openwork.server.token");
+      const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+      const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") };
       try {
-        const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session", {
-          headers: { Authorization: "Bearer " + token },
-        });
-        if (response.ok && window.__openworkControl) return true;
+        const statusResponse = await fetch(base + "/experimental/engine-v2-preview/status", { headers });
+        const status = statusResponse.ok ? await statusResponse.json() : null;
+        const selected = status ? status.enabled && status.chatRouting : false;
+        if ((engine === "v2") !== selected || (!statusResponse.ok && statusResponse.status !== 404)) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          continue;
+        }
+        const mounted = base + "/workspace/" + encodeURIComponent(workspaceId);
+        const response = await fetch(mounted + (engine === "v2" ? "/opencode2/api/model" : "/opencode/session"), { headers });
+        if (response.ok && window.__openworkControl) {
+          if (engine === "v1") return true;
+          const catalog = JSON.stringify(await response.json());
+          if (catalog.includes(providerId) && catalog.includes(modelId)) return true;
+        }
       } catch {}
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     return false;
-  }`, { args: [workspaceId], awaitPromise: true, timeoutMs: 120_000 });
-  if (ready !== true) throw new Error("Engine did not become ready after provider configuration.");
+  }, [workspaceId, engine, providerId, modelId]), { awaitPromise: true, timeoutMs: 120_000 });
+  if (ready !== true) throw new Error(`Selected ${engine} engine did not become ready after provider configuration.`);
 }
 
 async function seedControls(
@@ -163,7 +172,7 @@ export async function arrangeControl(
   args?: unknown,
 ): Promise<unknown> {
   // TODO(primitive): invoke a named renderer fixture control and await its result.
-  return seed.evalIn(app, `async (action, argsJson) => {
+  return seed.evalIn(app, browserScript(async (action, argsJson) => {
     const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
       const available = window.__openworkControl?.listActions().find((candidate) => candidate.id === action && !candidate.disabled);
@@ -173,7 +182,7 @@ export async function arrangeControl(
     const result = await window.__openworkControl.execute(action, JSON.parse(argsJson));
     if (!result?.ok) throw new Error(String(result?.error ?? "control action failed"));
     return result.value;
-  }`, { args: [action, JSON.stringify(args ?? null)], awaitPromise: true, timeoutMs: 120_000 });
+  }, [action, JSON.stringify(args ?? null)]), { awaitPromise: true, timeoutMs: 120_000 });
 }
 
 async function seedSessionRetry(
@@ -208,36 +217,162 @@ export async function paletteSessionActions(seed: Seed) {
   return { app, workspace, session };
 }
 
+async function splitPaneQuestions(
+  seed: Seed,
+  name: string,
+  agentWorkloads: MockAgentWorkload[],
+  policy: Record<string, unknown> = { permission: { question: "allow" } },
+) {
+  const providerId = "split-send-mock";
+  const modelId = "split-send-model";
+  const mock = seed.mock({ agentWorkloads });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const app = await seed.desktop({ name, den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath(name));
+  // Arrange an allowed native question tool independently of custom-agent defaults.
+  // TODO(primitive): write workspace fixture files through a first-class seed API.
+  const questionPolicyWritten = await seed.evalIn(app, browserScript(async (workspaceId, content) => {
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/files/content", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "opencode.json", content }),
+    });
+    return response.ok;
+  }, [workspace.workspaceId, JSON.stringify(policy)]), { awaitPromise: true });
+  if (questionPolicyWritten !== true) throw new Error("Could not arrange the question-tool policy.");
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Split send mock",
+        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-split-send" },
+        models: { [modelId]: { name: "Split send model" } },
+      },
+    },
+  });
+  return { app, workspace, mock: den.mocks.agent };
+}
+
+export async function delegatedQuestionHandoff(seed: Seed) {
+  const engine = resolveEvalEngine();
+  const delegationTool = engine === "v2" ? "subagent" : "task";
+  const rootPrompt = "Delegate choosing the task format, then report the result.";
+  const child = {
+    prompt: "Help me choose the delegated task format",
+    question: "Which format should the child task use?",
+    answer: "Child checklist",
+    alternative: "Child outline",
+  };
+  const unrelated = {
+    prompt: "Help me choose the unrelated task format",
+    question: "Which format should the unrelated task use?",
+    answer: "Unrelated outline",
+    alternative: "Unrelated checklist",
+  };
+  const base = await splitPaneQuestions(seed, "delegated-question-handoff", [
+    {
+      promptMarker: rootPrompt, latestUserTurn: true,
+      finalReply: "Unused: return the actual child result.", finalReplyFrom: "last-tool-text",
+      steps: [{ tool: delegationTool, arguments: {
+        description: "Choose delegated task format", prompt: child.prompt,
+        // v2 beta-19086 calls this subagent; foreground must await the child's answer.
+        ...(engine === "v2" ? { agent: "general", background: false } : { subagent_type: "general" }),
+      } }],
+    },
+    ...[child, unrelated].map((question): MockAgentWorkload => ({
+      promptMarker: question.prompt, latestUserTurn: true,
+      finalReply: "Unused: return the actual question result.", finalReplyFrom: "last-tool-text",
+      steps: [{ tool: "question", arguments: { questions: [{
+        header: "Task format", question: question.question,
+        options: [
+          { label: question.answer, description: "Use this format" },
+          { label: question.alternative, description: "Use the other format" },
+        ],
+      }] } }],
+    })),
+  ], {
+    permission: { question: "allow", task: "allow" },
+    // Both engines deny questions for general by default; v2 migrates task to subagent.
+    agent: { general: { permission: { question: "allow" } } },
+  });
+  const root = await seedSessionRetry(seed, base.app, { title: "Delegated question parent" });
+  const other = await seedSessionRetry(seed, base.app, { title: "Unrelated question root" });
+  return { ...base, engine, delegationTool, root: { ...root, prompt: rootPrompt }, child, unrelated: { ...other, ...unrelated } };
+}
+
+/** Real native permissions and a provider retry, without synthetic UI events. */
+export async function permissionStopRecovery(seed: Seed) {
+  const engine = resolveEvalEngine();
+  const retry = { prompt: "Prepare the retry reliability summary", reply: "Retry recovery finished." };
+  const stopped = { prompt: "Inspect the stopped permission workspace", command: "printf STOP_PERMISSION_WITNESS" };
+  const other = { prompt: "Inspect the other permission workspace", command: "printf OTHER_PERMISSION_WITNESS" };
+  const followup = { prompt: "Continue with a fresh summary instead", reply: "Fresh work finished after stop." };
+  const base = await splitPaneQuestions(seed, "permission-stop-recovery", [
+    { promptMarker: retry.prompt, latestUserTurn: true, rateLimitAttempts: 1, finalReply: retry.reply, steps: [] },
+    ...[stopped, other].map((item): MockAgentWorkload => ({
+      promptMarker: item.prompt, latestUserTurn: true, finalReply: "Permission work finished.",
+      steps: [{ tool: engine === "v2" ? "shell" : "bash", arguments: {
+        command: item.command, description: "Inspect the permission workspace", timeout: 30_000,
+      } }],
+    })),
+    { promptMarker: followup.prompt, latestUserTurn: true, finalReply: followup.reply, steps: [] },
+  ], { permission: { bash: "ask" } });
+  const stoppedSession = await seedSessionRetry(seed, base.app, { title: "Stop permission task" });
+  const otherSession = await seedSessionRetry(seed, base.app, { title: "Keep permission task" });
+  return { ...base, engine, retry, followup, stopped: { ...stopped, ...stoppedSession }, other: { ...other, ...otherSession } };
+}
+
 export async function newSplitPrimary(seed: Seed) {
-  const app = await seed.desktop({ name: "new-split-session" });
-  const workspace = await seed.workspace(app, seed.tmpPath("new-split-session"));
+  const primaryPrompt = "Reply to the primary split message";
+  const secondaryPrompt = "Reply to the secondary split message";
+  const switchPrompt = "Reply after switching the primary session";
+  const primaryQuestionPrompt = "Help me choose the main task format";
+  const secondaryQuestionPrompt = "Help me choose the side task format";
+  const contextPrompt = "Describe your conversation context";
+  const { app, workspace } = await splitPaneQuestions(seed, "new-split-session", [
+    ...["Main", "Side"].map((pane): MockAgentWorkload => ({
+      promptMarker: pane === "Main" ? primaryQuestionPrompt : secondaryQuestionPrompt,
+      latestUserTurn: true, finalReply: "Answered the format question.", finalReplyFrom: "last-tool-text",
+      steps: [{ tool: "question", arguments: { questions: [{
+        header: `${pane} format`, question: `Which format should the ${pane.toLowerCase()} task use?`,
+        options: [{ label: `${pane} outline`, description: "A brief overview" }, { label: `${pane} checklist`, description: "A sequence of steps" }],
+      }] } }],
+    })),
+    { promptMarker: contextPrompt, latestUserTurn: true, finalReply: "Conversation context.", finalReplyFrom: "system-text", steps: [] },
+    { latestUserTurn: true, promptMarker: primaryPrompt, finalReply: "Primary split received", steps: [] },
+    { latestUserTurn: true, promptMarker: secondaryPrompt, finalReply: "Secondary split received", steps: [] },
+    { latestUserTurn: true, promptMarker: switchPrompt, finalReply: "Switched session received", steps: [] },
+  ]);
+  const switchSession = await seedSessionRetry(seed, app, { title: "Split switch target" });
   const session = await seedSessionRetry(seed, app, { title: "New split primary" });
-  const splitFacts = () => evalIn(app, `(() => {
+  const splitFacts = () => evalIn(app, () => {
     const context = window.__openworkControl?.context?.();
     const layout = context?.conversations?.layout;
-    const primaryPane = document.querySelector('[data-workbench-pane="primary"]');
-    const secondaryPanes = [...document.querySelectorAll('[data-workbench-pane="secondary"]')];
+    const primaryPane = document.querySelector<HTMLElement>('[data-workbench-pane="primary"]');
+    const secondaryPanes = [...document.querySelectorAll<HTMLElement>('[data-workbench-pane="secondary"]')];
     const secondaryPane = secondaryPanes[0];
     return {
       layoutKind: layout?.kind ?? "",
-      focusedPane: layout?.focused ?? "",
+      focusedPane: (layout?.kind === "split" ? layout.focused : undefined) ?? "",
       focusedComposerSessionId: document.activeElement?.matches('[contenteditable="true"]')
         ? document.activeElement.closest("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? ""
         : "",
-      primarySessionId: layout?.primarySessionId ?? layout?.sessionId ?? "",
-      secondarySessionId: layout?.secondarySessionId ?? "",
-      primaryWorkspaceId: layout?.primaryWorkspaceId ?? "",
-      secondaryWorkspaceId: layout?.secondaryWorkspaceId ?? "",
-      primarySurfaceSessionId: primaryPane?.querySelector('[data-session-surface-id]')
+      primarySessionId: (layout?.kind === "split" ? layout.primarySessionId : undefined) ?? (layout?.kind === "single" ? layout.sessionId : undefined) ?? "",
+      secondarySessionId: (layout?.kind === "split" ? layout.secondarySessionId : undefined) ?? "",
+      primaryWorkspaceId: (layout?.kind === "split" ? layout.primaryWorkspaceId : undefined) ?? "",
+      secondaryWorkspaceId: (layout?.kind === "split" ? layout.secondaryWorkspaceId : undefined) ?? "",
+      primarySurfaceSessionId: primaryPane?.querySelector<HTMLElement>('[data-session-surface-id]')
         ?.getAttribute('data-session-surface-id') ?? "",
-      secondarySurfaceSessionId: secondaryPane?.querySelector('[data-session-surface-id]')
+      secondarySurfaceSessionId: secondaryPane?.querySelector<HTMLElement>('[data-session-surface-id]')
         ?.getAttribute('data-session-surface-id') ?? "",
       secondaryPaneWorkspaceId: secondaryPane?.getAttribute('data-workbench-workspace-id') ?? "",
       secondaryPaneCount: secondaryPanes.length,
       locationHash: window.location.hash,
     };
-  })()`);
-  const agentContextViaServer = () => evalIn(app, `(async () => {
+  });
+  const agentContextViaServer = () => evalIn(app, async () => {
     const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/experimental/ui-control/request", {
       method: "POST",
       headers: {
@@ -247,8 +382,8 @@ export async function newSplitPrimary(seed: Seed) {
       body: JSON.stringify({ kind: "context" }),
     });
     return response.json();
-  })()`, { awaitPromise: true, timeoutMs: 15_000 });
-  return { app, workspace, session, splitFacts, agentContextViaServer };
+  }, { awaitPromise: true, timeoutMs: 15_000 });
+  return { app, workspace, session, continuity: chatContinuity(app, workspace.workspaceId), splitFacts, agentContextViaServer, primaryPrompt, secondaryPrompt, switchSession, switchPrompt, primaryQuestionPrompt, secondaryQuestionPrompt, contextPrompt };
 }
 
 export async function shimmerChat(seed: Seed) {
@@ -287,12 +422,12 @@ export async function connectionsMenu(seed: Seed) {
   const app = await seed.desktop({ den, as: "admin" });
   const session = await seedSessionRetry(seed, app);
   // TODO(primitive): click a button by its title when it has no accessible name.
-  const opened = await seed.evalIn(app, `(() => {
-    const trigger = document.querySelector('button[title="Agents, commands, skills, plugins, and connections"]');
+  const opened = await seed.evalIn(app, () => {
+    const trigger = document.querySelector<HTMLButtonElement>('button[title="Agents, commands, skills, plugins, and connections"]');
     if (!(trigger instanceof HTMLButtonElement)) return false;
     trigger.click();
     return true;
-  })()`);
+  });
   if (opened !== true) throw new Error("Composer capability menu did not open.");
   return { app, den, session, connections };
 }
@@ -465,25 +600,25 @@ export async function renderCycle(seed: Seed) {
       },
     });
     // TODO(primitive): enable the renderer profiler before desktop launch.
-    await seed.evalIn(app, `(() => {
+    await seed.evalIn(app, () => {
       localStorage.setItem("openwork.debug.profiler", "1");
       localStorage.removeItem("openwork.debug.profilerOverlay");
       location.reload();
       return true;
-    })()`);
-    const controlsReady = await seed.evalIn(app, `(async () => {
+    });
+    const controlsReady = await seed.evalIn(app, async () => {
       const deadline = Date.now() + 30000;
       while (Date.now() < deadline) {
         if (window.__openworkControl?.listActions().some((action) => action.id === "session.create_task" && !action.disabled)) return true;
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       return false;
-    })()`, { awaitPromise: true, timeoutMs: 120_000 });
+    }, { awaitPromise: true, timeoutMs: 120_000 });
     if (controlsReady !== true) throw new Error("Session controls did not return after enabling the profiler.");
     const session = await seedSessionRetry(seed, app);
     await seed.composerText(app, `Reply with exactly: ${renderCycleFirstReply}`);
     // TODO(primitive): send an arranged historical turn and await its completion.
-    const historical = await seed.evalIn(app, `async (expectedReply) => {
+    const historical = await seed.evalIn(app, browserScript(async (expectedReply) => {
       const sent = await window.__openworkControl.execute("composer.send", null);
       if (!sent?.ok) throw new Error(String(sent?.error ?? "composer.send failed"));
       const deadline = Date.now() + 30000;
@@ -492,7 +627,7 @@ export async function renderCycle(seed: Seed) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       return false;
-    }`, { args: [renderCycleFirstReply], awaitPromise: true, timeoutMs: 120_000 });
+    }, [renderCycleFirstReply]), { awaitPromise: true, timeoutMs: 120_000 });
     if (historical !== true) throw new Error(`Historical turn did not complete. Requests: ${requests.join("; ")}`);
     return {
       app,
@@ -506,7 +641,77 @@ export async function renderCycle(seed: Seed) {
   }
 }
 
+export async function streamedToolHistory(seed: Seed) {
+  if (resolveEvalEngine() !== "v1") throw new SkipError("native v1 transcript history (OPENWORK_EVAL_ENGINE=v1)");
+  const providerId = "streamed-history-mock";
+  const modelId = "streamed-history-model";
+  const prompt = "Continue the history review and report the latest tool result.";
+  const opening = "History review is advancing.";
+  const middle = "The next review section is arriving.";
+  const closing = "History review is complete.";
+  const answer = [opening, "Earlier work remains available. ".repeat(16), middle,
+    "The current answer continues to grow. ".repeat(20), closing].join("\n\n");
+  const history = Array.from({ length: 150 }, (_, index) => `Settled history ${String(index + 1).padStart(3, "0")}.`);
+  const toolNames = Array.from({ length: 20 }, (_, index) => `history-tool-${String(index + 1).padStart(2, "0")}`);
+  const latestTool = "latest-tool-result";
+  // The complete URL exists only in output, not in the tool input or final reply.
+  const command = (name: string) => `printf '%s%s/%s\\n' 'http://' '127.0.0.1:43123' '${name}'`;
+  const mock = seed.mock({ agentWorkloads: [{
+    promptMarker: prompt, latestUserTurn: true, finalReply: answer, finalReplyChunkSize: 2,
+    steps: [{ tool: "bash", arguments: { command: command(latestTool), description: "Read the latest history result" } }],
+  }] });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const app = await seed.desktop({ name: "streamed-tool-history", den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("streamed-tool-history"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    permission: { bash: "allow" },
+    provider: { [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Streamed history mock",
+      options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-streamed-history" },
+      models: { [modelId]: { name: "Streamed history model" } },
+    } },
+  });
+  const neighbor = await seedSessionRetry(seed, app, { title: "Unrelated history review" });
+  const session = await seedSessionRetry(seed, app, { title: "Long tool history" });
+  const historyPath = `/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode/session/${encodeURIComponent(session.sessionId)}/message`;
+  // Persist through native HTTP boundaries while the real SSE subscriber builds
+  // its cache. Never inject renderer messages or import the merge implementation.
+  await seed.evalIn(app, browserScript(async (historyPath, history, commands, providerId, modelId) => {
+    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+    const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" };
+    const deadline = Date.now() + 150000;
+    const post = async (path: string, body: unknown) => {
+      if (Date.now() >= deadline) throw new Error("Native history arrangement exceeded 150 seconds");
+      const response = await fetch(base + path, {
+        method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(30000),
+      });
+      if (!response.ok) throw new Error("Native history arrangement failed: " + response.status);
+      return response.json();
+    };
+    for (const text of history) {
+      await post(historyPath, { noReply: true, model: { providerID: providerId, modelID: modelId }, parts: [{ type: "text", text }] });
+      // Wait for each native event to reach the transcript, including the oldest
+      // entries that will no longer fit in a later bounded snapshot.
+      const visibleDeadline = Math.min(deadline, Date.now() + 10000);
+      while (![...document.querySelectorAll<HTMLElement>('[data-message-role="user"]')].some(node => node.innerText.includes(text))) {
+        if (Date.now() >= visibleDeadline) throw new Error("Native history event did not render: " + text);
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    }
+    for (const command of commands) {
+      const result = await post(historyPath.replace(/\/message$/, "/shell"), {
+        agent: "build", model: { providerID: providerId, modelID: modelId }, command,
+      });
+      if (!Array.isArray(result.parts) || !result.parts.some((part: { type?: string; state?: { status?: string } }) => part.type === "tool" && part.state?.status === "completed")) {
+        throw new Error("Native shell history did not complete");
+      }
+    }
+  }, [historyPath, history, toolNames.map(command), providerId, modelId]), { awaitPromise: true, timeoutMs: 185_000 });
+  return { app, workspace, session, neighbor, historyPath, history, toolNames, latestTool, prompt, opening, middle, closing };
+}
+
 export const streamedMarkdownMarker = "STREAM_MARKDOWN_ANSWER";
+export const streamedMarkdownReasoning = "Preparing the formatted response.";
 /** A multi-block answer: heading, prose, list, table, fenced code, closing prose. */
 export const streamedMarkdownAnswer = [
   "## Streamed answer heading",
@@ -524,6 +729,8 @@ export const streamedMarkdownAnswer = [
   "const streamed = \"delta\";",
   "```",
   "",
+  "[Play video](clip.mp4)",
+  "",
   "Closing paragraph epsilon.",
 ].join("\n");
 
@@ -538,7 +745,10 @@ export async function streamedMarkdown(seed: Seed) {
     agentWorkloads: [{
       promptMarker: streamedMarkdownMarker,
       finalReply: streamedMarkdownAnswer,
-      finalReplyChunkSize: 8,
+      finalReasoning: streamedMarkdownReasoning,
+      // Allow live reasoning inspection over remote CDP before the mid-turn reload.
+      finalReplyChunkSize: 1,
+      finalReplyDelayMs: 1500,
       steps: [],
     }],
   });
@@ -551,12 +761,52 @@ export async function streamedMarkdown(seed: Seed) {
         npm: "@ai-sdk/openai-compatible",
         name: "Streamed markdown mock",
         options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-streamed-markdown" },
-        models: { [modelId]: { name: "Streamed markdown model" } },
+        models: { [modelId]: { name: "Streamed markdown model", reasoning: true } },
       },
     },
   });
+  // A tiny H.264 clip, served through the same authenticated file endpoint as user files.
+  await seed.evalIn(app, browserScript(async (workspaceId, dataBase64) => {
+    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+    const response = await fetch(base + "/workspace/" + encodeURIComponent(workspaceId) + "/files/raw", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "clip.mp4", dataBase64 }),
+    });
+    if (!response.ok) throw new Error("Video fixture write failed: " + response.status);
+  }, [workspace.workspaceId, (await readFile(new URL("../fixtures/assistant-video.mp4", import.meta.url))).toString("base64")]), { awaitPromise: true });
+  const engine = resolveEvalEngine();
+  const ready = await seed.evalIn(app, browserScript(async (workspaceId, engine, providerId, modelId) => {
+    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+    const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") };
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      const status = await (await fetch(base + "/experimental/engine-v2-preview/status", { headers })).json();
+      if (engine === "v1" && !status.chatRouting) return true;
+      if (engine === "v2" && status.running && status.chatRouting) {
+        const response = await fetch(base + "/workspace/" + workspaceId + "/opencode2/api/model", { headers });
+        if (response.ok) {
+          const catalog = JSON.stringify(await response.json());
+          if (catalog.includes(providerId) && catalog.includes(modelId)) return true;
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    return false;
+  }, [workspace.workspaceId, engine, providerId, modelId]), { awaitPromise: true, timeoutMs: 65000 });
+  if (ready !== true) throw new Error(`Selected ${engine} engine was not ready for the streaming journey`);
   const session = await seedSessionRetry(seed, app);
-  return { app, den, workspace, session };
+  return { app, den, workspace, session,
+    async videoState(play = false) {
+      return seed.evalIn(app, browserScript(async (play) => {
+        const video = document.querySelector<HTMLVideoElement>('video[data-openwork-video-path="clip.mp4"]');
+        if (!video) return null;
+        if (play) await video.play();
+        return { controls: video.controls, autoplay: video.autoplay, ready: video.readyState >= 2,
+          paused: video.paused, time: video.currentTime, error: video.error?.message ?? null };
+      }, [play]), { awaitPromise: true });
+    },
+  };
 }
 
 const htmlToolName = "explode_html";
@@ -717,26 +967,26 @@ async function writeProviderConfig(path: string, providerId: string, modelId: st
 
 async function selectModelInWorld(seed: Seed, app: Awaited<ReturnType<Seed["desktop"]>>, modelName: string): Promise<void> {
   // TODO(primitive): select a model as arranged state.
-  const selected = await seed.evalIn(app, `async (modelName) => {
+  const selected = await seed.evalIn(app, browserScript(async (modelName) => {
     const deadline = Date.now() + 60000;
-    if (!document.querySelector('input[placeholder="Search providers and models..."]')) {
+    if (!document.querySelector<HTMLInputElement>('input[placeholder="Search providers and models..."]')) {
       const result = await window.__openworkControl.execute("session.model_picker.open", null);
       if (!result?.ok) return false;
     }
     while (Date.now() < deadline) {
-      const input = document.querySelector('input[placeholder="Search providers and models..."]');
+      const input = document.querySelector<HTMLInputElement>('input[placeholder="Search providers and models..."]');
       if (input instanceof HTMLInputElement && input.value !== modelName) {
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
         setter?.call(input, modelName);
         input.dispatchEvent(new Event("input", { bubbles: true }));
       }
-      const dialog = document.querySelector('[data-slot="dialog-content"]');
+      const dialog = document.querySelector<HTMLElement>('[data-slot="dialog-content"]');
       const item = [...(dialog?.querySelectorAll("button") ?? [])]
         .find((candidate) => !candidate.disabled && (candidate.textContent ?? "").includes(modelName));
       if (item instanceof HTMLElement) {
         item.click();
         while (Date.now() < deadline) {
-          if (!document.querySelector('input[placeholder="Search providers and models..."]')) return true;
+          if (!document.querySelector<HTMLInputElement>('input[placeholder="Search providers and models..."]')) return true;
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
         return false;
@@ -744,7 +994,7 @@ async function selectModelInWorld(seed: Seed, app: Awaited<ReturnType<Seed["desk
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     return false;
-  }`, { args: [modelName], awaitPromise: true, timeoutMs: 120_000 });
+  }, [modelName]), { awaitPromise: true, timeoutMs: 120_000 });
   if (selected !== true) throw new Error(`Model ${modelName} was not selectable.`);
 }
 
@@ -928,7 +1178,7 @@ async function configureCrossWorkspaces(
   baseUrl: string,
 ): Promise<void> {
   // TODO(primitive): configure one provider across several workspaces and select its model.
-  const configured = await seed.evalIn(app, `async (workspaceIdsJson, providerBaseUrl) => {
+  const configured = await seed.evalIn(app, browserScript(async (workspaceIdsJson, providerBaseUrl) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return "missing local server credentials";
@@ -958,7 +1208,7 @@ async function configureCrossWorkspaces(
       if (!reload.ok && reload.status !== 504) return "reload:" + reload.status + ":" + (await reload.text()).slice(0, 300);
     }
     const raw = localStorage.getItem("openwork.preferences");
-    let preferences = {};
+    let preferences: Record<string, unknown> = {};
     try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
     if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
     localStorage.setItem("openwork.preferences", JSON.stringify({
@@ -969,9 +1219,9 @@ async function configureCrossWorkspaces(
     }));
     localStorage.setItem("openwork.defaultModel", "composer-switch-mock/composer-switch-model");
     return "ok";
-  }`, { args: [JSON.stringify(workspaceIds), `${baseUrl}/v1`], awaitPromise: true, timeoutMs: 180_000 });
+  }, [JSON.stringify(workspaceIds), `${baseUrl}/v1`]), { awaitPromise: true, timeoutMs: 180_000 });
   if (configured !== "ok") throw new Error(`Cross-workspace provider configuration failed: ${String(configured)}`);
-  await seed.evalIn(app, "location.reload(); true");
+  await seed.evalIn(app, () => { location.reload(); return true; });
 }
 
 export async function crossWorkspace(seed: Seed) {
@@ -1134,12 +1384,127 @@ export async function sessionErrorCard(seed: Seed) {
   };
 }
 
+export async function sessionSubmitErrorIsolation(seed: Seed) {
+  const promptB = "Summarize the second task independently.";
+  const replyB = "The second task completed independently.";
+  const base = await splitPaneQuestions(seed, "session-submit-error-isolation", [
+    { promptMarker: promptB, latestUserTurn: true, finalReply: replyB, steps: [] },
+  ]);
+  const sessionB = await seedSessionRetry(seed, base.app, { title: "Independent task B" });
+  const sessionA = await seedSessionRetry(seed, base.app, { title: "Storage failure task A" });
+  const endpoint = base.app.client.webSocketDebuggerUrl;
+  if (!endpoint) throw new Error("Submit fault requires the desktop CDP endpoint");
+  const origin = await evalIn(base.app, () => "http://127.0.0.1:" + localStorage.getItem("openwork.server.port"));
+  const paths = (id: string) => ["workspace", "w"].flatMap(mount => ["opencode", "opencode2/api"].map(engine =>
+    `/${mount}/${encodeURIComponent(base.workspace.workspaceId)}/${engine}/session/${encodeURIComponent(id)}/prompt_async`));
+  const pathsA = paths(sessionA.sessionId);
+  const pathsB = paths(sessionB.sessionId);
+  const socket = new WebSocket(endpoint);
+  const ready = Promise.withResolvers<void>();
+  const commands = new Map<number, ReturnType<typeof Promise.withResolvers<void>>>();
+  const held = new Map<string, string>();
+  const finished = new Set<string>();
+  const requests: { sessionId: string; body: string }[] = [];
+  let nextId = 1;
+  let disposed = false;
+  let failure: Error | undefined;
+  const command = async (method: string, params = {}) => {
+    const id = nextId++;
+    const result = Promise.withResolvers<void>();
+    commands.set(id, result);
+    const timer = setTimeout(() => result.reject(new Error(`Submit fault timed out: ${method}`)), 15_000);
+    try { socket.send(JSON.stringify({ id, method, params })); await result.promise; }
+    finally { clearTimeout(timer); commands.delete(id); }
+  };
+  const fail = (error = new Error("Submit fault lost its CDP connection")) => {
+    if (disposed) return;
+    failure = error;
+    ready.reject(error);
+    for (const result of commands.values()) result.reject(error);
+  };
+  socket.addEventListener("open", () => ready.resolve());
+  socket.addEventListener("error", () => fail());
+  socket.addEventListener("close", () => fail());
+  socket.addEventListener("message", event => {
+    const message: unknown = JSON.parse(String(event.data));
+    if (!isRecord(message)) return;
+    if (typeof message.id === "number") {
+      const result = commands.get(message.id);
+      if (message.error) result?.reject(new Error("Submit fault CDP command failed"));
+      else result?.resolve();
+    }
+    const params = message.params;
+    if (!isRecord(params) || typeof params.requestId !== "string") return;
+    if (message.method === "Network.loadingFinished") finished.add(params.requestId);
+    if (message.method !== "Fetch.requestPaused") return;
+    const request = params.request;
+    const path = isRecord(request) && typeof request.url === "string" ? new URL(request.url).pathname : "";
+    if (isRecord(request) && request.method === "POST" && (pathsA.includes(path) || pathsB.includes(path))) {
+      requests.push({ sessionId: pathsA.includes(path) ? sessionA.sessionId : sessionB.sessionId,
+        body: typeof request.postData === "string" ? request.postData : "" });
+      if (pathsA.includes(path)) {
+        if (typeof params.networkId !== "string") { fail(new Error("Submit fault has no network request ID")); return; }
+        held.set(params.requestId, params.networkId);
+        return;
+      }
+    }
+    void command("Fetch.continueRequest", { requestId: params.requestId }).catch(fail);
+  });
+  const timer = setTimeout(() => ready.reject(new Error("Submit fault could not connect")), 15_000);
+  try {
+    await ready.promise;
+    await command("Network.enable");
+    await command("Fetch.enable", { patterns: [...pathsA, ...pathsB].map(path => ({ urlPattern: origin + path + "*", requestStage: "Request" })) });
+  } catch (error) { disposed = true; socket.close(); throw error; }
+  finally { clearTimeout(timer); }
+  return {
+    ...base, sessionA, sessionB, promptB, replyB,
+    readSubmissions() {
+      if (failure) throw failure;
+      return { requests: [...requests], held: held.size, finished: [...held.values()].filter(id => finished.has(id)).length };
+    },
+    async failHeldSubmissions() {
+      if (failure) throw failure;
+      const pending = [...held].filter(([, id]) => !finished.has(id));
+      if (!pending.length) throw new Error("No submit request is held");
+      // A real SDK response, not a seeded presentation: the storage code exists
+      // only in the upstream response body, not in the top-level message.
+      const body = Buffer.from(JSON.stringify({ name: "APIError", data: {
+        message: "Connected service could not save the task output", statusCode: 507,
+        responseBody: JSON.stringify({ error: { code: "EDQUOT", message: "Connected service storage quota exceeded" } }),
+      } })).toString("base64");
+      await Promise.all(pending.map(([requestId]) => command("Fetch.fulfillRequest", {
+        requestId, responseCode: 507, responseHeaders: [
+          { name: "content-type", value: "application/json" },
+          { name: "access-control-allow-origin", value: "*" },
+        ], body,
+      })));
+    },
+    async selectedSurface() {
+      return evalIn(base.app, () => {
+        const surface = document.querySelector<HTMLElement>('[data-workbench-pane="primary"] [data-session-surface-id]');
+        const run = surface?.querySelector<HTMLButtonElement>('button[aria-label="Run task"]');
+        return { sessionId: surface?.dataset.sessionSurfaceId ?? "", runEnabled: Boolean(run && !run.disabled) };
+      });
+    },
+    async settleResponse() {
+      // Network completion precedes the SDK promise chain and React's commit.
+      await evalIn(base.app, () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+        { awaitPromise: true, timeoutMs: 5_000 });
+    },
+    async [Symbol.asyncDispose]() {
+      try { if (socket.readyState === WebSocket.OPEN) await command("Fetch.disable"); }
+      finally { disposed = true; socket.close(); }
+    },
+  };
+}
+
 export async function snapshotFailure(seed: Seed) {
   const app = await seed.desktop({ name: "composer-snapshot-failure" });
   const workspace = await seed.workspace(app, seed.tmpPath("composer-snapshot-failure"));
   const session = await seedSessionRetry(seed, app, { title: "Composer snapshot failure proof" });
   await arrangeControl(seed, app, "eval.chat_transcript.seed");
-  const failureJson = await seed.evalIn(app, `async () => {
+  const failureJson = await seed.evalIn(app, browserScript(async () => {
     const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
       const available = window.__openworkControl?.listActions()
@@ -1150,7 +1515,7 @@ export async function snapshotFailure(seed: Seed) {
     const result = await window.__openworkControl.execute("eval.session_snapshot.fail", null);
     if (!result?.ok) throw new Error(String(result?.error ?? "control action failed"));
     return JSON.stringify(result.result);
-  }`, { args: [], awaitPromise: true, timeoutMs: 120_000 });
+  }, []), { awaitPromise: true, timeoutMs: 120_000 });
   const failure: unknown = typeof failureJson === "string" ? JSON.parse(failureJson) : failureJson;
   if (!isRecord(failure) || failure.isError !== true) {
     throw new Error(`Session snapshot failure was not established: ${JSON.stringify(failure)}`);
@@ -1237,7 +1602,7 @@ export async function computerMentions(seed: Seed) {
     den, app, workspace, session,
     async submittedParts() {
       // TODO(primitive): inspect submitted engine parts, including synthetic routing instructions.
-      return seed.evalIn(app, `async (workspaceId) => {
+      return seed.evalIn(app, browserScript(async (workspaceId) => {
         const port = localStorage.getItem("openwork.server.port");
         const token = localStorage.getItem("openwork.server.token");
         const base = "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session";
@@ -1253,191 +1618,167 @@ export async function computerMentions(seed: Seed) {
         }
         messages.sort((a, b) => a.info.time.created - b.info.time.created);
         return messages.filter((message) => message.info.role === "user").map((message) => ({
-          visible: message.parts.filter((part) => part.type === "text" && !part.synthetic).map((part) => part.text).join("").trim(),
-          routing: message.parts.filter((part) => part.type === "text" && part.synthetic && part.text.includes("remote-session:create")).map((part) => part.text),
+          visible: message.parts.filter((part: { type: string; synthetic?: boolean; text: string }) => part.type === "text" && !part.synthetic).map((part: { text: string }) => part.text).join("").trim(),
+          routing: message.parts.filter((part: { type: string; synthetic?: boolean; text: string }) => part.type === "text" && part.synthetic).map((part: { text: string }) => part.text),
         }));
-      }`, { args: [workspace.workspaceId], awaitPromise: true });
+      }, [workspace.workspaceId]), { awaitPromise: true });
     },
   };
 }
 
-export const suspendedTurnPrompt = "Continue the deterministic task that spans a laptop sleep.";
-export const suspendedTurnReply = "The task finished after the computer resumed.";
-
-/**
- * A model whose first answer goes quiet after its opening chunk and never
- * ends — what a half-open socket looks like after the machine slept — and
- * whose later answers complete. The witness records every completion so a
- * spec can prove the engine re-asked once rather than duplicating work.
- */
-export async function suspendedTurn(seed: Seed, { place }: { place: import("@openwork/env").Place }) {
-  const providerId = "lpr_suspended_turn";
-  const modelId = "suspended-turn-model";
-  const boot = seed.mock({
-    agentWorkloads: [{
-      promptMarker: suspendedTurnPrompt,
-      finalReply: suspendedTurnReply,
-      quietCompletions: 1,
-      steps: [{
-        tool: "bash",
-        arguments: {
-          command: "printf '%s\\n' 'suspended-turn-resumed'",
-          timeout: 30_000,
-          description: "Acknowledge the resumed turn",
-        },
-      }],
-    }],
+/** A deterministic model calls the real built-in visualization tool. */
+export async function visualization(seed: Seed) {
+  const providerId = "visualization-mock";
+  const modelId = "visualization-model";
+  const design = {
+    id: "project-overview", title: "Project overview", revision: 1,
+    navigation: ["Overview", "Projects", "Settings"],
+    sections: [{ title: "Your workspace", columns: "two", blocks: [
+      { kind: "metric", label: "Active projects", value: "12" },
+      { kind: "field", label: "Project name", value: "Website refresh" },
+      { kind: "button", label: "Create project" },
+      { kind: "list", label: "Recent activity", items: ["Draft reviewed", "Mockup updated"] },
+      { kind: "image", label: "Cover image" },
+      { kind: "text", label: "Design note", value: "<script>window.mockupExecuted = true</script>" },
+    ] }],
+  };
+  const mock = seed.mock({ agentWorkloads: [
+    { latestUserTurn: true, promptMarker: "Sketch a project overview", finalReply: "Your first sketch is ready.", steps: [{ tool: "openwork_visualization", arguments: design }] },
+    { latestUserTurn: true, promptMarker: "Create version 2", finalReply: "Your revised sketch is ready.", steps: [{ tool: "openwork_visualization", arguments: { ...design, revision: 2, description: "A calmer overview" } }] },
+  ] });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const app = await seed.desktop({ name: "visualization", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("visualization"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    permission: { openwork_visualization: "allow" },
+    provider: { [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Visualization mock",
+      options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-visualization" },
+      models: { [modelId]: { name: "Visualization model", tool_call: true } },
+    } },
   });
-  const { handle: agent } = await boot.boot(place);
-  try {
-    await place.exposeMock(agent);
-    const app = await seed.desktop({ model: `${providerId}/${modelId}` });
-    const workspace = await seed.workspace(app, seed.tmpPath("suspended-turn"));
-    await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
-      provider: {
-        [providerId]: {
-          npm: "@ai-sdk/openai-compatible",
-          name: "Suspended turn mock",
-          options: { baseURL: `${agent.url}/v1`, apiKey: "sk-suspended-turn" },
-          models: { [modelId]: { name: "Suspended turn model" } },
-        },
-      },
+  const session = await seedSessionRetry(seed, app);
+  return {
+    den, app, workspace, session,
+    preview: async () => {
+      const result = await evalIn(app, () => {
+      const preview = document.querySelector<HTMLElement>('[data-testid="visualization-preview"]');
+      return { viewport: preview?.getAttribute('data-viewport'), width: preview?.getBoundingClientRect().width,
+        scripts: preview?.querySelectorAll('script').length, executed: window.mockupExecuted === true,
+        cards: document.querySelectorAll<HTMLElement>('[data-testid="visualization-card"]').length };
     });
-    const session = await seedSessionRetry(seed, app, { title: "Suspended turn" });
-    const startedAt = new Date().toISOString();
-    return {
-      [Symbol.asyncDispose]: () => agent.stop(),
-      app,
-      workspace,
-      session,
-      /** Kinds of every main completion for this turn, in order. */
-      async completionKinds(): Promise<string[]> {
-        const requests = await agent.agentRequests({ promptMarker: suspendedTurnPrompt, sinceIso: startedAt });
-        return requests.filter((request) => request.kind !== "utility").map((request) => request.kind);
-      },
-      /**
-       * Stop the engine process for `ms` and let it continue: from the engine's
-       * point of view this is the lid closing and opening again.
-       */
-      async suspendEngine(ms: number): Promise<void> {
-        // TODO(primitive): read the managed engine process id from the desktop runtime.
-        const info = await seed.evalIn(app, `window.__OPENWORK_ELECTRON__.invokeDesktop("engineInfo")`, { awaitPromise: true, timeoutMs: 30_000 });
-        const pid = recordValue(info, "pid");
-        if (typeof pid !== "number") throw new Error(`Engine pid unavailable: ${JSON.stringify(info)}`);
-        process.kill(pid, "SIGSTOP");
-        try {
-          await new Promise((resolveWait) => setTimeout(resolveWait, ms));
-        } finally {
-          process.kill(pid, "SIGCONT");
-        }
-      },
-      async transcriptFacts(): Promise<{ prompts: number; replies: number; interruptedCards: number; working: boolean }> {
-        // TODO(primitive): count transcript occurrences and interrupted-run cards.
-        const facts = await seed.evalIn(app, `(prompt, reply) => {
-          const text = document.body.innerText;
-          return {
-            prompts: text.split(prompt).length - 1,
-            replies: text.split(reply).length - 1,
-            working: /Working [0-9]/.test(text),
-            interruptedCards: document.querySelectorAll('[data-testid="session-error-interrupted"]').length,
-          };
-        }`, { args: [suspendedTurnPrompt, suspendedTurnReply] });
-        const working = recordValue(facts, "working");
-        const prompts = recordValue(facts, "prompts");
-        const replies = recordValue(facts, "replies");
-        const interruptedCards = recordValue(facts, "interruptedCards");
-        if (typeof working !== "boolean" || typeof prompts !== "number" || typeof replies !== "number" || typeof interruptedCards !== "number") {
-          throw new Error(`Transcript facts were invalid: ${JSON.stringify(facts)}`);
-        }
-        return { prompts, replies, interruptedCards, working };
-      },
-    };
-  } catch (error) {
-    await agent.stop();
-    throw error;
-  }
+      if (!isRecord(result) || typeof result.width !== "number") throw new Error("Visualization preview missing");
+      return { ...result, width: result.width };
+    },
+  };
 }
 
-export const authenticatedConnectPrompt = "Find my connected apps using Connect.";
-export const authenticatedConnectReply = "Connect is working with my signed-in model.";
 
-/** A real provider auth.loader must supply the transport before Connect can run. */
-export async function authenticatedConnect(seed: Seed, { place }: { place: import("@openwork/env").Place }) {
-  const providerId = "authenticated-connect-witness";
-  const modelId = "authenticated-connect-model";
-  const { handle: agent } = await seed.mock({
-    allowUnauthenticatedMcp: true,
-    agentRequiredHeader: { name: "x-witness-auth", value: "loaded" },
-    tools: [{
-      name: "search_capabilities",
-      description: "Find connected apps.",
-      inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
-      result: { content: [{ type: "text", text: "Connected apps are available." }] },
-    }],
-    agentWorkloads: [{
-      promptMarker: authenticatedConnectPrompt,
-      finalReply: authenticatedConnectReply,
-      steps: [{ tool: "openwork-cloud_search_capabilities", arguments: { query: "connected apps" } }],
-    }],
-  }).boot(place);
+/** A persisted workspace and conversation created before opting into the other engine. */
+export async function workspaceEngineUpgrade(seed: Seed) {
+  const providerId = "workspace-upgrade-mock";
+  const modelId = "workspace-upgrade-model";
+  const mock = seed.mock({ agentWorkloads: [{
+    promptMarker: "hi",
+    finalReply: "Hello. Your upgrade conversation is working.",
+    finalReplyChunkSize: 3,
+    finalReplyDelayMs: 750,
+    steps: [],
+  }] });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const primaryPath = seed.tmpPath("upgrade-primary");
+  const otherPath = seed.tmpPath("upgrade-existing");
+  const app = await seed.desktop({ den, as: "admin", workspacePath: primaryPath, model: `${providerId}/${modelId}` });
+  const primary = await seed.workspace(app, primaryPath);
+  const provider = { provider: { [providerId]: {
+    npm: "@ai-sdk/openai-compatible", name: "Upgrade mock",
+    options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-upgrade-fixture" },
+    models: { [modelId]: { name: "Upgrade model" } },
+  } } };
+  await configureProvider(seed, app, primary.workspaceId, providerId, modelId, provider);
+  const original = await seedSessionRetry(seed, app, { title: "Before engine upgrade" });
+  const other = await seed.workspace(app, otherPath, { create: true });
+  await configureProvider(seed, app, other.workspaceId, providerId, modelId, provider);
+  const otherOriginal = await seedSessionRetry(seed, app, { title: "Existing workspace history" });
+  return { app, den, primary, other, original, otherOriginal, providerId, modelId,
+    otherName: otherPath.split("/").at(-1),
+  };
+}
+
+/** A running conversation whose workspace skills can change through OpenWork. */
+export async function skillLifecycle(seed: Seed) {
+  const live = liveOpenAiEnabled();
+  const orgName = "Skill lifecycle";
+  const den = await seed.den({ org: { name: orgName }, mocks: { model: seed.mock({}) } });
+  const managed = await provisionLiveOpenAi(den.admin, orgName);
   try {
-    await place.exposeMock(agent);
-    const root = seed.tmpPath("authenticated-connect");
-    await mkdir(root, { recursive: true });
-    const pluginPath = join(root, "provider-auth.js");
-    await writeFile(pluginPath, `export const WitnessAuth = async () => ({
-      auth: {
-        provider: ${JSON.stringify(providerId)},
-        methods: [{ type: "api", label: "Witness credentials" }],
-        loader: async () => ({
-          apiKey: "test-only",
-          fetch: async (input, init) => {
-            const headers = new Headers(init?.headers);
-            headers.set("x-witness-auth", "loaded");
-            return fetch(input, { ...init, headers });
-          },
-        }),
-      },
-    });\n`);
-    const app = await seed.desktop({ name: "authenticated-connect", model: `${providerId}/${modelId}` });
-    const workspace = await seed.workspace(app, root);
-    // TODO(primitive): install a synthetic provider credential in the isolated engine profile.
-    const status = await seed.evalIn(app, `async (workspaceId, providerId) => {
-      const port = localStorage.getItem("openwork.server.port");
-      const token = localStorage.getItem("openwork.server.token");
-      const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/auth/" + providerId, {
-        method: "PUT",
-        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "api", key: "test-only" }),
+    const app = await seed.desktop({ den, as: "admin" });
+    const workspace = await seed.workspace(app, seed.tmpPath("skill-lifecycle"));
+    const request = async (path: string) => {
+      const response = await seed.evalIn(app, browserScript(async (path) => {
+        const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + path, {
+          headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") },
+          signal: AbortSignal.timeout(10000),
+        });
+        return { status: response.status, json: await response.json() };
+      }, [path]), { awaitPromise: true });
+      if (!isRecord(response) || typeof response.status !== "number") throw new Error("Missing desktop response");
+      assertNoLiveSecret(response);
+      return { status: response.status, json: response.json };
+    };
+    const providerId = live ? await liveProviderId(request, managed.id) : "skill-lifecycle";
+    const modelId = live ? liveOpenAiModel() : "skill-lifecycle-model";
+    // This world arranges an opted-in native v2 conversation, including when
+    // invoked by the standard E2E command without an engine override.
+    await seed.evalIn(app, async () => {
+      const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/experimental/engine-v2-preview", {
+        method: "PUT", headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true, chatRouting: true }), signal: AbortSignal.timeout(180000),
       });
-      return response.status;
-    }`, { args: [workspace.workspaceId, providerId], awaitPromise: true, timeoutMs: 60_000 });
-    if (status !== 200) throw new Error(`Witness credential setup failed: ${String(status)}`);
+      if (!response.ok) throw new Error("Could not enable the native engine");
+      return true;
+    }, { awaitPromise: true, timeoutMs: 185_000 });
     await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
-      plugin: [pluginPath],
-      permission: { "openwork-cloud_*": "allow" },
-      mcp: { "openwork-cloud": { type: "remote", url: agent.mcpUrl, enabled: true, oauth: false } },
-      provider: {
-        [providerId]: {
-          npm: "@ai-sdk/openai-compatible",
-          name: "Authenticated Connect witness",
-          options: { baseURL: `${agent.url}/v1`, apiKey: "test-only" },
-          models: { [modelId]: { name: "Authenticated Connect model" } },
-        },
-      },
-    });
-    const session = await seedSessionRetry(seed, app, { title: "Authenticated model uses Connect" });
+      permission: { skill: "allow" },
+      ...(!live ? { provider: { [providerId]: {
+        npm: "@ai-sdk/openai-compatible", name: "Skill lifecycle model",
+        options: { baseURL: `${den.mocks.model.url}/v1`, apiKey: "eval-only-key" },
+        models: { [modelId]: { name: "Skill lifecycle model", tool_call: true } },
+      } } } : {}),
+    }, "v2");
+    const session = await seedSessionRetry(seed, app, { title: "Release report" });
+    const skillName = "release-briefing";
     return {
-      app, workspace, session,
-      async completionKinds() {
-        return (await agent.agentRequests({ promptMarker: authenticatedConnectPrompt }))
-          .filter((request) => request.kind !== "utility").map((request) => request.kind);
+      app, den, workspace, session, skillName, live, modelId,
+      async prepareTurn(prompt: string) {
+        if (live) return;
+        const result = await fetch(`${den.mocks.model.url}/admin/agent-workloads`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ workloads: [{ latestUserTurn: true, promptMarker: prompt,
+            finalReply: "OpenWork: UNAVAILABLE", finalReplyFrom: "last-tool-text",
+            steps: [{ tool: "skill", argumentsFrom: "skill-catalog", arguments: { skill: skillName } }],
+          }] }),
+        });
+        if (!result.ok) throw new Error("Could not arrange model response");
       },
-      async connectCalls() { return agent.toolCalls({ name: "search_capabilities" }); },
-      [Symbol.asyncDispose]: () => agent.stop(),
+      async usedConfiguredModel() {
+        const result = await request(`/workspace/${workspace.workspaceId}/opencode2/api/session/${session.sessionId}/message`);
+        const messages = isRecord(result.json) && Array.isArray(result.json.data) ? result.json.data.filter(isRecord) : [];
+        const replies = messages.filter(message => message.type === "assistant" && message.finish === "stop");
+        return replies.length > 0 && replies.every(message => isRecord(message.model)
+          && message.model.id === modelId && message.model.providerID === providerId
+          && isRecord(message.tokens) && typeof message.tokens.output === "number" && message.tokens.output > 0);
+      },
+      async runtimeIdentity() {
+        const result = await request("/experimental/engine-v2-preview/status");
+        if (!isRecord(result.json) || result.json.running !== true || result.json.chatRouting !== true
+          || typeof result.json.pid !== "number") throw new Error("The v2 conversation runtime is not running");
+        return result.json.pid;
+      },
+      async [Symbol.asyncDispose]() { await managed[Symbol.asyncDispose](); },
     };
   } catch (error) {
-    await agent.stop();
+    await managed[Symbol.asyncDispose]();
     throw error;
   }
 }

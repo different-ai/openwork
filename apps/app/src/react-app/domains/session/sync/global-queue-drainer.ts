@@ -123,6 +123,7 @@ async function performQueuedDraftSend(
     workspaceId: context.workspaceId,
   });
   const system = await buildOpenworkSessionSystemContext(context.client, {
+    workspaceId: context.workspaceId,
     cacheKey: sessionId,
     runtimeKey: context.environmentRuntimeKey,
   });

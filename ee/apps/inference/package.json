@@ -20,7 +20,8 @@
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.45.2",
     "hono": "4.12.34",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "@openwork-ee/telemetry": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

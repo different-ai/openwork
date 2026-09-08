@@ -42,7 +42,7 @@ export function DenSwitch({
         aria-hidden="true"
         className={[
           size === "md" ? "h-5 w-5" : "h-4 w-4",
-          "rounded-full bg-white shadow-sm",
+          "rounded-full bg-white shadow-xs",
         ].join(" ")}
       />
     </button>

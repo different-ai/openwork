@@ -12,7 +12,7 @@ whose membership is managed by Entra.
 You need:
 
 - An OpenWork organization with Enterprise SSO and SCIM.
-- An OpenWork owner, or a member who can manage security configuration.
+- An OpenWork owner or super-admin.
 - A working, domain-verified, tested, and enabled OpenWork SAML connection.
   Complete and test
   [Microsoft Entra SAML SSO](/cloud/sso-microsoft-entra) first.
@@ -160,6 +160,19 @@ Before expanding the assignment scope, verify the complete lifecycle:
 
 Change SCIM-managed teams in Entra, not in OpenWork. OpenWork keeps manually
 created teams separate from identity-provider-managed teams.
+
+### Optional: grant organization Admin through an Entra group
+
+After verifying the synchronized membership, an OpenWork owner or super-admin
+can approve the team to grant organization `Admin`. The Entra group name and
+SAML group attributes do not grant elevated access by themselves. Follow
+[Team Admin access](/cloud/members-and-rbac#team-admin-access) for the checkbox,
+membership controls, and reapproval rules when team sync is disabled or re-enabled.
+
+Test with a member who has no direct Admin role or other Admin team grant:
+confirm `Admin via {team name}`, remove them from the Entra group, wait for
+successful provisioning, and confirm that inherited access is gone. Review
+**Provisioning logs** if the change is still pending.
 
 ## Troubleshooting
 

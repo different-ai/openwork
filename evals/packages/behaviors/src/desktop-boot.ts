@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import { dumpScreenState, readActiveWorkspaceId } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
 import type { DenRef, DenSession } from "./den.ts";
@@ -14,7 +15,7 @@ function messageText(error: unknown): string {
 async function waitForDenState(
   app: Surface,
   den: DenRef,
-  expression: string,
+  expression: import("@openwork/cdp").BrowserEvaluation,
   options: { timeoutMs: number; label: string },
 ): Promise<void> {
   try {
@@ -22,7 +23,7 @@ async function waitForDenState(
   } catch (error) {
     const keys = await evalIn(
       app,
-      "Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)).filter(Boolean).sort()",
+      () => (Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)).filter(Boolean).sort()),
       { timeoutMs: 5_000 },
     ).catch((keysError: unknown) => [`<unavailable: ${messageText(keysError)}>`]);
     throw new Error(
@@ -37,7 +38,7 @@ export interface SelectedWorkspaceFacts {
 }
 
 export async function signInDesktopAs(app: Surface, den: DenRef, member: DenSession): Promise<void> {
-  await waitFor(app, "Boolean(window.__openworkControl?.listActions?.().some((action) => action.id === 'auth.exchange-grant'))", {
+  await waitFor(app, () => (Boolean(window.__openworkControl?.listActions?.().some((action) => action.id === 'auth.exchange-grant'))), {
     timeoutMs: 60_000,
     label: "auth.exchange-grant action registered",
   });
@@ -47,17 +48,17 @@ export async function signInDesktopAs(app: Surface, den: DenRef, member: DenSess
   } catch (error) {
     if (!messageText(error).includes("Already acting: auth.exchange-grant")) throw error;
   }
-  await waitForDenState(app, den, "Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", {
+  await waitForDenState(app, den, () => (Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())), {
     timeoutMs: 45_000,
     label: "persisted den auth token",
   });
-  await waitForDenState(app, den, "Boolean((localStorage.getItem('openwork.den.activeOrgId') ?? '').trim())", {
+  await waitForDenState(app, den, () => (Boolean((localStorage.getItem('openwork.den.activeOrgId') ?? '').trim())), {
     timeoutMs: 60_000,
     label: "active org resolved",
   });
   // A first-time member lands on organization onboarding; a member whose app
   // already has a workspace can come straight back to it.
-  await waitFor(app, `window.location.hash.includes("/onboarding") || /\\/(workspace|session)/.test(window.location.hash)`, {
+  await waitFor(app, () => (window.location.hash.includes("/onboarding") || /\/(workspace|session)/.test(window.location.hash)), {
     timeoutMs: 60_000,
     label: "organization onboarding or workspace route",
   });
@@ -66,13 +67,13 @@ export async function signInDesktopAs(app: Surface, den: DenRef, member: DenSess
 async function completeOrganizationOnboarding(app: Surface): Promise<void> {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline && (await currentHash(app)).includes("/onboarding")) {
-    const label = await evalIn(app, `(() => {
+    const label = await evalIn(app, () => {
       const labels = [...document.querySelectorAll("button")]
         .filter((button) => !button.disabled)
         .map((button) => (button.textContent ?? "").trim());
       return ["Continue with organization", "Continue to workspace", "Continue without OpenWork Models", "Continue"]
         .find((candidate) => labels.includes(candidate)) ?? "";
-    })()`);
+    });
     if (typeof label === "string" && label) {
       await clickButton(app, label);
     }
@@ -89,14 +90,14 @@ function workspaceIdFromRoute(route: string): string {
 
 async function waitForTaskUi(app: Surface, workspaceId: string): Promise<string> {
   await go(app, `/workspace/${workspaceId}/session`);
-  await waitFor(app, `(() => {
-    const match = /^#?\\/workspace\\/([^/?#]+)\\/session\\/?$/.exec(window.location.hash);
-    const routeReady = match?.[1] === ${JSON.stringify(workspaceId)};
+  await waitFor(app, browserScript((workspaceId) => {
+    const match = /^#?\/workspace\/([^/?#]+)\/session\/?$/.exec(window.location.hash);
+    const routeReady = match?.[1] === workspaceId;
     const text = document.body.innerText;
     const runTask = [...document.querySelectorAll("button")]
       .some((button) => (button.textContent ?? "").trim() === "Run task");
     return routeReady && (text.includes("What do you need done?") || runTask);
-  })()`, { timeoutMs: 120_000, label: `workspace ${workspaceId} task UI` });
+  }, [workspaceId]), { timeoutMs: 120_000, label: `workspace ${workspaceId} task UI` });
   return currentHash(app);
 }
 
@@ -116,7 +117,7 @@ async function resolveWorkspaceId(app: Surface): Promise<string> {
  */
 export async function createAndSelectWorkspace(
   app: Surface,
-  input: { path: string },
+  input: { path: string; create?: boolean },
 ): Promise<SelectedWorkspaceFacts> {
   let workspaceId = "";
   const route = await currentHash(app);
@@ -129,8 +130,8 @@ export async function createAndSelectWorkspace(
     // onboarding steps finish reads an id the app has not adopted yet.
     workspaceId = workspace.id;
     if (!workspaceId) {
-      await waitFor(app, `Boolean(localStorage.getItem("openwork.react.activeWorkspace"))
-        || /\\/workspace\\/[^/?#]+/.test(window.location.hash)`, {
+      await waitFor(app, () => (Boolean(localStorage.getItem("openwork.react.activeWorkspace"))
+        || /\/workspace\/[^/?#]+/.test(window.location.hash)), {
         timeoutMs: 180_000,
         label: "workspace selected after onboarding",
       });
@@ -139,19 +140,22 @@ export async function createAndSelectWorkspace(
   } else {
     if (route.includes("/onboarding")) await completeOrganizationOnboarding(app);
     workspaceId = await resolveWorkspaceId(app);
-    if (!workspaceId) {
-      await waitFor(app, `window.__openworkControl.listActions()
-        .some((action) => action.id === "workspace.create" && !action.disabled)`, {
+    if (!workspaceId || input.create) {
+      await waitFor(app, () => (window.__openworkControl.listActions()
+        .some((action) => action.id === "workspace.create" && !action.disabled)), {
         timeoutMs: 60_000,
         label: "workspace.create enabled",
       });
       // Cold first action: engine spawn + Vite compile can exceed the default
       // evaluate bound, and this proved flaky at 8s (passed on rerun).
-      await control(app, "workspace.create", input, { timeoutMs: 60_000 });
+      await control(app, "workspace.create", { path: input.path }, { timeoutMs: 60_000 });
       // The app does not always put a new workspace in the hash, so wait for its
       // own active-workspace state to settle instead of matching a route shape.
-      await waitFor(app, `Boolean(localStorage.getItem("openwork.react.activeWorkspace"))
-        || /\\/workspace\\/[^/?#]+/.test(window.location.hash)`, {
+      await waitFor(app, browserScript((workspaceId) => {
+        const selected = localStorage.getItem("openwork.react.activeWorkspace")
+          || window.location.hash.match(/\/workspace\/([^/?#]+)/)?.[1];
+        return Boolean(selected) && selected !== workspaceId;
+      }, [workspaceId]), {
         timeoutMs: 120_000,
         label: "created workspace selected",
       });

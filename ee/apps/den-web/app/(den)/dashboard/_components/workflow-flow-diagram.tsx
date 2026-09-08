@@ -276,7 +276,7 @@ function FlowNode({
 
   return (
     <div className="w-full max-w-sm">
-      <div className={`rounded-xl border px-3.5 py-3 shadow-sm ${runState === "failed" ? "border-red-300 bg-red-50/30" : cardStyle(node.kind)} ${runState === "not_reached" ? "opacity-50" : ""}`} data-node-id={node.id} data-node-kind={node.kind} data-run-state={runState === "neutral" ? undefined : runState} data-terminal={node.kind === "return" ? "true" : undefined}>
+      <div className={`rounded-xl border px-3.5 py-3 shadow-xs ${runState === "failed" ? "border-red-300 bg-red-50/30" : cardStyle(node.kind)} ${runState === "not_reached" ? "opacity-50" : ""}`} data-node-id={node.id} data-node-kind={node.kind} data-run-state={runState === "neutral" ? undefined : runState} data-terminal={node.kind === "return" ? "true" : undefined}>
         <div className="flex min-w-0 items-start gap-2.5">
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-[10px] font-semibold text-gray-600" data-step-number={stepNumber}>{stepNumber}</span>
           <span className="mt-0.5 rounded-lg border border-current/10 bg-white p-1.5 text-gray-500"><NodeIcon kind={node.kind} /></span>

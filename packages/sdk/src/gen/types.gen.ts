@@ -33,6 +33,16 @@ export type NotFoundError = {
   message?: string;
 };
 
+export type InvalidRequestError = {
+  error: "invalid_request";
+  details: Array<{
+    message: string;
+    path?: Array<string | number>;
+    [key: string]: unknown | string | Array<string | number> | undefined;
+  }>;
+  capability?: string;
+};
+
 export type AdminPageInfo = {
   total: number;
   limit: number;
@@ -55,16 +65,6 @@ export type AdminUsersPageResponse = {
     billingUnavailableUsers: number | null;
   };
   generatedAt: string;
-};
-
-export type InvalidRequestError = {
-  error: "invalid_request";
-  details: Array<{
-    message: string;
-    path?: Array<string | number>;
-    [key: string]: unknown | string | Array<string | number> | undefined;
-  }>;
-  capability?: string;
 };
 
 export type AdminOrganizationsPageResponse = {
@@ -373,6 +373,12 @@ export type CurrentUserDesktopConfigResponse = {
   allowBuiltInExtensions?: boolean;
   allowAlphaUpdates?: boolean;
   showWelcomePage?: boolean;
+  execution?: {
+    commands?: "allow" | "deny";
+    blockedCommands?: Array<string>;
+    browserOrigins?: Array<string>;
+    blockBrowserUploads?: boolean;
+  };
   allowedDesktopVersions?: Array<string>;
   brandAppName?: string;
   brandLogoUrl?: string;
@@ -729,6 +735,57 @@ export type WorkflowRunListResponse = {
     finishedAt: string;
     createdAt: string;
     orgMembershipId: string | null;
+    workflow: {
+      configObjectId: string;
+      title: string;
+      graph: {
+        nodes: Array<
+          | {
+              id: string;
+              kind: "input";
+              label: string;
+              fields: Array<string>;
+            }
+          | {
+              id: string;
+              kind: "tool";
+              label: string;
+              namespace: string;
+              tool: string;
+              scriptPath: string;
+              assignsTo: string | null;
+              parallelGroup: string | null;
+            }
+          | {
+              id: string;
+              kind: "search";
+              label: string;
+            }
+          | {
+              id: string;
+              kind: "branch";
+              label: string;
+            }
+          | {
+              id: string;
+              kind: "loop";
+              label: string;
+            }
+          | {
+              id: string;
+              kind: "return";
+              label: string;
+            }
+        >;
+        edges: Array<{
+          from: string;
+          to: string;
+          label: string | null;
+          kind: "flow" | "data";
+        }>;
+        parseError: string | null;
+      } | null;
+    } | null;
   }>;
 };
 
@@ -824,6 +881,12 @@ export type DenDesktopPolicyDocumentWrite = {
   access?: {
     mode: "custom" | "locked";
     capabilities: DenDesktopPolicyValue;
+  };
+  execution?: {
+    commands?: "allow" | "deny";
+    blockedCommands?: Array<string>;
+    browserOrigins?: Array<string>;
+    blockBrowserUploads?: boolean;
   };
   onboardingPrompts?: Array<string> | null;
   onboardingPromptDescriptions?: Array<string> | null;
@@ -1073,7 +1136,7 @@ export type CreateInstallLinkResponse = {
 
 export type CapabilityDisabledError = {
   error: "capability_disabled";
-  capability: "installLinks" | "mcpConnections";
+  capability: "installLinks" | "mcpConnections" | "modelsAnalytics";
 };
 
 export type CreateInstallLinkRequest = {
@@ -3720,6 +3783,7 @@ export type TeamResponse = {
     updatedAt: string;
     memberIds: Array<string>;
     managedByScim: boolean;
+    grantsOrganizationAdmin: boolean;
   };
 };
 
@@ -4403,6 +4467,74 @@ export type PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses = {
 
 export type PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponse =
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses[keyof PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses];
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaData = {
+  body: {
+    dpaSigned: boolean;
+    reason: string;
+  };
+  path: {
+    organizationId: string;
+  };
+  query?: never;
+  url: "/v1/admin/organizations/{organizationId}/dpa";
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaErrors = {
+  /**
+   * Invalid DPA decision or organization identifier.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: "invalid_request";
+        message: string;
+      };
+  /**
+   * Authentication is required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Platform administrator access is required.
+   */
+  403: ForbiddenError;
+  /**
+   * Organization not found.
+   */
+  404: {
+    error: "not_found";
+    message: string;
+  };
+  /**
+   * Organization metadata could not be read.
+   */
+  503: {
+    error: "managed_models_policy_unavailable";
+    message: string;
+  };
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaError =
+  PatchV1AdminOrganizationsByOrganizationIdDpaErrors[keyof PatchV1AdminOrganizationsByOrganizationIdDpaErrors];
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaResponses = {
+  /**
+   * DPA decision recorded.
+   */
+  200: {
+    ok: true;
+    organization: {
+      /**
+       * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      dpaSigned: boolean;
+    };
+  };
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaResponse =
+  PatchV1AdminOrganizationsByOrganizationIdDpaResponses[keyof PatchV1AdminOrganizationsByOrganizationIdDpaResponses];
 
 export type PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessData = {
   body?: never;
@@ -8376,6 +8508,10 @@ export type GetV1WorkflowRunsErrors = {
    * The caller must be signed in to list Workflow runs.
    */
   401: UnauthorizedError;
+  /**
+   * Workflow run analytics requires an Enterprise plan.
+   */
+  402: EnterprisePlanRequiredError;
 };
 
 export type GetV1WorkflowRunsError = GetV1WorkflowRunsErrors[keyof GetV1WorkflowRunsErrors];
@@ -8796,6 +8932,7 @@ export type GetV1WorkflowsByConfigObjectIdResponses = {
       description: string | null;
       status: "active" | "retired";
       activeRevisionId: string | null;
+      useInWorkflow?: boolean;
       revisions: Array<{
         id: string;
         artifactViewId: string;
@@ -8831,6 +8968,314 @@ export type GetV1WorkflowsByConfigObjectIdResponses = {
 
 export type GetV1WorkflowsByConfigObjectIdResponse =
   GetV1WorkflowsByConfigObjectIdResponses[keyof GetV1WorkflowsByConfigObjectIdResponses];
+
+export type GetV1AppsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/apps";
+};
+
+export type GetV1AppsResponses = {
+  /**
+   * Saved apps returned.
+   */
+  200: {
+    enabled: boolean;
+    sharingEnabled: boolean;
+    items: Array<{
+      view: {
+        id: string;
+        configObjectId: string;
+        title: string;
+        description: string | null;
+        status: "active" | "retired";
+        activeRevisionId: string | null;
+        useInWorkflow?: boolean;
+        revisions: Array<{
+          id: string;
+          artifactViewId: string;
+          resourceUri: string;
+          buildStatus: "ready" | "failed";
+          sourceDigest: string;
+          resourceDigest: string | null;
+          outputSchemaDigest: string;
+          csp: {
+            connectDomains: Array<string>;
+            resourceDomains: Array<string>;
+            frameDomains: Array<string>;
+            baseUriDomains: Array<string>;
+          };
+          diagnostics: Array<{
+            level: "error" | "warning";
+            message: string;
+            line: number | null;
+            column: number | null;
+          }>;
+          compilerName: string;
+          compilerVersion: string;
+          reactVersion: string;
+          compiledHtmlBytes: number | null;
+          retiredAt: string | null;
+          createdAt: string;
+        }>;
+        createdAt: string;
+        updatedAt: string;
+      };
+      workflowTitle: string;
+      canManage: boolean;
+      onDashboard: boolean;
+    }>;
+  };
+};
+
+export type GetV1AppsResponse = GetV1AppsResponses[keyof GetV1AppsResponses];
+
+export type PostV1AppsByAppIdShareData = {
+  body: {
+    email: string;
+  };
+  path: {
+    appId: string;
+  };
+  query?: never;
+  url: "/v1/apps/{appId}/share";
+};
+
+export type PostV1AppsByAppIdShareErrors = {
+  /**
+   * Only app managers can share.
+   */
+  403: ForbiddenError;
+  /**
+   * App or teammate not found.
+   */
+  404: NotFoundError;
+};
+
+export type PostV1AppsByAppIdShareError = PostV1AppsByAppIdShareErrors[keyof PostV1AppsByAppIdShareErrors];
+
+export type PostV1AppsByAppIdShareResponses = {
+  /**
+   * App shared to the teammate's dashboard.
+   */
+  200: {
+    ok: true;
+  };
+};
+
+export type PostV1AppsByAppIdShareResponse = PostV1AppsByAppIdShareResponses[keyof PostV1AppsByAppIdShareResponses];
+
+export type GetV1AppsByAppIdData = {
+  body?: never;
+  path: {
+    appId: string;
+  };
+  query?: {
+    revisionId?: string;
+    receiptId?: string;
+  };
+  url: "/v1/apps/{appId}";
+};
+
+export type GetV1AppsByAppIdResponses = {
+  /**
+   * App preview returned.
+   */
+  200: {
+    view: {
+      id: string;
+      configObjectId: string;
+      title: string;
+      description: string | null;
+      status: "active" | "retired";
+      activeRevisionId: string | null;
+      useInWorkflow?: boolean;
+      revisions: Array<{
+        id: string;
+        artifactViewId: string;
+        resourceUri: string;
+        buildStatus: "ready" | "failed";
+        sourceDigest: string;
+        resourceDigest: string | null;
+        outputSchemaDigest: string;
+        csp: {
+          connectDomains: Array<string>;
+          resourceDomains: Array<string>;
+          frameDomains: Array<string>;
+          baseUriDomains: Array<string>;
+        };
+        diagnostics: Array<{
+          level: "error" | "warning";
+          message: string;
+          line: number | null;
+          column: number | null;
+        }>;
+        compilerName: string;
+        compilerVersion: string;
+        reactVersion: string;
+        compiledHtmlBytes: number | null;
+        retiredAt: string | null;
+        createdAt: string;
+      }>;
+      createdAt: string;
+      updatedAt: string;
+    };
+    workflowTitle: string;
+    canManage: boolean;
+    onDashboard: boolean;
+    revision: {
+      id: string;
+      artifactViewId: string;
+      resourceUri: string;
+      buildStatus: "ready" | "failed";
+      sourceDigest: string;
+      resourceDigest: string | null;
+      outputSchemaDigest: string;
+      csp: {
+        connectDomains: Array<string>;
+        resourceDomains: Array<string>;
+        frameDomains: Array<string>;
+        baseUriDomains: Array<string>;
+      };
+      diagnostics: Array<{
+        level: "error" | "warning";
+        message: string;
+        line: number | null;
+        column: number | null;
+      }>;
+      compilerName: string;
+      compilerVersion: string;
+      reactVersion: string;
+      compiledHtmlBytes: number | null;
+      retiredAt: string | null;
+      createdAt: string;
+    } | null;
+    html: string | null;
+    payload: {
+      schemaVersion: "1";
+      artifact: {
+        title: string;
+        description: string | null;
+        pluginId: string;
+        configObjectId: string;
+        configObjectVersionId: string;
+        receiptId: string;
+        automationRunId: string | null;
+        source: "manual" | "scheduled";
+        generatedAt: string;
+        resultDigest: string;
+        rendererVersion: "codemode-markdown-v1";
+        freshness:
+          | {
+              state: "never_run";
+            }
+          | {
+              state: "fresh";
+              ageMs: number;
+            }
+          | {
+              state: "stale";
+              ageMs: number;
+              maxAgeMs: number;
+            }
+          | {
+              state: "needs_attention";
+              ageMs: number | null;
+              lastSuccessfulReceiptId: string | null;
+              reason: string;
+            };
+      };
+      data: unknown;
+    } | null;
+    previewNotice: string | null;
+  };
+};
+
+export type GetV1AppsByAppIdResponse = GetV1AppsByAppIdResponses[keyof GetV1AppsByAppIdResponses];
+
+export type PostV1AppsByAppIdDashboardData = {
+  body: {
+    added: boolean;
+  };
+  path: {
+    appId: string;
+  };
+  query?: never;
+  url: "/v1/apps/{appId}/dashboard";
+};
+
+export type PostV1AppsByAppIdDashboardResponses = {
+  /**
+   * Dashboard updated.
+   */
+  200: {
+    ok: true;
+  };
+};
+
+export type PostV1AppsByAppIdDashboardResponse =
+  PostV1AppsByAppIdDashboardResponses[keyof PostV1AppsByAppIdDashboardResponses];
+
+export type PostV1AppsByAppIdSaveData = {
+  body: {
+    revisionId: string;
+    title: string;
+    useInWorkflow: boolean;
+    expectedActiveRevisionId: string | null;
+  };
+  path: {
+    appId: string;
+  };
+  query?: never;
+  url: "/v1/apps/{appId}/save";
+};
+
+export type PostV1AppsByAppIdSaveResponses = {
+  /**
+   * App saved.
+   */
+  200: {
+    id: string;
+    configObjectId: string;
+    title: string;
+    description: string | null;
+    status: "active" | "retired";
+    activeRevisionId: string | null;
+    useInWorkflow?: boolean;
+    revisions: Array<{
+      id: string;
+      artifactViewId: string;
+      resourceUri: string;
+      buildStatus: "ready" | "failed";
+      sourceDigest: string;
+      resourceDigest: string | null;
+      outputSchemaDigest: string;
+      csp: {
+        connectDomains: Array<string>;
+        resourceDomains: Array<string>;
+        frameDomains: Array<string>;
+        baseUriDomains: Array<string>;
+      };
+      diagnostics: Array<{
+        level: "error" | "warning";
+        message: string;
+        line: number | null;
+        column: number | null;
+      }>;
+      compilerName: string;
+      compilerVersion: string;
+      reactVersion: string;
+      compiledHtmlBytes: number | null;
+      retiredAt: string | null;
+      createdAt: string;
+    }>;
+    createdAt: string;
+    updatedAt: string;
+  };
+};
+
+export type PostV1AppsByAppIdSaveResponse = PostV1AppsByAppIdSaveResponses[keyof PostV1AppsByAppIdSaveResponses];
 
 export type GetV1WorkflowsByConfigObjectIdViewsData = {
   body?: never;
@@ -8871,6 +9316,7 @@ export type GetV1WorkflowsByConfigObjectIdViewsResponses = {
       description: string | null;
       status: "active" | "retired";
       activeRevisionId: string | null;
+      useInWorkflow?: boolean;
       revisions: Array<{
         id: string;
         artifactViewId: string;
@@ -8946,6 +9392,7 @@ export type PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateResp
     description: string | null;
     status: "active" | "retired";
     activeRevisionId: string | null;
+    useInWorkflow?: boolean;
     revisions: Array<{
       id: string;
       artifactViewId: string;
@@ -9019,6 +9466,7 @@ export type PostV1ArtifactViewsByArtifactViewIdRetireResponses = {
     description: string | null;
     status: "active" | "retired";
     activeRevisionId: string | null;
+    useInWorkflow?: boolean;
     revisions: Array<{
       id: string;
       artifactViewId: string;
@@ -10631,9 +11079,21 @@ export type PatchV1InferenceErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can update inference settings.
+   * Inference settings access is denied.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "managed_models_disabled_for_dpa" | "managed_models_policy_unavailable";
+        message: string;
+      };
+  /**
+   * Managed Models policy is unavailable.
+   */
+  503: {
+    error: "managed_models_disabled_for_dpa" | "managed_models_policy_unavailable";
+    message: string;
+  };
 };
 
 export type PatchV1InferenceError = PatchV1InferenceErrors[keyof PatchV1InferenceErrors];
@@ -10646,6 +11106,261 @@ export type PatchV1InferenceResponses = {
 };
 
 export type PatchV1InferenceResponse = PatchV1InferenceResponses[keyof PatchV1InferenceResponses];
+
+export type GetV1InferenceAnalyticsSettingsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/settings";
+};
+
+export type GetV1InferenceAnalyticsSettingsResponses = {
+  /**
+   * Task analytics settings
+   */
+  200: {
+    available: boolean;
+    subscribed: boolean;
+    modelsEnabled: boolean;
+    enabled: boolean;
+    consentedAt: string | null;
+    consentVersion: number | null;
+    exportEnabled: boolean;
+    langfuseHost: string | null;
+    langfuseConfigured: boolean;
+  };
+};
+
+export type GetV1InferenceAnalyticsSettingsResponse =
+  GetV1InferenceAnalyticsSettingsResponses[keyof GetV1InferenceAnalyticsSettingsResponses];
+
+export type PatchV1InferenceAnalyticsSettingsData = {
+  body: {
+    enabled: boolean;
+    consentVersion?: 1;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/settings";
+};
+
+export type PatchV1InferenceAnalyticsSettingsResponses = {
+  /**
+   * Updated task analytics choice
+   */
+  200: {
+    available: boolean;
+    subscribed: boolean;
+    modelsEnabled: boolean;
+    enabled: boolean;
+    consentedAt: string | null;
+    consentVersion: number | null;
+    exportEnabled: boolean;
+    langfuseHost: string | null;
+    langfuseConfigured: boolean;
+  };
+};
+
+export type PatchV1InferenceAnalyticsSettingsResponse =
+  PatchV1InferenceAnalyticsSettingsResponses[keyof PatchV1InferenceAnalyticsSettingsResponses];
+
+export type PostV1InferenceAnalyticsEventsData = {
+  body: {
+    events: Array<{
+      id: string;
+      type:
+        | "task.started"
+        | "task.completed"
+        | "task.failed"
+        | "task.cancelled"
+        | "tool.executed"
+        | "skill.loaded"
+        | "model.call";
+      timestamp: string;
+      sessionId: string;
+      taskId: string;
+      callId?: string;
+      durationMs?: number;
+      status?: "completed" | "failed" | "cancelled";
+      model?: string;
+      provider?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      costUsd?: number;
+      usageComplete?: boolean;
+      tool?: string;
+      skill?: string;
+      skillVersion?: string;
+      mcp?: string;
+      metadata?: {
+        [key: string]: string | number | boolean;
+      };
+    }>;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/events";
+};
+
+export type PostV1InferenceAnalyticsEventsResponses = {
+  /**
+   * OK
+   */
+  200: unknown;
+};
+
+export type GetV1InferenceAnalyticsActivityData = {
+  body?: never;
+  path?: never;
+  query?: {
+    days?: number;
+    memberId?: string;
+    taskId?: string;
+    sessionId?: string;
+    before?: string;
+    beforeId?: string;
+  };
+  url: "/v1/inference/analytics/activity";
+};
+
+export type GetV1InferenceAnalyticsActivityResponses = {
+  /**
+   * Task activity
+   */
+  200: {
+    events: Array<{
+      id: string;
+      type:
+        | "task.started"
+        | "task.completed"
+        | "task.failed"
+        | "task.cancelled"
+        | "tool.executed"
+        | "skill.loaded"
+        | "model.call";
+      timestamp: string;
+      sessionId: string;
+      taskId: string;
+      callId?: string;
+      durationMs?: number;
+      status?: "completed" | "failed" | "cancelled";
+      model?: string;
+      provider?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      costUsd?: number;
+      usageComplete?: boolean;
+      tool?: string;
+      skill?: string;
+      skillVersion?: string;
+      mcp?: string;
+      metadata?: {
+        [key: string]: string | number | boolean;
+      };
+      memberId: string;
+      source: "app" | "inference";
+    }>;
+    next: {
+      before: string;
+      beforeId: string;
+    } | null;
+  };
+};
+
+export type GetV1InferenceAnalyticsActivityResponse =
+  GetV1InferenceAnalyticsActivityResponses[keyof GetV1InferenceAnalyticsActivityResponses];
+
+export type GetV1InferenceAnalyticsConsumptionData = {
+  body?: never;
+  path?: never;
+  query?: {
+    days?: number;
+    memberId?: string;
+    taskId?: string;
+    sessionId?: string;
+    before?: string;
+    beforeId?: string;
+  };
+  url: "/v1/inference/analytics/consumption";
+};
+
+export type GetV1InferenceAnalyticsConsumptionResponses = {
+  /**
+   * Model consumption
+   */
+  200: {
+    groups: Array<{
+      model: string | null;
+      provider: string | null;
+      memberId: string;
+      day: string;
+      calls: number;
+      failedCalls: number;
+      incompleteCalls: number;
+      inputTokens: number | null;
+      outputTokens: number | null;
+      cacheReadTokens: number | null;
+      costUsd: number | null;
+    }>;
+  };
+};
+
+export type GetV1InferenceAnalyticsConsumptionResponse =
+  GetV1InferenceAnalyticsConsumptionResponses[keyof GetV1InferenceAnalyticsConsumptionResponses];
+
+export type PostV1InferenceAnalyticsLangfuseTestData = {
+  body: {
+    host: string;
+    publicKey: string;
+    secretKey: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/langfuse/test";
+};
+
+export type PostV1InferenceAnalyticsLangfuseTestResponses = {
+  /**
+   * OK
+   */
+  200: unknown;
+};
+
+export type PostV1InferenceAnalyticsLangfuseConnectData = {
+  body: {
+    host: string;
+    publicKey: string;
+    secretKey: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/langfuse/connect";
+};
+
+export type PostV1InferenceAnalyticsLangfuseConnectResponses = {
+  /**
+   * OK
+   */
+  200: unknown;
+};
+
+export type DeleteV1InferenceAnalyticsLangfuseData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/langfuse";
+};
+
+export type DeleteV1InferenceAnalyticsLangfuseResponses = {
+  /**
+   * OK
+   */
+  200: unknown;
+};
 
 export type DeleteV1ScimData = {
   body?: never;
@@ -19163,6 +19878,7 @@ export type PutV1TeamsByKeyByExternalKeyData = {
   body: {
     name: string;
     memberIds?: Array<string>;
+    grantsOrganizationAdmin?: boolean;
   };
   path: {
     externalKey: string;
@@ -19290,6 +20006,7 @@ export type PatchV1TeamsByTeamIdData = {
   body: {
     name?: string;
     memberIds?: Array<string>;
+    grantsOrganizationAdmin?: boolean;
   };
   path: {
     /**
@@ -19335,6 +20052,7 @@ export type PostV1TeamsData = {
   body: {
     name: string;
     memberIds?: Array<string>;
+    grantsOrganizationAdmin?: boolean;
   };
   path?: never;
   query?: never;

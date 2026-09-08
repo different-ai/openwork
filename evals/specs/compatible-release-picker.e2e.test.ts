@@ -38,7 +38,7 @@ test("recovery offers only recent stable releases with exact compatible artifact
   ]);
   await seed.evalIn(
     world.app,
-    `Promise.all([window.__openworkRecoveryControl.select("2.3.0"), window.__openworkRecoveryControl.select("9.9.9")])`,
+    () => (Promise.all([window.__openworkRecoveryControl.select("2.3.0"), window.__openworkRecoveryControl.select("9.9.9")])),
     { awaitPromise: true },
   );
   const afterInvalid = await world.snapshot();

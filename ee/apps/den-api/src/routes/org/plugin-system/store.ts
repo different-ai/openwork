@@ -71,6 +71,7 @@ import {
   type DefaultMarketplacePluginEntry,
 } from "./default-marketplaces.js"
 import { db } from "../../../db.js"
+import { resolveOrganizationMemberAuthority } from "../../../organization-team-roles.js"
 import { env } from "../../../env.js"
 import { appLogger } from "../../../observability/logger.js"
 import { roleIncludesOwner } from "../../../orgs.js"
@@ -6019,16 +6020,10 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
     throw new PluginArchRouteFailure(404, "organization_not_found", "Organization not found for connector instance.")
   }
 
-  const memberRows = await db
-    .select()
-    .from(MemberTable)
-    .where(and(
-      eq(MemberTable.organizationId, input.connectorInstance.organizationId),
-      eq(MemberTable.id, input.connectorInstance.createdByOrgMembershipId),
-      isNull(MemberTable.removedAt),
-    ))
-    .limit(1)
-  const member = memberRows[0] as MemberRow | undefined
+  const member = await resolveOrganizationMemberAuthority({
+    organizationId: input.connectorInstance.organizationId,
+    memberId: input.connectorInstance.createdByOrgMembershipId,
+  })
   if (!member) {
     throw new PluginArchRouteFailure(404, "member_not_found", "Connector creator member not found.")
   }
@@ -6048,6 +6043,8 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
         isOwner: roleIncludesOwner(member.role),
         joinedAt: member.joinedAt,
         role: member.role,
+        directRole: member.directRole,
+        adminTeams: member.adminTeams,
         userId: member.userId,
       },
       invitations: [],

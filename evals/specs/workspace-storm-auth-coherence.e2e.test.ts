@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 /**
  * Repro attempts for the field report "failed authorization / asks me to
  * reconnect even though the tools/MCPs are connected": a member with many
@@ -63,20 +64,20 @@ interface WorkspaceListing {
 
 /** The local server's own workspace registry, read the way the app reads it. */
 async function listWorkspaces(desktopApp: App): Promise<WorkspaceListing> {
-  const value = await evalIn(desktopApp, `(async () => {
+  const value = await evalIn(desktopApp, async () => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
-    const response = await fetch(String(info.baseUrl).replace(/\\/+$/, "") + "/workspaces", {
+    const response = await fetch(String(info.baseUrl).replace(/\/+$/, "") + "/workspaces", {
       headers: { authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
     });
     if (!response.ok) return { error: "workspaces_http_" + response.status };
     const body = await response.json();
     const items = Array.isArray(body?.items) ? body.items : [];
     return {
-      ids: items.map((item) => String(item?.id ?? "")).filter(Boolean),
+      ids: items.map((item: { id?: unknown }) => String(item?.id ?? "")).filter(Boolean),
       activeId: typeof body?.activeId === "string" ? body.activeId : null,
     };
-  })()`, { awaitPromise: true, timeoutMs: 20_000 });
+  }, { awaitPromise: true, timeoutMs: 20_000 });
   if (!isRecord(value) || !Array.isArray(value.ids)) {
     throw new Error(`Listing workspaces failed: ${JSON.stringify(value)}`);
   }
@@ -110,31 +111,31 @@ async function switchToWorkspace(desktopApp: App, workspaceId: string, dwellMs: 
 
 /** Ask the real Den auth provider to re-read its session; exercises injected identity failures. */
 async function refreshDenSession(desktopApp: App, times: number): Promise<void> {
-  await evalIn(desktopApp, `(async () => {
-    for (let index = 0; index < ${times}; index += 1) {
+  await evalIn(desktopApp, browserScript(async (times) => {
+    for (let index = 0; index < times; index += 1) {
       window.dispatchEvent(new Event("openwork-den-session-updated"));
       await new Promise((resolve) => window.setTimeout(resolve, 100));
     }
-  })()`, { awaitPromise: true, timeoutMs: 10_000 });
+  }, [times]), { awaitPromise: true, timeoutMs: 10_000 });
 }
 
 async function probeDenPath(desktopApp: App, apiUrl: string, path: string, times: number): Promise<void> {
-  await evalIn(desktopApp, `(async () => {
+  await evalIn(desktopApp, browserScript(async (times, apiUrl, path) => {
     const token = localStorage.getItem("openwork.den.authToken") ?? "";
-    for (let index = 0; index < ${times}; index += 1) {
+    for (let index = 0; index < times; index += 1) {
       try {
-        await fetch(${JSON.stringify(apiUrl)} + ${JSON.stringify(path)}, {
+        await fetch(apiUrl + path, {
           headers: { Authorization: "Bearer " + token },
         });
       } catch {}
     }
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  }, [times, apiUrl, path]), { awaitPromise: true, timeoutMs: 30_000 });
 }
 
 /** Wait until the app itself has adopted the workspace as active. */
 async function waitForAdoptedWorkspace(desktopApp: App, workspaceId: string): Promise<void> {
-  await waitFor(desktopApp, `(localStorage.getItem("openwork.react.activeWorkspace") ?? "") === ${JSON.stringify(workspaceId)}
-    && window.location.hash.includes(${JSON.stringify(`/workspace/${workspaceId}`)})`, {
+  await waitFor(desktopApp, browserScript((workspaceId, value) => ((localStorage.getItem("openwork.react.activeWorkspace") ?? "") === workspaceId
+    && window.location.hash.includes(value)), [workspaceId, `/workspace/${workspaceId}`]), {
     timeoutMs: 60_000,
     label: `workspace ${workspaceId} adopted as active`,
   });
@@ -503,11 +504,11 @@ test.skipIf(!runnable)(
       true,
     );
 
-    const gateInstalled = await evalIn(desktopApp, `(() => {
+    const gateInstalled = await evalIn(desktopApp, () => {
       const originalFetch = window.fetch.bind(window);
       let releaseGate = () => {};
-      const gate = new Promise((resolve) => { releaseGate = resolve; });
-      const state = {
+      const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+      const state: Window["__workspaceStormSettingsGate"] = {
         entered: false,
         released: false,
         firstCompleted: false,
@@ -537,24 +538,24 @@ test.skipIf(!runnable)(
         return originalFetch(input, init);
       };
       return true;
-    })()`);
+    });
     expect(gateInstalled).toBe(true);
     await go(desktopApp, `/workspace/${encodeURIComponent(first)}/settings/general`);
-    await waitFor(desktopApp, "window.__workspaceStormSettingsGate?.entered === true", {
+    await waitFor(desktopApp, () => (window.__workspaceStormSettingsGate?.entered === true), {
       timeoutMs: 30_000,
       label: "first Settings workspace refresh held in flight",
     });
     await go(desktopApp, `/workspace/${encodeURIComponent(finalWorkspaceId)}/settings/general`);
-    await waitFor(desktopApp, `window.location.hash.includes(${JSON.stringify(`/workspace/${encodeURIComponent(finalWorkspaceId)}/settings/general`)})
-      && document.body.innerText.includes("Overview of all settings")`, {
+    await waitFor(desktopApp, browserScript((value) => (window.location.hash.includes(value)
+      && document.body.innerText.includes("Overview of all settings")), [`/workspace/${encodeURIComponent(finalWorkspaceId)}/settings/general`]), {
       timeoutMs: 90_000,
       label: "final Settings route rendered while the stale refresh is held",
     });
     const coherentBeforeRelease = await eventually(
-      () => evalIn(desktopApp, `(async () => {
+      () => evalIn(desktopApp, async () => {
         const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
         const desktopState = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("workspaceBootstrap");
-        const response = await fetch(String(info?.baseUrl ?? "").replace(/\\/+$/, "") + "/workspaces", {
+        const response = await fetch(String(info?.baseUrl ?? "").replace(/\/+$/, "") + "/workspaces", {
           headers: { authorization: "Bearer " + String(info?.ownerToken ?? info?.clientToken ?? "") },
         });
         const body = await response.json();
@@ -565,7 +566,7 @@ test.skipIf(!runnable)(
           desktop: String(desktopState?.activeId ?? ""),
           server: String(body?.activeId ?? ""),
         };
-      })()`, { awaitPromise: true, timeoutMs: 20_000 }),
+      }, { awaitPromise: true, timeoutMs: 20_000 }),
       {
         within: 90_000,
         intervalMs: 500,
@@ -581,17 +582,17 @@ test.skipIf(!runnable)(
       true,
     );
 
-    await evalIn(desktopApp, "window.__workspaceStormSettingsGate?.release(); true");
-    await waitFor(desktopApp, "window.__workspaceStormSettingsGate?.firstCompleted === true", {
+    await evalIn(desktopApp, () => { window.__workspaceStormSettingsGate?.release(); return true; });
+    await waitFor(desktopApp, () => (window.__workspaceStormSettingsGate?.firstCompleted === true), {
       timeoutMs: 30_000,
       label: "held workspace response completed",
     });
     await sleep(2_000);
-    const afterRelease = await evalIn(desktopApp, `(() => ({
+    const afterRelease = await evalIn(desktopApp, () => ((() => ({
       active: localStorage.getItem("openwork.react.activeWorkspace") ?? "",
       errors: [...(window.__workspaceStormSettingsGate?.errors ?? [])],
       visibleError: /Failed to fetch|OpenCode base URL is missing|Workspace configuration failed|Runtime error/.test(document.body.innerText),
-    }))()`);
+    }))()));
     expect(afterRelease).toMatchObject({ active: finalWorkspaceId, errors: [], visibleError: false });
     await switchToWorkspace(desktopApp, finalWorkspaceId, 0);
 
@@ -608,7 +609,7 @@ test.skipIf(!runnable)(
       attempt: "Attempt 3",
     });
 
-    const adopted = await evalIn(desktopApp, `localStorage.getItem("openwork.react.activeWorkspace") ?? ""`);
+    const adopted = await evalIn(desktopApp, () => (localStorage.getItem("openwork.react.activeWorkspace") ?? ""));
     evidence.recordAssertionEvidence(
       "Attempt 3: no lost update — the adopted workspace is the last one requested",
       `openwork.react.activeWorkspace=${JSON.stringify(adopted)} after ${toggles} toggles (expected ${finalWorkspaceId}).`,

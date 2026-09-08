@@ -175,7 +175,7 @@ function CardItem({ item, index }: { item: Record<string, unknown>; index: numbe
   ));
   const collections = entries.filter((entry) => isCollection(entry[1]));
   return (
-    <article className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+    <article className="rounded-2xl border border-gray-200 bg-white p-4 shadow-xs">
       <h3 className="text-[14px] font-medium text-gray-950">{title.text}</h3>
       {date.text ? <p className="mt-1 text-[12px] text-gray-500">{date.text}</p> : null}
       {scalars.length > 0 ? <div className="mt-4"><DefinitionList entries={scalars} /></div> : null}

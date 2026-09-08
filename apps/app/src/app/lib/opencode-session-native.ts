@@ -1,6 +1,8 @@
 import type { Message, Part, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
+import { closeSessionBrowserTabs } from "./desktop";
 import { createClient, unwrap, type FieldsResult } from "./opencode";
+import { createClientV2, isOpencodeV2BaseUrl } from "./opencode-v2-adapter";
 import type { OpenworkSessionSnapshot } from "./openwork-server";
 import type { ResolvedWorkspaceEndpoint } from "./workspace-endpoint";
 
@@ -20,7 +22,9 @@ export type NativeSessionDependencies = {
 };
 
 function createNativeOperations(endpoint: NativeSessionEndpoint): NativeSessionOperations {
-  const client = createClient(endpoint.opencodeBaseUrl, undefined, { mode: "openwork", token: endpoint.token });
+  const client = isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)
+    ? createClientV2(endpoint.opencodeBaseUrl, undefined, { token: endpoint.token })
+    : createClient(endpoint.opencodeBaseUrl, undefined, { mode: "openwork", token: endpoint.token });
   return {
     get: (sessionId, options) => client.session.get({ sessionID: sessionId }, options),
     messages: (sessionId, limit, options) => client.session.messages({ sessionID: sessionId, limit }, options),
@@ -98,5 +102,7 @@ export async function deleteNativeSession(
   dependencies?: NativeSessionDependencies,
 ) {
   const result = await sessionOperations(endpoint, dependencies).delete(sessionId, options);
-  return unwrapSessionResult(result, "session_not_found");
+  const deleted = unwrapSessionResult(result, "session_not_found");
+  if (deleted) void closeSessionBrowserTabs(sessionId);
+  return deleted;
 }

@@ -3,15 +3,16 @@ import { z } from "zod";
 type DesktopPolicyDefinitionEntry = {
   id: string;
   name: string;
+  teamLabel: string;
   description: string;
   userNotice: string;
   defaultValue: boolean;
-  /**
-   * Value the Restricted policy mode locks this key to, or `null` when the key
-   * is a display preference that Restricted leaves editable.
-   */
-  restrictedValue: boolean | null;
-};
+} & (
+  // Every restricted capability must have a place in the team editor.
+  // Display preferences remain editable in Restricted mode.
+  | { restrictedValue: boolean; group: "ai" | "tools" | "app" }
+  | { restrictedValue: null; group: "display" }
+);
 
 // Canonical desktop policy catalog.
 //
@@ -22,7 +23,7 @@ type DesktopPolicyDefinitionEntry = {
 //    the key to, or `null` for a display preference Restricted leaves alone.
 // 4. Wire desktop app behavior to read the key through the desktop config hooks.
 // 5. If the key affects Den web editing copy, update the `name`, `description`,
-//    and `userNotice` here rather than duplicating that copy elsewhere.
+//    `teamLabel`, `group`, and `userNotice` here rather than duplicating them elsewhere.
 // 6. Do not manually edit `desktopPolicyValueSchema`; it is generated from the
 //    IDs in this definition list.
 //
@@ -33,6 +34,8 @@ type DesktopPolicyDefinitionEntry = {
 export const desktopPolicyDefinitions = [
   {
     id: "allowCustomProviders",
+    teamLabel: "Add AI providers",
+    group: "ai",
     name: "Custom providers",
     description:
       "Allow users to add and use models that are not deployed through OpenWork Cloud.",
@@ -43,6 +46,8 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowZenModel",
+    teamLabel: "Use OpenCode models",
+    group: "ai",
     name: "Enable OpenCode Zen Models",
     description: "Allow users to use the built in models provided by OpenCode.",
     userNotice: "Your administrator has disabled access to OpenCode Models.",
@@ -51,6 +56,8 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowMultipleWorkspaces",
+    teamLabel: "Create more workspaces",
+    group: "app",
     name: "Multiple workspaces",
     description:
       "Allow users to create or configure more than one workspace on their machine.",
@@ -61,6 +68,8 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowControlSettings",
+    teamLabel: "Change app settings",
+    group: "app",
     name: "Control Settings",
     description: "Allow users to access and change the desktop app settings.",
     userNotice:
@@ -70,6 +79,8 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowManageExtensions",
+    teamLabel: "Add local tools, skills & MCP servers",
+    group: "tools",
     name: "Manage Extensions",
     description: "Allow users to install and manage extensions locally.",
     userNotice:
@@ -79,6 +90,8 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowBuiltInExtensions",
+    teamLabel: "Use built-in extensions",
+    group: "tools",
     name: "Built-in Extensions",
     description:
       "Allow users to see and use OpenWork's built-in extensions, including browser, image, and local-provider extensions.",
@@ -89,6 +102,8 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowAlphaUpdates",
+    teamLabel: "Try experimental updates",
+    group: "app",
     name: "Alpha updates",
     description:
       "Allow users to opt into experimental Alpha desktop updates.",
@@ -99,6 +114,8 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "showWelcomePage",
+    teamLabel: "Show welcome page",
+    group: "display",
     name: "Welcome Page",
     description: "Show the Getting Started page to new users.",
     userNotice:
@@ -109,7 +126,7 @@ export const desktopPolicyDefinitions = [
 ] as const satisfies readonly DesktopPolicyDefinitionEntry[];
 
 export type DesktopPolicyKey = (typeof desktopPolicyDefinitions)[number]["id"];
-export type DesktopPolicyDefinition = Omit<DesktopPolicyDefinitionEntry, "id"> & {
+export type DesktopPolicyDefinition = Omit<DesktopPolicyDefinitionEntry, "id" | "teamLabel" | "group"> & {
   id: DesktopPolicyKey;
 };
 
@@ -155,9 +172,51 @@ function normalizeTeamAccess(value: unknown): TeamAccess | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
+// Execution restrictions intersect across matching policies, independently of
+// the legacy union-of-grants booleans.
+export const desktopExecutionPolicySchema = z.object({
+  commands: z.enum(["allow", "deny"]).default("allow"),
+  blockedCommands: z.array(z.string().trim().min(1).max(500)).max(100).default([]),
+  browserOrigins: z.array(z.string().url().max(2048).refine((value) => {
+    try {
+      const url = new URL(value);
+      return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password
+        && url.pathname === "/" && !url.search && !url.hash;
+    } catch { return false; }
+  }, "Use an HTTP or HTTPS site without a path, credentials, or query.")
+    .transform((value) => new URL(value).origin)).max(100).optional(),
+  blockBrowserUploads: z.boolean().default(false),
+}).strict();
+export type DesktopExecutionPolicy = z.infer<typeof desktopExecutionPolicySchema>;
+// A member can belong to several teams, each contributing up to 100 patterns.
+// The effective union must not fail validation merely because it exceeds one
+// document's editing limit.
+const effectiveDesktopExecutionPolicySchema = desktopExecutionPolicySchema.extend({
+  blockedCommands: z.array(z.string().min(1).max(500)).default([]),
+});
+
+
+export function resolveDesktopExecutionPolicy(documents: unknown[]): DesktopExecutionPolicy {
+  const result: DesktopExecutionPolicy = { commands: "allow", blockedCommands: [], blockBrowserUploads: false };
+  for (const document of documents) {
+    const raw = coerceJsonRecord(document);
+    if (!isRecord(raw) || raw.execution === undefined) continue;
+    const policy = desktopExecutionPolicySchema.parse(raw.execution);
+    if (policy.commands === "deny") result.commands = "deny";
+    result.blockedCommands = [...new Set([...result.blockedCommands, ...policy.blockedCommands])];
+    result.blockBrowserUploads ||= policy.blockBrowserUploads;
+    if (policy.browserOrigins !== undefined) {
+      result.browserOrigins = result.browserOrigins === undefined ? policy.browserOrigins
+        : result.browserOrigins.filter((origin) => policy.browserOrigins?.includes(origin));
+    }
+  }
+  return result;
+}
+
 export const desktopPolicyDocumentSchema = desktopPolicyValueSchema
   .extend({
     access: teamAccessSchema.optional(),
+    execution: desktopExecutionPolicySchema.optional(),
     onboardingPrompts: onboardingPromptsSchema.optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema.optional(),
   })
@@ -166,6 +225,7 @@ export const desktopPolicyDocumentSchema = desktopPolicyValueSchema
 export const desktopPolicyDocumentWriteSchema = desktopPolicyValueSchema
   .extend({
     access: teamAccessSchema.optional(),
+    execution: desktopExecutionPolicySchema.optional(),
     onboardingPrompts: onboardingPromptsSchema.nullable().optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema
       .nullable()
@@ -178,6 +238,7 @@ export type DesktopPolicyDocumentWrite = z.infer<
   typeof desktopPolicyDocumentWriteSchema
 >;
 export type DefaultDesktopPolicyDocument = Required<DesktopPolicyValue> & {
+  execution?: DesktopExecutionPolicy;
   access?: TeamAccess;
   onboardingPrompts?: string[];
   onboardingPromptDescriptions?: string[];
@@ -268,6 +329,7 @@ export type BrandAccentColor = (typeof brandAccentColorValues)[number];
 
 export const desktopConfigSchema = desktopPolicyValueSchema
   .extend({
+    execution: effectiveDesktopExecutionPolicySchema.optional(),
     allowedDesktopVersions: z
       .array(z.string().trim().min(1).max(32))
       .optional(),
@@ -403,9 +465,11 @@ export function normalizeDesktopPolicyDocument(
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(coerced);
 
   const access = normalizeTeamAccess(coerced);
+  const execution = isRecord(coerced) && coerced.execution !== undefined ? desktopExecutionPolicySchema.parse(coerced.execution) : undefined;
   return {
     ...policy,
     ...(access !== undefined ? { access } : {}),
+    ...(execution !== undefined ? { execution } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
   };
 }
@@ -425,9 +489,11 @@ export function normalizeDesktopPolicyDocumentWrite(
   );
 
   const access = normalizeTeamAccess(coerced);
+  const execution = isRecord(coerced) && coerced.execution !== undefined ? desktopExecutionPolicySchema.parse(coerced.execution) : undefined;
   return {
     ...policy,
     ...(access !== undefined ? { access } : {}),
+    ...(execution !== undefined ? { execution } : {}),
     ...(rawPrompts === null
       ? { onboardingPrompts: null, onboardingPromptDescriptions: null }
       : onboardingPrompts !== undefined
@@ -477,9 +543,11 @@ export function resolveDesktopPolicyDocumentWrite(input: {
         : undefined;
 
   const access = write.access ?? normalizeTeamAccess(input.existingPolicy);
+  const execution = write.execution ?? normalizeDesktopPolicyDocument(input.existingPolicy).execution;
   return {
     ...policy,
     ...(access !== undefined ? { access } : {}),
+    ...(execution !== undefined ? { execution } : {}),
     ...(onboardingPrompts !== undefined ? { onboardingPrompts } : {}),
     ...(onboardingPromptDescriptions !== undefined
       ? { onboardingPromptDescriptions }
@@ -495,9 +563,11 @@ export function normalizeDefaultDesktopPolicyDocument(
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(coerced);
 
   const access = normalizeTeamAccess(coerced);
+  const execution = isRecord(coerced) && coerced.execution !== undefined ? desktopExecutionPolicySchema.parse(coerced.execution) : undefined;
   return {
     ...policy,
     ...(access !== undefined ? { access } : {}),
+    ...(execution !== undefined ? { execution } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
   };
 }
@@ -508,6 +578,12 @@ export function allDesktopPolicies(
   return Object.fromEntries(
     desktopPolicyDefinitions.map((definition) => [definition.id, value]),
   ) as Required<DesktopPolicyValue>;
+}
+
+/** Materialize the restrictions a team applies, including legacy Locked policies. */
+export function resolveTeamAccessCapabilities(access: TeamAccess): Required<DesktopPolicyValue> {
+  const capabilities = normalizeDefaultDesktopPolicyValue(access.capabilities);
+  return access.mode === "locked" ? applyRestrictedDesktopPolicy(capabilities) : capabilities;
 }
 
 export function calculateEffectiveDesktopPolicy(input: {
@@ -538,9 +614,10 @@ export function calculateEffectiveDesktopPolicy(input: {
   for (const document of [input.defaultPolicy, ...input.assignedPolicies]) {
     const access = normalizeTeamAccess(document);
     if (!access) continue;
+    const capabilities = resolveTeamAccessCapabilities(access);
     for (const definition of desktopPolicyDefinitions) {
       if (definition.restrictedValue === null) continue;
-      if (access.mode === "locked" || access.capabilities[definition.id] === false) {
+      if (capabilities[definition.id] === false) {
         calculated[definition.id] = false;
       }
     }
@@ -656,9 +733,11 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
   const connectEnabled =
     typeof raw?.connectEnabled === "boolean" ? raw.connectEnabled : undefined;
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(raw);
+  const execution = raw?.execution === undefined ? undefined : effectiveDesktopExecutionPolicySchema.parse(raw.execution);
 
   return {
     ...policy,
+    ...(execution !== undefined ? { execution } : {}),
     ...(allowedDesktopVersions !== undefined ? { allowedDesktopVersions } : {}),
     ...(brandAppName !== undefined ? { brandAppName } : {}),
     ...(brandLogoUrl !== undefined ? { brandLogoUrl } : {}),

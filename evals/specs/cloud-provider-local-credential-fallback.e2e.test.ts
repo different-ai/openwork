@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 import { denFetch, evalIn, go, readAvailableModels, waitFor } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
@@ -93,22 +94,22 @@ async function localServerRequest(
   path: string,
   input: { method?: string; body?: Record<string, unknown>; host?: boolean } = {},
 ): Promise<{ status: number; body: unknown }> {
-  const value = await evalIn(surface, `(async () => {
+  const value = await evalIn(surface, browserScript(async (value, path, inputValue, inputValue2) => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return { status: 0, body: { error: "local_server_unavailable" } };
-    const headers = { "content-type": "application/json" };
-    if (${input.host === true}) headers["x-openwork-host-token"] = String(info.hostToken ?? "");
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (value) headers["x-openwork-host-token"] = String(info.hostToken ?? "");
     else headers.authorization = "Bearer " + String(info.ownerToken ?? info.clientToken ?? "");
-    const response = await fetch(String(info.baseUrl).replace(/\\/+$/, "") + ${JSON.stringify(path)}, {
-      method: ${JSON.stringify(input.method ?? "GET")},
+    const response = await fetch(String(info.baseUrl).replace(/\/+$/, "") + path, {
+      method: inputValue,
       headers,
-      body: ${input.body ? JSON.stringify(JSON.stringify(input.body)) : "undefined"},
+      body: inputValue2,
     });
     const text = await response.text();
     let body = text;
     try { body = text ? JSON.parse(text) : null; } catch {}
     return { status: response.status, body };
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  }, [input.host === true, path, input.method ?? "GET", input.body ? JSON.stringify(input.body) : undefined]), { awaitPromise: true, timeoutMs: 30_000 });
   if (!isRecord(value) || typeof value.status !== "number") {
     throw new Error(`Invalid local server response for ${path}: ${JSON.stringify(value)}`);
   }
@@ -157,21 +158,21 @@ async function waitForProviderRow(
   const route = `/workspace/${workspaceId}/settings/cloud-providers`;
   await go(surface, `/workspace/${workspaceId}/session`);
   await go(surface, route);
-  await waitFor(surface, `(() => {
+  await waitFor(surface, browserScript((PROVIDER_NAME, statusLabel) => {
     const title = [...document.querySelectorAll("span")]
-      .find((element) => (element.textContent ?? "").trim() === ${JSON.stringify(PROVIDER_NAME)});
+      .find((element) => (element.textContent ?? "").trim() === PROVIDER_NAME);
     const row = title?.parentElement?.parentElement?.parentElement;
-    return Boolean(row && (row.textContent ?? "").includes(${JSON.stringify(statusLabel)}));
-  })()`, { timeoutMs: 120_000, label: `${PROVIDER_NAME} row shows ${statusLabel}` });
+    return Boolean(row && (row.textContent ?? "").includes(statusLabel));
+  }, [PROVIDER_NAME, statusLabel]), { timeoutMs: 120_000, label: `${PROVIDER_NAME} row shows ${statusLabel}` });
 }
 
 async function closeModelPicker(surface: Parameters<typeof evalIn>[0]): Promise<void> {
-  await evalIn(surface, `(() => {
-    const close = document.querySelector('[data-slot="dialog-content"] [data-slot="dialog-close"]');
+  await evalIn(surface, () => {
+    const close = document.querySelector<HTMLElement>('[data-slot="dialog-content"] [data-slot="dialog-close"]');
     if (close instanceof HTMLElement) close.click();
     return true;
-  })()`);
-  await waitFor(surface, `!document.querySelector('[data-slot="dialog-content"]')`, {
+  });
+  await waitFor(surface, () => (!document.querySelector<HTMLElement>('[data-slot="dialog-content"]')), {
     timeoutMs: 15_000,
     label: "model picker closed",
   });

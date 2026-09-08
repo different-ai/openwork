@@ -19,7 +19,7 @@ import { OnboardingCard } from "./onboarding-card";
 import { OnboardingShell } from "./onboarding-shell";
 import type { OrganizationBrand } from "./organization-brand-identity";
 
-const primaryActionClassName = "den-button-primary min-h-12 w-full focus:outline-none focus:ring-4 focus:ring-slate-950/10";
+const primaryActionClassName = "den-button-primary min-h-12 w-full focus:outline-hidden focus:ring-4 focus:ring-slate-950/10";
 
 type JoinedOrg = {
   id: string;
@@ -100,7 +100,7 @@ function NotNowButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       type="button"
-      className="inline-flex min-h-12 w-full items-center justify-center rounded-full px-3 text-sm font-medium text-slate-500 transition hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-slate-950/10"
+      className="inline-flex min-h-12 w-full items-center justify-center rounded-full px-3 text-sm font-medium text-slate-500 transition hover:text-slate-950 focus:outline-hidden focus:ring-4 focus:ring-slate-950/10"
       onClick={onClick}
     >
       Not now

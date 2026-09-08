@@ -23,19 +23,29 @@ export interface MockToolCall {
 }
 
 export interface MockAgentToolStep {
+  /** Emit an unadvertised tool call to exercise the engine's rejection boundary. */
+  allowUnadvertisedTool?: boolean;
   /** Derive the handoff from the actual model input instead of fixture arguments. */
-  argumentsFrom?: "computer-mention";
+  argumentsFrom?: "computer-mention" | "skill-catalog" | "capability-search";
   tool: string;
   arguments: Record<string, unknown>;
 }
 
 export interface MockAgentWorkload {
+  /** Chat Completions: return this many 429s with Retry-After before serving the workload. */
+  rateLimitAttempts?: number;
+  /** Chat Completions: match the latest user message and count only its tool rounds. */
+  latestUserTurn?: boolean;
   promptMarker: string;
   finalReply: string;
+  /** Derive the final reply from the real tool result or model system instructions. */
+  finalReplyFrom?: "last-tool-text" | "system-text";
   /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
   finalReplyChunkSize?: number;
-  /** Opening chunk followed by silence for the first N completions. */
-  quietCompletions?: number;
+  /** Hold the final response before sending headers, to exercise loading transitions. */
+  finalReplyDelayMs?: number;
+  /** Chat Completions: emit a reasoning block before the final answer. */
+  finalReasoning?: string;
   /** Tool calls the agent makes before its final reply; empty answers directly. */
   steps: MockAgentToolStep[];
 }
@@ -45,7 +55,7 @@ export interface MockAgentRequest {
   promptMarker: string | null;
   matchedMarkers: string[];
   completedTools: number;
-  kind: "utility" | "tool" | "final" | "error" | "quiet";
+  kind: "utility" | "tool" | "final" | "error";
   toolName: string | null;
   arguments: Record<string, unknown>;
   at: string;
@@ -78,7 +88,16 @@ export interface MockMcpTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  result: { content: { type: "text"; text: string }[] };
+  title?: string;
+  annotations?: { readOnlyHint: boolean; destructiveHint: boolean };
+  _meta?: { ui: { resourceUri: string; visibility?: string[] } };
+  /** Serve the HTML bound to this tool's _meta.ui.resourceUri. */
+  appHtml?: string;
+  /** Reject absent required input keys with JSON-RPC invalid params. */
+  validateRequiredArguments?: boolean;
+  /** Hold the response while the real engine exposes its running tool state. */
+  delayMs?: number;
+  result: { content: { type: "text"; text: string }[]; isError?: boolean };
 }
 
 export interface StartMockMcpOptions {
@@ -89,6 +108,8 @@ export interface StartMockMcpOptions {
   publicUrl?: string;
   /** Advertised OAuth/resource origin when the mock sits behind a proxy; defaults to the mock's own URL. */
   issuer?: string;
+  /** Set RFC 9207 metadata explicitly; undefined omits it. Only true includes response iss. */
+  authorizationResponseIssuerSupported?: boolean;
   profileId?: EnterpriseMcpProfileId;
   fault?: string;
   oauthClientSecret?: string;
@@ -99,7 +120,7 @@ export interface StartMockMcpOptions {
   appToolName?: string;
   /** Script deterministic OpenAI-compatible agent turns through this mock. */
   agentWorkloads?: MockAgentWorkload[];
-  /** Require an authentication handler to add this header to model requests. */
+  /** Verify native provider requests retain this private model header. */
   agentRequiredHeader?: { name: string; value: string };
 }
 
@@ -320,6 +341,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
         PORT: String(port),
         ISSUER: options.issuer ?? url,
         AUTO_APPROVE: "1",
+        ...(options.authorizationResponseIssuerSupported === undefined ? {} : { MOCK_AUTHORIZATION_RESPONSE_ISSUER: options.authorizationResponseIssuerSupported ? "1" : "0" }),
         ...(options.allowUnauthenticatedMcp ? { MOCK_ALLOW_UNAUTHENTICATED_MCP: "1" } : {}),
         ...(options.extraToolCount ? { MOCK_EXTRA_TOOL_COUNT: String(options.extraToolCount) } : {}),
         ...(options.appToolName ? { MOCK_APP_TOOL_NAME: options.appToolName } : {}),
@@ -405,7 +427,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
       const at = typeof entry.at === "string" ? entry.at : "";
       if (sinceIso && at < sinceIso) continue;
       const kind = completion.kind;
-      if (kind !== "utility" && kind !== "tool" && kind !== "final" && kind !== "error" && kind !== "quiet") continue;
+      if (kind !== "utility" && kind !== "tool" && kind !== "final" && kind !== "error") continue;
       const marker = typeof completion.promptMarker === "string" ? completion.promptMarker : null;
       if (promptMarker && marker !== promptMarker) continue;
       if (typeof completion.model !== "string"

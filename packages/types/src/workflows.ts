@@ -74,6 +74,13 @@ export const workflowGraphSchema = z.object({
 })
 export type WorkflowGraph = z.infer<typeof workflowGraphSchema>
 
+export const workflowRunPreviewSchema = z.object({
+  configObjectId: idSchema,
+  title: z.string(),
+  graph: workflowGraphSchema.nullable(),
+})
+export type WorkflowRunPreview = z.infer<typeof workflowRunPreviewSchema>
+
 export const workflowVersionSchema = z.object({
   id: idSchema,
   // Authoring source and example input are OpenWork management data, not MCP
@@ -214,8 +221,33 @@ export const generatedArtifactViewSchema = z.object({
   description: z.string().trim().max(2_000).nullable(),
   status: z.enum(["active", "retired"]),
   activeRevisionId: idSchema.nullable(),
+  useInWorkflow: z.boolean().optional(),
   revisions: z.array(generatedArtifactViewRevisionSchema),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 })
 export type GeneratedArtifactView = z.infer<typeof generatedArtifactViewSchema>
+
+export const savedAppSummarySchema = z.object({
+  view: generatedArtifactViewSchema,
+  workflowTitle: z.string(),
+  canManage: z.boolean(),
+  onDashboard: z.boolean(),
+})
+export type SavedAppSummary = z.infer<typeof savedAppSummarySchema>
+
+export const savedAppDetailSchema = savedAppSummarySchema.extend({
+  revision: generatedArtifactViewRevisionSchema.nullable(),
+  html: z.string().nullable(),
+  payload: workflowArtifactPayloadSchema.nullable(),
+  previewNotice: z.string().nullable(),
+})
+export type SavedAppDetail = z.infer<typeof savedAppDetailSchema>
+
+export const saveAppSchema = z.object({
+  revisionId: idSchema,
+  title: z.string().trim().min(1).max(255),
+  useInWorkflow: z.boolean(),
+  expectedActiveRevisionId: idSchema.nullable(),
+})
+export type SaveApp = z.infer<typeof saveAppSchema>

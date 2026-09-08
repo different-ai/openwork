@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -46,11 +47,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function configureWorkspaceModel(app: App, model: WorkspaceModel): Promise<void> {
-  const configured = await inPage(app, `async (args) => {
+  const configured = await inPage(app, async (args) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return "missing local server credentials";
-    const request = async (path, init) => {
+    const request = async (path: string, init?: RequestInit) => {
       const response = await fetch("http://127.0.0.1:" + port + path, {
         ...init,
         headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
@@ -77,7 +78,7 @@ async function configureWorkspaceModel(app: App, model: WorkspaceModel): Promise
     const reloaded = await request("/workspace/" + encodeURIComponent(args.workspaceId) + "/engine/reload", { method: "POST" });
     if (reloaded !== "ok" && !reloaded.includes("opencode_reload_timeout")) return reloaded;
     const raw = localStorage.getItem("openwork.preferences");
-    let preferences = {};
+    let preferences: Record<string, unknown> = {};
     try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
     if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
     localStorage.setItem("openwork.preferences", JSON.stringify({
@@ -89,16 +90,16 @@ async function configureWorkspaceModel(app: App, model: WorkspaceModel): Promise
     localStorage.setItem("openwork.defaultModel", args.providerId + "/" + args.modelId);
     localStorage.removeItem("openwork.sessionModels." + args.workspaceId);
     return "ok";
-  }`, {
+  }, {
     workspaceId: app.workspaceId,
     providerId: model.providerId,
     modelId: model.modelId,
     baseUrl: model.baseUrl,
   }, { awaitPromise: true, timeoutMs: 90_000 });
   if (configured !== "ok") throw new Error(`Configuring the workspace model failed: ${String(configured)}`);
-  await inPage(app, `() => { location.reload(); return true; }`, {});
-  await waitFor(app, "Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "desktop control after reload" });
-  await waitFor(app, `window.__openworkControl.listActions().some((action) => action.id === "session.create_task" && !action.disabled)`, {
+  await inPage(app, () => { location.reload(); return true; }, {});
+  await waitFor(app, () => (Boolean(window.__openworkControl)), { timeoutMs: 60_000, label: "desktop control after reload" });
+  await waitFor(app, () => (window.__openworkControl.listActions().some((action) => action.id === "session.create_task" && !action.disabled)), {
     timeoutMs: 60_000,
     label: "desktop ready after model configuration",
   });
@@ -135,21 +136,21 @@ export function denWeb(options: { org: Provider<SeededOrg>; as: string }): Provi
       host: organization.place.host(),
     });
     ctx.onDispose(() => browser[Symbol.asyncDispose]());
-    await waitFor(browser, `location.href.startsWith(${JSON.stringify(organization.den.ref.webUrl)}) && document.readyState === "complete"`, {
+    await waitFor(browser, browserScript((webUrl) => (location.href.startsWith(webUrl) && document.readyState === "complete"), [organization.den.ref.webUrl]), {
       timeoutMs: 60_000,
       label: "Den Web origin before auth token handoff",
     });
-    const stored = await inPage(browser, `(args) => {
+    const stored = await inPage(browser, (args) => {
       localStorage.setItem("openwork:web:auth-token", args.token);
       return localStorage.getItem("openwork:web:auth-token") === args.token;
-    }`, { token: member.token });
+    }, { token: member.token });
     if (stored !== true) throw new Error("Storing the Den Web auth token failed.");
     return {
       ...browser,
       organization,
       open: async (path) => {
         await navigate(browser.client, `${organization.den.ref.webUrl}${path}`);
-        await waitFor(browser, `document.readyState === "complete"`, {
+        await waitFor(browser, () => (document.readyState === "complete"), {
           timeoutMs: 60_000,
           label: `Den Web ${path}`,
         });
@@ -234,7 +235,7 @@ export function webTab(options: { org: Provider<SeededOrg> }): Provider<ShotSurf
       ...browser,
       open: async (path) => {
         await navigate(browser.client, new URL(path, info.webUrl).toString());
-        await waitFor(browser, `document.readyState === "complete"`, {
+        await waitFor(browser, () => (document.readyState === "complete"), {
           timeoutMs: 60_000,
           label: `OpenWork Web ${path}`,
         });

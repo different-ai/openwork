@@ -98,7 +98,7 @@ function PaletteGroup({
           value={`${heading}:${entry.id}`}
           keywords={[entry.label, ...entry.keywords, entry.hint]}
           onSelect={() => onSelect(entry)}
-          className="flex cursor-default items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] tracking-[-0.1px] text-gray-700 outline-none data-[selected=true]:bg-gray-100 data-[selected=true]:text-gray-900"
+          className="flex cursor-default items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] tracking-[-0.1px] text-gray-700 outline-hidden data-[selected=true]:bg-gray-100 data-[selected=true]:text-gray-900"
         >
           <entry.icon className="h-4 w-4 shrink-0 text-gray-400" strokeWidth={1.8} />
           <span className="min-w-0 flex-1 truncate">{entry.label}</span>
@@ -266,7 +266,7 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
             onValueChange={setQuery}
             placeholder="Search or jump to…"
             data-testid="den-command-palette-input"
-            className="h-12 w-full border-b border-gray-100 bg-transparent px-4 text-[14px] text-gray-900 outline-none placeholder:text-gray-400"
+            className="h-12 w-full border-b border-gray-100 bg-transparent px-4 text-[14px] text-gray-900 outline-hidden placeholder:text-gray-400"
           />
           <Command.List className="max-h-[min(60vh,420px)] overflow-y-auto p-2">
             <Command.Empty className="px-3 py-10 text-center text-[13px] text-gray-400">

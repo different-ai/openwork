@@ -142,7 +142,7 @@ export function Microsoft365Dialog({
                         <input
                           type="checkbox"
                           data-feature={permission.key}
-                          className="mt-0.5 h-4 w-4 rounded border-gray-300 text-gray-900"
+                          className="mt-0.5 h-4 w-4 rounded-sm border-gray-300 text-gray-900"
                           checked={features.includes(permission.key)}
                           disabled={loadingConfig}
                           onChange={() => toggleFeature(permission.key)}

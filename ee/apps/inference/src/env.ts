@@ -19,7 +19,6 @@ const EnvSchema = z
     INFERENCE_ADMIN_TOKEN: z.string().optional(),
     INFERENCE_WEBHOOK_SECRET: z.string().optional(),
     INFERENCE_CREDITS_PER_DOLLAR: z.string().optional(),
-    VOICE_SESSION_COST_UNITS: z.string().optional(),
   })
   .superRefine((value, ctx) => {
     const mode =
@@ -100,14 +99,6 @@ function parseCreditsPerDollar(value: string | undefined) {
   return credits;
 }
 
-function parseVoiceSessionCostUnits(value: string | undefined) {
-  const units = Number(value ?? "50000000");
-  if (!Number.isFinite(units) || units <= 0) {
-    throw new Error("VOICE_SESSION_COST_UNITS must be a positive number");
-  }
-  return units;
-}
-
 const planetscale: PlanetScaleCredentials | null =
   parsed.DATABASE_HOST &&
   parsed.DATABASE_USERNAME &&
@@ -135,5 +126,4 @@ export const env = {
   adminToken: optionalString(parsed.INFERENCE_ADMIN_TOKEN),
   webhookSecret: optionalString(parsed.INFERENCE_WEBHOOK_SECRET),
   creditsPerDollar: parseCreditsPerDollar(parsed.INFERENCE_CREDITS_PER_DOLLAR),
-  voiceSessionCostUnits: parseVoiceSessionCostUnits(parsed.VOICE_SESSION_COST_UNITS),
 };

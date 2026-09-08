@@ -10,6 +10,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 import { db } from "../db.js"
+import { organizationAllowsManagedModels } from "../inference.js"
 import { calculateDesktopPolicyForOrgMember } from "../desktop-policies.js"
 
 type ProviderId = typeof LlmProviderTable.$inferSelect.id
@@ -72,6 +73,7 @@ const databaseAuthorityStore: AutomationModelAuthorityStore = {
   },
 
   async findOpenWorkProvider(input) {
+    if (!await organizationAllowsManagedModels(normalizeDenTypeId("organization", input.organizationId))) return null
     const providers = await db.select().from(LlmProviderTable).where(and(
       eq(LlmProviderTable.organizationId, normalizeDenTypeId("organization", input.organizationId)),
       eq(LlmProviderTable.createdByOrgMembershipId, normalizeDenTypeId("member", input.ownerMemberId)),

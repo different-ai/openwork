@@ -8,6 +8,7 @@ import { toast } from "@/components/ui/sonner";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
 import { createClient, unwrap } from "@/app/lib/opencode";
+import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe } from "@/app/lib/opencode-session";
 import { composeNativeSessionSnapshot } from "@/app/lib/opencode-session-native";
 import { setThemeMode } from "@/app/theme";
@@ -45,6 +46,7 @@ import type {
   CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
+import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
 import { useSessionModelSelection } from "./session-model-store";
 import type { ProviderCatalog } from "./use-model-behavior";
 import type { ModelAvailability } from "./model-availability";
@@ -52,7 +54,7 @@ import { isComputerTarget } from "./composer/computer-mentions";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
-import { connectSkillPrompt, parseConnectSkillToken } from "./composer/connect-skill-token";
+import { parseConnectSkillToken } from "./composer/connect-skill-token";
 import { createPastedTextChip, resolvePastedTextPlaceholders } from "./composer/pasted-text";
 import {
   canAdmitNextQueuedItem,
@@ -91,8 +93,8 @@ import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-m
 import { deriveOpenTargets, sameOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
-  deriveRunSyncHealth,
   markSessionSnapshotFetchStart,
+  reconcileFailureDegradedThreshold,
   seedSessionState,
   snapshotKey as reactSnapshotKey,
   statusKey as reactStatusKey,
@@ -542,6 +544,7 @@ export type SessionSurfaceProps = {
   sessionId: string;
   draftScope: string | null;
   isControlTarget: boolean;
+  chatPane?: "primary" | "secondary";
   opencodeBaseUrl: string;
   openworkToken: string;
   developerMode: boolean;
@@ -665,19 +668,6 @@ function resolveFindOwnerSessionId() {
   }
 
   return firstMountedSessionSurfaceId();
-}
-
-function subscribeNetworkOnline(onChange: () => void) {
-  window.addEventListener("online", onChange);
-  window.addEventListener("offline", onChange);
-  return () => {
-    window.removeEventListener("online", onChange);
-    window.removeEventListener("offline", onChange);
-  };
-}
-
-function readNetworkOnline() {
-  return window.navigator.onLine !== false;
 }
 
 function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolean) {
@@ -1103,9 +1093,21 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const sessionModelUnavailable = props.resolveModelAvailability
     ? props.resolveModelAvailability(sessionModel.selectedModel).status === "unavailable"
     : Boolean(props.modelUnavailable);
-  const [error, setError] = useState<SessionError | null>(null);
+  // This surface is retained across navigation. Async completions must keep
+  // their original owner, including when different servers reuse session IDs.
+  const sessionOwner = JSON.stringify([props.opencodeBaseUrl, props.workspaceId, props.sessionId]);
+  const activeSessionOwnerRef = useRef(sessionOwner);
+  activeSessionOwnerRef.current = sessionOwner;
+  const [ownedError, setOwnedError] = useState<{ owner: string; error: SessionError } | null>(null);
+  const error = ownedError?.owner === sessionOwner ? ownedError.error : null;
+  const setError = useCallback((nextError: SessionError | null) => {
+    if (activeSessionOwnerRef.current !== sessionOwner) return;
+    setOwnedError(nextError ? { owner: sessionOwner, error: nextError } : null);
+  }, [sessionOwner]);
   const [restoringRevertedMessages, setRestoringRevertedMessages] = useState(false);
-  const [showDelayedLoading, setShowDelayedLoading] = useState(false);
+  const [delayedLoadingTarget, setDelayedLoadingTarget] = useState<{ workspaceId: string; sessionId: string } | null>(null);
+  const showDelayedLoading = delayedLoadingTarget?.workspaceId === props.workspaceId &&
+    delayedLoadingTarget.sessionId === props.sessionId;
   const [awaitingAssistantBaseline, setAwaitingAssistantBaseline] = useState<number | null>(null);
   // Terminal invariant: an accepted admission that reached idle with no
   // assistant result surfaces a bounded recovery card instead of plain idle.
@@ -1130,7 +1132,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [steering, setSteering] = useState(false);
   const [verifiedOpenTargets, setVerifiedOpenTargets] = useState<OpenTarget[]>([]);
   const [cloudQueueRetryVersion, setCloudQueueRetryVersion] = useState(0);
-  const sending = props.cloudMcpSubmissionState.status === "sending";
+  const [pendingSendSessions, setPendingSendSessions] = useState<string[]>([]);
+  const pendingSendsRef = useRef(new Map<symbol, string>());
+  const sending = pendingSendSessions.includes(sessionOwner);
   const cloudQueueBlockedRef = useRef(false);
   const evalSnapshotFailureRef = useRef(false);
   // Shared with promote-to-send so a manual send-now cannot race the idle drain.
@@ -1146,12 +1150,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const lastObservationProbeAtRef = useRef<number | null>(null);
   const [observationProbeVersion, setObservationProbeVersion] = useState(0);
   const composerShellRef = useRef<HTMLDivElement>(null);
-  const hydratedKeyRef = useRef<string | null>(null);
   const autoOpenedTargetRef = useRef<string | null>(null);
   const initializedAutoOpenSessionRef = useRef<string | null>(null);
   const opencodeClient = useMemo(
-    () => createClient(props.opencodeBaseUrl, undefined, { token: props.openworkToken, mode: "openwork" }),
-    [props.opencodeBaseUrl, props.openworkToken],
+    () => isOpencodeV2BaseUrl(props.opencodeBaseUrl)
+      ? createClientV2(props.opencodeBaseUrl, props.workspaceRoot || undefined, { token: props.openworkToken })
+      : createClient(props.opencodeBaseUrl, undefined, { token: props.openworkToken, mode: "openwork" }),
+    [props.opencodeBaseUrl, props.openworkToken, props.workspaceRoot],
   );
 
   const snapshotQueryKey = useMemo(
@@ -1207,11 +1212,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     evalSnapshotFailureRef.current = false;
-    hydratedKeyRef.current = null;
     setSteering(false);
     setError(null);
     setRestoringRevertedMessages(false);
-    setShowDelayedLoading(false);
     setAwaitingAssistantBaseline(null);
     setAdmissionOutcomeUnresolved(false);
     // Composer draft state lives in the shared store keyed by session id, so
@@ -1219,7 +1222,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     autoOpenedTargetRef.current = null;
     initializedAutoOpenSessionRef.current = null;
     setVerifiedOpenTargets([]);
-  }, [props.sessionId]);
+  }, [sessionOwner, setError]);
 
   useEffect(() => () => {
     clearComposerRevertTarget(props.sessionId);
@@ -1281,14 +1284,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     seedSessionState(props.workspaceId, currentSnapshot);
   }, [currentSnapshot, props.sessionId, props.workspaceId]);
 
-  useEffect(() => {
-    if (!currentSnapshot) return;
-    const key = `${props.sessionId}:${currentSnapshot.session.time?.updated ?? currentSnapshot.session.time?.created ?? 0}:${currentSnapshot.messages.length}`;
-    if (hydratedKeyRef.current === key) return;
-    hydratedKeyRef.current = key;
-    seedSessionState(props.workspaceId, currentSnapshot);
-  }, [props.sessionId, currentSnapshot, props.workspaceId]);
-
   const snapshot = resolveRenderedSessionSnapshot({
     sessionId: props.sessionId,
     currentSnapshot,
@@ -1303,19 +1298,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // A busy status is a claim that decays: the sync layer revalidates it
   // continuously against /session/status, and once that validation keeps
   // failing (network drop, sleep, dead engine) the transcript must present
-  // "reconnecting" instead of a confidently ticking Working row. A local
-  // engine keeps answering that poll while the machine itself is offline, so
-  // the browser's own connectivity is part of the same judgement: its model
-  // request cannot progress without a network either.
+  // "reconnecting" instead of a confidently ticking Working row.
   const syncStreamKey = workspaceSyncStreamKey({ workspaceId: props.workspaceId, baseUrl: props.opencodeBaseUrl });
   const syncReconcileHealth = useWorkspaceSyncStreamStore(
     (state) => state.reconcileHealthByKey[syncStreamKey],
   );
-  const networkOnline = useSyncExternalStore(subscribeNetworkOnline, readNetworkOnline, () => true);
-  const runSyncHealth = useMemo(
-    () => deriveRunSyncHealth({ networkOnline, health: syncReconcileHealth }),
-    [networkOnline, syncReconcileHealth],
-  );
+  const runSyncHealth = useMemo(() => ({
+    degraded: (syncReconcileHealth?.consecutiveFailures ?? 0) >= reconcileFailureDegradedThreshold,
+    lastConfirmedAt: syncReconcileHealth?.lastSuccessAt ?? null,
+  }), [syncReconcileHealth]);
 
   useEffect(() => {
     if (!chatStreaming) setSteering(false);
@@ -1480,7 +1471,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         return { ok: true };
       },
     };
-  }, [props.sessionId]);
+  }, [props.sessionId, setError]);
   useControlAction(props.isControlTarget ? seedSessionErrorControlAction : null);
   const seedSessionLifecycleControlAction = useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
@@ -1674,13 +1665,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.sessionId, verifiedOpenTargets]);
 
   useEffect(() => {
-    if (!pendingSessionLoad) {
-      setShowDelayedLoading(false);
-      return;
-    }
-    const id = window.setTimeout(() => setShowDelayedLoading(true), 2000);
+    setDelayedLoadingTarget(null);
+    if (!pendingSessionLoad) return;
+    const id = window.setTimeout(() => setDelayedLoadingTarget({
+      workspaceId: props.workspaceId,
+      sessionId: props.sessionId,
+    }), 2000);
     return () => window.clearTimeout(id);
-  }, [pendingSessionLoad]);
+  }, [pendingSessionLoad, props.workspaceId, props.sessionId]);
 
   // Terminal invariant for accepted admissions: idle with no assistant result
   // must never silently clear the task. The transcript-length check alone is
@@ -1752,7 +1744,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       const connectSkill = parseConnectSkillToken(segment);
       if (connectSkill) {
-        return [{ type: "text", text: connectSkillPrompt(connectSkill) } satisfies ComposerDraft["parts"][number]];
+        return [{ type: "connect-skill", ...connectSkill } satisfies ComposerDraft["parts"][number]];
       }
       const skillMatch = segment.match(/^\[skill (.+)\]$/);
       if (skillMatch?.[1]) {
@@ -1776,13 +1768,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
     resolved = resolved.replace(/\[attachment [^\]]+\]/g, "");
     resolved = resolved.replace(/\[connect-skill [^\]]+\]/g, (match) => {
       const token = parseConnectSkillToken(match);
-      return token ? connectSkillPrompt(token) : match;
+      return token ? `/${token.slug}` : match;
     });
     resolved = resolved.replace(/\[skill ([^\]]+)\]/g, (_match, name: string) => `the \"${name}\" skill`);
     for (const value of Object.keys(mentions)) {
       resolved = resolved.replaceAll(`@${encodeComposerMentionValue(value)}`, `@${value}`);
     }
-    const slashCommand = parseSlashCommandInvocation(resolved);
+    // A selected Connect skill is a mention, even though its label starts with /.
+    const slashCommand = text.trimStart().startsWith("[connect-skill ") ? null : parseSlashCommandInvocation(resolved);
     return {
       mode: "prompt",
       parts,
@@ -1819,6 +1812,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // accepts follow-up user turns mid-run (steering) — the running loop picks
   // up the new message — so this is safe to call while the agent is busy.
   const sendDraft = useCallback(async (nextDraft: ComposerDraft) => {
+    const submissionId = Symbol();
+    pendingSendsRef.current.set(submissionId, sessionOwner);
+    setPendingSendSessions([...pendingSendsRef.current.values()]);
     setError(null);
     try {
       const result = await props.onSendDraft(nextDraft, props.sessionId);
@@ -1827,17 +1823,24 @@ export function SessionSurface(props: SessionSurfaceProps) {
       // submission and the route accepted or sent it.
       appendComposerHistory(props.sessionId, nextDraft.text);
       useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "busy" });
-      setAwaitingAssistantBaseline(renderedMessages.length);
+      if (activeSessionOwnerRef.current === sessionOwner) {
+        setAwaitingAssistantBaseline(renderedMessages.length);
+      }
       return result;
     } catch (nextError) {
       const parsed = parseSessionError(nextError);
       captureAnalyticsEvent("task_send_failed", {});
       setError(parsed);
       useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
-      setAwaitingAssistantBaseline(null);
+      if (activeSessionOwnerRef.current === sessionOwner) {
+        setAwaitingAssistantBaseline(null);
+      }
       throw nextError;
+    } finally {
+      pendingSendsRef.current.delete(submissionId);
+      setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
-  }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length]);
+  }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length, sessionOwner, setError]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
@@ -1847,6 +1850,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
   // share the same immediate path.
   const handleSend = useCallback(async () => {
+    if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
     const originalDraft = draft;
     const text = originalDraft.trim();
     if (!text && attachments.length === 0) return;
@@ -1872,7 +1876,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } finally {
       setAttachmentsUploading(false);
     }
-  }, [attachments, buildDraft, clearComposer, draft, props.sessionId, sendDraft]);
+  }, [attachments, buildDraft, clearComposer, draft, props.sessionId, sendDraft, sessionOwner]);
 
   // One-step run from the empty-state hero: the route seeds this session's
   // draft and marks it for auto-send. Fire the same send path as the send
@@ -1987,12 +1991,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
     captureAnalyticsEvent("task_run_stopped", {});
     await snapshotQuery.refetch();
-  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceRoot, queuedItems, snapshotQuery.refetch]);
+  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceRoot, queuedItems, snapshotQuery.refetch, setError]);
 
   const handleDismissError = useCallback(() => {
     setError(null);
     useSessionActivityStore.getState().clearError(props.workspaceId, props.sessionId);
-  }, [props.sessionId, props.workspaceId]);
+  }, [props.sessionId, props.workspaceId, setError]);
 
   // Drain one queued follow-up each time the session goes idle, so prompts
   // run as separate turns instead of one merged message. Progress is grounded
@@ -2226,24 +2230,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     replaceComposerDraft(props.sessionId, text, revertMessageId);
     await waitForControl(40);
   }, [props.sessionId, replaceComposerDraft]);
-
-  useEffect(() => {
-    const handleVoiceTranscript = (event: Event) => {
-      if (!(event instanceof CustomEvent)) return;
-      const detail: unknown = event.detail;
-      if (!detail || typeof detail !== "object" || Array.isArray(detail) || !("text" in detail) || typeof detail.text !== "string") return;
-      const text = detail.text;
-      void typeComposerText(text);
-      props.onDraftChange(buildDraft(text, attachments));
-      recordInspectorEvent("voice.transcript.applied", {
-        workspaceId: props.workspaceId,
-        sessionId: props.sessionId,
-        length: text.length,
-      });
-    };
-    window.addEventListener("openwork:voice-transcript", handleVoiceTranscript);
-    return () => window.removeEventListener("openwork:voice-transcript", handleVoiceTranscript);
-  }, [attachments, buildDraft, props.onDraftChange, props.sessionId, props.workspaceId, typeComposerText]);
 
   const composerSetTextControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "composer.set_text",
@@ -2553,6 +2539,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     try {
       const denClient = createDenClient({ baseUrl: settings.baseUrl, token });
       const connections = await denClient.listMcpConnections(organizationId, "usable");
+      if (!isChatMcpReconnectScopeCurrent(scope, currentScope())) throw new Error("Your OpenWork account changed. Try connecting again.");
       const connection = connections.find((entry) => entry.id === action.connectionId);
       if (!connection || connection.authType !== "oauth" || connection.credentialMode !== "per_member") {
         throw new Error(`${action.connectionName} is no longer available as your reconnectable account.`);
@@ -2565,6 +2552,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       });
       onProgress({ phase: "opening" });
       const result = await denClient.startMcpConnectionConnect(organizationId, action.connectionId);
+      if (!isChatMcpReconnectScopeCurrent(scope, currentScope())) throw new Error("Your OpenWork account changed. Try connecting again.");
       if (result.status === "connected") {
         recordInspectorEvent("mcp.chat_reconnect.completed", {
           workspaceId: props.workspaceId,
@@ -2809,7 +2797,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   </div>
                 )}
               </div>
-            ) : renderedMessages.length === 0 && effectiveActivityStatus !== "idle" ? (
+            ) : renderedMessages.length === 0 && effectiveActivityStatus !== "idle" && !error ? (
               <div className="px-6 py-12">
                 <AssistantWaitingCard label={getSessionActivityStatusLabel(effectiveActivityStatus)} />
               </div>
@@ -2821,9 +2809,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 onChangeModel={handleModelChange}
                 onOpenModelPicker={handleOpenModelPicker}
               />
+            ) : props.chatPane === "secondary" && snapshot && renderedMessages.length === 0 ? (
+              null
             ) : (
               <DevProfiler id="MessageList">
                 <OpenTargetProvider
+                  client={props.client}
+                  workspaceId={props.workspaceId}
+                  workspaceRoot={props.workspaceRoot}
                   openTargets={verifiedOpenTargets}
                   onOpenTarget={handleOpenTarget}
                 >
@@ -2838,7 +2831,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       showThinking={showThinking}
                       highlightQuery={findHighlightQuery}
                       developerMode={props.developerMode}
-                      displaySuggestions={shellConfig.starterCards}
+                      displaySuggestions={shellConfig.starterCards && snapshot !== null && snapshot.messages.length === 0}
                       providerConnectedCount={props.providerConnectedCount ?? 0}
                       connectorIdentities={connectorIdentities}
                       syncDegraded={runSyncHealth.degraded}
@@ -2919,6 +2912,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           </div>
         ) : null}
         <ReactSessionComposer
+          runModeControl={<WorkspaceRunModeMenu client={props.client} workspaceId={props.workspaceId} busy={chatStreaming || preparingCloudTools || Boolean(props.activePermission || props.activeQuestion)} />}
           draft={draft}
           mentions={mentions}
           onDraftChange={handleComposerDraftChange}

@@ -1,3 +1,7 @@
+import ts from "typescript";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { checkBrowserCode } from "./check-browser-code.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { compareBaseline, countRawEscapes } from "./spec-channel-ratchet.mjs";
@@ -49,4 +53,40 @@ test("compareBaseline rejects raw escapes in an unbaselined new-layer spec", () 
       warnings: [],
     },
   );
+});
+
+
+test("browser boundary rejects raw strings, imported aliases, captures and mismatched arguments", () => {
+  const root = fileURLToPath(new URL("../..", import.meta.url));
+  const fixture = resolve(root, "evals/browser-guard-fixture.ts");
+  const source = `
+    import { browserScript as script } from "./packages/cdp/src/browser-script.ts";
+    import { evaluate as run } from "./packages/cdp/src/cdp.ts";
+    import type { CdpClient } from "./packages/cdp/src/cdp.ts";
+    declare const client: CdpClient;
+    const secret = "test-process-only";
+    run(client, "document.title");
+    run(client, () => secret);
+    run(client, () => ({ secret }));
+    run(client, () => process.pid);
+    run(client, () => document.body);
+    run(client, () => () => 1);
+    script((value) => Boolean(value), [new Date()]);
+    script((value: number) => value + 1, ["wrong"]);
+    script((title) => document.title === title, ["safe"]);
+  `;
+  const options = { strict: true, noEmit: true, skipLibCheck: true, target: ts.ScriptTarget.ESNext,
+    module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, allowImportingTsExtensions: true };
+  const host = ts.createCompilerHost(options);
+  const read = host.readFile.bind(host);
+  host.readFile = path => path === fixture ? source : read(path);
+  const program = ts.createProgram([fixture], options, host);
+  const result = checkBrowserCode(program, root, path => path === fixture);
+  assert.ok(result.failures.some(message => message.includes("Raw browser code")));
+  assert.equal(result.failures.filter(message => message.includes("captures 'secret'")).length, 2);
+  assert.ok(result.failures.some(message => message.includes("captures 'process'")));
+  assert.ok(result.failures.some(message => message.includes("not assignable to type 'number'")));
+  assert.equal(result.failures.filter(message => message.includes("Browser result contains")).length, 2);
+  assert.ok(result.failures.some(message => message.includes("Browser arguments contain")));
+  assert.ok(!result.failures.some(message => message.includes("captures 'document'")));
 });

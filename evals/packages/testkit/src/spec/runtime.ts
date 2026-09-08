@@ -1,3 +1,6 @@
+import type { BrowserEvaluation, EvaluateOptions } from "@openwork/cdp";
+import { browserScript } from "@openwork/cdp";
+import { typeWithCadence, typingPlan } from "@openwork/behaviors";
 import {
   control,
   createNativeConnector,
@@ -12,11 +15,13 @@ import {
 } from "@openwork/behaviors";
 import {
   callFunctionOnSurface,
+  callFunction, connect, debuggerUrlFor, listTargets,
   clickAt,
   dumpScreenState,
   evaluateOnSurface,
   hoverAt,
   locate,
+  assertAbsent,
   navigate,
   pressKey,
   reload,
@@ -194,7 +199,7 @@ function textMatches(actual: string, expected: string | RegExp): boolean {
 
 function typedTextDetail(target: Target, text: string, options: TypeOptions): string {
   const targetName = targetDetail(target);
-  const sensitive = /password|token|secret/i.test(targetName);
+  const sensitive = options.sensitive || /password|token|secret/i.test(targetName);
   return `type(${targetName}, ${sensitive ? "<redacted>" : JSON.stringify(redacted(text))}${options.replace ? ", replace" : ""})`;
 }
 
@@ -212,7 +217,7 @@ async function waitForControlAction(surface: Surface, action: string, timeoutMs 
   await waitForControlRail(surface, action, Math.max(1, deadline - Date.now()));
   while (Date.now() < deadline) {
     try {
-      const actions = await evalIn(surface, "window.__openworkControl?.listActions?.() ?? null", {
+      const actions = await evalIn(surface, () => (window.__openworkControl?.listActions?.() ?? null), {
         timeoutMs: Math.min(2_000, Math.max(1, deadline - Date.now())),
       });
       if (Array.isArray(actions) && actions.some((entry) => isRecord(entry) && entry.id === action && entry.disabled !== true)) return;
@@ -427,8 +432,10 @@ export class SeedChannel implements Seed {
             place: this.#runtime.place,
             signIn: false,
             model: options.model,
+            env: options.env,
             workspacePath: options.workspacePath,
             profileDir: options.profileDir,
+            enterpriseActivated: options.enterpriseActivated,
           }));
         }
         return this.#runtime.stack.use(await startApp({
@@ -436,8 +443,10 @@ export class SeedChannel implements Seed {
           place: this.#runtime.place,
           as: options.as ?? "admin",
           model: options.model,
+          env: options.env,
           workspacePath: options.workspacePath,
           profileDir: options.profileDir,
+          enterpriseActivated: options.enterpriseActivated,
         }));
       }
       if (options.as) throw new Error("seed.desktop({ as }) requires a Den.");
@@ -445,7 +454,9 @@ export class SeedChannel implements Seed {
         name: options.name,
         host: this.#runtime.place.host(),
         profileDir: options.profileDir,
-        env: options.model ? { OPENWORK_EVAL_MODEL: options.model } : undefined,
+        env: options.model
+          ? { ...options.env, OPENWORK_EVAL_MODEL: options.model }
+          : options.env,
       }));
       if (options.workspacePath) await this.workspace(app, options.workspacePath);
       return app;
@@ -469,7 +480,7 @@ export class SeedChannel implements Seed {
         const denOrigin = new URL(options.den.ref.webUrl).origin;
         let lastHref = "unobserved";
         const waitForDen = () => eventually(async () => {
-          const observation = await evaluateOnSurface(web, `location.origin === ${JSON.stringify(denOrigin)} && document.readyState !== "loading" ? "" : location.href`);
+          const observation = await evaluateOnSurface(web, browserScript((denOrigin) => (location.origin === denOrigin && document.readyState !== "loading" ? "" : location.href), [denOrigin]));
           if (typeof observation === "string") lastHref = observation;
           return observation === "";
         }, { within: 30_000, intervalMs: 250, label: "Den origin document" });
@@ -479,10 +490,10 @@ export class SeedChannel implements Seed {
           await navigate(web.client, options.den.ref.webUrl);
           await waitForDen().catch(() => { throw new Error(`Den origin document did not load; last observed location.href: ${lastHref}`); });
         }
-        await callFunctionOnSurface(web, `(token) => {
+        await callFunctionOnSurface(web, (token) => {
           localStorage.setItem("openwork:web:auth-token", token);
           return true;
-        }`, [session.token]);
+        }, [session.token]);
       }
       const startPath = options.startPath ?? "/";
       await navigate(web.client, new URL(startPath, options.den.ref.webUrl).toString());
@@ -490,9 +501,16 @@ export class SeedChannel implements Seed {
     });
   }
 
-  workspace(app: Surface, path = `/tmp/openwork-spec-${Date.now()}`) {
+  workspace(app: Surface, path = `/tmp/openwork-spec-${Date.now()}`, options: { create?: boolean } = {}) {
     return this.#runtime.call("seed", "workspace", `workspace(${path})`, app, async () => {
-      const result = await import("@openwork/behaviors").then(({ createAndSelectWorkspace }) => createAndSelectWorkspace(app, { path }));
+      const result = await import("@openwork/behaviors").then(({ createAndSelectWorkspace }) => createAndSelectWorkspace(app, { path, ...options }));
+      await eventually(() => callFunctionOnSurface(app, (workspaceId) => {
+        const workspace = window.__openwork?.slice?.("route")?.workspaces?.find(item => item.id === workspaceId);
+        return workspace ? { exists: true, loading: workspace.loading } : { exists: false };
+      }, [result.workspaceId]), {
+        within: 60000, intervalMs: 250, label: `workspace ${result.workspaceId} initial session load`,
+        until: value => isRecord(value) && value.exists === true && value.loading === false,
+      });
       return result;
     });
   }
@@ -578,15 +596,11 @@ export class SeedChannel implements Seed {
     });
   }
 
-  evalIn(surface: Surface, expression: string, options: { args?: readonly import("@openwork/cdp").CdpFunctionArgument[]; awaitPromise?: boolean; timeoutMs?: number } = {}) {
-    const { args, ...evaluateOptions } = options;
-    return this.#runtime.call("seed:raw", "evalIn", "[seed:raw] evalIn(<expression>)", surface, () => args === undefined
-      ? evalIn(surface, expression, evaluateOptions)
-      : callFunctionOnSurface(surface, expression, args, evaluateOptions));
+  evalIn<T>(surface: Surface, expression: BrowserEvaluation<T>, options: EvaluateOptions = {}): Promise<Awaited<T>> {
+    return this.#runtime.call("seed:raw", "evalIn", "[seed:raw] evalIn(<callback>)", surface,
+      () => evalIn(surface, expression, options));
   }
 }
-
-class VisibleTargetError extends Error {}
 
 export class UserChannel implements User {
   readonly #runtime: SpecRuntime;
@@ -625,6 +639,7 @@ export class UserChannel implements User {
     return this.#runtime.call("user", verb, `${verb}(${targetDetail(target)}${hitTestDetail})`, surface, async () => {
       if (this.#runtime.adapters.user?.click) return this.#runtime.adapters.user.click(surface, target, clickCount);
       const found = await waitForLocated(surface, target, { mustHitTest: options.hitTest !== false });
+      this.#runtime.emit({ stage: this.#runtime.stage, channel: "user", verb: "target", detail: targetDetail(target), surface: surfaceName(surface), ok: true, target: found.rect });
       await clickAt(surface, found.center, { clickCount });
     });
   }
@@ -632,14 +647,38 @@ export class UserChannel implements User {
   type(target: Target, text: string, options: TypeOptions = {}): Promise<void> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("user", "type", typedTextDetail(target, text, options), surface, async () => {
+      if (options.typing) typingPlan(text, options.typing);
       if (this.#runtime.adapters.user?.click) await this.#runtime.adapters.user.click(surface, target, 1);
       else {
         const found = await waitForLocated(surface, target, { mustHitTest: true });
         await clickAt(surface, found.center);
       }
+      if (options.sensitive) {
+        const masked = await callFunctionOnSurface(surface, () => document.activeElement instanceof HTMLInputElement && document.activeElement.type === 'password', []);
+        if (masked !== true) throw new Error("Sensitive typing requires a masked password input");
+      }
       const mac = surface.handle.hostKind !== "daytona" && process.platform === "darwin";
       await pressKey(surface, options.replace ? (mac ? "Meta+A" : "Control+A") : (mac ? "Meta+ArrowDown" : "Control+End"));
-      await typeText(surface, text);
+      if (options.typing) {
+        await typeWithCadence(text, options.typing, (character) => typeText(surface, character));
+      } else if (options.intervalMs) {
+        for (const character of text) {
+          await typeText(surface, character);
+          await new Promise((resolve) => setTimeout(resolve, options.intervalMs));
+        }
+      } else {
+        await typeText(surface, text);
+      }
+      if (options.verify) {
+        // Do not serialize the expected value or the located field into errors.
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          const found = await locate(surface, target);
+          if (found.value === text) return;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error("Typed field did not retain the expected value");
+      }
     });
   }
 
@@ -681,17 +720,7 @@ export class UserChannel implements User {
   notSee(target: Target, options: { timeoutMs?: number } = {}): Promise<void> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("user", "notSee", `notSee(${targetDetail(target)})`, surface, async () => {
-      const timeoutMs = options.timeoutMs ?? 3_000;
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        try {
-          const found = await locate(surface, target);
-          if (found.visible) throw new VisibleTargetError(`${targetDetail(target)} remained visible. On screen: ${await dumpScreenState(surface)}.`);
-        } catch (error) {
-          if (error instanceof VisibleTargetError) throw error;
-        }
-        await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
-      }
+      await assertAbsent(surface, target, options.timeoutMs ?? 3_000);
     });
   }
 
@@ -745,6 +774,52 @@ export class AgentChannel implements Agent {
     });
   }
 
+  browserRequest(input: { url: string; method?: string; body?: string }): Promise<{ reached: boolean; error?: string }> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("agent", "browserRequest", `browserRequest(${input.method ?? "GET"} ${input.url})`, surface, async () => {
+      const handle = await callFunctionOnSurface(surface, async () => window.__OPENWORK_ELECTRON__.browser.openUrl("about:blank"), [], { awaitPromise: true });
+      if (!isRecord(handle) || typeof handle.target_id !== "string") throw new Error("Browser did not return a target");
+      const target = (await listTargets(surface.handle.cdpUrl)).find((entry) => entry.id === handle.target_id);
+      if (!target) throw new Error("Browser target missing");
+      const client = await connect(debuggerUrlFor(surface.handle.cdpUrl, target));
+      try {
+        const result = await callFunction(client, async (encoded) => {
+          const input = JSON.parse(encoded);
+          try {
+            await fetch(input.url, { method: input.method ?? "GET", body: input.body, mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(20000) });
+            return { reached: true };
+          } catch (error) { return { reached: false, error: String(error) }; }
+        }, [JSON.stringify(input)], { awaitPromise: true, timeoutMs: 25000 });
+        if (!isRecord(result) || typeof result.reached !== "boolean") throw new Error("Invalid browser request result");
+        return { reached: result.reached, ...(typeof result.error === "string" ? { error: result.error } : {}) };
+      } finally { client.close(); }
+    });
+  }
+
+  desktopApi(path: string, input: { method: string; body?: unknown }): Promise<{ status: number; body: unknown }> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("agent", "desktopApi", `desktopApi(${input.method} ${path})`, surface, async () => {
+      if (!path.startsWith("/") || path.startsWith("//") || /[\\\s]/.test(path)) throw new Error("A root-relative server path is required.");
+      const value = await callFunctionOnSurface(surface, async (path, encodedInput) => {
+        const input = JSON.parse(encodedInput);
+        const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+        if (!info?.running || !info.baseUrl) return { status: 0, body: { error: "local_server_unavailable" } };
+        const response = await fetch(String(info.baseUrl).replace(/\/+$/, "") + path, {
+          method: input.method,
+          headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""), "Content-Type": "application/json" },
+          body: input.body === undefined ? undefined : JSON.stringify(input.body),
+          redirect: "error", signal: AbortSignal.timeout(30_000),
+        });
+        const text = await response.text();
+        let body = text;
+        try { body = JSON.parse(text); } catch {}
+        return { status: response.status, body };
+      }, [path, JSON.stringify(input)], { awaitPromise: true, timeoutMs: 35_000 });
+      if (!isRecord(value) || typeof value.status !== "number") throw new Error("Invalid desktop API result");
+      return { status: value.status, body: value.body };
+    });
+  }
+
   async send(text: string): Promise<unknown> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("agent", "send", `send(${text.length} chars)`, surface, async () => {
@@ -773,7 +848,7 @@ export class AgentChannel implements Agent {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("agent", "actions", "listActions", surface, async () => {
       await waitForControlRail(surface, "listActions");
-      return evaluateOnSurface(surface, "window.__openworkControl.listActions()");
+      return evaluateOnSurface(surface, () => (window.__openworkControl.listActions()));
     });
   }
 }
@@ -795,7 +870,7 @@ export class ProbeChannel implements Probe {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "text", "text", surface, async () => {
       if (this.#runtime.adapters.probe?.text) return this.#runtime.adapters.probe.text(surface);
-      const value = await evaluateOnSurface(surface, "document.body.innerText");
+      const value = await evaluateOnSurface(surface, () => (document.body.innerText));
       if (typeof value !== "string") throw new Error("document.body.innerText was not a string.");
       return value;
     });
@@ -804,7 +879,7 @@ export class ProbeChannel implements Probe {
   has(text: string): Promise<boolean> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "has", `has(${JSON.stringify(redacted(text))})`, surface, async () => {
-      const value = await callFunctionOnSurface(surface, `(wanted) => document.body.innerText.includes(wanted)`, [text]);
+      const value = await callFunctionOnSurface(surface, (wanted) => document.body.innerText.includes(wanted), [text]);
       if (typeof value !== "boolean") throw new Error("Text presence probe was not a boolean.");
       return value;
     });
@@ -820,7 +895,7 @@ export class ProbeChannel implements Probe {
   async storage<T>(key: string, pick?: (value: unknown) => T): Promise<unknown> {
     const surface = requireSurface(this.#surface);
     const value = await this.#runtime.call("probe", "storage", `storage(${key})`, surface, async () => {
-      const raw = await callFunctionOnSurface(surface, `(storageKey) => localStorage.getItem(storageKey)`, [key]);
+      const raw = await callFunctionOnSurface(surface, (storageKey) => localStorage.getItem(storageKey), [key]);
       if (raw === null || raw === undefined || raw === "") return null;
       if (typeof raw !== "string") throw new Error(`localStorage ${JSON.stringify(key)} was not a string.`);
       try {
@@ -836,27 +911,23 @@ export class ProbeChannel implements Probe {
   hash(): Promise<string> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "hash", "hash", surface, async () => {
-      const value = await evaluateOnSurface(surface, "window.location.hash");
+      const value = await evaluateOnSurface(surface, () => (window.location.hash));
       if (typeof value !== "string") throw new Error("window.location.hash was not a string.");
       return value;
     });
   }
 
-  eval(expression: string, options?: ProbeEvalOptions): Promise<unknown>;
-  eval(surface: Surface, expression: string, options?: ProbeEvalOptions): Promise<unknown>;
-  eval(surfaceOrExpression: Surface | string, expressionOrOptions?: string | ProbeEvalOptions, explicitOptions: ProbeEvalOptions = {}): Promise<unknown> {
-    const surface = typeof surfaceOrExpression === "string" ? requireSurface(this.#surface) : surfaceOrExpression;
-    const source = typeof surfaceOrExpression === "string"
-      ? surfaceOrExpression
-      : typeof expressionOrOptions === "string" ? expressionOrOptions : undefined;
-    const options = typeof surfaceOrExpression === "string"
-      ? typeof expressionOrOptions === "string" ? {} : expressionOrOptions ?? {}
-      : explicitOptions;
-    if (source === undefined) throw new Error("probe.eval requires an expression.");
-    const { args, ...evaluateOptions } = options;
-    return this.#runtime.call("probe:raw", "eval", "[probe:raw] eval(<expression>)", surface, () => args === undefined
-      ? evalIn(surface, source, evaluateOptions)
-      : callFunctionOnSurface(surface, source, args, evaluateOptions));
+  eval<T>(expression: BrowserEvaluation<T>, options?: ProbeEvalOptions): Promise<Awaited<T>>;
+  eval<T>(surface: Surface, expression: BrowserEvaluation<T>, options?: ProbeEvalOptions): Promise<Awaited<T>>;
+  eval<T>(surfaceOrExpression: Surface | BrowserEvaluation<T>, expressionOrOptions?: BrowserEvaluation<T> | ProbeEvalOptions, explicitOptions: ProbeEvalOptions = {}): Promise<Awaited<T>> {
+    const bound = typeof surfaceOrExpression === "function" || "callback" in surfaceOrExpression;
+    const surface = bound ? requireSurface(this.#surface) : surfaceOrExpression;
+    const expression = bound ? surfaceOrExpression : expressionOrOptions;
+    if (!expression || !(typeof expression === "function" || "callback" in expression)) throw new Error("probe.eval requires a browser callback");
+    const options = bound && expressionOrOptions && typeof expressionOrOptions !== "function" && !("callback" in expressionOrOptions)
+      ? expressionOrOptions : explicitOptions;
+    return this.#runtime.call("probe:raw", "eval", "[probe:raw] eval(<callback>)", surface,
+      () => evalIn(surface, expression, options));
   }
 
   connectState(app: Surface) {
@@ -870,6 +941,33 @@ export class ProbeChannel implements Probe {
       const headers = new Headers(init.headers);
       headers.set("authorization", `Bearer ${session.token}`);
       return denFetch(session, path, { ...init, method: "GET", headers });
+    });
+  }
+
+  desktopApi(path: string): Promise<{ status: number; body: unknown }> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "desktopApi", `desktopApi(GET ${path})`, surface, async () => {
+      if (!path.startsWith("/") || path.startsWith("//") || /[\\\s]/.test(path)) {
+        throw new Error("probe.desktopApi requires a root-relative server path.");
+      }
+      const value = await callFunctionOnSurface(surface, async (path) => {
+        const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+        if (!info?.running || !info.baseUrl) return { status: 0, body: { error: "local_server_unavailable" } };
+        const response = await fetch(String(info.baseUrl).replace(/\/+$/, "") + path, {
+          method: "GET",
+          headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
+          redirect: "error",
+          signal: AbortSignal.timeout(15_000),
+        });
+        const text = await response.text();
+        let body = text;
+        try { body = text ? JSON.parse(text) : null; } catch {}
+        return { status: response.status, body };
+      }, [path], { awaitPromise: true, timeoutMs: 20_000 });
+      if (!isRecord(value) || typeof value.status !== "number" || !("body" in value)) {
+        throw new Error("Invalid desktop API probe response.");
+      }
+      return { status: value.status, body: value.body };
     });
   }
 

@@ -11,6 +11,7 @@ import { getMarketplaceRoute, getMembersRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { TeamPermissionsPanel } from "./team-permissions-panel";
 import { OrgMemberIdentity } from "./org-member-identity";
+import { TeamAdminCheckbox } from "./team-admin-checkbox";
 import {
   type TeamPluginAccessItem,
   useRevokeTeamPluginAccess,
@@ -94,6 +95,7 @@ export function TeamDetailScreen({ teamId }: { teamId: string }) {
           {memberCount} {memberCount === 1 ? "member" : "members"}
         </span>
       </header>
+      {team ? <TeamAdminCheckbox team={team} /> : null}
 
       <UnderlineTabs
         className="mt-6"
@@ -114,6 +116,9 @@ export function TeamDetailScreen({ teamId }: { teamId: string }) {
                 {teamMembers.map((member) => (
                   <div key={member.id} className="px-6 py-4">
                     <OrgMemberIdentity member={member} />
+                    {member.adminTeams.length > 0 ? (
+                      <p className="mt-2 text-[12px] text-gray-500">Admin via {member.adminTeams.map((entry) => entry.name).join(", ")}</p>
+                    ) : null}
                   </div>
                 ))}
               </div>

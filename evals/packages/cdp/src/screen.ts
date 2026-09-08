@@ -1,3 +1,4 @@
+import { browserScript } from "./browser-script.ts";
 import { evaluate } from "./cdp.ts";
 import type { Surface } from "./surface.ts";
 
@@ -21,20 +22,20 @@ export async function emulateFocus(surface: Surface): Promise<void> {
 }
 
 export async function paintBackdrop(surface: Surface, color: string): Promise<void> {
-  await evaluate(surface.client, `(() => {
+  await evaluate(surface.client, browserScript((color) => {
     if (!document.getElementById("docs-shots-backdrop")) {
       const style = document.createElement("style");
       style.id = "docs-shots-backdrop";
-      style.textContent = "html { background-color: ${color} !important; }";
+      style.textContent = `html { background-color: ${color} !important; }`;
       document.head.appendChild(style);
     }
     return true;
-  })()`);
+  }, [color]));
 }
 
 /** Stop CSS motion and text carets so two clean frames can be pixel-identical. */
 export async function freezeMotion(surface: Surface): Promise<void> {
-  await evaluate(surface.client, `(() => {
+  await evaluate(surface.client, () => {
     if (!document.getElementById("docs-shots-freeze")) {
       const style = document.createElement("style");
       style.id = "docs-shots-freeze";
@@ -42,5 +43,5 @@ export async function freezeMotion(surface: Surface): Promise<void> {
       document.head.appendChild(style);
     }
     return true;
-  })()`);
+  });
 }

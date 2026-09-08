@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import {
   checkNeeds,
   deriveMockEnv,
@@ -106,4 +108,20 @@ test("ephemeral database names are valid and unique", () => {
   const names = new Set(Array.from({ length: 100 }, () => ephemeralDatabaseName()));
   assert.equal(names.size, 100);
   for (const name of names) assert.match(name, /^[a-z][a-z0-9_]{0,62}$/);
+});
+
+
+test("needs recognizes OpenSSL implementations that reject --version", (context) => {
+  const spawn = context.mock.method(childProcess, "spawnSync", (command: string, args: readonly string[]) => ({
+    pid: 0, output: [], stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), signal: null,
+    status: command === "openssl" && args[0] === "version" ? 0 : 1,
+  }));
+  syncBuiltinESMExports();
+  try {
+    assert.doesNotThrow(() => checkNeeds({ commands: ["openssl"] }, {}));
+    assert.equal(spawn.mock.callCount(), 1);
+  } finally {
+    spawn.mock.restore();
+    syncBuiltinESMExports();
+  }
 });

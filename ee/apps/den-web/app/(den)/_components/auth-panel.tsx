@@ -410,6 +410,7 @@ export function AuthPanel({
       ? resolvedSignInContent
       : resolvedSignUpContent;
   const showLockedEmailSummary = Boolean(prefilledEmail && lockEmail && hideEmailField && !hideLockedEmailSummary);
+  const titleClass = bare ? "text-[24px] font-semibold leading-tight tracking-[-0.03em] text-[var(--dls-text-primary)]" : "den-title-lg";
   const shellClass = (gap: string, padding: string) =>
     bare ? `grid ${gap}` : `den-frame grid ${gap} ${padding}`;
   // The segmented tabs are the primary sign-in/sign-up switch. Hide them for the
@@ -632,7 +633,7 @@ export function AuthPanel({
         <div className="grid gap-3">
           <p className="den-eyebrow">{eyebrow}</p>
           <div className="grid gap-2">
-            <h2 className="den-title-lg">You&apos;re signed in.</h2>
+            <h2 className={titleClass}>You&apos;re signed in.</h2>
             <p className="den-copy">
               {signedInEmail ? (
                 <>
@@ -681,7 +682,7 @@ export function AuthPanel({
           <div className="grid gap-3">
             <p className="den-eyebrow">{eyebrow}</p>
             <div className="grid gap-2">
-              <h2 className="den-title-lg">{activeContent.title}</h2>
+              <h2 className={titleClass}>{activeContent.title}</h2>
               <p className="den-copy">{activeContent.copy}</p>
             </div>
           </div>
@@ -890,7 +891,7 @@ export function AuthPanel({
         <div className="grid gap-3">
           <p className="den-eyebrow">{eyebrow}</p>
           <div className="grid gap-2">
-            <h2 className="den-title-lg">{activeContent.title}</h2>
+            <h2 className={titleClass}>{activeContent.title}</h2>
             <p className="den-copy">{activeContent.copy}</p>
           </div>
         </div>

@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import { control, evalIn, go, listSessions, seedSessions, waitFor } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
@@ -33,19 +34,19 @@ const sessionTitles = ["Responsive primary chat", "Responsive split chat"];
 
 async function openSessionRoute(app: Surface, workspaceId: string, sessionId: string) {
   await go(app, `/workspace/${workspaceId}/session/${sessionId}`);
-  await waitFor(app, `Boolean(document.querySelector(
-    '[data-session-surface-id="${sessionId}"]'
-  ))`, { timeoutMs: 60_000, label: "primary session route" });
+  await waitFor(app, browserScript((sessionId) => (Boolean(document.querySelector<HTMLElement>(
+    `[data-session-surface-id="${sessionId}"]`
+  ))), [sessionId]), { timeoutMs: 60_000, label: "primary session route" });
 }
 
 async function openSessionInSplit(app: Surface, workspaceId: string, sessionId: string) {
-  const opened = await evalIn(app, `(() => {
-    const row = document.querySelector(
-      '[data-sidebar-session-id="${sessionId}"][data-sidebar-session-workspace-id="${workspaceId}"]'
+  const opened = await evalIn(app, browserScript((sessionId, workspaceId, inputSessionId) => {
+    const row = document.querySelector<HTMLElement>(
+      `[data-sidebar-session-id="${sessionId}"][data-sidebar-session-workspace-id="${workspaceId}"]`
     );
     if (!(row instanceof HTMLElement)) return false;
     row.scrollIntoView({ block: "center" });
-    const target = row.querySelector('[data-session-tab-id="${sessionId}"]') ?? row;
+    const target = row.querySelector<HTMLElement>(`[data-session-tab-id="${inputSessionId}"]`) ?? row;
     if (!(target instanceof HTMLElement)) return false;
     const rect = target.getBoundingClientRect();
     target.dispatchEvent(new MouseEvent("contextmenu", {
@@ -57,52 +58,52 @@ async function openSessionInSplit(app: Surface, workspaceId: string, sessionId: 
       clientY: rect.top + Math.min(12, Math.max(1, rect.height / 2)),
     }));
     return true;
-  })()`);
+  }, [sessionId, workspaceId, sessionId]));
   expect(opened).toBe(true);
-  await waitFor(app, `Boolean(document.querySelector('[data-session-menu-open-split]'))`, {
+  await waitFor(app, () => (Boolean(document.querySelector<HTMLElement>('[data-session-menu-open-split]'))), {
     timeoutMs: 15_000,
     label: "Open in split view menu item",
   });
-  const clicked = await evalIn(app, `(() => {
-    const item = document.querySelector('[data-session-menu-open-split]');
+  const clicked = await evalIn(app, () => {
+    const item = document.querySelector<HTMLElement>('[data-session-menu-open-split]');
     if (!(item instanceof HTMLElement)) return false;
     item.click();
     return true;
-  })()`);
+  });
   expect(clicked).toBe(true);
 }
 
 async function pressPaneKey(app: Surface, pane: "chat" | "split" | "panel", key: string) {
-  const pressed = await evalIn(app, `(() => {
-    const tab = document.querySelector('[data-narrow-pane="${pane}"]');
+  const pressed = await evalIn(app, browserScript((pane, inputKey) => {
+    const tab = document.querySelector<HTMLElement>(`[data-narrow-pane="${pane}"]`);
     if (!(tab instanceof HTMLElement)) return false;
     tab.focus();
-    tab.dispatchEvent(new KeyboardEvent("keydown", { key: ${JSON.stringify(key)}, bubbles: true }));
+    tab.dispatchEvent(new KeyboardEvent("keydown", { key: inputKey, bubbles: true }));
     return true;
-  })()`);
+  }, [pane, key]));
   expect(pressed).toBe(true);
 }
 
 async function openFilesPanel(app: Surface) {
-  const openedMenu = await evalIn(app, `(() => {
-    const button = document.querySelector('button[aria-label="More actions"]');
+  const openedMenu = await evalIn(app, () => {
+    const button = document.querySelector<HTMLButtonElement>('button[aria-label="More actions"]');
     if (!(button instanceof HTMLButtonElement)) return false;
     button.click();
     return true;
-  })()`);
+  });
   expect(openedMenu).toBe(true);
-  await waitFor(app, `Boolean([...document.querySelectorAll('[role="menuitem"]')]
-    .find((item) => (item.textContent ?? '').trim().startsWith('Files')))`, {
+  await waitFor(app, () => (Boolean([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    .find((item) => (item.textContent ?? '').trim().startsWith('Files')))), {
     timeoutMs: 15_000,
     label: "Files menu item",
   });
-  const openedPanel = await evalIn(app, `(() => {
-    const item = [...document.querySelectorAll('[role="menuitem"]')]
+  const openedPanel = await evalIn(app, () => {
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
       .find((candidate) => (candidate.textContent ?? '').trim().startsWith('Files'));
     if (!(item instanceof HTMLElement)) return false;
     item.click();
     return true;
-  })()`);
+  });
   expect(openedPanel).toBe(true);
 }
 
@@ -129,16 +130,41 @@ test.skipIf(!runnable)(
     }
 
     await openSessionRoute(app, workspaceId, primary.sessionId);
+    await setViewport(app, { width: 1440, height: 844, deviceScaleFactor: 1 });
+    for (const open of [true, false, true, false]) {
+      const clicked = await evalIn(app, () => {
+        const button = document.querySelector<HTMLButtonElement>('aside button[aria-label^="Files ("]');
+        if (!button) return false;
+        button.click();
+        return true;
+      });
+      expect(clicked).toBe(true);
+      await waitFor(app, browserScript((open, sessionId) => {
+        const button = document.querySelector<HTMLButtonElement>('aside button[aria-label^="Files ("]');
+        const panel = document.querySelector<HTMLButtonElement>('button[aria-label="Close panel"]');
+        return button?.getAttribute("aria-pressed") === String(open)
+          && Boolean(panel && panel.getBoundingClientRect().width > 0) === open
+          && Boolean(document.querySelector(`[data-session-surface-id="${sessionId}"]`));
+      }, [open, primary.sessionId]), {
+        timeoutMs: 15_000,
+        label: `Files rail toggles panel ${open ? "open" : "closed"} without replacing the chat`,
+      });
+    }
+    evidence.recordAssertionEvidence(
+      "Files rail opens, hides, and reopens the empty panel without replacing the chat",
+      "Repeated rail clicks matched the pressed state and panel visibility; the primary chat remained mounted.",
+      true,
+    );
     await openSessionInSplit(app, workspaceId, secondary.sessionId);
-    await waitFor(app, `Boolean(document.querySelector(
-      '[data-workbench-pane="secondary"] [data-session-surface-id="${secondary.sessionId}"]'
-    ))`, { timeoutMs: 60_000, label: "desktop split session" });
+    await waitFor(app, browserScript((sessionId) => (Boolean(document.querySelector<HTMLElement>(
+      `[data-workbench-pane="secondary"] [data-session-surface-id="${sessionId}"]`
+    ))), [secondary.sessionId]), { timeoutMs: 60_000, label: "desktop split session" });
 
     // Exercise desktop split panes as well as the single-pane mobile layout.
     for (const width of [1440, 1100, 390, 320]) {
       await setViewport(app, { width, height: 844, deviceScaleFactor: 1 });
-      await waitFor(app, `(() => {
-        const toolbars = [...document.querySelectorAll('[data-composer-toolbar]')]
+      await waitFor(app, () => {
+        const toolbars = [...document.querySelectorAll<HTMLElement>('[data-composer-toolbar]')]
           .filter((toolbar) => toolbar.getBoundingClientRect().width > 0);
         return toolbars.length > 0 && toolbars.every((toolbar) => {
           const bounds = toolbar.getBoundingClientRect();
@@ -152,7 +178,7 @@ test.skipIf(!runnable)(
               rect.right <= other.left + 1 || other.right <= rect.left + 1
               || rect.bottom <= other.top + 1 || other.bottom <= rect.top + 1));
         });
-      })()`, { timeoutMs: 30_000, label: `composer controls fit without overlap at ${width}px` });
+      }, { timeoutMs: 30_000, label: `composer controls fit without overlap at ${width}px` });
       await screenshot(app);
       evidence.recordAssertionEvidence(
         `Composer controls remain contained and do not overlap at ${width}px`,
@@ -162,20 +188,20 @@ test.skipIf(!runnable)(
     }
 
     await setViewport(app, { width: 390, height: 844, deviceScaleFactor: 1 });
-    await waitFor(app, `(() => {
-      const selected = document.querySelector('[data-narrow-pane][aria-selected="true"]');
-      const secondary = document.querySelector('[data-session-surface-id="${secondary.sessionId}"]');
-      const primary = document.querySelector('[data-session-surface-id="${primary.sessionId}"]');
+    await waitFor(app, browserScript((sessionId, inputSessionId) => {
+      const selected = document.querySelector<HTMLElement>('[data-narrow-pane][aria-selected="true"]');
+      const secondary = document.querySelector<HTMLElement>(`[data-session-surface-id="${sessionId}"]`);
+      const primary = document.querySelector<HTMLElement>(`[data-session-surface-id="${inputSessionId}"]`);
       return selected?.getAttribute('data-narrow-pane') === 'split' && Boolean(secondary) && !primary;
-    })()`, { timeoutMs: 30_000, label: "focused split becomes the narrow visible pane" });
+    }, [secondary.sessionId, primary.sessionId]), { timeoutMs: 30_000, label: "focused split becomes the narrow visible pane" });
 
-    const initialNarrowFacts = await evalIn(app, `(() => {
-      const tabs = [...document.querySelectorAll('[data-narrow-pane]')];
+    const initialNarrowFacts = await evalIn(app, () => {
+      const tabs = [...document.querySelectorAll<HTMLElement>('[data-narrow-pane]')];
       const active = tabs.find((tab) => tab.getAttribute('aria-selected') === 'true');
       const activePanel = active
         ? document.getElementById(active.getAttribute('aria-controls') ?? '')
         : null;
-      const switcher = document.querySelector('[data-narrow-pane-switcher]');
+      const switcher = document.querySelector<HTMLElement>('[data-narrow-pane-switcher]');
       const switcherRect = switcher?.getBoundingClientRect();
       const panelRect = activePanel?.getBoundingClientRect();
       return {
@@ -199,7 +225,7 @@ test.skipIf(!runnable)(
         documentWidth: document.documentElement.scrollWidth,
         viewportWidth: window.innerWidth,
       };
-    })()`);
+    });
     expect(initialNarrowFacts).toMatchObject({
       selected: "split",
       tabStops: 1,
@@ -224,42 +250,42 @@ test.skipIf(!runnable)(
     );
 
     await pressPaneKey(app, "split", "ArrowLeft");
-    await waitFor(app, `(() => {
-      const selected = document.querySelector('[data-narrow-pane][aria-selected="true"]');
+    await waitFor(app, browserScript((sessionId, inputSessionId) => {
+      const selected = document.querySelector<HTMLElement>('[data-narrow-pane][aria-selected="true"]');
       return selected?.getAttribute('data-narrow-pane') === 'chat'
-        && Boolean(document.querySelector('[data-session-surface-id="${primary.sessionId}"]'))
-        && !document.querySelector('[data-session-surface-id="${secondary.sessionId}"]');
-    })()`, { timeoutMs: 30_000, label: "ArrowLeft selects primary chat" });
+        && Boolean(document.querySelector<HTMLElement>(`[data-session-surface-id="${sessionId}"]`))
+        && !document.querySelector<HTMLElement>(`[data-session-surface-id="${inputSessionId}"]`);
+    }, [primary.sessionId, secondary.sessionId]), { timeoutMs: 30_000, label: "ArrowLeft selects primary chat" });
 
     const draft = "Keep this narrow-screen draft";
-    const focusedComposer = await evalIn(app, `(() => {
-      const editor = document.querySelector(
-        '[data-session-surface-id="${primary.sessionId}"] [contenteditable="true"][data-lexical-editor="true"]'
+    const focusedComposer = await evalIn(app, browserScript((sessionId) => {
+      const editor = document.querySelector<HTMLElement>(
+        `[data-session-surface-id="${sessionId}"] [contenteditable="true"][data-lexical-editor="true"]`
       );
       if (!(editor instanceof HTMLElement)) return false;
       editor.focus();
       return document.activeElement === editor;
-    })()`);
+    }, [primary.sessionId]));
     expect(focusedComposer).toBe(true);
     await app.client.send("Input.insertText", { text: draft });
-    await waitFor(app, `(document.querySelector(
-      '[data-session-surface-id="${primary.sessionId}"] [contenteditable="true"][data-lexical-editor="true"]'
-    )?.textContent ?? '').includes(${JSON.stringify(draft)})`, {
+    await waitFor(app, browserScript((sessionId, draft) => ((document.querySelector<HTMLElement>(
+      `[data-session-surface-id="${sessionId}"] [contenteditable="true"][data-lexical-editor="true"]`
+    )?.textContent ?? '').includes(draft)), [primary.sessionId, draft]), {
       timeoutMs: 15_000,
       label: "narrow primary draft",
     });
 
     const focusSecondaryResult = await control(app, "session.open", { sessionId: secondary.sessionId });
     expect(focusSecondaryResult).toMatchObject({ ok: true, reused: "secondary-pane" });
-    await waitFor(app, `document.querySelector('[data-narrow-pane="split"]')?.getAttribute('aria-selected') === 'true'
-      && Boolean(document.querySelector('[data-session-surface-id="${secondary.sessionId}"]'))`, {
+    await waitFor(app, browserScript((sessionId) => (document.querySelector<HTMLElement>('[data-narrow-pane="split"]')?.getAttribute('aria-selected') === 'true'
+      && Boolean(document.querySelector<HTMLElement>(`[data-session-surface-id="${sessionId}"]`))), [secondary.sessionId]), {
       timeoutMs: 30_000,
       label: "session.open reveals narrow split",
     });
     await pressPaneKey(app, "split", "ArrowLeft");
-    await waitFor(app, `(document.querySelector(
-      '[data-session-surface-id="${primary.sessionId}"] [contenteditable="true"][data-lexical-editor="true"]'
-    )?.textContent ?? '').includes(${JSON.stringify(draft)})`, {
+    await waitFor(app, browserScript((sessionId, draft) => ((document.querySelector<HTMLElement>(
+      `[data-session-surface-id="${sessionId}"] [contenteditable="true"][data-lexical-editor="true"]`
+    )?.textContent ?? '').includes(draft)), [primary.sessionId, draft]), {
       timeoutMs: 30_000,
       label: "draft survives narrow pane remount",
     });
@@ -270,12 +296,12 @@ test.skipIf(!runnable)(
     );
 
     await openFilesPanel(app);
-    await waitFor(app, `document.querySelector('[data-narrow-pane="panel"]')?.getAttribute('aria-selected') === 'true'
-      && Boolean(document.getElementById('narrow-session-pane-panel'))`, {
+    await waitFor(app, () => (document.querySelector<HTMLElement>('[data-narrow-pane="panel"]')?.getAttribute('aria-selected') === 'true'
+      && Boolean(document.getElementById('narrow-session-pane-panel'))), {
       timeoutMs: 30_000,
       label: "tools panel becomes the narrow visible pane",
     });
-    const panelFacts = await evalIn(app, `(() => {
+    const panelFacts = await evalIn(app, () => {
       const panel = document.getElementById('narrow-session-pane-panel');
       const rect = panel?.getBoundingClientRect();
       return {
@@ -289,7 +315,7 @@ test.skipIf(!runnable)(
         documentWidth: document.documentElement.scrollWidth,
         viewportWidth: window.innerWidth,
       };
-    })()`);
+    });
     expect(panelFacts).toEqual({
       panelInsideViewport: true,
       chatHidden: true,
@@ -298,16 +324,16 @@ test.skipIf(!runnable)(
       viewportWidth: 390,
     });
 
-    const closedPanel = await evalIn(app, `(() => {
-      const close = document.querySelector('#narrow-session-pane-panel button[aria-label="Close panel"]');
+    const closedPanel = await evalIn(app, () => {
+      const close = document.querySelector<HTMLElement>('#narrow-session-pane-panel button[aria-label="Close panel"]');
       if (!(close instanceof HTMLButtonElement)) return false;
       close.click();
       return true;
-    })()`);
+    });
     expect(closedPanel).toBe(true);
-    await waitFor(app, `!document.querySelector('[data-narrow-pane="panel"]')
-      && document.querySelector('[data-narrow-pane="chat"]')?.getAttribute('aria-selected') === 'true'
-      && Boolean(document.querySelector('[data-session-surface-id="${primary.sessionId}"]'))`, {
+    await waitFor(app, browserScript((sessionId) => (!document.querySelector<HTMLElement>('[data-narrow-pane="panel"]')
+      && document.querySelector<HTMLElement>('[data-narrow-pane="chat"]')?.getAttribute('aria-selected') === 'true'
+      && Boolean(document.querySelector<HTMLElement>(`[data-session-surface-id="${sessionId}"]`))), [primary.sessionId]), {
       timeoutMs: 30_000,
       label: "closing selected panel falls back to chat",
     });

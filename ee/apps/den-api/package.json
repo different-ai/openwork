@@ -43,6 +43,7 @@
     "@opentelemetry/sdk-node": "0.220.0",
     "@opentelemetry/sdk-trace-node": "2.9.0",
     "@opentelemetry/semantic-conventions": "1.42.0",
+    "@openwork-ee/cloud-runtime": "workspace:*",
     "@openwork-ee/den-db": "workspace:*",
     "@openwork-ee/telemetry": "workspace:*",
     "@openwork-ee/utils": "workspace:*",

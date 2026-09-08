@@ -2,6 +2,9 @@
 
 The MCP catalog is generated from `openapi.json`, then filtered by `policy.ts` before tools are registered.
 
+For third-party client setup and `invalid_target` troubleshooting, see
+[Connect a third-party MCP client with OAuth](../../../../../docs/mcp-client-oauth.md).
+
 ## Allowed Tags
 
 Every tagged Den API product surface is allowed unless it is listed under blocked tags or blocked operation IDs:

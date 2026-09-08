@@ -1,11 +1,13 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { eq, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable } from "@openwork-ee/den-db/schema"
+import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
 import { z } from "zod"
 import { db } from "../db.js"
 import { getDesktopReleaseMetadata } from "../desktop-releases.js"
 import { parseOrganizationPlan, type PlanTier } from "../entitlements.js"
 import { normalizeOrganizationMetadata } from "../organization-limits.js"
+import { updateOrganizationMetadata } from "../organization-metadata.js"
 
 /**
  * den-admin MCP toolset: read-only Den analytics for allowlisted platform
@@ -454,20 +456,19 @@ export function registerAdminMcpTools(server: McpServer) {
           throw new Error(`No organization found for ${organizationId}`)
         }
 
-        const normalized = normalizeOrganizationMetadata(organization.metadata).metadata
-        const metadata = {
-          ...normalized,
-          plan: manualPlan(tier),
-          limits: {
-            ...normalized.limits,
-            members: seatLimit,
-          },
-        }
-
-        await db
-          .update(OrganizationTable)
-          .set({ metadata })
-          .where(eq(OrganizationTable.id, organizationId))
+        const metadata = await updateOrganizationMetadata(organizationId, (current) => {
+          const normalized = normalizeOrganizationMetadata(current).metadata
+          const plan = { ...readOrganizationMetadata(current.plan), ...manualPlan(tier) }
+          if (tier !== "enterprise") delete plan.grantedAt
+          return {
+            ...normalized,
+            plan,
+            limits: {
+              ...normalized.limits,
+              members: seatLimit,
+            },
+          }
+        })
 
         return {
           ok: true,

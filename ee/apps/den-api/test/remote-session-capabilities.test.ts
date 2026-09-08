@@ -337,6 +337,30 @@ test("a missing session maps to unknown_session", async () => {
   expect(body.retryable).toBe(false)
 })
 
+test("engine startup retries only a rejected create, not a partially created session", async () => {
+  for (const path of ["/workspace/ws_1/opencode/session", "/workspace/ws_1/opencode/session/ses_created/prompt_async"]) {
+    const result = await executeRemoteSessionCapability(
+      executeInput("create", { prompt: "Say hi" }),
+      readyDeps({
+        createThread: async () => {
+          throw new HeadlessThreadError({
+            code: "opencode_unconfigured",
+            message: "OpenCode base URL is missing for this workspace",
+            method: "POST",
+            path,
+            status: 400,
+          })
+        },
+      }),
+    )
+    const canRetry = path.endsWith("/opencode/session")
+    expect(result.isError).toBe(true)
+    expect(payload(result).error).toBe(canRetry ? "cloud_runtime_waking" : "remote_session_request_failed")
+    expect(payload(result).retryable).toBe(canRetry)
+    expect(payload(result).retryAfterMs).toBe(canRetry ? 30_000 : undefined)
+  }
+})
+
 test("a waking runtime is reported as retryable without touching the client", async () => {
   const result = await executeRemoteSessionCapability(
     executeInput("create", {}),

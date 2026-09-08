@@ -5,13 +5,13 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "target": "es2023",
-    "lib": ["es2023", "esnext.disposable"],
+    "lib": ["es2023", "dom", "dom.iterable", "esnext.disposable"],
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["docs-shots/**/*.ts", "runner/**/*.ts", "packages/**/*.ts", "scripts/**/*.ts", "specs/**/*.ts", "worlds/**/*.ts", "vitest.config.ts"],
+  "include": ["docs-shots/**/*.ts", "drivers/**/*.mts", "../packages/handsfree/test/e2e/browser.ts", "runner/**/*.ts", "packages/**/*.ts", "scripts/**/*.ts", "specs/**/*.ts", "worlds/**/*.ts", "vitest.config.ts"],
   "exclude": ["results"]
 }

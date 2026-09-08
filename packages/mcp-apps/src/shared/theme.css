@@ -264,6 +264,18 @@ h1 {
   font-weight: 600;
 }
 
+.action-secondary {
+  align-self: flex-start;
+  background: transparent;
+  color: var(--app-text);
+  box-shadow: inset 0 0 0 1px var(--app-border);
+}
+
+.action-primary:disabled {
+  cursor: wait;
+  opacity: .6;
+}
+
 .action-primary:hover {
   opacity: .9;
 }

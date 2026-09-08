@@ -1,0 +1,26 @@
+{
+  "name": "@openwork/scenarios",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "onboarding:render": "node onboarding/render.mjs"
+  },
+  "dependencies": {
+    "@openwork/behaviors": "workspace:*",
+    "@openwork/cdp": "workspace:*",
+    "@openwork/env": "workspace:*",
+    "@openwork/testkit": "workspace:*",
+    "@openwork/presentation": "link:../packages/presentation",
+    "@remotion/bundler": "4.0.520",
+    "@remotion/renderer": "4.0.520",
+    "remotion": "4.0.520",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "vitest": "^3.2.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.13",
+    "typescript": "^5.9.3"
+  }
+}

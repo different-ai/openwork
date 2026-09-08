@@ -54,6 +54,75 @@ import type {
   BrowserStatePayload,
   OpenBrowserUrlResult,
 } from "@openwork/browser-tabs";
+import type { ImportableSite, ImportSourceAvailability } from "@openwork/browser-logins";
+
+export type BrowserLoginSite = ImportableSite;
+
+export type BrowserLoginSource = {
+  id: string;
+  browser: string;
+  label: string;
+  profile: string;
+};
+
+export type BrowserLoginSources = {
+  availability: ImportSourceAvailability[];
+  profiles: BrowserLoginSource[];
+};
+
+export type BrowserLoginPreview = {
+  previewId: string;
+  source: BrowserLoginSource;
+  sites: ImportableSite[];
+  cookieCount: number;
+  undecryptable: number;
+};
+
+export type BrowserLoginSyncStatus =
+  | "policy_off"
+  | "not_configured"
+  | "paused"
+  | "syncing"
+  | "synced"
+  | "error";
+
+/** Renderer-safe sync metadata. Browser cookie values never cross this bridge. */
+export type BrowserLoginSyncState = {
+  policyAllowed: boolean;
+  configured: boolean;
+  active: boolean;
+  source: BrowserLoginSource | null;
+  selectedSites: string[];
+  status: BrowserLoginSyncStatus;
+  lastSyncedAt: number | null;
+  errorCode: string | null;
+  managedCookieCount: number;
+};
+
+/** Value-free counts from a sync or removal operation. */
+export type BrowserLoginSyncResult = {
+  sites: Array<{ site: string; synced: number; failed: number; removed: number }>;
+};
+
+export type BrowserLoginSyncBridge = {
+  disableForManagedContext: () => Promise<BrowserLoginSyncState>;
+  sources: () => Promise<BrowserLoginSources>;
+  preview: (request: { sourceId: string }) => Promise<BrowserLoginPreview>;
+  configure: (request: { previewId: string; sites: string[] }) => Promise<BrowserLoginSyncResult>;
+  state: () => Promise<BrowserLoginSyncState>;
+  syncNow: () => Promise<BrowserLoginSyncResult>;
+  pause: () => Promise<BrowserLoginSyncState>;
+  resume: () => Promise<BrowserLoginSyncResult>;
+  stopSite: (site: string) => Promise<BrowserLoginSyncResult>;
+  disconnect: (request: { forgetSynced: boolean }) => Promise<BrowserLoginSyncResult>;
+  signedInSites: () => Promise<BrowserLoginSite[]>;
+  forgetSite: (site: string) => Promise<{ site: string; removed: number }>;
+  forgetAll: () => Promise<{ ok: boolean }>;
+  /** Eval seam (unpackaged builds only): write a Firefox-shaped store and list it as a source. */
+  writeTestStore?: (request: { path: string; cookies: unknown[] }) => Promise<BrowserLoginSource>;
+  /** Eval seam (unpackaged builds only): value-free login witness on Electron's host. */
+  testWitnessUrl?: () => Promise<string>;
+};
 
 export type { BrowserStatePayload } from "@openwork/browser-tabs";
 
@@ -190,6 +259,7 @@ declare global {
         createTab?: (url?: string, sessionId?: string | null) => Promise<{ tabId: string }>;
         closeTab?: (tabId: string) => Promise<string | null>;
         closeAllTabs?: () => Promise<string[]>;
+        closeSessionTabs?: (sessionId: string) => Promise<string[]>;
         selectTab?: (tabId: string) => Promise<string>;
         reorderTabs?: (tabIds: string[]) => Promise<BrowserPanelTab[]>;
         listTabs?: () => Promise<BrowserPanelTab[]>;
@@ -201,6 +271,7 @@ declare global {
         onPanelOpened?: (callback: (payload?: BrowserPanelOwnerPayload) => void) => () => void;
         onPanelClosed?: (callback: (payload?: BrowserPanelOwnerPayload) => void) => () => void;
       };
+      browserLogins?: BrowserLoginSyncBridge;
       terminal?: {
         create?: (options: { cwd: string; cols: number; rows: number }) => Promise<{ terminalId: string }>;
         write?: (terminalId: string, data: string) => Promise<void>;
@@ -224,6 +295,15 @@ declare global {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+export async function closeSessionBrowserTabs(sessionId: string): Promise<void> {
+  if (typeof window === "undefined" || !sessionId.trim()) return;
+  try {
+    await window.__OPENWORK_ELECTRON__?.browser?.closeSessionTabs?.(sessionId);
+  } catch {
+    // Cleanup is idempotent and must not undo a confirmed session deletion.
+  }
+}
 
 async function invokeElectronHelper<C extends DesktopCommandName>(
   command: C,

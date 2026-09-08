@@ -8,6 +8,7 @@ import {
   connectedConnectionActionPayload,
   connectionActionErrorCard,
   connectionActionLaunch,
+  connectionActionSearchCard,
   connectionActionPayloadFromStatus,
   connectionActionPayloadSchema,
   connectionActionTextFallback,
@@ -119,6 +120,16 @@ test("connection status payloads carry the exact human action and same-server la
     resourceUri: CONNECTION_ACTION_APP_RESOURCE_URI,
     arguments: { connectionId: "emc_gmail" },
   })
+  const match = { kind: "connection_status", connectionStatus: needsSignInStatus }
+  const searchCard = connectionActionSearchCard([match])
+  expect(searchCard?.connectionAction).toEqual(payload)
+  expect(searchCard?.meta).toEqual({ "openwork/mcpApp": connectionActionLaunch(payload) })
+  expect(connectionActionSearchCard([match, match])).toEqual(searchCard)
+  expect(connectionActionSearchCard([])).toBeNull()
+  expect(connectionActionSearchCard([{ kind: "tool" }])).toBeNull()
+  expect(connectionActionSearchCard([match, {
+    ...match, connectionStatus: { ...needsSignInStatus, connectionId: "emc_other" },
+  }])).toBeNull()
   const fallback = connectionActionTextFallback(payload)
   expect(fallback).toContain("# Connection needs attention: Gmail")
   expect(fallback).toContain("Action: Connect Gmail")
@@ -155,9 +166,20 @@ test("the app-only tool probes live status and returns schema-valid structured c
     const parsed = connectionActionPayloadSchema.parse(result.structuredContent)
     expect(parsed.state).toBe("needs_connection")
     expect(parsed.action?.label).toBe("Connect Gmail")
+    const checked = await client.callTool({
+      name: CONNECTION_ACTION_TOOL_NAME,
+      arguments: { connectionId: "emc_gmail" },
+    })
+    expect(checked.isError).not.toBe(true)
+    const connected = connectionActionPayloadSchema.parse(checked.structuredContent)
+    expect(connected.state).toBe("connected")
+    expect(connected.action).toBeNull()
+    expect(connected.connectionId).toBe("emc_gmail")
   }, async ({ connectionId }) => {
     probed.push(connectionId)
-    return { ok: true, payload: connectionActionPayloadFromStatus(needsSignInStatus) }
+    return { ok: true, payload: probed.length === 1
+      ? connectionActionPayloadFromStatus(needsSignInStatus)
+      : connectedConnectionActionPayload({ connectionId, connectionName: "Gmail" }) }
   })
-  expect(probed).toEqual(["emc_gmail"])
+  expect(probed).toEqual(["emc_gmail", "emc_gmail"])
 })

@@ -519,6 +519,8 @@ describe("downloaded update lifecycle", () => {
 
       assert.equal((await check(null, "stable")).available, true);
       assert.deepEqual(await download(), { ok: true });
+      assert.equal(updater.autoInstallOnAppQuit, true);
+      assert.deepEqual(calls, ["download"], "downloading must not quit the app");
       updater.checkForUpdates = async () => {
         throw new Error("network flake");
       };

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
+import { assertManagedModelsAllowed, ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import type { InferenceHandledErrorReport, InferenceReporter, InferenceRequestReport } from "../src/inference-reporting.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
@@ -15,10 +16,12 @@ type UpstreamRequest = {
   method: string | undefined
   body: string | null
   headers: Headers
+  redirect: RequestRedirect | undefined
 }
 
 type DependencyCalls = {
   findActiveInferenceKey: number
+  policyOrganizationIds: string[]
   getOpenRouterProviderKey: number
   ensureUsableBuckets: number
 }
@@ -29,6 +32,10 @@ type CapturedReports = {
 }
 
 type TestServerOptions = {
+  assertOrganizationManagedModelsAllowed?: (organizationId: string) => Promise<void>
+  organizationMetadata?: unknown
+  invalidKey?: boolean
+  analytics?: typeof import("../src/task-analytics.js").beginModelAnalytics
   organizationId?: string
   providerKey?: { encrypted_api_key: string } | null
   fetch?: typeof fetch
@@ -114,6 +121,7 @@ function createTestServer(options: TestServerOptions = {}) {
   const reports: CapturedReports = { requests: [], handledErrors: [] }
   const calls: DependencyCalls = {
     findActiveInferenceKey: 0,
+    policyOrganizationIds: [],
     getOpenRouterProviderKey: 0,
     ensureUsableBuckets: 0,
   }
@@ -123,6 +131,7 @@ function createTestServer(options: TestServerOptions = {}) {
       method: init?.method,
       body: readInitBody(init?.body),
       headers: new Headers(init?.headers),
+      redirect: init?.redirect,
     })
     return Response.json({ ok: true })
   })
@@ -138,10 +147,19 @@ function createTestServer(options: TestServerOptions = {}) {
   registerProxyRoutes(app, {
     async findActiveInferenceKey(_key) {
       calls.findActiveInferenceKey += 1
+      if (options.invalidKey) return null
       return {
         id: "inference_key_123",
         organization_id: options.organizationId ?? "organization_123",
         org_membership_id: "member_123",
+      }
+    },
+    async assertOrganizationManagedModelsAllowed(organizationId) {
+      calls.policyOrganizationIds.push(organizationId)
+      if (options.assertOrganizationManagedModelsAllowed) {
+        await options.assertOrganizationManagedModelsAllowed(organizationId)
+      } else {
+        assertManagedModelsAllowed(options.organizationMetadata)
       }
     },
     async getOpenRouterProviderKey(_organizationId: string) {
@@ -174,11 +192,221 @@ function createTestServer(options: TestServerOptions = {}) {
       }
     },
     fetch: upstreamFetch,
+    analytics: options.analytics,
     reporter,
   })
 
   return { app, upstreamRequests, calls, reports }
 }
+
+for (const organizationMetadata of [undefined, null, {}, { dpaSigned: false }, '{"dpaSigned":false}', { nested: { dpaSigned: true } }]) {
+  test(`allows managed models for metadata ${JSON.stringify(organizationMetadata)}`, async () => {
+    const { app, upstreamRequests, calls } = createTestServer({ organizationMetadata })
+    const response = await app.fetch(inferenceRequest({
+      method: "POST", headers: authHeaders("application/json"),
+      body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [], metadata: { dpaSigned: true } }),
+    }))
+    assert.equal(response.status, 200)
+    assert.deepEqual(calls.policyOrganizationIds, ["organization_123", "organization_123"])
+    assert.equal(upstreamRequests.length, 1)
+    assert.equal(upstreamRequests[0].redirect, "error")
+  })
+}
+
+for (const policy of [
+  { metadata: { dpaSigned: true }, code: "managed_models_disabled_for_dpa", status: 403 },
+  { metadata: '{"dpaSigned":true}', code: "managed_models_disabled_for_dpa", status: 403 },
+  { metadata: "{broken", code: "managed_models_policy_unavailable", status: 503 },
+  { metadata: [], code: "managed_models_policy_unavailable", status: 503 },
+]) {
+  test(`blocks catalog and chat before body reporting for ${JSON.stringify(policy.metadata)}`, async () => {
+    let analyticsCalls = 0
+    const { app, upstreamRequests, calls, reports } = createTestServer({
+      organizationMetadata: policy.metadata,
+      analytics: async () => { analyticsCalls += 1; return null },
+    })
+    for (const input of [
+      { method: "GET", path: "/api/v1/models" },
+      { method: "POST", path: "/api/v1/chat/completions", body: "{invalid body" },
+      { method: "POST", path: "/api/v1/chat/completions?model=ignored", body: "{}" },
+    ]) {
+      const request = inferenceRequest({ ...input, headers: authHeaders("application/json") })
+      const response = await app.fetch(request)
+      assert.equal(response.status, policy.status)
+      assert.equal(await readErrorCode(response), policy.code)
+      assert.equal(request.bodyUsed, false)
+    }
+    assert.deepEqual(calls.policyOrganizationIds, ["organization_123", "organization_123", "organization_123"])
+    assert.equal(calls.ensureUsableBuckets, 0)
+    assert.equal(calls.getOpenRouterProviderKey, 0)
+    assert.equal(analyticsCalls, 0)
+    assert.equal(upstreamRequests.length, 0)
+    assert.deepEqual(reports, { requests: [], handledErrors: [] })
+  })
+}
+
+test("policy lookup failures fail closed without leaking the underlying error", async () => {
+  for (const error of [new ManagedModelsPolicyError("managed_models_policy_unavailable"), new Error("private database failure")]) {
+    const { app, calls, reports, upstreamRequests } = createTestServer({
+      assertOrganizationManagedModelsAllowed: async () => { throw error },
+    })
+    const response = await app.fetch(inferenceRequest({ method: "GET", path: "/api/v1/models", headers: authHeaders() }))
+    assert.equal(response.status, 503)
+    assert.deepEqual(await response.json(), { error: {
+      message: new ManagedModelsPolicyError("managed_models_policy_unavailable").message,
+      type: "invalid_request_error",
+      code: "managed_models_policy_unavailable",
+    } })
+    assert.equal(calls.ensureUsableBuckets, 0)
+    assert.equal(calls.getOpenRouterProviderKey, 0)
+    assert.equal(upstreamRequests.length, 0)
+    assert.deepEqual(reports, { requests: [], handledErrors: [] })
+  }
+})
+
+test("policy uses only the authenticated key organization, not caller organization hints", async () => {
+  const { app, calls } = createTestServer({ organizationId: "organization_key_owner" })
+  const headers = authHeaders("application/json")
+  headers.set("x-organization-id", "organization_caller")
+  const response = await app.fetch(inferenceRequest({ method: "POST", headers,
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [], organizationId: "organization_caller", dpaSigned: false }),
+  }))
+  assert.equal(response.status, 200)
+  assert.deepEqual(calls.policyOrganizationIds, ["organization_key_owner", "organization_key_owner"])
+})
+
+for (const unavailable of [false, true]) {
+  test(`rechecks fresh policy after quota, key and analytics awaits (${unavailable ? "unavailable" : "disabled"})`, async () => {
+    let metadata: unknown = { dpaSigned: false }
+    let analyticsCalls = 0
+    const { app, calls, upstreamRequests } = createTestServer({
+      assertOrganizationManagedModelsAllowed: async () => { assertManagedModelsAllowed(metadata) },
+      analytics: async () => {
+        assert.equal(calls.ensureUsableBuckets, 1)
+        assert.equal(calls.getOpenRouterProviderKey, 1)
+        assert.equal(calls.policyOrganizationIds.length, 1)
+        await Promise.resolve()
+        analyticsCalls += 1
+        metadata = unavailable ? "{corrupt" : { dpaSigned: true }
+        return null
+      },
+    })
+    const request = () => inferenceRequest({ method: "POST", headers: authHeaders("application/json"),
+      body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+    })
+    const response = await app.fetch(request())
+    assert.equal(response.status, unavailable ? 503 : 403)
+    assert.equal(await readErrorCode(response), unavailable ? "managed_models_policy_unavailable" : "managed_models_disabled_for_dpa")
+    assert.deepEqual(calls.policyOrganizationIds, ["organization_123", "organization_123"])
+    assert.equal(upstreamRequests.length, 0)
+    const retry = await app.fetch(request())
+    assert.equal(retry.status, unavailable ? 503 : 403)
+    assert.equal(calls.policyOrganizationIds.length, 3)
+    assert.equal(calls.ensureUsableBuckets, 1)
+    assert.equal(calls.getOpenRouterProviderKey, 1)
+    assert.equal(analyticsCalls, 1)
+    assert.equal(upstreamRequests.length, 0)
+  })
+}
+
+test("new requests observe both enabling and disabling policy without a cached decision", async () => {
+  let metadata = { dpaSigned: false }
+  const { app, calls, upstreamRequests } = createTestServer({
+    assertOrganizationManagedModelsAllowed: async () => { assertManagedModelsAllowed(metadata) },
+  })
+  for (const dpaSigned of [false, true, false]) {
+    metadata = { dpaSigned }
+    const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"),
+      body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+    }))
+    assert.equal(response.status, dpaSigned ? 403 : 200)
+  }
+  assert.equal(calls.policyOrganizationIds.length, 5)
+  assert.equal(upstreamRequests.length, 2)
+})
+
+test("redirect rejection is not retried and a client retry rechecks policy", async () => {
+  let fetchCalls = 0
+  let metadata = { dpaSigned: false }
+  const { app, calls } = createTestServer({
+    assertOrganizationManagedModelsAllowed: async () => { assertManagedModelsAllowed(metadata) },
+    fetch: async (_input, init) => {
+      fetchCalls += 1
+      assert.equal(init?.redirect, "error")
+      metadata = { dpaSigned: true }
+      throw new TypeError("redirect encountered")
+    },
+  })
+  const request = () => inferenceRequest({ method: "POST", headers: authHeaders("application/json"),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+  })
+  const response = await app.fetch(request())
+  assert.equal(response.status, 502)
+  assert.equal(await readErrorCode(response), "upstream_unreachable")
+  assert.equal(fetchCalls, 1)
+  const retry = await app.fetch(request())
+  assert.equal(retry.status, 403)
+  assert.equal(await readErrorCode(retry), "managed_models_disabled_for_dpa")
+  assert.equal(fetchCalls, 1)
+  assert.equal(calls.policyOrganizationIds.length, 3)
+})
+
+test("invalid authentication never reads organization policy", async () => {
+  const { app, calls, upstreamRequests, reports } = createTestServer({ invalidKey: true })
+  const response = await app.fetch(inferenceRequest({ method: "GET", path: "/api/v1/models", headers: authHeaders() }))
+  assert.equal(response.status, 401)
+  assert.equal(await readErrorCode(response), "invalid_api_key")
+  assert.deepEqual(calls.policyOrganizationIds, [])
+  assert.equal(upstreamRequests.length, 0)
+  assert.deepEqual(reports, { requests: [], handledErrors: [] })
+})
+
+test("analytics storage failures preserve exact streamed bytes and upstream status", async () => {
+  const { observeModelResponse } = await import("../src/task-analytics.js")
+  const body = 'data: {"choices":[{"delta":{"content":"hello"}}]}\n\ndata: [DONE]\n\n'
+  const { app } = createTestServer({
+    fetch: async () => new Response(body, { headers: { "content-type": "text/event-stream" } }),
+    analytics: async ({ requestId, startedAt }) => (streaming) => observeModelResponse({
+      id: requestId, startedAt, streaming, sessionId: "session", taskId: "task", model: "model",
+    }, async () => { throw new Error("store unavailable") }),
+  })
+  const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }) }))
+  assert.equal(response.status, 200)
+  assert.equal(await response.text(), body)
+})
+
+test("an unavailable analytics check leaves existing inference operational", async () => {
+  const { app } = createTestServer({ analytics: async () => { throw new Error("analytics offline") } })
+  const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }) }))
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), { ok: true })
+})
+
+test("an analytics observer failure cannot truncate an upstream response", async () => {
+  const body = "data: original response\n\ndata: [DONE]\n\n"
+  const { app } = createTestServer({
+    fetch: async () => new Response(body, { headers: { "content-type": "text/event-stream" } }),
+    analytics: async () => () => ({ chunk() { throw new Error("parser unavailable") }, finish() { throw new Error("observer unavailable") } }),
+  })
+  const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }) }))
+  assert.equal(response.status, 200)
+  assert.equal(await response.text(), body)
+})
+
+test("cancelled, malformed and oversized usage stays incomplete with one accounting event", async () => {
+  const { observeModelResponse } = await import("../src/task-analytics.js")
+  const events: import("@openwork-ee/telemetry").ModelsAnalyticsEvent[] = []
+  for (const status of ["cancelled", "completed"] satisfies ("cancelled" | "completed")[]) {
+    const observer = observeModelResponse({ id: status, sessionId: "session", taskId: "task", startedAt: Date.now(), model: "model", streaming: true }, async (event) => { events.push(event) })
+    observer.chunk(new TextEncoder().encode('data: {"usage":nope}\n\n'))
+    observer.chunk(new TextEncoder().encode("x".repeat(1_048_577)))
+    observer.finish(status)
+    observer.finish(status)
+  }
+  assert.equal(events.length, 2)
+  assert.equal(events[0].status, "cancelled")
+  assert.ok(events.every((event) => event.usageComplete === false && event.costUsd === undefined))
+})
 
 async function expectUnsupportedModelSelection(body: Record<string, unknown>) {
   const { app, upstreamRequests, calls } = createTestServer()
@@ -693,6 +921,7 @@ test("requires authentication before returning the local model catalog", async (
   assert.equal(response.status, 401)
   assert.equal(await readErrorCode(response), "missing_api_key")
   assert.equal(calls.findActiveInferenceKey, 0)
+  assert.deepEqual(calls.policyOrganizationIds, [])
   assert.equal(calls.ensureUsableBuckets, 0)
   assert.equal(calls.getOpenRouterProviderKey, 0)
   assert.equal(upstreamRequests.length, 0)

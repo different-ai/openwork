@@ -109,6 +109,7 @@ function startMockOpencode(options: MockOpencodeOptions = {}) {
         return Response.json({ healthy: true, version: "1.17.11" });
       }
       if (url.pathname === "/instance/dispose") return Response.json({ disposed: true });
+      if (url.pathname === "/session/status") return Response.json({});
       if (url.pathname === "/mcp" && request.method === "POST") {
         if (options.postFailure) return Response.json(options.postFailure.body, { status: options.postFailure.status });
         registerCount += 1;
@@ -407,7 +408,9 @@ describe("openwork-cloud MCP strict reconcile", () => {
 
   test("live status read heals a failed registration record after reconcile returns early", async () => {
     const root = await createRoot();
-    const mock = startMockOpencode({ connectAfterStatusReads: 2 });
+    // Registration now probes liveness before POSTing; keep the first
+    // post-registration health read failed, then heal on the next read.
+    const mock = startMockOpencode({ connectAfterStatusReads: 3 });
     const baseUrl = `http://127.0.0.1:${mock.server.port}`;
     const openwork = await startOpenwork([workspace("ws_1", root, baseUrl)]);
     registerTrustedOpencodeProcess(openwork.config, {
