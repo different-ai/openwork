@@ -270,6 +270,7 @@ for (const revocation of ["disconnect", "stopSite", "pause"]) {
       const source = fixture.rows()[0];
       fixture.setRows(["early", "pending", "unattempted"].map((name) => ({ ...source, name })));
       let signalEntered;
+      /** @type {(value?: unknown) => void} */
       let releaseWrite;
       const entered = new Promise((resolve) => { signalEntered = resolve; });
       const release = new Promise((resolve) => { releaseWrite = resolve; });
