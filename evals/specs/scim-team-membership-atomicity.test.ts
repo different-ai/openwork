@@ -70,7 +70,9 @@ test("SCIM projection ownership is atomic and detached manual teams reject later
       const deadline = Date.now() + 10000;
       while (Date.now() < deadline) {
         if (databaseVersion.version.includes('MariaDB')) {
-          // Read each live catalog once: self-joining INNODB_TRX can miss edges.
+          // InnoDB catalog snapshots are cached briefly; allow refresh before
+          // observing an edge rather than repeatedly reading the first snapshot.
+          await delay(250);
           const [transactions] = await db.query('SELECT trx_id, trx_mysql_thread_id, trx_query FROM information_schema.INNODB_TRX');
           const [waits] = await db.query('SELECT requesting_trx_id, blocking_trx_id FROM information_schema.INNODB_LOCK_WAITS');
           const blocker = transactions.find((row) => Number(row.trx_mysql_thread_id) === Number(id));
