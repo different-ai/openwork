@@ -22,6 +22,11 @@
       "development": "./src/bootstrap/index.ts",
       "default": "./dist/bootstrap/index.js"
     },
+    "./orchestrator": {
+      "types": "./src/orchestrator/index.ts",
+      "development": "./src/orchestrator/index.ts",
+      "default": "./dist/orchestrator/index.js"
+    },
     "./testing": {
       "types": "./src/testing/index.ts",
       "development": "./src/testing/index.ts",

@@ -14,6 +14,7 @@ import {
 import { resolveCloudRuntimeAccess, type CloudWorkerAccess } from "../workers/worker-access.js"
 import { cloudHostingAvailable } from "../capability-sources/cloud-hosting.js"
 import { CLOUD_INSTANCE_BACKEND } from "../workers/cloud-constants.js"
+import { cloudRuntimeAvailable } from "../workers/cloud-runtime.js"
 import { wakeCloudWorker } from "../workers/cloud-lifecycle.js"
 import { fetchPreviewNoRedirect, previewFetch } from "../workers/preview-fetch.js"
 import { resolveAutomationModelAccess } from "./authority.js"
@@ -153,7 +154,7 @@ async function ownerCloudWorker(scope: OwnerScope) {
 }
 
 export async function cloudAgentRuntimeAvailable(scope: OwnerScope): Promise<boolean> {
-  if (env.provisionerMode !== "daytona" || !env.daytona.apiKey) return false
+  if (!cloudRuntimeAvailable()) return false
   const organizationId = normalizeDenTypeId("organization", scope.organizationId)
   const members = await db.select({ id: MemberTable.id }).from(MemberTable).where(and(
     eq(MemberTable.id, normalizeDenTypeId("member", scope.ownerMemberId)),

@@ -2,14 +2,10 @@ import { and, asc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
-import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
+import type { RuntimeInstanceInspection, RuntimeInstanceRecord } from "@openwork-ee/cloud-runtime/orchestrator"
 import { CLOUD_INSTANCE_BACKEND } from "./cloud-constants.js"
-import {
-  getDaytonaSandboxRecord,
-  inspectDaytonaSandbox,
-  refreshDaytonaSignedPreview,
-} from "./daytona.js"
+import { cloudRuntimeStore, currentCloudImageVersion, getCloudRuntime } from "./cloud-runtime.js"
 import { recoverClaimedCloudWorker, wakeCloudWorker } from "./cloud-lifecycle.js"
 import { fetchWithConnectRetry, previewFetch } from "./preview-fetch.js"
 import {
@@ -26,11 +22,10 @@ export type CloudRuntimeWorker = Pick<typeof WorkerTable.$inferSelect, "id" | "n
   image_version?: typeof WorkerTable.$inferSelect.image_version
 }
 export type CloudRuntimeToken = Pick<typeof WorkerTokenTable.$inferSelect, "scope" | "token">
-export type CloudRuntimeSandboxRecord = Pick<
-  NonNullable<Awaited<ReturnType<typeof getDaytonaSandboxRecord>>>,
-  "signed_preview_url" | "signed_preview_url_expires_at"
-> & { sandbox_id?: string | null }
-export type CloudRuntimeSandboxInspection = { state: string | null } | null
+/** The endpoint half of a runtime record; `sandbox` is present when the host instance is known. */
+export type CloudRuntimeSandboxRecord = Pick<RuntimeInstanceRecord, "endpointUrl" | "endpointExpiresAt">
+  & Partial<Pick<RuntimeInstanceRecord, "sandbox">>
+export type CloudRuntimeSandboxInspection = RuntimeInstanceInspection | null
 export type CloudRuntimeStore = {
   claimFailedWorker: (workerId: CloudRuntimeWorker["id"]) => Promise<boolean>
   claimRecycleWorker: (workerId: CloudRuntimeWorker["id"]) => Promise<boolean>
@@ -82,6 +77,8 @@ export type ResolveCloudRuntimeStateOptions = {
   startRecovery: StartWake
   store: CloudRuntimeStore
   now: () => number
+  /** The image version new instances boot; a stopped worker on an older one is recycled. */
+  currentImageVersion?: () => string | null
   forceFailedRecovery?: boolean
 }
 
@@ -311,14 +308,14 @@ async function refreshAndProbeSignedPreview(input: {
   try {
     const refreshed = await input.refreshSignedPreview(input.workerId)
     if (!refreshed) return null
-    const expiresAtMs = refreshed.signed_preview_url_expires_at.getTime()
+    const expiresAtMs = refreshed.endpointExpiresAt.getTime()
     if (!Number.isFinite(expiresAtMs) || expiresAtMs <= input.now()) {
       return { status: "failed", url: null, reason: "preview_expired" }
     }
     return readyFromSignedPreview({
       workerId: input.workerId,
-      signedPreviewUrl: refreshed.signed_preview_url,
-      expiresAt: refreshed.signed_preview_url_expires_at,
+      signedPreviewUrl: refreshed.endpointUrl,
+      expiresAt: refreshed.endpointExpiresAt,
       probeSignedPreview: input.probeSignedPreview,
       now: input.now,
     })
@@ -327,13 +324,12 @@ async function refreshAndProbeSignedPreview(input: {
   }
 }
 
-function isStoppedSandboxState(state: string | null) {
-  return state?.toLowerCase() === "stopped"
+function isStoppedSandboxState(inspection: CloudRuntimeSandboxInspection) {
+  return inspection?.state === "stopped"
 }
 
-function workerNeedsSnapshotRecycle(worker: CloudRuntimeWorker) {
-  const snapshot = env.daytona.snapshot
-  return Boolean(snapshot && "image_version" in worker && worker.image_version !== snapshot)
+function workerNeedsSnapshotRecycle(worker: CloudRuntimeWorker, imageVersion: string | null) {
+  return Boolean(imageVersion && "image_version" in worker && worker.image_version !== imageVersion)
 }
 
 async function startStaleStoppedRecycle(input: {
@@ -342,15 +338,16 @@ async function startStaleStoppedRecycle(input: {
   inspectSandbox: InspectSandbox
   startRecovery: StartWake
   store: CloudRuntimeStore
+  currentImageVersion: () => string | null
 }) {
-  if (!input.sandboxExists || !workerNeedsSnapshotRecycle(input.worker)) return false
+  if (!input.sandboxExists || !workerNeedsSnapshotRecycle(input.worker, input.currentImageVersion())) return false
   let inspection: CloudRuntimeSandboxInspection = null
   try {
     inspection = await input.inspectSandbox(input.worker.id)
   } catch {
     return false
   }
-  if (!isStoppedSandboxState(inspection?.state ?? null)) return false
+  if (!isStoppedSandboxState(inspection)) return false
   const claimed = await input.store.claimRecycleWorker(input.worker.id)
   if (claimed) input.startRecovery(input.worker.id)
   return true
@@ -368,7 +365,7 @@ async function recoverUnhealthyCloudSandbox(input: {
   } catch {
     inspection = null
   }
-  if (isStoppedSandboxState(inspection?.state ?? null)) {
+  if (isStoppedSandboxState(inspection)) {
     unreachableWorkers.delete(input.worker.id)
     const claimed = await input.store.claimRecycleWorker(input.worker.id)
     if (claimed) input.startRecovery(input.worker.id)
@@ -404,6 +401,7 @@ export async function resolveCloudRuntimeState(input: {
       inspectSandbox: options.inspectSandbox,
       startRecovery: options.startRecovery,
       store: options.store,
+      currentImageVersion: options.currentImageVersion ?? currentCloudImageVersion,
     })) return { status: "waking", url: null, reason: "stopped" }
     options.startWake(input.worker.id)
     return { status: "waking", url: null, reason: "stopped" }
@@ -432,13 +430,14 @@ export async function resolveCloudRuntimeState(input: {
     inspectSandbox: options.inspectSandbox,
     startRecovery: options.startRecovery,
     store: options.store,
+    currentImageVersion: options.currentImageVersion ?? currentCloudImageVersion,
   })) return { status: "waking", url: null, reason: "stopped" }
 
-  if (sandbox.signed_preview_url_expires_at.getTime() > options.now()) {
+  if (sandbox.endpointExpiresAt.getTime() > options.now()) {
     const ready = await readyFromSignedPreview({
       workerId: input.worker.id,
-      signedPreviewUrl: sandbox.signed_preview_url,
-      expiresAt: sandbox.signed_preview_url_expires_at,
+      signedPreviewUrl: sandbox.endpointUrl,
+      expiresAt: sandbox.endpointExpiresAt,
       probeSignedPreview: options.probeSignedPreview,
       now: options.now,
     })
@@ -474,14 +473,15 @@ export async function resolveCloudRuntimeAccess(
 
   const store = options.store ?? databaseCloudRuntimeStore
   const state = await resolveCloudRuntimeState({ worker, organizationId: ownership.organizationId }, {
-    refreshSignedPreview: options.refreshSignedPreview ?? refreshDaytonaSignedPreview,
-    getSandboxRecord: options.getSandboxRecord ?? getDaytonaSandboxRecord,
-    inspectSandbox: options.inspectSandbox ?? inspectDaytonaSandbox,
+    refreshSignedPreview: options.refreshSignedPreview ?? ((workerId) => getCloudRuntime().refreshEndpoint(workerId)),
+    getSandboxRecord: options.getSandboxRecord ?? ((workerId) => cloudRuntimeStore().get(workerId)),
+    inspectSandbox: options.inspectSandbox ?? ((workerId) => getCloudRuntime().inspect(workerId)),
     probeSignedPreview: options.probeSignedPreview ?? probeCloudRuntimeSignedPreview,
     startWake: options.startWake ?? startDefaultWake,
     startRecovery: options.startRecovery ?? startDefaultRecovery,
     store,
     now: options.now ?? Date.now,
+    currentImageVersion: options.currentImageVersion,
     forceFailedRecovery: options.forceFailedRecovery,
   })
   const failure = state.status === "ready" ? null : state.failure ?? cloudStartupFailureFromWorker(worker)
