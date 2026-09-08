@@ -63,10 +63,16 @@ test("SCIM projection ownership is atomic and detached manual teams reject later
     const addPendingSource = () => db.execute('INSERT INTO scim_group_member (id, group_id, provider_id, organization_id, remote_user_id) VALUES (?, ?, ?, ?, ?)', [sourceId, group.id, provider.provider_id, input.orgId, input.userId]);
     const patch = (operations) => scim('/' + group.id, 'PATCH', { schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'], Operations: operations });
     const add = (value) => patch([{ op: 'add', path: 'members', value: [{ value }] }]);
+    const [[databaseVersion]] = await db.query('SELECT VERSION() AS version');
+    // Daytona's server snapshot uses MariaDB; retain the same wait-edge proof
+    // using its InnoDB catalog rather than MySQL 8's performance-schema catalog.
+    const waitQuery = databaseVersion.version.includes('MariaDB')
+      ? 'SELECT r.trx_mysql_thread_id AS connectionId, r.trx_query AS query FROM information_schema.INNODB_LOCK_WAITS w JOIN information_schema.INNODB_TRX r ON r.trx_id = w.requesting_trx_id JOIN information_schema.INNODB_TRX b ON b.trx_id = w.blocking_trx_id WHERE b.trx_mysql_thread_id = ?'
+      : 'SELECT r.PROCESSLIST_ID AS connectionId, r.PROCESSLIST_INFO AS query FROM performance_schema.data_lock_waits w JOIN performance_schema.threads r ON r.THREAD_ID = w.REQUESTING_THREAD_ID JOIN performance_schema.threads b ON b.THREAD_ID = w.BLOCKING_THREAD_ID WHERE b.PROCESSLIST_ID = ?';
     const waitForBlocker = async (id) => {
       const deadline = Date.now() + 10000;
       while (Date.now() < deadline) {
-        const [rows] = await db.execute('SELECT r.PROCESSLIST_ID AS connectionId, r.PROCESSLIST_INFO AS query FROM performance_schema.data_lock_waits w JOIN performance_schema.threads r ON r.THREAD_ID = w.REQUESTING_THREAD_ID JOIN performance_schema.threads b ON b.THREAD_ID = w.BLOCKING_THREAD_ID WHERE b.PROCESSLIST_ID = ?', [id]);
+        const [rows] = await db.execute(waitQuery, [id]);
         if (rows.length) return rows[0];
         await delay(25);
       }
