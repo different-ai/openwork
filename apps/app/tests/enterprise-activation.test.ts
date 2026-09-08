@@ -107,9 +107,17 @@ describe("enterprise desktop activation", () => {
   });
 
   test("keeps the branded connect-link activation consumer mounted before activation", () => {
-    expect(providersSource).toContain(
-      "return <ConnectLinkProvider>{children}</ConnectLinkProvider>;",
+    // The pre-activation branch keeps ConnectLinkProvider mounted (the branded
+    // connect-link consumer) and also provides the contexts AppRoot-level
+    // consumers need — DesktopUpdaterProvider's useUpdater() reads Local and
+    // DesktopConfig contexts before activation completes (#4482).
+    const activationBranch = providersSource.slice(
+      providersSource.indexOf("if (activationRequired)"),
+      providersSource.indexOf("<DesktopRuntimeBoot"),
     );
+    expect(activationBranch).toContain("<ConnectLinkProvider>");
+    expect(activationBranch).toContain("<DesktopConfigProvider>");
+    expect(activationBranch).toContain("<LocalProvider>");
     expect(connectConfirmDialogSource).toContain(
       "const trustedBrandUrl = transport ? claims?.brand.iconUrl ?? claims?.brand.logoUrl : null;",
     );
