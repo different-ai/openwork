@@ -175,6 +175,17 @@ const AGENT_DIAGNOSTICS_ERROR_FLUSH_MS = 25;
 const COMMAND_ADMISSION_CAPACITY = 10_000;
 const COMMAND_ADMISSION_TTL_MS = 24 * 60 * 60 * 1_000;
 
+async function assertDesktopTaskAccess(config: ServerConfig, request: Request, path: string): Promise<void> {
+  if (!config.authorizeTask || ["GET", "HEAD", "OPTIONS"].includes(request.method)) return;
+  const enginePath = decodeURIComponent(path).replace(/^\/opencode2?/, "").replace(/^\/api/, "");
+  // Session creation, prompts, commands, compaction, and approval replies can
+  // start/resume generation. Reads and stopping a running task stay available.
+  if (!/^\/(?:session|question|permission)(?:\/|$)/.test(enginePath) || /\/abort$/.test(enginePath)) return;
+  if (!(await config.authorizeTask())) {
+    throw new ApiError(403, "signin_required", "Sign in to OpenWork before running a task.");
+  }
+}
+
 function rethrowMcpAppHostError(error: unknown): never {
   if (!(error instanceof McpAppHostError)) throw error;
   const status = error.code === "invalid_tool_name" || error.code.startsWith("invalid_resource")
@@ -838,6 +849,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         try {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
+          await assertDesktopTaskAccess(config, request, mount.restPath);
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
           await assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, mount.restPath);
@@ -865,6 +877,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         try {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
+          await assertDesktopTaskAccess(config, request, mount.restPath);
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
           const connection = engineV2Preview.connection();
@@ -943,6 +956,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         try {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
+          await assertDesktopTaskAccess(config, request, url.pathname);
           await managedDesktopPolicy(config).assertRequest(request, url.pathname, true);
           proxyService = "opencode";
           const workspace = config.workspaces[0];

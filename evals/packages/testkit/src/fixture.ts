@@ -1,13 +1,17 @@
-import { test as evidenceTest } from "@openwork/test-evidence/vitest";
+import { createEvidenceTest } from "@openwork/test-evidence/vitest";
 import { SkipError, resolvePlace } from "@openwork/env";
 import { setBriefTestRegistrar } from "./brief-internal.ts";
 import type { TestEvidenceRecorder } from "@openwork/test-evidence";
 
-export const fixtureTest = evidenceTest.extend<{ place: ReturnType<typeof resolvePlace> }>({
-  place: [async ({}, use) => {
-    await use(resolvePlace(process.env));
-  }, { auto: true, scope: "file" }],
-});
+export function createFixtureTest() {
+  return createEvidenceTest().extend<{ place: ReturnType<typeof resolvePlace> }>({
+    place: [async ({}, use) => {
+      await use(resolvePlace(process.env));
+    }, { auto: true, scope: "file" }],
+  });
+}
+
+export const fixtureTest = createFixtureTest();
 
 interface WrappedContext {
   place: ReturnType<typeof resolvePlace>;

@@ -13,6 +13,7 @@ import {
 import {
   clearDenSession,
   createDenClient,
+  DenApiError,
   ensureDenActiveOrganization,
   denOriginComparisonKey,
   isDenSessionRevokedError,
@@ -238,6 +239,9 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     }
 
     if (!token) {
+      if (readDenBootstrapConfig().installationRequiresSignin) {
+        void desktopBridge.installationSessionVerify(null).catch(() => undefined);
+      }
       setUser(null);
       setVerifiedIdentity(null);
       setError(null);
@@ -255,10 +259,22 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     }
 
     try {
-      const nextUser = await createDenClient({
-        baseUrl: settings.baseUrl,
-        token,
-      }).getSession();
+      const installationRequired = readDenBootstrapConfig().installationRequiresSignin === true;
+      const installationSession = installationRequired
+        ? await desktopBridge.installationSessionVerify(token, settings.baseUrl)
+        : null;
+      if (installationSession && installationSession.status !== "signed_in") {
+        throw new DenApiError(
+          installationSession.status === "signed_out" ? 401 : 503,
+          installationSession.status === "signed_out" ? "invalid_session" : "installation_session_unverified",
+          installationSession.status === "unavailable"
+            ? `${t("den.installation_session_unverified")} (${installationSession.reason})`
+            : t("den.installation_session_unverified"),
+        );
+      }
+      const nextUser = installationSession?.status === "signed_in"
+        ? installationSession.user
+        : await createDenClient({ baseUrl: settings.baseUrl, token }).getSession();
 
       if (currentRun !== refreshTokenRef.current) return;
 
@@ -328,6 +344,24 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     return () => {
       window.removeEventListener(denSessionUpdatedEvent, handleSessionUpdated);
       window.removeEventListener(denSettingsChangedEvent, handleSessionUpdated);
+    };
+  }, [refresh]);
+
+  useEffect(() => {
+    // A required installation must notice expiry/revocation even while idle.
+    // Task admission also verifies in main, independent of renderer timers.
+    const recheckInstallation = () => {
+      if (readDenBootstrapConfig().installationRequiresSignin && readDenSettings().authToken?.trim()) {
+        void refresh();
+      }
+    };
+    const interval = window.setInterval(recheckInstallation, 30_000);
+    window.addEventListener("focus", recheckInstallation);
+    window.addEventListener("online", recheckInstallation);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", recheckInstallation);
+      window.removeEventListener("online", recheckInstallation);
     };
   }, [refresh]);
 

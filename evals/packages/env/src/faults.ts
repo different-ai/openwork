@@ -100,6 +100,7 @@ function forward(
   incoming: IncomingMessage,
   client: ServerResponse,
   upstream: URL,
+  apiUpstream: URL,
   faulted: boolean,
   requests: FaultRequest[],
 ): void {
@@ -115,15 +116,20 @@ function forward(
   // steer this fetch at an arbitrary host, because `new URL(absolute, base)`
   // discards the base.
   const requested = new URL(path, "http://request-target.invalid");
+  const apiRequest = /^\/api\/den(?:\/|$)/.test(requested.pathname);
+  const destination = apiRequest ? apiUpstream : upstream;
+  const upstreamPath = apiRequest
+    ? apiUpstream.pathname.replace(/\/$/, "") + (requested.pathname.slice("/api/den".length) || "/")
+    : requested.pathname;
   const options = {
-    protocol: upstream.protocol,
-    hostname: upstream.hostname,
-    port: upstream.port,
-    path: `${requested.pathname}${requested.search}`,
+    protocol: destination.protocol,
+    hostname: destination.hostname,
+    port: destination.port,
+    path: `${upstreamPath}${requested.search}`,
     method: incoming.method ?? "GET",
-    headers: forwardedHeaders(incoming.headers, upstream.host),
+    headers: forwardedHeaders(incoming.headers, destination.host),
   };
-  const outbound = upstream.protocol === "https:"
+  const outbound = destination.protocol === "https:"
     ? httpsRequest(options, onResponse)
     : httpRequest(options, onResponse);
   outbound.on("error", (error) => {
@@ -141,6 +147,7 @@ function forward(
 
 async function localFaultProxy(ref: DenRef): Promise<FaultProxy> {
   const upstream = new URL(ref.webUrl);
+  const apiUpstream = new URL(ref.apiUrl);
   const port = await allocateFreePort();
   const rules: FaultRule[] = [];
   const requests: FaultRequest[] = [];
@@ -160,7 +167,7 @@ async function localFaultProxy(ref: DenRef): Promise<FaultProxy> {
         return;
       }
       if (rule?.kind === "latency") await delay(rule.delayMs);
-      forward(incoming, response, upstream, rule !== null, requests);
+      forward(incoming, response, upstream, apiUpstream, rule !== null, requests);
     })().catch((error: unknown) => {
       if (response.headersSent) {
         response.destroy(error instanceof Error ? error : undefined);

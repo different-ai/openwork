@@ -583,6 +583,7 @@ export default {
   "den.cloud_signed_in_desc": "You are signed in and ready to use OpenWork Cloud.",
   "den.open_dashboard": "Open Den dashboard",
   "den.cloud_unavailable_body": "Local work remains available. Reconnecting automatically.",
+  "den.installation_session_unverified": "Sign in or retry when connected to verify your OpenWork session.",
   "den.cloud_unavailable_title": "OpenWork Cloud is temporarily unavailable.",
   "den.copy_signin_link": "Copy sign-in link",
   "den.create_account": "Create account",

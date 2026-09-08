@@ -178,6 +178,7 @@ export type DenEnterpriseActivation = {
 export type DenBootstrapConfig = DenBaseUrls & {
   source: DenBootstrapSource;
   requireSignin: boolean;
+  readonly installationRequiresSignin?: boolean;
   requireActivation?: boolean;
   brandAppName?: string | null;
   brandLogoUrl?: string | null;
@@ -927,6 +928,7 @@ function resolveDenBootstrapConfig(
     baseUrl: string;
     apiBaseUrl?: string | null;
     requireSignin?: boolean | null;
+    readonly installationRequiresSignin?: boolean;
     requireActivation?: boolean | null;
     brandAppName?: string | null;
     brandLogoUrl?: string | null;
@@ -943,6 +945,8 @@ function resolveDenBootstrapConfig(
     ...resolveDenBaseUrls(input),
     source: input.source === "file" || input.fromFile === true ? "file" : "default",
     requireSignin: input.requireSignin === true,
+    ...(typeof input.installationRequiresSignin === "boolean"
+      ? { installationRequiresSignin: input.installationRequiresSignin } : {}),
     ...(typeof input.requireActivation === "boolean"
       ? { requireActivation: input.requireActivation }
       : {}),
@@ -1667,6 +1671,10 @@ export function writeDenSettings(
 export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
   if (typeof window === "undefined") {
     return;
+  }
+
+  if (readDenBootstrapConfig().installationRequiresSignin) {
+    void window.__OPENWORK_ELECTRON__?.invokeDesktop?.("installationSessionVerify", null).catch(() => undefined);
   }
 
   if (import.meta.env.DEV) {

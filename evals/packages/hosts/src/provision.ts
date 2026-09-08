@@ -79,6 +79,7 @@ export interface FaultProxyOnSandboxOptions {
   sandbox: string;
   port?: number;
   upstreamPort?: number;
+  apiUpstreamPort?: number;
   log?: (line: string) => void;
   fetchImpl?: typeof fetch;
 }
@@ -769,6 +770,7 @@ export async function startFaultProxyOnSandbox(options: FaultProxyOnSandboxOptio
   const fetchImpl = options.fetchImpl ?? fetch;
   const port = options.port ?? 3985;
   const upstreamPort = options.upstreamPort ?? DEN_WEB_PORT;
+  const apiUpstreamPort = options.apiUpstreamPort ?? DEN_API_PORT;
   const token = randomBytes(16).toString("hex");
   const url = await timedStep(log, "fault proxy preview URL gate", () => previewUrl(exec, options.sandbox, port));
 
@@ -795,7 +797,7 @@ export async function startFaultProxyOnSandbox(options: FaultProxyOnSandboxOptio
     const detachScript = `python3 - <<PYEOF
 import subprocess
 log = open("/tmp/openwork-fault-proxy.log", "ab", buffering=0)
-subprocess.Popen(["bash", "-lc", "env PORT=${port} UPSTREAM=http://127.0.0.1:${upstreamPort} ISSUER=${url} CONTROL_TOKEN=${token} node /tmp/openwork-fault-proxy.mjs"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+subprocess.Popen(["bash", "-lc", "env PORT=${port} UPSTREAM=http://127.0.0.1:${upstreamPort} API_UPSTREAM=http://127.0.0.1:${apiUpstreamPort} ISSUER=${url} CONTROL_TOKEN=${token} node /tmp/openwork-fault-proxy.mjs"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
 PYEOF
 echo detached`;
     await execInSandbox(exec, options.sandbox, detachScript, { timeoutMs: 30_000, context: `fault proxy process detach for ${options.sandbox}` });

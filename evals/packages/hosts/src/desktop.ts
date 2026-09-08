@@ -57,6 +57,7 @@ export interface DesktopOptions {
   prepareSharedResources?: boolean;
   /** Exact caller-owned Electron profile root, for restart scenarios. */
   profileDir?: string;
+  newInstallation?: boolean;
   timeoutMs?: number;
 }
 
@@ -133,6 +134,7 @@ export async function desktop(opts: DesktopOptions = {}): Promise<DesktopHandle>
     handle = await host.spawnElectron(opts.name ?? "spec", {
       profile: "fresh",
       profileDir: opts.profileDir,
+      newInstallation: opts.newInstallation,
       bootstrap: opts.bootstrap,
       env: opts.env,
       devCommand: opts.devCommand,

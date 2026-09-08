@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   checkNeeds,
   deriveMockEnv,
@@ -124,4 +128,46 @@ test("needs recognizes OpenSSL implementations that reject --version", (context)
     spawn.mock.restore();
     syncBuiltinESMExports();
   }
+});
+
+test("independent spec.world fixtures build and dispose once, with or without describe", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "openwork-world-fixtures-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, "vitest.config.mjs"), "export default { test: { include: ['*.test.ts'], maxWorkers: 1, testTimeout: 10000 } };\n");
+  await writeFile(join(root, "world-fixtures.test.ts"), `
+    import { afterAll, describe, expect } from ${JSON.stringify(import.meta.resolve("vitest"))};
+    import { spec } from ${JSON.stringify(new URL("../src/spec/index.ts", import.meta.url).href)};
+    const names = ["legacy-directory", "fresh", "legacy-empty", "legacy-populated"];
+    const started = [];
+    const disposed = [];
+    for (const grouped of [false, true]) {
+      describe(grouped ? "separate describe suites" : "same suite", () => {
+        for (const name of names) {
+          const register = () => {
+            const check = spec.world(async () => {
+              started.push(name);
+              return { name, [Symbol.asyncDispose]() { disposed.push(name); } };
+            });
+            check(name, ({ world }) => {
+              expect(world.name).toBe(name);
+              expect(started.splice(0)).toEqual([name]);
+            });
+          };
+          if (grouped) describe(name, register);
+          else register();
+        }
+      });
+    }
+    afterAll(() => expect(disposed).toEqual([...names, ...names]));
+  `);
+  const result = childProcess.spawnSync(process.execPath, [
+    fileURLToPath(new URL("vitest.mjs", import.meta.resolve("vitest/package.json"))),
+    "run", "--root", root, "--config", join(root, "vitest.config.mjs"),
+  ], {
+    encoding: "utf8",
+    timeout: 30_000,
+    env: { ...process.env, OPENWORK_WORLD_PLACE: "local", OPENWORK_EVAL_DAYTONA: "0", NO_COLOR: "1" },
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });

@@ -1,6 +1,6 @@
 import { browserScript, listTargets } from "@openwork/cdp";
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, readdir, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { app as startApp, server as startServer } from "@openwork/env";
@@ -126,45 +126,156 @@ export async function bareFirstRunWorld(seed: Seed, { place }: { place: Place })
   };
 }
 
-export async function localFirstRunWorld(seed: Seed) {
+async function firstRunProvider(seed: Seed, account = false) {
   const prompt = "Create a short welcome checklist for this OpenWork workspace. Use exactly three bullets and mention one thing I can do next.";
   const reply = "Your workspace is ready. You can draft a document next.";
   const den = await seed.den({
-    provision: false,
+    provision: account,
     mocks: { starter: seed.mock({ agentWorkloads: [{ promptMarker: prompt, finalReply: reply, steps: [] }] }) },
   });
   const mock = den.mocks.starter;
-  // Only replace the provider transport. Do not seed a workspace, session,
-  // sign-in, onboarding preference, or selected model: the app must supply them.
-  const app = await seed.desktop({
-    name: "first-run-local",
-    signIn: false,
-    env: {
-      DAYTONA_SECRETS_ENV: "/tmp/openwork-first-run-no-secrets",
-      OPENWORK_DESKTOP_DISTRIBUTION: "public",
-      OPENWORK_EVAL_MODEL: "",
-      VITE_DISABLE_OPENWORK_MODELS: "0",
-      OPENCODE_CONFIG: "",
-      OPENCODE_CONFIG_CONTENT: JSON.stringify({
-        enabled_providers: ["opencode"],
-        small_model: "opencode/big-pickle",
-        provider: {
-          opencode: {
-            npm: "@ai-sdk/openai-compatible",
-            options: { baseURL: `${mock.url}/v1`, apiKey: "sk-eval-fixture" },
-            whitelist: ["big-pickle"],
-            models: {
-              "big-pickle": {
-                name: "Big Pickle",
-                provider: { npm: "@ai-sdk/openai-compatible", api: `${mock.url}/v1` },
-              },
+  const env = {
+    DAYTONA_SECRETS_ENV: "/tmp/openwork-first-run-no-secrets",
+    OPENWORK_DESKTOP_DISTRIBUTION: "public",
+    OPENWORK_EVAL_MODEL: "",
+    VITE_DISABLE_OPENWORK_MODELS: "0",
+    OPENCODE_CONFIG: "",
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      enabled_providers: ["opencode"],
+      small_model: "opencode/big-pickle",
+      provider: {
+        opencode: {
+          npm: "@ai-sdk/openai-compatible",
+          options: { baseURL: `${mock.url}/v1`, apiKey: "sk-eval-fixture" },
+          whitelist: ["big-pickle"],
+          models: {
+            "big-pickle": {
+              name: "Big Pickle",
+              provider: { npm: "@ai-sdk/openai-compatible", api: `${mock.url}/v1` },
             },
           },
         },
-      }),
-    },
-  });
-  return { app, mock, prompt, reply };
+      },
+    }),
+  };
+  return { den, mock, prompt, reply, env };
+}
+
+export async function localFirstRunWorld(seed: Seed) {
+  const setup = await firstRunProvider(seed);
+  // The normal eval launcher supplies an existing empty userData directory:
+  // this deliberately witnesses the legacy empty-profile experience.
+  const app = await seed.desktop({ name: "first-run-local", signIn: false, env: setup.env });
+  return { ...setup, app };
+}
+
+export async function installationFirstRunWorld(seed: Seed, { place }: { place: Place }, cohort: "new" | "legacy-empty" | "legacy-populated" = "new") {
+  const setup = await firstRunProvider(seed, cohort === "new");
+  const proxy = cohort === "new" ? await seed.faultProxy(setup.den) : null;
+  const resetAuthFaults = async () => {
+    if (!proxy) return;
+    await proxy.faults.clear();
+    // Keep both renderer and main on the fixture proxy when they independently
+    // resolve Den's published API, including after cache expiry and relaunch.
+    await proxy.faults.status("/api/runtime-config", 200, { times: 1_000, body: { denApiUrl: proxy.ref.apiUrl } });
+  };
+  const profileDir = seed.tmpPath(`first-run-${cohort}`);
+  const provisioned = place.kind === "daytona" ? await provisionDesktopSandbox({
+    ref: process.env.OPENWORK_EVAL_REF?.trim() || process.env.GITHUB_SHA?.trim() || "dev",
+    name: `first-run-${cohort}`,
+    log: (line) => console.error(`[openwork/testkit] ${line}`),
+  }) : null;
+  const host = provisioned ? daytonaSandbox(provisioned.sandbox) : localHost();
+  const workspacePath = join(profileDir, "existing-workspace");
+  const env = {
+    ...setup.env,
+    // LocalStorage belongs to the renderer origin, not just Electron userData.
+    // Keep Vite's origin stable while the caller-owned profile is relaunched.
+    ...(place.kind === "local" ? { PORT: String(await allocateFreePort()) } : {}),
+    OPENWORK_DESKTOP_BOOTSTRAP_PATH: join(profileDir, "bootstrap.json"),
+    OPENWORK_SERVER_CONFIG: join(profileDir, "server.json"),
+    OPENWORK_SERVER_TOKEN_STORE_PATH: join(profileDir, "server-tokens.json"),
+    OPENWORK_TOKEN_STORE: join(profileDir, "tokens.json"),
+    OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY: "1",
+  };
+  let active: Awaited<ReturnType<typeof desktop>> | null = null;
+  const dispose = async () => {
+    await active?.stop();
+    if (provisioned) {
+      await checkedExec(defaultDaytonaExec, ["exec", provisioned.sandbox, "--", "rm", "-rf", profileDir], "remove owned first-run profile");
+    } else await rm(profileDir, { recursive: true, force: true });
+    await host[Symbol.asyncDispose]();
+    if (provisioned?.created) await deleteSandboxes([provisioned.sandbox]);
+  };
+  try {
+    if (cohort !== "new") {
+      const state = JSON.stringify({ selectedId: cohort === "legacy-populated" ? "existing" : "", workspaces: cohort === "legacy-populated"
+        ? [{ id: "existing", name: "Existing workspace", path: workspacePath, workspaceType: "local" }] : [] });
+      const userData = join(profileDir, "electron-userdata");
+      const statePath = join(userData, "openwork-workspaces.json");
+      if (provisioned) {
+        const encoded = Buffer.from(state).toString("base64");
+        await checkedExec(defaultDaytonaExec, remoteCommand(provisioned.sandbox,
+          `mkdir -p ${shellQuote(userData)} ${shellQuote(workspacePath)} && printf %s ${shellQuote(encoded)} | base64 -d > ${shellQuote(statePath)}`), "seed legacy workspace registry");
+      } else {
+        await mkdir(userData, { recursive: true });
+        await mkdir(workspacePath, { recursive: true });
+        await writeFile(statePath, state);
+      }
+    }
+    active = await desktop({ name: `first-run-${cohort}`, host, profileDir, env, newInstallation: cohort === "new" });
+    const app = active;
+    const bootstrap = (surface = active) => {
+      if (!surface) throw new Error("First-run desktop is stopped");
+      return evalIn(surface, async () => {
+        const config = await window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig");
+        return { requireSignin: config.requireSignin, installationRequiresSignin: config.installationRequiresSignin };
+      }, { awaitPromise: true });
+    };
+    if (proxy) {
+      await resetAuthFaults();
+      // The product has already classified the untouched disk. Only now point
+      // auth at the isolated Den; never seed its installation-access record.
+      await seed.evalIn(app, browserScript(async (ref) => {
+        await window.__OPENWORK_ELECTRON__.invokeDesktop("setDesktopBootstrapConfig", {
+          baseUrl: ref.webUrl, requireSignin: false,
+        });
+      }, [proxy.ref]), { awaitPromise: true });
+      await app.client.send("Page.reload");
+      await waitForBehavior(app, () => location.hash === "#/signin" && document.body.innerText.includes("Sign in"), { timeoutMs: 60_000, label: "fresh sign-in gate" });
+    }
+    return {
+      ...setup, app, proxy, workspacePath, bootstrap, resetAuthFaults,
+      bootstrapPersistence: () => evalIn(app, async () => {
+        const config = await window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig");
+        return { hasApiBaseUrl: Boolean(config.apiBaseUrl), writtenAt: config.writtenAt };
+      }, { awaitPromise: true }),
+      grant: proxy ? await createDesktopHandoffGrant(setup.den.admin) : null,
+      issueGrant: () => createDesktopHandoffGrant(setup.den.admin),
+      async relaunch() {
+        if (!active) throw new Error("First-run desktop is stopped");
+        await active.client.send("Browser.close").catch((error: unknown) => {
+          if (!(error instanceof Error) || !/CDP websocket (?:failed|closed)/i.test(error.message)) throw error;
+        });
+        const deadline = Date.now() + 30_000;
+        let stopped = false;
+        while (!stopped && Date.now() < deadline) {
+          stopped = await fetch(`${active.handle.cdpUrl.replace(/\/$/, "")}/json/version`, {
+            signal: AbortSignal.timeout(1_000),
+          }).then((response) => !response.ok, () => true);
+          if (!stopped) await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+        }
+        if (!stopped) throw new Error("First-run desktop did not shut down cleanly");
+        await active.stop();
+        active = await desktop({ name: `first-run-${cohort}`, host, profileDir, env });
+        return active;
+      },
+      [Symbol.asyncDispose]: dispose,
+    };
+  } catch (error) {
+    await dispose();
+    throw error;
+  }
 }
 
 export async function workspaceWorld(seed: Seed) {

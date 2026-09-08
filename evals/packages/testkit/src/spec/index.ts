@@ -1,5 +1,5 @@
 import { SkipError, unmetNeeds } from "@openwork/env";
-import { fixtureTest, wrapTestApi } from "../fixture.ts";
+import { createFixtureTest, wrapTestApi } from "../fixture.ts";
 import {
   BufferedEvidenceSink,
   SeedChannel,
@@ -78,7 +78,9 @@ async function buildWithTimeout<W>(worldFn: WorldFn<W>, seed: Seed, place: Place
 function world<W>(worldFn: WorldFn<W>, options?: SpecWorldOptions): SpecTestApi<W>;
 function world<W>(worldFn: WorldFn<W>, options: SpecWorldOptions = {}) {
   const scope = options.scope ?? "test";
-  const api = fixtureTest.extend<{
+  // Vitest 3 extends its base context in place, even across describe suites.
+  // Each independent world needs a fresh base, not another extension of a singleton.
+  const api = createFixtureTest().extend<{
     specWorldState: WorldState<W>;
     specRuntimeContext: RuntimeContext<W>;
     world: W;

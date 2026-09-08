@@ -302,6 +302,7 @@ function resolveNukePlan(input) {
   const { env, homedir, platform, paths, userDataPath } = resolved;
   const bootstrapPath = desktopBootstrapPath(env, homedir, platform, paths, userDataPath);
   const preserveBootstrapPath = input.preserveBootstrap === false ? null : bootstrapPath;
+  const installationAccessPath = paths.join(userDataPath, "installation-access.v1.json");
   const legacyBootstrapPath = legacyDesktopBootstrapPath(homedir, platform);
   const serverConfig = openworkServerConfigPath(env, homedir, platform, paths);
   const runtimeDb = runtimeDbPath(env, serverConfig, homedir, paths);
@@ -374,7 +375,8 @@ function resolveNukePlan(input) {
     pendingPath,
     scopeToProfile,
     scopeDeletePaths,
-    preservePaths: uniquePaths([preserveBootstrapPath, paths.join(homedir, ".opencode", "bin")], paths, platform),
+    // Resetting workspace/account preferences must not reclassify an installation.
+    preservePaths: uniquePaths([preserveBootstrapPath, ...(existsSync(installationAccessPath) ? [installationAccessPath] : []), paths.join(homedir, ".opencode", "bin")], paths, platform),
     legacyBootstrapPath: paths.resolve(legacyBootstrapPath) === paths.resolve(bootstrapPath) ? null : legacyBootstrapPath,
     platform,
   };

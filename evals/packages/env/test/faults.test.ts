@@ -57,7 +57,7 @@ test("faultProxy consumes status and latency rules before passing through", asyn
     assert.equal(second.status, 429);
     assert.equal(passed.status, 200);
     assert.equal(passed.headers.get("x-upstream"), "yes");
-    assert.deepEqual(await passed.json(), { method: "GET", path: "/api/den/flaky" });
+    assert.deepEqual(await passed.json(), { method: "GET", path: "/flaky" });
 
     await proxy.faults.latency("/delayed", 25);
     const startedAt = Date.now();
@@ -67,7 +67,7 @@ test("faultProxy consumes status and latency rules before passing through", asyn
     assert.equal((await fetch(`${proxy.ref.webUrl}/delayed`)).status, 200);
     const behaviorResult = await denFetch(proxy.ref, "/behavior");
     assert.equal(behaviorResult.response.status, 200);
-    assert.deepEqual(behaviorResult.body, { method: "GET", path: "/api/den/behavior" });
+    assert.deepEqual(behaviorResult.body, { method: "GET", path: "/behavior" });
 
     assert.deepEqual(
       proxy.requests.map(({ path, status, faulted }) => ({ path, status, faulted })),
@@ -105,6 +105,31 @@ test("faultProxy clear removes pending rules", async () => {
     assert.equal(proxy.requests[0]?.faulted, false);
   } finally {
     await close(upstream);
+  }
+});
+
+test("faultProxy routes API calls directly without following Den Web redirects", async () => {
+  let webRequests = 0;
+  const web = createServer((_request, response) => {
+    webRequests++;
+    response.writeHead(307, { location: "https://redirect.invalid/v1/me" });
+    response.end();
+  });
+  const api = createServer((request, response) => {
+    assert.equal(request.url, "/v1/me?include=org");
+    assert.equal(request.headers.authorization, "Bearer fixture-session");
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ user: { id: "member", email: "member@openwork.test" } }));
+  });
+  const [webPort, apiPort] = await Promise.all([listen(web), listen(api)]);
+  try {
+    await using proxy = await faultProxy({ webUrl: `http://127.0.0.1:${webPort}`, apiUrl: `http://127.0.0.1:${apiPort}` });
+    const response = await fetch(`${proxy.ref.apiUrl}/v1/me?include=org`, { redirect: "error", headers: { Authorization: "Bearer fixture-session" } });
+    assert.equal(response.status, 200);
+    assert.equal(webRequests, 0);
+    assert.deepEqual(await response.json(), { user: { id: "member", email: "member@openwork.test" } });
+  } finally {
+    await Promise.all([close(web), close(api)]);
   }
 });
 

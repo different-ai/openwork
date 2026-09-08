@@ -199,6 +199,8 @@ export type DesktopBootstrapConfig = {
   baseUrl: string;
   apiBaseUrl?: string | null;
   requireSignin: boolean;
+  /** Main-owned public installation cohort; never accepted from bootstrap writes. */
+  readonly installationRequiresSignin?: boolean;
   requireActivation?: boolean;
   brandAppName?: string | null;
   brandLogoUrl?: string | null;
@@ -227,6 +229,11 @@ export type DesktopBootstrapConfig = {
     denBaseUrl: string;
   } | null;
 };
+
+export type InstallationSessionResult =
+  | { status: "signed_in"; user: { id: string; email: string; name: string | null } }
+  | { status: "signed_out" }
+  | { status: "unavailable"; reason: "runtime_config_unavailable" | "session_request_failed" | "session_http_error" | "session_payload_invalid" };
 
 export type OpenworkDockerCleanupResult = {
   candidates: string[];
@@ -467,6 +474,8 @@ export type DesktopCommandMap = {
     result: { enabled: boolean };
   };
   desktopSentryClearSession: { args: []; result: { enabled: boolean } };
+  /** sourceBaseUrl binds a non-null token to the configured web origin, not an API endpoint. */
+  installationSessionVerify: { args: [token: string | null, sourceBaseUrl?: string]; result: InstallationSessionResult };
   desktopIntegrationStatus: { args: []; result: DesktopIntegrationStatus };
   desktopIntegrationInstall: {
     args: [options?: { useExternalLauncher?: boolean }];

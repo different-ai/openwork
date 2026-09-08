@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 const port = Number(process.env.PORT);
 const upstream = new URL(process.env.UPSTREAM);
+const apiUpstream = new URL(process.env.API_UPSTREAM);
 const issuer = process.env.ISSUER;
 const controlToken = process.env.CONTROL_TOKEN;
 const rules = [];
@@ -90,15 +91,22 @@ function forward(incoming, client, faulted) {
   // steer this fetch at an arbitrary host, because new URL(absolute, base)
   // discards the base.
   const requested = new URL(path, "http://request-target.invalid");
+  // Den Web redirects /api/den rather than proxying it. The fixture must
+  // reach the actual API so strict clients need not follow bearer redirects.
+  const apiRequest = /^\/api\/den(?:\/|$)/.test(requested.pathname);
+  const destination = apiRequest ? apiUpstream : upstream;
+  const upstreamPath = apiRequest
+    ? apiUpstream.pathname.replace(/\/$/, "") + (requested.pathname.slice("/api/den".length) || "/")
+    : requested.pathname;
   const options = {
-    protocol: upstream.protocol,
-    hostname: upstream.hostname,
-    port: upstream.port,
-    path: requested.pathname + requested.search,
+    protocol: destination.protocol,
+    hostname: destination.hostname,
+    port: destination.port,
+    path: upstreamPath + requested.search,
     method: incoming.method ?? "GET",
-    headers: forwardedHeaders(incoming.headers, upstream.host),
+    headers: forwardedHeaders(incoming.headers, destination.host),
   };
-  const outbound = upstream.protocol === "https:"
+  const outbound = destination.protocol === "https:"
     ? httpsRequest(options, onResponse)
     : httpRequest(options, onResponse);
   outbound.on("error", (error) => {
