@@ -8,6 +8,11 @@ test("app boots with a control route and meaningful visible content", async ({ w
   expect(await probe.hash()).toBeTruthy();
   expect((await probe.text()).trim().length).toBeGreaterThan(40);
   if (world.packaged) {
+    await probe.eventually(() => probe.hash(), {
+      within: 30_000,
+      label: "packaged startup selects its empty workspace route",
+      until: (hash) => /^#\/workspace\/[^/]+\/session$/.test(hash),
+    });
     await user.see("composer", { editable: true, text: "" });
     expect(await world.packagedRuntime()).toEqual({
       bridge: true, protocol: "file:", health: 200, emptySession: true, signedOut: true, onboarding: false, crash: false,
