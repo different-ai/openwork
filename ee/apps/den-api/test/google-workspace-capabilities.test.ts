@@ -2093,7 +2093,7 @@ test("no connected account returns needs_connection", async () => {
   const body: unknown = await response.json()
   expect(body).toEqual({
     error: "needs_connection",
-    message: "Connect your Google account first: open Settings > Connect and use Connect your account on the Google Workspace row, or connect from the OpenWork Cloud dashboard.",
+    message: "Connect your Google account first: open Settings > Library > Connections and connect the Google Workspace connection, or use OpenWork Cloud > Your Connections.",
   })
 })
 
