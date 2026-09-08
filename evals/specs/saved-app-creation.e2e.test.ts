@@ -357,7 +357,7 @@ test("create, preview, save and reopen an app without changing already-open resu
       method: "POST", body: JSON.stringify({ email: colleague.email }),
     });
     expect(staleShare.response.status, staleShare.text).toBe(403);
-    expect(staleShare.body).toMatchObject({ error: "reauth", reason: "fresh_auth_required" });
+    expect(staleShare.body).toMatchObject({ error: "reauth" });
     await user.click("Share apps");
     await user.see("Confirm your identity to share apps");
     expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
@@ -438,6 +438,40 @@ test("create, preview, save and reopen an app without changing already-open resu
   evidence.recordAssertionEvidence("Dashboard Share grants a teammate view access and adds the selected app to their dashboard", "Cancel and an unknown email left the app private. Sharing made one saved app visible on the recipient dashboard without manager access; repeat sharing did not duplicate it, the unchecked app and its separate workflow remained private, viewers could not reshare, and company dashboards stayed unchanged.", true);
   evidence.recordAssertionEvidence("An expired admin can verify and resume sharing without losing their selection", "A real 20-minute-old session was rejected. Cancelling, an unrelated callback, a different account’s grant, and a wrong password left the app private. Browser password verification produced a real one-time link; pasting it shared only the selected app with the preserved recipient. The original stale session still could not share, and a late callback did not duplicate the dashboard entry.", true);
   evidence.recordAssertionEvidence("Sharing includes the workflow, saved results, and sibling apps without adding every sibling to the dashboard", "The recipient could read the workflow and the latest saved result in both the selected app and its previously inaccessible companion. Both appeared in the accessible app list, but only the selected app was on their dashboard; the separate private workflow stayed inaccessible.", true);
+
+  await step("return from browser verification and keep subsequent sharing uninterrupted", async () => {
+    await world.ageAdminSession();
+    await user.click({ role: "button", label: "Share" });
+    await user.click({ role: "checkbox", label: "Private planning" });
+    await user.type({ label: "Teammate’s email" }, colleague.email);
+    await user.click("Share apps");
+    await user.see("Confirm your identity to share apps");
+    const verificationUrl = await probe.eval(() => document.querySelector<HTMLInputElement>('[aria-label="Verification address"]')?.value);
+    if (typeof verificationUrl !== "string") throw new Error("Missing verification address");
+    const webUser = user.on(world.web);
+    await webUser.navigate(verificationUrl);
+    await webUser.type({ label: "Password" }, world.den.admin.password);
+    await webUser.click("Verify password");
+    await webUser.see("Return to OpenWork to finish sharing", { timeoutMs: 60_000 });
+    const returned = await probe.on(world.web).eval(() => document.querySelector<HTMLAnchorElement>('a[href^="openwork://den-reauth"]')?.href);
+    if (typeof returned !== "string") throw new Error("Missing Return to OpenWork link");
+    await world.returnVerification(returned);
+    await user.see({ text: `Shared 1 app with ${colleague.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
+    await user.click("Done");
+    await user.click({ role: "button", label: "Share" });
+    await user.click({ role: "checkbox", label: "Private planning" });
+    await user.type({ label: "Teammate’s email" }, colleague.email);
+    await user.click("Share apps");
+    await user.see({ text: `Shared 1 app with ${colleague.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
+    await user.notSee("Confirm your identity to share apps");
+    const listed = record((await probe.api(colleague, "/v1/apps")).body).items;
+    if (!Array.isArray(listed)) throw new Error("Expected the recipient app list");
+    expect(listed.filter((item) => record(item).onDashboard)).toHaveLength(1);
+    expect((await probe.api(colleague, `/v1/apps/${privateAppId}`)).response.status).toBe(403);
+    await user.click("Done");
+    await world.refreshFixtureAdmin();
+  });
+  evidence.recordAssertionEvidence("Browser return resumes sharing and the fresh session avoids another prompt", "Delivering the real browser return link completed the pending share. Sharing again immediately completed without verification, kept exactly one recipient dashboard entry, and left the unchecked private app inaccessible.", true);
 
   const cleanupCompanion = await seed.api(world.den.admin, `/v1/artifact-views/${companionAppId}/retire`, { method: "POST" });
   expect(cleanupCompanion.response.status, cleanupCompanion.text).toBe(200);

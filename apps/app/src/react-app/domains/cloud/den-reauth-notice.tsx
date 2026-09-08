@@ -36,6 +36,7 @@ export function DenReauthNotice({ onVerified, onCancel }: {
 
   async function finish(value: string) {
     if (exchanging.current || !active.current) return;
+    if (!user) { setError("Your account could not be confirmed. Cancel and try again."); return; }
     let returned: URL;
     try { returned = new URL(value.trim()); }
     catch { setError("Paste the verification link from your browser."); return; }
@@ -59,8 +60,8 @@ export function DenReauthNotice({ onVerified, onCancel }: {
       ensureCurrent();
       // Never send a grant to a destination supplied by a link.
       const exchange = await createDenClient(settings).exchangeDesktopHandoff(grant);
-      if (!exchange.token || !user || exchange.user?.id !== user.id) {
-        throw new Error(`Sign in as ${user?.email} to confirm this share.`);
+      if (!exchange.token || exchange.user?.id !== user.id) {
+        throw new Error(`Sign in as ${user.email} to confirm this share.`);
       }
       const client = createDenClient({ ...settings, token: exchange.token });
       const verifiedUser = await client.getSession();

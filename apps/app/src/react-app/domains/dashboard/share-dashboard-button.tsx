@@ -13,7 +13,7 @@ export function ShareDashboardButton({ apps }: { apps: SavedAppSummary[] }) {
   const [pending, setPending] = useState(false);
   return <Dialog open={open} onOpenChange={(next) => { if (!pending) setOpen(next); }}>
     <Button variant="outline" onClick={() => setOpen(true)}><Share2 className="size-4" />Share</Button>
-    {open ? <DialogContent>
+    {open ? <DialogContent className="max-h-[90dvh] overflow-y-auto">
       <DialogHeader>
         <DialogTitle>Share your dashboard</DialogTitle>
         <DialogDescription>Choose apps to add to a teammate’s dashboard. They must belong to your organization.</DialogDescription>

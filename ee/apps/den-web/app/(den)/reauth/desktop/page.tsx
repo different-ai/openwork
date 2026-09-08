@@ -38,7 +38,7 @@ function DesktopReauth() {
     <div className="den-frame grid w-full max-w-[520px] gap-4 p-6">
       <h1 className="den-title-lg">{link ? "Return to OpenWork to finish sharing" : "Confirm your identity to share apps"}</h1>
       {!valid ? <p>Open verification from the Share dialog in OpenWork to start a new security check.</p>
-        : cancelled ? <><p>Verification cancelled. Your apps have not been shared by this security check.</p><DenButton onClick={() => setCancelled(false)}>Try verification again</DenButton></>
+        : cancelled ? <><p>Verification cancelled. Return to the Share dialog in OpenWork.</p><DenButton onClick={() => setCancelled(false)}>Try verification again</DenButton></>
         : link ? <>
           <p>Return to the app to finish your pending share. If it doesn’t open, copy this link and paste it into the Share dialog.</p>
           <a className={buttonVariants()} href={link}>Return to OpenWork</a>
