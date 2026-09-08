@@ -66,14 +66,21 @@ test("SCIM projection ownership is atomic and detached manual teams reject later
     const [[databaseVersion]] = await db.query('SELECT VERSION() AS version');
     // Daytona's server snapshot uses MariaDB; retain the same wait-edge proof
     // using its InnoDB catalog rather than MySQL 8's performance-schema catalog.
-    const waitQuery = databaseVersion.version.includes('MariaDB')
-      ? 'SELECT r.trx_mysql_thread_id AS connectionId, r.trx_query AS query FROM information_schema.INNODB_LOCK_WAITS w JOIN information_schema.INNODB_TRX r ON r.trx_id = w.requesting_trx_id JOIN information_schema.INNODB_TRX b ON b.trx_id = w.blocking_trx_id WHERE b.trx_mysql_thread_id = ?'
-      : 'SELECT r.PROCESSLIST_ID AS connectionId, r.PROCESSLIST_INFO AS query FROM performance_schema.data_lock_waits w JOIN performance_schema.threads r ON r.THREAD_ID = w.REQUESTING_THREAD_ID JOIN performance_schema.threads b ON b.THREAD_ID = w.BLOCKING_THREAD_ID WHERE b.PROCESSLIST_ID = ?';
     const waitForBlocker = async (id) => {
       const deadline = Date.now() + 10000;
       while (Date.now() < deadline) {
-        const [rows] = await db.execute(waitQuery, [id]);
-        if (rows.length) return rows[0];
+        if (databaseVersion.version.includes('MariaDB')) {
+          // Read each live catalog once: self-joining INNODB_TRX can miss edges.
+          const [transactions] = await db.query('SELECT trx_id, trx_mysql_thread_id, trx_query FROM information_schema.INNODB_TRX');
+          const [waits] = await db.query('SELECT requesting_trx_id, blocking_trx_id FROM information_schema.INNODB_LOCK_WAITS');
+          const blocker = transactions.find((row) => Number(row.trx_mysql_thread_id) === Number(id));
+          const edge = blocker && waits.find((row) => String(row.blocking_trx_id) === String(blocker.trx_id));
+          const requester = edge && transactions.find((row) => String(row.trx_id) === String(edge.requesting_trx_id));
+          if (requester) return { connectionId: requester.trx_mysql_thread_id, query: requester.trx_query };
+        } else {
+          const [rows] = await db.execute('SELECT r.PROCESSLIST_ID AS connectionId, r.PROCESSLIST_INFO AS query FROM performance_schema.data_lock_waits w JOIN performance_schema.threads r ON r.THREAD_ID = w.REQUESTING_THREAD_ID JOIN performance_schema.threads b ON b.THREAD_ID = w.BLOCKING_THREAD_ID WHERE b.PROCESSLIST_ID = ?', [id]);
+          if (rows.length) return rows[0];
+        }
         await delay(25);
       }
       throw new Error('Expected blocked transaction behind connection ' + id);
