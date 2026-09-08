@@ -1,8 +1,8 @@
 # Help Translate OpenWork
 
-We are actively looking for contributors to translate OpenWork to your own native language.
+We are actively looking for contributors to translate OpenWork into your own native language.
 
-## README translations
+## README Translations
 
 Translated README variants live in `translated_readmes/`, so adding a new language only touches the index there plus the supported languages list in the root `README.md`.
 
@@ -14,7 +14,7 @@ If you want to add a new README language:
 4. Add your language name to the supported languages list at the bottom of `README.md`.
 5. Open a PR.
 
-## App UI translations (i18n)
+## App UI Translations (i18n)
 
 You can also help translate the app UI via:
 
