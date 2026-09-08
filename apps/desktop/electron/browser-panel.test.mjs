@@ -953,6 +953,9 @@ test("denied, canceled, closed and background task opens never load and release 
     if (end === "close") invoke("openwork:browser:closeTab", tab.id);
     if (end === "cancel") controller.abort();
     if (end === "background") {
+      assert.equal(views()[0].webContents.debugger.isAttached(), false, "an uninitialized consent tab must not enter background emulation");
+      assert.deepEqual(views()[0].webContents.debugger.commands, []);
+      assert.equal(invoke("openwork:browser:state").backgroundWindowCount, 0, "pending consent needs no hidden native host");
       assert.equal(approve(true, tab.id), false, "another visible conversation cannot approve");
       assert.ok(invoke("openwork:browser:state").tabs[0].browserApproval);
       controller.abort();

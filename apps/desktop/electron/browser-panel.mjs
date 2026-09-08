@@ -236,7 +236,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   async function openBrowserTab(url, ownerSessionId, signal = undefined, beforeLoad = undefined) {
     signal?.throwIfAborted();
-    const tab = createBrowserTab("about:blank", { select: true, initializeBlank: false, ownerSessionId, automationProtected: true });
+    const tab = createBrowserTab("about:blank", { select: true, initializeBlank: false, deferBackground: true, ownerSessionId, automationProtected: true });
     const stop = () => {
       if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop();
       closeBrowserTab(tab.tabId);
@@ -246,7 +246,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       await beforeLoad?.(tab);
       signal?.throwIfAborted();
       if (getBrowserTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed() || registry.ownerOf(tab.tabId) !== ownerSessionId) throw new BrowserTaskError("tab_closed", "The browser tab closed or changed owner before navigation.");
-      await tab.view.webContents.loadURL(url); signal?.throwIfAborted(); return tab;
+      await tab.view.webContents.loadURL(url); signal?.throwIfAborted();
+      tab.deferBackground = false;
+      applySurfacing();
+      return tab;
     }
     catch (error) {
       // No usable handle was returned; retries must not retain abandoned pages.
@@ -771,7 +774,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     callback(browserProxy.username, browserProxy.password);
   });
 
-  function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, ownerSessionId = null, restoreTabId = null, automationProtected = false, contentsOptions = /** @type {import("electron").WebContentsViewConstructorOptions} */ ({}) } = {}) {
+  function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, deferBackground = false, ownerSessionId = null, restoreTabId = null, automationProtected = false, contentsOptions = /** @type {import("electron").WebContentsViewConstructorOptions} */ ({}) } = {}) {
     // Check synchronously before creating a WebContentsView, including pending
     // opens, popups, transcript links and the tab-strip button.
     if (browserTabs.size >= MAX_BROWSER_TABS) {
@@ -793,6 +796,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     });
     const tab = {
       tabId, view, favicon: null, background: false, automationProtected,
+      deferBackground,
       operation: false, suspending: false, mediaPlaying: false, downloads: new Set(),
       domReady: false, emulation: Promise.resolve(),
       /** @type {((error: Error | null) => void) | null} */
@@ -971,7 +975,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   // contentView paints above OpenWork, regardless of its child index or bounds.
   // Moving the same view preserves the document and CDP target.
   function enterBackgroundMode(tab) {
-    if (!tab || tab.background) return;
+    // A task's blank consent tab has no document to paint or observe. Attaching
+    // its uninitialized widget to a hidden host can crash Electron on Linux.
+    // Keep it detached until its approved first navigation has completed.
+    if (!tab || tab.background || tab.deferBackground) return;
     const webContents = tab.view.webContents;
     if (webContents.isDestroyed()) return;
     tab.background = true;
