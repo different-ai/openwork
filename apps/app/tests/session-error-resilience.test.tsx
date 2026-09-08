@@ -307,8 +307,6 @@ describe("session error resilience", () => {
     })
 
     expect(html).toContain('data-testid="session-error-resume"')
-    expect(html).not.toContain('data-testid="session-error-interruption-warning"')
-    expect(html).not.toContain("Output and files already produced are kept")
   })
 
   test("hides Resume for errors that cannot be resumed", () => {

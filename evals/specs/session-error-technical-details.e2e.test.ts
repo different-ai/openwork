@@ -71,19 +71,6 @@ test("session error cards expose provider diagnostics only in Developer mode", a
     await user.notSee({ text: DEBUG_PANEL_TITLE });
   });
 
-  await step("an incomplete provider response shows safety guidance alongside Resume", async () => {
-    await world.seedInterruption("provider-incomplete");
-    await user.see({ text: "The model response was interrupted" });
-    await user.see({ testId: "session-error-interruption-warning", text: /Review them before continuing/ });
-    await user.see({ testId: "session-error-resume", text: "Resume" });
-    await user.notSee(detailsToggle);
-    await user.notSee({ text: /upstream_incomplete/ });
-    await world.seedInterruption("aborted");
-    await user.see({ text: "Task interrupted" });
-    await user.see({ testId: "session-error-resume", text: "Resume" });
-    await user.notSee({ testId: "session-error-interruption-warning" });
-  });
-
   const storageErrors: Array<"disk-full" | "database-error"> = ["disk-full", "database-error"];
   for (const kind of storageErrors) {
     await step(`${kind} shows recovery guidance and keeps the stack trace in Developer mode`, async () => {

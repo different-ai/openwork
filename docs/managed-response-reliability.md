@@ -49,9 +49,10 @@ actual completion/cancellation/failure outcome. Observer failures cannot interru
 delivery. First-output latency is recorded when output is emitted, even if a later
 frame in the same chunk is malformed.
 
-The recovery UI shows the partial-work warning alongside Resume for managed
-interruptions. Ordinary user aborts keep their quiet presentation. Resume remains
-an explicit user action; the gateway does not replay work.
+The existing recovery UI on `dev` shows the partial-work warning alongside Resume
+for managed interruptions. Ordinary user aborts keep their quiet presentation.
+This patch keeps its errors classifiable by that UI without changing the renderer
+or picker. Resume remains an explicit user action; the gateway does not replay work.
 
 ## Unchanged boundaries
 
@@ -70,9 +71,8 @@ SQL only for authentication/admission. It checks success, fragmentation, termina
 length responses, choice handling, errors, cancellation, heartbeats, request
 preservation and transcript readback. No billing or catalog-delivery claim is made.
 
-`pnpm evals:e2e session-error-technical-details` extends the existing real UI
-journey to verify visible warning/Resume behavior and unchanged ordinary aborts.
-The existing packaged Desktop smoke remains the packaging gate. Supporting proxy
-and rendered component tests do not replace those journey and packaging checks.
+The existing `session-error-technical-details` UI journey and packaged Desktop
+smoke remain unchanged; no new renderer, catalog or packaged-server import is added.
+Supporting proxy tests do not replace the real gateway/engine journey.
 Live provider performance, account provisioning and production usage broadcasts
 are not certified by deterministic fixtures.

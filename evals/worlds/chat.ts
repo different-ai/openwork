@@ -1487,7 +1487,6 @@ export async function sessionErrorCard(seed: Seed) {
   return {
     app, workspace, session,
     seedStorageError: (kind: "disk-full" | "database-error", surface: "transcript" | "banner" = "transcript") => arrangeControl(seed, app, "eval.session_error.seed", { kind, surface }),
-    seedInterruption: (kind: "provider-incomplete" | "aborted") => arrangeControl(seed, app, "eval.session_error.seed", { kind }),
   };
 }
 
