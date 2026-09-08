@@ -1112,9 +1112,10 @@ test("takeover cancels pending navigation, permits manual browsing without grant
 });
 
 test("a request already waiting on managed policy cannot become manual traffic after takeover", async () => {
-  let release;
+  /** @type {() => void} */
+  let release = () => assert.fail("The managed-policy request has not reached its wait point.");
   const { invoke, panel, views, approve } = createPanel(async ({ url, method }) => {
-    if (method && url.endsWith("/held")) await new Promise((resolve) => { release = resolve; });
+    if (method && url.endsWith("/held")) await new Promise((resolve) => { release = () => resolve(undefined); });
   });
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");
   const opening = panel.browserTask({ sessionId: "A", operation: "open", args: { url: "https://owned.example/" } });
@@ -1131,9 +1132,11 @@ test("a request already waiting on managed policy cannot become manual traffic a
 });
 
 test("hiding a tab during post-acceptance policy checking withholds navigation and its grant", async () => {
-  let hold = false, release;
+  let hold = false;
+  /** @type {() => void} */
+  let release = () => assert.fail("The post-acceptance policy check has not reached its wait point.");
   const { invoke, panel, views, approve } = createPanel(async () => {
-    if (hold) await new Promise((resolve) => { release = resolve; });
+    if (hold) await new Promise((resolve) => { release = () => resolve(undefined); });
   });
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");
   const opening = panel.browserTask({ sessionId: "A", operation: "open", args: { url: "http://localhost:4173/" } });
@@ -1237,7 +1240,8 @@ test("parent observations preserve popup approval and grants, but deliberate lif
     await flush();
     const canceledApprovalId = invoke("openwork:browser:state").tabs.at(-1).browserApproval.id;
     if (ending === "cancel") {
-      let finish;
+      /** @type {() => void} */
+      let finish = () => assert.fail("The observation has not reached its wait point.");
       parent.executeJavaScriptInIsolatedWorld = () => new Promise((resolve) => { finish = () => resolve(page); });
       const controller = new AbortController();
       const inFlight = observe({ signal: controller.signal });
