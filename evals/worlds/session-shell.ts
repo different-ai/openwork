@@ -2,6 +2,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
 import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
 import type { Seed } from "@openwork/env";
+import { queuedDrainAway } from "./chat.ts";
 
 const stormProviderId = "active-session-storm-mock";
 const stormModelId = "mock-agent-workload-model";
@@ -293,13 +294,137 @@ export async function commandPaletteSearch(seed: Seed) {
 }
 
 export async function archiveSessions(seed: Seed) {
-  const stamp = `${Date.now()}-${process.pid}`;
-  const app = await seed.desktop({ name: "session-archive-button" });
-  const workspaceB = await seed.workspace(app, `/tmp/openwork-session-archive-${stamp}-b`);
-  const [b1] = await seed.sessions(app, [`Archive B1 ${stamp}`]);
-  const workspaceA = await additionalWorkspace(seed, app, `/tmp/openwork-session-archive-${stamp}-a`);
-  const [a1, a2] = await seed.sessions(app, [`Archive A1 ${stamp}`, `Archive A2 ${stamp}`]);
+  await using resources = new AsyncDisposableStack();
+  const held = resources.use(await queuedDrainAway(seed, { "archive-witness": { template: "Archive command witness task." } }));
+  const { app, workspaceA } = held;
+  const a1 = held.sessionA;
+  const [a2] = await seed.sessions(app, ["Archive idle neighbor"]);
+  const workspaceB = await additionalWorkspace(seed, app, held.workspacePathB);
+  const [b1] = await seed.sessions(app, ["Archive other workspace"]);
   if (!a1 || !a2 || !b1) throw new Error("Archive world did not create all three sessions.");
+  const child = await seed.evalIn(app, `async (workspaceId, parentID) => {
+    const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    const response = await fetch(info.baseUrl.replace(/\\/+$/, "") + "/workspace/" + workspaceId + "/opencode/session", {
+      method: "POST", headers: { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken), "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Archive child task", parentID }), signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw new Error("Could not seed child: " + response.status);
+    const session = await response.json();
+    return { sessionId: session.id, title: session.title };
+  }`, { args: [workspaceA.workspaceId, a1.sessionId], awaitPromise: true, timeoutMs: 20_000 });
+  if (!isRecord(child) || typeof child.sessionId !== "string" || typeof child.title !== "string") throw new Error("Missing child session");
+
+  // Faults live at the HTTP boundary, not in product stores or archive code.
+  // The local desktop's loopback OpenCode requests use the renderer fetch.
+  await seed.evalIn(app, `(() => {
+    const original = window.fetch.bind(window);
+    const state = { mode: "none", sessionId: "", requests: [], release: null };
+    window.__archiveNetwork = state;
+    window.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      const match = url.pathname.match(/\\/session\\/([^/]+)\\/(abort|prompt_async|command|shell)$/);
+      const metadata = request.method === "PATCH" ? url.pathname.match(/\\/session\\/([^/]+)$/) : null;
+      const record = match && request.method === "POST"
+        ? { path: url.pathname, sessionId: match[1], action: match[2], result: null }
+        : metadata ? { path: url.pathname, sessionId: metadata[1], action: "metadata", result: null } : null;
+      if (record) state.requests.push(record);
+      const target = record?.sessionId === state.sessionId;
+      if (record?.action === "metadata" && target && state.mode === "hold_archive") {
+        await new Promise(resolve => { state.release = resolve; });
+      }
+      if (record?.action === "command" && target && state.mode === "accepted_command") {
+        record.result = "accepted, not dispatched";
+        state.release = async () => { const response = await original(request); record.result = response.status; };
+        return Response.json({ ok: true, accepted: true });
+      }
+      if (record?.action === "prompt_async" && target && state.mode === "prompt_error") {
+        record.result = 503;
+        return Response.json({ error: "Injected send failure" }, { status: 503 });
+      }
+      if (record?.action === "prompt_async" && target && state.mode === "hold_prompt") {
+        await new Promise(resolve => { state.release = resolve; });
+        record.result = "late send failure";
+        throw new TypeError("Injected delayed queue send failure");
+      }
+      if (record?.action === "abort" && target && state.mode !== "none") {
+        const mode = state.mode;
+        if (mode === "hold" || mode === "timeout") {
+          await new Promise((resolve, reject) => {
+            state.release = resolve;
+            request.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+          });
+        } else {
+          record.result = mode;
+          if (mode === "error") throw new TypeError("Injected abort connection failure");
+          return Response.json(mode === "unconfirmed");
+        }
+      }
+      if (state.mode === "retry" && url.pathname.endsWith("/session/status")) {
+        return Response.json({ [state.sessionId]: { type: "retry", attempt: 1, message: "Retrying", next: Date.now() + 60000 } });
+      }
+      if ((state.mode === "permission" || state.mode === "question") && url.pathname.endsWith("/opencode/" + state.mode)) {
+        return Response.json([{ id: "archive-pending-request", sessionID: state.sessionId,
+          permission: "bash", patterns: ["*"], metadata: {}, always: [],
+          questions: [{ question: "Continue?", header: "Continue", options: [{ label: "Yes", description: "Continue" }] }],
+        }]);
+      }
+      const response = await original(request);
+      if (record) record.result = response.status;
+      return response;
+    };
+    return true;
+  })()`);
+
+  async function networkFault(mode: "none" | "false" | "error" | "timeout" | "unconfirmed" | "hold" | "retry" | "permission" | "question" | "prompt_error" | "hold_prompt" | "accepted_command" | "hold_archive", sessionId: string) {
+    await seed.evalIn(app, `(mode, sessionId) => {
+      window.__archiveNetwork.mode = mode;
+      window.__archiveNetwork.sessionId = sessionId;
+      return true;
+    }`, { args: [mode, sessionId] });
+  }
+
+  async function facts() {
+    const result = await seed.evalIn(app, `async (workspaceIds) => {
+      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+      const headers = { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken) };
+      const sessions = [];
+      for (const workspaceId of JSON.parse(workspaceIds)) {
+        const base = info.baseUrl.replace(/\\/+$/, "") + "/workspace/" + workspaceId + "/opencode";
+        const [list, statuses] = await Promise.all([
+          fetch(base + "/session?limit=200", { headers, signal: AbortSignal.timeout(10000) }).then(r => { if (!r.ok) throw new Error("Session list: " + r.status); return r.json(); }),
+          fetch(base + "/session/status", { headers, signal: AbortSignal.timeout(10000) }).then(r => { if (!r.ok) throw new Error("Session status: " + r.status); return r.json(); }),
+        ]);
+        for (const session of list) sessions.push({ workspaceId, sessionId: session.id,
+          archived: (session.time?.archived ?? 0) > 0, status: statuses[session.id]?.type ?? "idle" });
+      }
+      return {
+        sessions,
+        requests: window.__archiveNetwork.requests,
+        surfaces: [...document.querySelectorAll("[data-session-surface-id]")].map(el => el.getAttribute("data-session-surface-id")),
+        activeRows: [...document.querySelectorAll("[data-sidebar-workspace-id] [data-sidebar-session-id]")].map(el => el.getAttribute("data-sidebar-session-id")),
+        tabs: window.__openworkControl.context().conversations.tabs.map(tab => tab.sessionId),
+        memory: JSON.parse(localStorage.getItem("openwork.react.sessionByWorkspace") ?? "{}"),
+      };
+    }`, { args: [JSON.stringify([workspaceA.workspaceId, workspaceB.workspaceId])], awaitPromise: true, timeoutMs: 30_000 });
+    if (!isRecord(result) || !Array.isArray(result.sessions) || !Array.isArray(result.requests)
+      || !Array.isArray(result.surfaces) || !Array.isArray(result.activeRows) || !Array.isArray(result.tabs) || !isRecord(result.memory)) {
+      throw new Error(`Malformed archive facts: ${JSON.stringify(result)}`);
+    }
+    const sessions = result.sessions.map((entry) => {
+      if (!isRecord(entry) || typeof entry.workspaceId !== "string" || typeof entry.sessionId !== "string"
+        || typeof entry.archived !== "boolean" || typeof entry.status !== "string") throw new Error("Malformed archive session");
+      return { workspaceId: entry.workspaceId, sessionId: entry.sessionId, archived: entry.archived, status: entry.status };
+    });
+    const requests = result.requests.map((entry) => {
+      if (!isRecord(entry) || typeof entry.path !== "string" || typeof entry.sessionId !== "string"
+        || typeof entry.action !== "string") throw new Error("Malformed archive request");
+      return { path: entry.path, sessionId: entry.sessionId, action: entry.action, result: entry.result };
+    });
+    return { sessions, requests, surfaces: result.surfaces, activeRows: result.activeRows, tabs: result.tabs, memory: result.memory };
+  }
+
+  const lifetime = resources.move();
   return {
     app,
     workspaceA,
@@ -307,6 +432,24 @@ export async function archiveSessions(seed: Seed) {
     a1: { ...a1, workspaceId: workspaceA.workspaceId },
     a2: { ...a2, workspaceId: workspaceA.workspaceId },
     b1: { ...b1, workspaceId: workspaceB.workspaceId },
+    child: { sessionId: child.sessionId, title: child.title, workspaceId: workspaceA.workspaceId },
+    workspaceBName: held.workspacePathB.split("/").at(-1) ?? "",
+    facts,
+    networkFault,
+    releaseAbort: () => seed.evalIn(app, "window.__archiveNetwork.release(); true"),
+    requests: held.requests,
+    releaseRun: held.releaseFirst,
+    holdRun: held.holdFirst,
+    transcript: (session: { workspaceId: string; sessionId: string }) => seed.evalIn(app, `async (workspaceId, sessionId) => {
+      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+      const response = await fetch(info.baseUrl.replace(/\\/+$/, "") + "/workspace/" + workspaceId + "/opencode/session/" + sessionId + "/message", {
+        headers: { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken) }, signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok) throw new Error("Could not read transcript: " + response.status);
+      const messages = await response.json();
+      return messages.map(({ info, parts }) => ({ id: info.id, role: info.role, text: parts.filter(p => p.type === "text").map(p => p.text).join("\\n") }));
+    }`, { args: [session.workspaceId, session.sessionId], awaitPromise: true, timeoutMs: 20_000 }),
+    async [Symbol.asyncDispose]() { await lifetime.disposeAsync(); },
   };
 }
 

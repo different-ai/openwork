@@ -169,6 +169,7 @@ type WorkbenchStore = WorkbenchSnapshot & {
   sync: (input: SyncWorkbenchInput) => void;
   openTab: (tab: WorkbenchSessionTab) => void;
   closeTab: (tab: Pick<OpenworkSessionRef, "workspaceId" | "sessionId">) => void;
+  archiveTab: (tab: Pick<OpenworkSessionRef, "workspaceId" | "sessionId">) => void;
   setSplit: (session: Pick<OpenworkSessionRef, "workspaceId" | "sessionId"> | null) => void;
   focusPane: (pane: WorkbenchPane) => void;
 };
@@ -178,6 +179,16 @@ export const useWorkbenchStore = create<WorkbenchStore>((set) => ({
   sync: (input) => set((state) => syncWorkbenchSnapshot(state, input)),
   openTab: (tab) => set((state) => openWorkbenchTab(state, tab)),
   closeTab: (tab) => set((state) => closeWorkbenchTab(state, tab)),
+  archiveTab: (tab) => set((state) => {
+    const closesPrimary = isSameWorkbenchSession(state.primary, tab);
+    const closesSecondary = isSameWorkbenchSession(state.secondary, tab);
+    return withRevision(state, {
+      tabs: state.tabs.filter((entry) => !isSameWorkbenchSession(entry, tab)),
+      primary: closesPrimary ? null : state.primary,
+      secondary: closesPrimary || closesSecondary ? null : state.secondary,
+      focusedPane: closesPrimary || closesSecondary ? "primary" : state.focusedPane,
+    });
+  }),
   setSplit: (session) => set((state) => setWorkbenchSplit(state, session)),
   focusPane: (pane) => set((state) => focusWorkbenchPane(state, pane)),
 }));

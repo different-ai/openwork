@@ -17,7 +17,7 @@ import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
 import { createClient, unwrap } from "@/app/lib/opencode";
-import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
+import { abortSessionSafe, forkSession, listCommands, revertSession, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
 import { deleteNativeSession, getNativeSessionMessages } from "@/app/lib/opencode-session-native";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
@@ -235,6 +235,8 @@ import {
 } from "./cloud-workspace-status";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
+import { useSessionArchive } from "@/react-app/domains/session/sidebar/use-session-archive";
+import { sendTrackedSessionCommand, sessionSendIsCurrent } from "@/react-app/domains/session/surface/session-work-guard";
 import { openComposerConfigure, isLibraryAgent, type ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import {
   globalExtensionsRoute,
@@ -1294,9 +1296,13 @@ export function SessionRoute() {
           openSettings: handleOpenSettings,
         });
       },
-      onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
+      onSendDraft: async (draft: ComposerDraft, sessionId: string, messageID?: string): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
+        const isCurrent = sessionSendIsCurrent(opencodeBaseUrl, targetSessionId);
+        const checkCurrent = () => {
+          if (!isCurrent()) throw new Error("Session send cancelled by archive.");
+        };
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!text && draft.attachments.length === 0) {
           return { outcome: "cancelled", reason: "context_changed" };
@@ -1317,6 +1323,11 @@ export function SessionRoute() {
           // message, including tasks that do not use connected services.
           skipGate: true,
           send: async () => {
+            checkCurrent();
+            if (unwrap(await opencodeClient.session.get({ sessionID: targetSessionId })).time.archived) {
+              throw new Error("This session is archived. Restore it before sending.");
+            }
+            checkCurrent();
             await sendWithRevertRollback({
               revertMessageId: draft.revertMessageId,
               abort: () => abortSessionSafe(opencodeClient, targetSessionId, selectedWorkspaceRoot || undefined, {
@@ -1329,6 +1340,7 @@ export function SessionRoute() {
                 applySessionRevert(selectedWorkspaceId, reverted);
               },
               prompt: async () => {
+                checkCurrent();
                 captureAnalyticsEvent("task_message_sent", {
                   mode: draft.mode ?? "prompt",
                   is_command: Boolean(draft.command),
@@ -1369,8 +1381,9 @@ export function SessionRoute() {
                 }
 
                 if (draft.command) {
-                  const result = await opencodeClient.session.command({
+                  const result = await sendTrackedSessionCommand(opencodeBaseUrl, opencodeClient, {
                     sessionID: targetSessionId,
+                    messageID,
                     command: draft.command.name,
                     arguments: draft.command.arguments,
                   });
@@ -1385,8 +1398,10 @@ export function SessionRoute() {
                   cacheKey: targetSessionId,
                   runtimeKey: environmentRuntimeKey,
                 });
+                checkCurrent();
                 const result = await opencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
+                  messageID,
                   parts,
                   model: sendModel ?? undefined,
                   agent: selectedAgent ?? undefined,
@@ -1639,8 +1654,12 @@ export function SessionRoute() {
       isSandboxWorkspace: isSandboxWorkspace(workspace),
       environmentRuntimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
       onApplyEnvironmentChanges: undefined,
-      onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
+      onSendDraft: async (draft: ComposerDraft, sessionId: string, messageID?: string): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || session.sessionId;
+        const isCurrent = sessionSendIsCurrent(endpoint.opencodeBaseUrl, targetSessionId);
+        const checkCurrent = () => {
+          if (!isCurrent()) throw new Error("Session send cancelled by archive.");
+        };
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!targetSessionId || (!text && draft.attachments.length === 0)) {
           return { outcome: "cancelled", reason: "context_changed" };
@@ -1651,6 +1670,11 @@ export function SessionRoute() {
         return submitWithCloudMcpReadiness({
           skipGate: true,
           send: async () => {
+            checkCurrent();
+            if (unwrap(await workspaceOpencodeClient.session.get({ sessionID: targetSessionId })).time.archived) {
+              throw new Error("This session is archived. Restore it before sending.");
+            }
+            checkCurrent();
             await sendWithRevertRollback({
               revertMessageId: draft.revertMessageId,
               abort: () => abortSessionSafe(workspaceOpencodeClient, targetSessionId, workspaceRoot || undefined, {
@@ -1663,6 +1687,7 @@ export function SessionRoute() {
                 applySessionRevert(endpoint.workspaceId, reverted);
               },
               prompt: async () => {
+                checkCurrent();
                 captureAnalyticsEvent("task_message_sent", {
                   mode: draft.mode ?? "prompt",
                   is_command: Boolean(draft.command),
@@ -1691,8 +1716,9 @@ export function SessionRoute() {
                   return;
                 }
                 if (draft.command) {
-                  const result = await workspaceOpencodeClient.session.command({
+                  const result = await sendTrackedSessionCommand(endpoint.opencodeBaseUrl, workspaceOpencodeClient, {
                     sessionID: targetSessionId,
+                    messageID,
                     command: draft.command.name,
                     arguments: draft.command.arguments,
                   });
@@ -1704,8 +1730,10 @@ export function SessionRoute() {
                   cacheKey: targetSessionId,
                   runtimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
                 });
+                checkCurrent();
                 const result = await workspaceOpencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
+                  messageID,
                   parts,
                   model: sendModel ?? undefined,
                   agent: selectedAgent ?? undefined,
@@ -2354,6 +2382,19 @@ export function SessionRoute() {
     modelPicker.setOpen(true);
   }, [selectedSessionId]);
 
+  const { archiveSession, archiveDialog } = useSessionArchive({
+    workspaces,
+    sessionsByWorkspaceId,
+    endpointForWorkspace,
+    selectedWorkspaceId,
+    selectedSessionId,
+    navigateToWorkspaceSession,
+    reloadWorkspaceSessions,
+  });
+  const handleArchiveSession = async (sessionId: string, archived: boolean) => {
+    await archiveSession(sessionId, archived);
+  };
+
   useSessionControlActions({
     workspaces,
     sessionsByWorkspaceId,
@@ -2369,6 +2410,7 @@ export function SessionRoute() {
     createTaskInWorkspace: handleCreateTaskInWorkspace,
     openModelPicker: openModelPickerForControl,
     refreshRouteState,
+    archiveSession,
   });
 
   const seedUnavailableModelControlAction = useMemo<OpenworkControlAction | null>(() => {
@@ -2881,37 +2923,6 @@ export function SessionRoute() {
     writeWorkspaceOrderIds(nextOrderIds);
     setWorkspaces((current) => orderRouteWorkspaces(current, nextOrderIds));
   }, []);
-
-  const handleArchiveSession = useCallback(
-    async (sessionId: string, archived: boolean) => {
-      if (!opencodeClient) return;
-      // The sidebar lists sessions from every workspace, so resolve the
-      // session's owning workspace instead of assuming the selected one —
-      // session.update needs the directory the session actually lives in.
-      const ownerWorkspace = workspaceSessionGroups.find((group) =>
-        group.sessions.some((session) => session?.id === sessionId),
-      )?.workspace;
-      try {
-        await setSessionArchived(
-          opencodeClient,
-          sessionId,
-          archived,
-          ownerWorkspace?.path || selectedWorkspaceRoot || undefined,
-        );
-        if (ownerWorkspace) await reloadWorkspaceSessions(ownerWorkspace.id);
-        await refreshRouteState();
-      } catch (error) {
-        console.error("[session-route] archive session failed", error);
-        toast.error(
-          archived
-            ? t("session_management.archive_failed")
-            : t("session_management.unarchive_failed"),
-          { description: describeRouteError(error) },
-        );
-      }
-    },
-    [opencodeClient, refreshRouteState, reloadWorkspaceSessions, selectedWorkspaceRoot, workspaceSessionGroups],
-  );
 
   const handleCreateWorkspace = useCallback(async (
     preset: WorkspacePreset,
@@ -3497,7 +3508,7 @@ export function SessionRoute() {
             }
           : undefined
       }
-      onArchiveSession={opencodeClient ? handleArchiveSession : undefined}
+      onArchiveSession={handleArchiveSession}
       statusBar={{
         // No per-session loading state here: the account row renders only
         // app-scoped facts. Session loading lives in the pane; an unresolved
@@ -3631,6 +3642,7 @@ export function SessionRoute() {
       selectedAgent={selectedAgent}
       onSelectAgent={setSelectedAgent}
     />
+    {archiveDialog}
     <SessionSearchDialog
       open={sessionSearchOpen}
       onClose={() => setSessionSearchOpen(false)}

@@ -667,7 +667,7 @@ function renderUserTextWithSkillChips(text: string, highlightQuery: string | und
 
 const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
-    const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery } = useMessageList()
+    const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
     const inlineParts = React.useMemo(
       () => message.parts.filter((part) => (part.type === "text" && Boolean(part.text)) || isFileUIPart(part)),
@@ -731,6 +731,7 @@ const UserMessage = React.memo(
                           variant="ghost"
                           size="icon"
                           aria-label="Edit message"
+                          disabled={readOnly}
                           onClick={() => onEditUserMessage(message.id, messageText)}
                         >
                           <Pencil />
@@ -752,6 +753,7 @@ const UserMessage = React.memo(
                         variant="ghost"
                         size="icon"
                         aria-label="Revert"
+                        disabled={readOnly}
                         onClick={() => onRevertToUserMessage(message.id)}
                       >
                         <Undo2 />
@@ -764,7 +766,7 @@ const UserMessage = React.memo(
           />
           <ContextMenuContent className="w-56">
             {messageText ? (
-              <ContextMenuItem onClick={() => onEditUserMessage(message.id, messageText)}>
+              <ContextMenuItem disabled={readOnly} onClick={() => onEditUserMessage(message.id, messageText)}>
                 <Pencil className="size-4" />
                 Edit message
               </ContextMenuItem>
@@ -779,7 +781,7 @@ const UserMessage = React.memo(
               <Split className="size-4 rotate-90" />
               Branch in new chat
             </ContextMenuItem>
-            <ContextMenuItem onClick={() => onRevertToUserMessage(message.id)}>
+            <ContextMenuItem disabled={readOnly} onClick={() => onRevertToUserMessage(message.id)}>
               <Undo2 className="size-4" />
               Revert
             </ContextMenuItem>
@@ -1181,7 +1183,7 @@ function MessageGroup({
   isLastGroup,
   isStreaming,
 }: AssistantMessageGroupProps) {
-  const { onRevertToUserMessage, onForkAtMessage, showThinking } = useMessageList()
+  const { onRevertToUserMessage, onForkAtMessage, showThinking, readOnly } = useMessageList()
   const lastItem = items[items.length - 1]
   // Branch/revert must target a real server-side message id. Synthetic
   // client-side messages (e.g. session errors) don't exist on the server and
@@ -1368,6 +1370,7 @@ function MessageGroup({
                     variant="ghost"
                     size="icon"
                     aria-label="Revert"
+                    disabled={readOnly}
                     onClick={() => onRevertToUserMessage(lastRealItem.message.id)}
                   >
                     <Undo2 />

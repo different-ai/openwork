@@ -25,10 +25,8 @@
  *                                      attempts; drain halts until user retry
  *
  * A missing busy event is never the only signal that allows progress: an
- * item stuck in `awaiting_observation` is released by a *level-reconciled*
- * idle observation (an authoritative status read whose observation time is
- * at/after the admission time), never by a stale idle that predates the
- * admission.
+ * item stuck in `awaiting_observation` needs a correlated terminal reply and
+ * fresh idle. Idle alone may precede asynchronous command dispatch.
  *
  * State lives in a module-level per-session store (not component refs) so an
  * in-flight admission survives navigating away from and back to the session.
@@ -70,16 +68,18 @@ export type QueuedDrainState = {
 
 export type QueuedDrainEvent =
   | { type: "send_started"; itemId: string }
-  | { type: "send_result"; itemId: string; outcome: "sent" | "accepted" | "blocked" | "cancelled"; at: number }
+  | { type: "send_result"; itemId: string; outcome: "sent" | "accepted" | "blocked" | "cancelled"; at: number; terminalObserved?: boolean }
   | { type: "send_error"; itemId: string }
   | { type: "busy_observed" }
   /** An authoritative status level read (SSE-followed idle after a busy
    * observation, or an explicit snapshot/status probe). `observedAt` is when
    * the observation was initiated so stale idles are ordered against the
    * admission time and dropped. */
-  | { type: "idle_reconciled"; observedAt: number }
+  | { type: "idle_reconciled"; observedAt: number; terminalObserved?: boolean }
   | { type: "user_retry" }
-  | { type: "queue_cleared" };
+  | { type: "queue_cleared" }
+  | { type: "stop_confirmed" }
+  | { type: "queue_cancelled" };
 
 export const INITIAL_QUEUED_DRAIN_STATE: QueuedDrainState = {
   phase: { kind: "ready" },
@@ -115,6 +115,9 @@ export function reduceQueuedDrain(state: QueuedDrainState, event: QueuedDrainEve
     }
     case "send_result": {
       if (phase.kind !== "sending" || phase.itemId !== event.itemId) return state;
+      if (event.outcome === "sent" && event.terminalObserved) {
+        return resolved(state, { kind: "ready" }, event.itemId, "completed", dropAttempt(state, event.itemId));
+      }
       if (event.outcome === "sent" || event.outcome === "accepted") {
         // Admitted. The engine may have rendered its busy status before the
         // send promise resolved; a busy seen during the send belongs to this
@@ -173,10 +176,9 @@ export function reduceQueuedDrain(state: QueuedDrainState, event: QueuedDrainEve
         // Negative invariant: a stale idle observed before the admission
         // must never release the item — that idle predates our send.
         if (event.observedAt < phase.admittedAt) return state;
-        // Authoritative idle at/after admission: either the run started and
-        // finished between observations (missed busy edge) or upstream
-        // dispatch failed after admission. Either way the admitted item can
-        // no longer block the queue.
+        // Idle can precede proxy dispatch. An unobserved admission needs its
+        // own terminal reply, not a timeout or an unrelated idle level.
+        if (!event.terminalObserved) return state;
         return resolved(state, { kind: "ready" }, phase.itemId, "completed", dropAttempt(state, phase.itemId));
       }
       return state;
@@ -189,6 +191,11 @@ export function reduceQueuedDrain(state: QueuedDrainState, event: QueuedDrainEve
         lastResolution: state.lastResolution,
       };
     }
+    case "queue_cancelled":
+      if (phase.kind === "sending" || phase.kind === "running" || phase.kind === "awaiting_observation") return state;
+      return INITIAL_QUEUED_DRAIN_STATE;
+    case "stop_confirmed":
+      return INITIAL_QUEUED_DRAIN_STATE;
     case "queue_cleared": {
       // Stop means stop: an aborted queue must not leave a halted or
       // awaiting admission behind to wedge the next queueing round. A
@@ -209,6 +216,10 @@ function dropAttempt(state: QueuedDrainState, itemId: string): Record<string, nu
 /** True when the drain may admit the next queued item. */
 export function canAdmitNextQueuedItem(state: QueuedDrainState): boolean {
   return state.phase.kind === "ready";
+}
+
+export function hasPendingQueuedAdmission(state: QueuedDrainState): boolean {
+  return state.phase.kind === "sending" || state.phase.kind === "awaiting_observation" || state.phase.kind === "running";
 }
 
 /** When (epoch ms) the awaiting admission should be probed against an

@@ -55,10 +55,11 @@ export async function abortSession(
   sessionID: string,
   directory?: string,
   logContext?: AbortSessionLogContext,
+  options?: { signal?: AbortSignal },
 ): Promise<boolean> {
   logAbortSession("start", sessionID, directory, logContext);
   try {
-    const aborted = unwrap(await client.session.abort({ sessionID, directory })) === true;
+    const aborted = unwrap(await client.session.abort({ sessionID, directory }, options)) === true;
     logAbortSession("done", sessionID, directory, logContext, { aborted });
     return aborted;
   } catch (error) {

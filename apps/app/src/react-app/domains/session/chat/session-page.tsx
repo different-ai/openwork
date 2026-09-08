@@ -425,6 +425,11 @@ function controlStringArg(args: unknown, key: string) {
 }
 
 export function SessionPage(props: SessionPageProps) {
+  const archivedInWorkspace = (workspaceId: string, sessionId: string | null) => {
+    const session = props.sidebar.workspaceSessionGroups.find(group => group.workspace.id === workspaceId)
+      ?.sessions.find(session => session.id === sessionId);
+    return session ? Boolean(session.time?.archived) : undefined;
+  };
   const { config: shellConfig } = useShellConfig();
   const platform = usePlatform();
   const denAuth = useDenAuth();
@@ -1800,6 +1805,8 @@ export function SessionPage(props: SessionPageProps) {
                             environmentClient={props.environmentClient}
                             workspaceId={props.runtimeWorkspaceId!}
                             sessionId={props.selectedSessionId!}
+                            archived={archivedInWorkspace(props.selectedWorkspaceId, props.selectedSessionId)}
+                            onRestoreSession={async () => { await props.onArchiveSession?.(props.selectedSessionId!, false); }}
                             isControlTarget={activeWorkbenchPane === "primary"}
                             opencodeBaseUrl={reactSessionBaseUrl}
                             openworkToken={reactSessionToken}
@@ -1858,6 +1865,8 @@ export function SessionPage(props: SessionPageProps) {
                                   workspaceId={splitPaneRuntime.runtimeWorkspaceId}
                                   workspaceRoot={splitPaneRuntime.workspaceRoot}
                                   sessionId={splitSession.sessionId}
+                                  archived={archivedInWorkspace(splitSession.workspaceId, splitSession.sessionId)}
+                                  onRestoreSession={async () => { await props.onArchiveSession?.(splitSession.sessionId, false); }}
                                   isControlTarget={activeWorkbenchPane === "secondary"}
                                   opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}
                                   openworkToken={splitPaneRuntime.openworkToken}
