@@ -1,0 +1,727 @@
+import { createHash, randomUUID } from "node:crypto"
+import type { Context, Hono } from "hono"
+import { z } from "zod"
+import {
+  consumeAnonymousSessionIssuance,
+  reserveAnonymousInference,
+  settleAnonymousInference,
+  validateAnonymousDispatch,
+  type TrustedAnonymousUsage,
+} from "./anonymous-limits.js"
+import {
+  createAnonymousIdentities,
+  issueAnonymousToken,
+  resolveAnonymousClientAddress,
+  verifyAnonymousToken,
+} from "./anonymous-identity.js"
+import { env } from "./env.js"
+
+const anonymousModel = "openai/gpt-5.6-luna"
+const sessionPath = "/api/anonymous/session"
+const modelsPath = "/api/anonymous/v1/models"
+const chatPath = "/api/anonymous/v1/chat/completions"
+const sessionSchema = z.object({ installationId: z.string().uuid() }).strict()
+const policyFields = new Set([
+  "models", "fallbacks", "preset", "route", "provider", "plugins", "transforms", "reasoning",
+  "web_search_options", "user", "session_id", "trace", "service_tier",
+])
+const allowedTopLevelFields = new Set([
+  "model", "messages", "stream", "max_tokens", "max_completion_tokens", "temperature", "top_p",
+  "frequency_penalty", "presence_penalty", "stop", "seed", "n", "tools", "tool_choice",
+  "response_format", "parallel_tool_calls", "usage", "reasoningEffort", "textVerbosity",
+])
+const sdkTextVerbosityValues = new Set(["low", "medium", "high"])
+
+type JsonObject = Record<string, unknown>
+type PreparedAnonymousRequest = {
+  body: string
+  stream: boolean
+}
+
+type AnonymousRouteDependencies = {
+  fetch: typeof fetch
+  clientAddress: (context: Context) => string | null
+  consumeSessionIssuance: typeof consumeAnonymousSessionIssuance
+  reserve: typeof reserveAnonymousInference
+  settle: typeof settleAnonymousInference
+  validateDispatch: typeof validateAnonymousDispatch
+}
+
+const defaultDependencies: AnonymousRouteDependencies = {
+  fetch,
+  clientAddress: resolveAnonymousClientAddress,
+  consumeSessionIssuance: consumeAnonymousSessionIssuance,
+  reserve: reserveAnonymousInference,
+  settle: settleAnonymousInference,
+  validateDispatch: validateAnonymousDispatch,
+}
+
+function isObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function openAiError(status: number, code: string, message: string, type = "invalid_request_error") {
+  return Response.json({ error: { code, message, type } }, { status })
+}
+
+function unavailable() {
+  return openAiError(503, "anonymous_unavailable", "OpenWork's free allowance is temporarily unavailable. Please try again later.", "api_error")
+}
+
+function invalidToken() {
+  return openAiError(401, "invalid_anonymous_token", "This OpenWork free allowance token is invalid or expired.", "authentication_error")
+}
+
+function modelNotAllowed(message = "OpenWork's free allowance only supports GPT-5.6 Luna and does not allow alternate routing.") {
+  return openAiError(403, "anonymous_model_not_allowed", message)
+}
+
+function admissionError(result: { reason: "limit" | "capacity" | "unavailable"; retryAfterSeconds?: number }) {
+  if (result.reason === "unavailable") return unavailable()
+  const capacity = result.reason === "capacity"
+  const response = openAiError(
+    429,
+    capacity ? "anonymous_capacity_exceeded" : "anonymous_limit_exceeded",
+    capacity
+      ? "OpenWork's free allowance is at capacity. Please try again later."
+      : "You have reached the OpenWork free allowance. Please try again after it resets.",
+    "rate_limit_error",
+  )
+  if (result.retryAfterSeconds) response.headers.set("retry-after", String(result.retryAfterSeconds))
+  return response
+}
+
+async function readBoundedJson(request: Request, maxBytes: number, deadlineAt: number) {
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase()
+  if (contentType !== "application/json" || request.headers.get("content-encoding")) {
+    return { error: openAiError(400, "invalid_request", "OpenWork's free allowance accepts uncompressed JSON requests only.") }
+  }
+  const declared = Number(request.headers.get("content-length") ?? "0")
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    return { error: openAiError(400, "invalid_request", "The request is too large for the OpenWork free allowance.") }
+  }
+  if (!request.body) return { error: openAiError(400, "invalid_request", "A JSON request body is required for the OpenWork free allowance.") }
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  while (true) {
+    if (request.signal.aborted || Date.now() >= deadlineAt) {
+      await reader.cancel().catch(() => undefined)
+      return { error: unavailable() }
+    }
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    let abortListener: (() => void) | undefined
+    const chunk = await Promise.race([
+      reader.read().then((result) => ({ result })),
+      new Promise<{ timedOut: true }>((resolve) => {
+        timeout = setTimeout(() => resolve({ timedOut: true }), Math.max(1, deadlineAt - Date.now()))
+      }),
+      new Promise<{ aborted: true }>((resolve) => {
+        abortListener = () => resolve({ aborted: true })
+        if (request.signal.aborted) {
+          resolve({ aborted: true })
+          return
+        }
+        request.signal.addEventListener("abort", abortListener, { once: true })
+      }),
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout)
+      if (abortListener) request.signal.removeEventListener("abort", abortListener)
+    })
+    if ("timedOut" in chunk || "aborted" in chunk) {
+      await reader.cancel().catch(() => undefined)
+      return { error: unavailable() }
+    }
+    const { result } = chunk
+    if (result.done) break
+    size += result.value.byteLength
+    if (size > maxBytes) {
+      await reader.cancel().catch(() => undefined)
+      return { error: openAiError(400, "invalid_request", "The request is too large for the OpenWork free allowance.") }
+    }
+    chunks.push(result.value)
+  }
+  const bytes = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  try {
+    return { value: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)), size }
+  } catch {
+    return { error: openAiError(400, "invalid_request", "The JSON request is invalid for the OpenWork free allowance.") }
+  }
+}
+
+function hasOnlyFields(value: JsonObject, fields: Set<string>) {
+  return Object.keys(value).every((field) => fields.has(field))
+}
+
+function isBoundedString(value: unknown, max = 65_536): value is string {
+  return typeof value === "string" && Buffer.byteLength(value, "utf8") <= max
+}
+
+function isJsonValue(value: unknown, depth = 0): boolean {
+  if (depth > 24) return false
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true
+  if (typeof value === "number") return Number.isFinite(value)
+  if (Array.isArray(value)) return value.every((entry) => isJsonValue(entry, depth + 1))
+  if (!isObject(value)) return false
+  if (Object.prototype.hasOwnProperty.call(value, "$ref")) return false
+  return Object.values(value).every((entry) => isJsonValue(entry, depth + 1))
+}
+
+function validContent(value: unknown) {
+  if (typeof value === "string" || value === null) return true
+  if (!Array.isArray(value)) return false
+  return value.every((part) => isObject(part)
+    && hasOnlyFields(part, new Set(["type", "text"]))
+    && (part.type === "text" || part.type === "input_text")
+    && isBoundedString(part.text))
+}
+
+function validToolCalls(value: unknown) {
+  if (value === undefined) return true
+  if (!Array.isArray(value) || value.length > 64) return false
+  return value.every((call) => isObject(call)
+    && hasOnlyFields(call, new Set(["id", "type", "function", "index"]))
+    && isBoundedString(call.id, 256)
+    && call.type === "function"
+    && (call.index === undefined || (Number.isInteger(call.index) && Number(call.index) >= 0))
+    && isObject(call.function)
+    && hasOnlyFields(call.function, new Set(["name", "arguments"]))
+    && isBoundedString(call.function.name, 256)
+    && isBoundedString(call.function.arguments))
+}
+
+function validMessages(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 256) return false
+  const roles = new Set(["system", "developer", "user", "assistant", "tool"])
+  const fields = new Set(["role", "content", "name", "tool_call_id", "tool_calls", "refusal"])
+  return value.every((message) => isObject(message)
+    && hasOnlyFields(message, fields)
+    && typeof message.role === "string"
+    && roles.has(message.role)
+    && validContent(message.content)
+    && (message.name === undefined || isBoundedString(message.name, 256))
+    && (message.tool_call_id === undefined || isBoundedString(message.tool_call_id, 256))
+    && (message.refusal === undefined || isBoundedString(message.refusal))
+    && validToolCalls(message.tool_calls))
+}
+
+function validTools(value: unknown) {
+  if (value === undefined) return true
+  if (!Array.isArray(value) || value.length > 64) return false
+  return value.every((tool) => isObject(tool)
+    && hasOnlyFields(tool, new Set(["type", "function"]))
+    && tool.type === "function"
+    && isObject(tool.function)
+    && hasOnlyFields(tool.function, new Set(["name", "description", "parameters", "strict"]))
+    && isBoundedString(tool.function.name, 256)
+    && (tool.function.description === undefined || isBoundedString(tool.function.description, 8_192))
+    && (tool.function.parameters === undefined || (isObject(tool.function.parameters) && isJsonValue(tool.function.parameters)))
+    && (tool.function.strict === undefined || typeof tool.function.strict === "boolean"))
+}
+
+function validToolChoice(value: unknown) {
+  if (value === undefined || value === "none" || value === "auto" || value === "required") return true
+  return isObject(value)
+    && hasOnlyFields(value, new Set(["type", "function"]))
+    && value.type === "function"
+    && isObject(value.function)
+    && hasOnlyFields(value.function, new Set(["name"]))
+    && isBoundedString(value.function.name, 256)
+}
+
+function validUsage(value: unknown) {
+  return value === undefined
+    || (isObject(value) && hasOnlyFields(value, new Set(["include"])) && value.include === true)
+}
+
+function validResponseFormat(value: unknown) {
+  if (value === undefined) return true
+  if (!isObject(value) || !hasOnlyFields(value, new Set(["type", "json_schema"]))) return false
+  if (value.type === "text" || value.type === "json_object") return value.json_schema === undefined
+  if (value.type !== "json_schema" || !isObject(value.json_schema)) return false
+  return hasOnlyFields(value.json_schema, new Set(["name", "description", "schema", "strict"]))
+    && isBoundedString(value.json_schema.name, 256)
+    && (value.json_schema.description === undefined || isBoundedString(value.json_schema.description, 8_192))
+    && isObject(value.json_schema.schema)
+    && isJsonValue(value.json_schema.schema)
+    && (value.json_schema.strict === undefined || typeof value.json_schema.strict === "boolean")
+}
+
+function optionalInteger(value: unknown, min: number, max: number) {
+  return value === undefined || (Number.isSafeInteger(value) && Number(value) >= min && Number(value) <= max)
+}
+
+function prepareAnonymousBody(value: unknown): PreparedAnonymousRequest | Response {
+  if (!isObject(value)) return openAiError(400, "invalid_request", "The OpenWork free allowance request must be a JSON object.")
+  const policyField = Object.keys(value).find((field) => policyFields.has(field))
+  if (policyField) return modelNotAllowed(`OpenWork's free allowance does not allow ${policyField} overrides.`)
+  const unknownField = Object.keys(value).find((field) => !allowedTopLevelFields.has(field))
+  if (unknownField) return openAiError(400, "invalid_request", `The field ${unknownField} is not supported by the OpenWork free allowance.`)
+  if (value.model !== anonymousModel) return modelNotAllowed()
+  if (!validMessages(value.messages)) return openAiError(400, "invalid_request", "Messages must contain bounded text-only content for the OpenWork free allowance.")
+  if (!validTools(value.tools)) return modelNotAllowed("OpenWork's free allowance permits client-side function tools only; server tools and remote media are not allowed.")
+  if (!validToolChoice(value.tool_choice) || !validResponseFormat(value.response_format)) {
+    return openAiError(400, "invalid_request", "The requested response or tool format is invalid for the OpenWork free allowance.")
+  }
+  if (!validUsage(value.usage)) return openAiError(400, "invalid_request", "The requested usage format is invalid for the OpenWork free allowance.")
+  if (value.stream !== undefined && typeof value.stream !== "boolean") return openAiError(400, "invalid_request", "stream must be a boolean.")
+  if (value.n !== undefined && value.n !== 1) return modelNotAllowed("OpenWork's free allowance supports exactly one completion per request.")
+  if (!optionalInteger(value.max_tokens, 1, env.anonymous.maxCompletionTokens)
+    || !optionalInteger(value.max_completion_tokens, 1, env.anonymous.maxCompletionTokens)
+    || (value.max_tokens !== undefined && value.max_completion_tokens !== undefined)) {
+    return openAiError(400, "invalid_request", `OpenWork's free allowance allows at most ${env.anonymous.maxCompletionTokens} billable completion tokens.`)
+  }
+  if (value.reasoningEffort !== undefined && typeof value.reasoningEffort !== "string") {
+    return openAiError(400, "invalid_request", "reasoningEffort must be the fixed none compatibility value.")
+  }
+  if (value.reasoningEffort !== undefined && value.reasoningEffort !== "none") {
+    return modelNotAllowed("OpenWork's free allowance fixes reasoning effort to none and mode to standard.")
+  }
+  if (value.textVerbosity !== undefined
+    && (typeof value.textVerbosity !== "string" || !sdkTextVerbosityValues.has(value.textVerbosity))) {
+    return openAiError(400, "invalid_request", "textVerbosity must be low, medium, or high.")
+  }
+  const unsupportedGenerationField = [
+    "temperature", "top_p", "frequency_penalty", "presence_penalty", "stop", "parallel_tool_calls",
+  ].find((field) => value[field] !== undefined)
+  if (unsupportedGenerationField) {
+    return openAiError(400, "invalid_request", `The field ${unsupportedGenerationField} is not supported by GPT-5.6 Luna.`)
+  }
+  if (!optionalInteger(value.seed, -2_147_483_648, 2_147_483_647)) {
+    return openAiError(400, "invalid_request", "A numeric generation setting is outside the OpenWork free allowance bounds.")
+  }
+
+  const stream = value.stream === true
+  const maxTokens = typeof value.max_tokens === "number"
+    ? value.max_tokens
+    : typeof value.max_completion_tokens === "number"
+      ? value.max_completion_tokens
+      : env.anonymous.maxCompletionTokens
+  const forwarded: JsonObject = {
+    model: anonymousModel,
+    messages: value.messages,
+    stream,
+    max_tokens: maxTokens,
+    reasoning: { effort: "none", mode: "standard", exclude: true },
+    usage: { include: true },
+    provider: {
+      order: [env.anonymous.provider],
+      only: [env.anonymous.provider],
+      allow_fallbacks: false,
+      require_parameters: true,
+      data_collection: "deny",
+      zdr: true,
+      max_price: {
+        prompt: env.anonymous.maxInputPriceMicroUsdPerMillion / 1_000_000,
+        completion: env.anonymous.maxCompletionPriceMicroUsdPerMillion / 1_000_000,
+        request: 0,
+        image: 0,
+      },
+    },
+  }
+  // Luna does not advertise n as a supported parameter. Omitting its default
+  // value preserves one completion while n !== 1 is rejected above.
+  for (const field of [
+    "seed", "tool_choice", "response_format",
+  ]) {
+    if (value[field] !== undefined) forwarded[field] = value[field]
+  }
+  // OpenCode and the AI SDK use camelCase provider options. OpenRouter's
+  // documented Chat API accepts the bounded equivalent as verbosity.
+  if (value.textVerbosity !== undefined) forwarded.verbosity = value.textVerbosity
+  if (stream) forwarded.stream_options = { include_usage: true }
+  // A byte-level canonical payload cap is enforced after JSON parsing and all
+  // server-owned fields are added. Keeping it below the priced input-token cap
+  // leaves an explicit allowance for provider chat/tool framing. Upstream usage
+  // remains authoritative and any reservation overrun trips the kill switch.
+  const canonicalPayloadLimit = env.anonymous.maxInputTokens - env.anonymous.chatWrappingTokenAllowance
+  if (value.tools !== undefined) forwarded.tools = value.tools
+  const body = JSON.stringify(forwarded)
+  const canonicalPayloadBytes = Buffer.byteLength(body, "utf8")
+  if (canonicalPayloadLimit <= 0 || canonicalPayloadBytes > canonicalPayloadLimit) {
+    return openAiError(400, "invalid_request", "The canonical chat and tool context is too large for the OpenWork free allowance.")
+  }
+  return { body, stream }
+}
+
+function readTrustedUsage(value: unknown): TrustedAnonymousUsage | null {
+  if (!isObject(value) || !isObject(value.usage)) return null
+  const usage = value.usage
+  if (typeof usage.cost !== "number" || !Number.isFinite(usage.cost) || usage.cost < 0) return null
+  if (typeof usage.is_byok !== "boolean") return null
+  if (!Number.isSafeInteger(usage.prompt_tokens) || Number(usage.prompt_tokens) < 0) return null
+  if (!Number.isSafeInteger(usage.completion_tokens) || Number(usage.completion_tokens) < 0) return null
+  const completionTokens = Number(usage.completion_tokens)
+  let reasoningTokens = 0
+  if (isObject(usage.completion_tokens_details) && usage.completion_tokens_details.reasoning_tokens !== undefined) {
+    if (!Number.isSafeInteger(usage.completion_tokens_details.reasoning_tokens)
+      || Number(usage.completion_tokens_details.reasoning_tokens) < 0) return null
+    reasoningTokens = Number(usage.completion_tokens_details.reasoning_tokens)
+  }
+  if (reasoningTokens > completionTokens) return null
+  // This route is enabled only after the key is attested as BYOK-only. Treat a
+  // shared-routing marker or missing provider principal as unknown accounting;
+  // either case retains the full reservation rather than refunding from the fee.
+  if (!usage.is_byok
+    || !isObject(usage.cost_details)
+    || typeof usage.cost_details.upstream_inference_cost !== "number"
+    || !Number.isFinite(usage.cost_details.upstream_inference_cost)
+    || usage.cost_details.upstream_inference_cost < 0) return null
+  const totalCost = usage.cost + usage.cost_details.upstream_inference_cost
+  if (!Number.isFinite(totalCost)) return null
+  const costMicroUsd = Math.ceil(totalCost * 1_000_000)
+  if (!Number.isSafeInteger(costMicroUsd)) return null
+  return {
+    costMicroUsd,
+    inputTokens: Number(usage.prompt_tokens),
+    // OpenAI reports reasoning_tokens as an inclusive subset of completion_tokens.
+    billableCompletionTokens: completionTokens,
+  }
+}
+
+async function readBoundedResponseJson(response: Response) {
+  const reader = response.body?.getReader()
+  if (!reader) return null
+  const chunks: Uint8Array[] = []
+  let bytes = 0
+  while (true) {
+    const chunk = await reader.read()
+    if (chunk.done) break
+    bytes += chunk.value.byteLength
+    if (bytes > env.anonymous.maxResponseBytes) {
+      await reader.cancel()
+      return null
+    }
+    chunks.push(chunk.value)
+  }
+  const body = new Uint8Array(bytes)
+  let offset = 0
+  for (const chunk of chunks) {
+    body.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  try {
+    const parsed: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body))
+    if (!isObject(parsed)) return null
+    const usage = readTrustedUsage(parsed)
+    const publicBody = new TextEncoder().encode(JSON.stringify(publicAnonymousResponse(parsed)))
+    if (publicBody.byteLength > env.anonymous.maxResponseBytes) return null
+    return { body: publicBody, usage }
+  } catch {
+    return null
+  }
+}
+
+function publicAnonymousUsage(value: unknown) {
+  if (!isObject(value)) return null
+  const usage: JsonObject = {}
+  for (const field of ["prompt_tokens", "completion_tokens", "total_tokens"]) {
+    if (Number.isSafeInteger(value[field]) && Number(value[field]) >= 0) usage[field] = value[field]
+  }
+  if (isObject(value.prompt_tokens_details) && Number.isSafeInteger(value.prompt_tokens_details.cached_tokens)
+    && Number(value.prompt_tokens_details.cached_tokens) >= 0) {
+    usage.prompt_tokens_details = { cached_tokens: value.prompt_tokens_details.cached_tokens }
+  }
+  if (isObject(value.completion_tokens_details) && Number.isSafeInteger(value.completion_tokens_details.reasoning_tokens)
+    && Number(value.completion_tokens_details.reasoning_tokens) >= 0) {
+    usage.completion_tokens_details = { reasoning_tokens: value.completion_tokens_details.reasoning_tokens }
+  }
+  return usage
+}
+
+function publicAnonymousResponse(value: JsonObject) {
+  const usage = publicAnonymousUsage(value.usage)
+  return usage ? { ...value, usage } : value
+}
+
+function trackAnonymousStream(input: {
+  body: ReadableStream<Uint8Array>
+  controller: AbortController
+  finalize: (usage: TrustedAnonymousUsage | null) => Promise<void>
+}) {
+  const reader = input.body.getReader()
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  let buffer = ""
+  let bytes = 0
+  let usage: TrustedAnonymousUsage | null = null
+  const transform = (text: string) => {
+    buffer += text.replaceAll("\r\n", "\n")
+    let output = ""
+    while (true) {
+      const boundary = buffer.indexOf("\n\n")
+      if (boundary < 0) break
+      const frame = buffer.slice(0, boundary).replaceAll("\r", "")
+      buffer = buffer.slice(boundary + 2)
+      const data = frame.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n")
+      if (!data || data === "[DONE]") {
+        output += `${frame}\n\n`
+        continue
+      }
+      try {
+        const parsed: unknown = JSON.parse(data)
+        const found = readTrustedUsage(parsed)
+        if (found) usage = found
+        output += isObject(parsed) && publicAnonymousUsage(parsed.usage)
+          ? `data: ${JSON.stringify(publicAnonymousResponse(parsed))}\n\n`
+          : `${frame}\n\n`
+      } catch {
+        output += `${frame}\n\n`
+      }
+    }
+    if (Buffer.byteLength(buffer, "utf8") > 262_144) buffer = ""
+    return output
+  }
+  return new ReadableStream<Uint8Array>({
+    async pull(stream) {
+      try {
+        while (true) {
+          const chunk = await reader.read()
+          if (chunk.done) {
+            const output = transform(decoder.decode()) + buffer
+            buffer = ""
+            if (output) stream.enqueue(encoder.encode(output))
+            await input.finalize(usage)
+            stream.close()
+            return
+          }
+          bytes += chunk.value.byteLength
+          if (bytes > env.anonymous.maxResponseBytes) {
+            input.controller.abort()
+            await input.finalize(null)
+            stream.error(new Error("Anonymous inference response exceeded its safety bound"))
+            return
+          }
+          const output = transform(decoder.decode(chunk.value, { stream: true }))
+          if (output) {
+            stream.enqueue(encoder.encode(output))
+            return
+          }
+        }
+      } catch (error) {
+        await input.finalize(null)
+        stream.error(error)
+      }
+    },
+    async cancel(reason) {
+      input.controller.abort()
+      await input.finalize(null)
+      await reader.cancel(reason)
+    },
+  })
+}
+
+function requestId() {
+  return createHash("sha256").update(`${Date.now()}:${randomUUID()}`, "utf8").digest("hex")
+}
+
+function readBearer(request: Request) {
+  const header = request.headers.get("authorization")
+  if (!header?.toLowerCase().startsWith("bearer ")) return null
+  return header.slice(7).trim() || null
+}
+
+function anonymousModels() {
+  return { object: "list", data: [{ id: anonymousModel, object: "model", created: 0, owned_by: "openwork" }] }
+}
+
+export function registerAnonymousInferenceRoutes(app: Hono, dependencies: AnonymousRouteDependencies = defaultDependencies) {
+  app.post(sessionPath, async (c) => {
+    const requestDeadline = Date.now() + env.anonymous.requestTimeoutMs
+    if (!env.anonymous.enabled) return unavailable()
+    const address = dependencies.clientAddress(c)
+    if (!address) return unavailable()
+    const parsedBody = await readBoundedJson(c.req.raw, 4_096, requestDeadline)
+    if ("error" in parsedBody) return parsedBody.error
+    const parsed = sessionSchema.safeParse(parsedBody.value)
+    if (!parsed.success) return openAiError(400, "invalid_request", "A valid installationId UUID is required for the OpenWork free allowance.")
+    const identities = createAnonymousIdentities(parsed.data.installationId, address)
+    if (c.req.raw.signal.aborted || Date.now() >= requestDeadline) return unavailable()
+    try {
+      const admitted = await dependencies.consumeSessionIssuance(identities, {
+        deadlineAt: requestDeadline,
+        signal: c.req.raw.signal,
+      })
+      if (!admitted.ok) return admissionError(admitted)
+      if (c.req.raw.signal.aborted || Date.now() >= requestDeadline) return unavailable()
+      const token = issueAnonymousToken(identities)
+      return c.json({ ...token, model: anonymousModel })
+    } catch {
+      return unavailable()
+    }
+  })
+
+  async function authenticate(c: Context) {
+    if (!env.anonymous.enabled) return { error: unavailable() }
+    const address = dependencies.clientAddress(c)
+    const bearer = readBearer(c.req.raw)
+    if (!address || !bearer) return { error: invalidToken() }
+    const token = verifyAnonymousToken(bearer, address)
+    return token ? { identities: token } : { error: invalidToken() }
+  }
+
+  app.get(modelsPath, async (c) => {
+    const authentication = await authenticate(c)
+    if ("error" in authentication) return authentication.error
+    if (new URL(c.req.url).search) return modelNotAllowed("OpenWork's free allowance does not allow model query overrides.")
+    return c.json(anonymousModels())
+  })
+
+  app.post(chatPath, async (c) => {
+    const requestDeadline = Date.now() + env.anonymous.requestTimeoutMs
+    const authentication = await authenticate(c)
+    if ("error" in authentication) return authentication.error
+    if (new URL(c.req.url).search) return modelNotAllowed("OpenWork's free allowance does not allow routing query parameters.")
+    const parsedBody = await readBoundedJson(c.req.raw, env.anonymous.maxBodyBytes, requestDeadline)
+    if ("error" in parsedBody) return parsedBody.error
+    const prepared = prepareAnonymousBody(parsedBody.value)
+    if (prepared instanceof Response) return prepared
+    if (c.req.raw.signal.aborted || Date.now() >= requestDeadline) return unavailable()
+
+    const id = requestId()
+    let admitted: Awaited<ReturnType<typeof dependencies.reserve>>
+    try {
+      admitted = await dependencies.reserve({
+        id,
+        identities: authentication.identities,
+        deadlineAt: requestDeadline,
+        signal: c.req.raw.signal,
+      })
+    } catch {
+      return unavailable()
+    }
+    if (!admitted.ok) return admissionError(admitted)
+
+    const controller = new AbortController()
+    let retainedSettlement: Promise<void> | null = null
+    let usageSettlement: Promise<void> | null = null
+    const finalize = (usage: TrustedAnonymousUsage | null) => {
+      if (usage) {
+        usageSettlement ??= dependencies.settle(admitted.reservationId, usage).then(() => undefined).catch(() => undefined)
+        return usageSettlement
+      }
+      if (usageSettlement) return usageSettlement
+      retainedSettlement ??= dependencies.settle(admitted.reservationId, null).then(() => undefined).catch(() => undefined)
+      return retainedSettlement
+    }
+    const abort = () => {
+      controller.abort()
+      void finalize(null)
+    }
+    c.req.raw.signal.addEventListener("abort", abort, { once: true })
+    if (c.req.raw.signal.aborted) abort()
+    let dispatchable = false
+    try {
+      dispatchable = !controller.signal.aborted
+        && await dependencies.validateDispatch(admitted.reservationId, admitted.dispatchDeadline, controller.signal)
+        && !controller.signal.aborted
+        && Date.now() < admitted.dispatchDeadline
+    } catch {
+      dispatchable = false
+    }
+    if (!dispatchable) {
+      c.req.raw.signal.removeEventListener("abort", abort)
+      await finalize(null)
+      return unavailable()
+    }
+    const timeoutMs = admitted.dispatchDeadline - Date.now()
+    if (timeoutMs <= 0) {
+      c.req.raw.signal.removeEventListener("abort", abort)
+      await finalize(null)
+      return unavailable()
+    }
+    const timeout = setTimeout(() => {
+      controller.abort()
+      void finalize(null)
+    }, timeoutMs)
+    if (controller.signal.aborted || Date.now() >= admitted.dispatchDeadline) {
+      clearTimeout(timeout)
+      c.req.raw.signal.removeEventListener("abort", abort)
+      await finalize(null)
+      return unavailable()
+    }
+
+    let upstream: Response
+    try {
+      upstream = await dependencies.fetch(`${env.openRouterUpstreamUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          accept: prepared.stream ? "text/event-stream" : "application/json",
+          authorization: `Bearer ${env.anonymous.apiKey}`,
+          "content-type": "application/json",
+          "x-openwork-request-id": id,
+          ...(env.proxyBaseUrl ? { "http-referer": env.proxyBaseUrl } : {}),
+          "x-title": "OpenWork Free Allowance",
+        },
+        body: prepared.body,
+        signal: controller.signal,
+      })
+    } catch {
+      clearTimeout(timeout)
+      c.req.raw.signal.removeEventListener("abort", abort)
+      await finalize(null)
+      return unavailable()
+    }
+
+    if (!upstream.ok || !upstream.body) {
+      clearTimeout(timeout)
+      c.req.raw.signal.removeEventListener("abort", abort)
+      await upstream.body?.cancel().catch(() => undefined)
+      await finalize(null)
+      return unavailable()
+    }
+
+    const upstreamContentType = upstream.headers.get("content-type")?.toLowerCase() ?? ""
+    if ((prepared.stream && !upstreamContentType.startsWith("text/event-stream"))
+      || (!prepared.stream && !upstreamContentType.startsWith("application/json"))) {
+      clearTimeout(timeout)
+      c.req.raw.signal.removeEventListener("abort", abort)
+      controller.abort()
+      await upstream.body.cancel().catch(() => undefined)
+      await finalize(null)
+      return unavailable()
+    }
+
+    const headers = new Headers({
+      "cache-control": "no-store",
+      "content-type": upstream.headers.get("content-type") ?? (prepared.stream ? "text/event-stream" : "application/json"),
+      "x-openwork-request-id": id,
+    })
+    if (!prepared.stream) {
+      let result: Awaited<ReturnType<typeof readBoundedResponseJson>> = null
+      try {
+        result = await readBoundedResponseJson(upstream)
+      } catch {
+        // Unknown/partial usage retains the reservation.
+      }
+      clearTimeout(timeout)
+      c.req.raw.signal.removeEventListener("abort", abort)
+      if (!result) {
+        controller.abort()
+        await finalize(null)
+        return unavailable()
+      }
+      await finalize(result.usage)
+      return new Response(result.body, { status: upstream.status, headers })
+    }
+
+    const body = trackAnonymousStream({
+      body: upstream.body,
+      controller,
+      finalize: async (usage) => {
+        clearTimeout(timeout)
+        c.req.raw.signal.removeEventListener("abort", abort)
+        await finalize(usage)
+      },
+    })
+    return new Response(body, { status: upstream.status, headers })
+  })
+
+  app.all("/api/anonymous", (c) => modelNotAllowed(`OpenWork's free allowance does not support ${c.req.method} ${c.req.path}.`))
+  app.all("/api/anonymous/*", (c) => modelNotAllowed(`OpenWork's free allowance does not support ${c.req.method} ${c.req.path}.`))
+}

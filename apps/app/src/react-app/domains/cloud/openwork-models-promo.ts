@@ -11,9 +11,13 @@ import {
 import { isDefaultControlPlaneUrl } from "../settings/cloud/control-plane-url";
 import { denSettingsChangedEvent } from "../../../app/lib/den-session-events";
 import { useSyncExternalStore } from "react";
+import { readDesktopDistributionInfo } from "../../../app/lib/desktop";
+import { isDesktopRuntime } from "../../../app/utils";
 
 export const OPENWORK_MODELS_PROVIDER_ID = "openwork";
 export const OPENWORK_MODELS_PROVIDER_NAME = "OpenWork Models";
+export const OPENWORK_FREE_MODELS_PROVIDER_ID = "openwork-free";
+export const OPENWORK_FREE_MODELS_PROVIDER_NAME = "OpenWork Models (Free)";
 export const OPENWORK_MODELS_PROMO_HIDDEN_KEY = "openwork.openworkModelsPromo.hidden";
 export const OPENWORK_MODELS_PROMO_LAST_SHOWN_KEY = "openwork.openworkModelsPromo.lastShownAt";
 export const OPENWORK_MODELS_STARTUP_PROMO_SHOWN_KEY = "openwork.openworkModelsPromo.startupShown";
@@ -37,6 +41,28 @@ export function isOpenWorkModelsPromoEligibleForDenBaseUrl(baseUrl: string) {
 
 export function isOpenWorkModelsPromoEligible() {
   return isOpenWorkModelsPromoEligibleForDenBaseUrl(readDenSettings().baseUrl);
+}
+
+export function isOpenWorkModelsFreeEligible() {
+  const bootstrap = readDenBootstrapConfig();
+  const distribution = readDesktopDistributionInfo();
+  return isDesktopRuntime()
+    && distribution.flavor === "public"
+    && bootstrap.requireSignin !== true
+    && bootstrap.requireActivation !== true
+    && isOpenWorkModelsPromoEligibleForDenBaseUrl(readDenSettings().baseUrl);
+}
+
+export function useOpenWorkModelsFreeEligibility() {
+  return useSyncExternalStore(
+    (notify) => {
+      if (typeof window === "undefined") return () => undefined;
+      window.addEventListener(denSettingsChangedEvent, notify);
+      return () => window.removeEventListener(denSettingsChangedEvent, notify);
+    },
+    isOpenWorkModelsFreeEligible,
+    isOpenWorkModelsFreeEligible,
+  );
 }
 
 export function useOpenWorkModelsPromoEligibility() {

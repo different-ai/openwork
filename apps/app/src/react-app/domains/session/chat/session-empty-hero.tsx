@@ -79,9 +79,8 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
   }, []);
 
-  // Quiet inline lead to OpenWork Models: replaces the old startup dialog
-  // interrupt. Shown only while the session runs on the free starter model
-  // (the built-in `opencode` provider) and the hosted offering applies.
+  // Quiet status for the anonymous OpenWork Models provider. It confirms that
+  // the first task is ready without making sign-in or an upgrade mandatory.
   const onFreeStarterModel = props.composer?.selectedModel.providerID === DEFAULT_MODEL.providerID;
   const showModelsHint =
     openWorkModelsPromoEligible &&
@@ -134,13 +133,13 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
           className="flex items-center justify-center gap-2 text-[12px] text-muted-foreground"
           data-testid="openwork-models-hint"
         >
-          <span>Using the free starter model.</span>
+          <span>Using OpenWork Models (Free). Free usage has limits.</span>
           <button
             type="button"
             className="flex items-center gap-1 font-medium text-blue-10 transition-colors hover:text-blue-11"
             onClick={() => platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"))}
           >
-            Get frontier models with no API keys
+            See more OpenWork Models
             <ArrowRight className="size-3" />
           </button>
           <button

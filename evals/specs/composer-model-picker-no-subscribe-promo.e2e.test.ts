@@ -5,7 +5,7 @@ const test = spec.world(modelPicker);
 
 test("the composer model pickers keep their controls without the OpenWork Models subscribe promo", async ({ user, step }) => {
   await user.click({ role: "button", label: "Change model" });
-  await user.click({ role: "button", label: /^Model\s+Big Pickle/ });
+  await user.click({ role: "button", label: /^Model\s+/ });
 
   await step("the compact picker keeps controls without subscribe promotion", async () => {
     await user.see({ placeholder: "Search models..." });

@@ -19,8 +19,8 @@ export { LANGUAGE_PREF_KEY } from "../i18n";
 export const HIDE_TITLEBAR_PREF_KEY = "openwork.hideTitlebar";
 
 export const DEFAULT_MODEL: ModelRef = {
-  providerID: "opencode",
-  modelID: "big-pickle",
+  providerID: "openwork-free",
+  modelID: "openai/gpt-5.6-luna",
 };
 
 export const SUGGESTED_PLUGINS: SuggestedPlugin[] = [];

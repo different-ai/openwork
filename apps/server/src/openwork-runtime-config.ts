@@ -39,6 +39,7 @@ import {
   runtimeProviderMap,
   runtimePluginList,
   type RuntimeOpencodeConfig,
+  withEngineGlobalRuntimeDefaults,
 } from "./runtime-opencode-config-store.js";
 import { CONNECT_MCP_SERVER_NAME_PREFIX } from "./connect-mcp-server-catalog.js";
 import { OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
@@ -58,18 +59,19 @@ export async function buildOpenworkRuntimeConfigObject(
 export function buildOpenworkRuntimeConfigObjectFromSnapshot(
   runtimeConfig: RuntimeOpencodeConfig,
 ): Record<string, unknown> {
-  const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
-  const permissions = legacyExecutionPermissions(runtimeConfig.managedPolicy?.execution);
-  const { managedPolicy: _managedPolicy, ...engineConfig } = runtimeConfig;
-  const provider = runtimeProviderMap(runtimeConfig);
+  const globalRuntimeConfig = withEngineGlobalRuntimeDefaults(runtimeConfig);
+  const disabledProviders = runtimeDisabledProviderList(globalRuntimeConfig);
+  const permissions = legacyExecutionPermissions(globalRuntimeConfig.managedPolicy?.execution);
+  const { managedPolicy: _managedPolicy, ...engineConfig } = globalRuntimeConfig;
+  const provider = runtimeProviderMap(globalRuntimeConfig);
   return {
     ...engineConfig,
-    ...(runtimeConfig.managedPolicy?.allowCustomProviders === false ? { enabled_providers: [
+    ...(globalRuntimeConfig.managedPolicy?.allowCustomProviders === false ? { enabled_providers: [
       ...Object.keys(provider).filter((id) => /^(?:lpr_|openwork$)/i.test(id)),
-      ...(runtimeConfig.managedPolicy.allowZenModel !== false ? ["opencode"] : []),
+      ...(globalRuntimeConfig.managedPolicy.allowZenModel !== false ? ["opencode"] : []),
     ] } : {}),
     permission: { ...engineConfig.permission, ...permissions },
-    default_agent: runtimeConfig.default_agent ?? "openwork",
+    default_agent: globalRuntimeConfig.default_agent ?? "openwork",
     agent: {
       openwork: {
         description: "OpenWork default agent",
@@ -105,10 +107,10 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkAnthropicAdaptiveThinkingPluginPath(),
       openworkAnthropicToolSchemaPluginPath(),
       openworkTitleRecoveryPluginPath(),
-      ...runtimePluginList(runtimeConfig),
+      ...runtimePluginList(globalRuntimeConfig),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
-    mcp: Object.fromEntries(Object.entries(runtimeMcpMap(runtimeConfig))
+    mcp: Object.fromEntries(Object.entries(runtimeMcpMap(globalRuntimeConfig))
       .filter(([name]) => !name.startsWith(CONNECT_MCP_SERVER_NAME_PREFIX))),
     ...(Object.keys(provider).length ? { provider } : {}),
   };

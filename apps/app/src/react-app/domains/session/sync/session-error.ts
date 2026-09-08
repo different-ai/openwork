@@ -3,7 +3,7 @@ import type { UIMessage } from "ai";
 import { safeStringify } from "../../../../app/utils";
 import { normalizeErrorText } from "../../../../lib/error-text";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "free-model-limit" | "disk-full" | "database-error" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "free-model-limit" | "anonymous-limit" | "anonymous-capacity" | "anonymous-unavailable" | "disk-full" | "database-error" | "generic";
 
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
@@ -83,6 +83,9 @@ function sessionErrorKind(
   if (responseBody?.includes("FreeUsageLimitError") || message?.includes("FreeUsageLimitError")) {
     return "free-model-limit";
   }
+  if (/anonymous_limit_exceeded/i.test(searchable)) return "anonymous-limit";
+  if (/anonymous_capacity_exceeded/i.test(searchable)) return "anonymous-capacity";
+  if (/anonymous_unavailable/i.test(searchable)) return "anonymous-unavailable";
   return "generic";
 }
 
@@ -92,6 +95,9 @@ function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
   if (kind === "aborted") return "Task interrupted";
   if (kind === "provider-timeout") return "Provider did not respond in time";
   if (kind === "free-model-limit") return "The free starter model is busy right now";
+  if (kind === "anonymous-limit") return "OpenWork Models free limit reached";
+  if (kind === "anonymous-capacity") return "OpenWork Models are busy right now";
+  if (kind === "anonymous-unavailable") return "OpenWork Models are temporarily unavailable";
   return fallback;
 }
 
@@ -110,6 +116,15 @@ function errorDescription(kind: OpencodeSessionErrorKind) {
   }
   if (kind === "free-model-limit") {
     return "Too many people are using the free model at once. Wait a few minutes and try again, or connect your own model provider in Settings → AI Providers to keep working.";
+  }
+  if (kind === "anonymous-limit") {
+    return "Wait for your free usage to reset, then try again. You can also connect your own provider in Settings → AI Providers.";
+  }
+  if (kind === "anonymous-capacity") {
+    return "Capacity is full right now. Wait a few minutes and retry. You can use an existing signed-in plan or your own provider in the meantime.";
+  }
+  if (kind === "anonymous-unavailable") {
+    return "Try again later. You can use an existing signed-in plan or connect your own provider in Settings → AI Providers.";
   }
   return null;
 }

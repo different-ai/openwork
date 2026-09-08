@@ -219,6 +219,11 @@ function configsAreSemanticallyEqual(left: string, right: string): boolean {
   return leftCanonical !== null && leftCanonical === rightCanonical;
 }
 
+function isDefaultDisabledOpenCodeProvider(providerId: string): boolean {
+  const normalized = providerId.trim().toLowerCase();
+  return normalized === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID || normalized === "opencode-go";
+}
+
 export type ProviderAuthMethod = {
   type: "oauth" | "api" | "cloud";
   label: string;
@@ -1582,7 +1587,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     };
 
     try {
-      if (resolved.toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
+      if (isDefaultDisabledOpenCodeProvider(resolved)) {
         await ensureProjectProviderDisabledState(resolved, false);
       }
       const trimmedCode = code?.trim();
@@ -1635,7 +1640,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     setStateField("providerAuthBusy", true);
     try {
-      if (providerId.trim().toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
+      if (isDefaultDisabledOpenCodeProvider(providerId)) {
         await ensureProjectProviderDisabledState(providerId, false);
       }
       await c.auth.set({ providerID: providerId, auth: { type: "api", key: trimmed } });
@@ -2165,9 +2170,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     try {
-      // OpenCode Zen is built-in / env-backed. Credential removal alone leaves
-      // it connected — disable it via runtime OPENCODE_CONFIG injection.
-      if (resolved.toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
+      // OpenCode's built-in providers can be env-backed. Credential removal
+      // alone leaves them connected, so disable them in the managed runtime.
+      if (isDefaultDisabledOpenCodeProvider(resolved)) {
         try {
           await removeProviderAuthCredentials(resolved);
         } catch {
@@ -2345,7 +2350,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         } else {
           const logoutProviderIds = detail?.status === "signed_out"
             ? [...new Set(options.providerConnectedIds())].filter(
-              (providerId) => providerId.trim().toLowerCase() !== DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID,
+              (providerId) => isCloudManagedProviderKey(providerId),
             )
             : [];
           // Account-scoped catalog state must disappear synchronously. Config

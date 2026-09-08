@@ -19,6 +19,7 @@ export type RuntimeOpencodeConfig = {
 };
 
 export const ENGINE_GLOBAL_RUNTIME_CONFIG_ID = "__openwork_engine_global__";
+export const DEFAULT_ENGINE_DISABLED_PROVIDERS = ["opencode", "opencode-go"] as const;
 
 /** Reserved Connect MCP name; kept in sync with OPENWORK_CLOUD_MCP_NAME in cloud-mcp-health.ts. */
 const OPENWORK_CLOUD_MCP_RESERVED_NAME = "openwork-cloud";
@@ -47,6 +48,14 @@ function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
     ...(externalDirectory ? { permission: { external_directory: externalDirectory } } : {}),
     ...(provider ? { provider } : {}),
   };
+}
+
+export function withEngineGlobalRuntimeDefaults(
+  config: RuntimeOpencodeConfig,
+): RuntimeOpencodeConfig {
+  return Array.isArray(config.disabled_providers)
+    ? config
+    : { ...config, disabled_providers: [...DEFAULT_ENGINE_DISABLED_PROVIDERS] };
 }
 
 function parseRuntimeOpencodeConfig(configJson: string): RuntimeOpencodeConfig {
@@ -149,7 +158,9 @@ export async function readRuntimeOpencodeConfig(config: ServerConfig, workspaceI
 }
 
 export async function readGlobalRuntimeOpencodeConfig(config: ServerConfig): Promise<RuntimeOpencodeConfig> {
-  return await readRuntimeOpencodeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID);
+  return withEngineGlobalRuntimeDefaults(
+    await readRuntimeOpencodeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID),
+  );
 }
 
 export type RuntimeOpencodeConfigRow = {
@@ -273,7 +284,7 @@ export async function readEffectiveRuntimeOpencodeConfig(
   workspaceId: string,
 ): Promise<RuntimeOpencodeConfig> {
   if (isEngineGlobalRuntimeConfigId(workspaceId)) {
-    return await readRuntimeOpencodeConfig(config, workspaceId);
+    return await readGlobalRuntimeOpencodeConfig(config);
   }
   const [globalRuntime, workspaceRuntime] = await Promise.all([
     readGlobalRuntimeOpencodeConfig(config),
@@ -528,7 +539,13 @@ function updateRuntimeConfig(
   const pending = runtimeWrites.get(config) ?? Promise.resolve();
   const result = pending.catch(() => undefined).then(async () => {
     const row = await runtimeOpencodeConfigStore.getRow(config, workspaceId);
-    const next = normalizeRuntimeOpencodeConfig(updater(row?.value ?? {}));
+    const current = isEngineGlobalRuntimeConfigId(workspaceId)
+      ? withEngineGlobalRuntimeDefaults(row?.value ?? {})
+      : row?.value ?? {};
+    const updated = normalizeRuntimeOpencodeConfig(updater(current));
+    const next = isEngineGlobalRuntimeConfigId(workspaceId)
+      ? withEngineGlobalRuntimeDefaults(updated)
+      : updated;
     const configJson = runtimeOpencodeConfigStore.serialize(next);
     if (row?.valueJson === configJson) return { config: next, changed: false };
     await runtimeOpencodeConfigStore.setSerialized(config, workspaceId, configJson, Date.now());

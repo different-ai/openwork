@@ -1086,6 +1086,16 @@ const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
     : `Retrying · attempt ${status.attempt}`
   const action = status.action
   const freeModelLimit = action?.reason === "free_tier_limit"
+  const retryText = `${status.message} ${action?.title ?? ""} ${action?.message ?? ""}`
+  const anonymousLimit = /anonymous_limit_exceeded/i.test(retryText)
+  const anonymousCapacity = /anonymous_capacity_exceeded/i.test(retryText)
+  const anonymousUnavailable = /anonymous_unavailable/i.test(retryText)
+  const anonymousFailure = anonymousLimit || anonymousCapacity || anonymousUnavailable
+  const anonymousTitle = anonymousLimit
+    ? "OpenWork Models free limit reached"
+    : anonymousCapacity
+      ? "OpenWork Models are busy right now"
+      : "OpenWork Models are temporarily unavailable"
 
   return (
     <Message className="not-prose mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-0 md:px-10">
@@ -1095,7 +1105,7 @@ const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
             <LoaderCircle size={16} className="mt-0.5 shrink-0 animate-spin text-amber-700" />
             <div className="min-w-0 space-y-1">
               <p className="whitespace-pre-wrap text-sm font-medium text-amber-900">
-                {freeModelLimit ? "The free starter model is busy right now" : status.message}
+                {anonymousFailure ? anonymousTitle : freeModelLimit ? "The free starter model is busy right now" : status.message}
               </p>
               <p className="text-xs text-amber-800">{info}</p>
             </div>
@@ -1103,10 +1113,12 @@ const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
           {action ? (
             <div className="ml-6 space-y-1 border-t border-amber-400/60 pt-2">
               <p className="text-xs font-medium text-amber-950">
-                {freeModelLimit ? "Free model limit reached" : action.title}
+                {anonymousFailure ? "Try again later" : freeModelLimit ? "Free model limit reached" : action.title}
               </p>
               <p className="text-xs text-amber-900">
-                {freeModelLimit
+                {anonymousFailure
+                  ? "Wait a moment and retry, or choose another model provider to keep working."
+                  : freeModelLimit
                   ? "OpenWork will keep retrying. To keep working now, connect your own model provider."
                   : action.message}
               </p>
