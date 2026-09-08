@@ -74,6 +74,7 @@ test("the global tab limit rejects new pages without disturbing live tabs, and c
   await step("Closing a visible tab releases exactly one slot and the same request succeeds", async () => {
     const readingState = full.tabs.find(tab => tab.id === readingTab.tabId);
     if (!readingState) throw new Error("The reading tab is missing at capacity.");
+    await user.hover({ role: "button", label: `Select tab: ${readingState.label}` });
     await user.click({ role: "button", label: `Close tab: ${readingState.label}` });
     await eventually(async () => {
       expect((await world.readBrowserState()).tabs).toEqual(full.tabs.filter(tab => tab.id !== readingTab.tabId));
@@ -245,6 +246,7 @@ test("moving the last background page on screen releases its hidden host and rep
         return true;
       }, { within: 15_000, label: "the hidden host target disappears while the same browser page remains" });
       expect(await world.clickAndType(tab, "-shown")).toEqual({ clicks: 2, value: "background-shown" });
+      await user.hover({ role: "button", label: "Select tab: input-probe" });
       await user.click({ role: "button", label: "Close tab: input-probe" });
       await user.click(conversation(reading.title));
       await eventually(async () => {
