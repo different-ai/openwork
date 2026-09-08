@@ -180,7 +180,7 @@ function parsePageProbe(value: unknown): PageProbe {
 export async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string>) {
   const app = await seed.desktop({ name: "builtin-browser", env });
   const workspacePath = seed.tmpPath("builtin-browser");
-  const workspace = await seed.workspace(app, workspacePath);
+  const workspace = await seed.workspace(app, workspacePath, { create: true });
   const session = await seed.session(app);
   const origin = await embeddedServerUrl(seed, app);
 
@@ -629,7 +629,7 @@ export async function attachBuiltinTab(app: Surface, targetId: string): Promise<
 
 export async function builtinBrowserWorld(seed: Seed, options: { workspacePath?: string } = {}) {
   const app = await seed.desktop({ name: "builtin-browser" });
-  const workspace = await seed.workspace(app, options.workspacePath ?? seed.tmpPath("builtin-browser"));
+  const workspace = await seed.workspace(app, options.workspacePath ?? seed.tmpPath("builtin-browser"), { create: true });
   const session = await seed.session(app, { title: "Browser project" });
   const info = await seed.evalIn(app, () => window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo"), { awaitPromise: true });
   if (!info || typeof info !== "object" || !("baseUrl" in info) || typeof info.baseUrl !== "string") throw new Error("The embedded server is unavailable.");
