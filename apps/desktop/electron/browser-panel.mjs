@@ -271,6 +271,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           } finally { reservedViews -= 1; }
         }
         if (reload) await tab.view.webContents.loadURL(url);
+        await tab.backgroundReady;
         tab.restoreError = null;
       } catch (error) {
         tab.restoreError = String(error instanceof Error ? error.message : error) || "Could not reload browser tab.";
@@ -463,6 +464,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         const targetId = await resolveBrowserCdpTargetId(tab.tabId);
         traceLifecycle("open: load destination");
         await tab.view.webContents.loadURL(url);
+        await tab.backgroundReady;
         traceLifecycle("open: destination loaded");
         if (browserTabs.get(tab.tabId) !== tab || tab.view.webContents.isDestroyed()) throw new Error("Browser tab was closed.");
         tab.targetId = targetId;
@@ -901,6 +903,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (request.cancelled) throw new Error("Browser tab creation cancelled by owner cleanup.");
       const tabId = createBrowserTabId();
       tab = { tabId, view: null, url: normalizeBrowserUrl(url), title: "", favicon: null, background: false,
+        documentReady: false, backgroundReady: Promise.resolve(),
         keepActive: false, automationProtected, restoring: false, lastUsed: ++useCounter,
         automationInFlight: automationProtected, restoreError: null, manuallySuspended: false,
         downloads: new Set(), permissionUsed: false, targetId: null, generation: 0 };
@@ -935,6 +938,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     });
     traceLifecycle("allocate: view created");
     Object.assign(tab, { view, background: false, backgroundDebuggerOwned: false, safety: null,
+      documentReady: false, backgroundReady: Promise.resolve(),
       reloadSafe: false, unsafeNavigation: false, requestIsGet: false, requestUrl: null,
       interacted: false, mediaUsed: false, loading: false });
     // Load about:blank immediately to preempt persistent-session restore.
@@ -1020,6 +1024,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     view.webContents.on("did-navigate-in-page", (_event, _url, isMainFrame) => {
       if (isMainFrame) { tab.unsafeNavigation = true; tab.reloadSafe = false; }
       sendBrowserState();
+    });
+    view.webContents.on("dom-ready", () => {
+      tab.documentReady = true;
+      if (tab.background) emulateBackgroundTab(tab);
     });
     view.webContents.on("did-finish-load", () => {
       try { view.webContents.send("openwork:browser:safety-init", { generation: tab.generation }); }
@@ -1137,8 +1145,18 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     tab.view.setBounds({ x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT });
     backgroundBrowserWindow().contentView.addChildView(tab.view);
     traceLifecycle("background: view attached");
+    if (tab.documentReady) emulateBackgroundTab(tab);
+  }
+
+  function emulateBackgroundTab(tab) {
+    const webContents = tab.view?.webContents;
+    if (!webContents || !tab.documentReady || !tab.background || webContents.isDestroyed()) return;
+    // A newly allocated WebContentsView has no initialized document yet.
+    // Sending Emulation commands before its first load can crash Electron's
+    // native renderer host. Async allocation makes that ordering observable;
+    // attach the view first, but wait for dom-ready before using the debugger.
     const cdp = webContents.debugger;
-    runDetachedTask("emulate background browser tab", async () => {
+    tab.backgroundReady = Promise.resolve().then(async () => {
       if (webContents.isDestroyed() || tab.view?.webContents !== webContents || !tab.background) return;
       if (!cdp.isAttached()) { cdp.attach("1.3"); tab.backgroundDebuggerOwned = true; }
       traceLifecycle("background: debugger attached");
@@ -1149,6 +1167,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         traceLifecycle(`background: ${method}`);
       }
     });
+    runDetachedTask("emulate background browser tab", () => tab.backgroundReady);
   }
 
   function exitBackgroundMode(tab) {

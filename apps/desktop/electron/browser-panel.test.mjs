@@ -72,7 +72,7 @@ export class WebContentsView {
       isLoading() { return this.loading ?? false; },
       canGoBack() { return false; },
       canGoForward() { return false; },
-      loadURL(url) { this.loads.push(url); this.url = url; return Promise.resolve(); },
+      loadURL(url) { this.loads.push(url); this.url = url; this.emit("dom-ready"); return Promise.resolve(); },
       focus() {},
       close(options) {
         this.closeOptions = options;
@@ -311,6 +311,27 @@ const FOREGROUND_SEQUENCE = [
   { method: "Emulation.setFocusEmulationEnabled", params: { enabled: false } },
   { method: "Emulation.clearDeviceMetricsOverride", params: undefined },
 ];
+
+test("background emulation waits for a real document after asynchronous view allocation", async (t) => {
+  controls.onCreate = (view) => {
+    view.webContents.loadURL = (url) => {
+      view.webContents.loads.push(url);
+      view.webContents.url = url;
+      return Promise.resolve();
+    };
+  };
+  t.after(() => { controls.onCreate = null; });
+  const panel = createPanel();
+  await panel.invoke("openwork:browser:createTab", "https://example.com", "background");
+  await flush();
+  const view = panel.views()[0];
+  assert.deepEqual(panel.commands(view), [], "no native emulation commands before dom-ready");
+  assert.equal(view.webContents.debugger.isAttached(), false);
+  view.webContents.emit("dom-ready");
+  await flush();
+  assert.deepEqual(panel.commands(view), BACKGROUND_SEQUENCE);
+  panel.invoke("openwork:browser:destroy");
+});
 
 test("a tab opened for a background conversation loads silently and leaves the visible conversation's tab on screen", async () => {
   const { invoke, onScreen, commands, children, messages, views } = createPanel();
