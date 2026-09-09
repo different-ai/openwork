@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { FileText, MessageCircle, ListTodo, Plug, RotateCcw, ArrowUp, ArrowRight, ChevronLeft, Check, Pause, Play, Plus, Users } from "lucide-react";
+import { FileText, MessageCircle, ListTodo, Mail, Plug, RotateCcw, ArrowUp, ArrowRight, ChevronLeft, Check, Pause, Play, Plus, Users } from "lucide-react";
 import { CoworkerAvatar, CoworkerMark, acknowledgeCoworker } from "./coworker-brand";
 import { CoworkerAction } from "./coworker-announcement-actions";
 import { DEMO_VIEWS, EXAMPLES, TEAM, DEFAULT_DEMO_COWORKER, customExample, type CoworkerId, type DemoView, type DemoCoworker, type StockCoworkerId } from "../lib/coworker-demo";
@@ -10,6 +10,7 @@ import { CoworkerDemoEffort } from "./coworker-demo-effort";
 import { CoworkerDemoModels } from "./coworker-demo-models";
 import { DemoQuestionCard, GroupComposer, GroupConversation, GroupFaces, Thinking } from "./coworker-demo-conversations";
 import { capturePosthogEvent } from "../lib/posthog-client";
+import { COWORKER } from "../lib/coworker-content";
 
 const VIEW_ICONS = { chat: MessageCircle, documents: FileText, assignments: ListTodo, connections: Plug, group: Users, create: Plus };
 type Model = "free" | "models";
@@ -27,7 +28,7 @@ export function CoworkerVignette() {
   const [view, setView] = useState<DemoView>("chat");
   const [progress, setProgress] = useState(freshProgress);
   const [documentOpen, setDocumentOpen] = useState(false);
-  const [connections, setConnections] = useState({ drive: false, slack: false });
+  const [connections, setConnections] = useState({ drive: false, slack: false, gmail: false });
   const [completed, setCompleted] = useState<Set<DemoView>>(() => new Set());
   const [status, setStatus] = useState("");
   const [motion, setMotion] = useState(true);
@@ -164,11 +165,11 @@ export function CoworkerVignette() {
     markComplete("assignments");
     setStatus("Example assignment added for " + member.name + ".");
   }
-  function toggleConnection(id: "drive" | "slack") {
+  function toggleConnection(id: "drive" | "slack" | "gmail") {
     track("connection_toggled", id);
     setConnections((current) => ({ ...current, [id]: !current[id] }));
     if (!connections[id]) markComplete("connections");
-    setStatus((id === "drive" ? "Google Drive" : "Slack") + (connections[id] ? " disconnected in the demo." : " connected in the demo."));
+    setStatus((id === "drive" ? "Google Drive" : id === "gmail" ? "Gmail" : "Slack") + (connections[id] ? " disconnected in the demo." : " connected in the demo."));
   }
   function reset() {
     track("reset");
@@ -179,7 +180,7 @@ export function CoworkerVignette() {
     setSelected("scout");
     setView("chat");
     setDocumentOpen(false);
-    setConnections({ drive: false, slack: false });
+    setConnections({ drive: false, slack: false, gmail: false });
     setCompleted(new Set());
     setStatus("The sample workspace has been reset.");
   }
@@ -202,7 +203,7 @@ export function CoworkerVignette() {
           <p className="cw-eyebrow cw-demo-sidebar-label">Your coworkers</p>
           <div className="cw-demo-team" role="group" aria-label="Choose a demo coworker">
             {team.map((person) => <button type="button" key={person.id} aria-label={"Talk to " + person.name} aria-pressed={selected === person.id && view !== "group" && view !== "create"} className="cw-demo-person" onClick={() => chooseCoworker(person.id)}>
-              <CoworkerAvatar {...person} identity={"landing:" + person.id} animated={motion} motion="navigation" size={30} /><span><span className="block text-sm font-medium">{person.name}</span><span className="cw-demo-role">{person.role}</span></span>
+               <CoworkerAvatar {...person} identity={"landing:" + person.id} animated={motion} motion="navigation" size={44} /><span><span className="block text-sm font-medium">{person.name}</span><span className="cw-demo-role">{person.role}</span></span>
             </button>)}
           </div>
           <button type="button" className="cw-demo-add" onClick={() => openView("create")}><Plus size={15} aria-hidden="true" />Add a coworker</button>
@@ -217,8 +218,11 @@ export function CoworkerVignette() {
         </aside>
         <section className="cw-demo-workspace" id="coworker-demo-panel" aria-labelledby="coworker-demo-title">
           <header className="cw-demo-panel-header">
-            <h3 id="coworker-demo-title" ref={titleRef} tabIndex={-1}>{panelTitle}</h3>
-            <span className="text-[11px] text-[var(--cw-muted)]">Sample workspace</span>
+            <div className="cw-demo-header-person">
+              {view === "group" ? <GroupFaces animated={false} /> : view !== "create" && <CoworkerAvatar {...member} identity={"landing:" + member.id} animated={motion} motion="attentive" size={36} />}
+              <div><h3 id="coworker-demo-title" ref={titleRef} tabIndex={-1}>{panelTitle}</h3><span className="cw-demo-header-state">Sample workspace</span></div>
+            </div>
+            <div className="cw-demo-header-tools"><button type="button" className="cw-demo-icon-button" aria-label="Show sample documents" onClick={() => openView("documents")}><FileText size={16} aria-hidden="true" /></button><button type="button" className="cw-demo-icon-button" aria-label="Show sample apps and tools" onClick={() => openView("connections")}><Plug size={16} aria-hidden="true" /></button></div>
           </header>
           <div className="cw-demo-content" ref={contentRef} tabIndex={0} role="region" aria-label={member.name + " " + view + " example"} key={selected + view + documentOpen}>
             {view === "create" && <CoworkerDemoBuilder value={draft} identity={"landing:custom-" + (customId.current + 1)} animated={motion} onChange={setDraft} onCreate={createCoworker} />}
@@ -257,11 +261,12 @@ export function CoworkerVignette() {
             {view === "connections" && <div className="cw-demo-panel-body">
               <p className="cw-eyebrow mb-4">OpenWork Connect</p><h4 className="text-2xl font-medium tracking-tight">Bring your work into the conversation.</h4><p className="cw-demo-description mt-3">Let your coworkers use the tools you already work with. Try a sample connection below.</p>
               <div className="space-y-3">
+                <div className="cw-demo-list-row"><span className="cw-demo-provider" aria-hidden="true"><Mail size={17} /></span><span className="flex-1"><strong>Gmail</strong><small>{connections.gmail ? "Connected in demo · 2 sample emails" : "Email context and draft replies"}</small></span><button type="button" className="cw-demo-small-button" onClick={() => toggleConnection("gmail")} aria-label={connections.gmail ? "Disconnect Gmail demo" : "Connect Gmail demo"}>{connections.gmail ? <><Check size={14} aria-hidden="true" />Connected</> : "Connect"}</button></div>
                 <div className="cw-demo-list-row"><span className="cw-demo-provider" aria-hidden="true">D</span><span className="flex-1"><strong>Google Drive</strong><small>{connections.drive ? "Connected in demo · 3 sample documents" : "Docs and working files"}</small></span><button type="button" className="cw-demo-small-button" onClick={() => toggleConnection("drive")} aria-label={connections.drive ? "Disconnect Google Drive demo" : "Connect Google Drive demo"}>{connections.drive ? <><Check size={14} aria-hidden="true" />Connected</> : "Connect"}</button></div>
                 <div className="cw-demo-list-row"><span className="cw-demo-provider" aria-hidden="true">S</span><span className="flex-1"><strong>Slack</strong><small>{connections.slack ? "Connected in demo · #launch-team" : "Team updates and conversations"}</small></span><button type="button" className="cw-demo-small-button" onClick={() => toggleConnection("slack")} aria-label={connections.slack ? "Disconnect Slack demo" : "Connect Slack demo"}>{connections.slack ? <><Check size={14} aria-hidden="true" />Connected</> : "Connect"}</button></div>
               </div>
-              {(connections.drive || connections.slack) && <div className="cw-demo-note"><strong>Ready for your next conversation</strong><p>{connections.drive ? "The sample launch brief, checklist, and announcement are available to your demo coworkers. " : ""}{connections.slack ? "The sample launch-team updates are available too." : ""}</p></div>}
-              <p className="mt-5 text-xs leading-5 text-[var(--cw-muted)]">These are example connections. Your accounts and files stay untouched.</p>
+              {(connections.drive || connections.slack || connections.gmail) && <div className="cw-demo-note"><strong>Ready for your next conversation</strong><p>{connections.gmail ? "Two fictional launch emails are available. " : ""}{connections.drive ? "The sample launch brief, checklist, and announcement are available to your demo coworkers. " : ""}{connections.slack ? "The sample launch-team updates are available too." : ""}</p></div>}
+              <p className="mt-5 text-xs leading-5 text-[var(--cw-muted)]">These are example connections. Your accounts and files stay untouched. In the app, authorize each service through OpenWork Connect; organization setup may be needed.</p>
             </div>}
           </div>
           {view === "group" && <GroupComposer effort={groupEffort} onEffortChange={setGroupEffort} selected={groupSelected} busy={groupBusy} animated={motion} onSend={playGroup} onEveryone={() => { track("group_recipient_selected", "everyone"); if (motion) TEAM.filter((person) => !groupSelected.includes(person.id)).forEach((person) => acknowledgeCoworker("landing:" + person.id)); setGroupSelected(TEAM.map((person) => person.id)); }} onToggle={(id) => { track("group_recipient_selected", id); if (motion && !groupSelected.includes(id)) acknowledgeCoworker("landing:" + id); setGroupSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]); }} />}
@@ -277,13 +282,13 @@ export function CoworkerVignette() {
       <div className="cw-demo-guide">
         <div><p className="font-medium">{completed.size === 6 ? "Make a little room on your team." : view === "group" ? "Different strengths. One conversation." : view === "create" ? "A coworker shaped around your work." : view === "chat" ? state.replied ? "There’s something to build on." : "Try the conversation." : view === "documents" ? "A draft you can make your own." : view === "assignments" ? "Give your coworker the next step." : "A place for your tools, too."}</p>
           <p className="mt-1 text-xs text-[var(--cw-muted)]">{completed.size === 6 ? "You’ve explored a sample workday. Meet your own coworkers next." : "Explore at your own pace · " + completed.size + " of 6 moments tried"}</p></div>
-        {completed.size === 6 ? <CoworkerAction href="#get-started" action="early_access" placement="demo" className="cw-demo-small-button">Get early access<ArrowRight size={14} aria-hidden="true" /></CoworkerAction>
+        {completed.size === 6 ? <CoworkerAction href={COWORKER.download} action="download" placement="demo" className="cw-demo-small-button">Download alpha<ArrowRight size={14} aria-hidden="true" /></CoworkerAction>
           : view === "group" ? <button type="button" className="cw-demo-small-button" disabled={groupBusy || (!groupDone && groupSelected.length === 0)} onClick={groupDone ? () => openView("create") : playGroup}>{groupDone ? "Add your coworker" : groupBusy ? "Coworkers are replying…" : "Try a group chat"}<ArrowRight size={14} aria-hidden="true" /></button>
           : view === "create" ? <span className="text-xs text-[var(--cw-muted)]">Your changes appear in the preview.</span>
           : view === "chat" ? <button type="button" className="cw-demo-small-button" disabled={state.thinking} onClick={state.replied ? openDocument : reply}>{state.thinking ? "Thinking…" : state.replied ? "Open the draft" : "Try a reply"}<ArrowRight size={14} aria-hidden="true" /></button>
           : view === "documents" ? <button type="button" className="cw-demo-small-button" onClick={documentOpen ? () => openView("assignments") : openDocument}>{documentOpen ? "Explore assignments" : "Open the draft"}<ArrowRight size={14} aria-hidden="true" /></button>
           : view === "assignments" ? <button type="button" className="cw-demo-small-button" onClick={state.assigned ? () => openView("connections") : assign}>{state.assigned ? "Explore connections" : "Try an assignment"}<ArrowRight size={14} aria-hidden="true" /></button>
-          : <button type="button" className="cw-demo-small-button" onClick={() => connections.drive || connections.slack ? openView("group") : toggleConnection("drive")}>{connections.drive || connections.slack ? "Try a group chat" : "Try a connection"}<ArrowRight size={14} aria-hidden="true" /></button>}
+          : <button type="button" className="cw-demo-small-button" onClick={() => connections.drive || connections.slack || connections.gmail ? openView("group") : toggleConnection("gmail")}>{connections.drive || connections.slack || connections.gmail ? "Try a group chat" : "Try a connection"}<ArrowRight size={14} aria-hidden="true" /></button>}
       </div>
       <p className="sr-only" role="status">{status}</p>
     </div>

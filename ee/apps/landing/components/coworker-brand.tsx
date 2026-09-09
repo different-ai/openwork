@@ -4,16 +4,17 @@ export type { AvatarColor, AvatarGlasses } from "@openwork/ui/coworker";
 
 const BUBBLE_PATH = "M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z";
 
-/** The app icon: a white speech bubble with round glasses on a light tile. */
+/** The white website logo. Keep the packaged app icon separate from site branding. */
 export function CoworkerMark({ size = 44, label, tile = true, className = "" }: { size?: number; label?: string; tile?: boolean; className?: string }) {
   return (
     <svg
       aria-hidden={label ? undefined : true}
       aria-label={label}
       role={label ? "img" : undefined}
-      className={className}
-      style={{ width: size, height: size }}
+      className={"inline-block align-middle " + className}
+      style={{ width: size, height: size, flexShrink: 0 }}
       viewBox="0 0 122 122"
+      data-coworker-mark="white"
     >
       {tile ? <rect x="3" y="3" width="116" height="116" rx="29" fill="#f7f8fa" /> : null}
       {tile ? <rect x="3.5" y="3.5" width="115" height="115" rx="28.5" fill="none" stroke="#d8dde5" /> : null}
@@ -33,5 +34,22 @@ export function CoworkerMark({ size = 44, label, tile = true, className = "" }: 
         </g>
       </g>
     </svg>
+  );
+}
+
+/** The approved desktop app icon is reserved for the download page. */
+export function CoworkerAppIcon({ size = 112, label, className = "" }: { size?: number; label?: string; className?: string }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- small local brand asset
+    <img
+      src="/coworker/app-icon.png"
+      alt={label ?? ""}
+      aria-hidden={label ? undefined : true}
+      aria-label={label}
+      className={"inline-block align-middle " + className}
+      width={size}
+      height={size}
+      style={{ flexShrink: 0, width: size, height: size, objectFit: "contain" }}
+    />
   );
 }

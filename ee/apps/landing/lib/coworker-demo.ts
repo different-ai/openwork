@@ -61,11 +61,11 @@ export const EXAMPLES: Record<StockCoworkerId, Example> = {
     reply: "How about: ‘Good work starts with a little company. Meet your new coworkers.’ I’ve added that as an alternative opening in the draft.",
     document: {
       title: "Announcement draft", eyebrow: "Writing · Draft for review",
-      intro: "Your work. Better together. Meet your AI coworkers: a little help with the research, the first draft, and whatever comes next.",
+      intro: "Your AI team. Built to work together. Give your coworkers context and responsibilities, then turn the next conversation into useful work.",
       points: ["Give a coworker a role and something to work on.", "Drop into the conversation when you want to shape the next step.", "Review the result and make it your own."],
       next: "Meet your next coworker. Start with one task you would love a little help with.",
     },
-    assignment: { title: "Write three announcement openings", description: "Keep them short, warm, and easy to understand.", result: "Three directions: ‘Your work. Better together.’, ‘A little company for your next big idea.’, and ‘Meet the newest member of your team.’" },
+    assignment: { title: "Write three announcement openings", description: "Keep them short, warm, and easy to understand.", result: "Three directions: ‘Your AI team. Built to work together.’, ‘A little company for your next big idea.’, and ‘Meet the newest member of your team.’" },
     routine: "Monday editorial check-in",
     responsibilities: ["Draft announcements", "Refine tone and wording", "Prepare an editorial check-in"],
     clarification: { prompt: "Where will we use this opening?", options: [

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ArrowRight, ArrowDownToLine, BookOpen, FileText, Plug, Users } from "lucide-react";
 import "@openwork/ui/coworker.css";
 import "@openwork/ui/coworker-effort.css";
 import "./coworker.css";
@@ -7,18 +8,19 @@ import { CoworkerVignette, CoworkerDemoShortcut } from "../../components/coworke
 import { TEAM } from "../../lib/coworker-demo";
 import { CoworkerAction, CoworkerAnnouncementView } from "../../components/coworker-announcement-actions";
 import { StructuredData } from "../../components/structured-data";
-import { BENEFITS, COWORKER, FAQ, GET_STARTED, HERO, MODELS, NOTIFY, POWERED_BY, STEPS } from "../../lib/coworker-content";
+import { CoworkerWorkExamples } from "../../components/coworker-work-examples";
+import { CoworkerFeatureLab } from "../../components/coworker-feature-lab";
+import { BENEFITS, COLLABORATION, COWORKER, FAQ, GET_STARTED, HERO, MODELS, NOTIFY, OPENWORK, POWERED_BY, STEPS } from "../../lib/coworker-content";
 
 const SITE_URL = "https://openworklabs.com";
-const NAV = [{ href: "#how", label: "Demo" }, { href: "#models", label: "Models" }];
 const SHARED_LINKS = [{ href: "/docs", label: "Docs" }, { href: "/pricing", label: "Team pricing" }, { href: "/enterprise", label: "Enterprise" }, { href: "/", label: "OpenWork" }];
 
 export const metadata: Metadata = {
-  title: "Open Coworker — Your work. Better together.",
+  title: `Open Coworker — ${HERO.title}`,
   description: HERO.lead,
   alternates: { canonical: "/coworker" },
   openGraph: {
-    title: "Open Coworker — Your work. Better together.",
+    title: `Open Coworker — ${HERO.title}`,
     description: HERO.lead,
     url: SITE_URL + "/coworker",
     siteName: "Open Coworker",
@@ -50,33 +52,27 @@ export default function CoworkerPage() {
       <div className="cw-backdrop" aria-hidden="true" />
       <div className="relative z-10">
         <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:bg-white focus:p-3 focus:text-black">Skip to content</a>
-        <header className="cw-nav sticky top-0 z-40">
-          <div className="mx-auto flex h-16 max-w-[1120px] items-center justify-between gap-3 px-5 md:px-8">
-            <a href="#top" className="flex shrink-0 items-center gap-2.5 font-bold tracking-tight">
-              <CoworkerMark size={28} label="Open Coworker" />
-              <span className="text-sm sm:text-base">{COWORKER.name}</span>
-            </a>
-            <nav aria-label="Primary" className="flex items-center gap-6">
-              {NAV.map((link) => <a key={link.href} href={link.href} className="hidden text-sm text-[var(--cw-muted)] hover:text-[var(--cw-text)] sm:block">{link.label}</a>)}
-              <CoworkerAction href={HERO.primary.href} action="early_access" placement="nav" className="cw-btn cw-btn--primary cw-btn--sm">{HERO.primary.label}</CoworkerAction>
-            </nav>
-          </div>
-        </header>
-
         <main id="main-content">
-          <section id="top" className="px-5 pb-6 pt-16 text-center md:px-8 md:pt-20">
+          <section id="top" className="cw-hero px-5 pb-3 pt-9 text-center md:px-8 md:pt-10">
             <div className="mx-auto max-w-[1040px]">
+              <div className="cw-hero-icon"><CoworkerMark size={64} /></div>
               <p className="cw-eyebrow">{HERO.eyebrow}</p>
-              <h1 className="cw-display mx-auto mt-6 max-w-[900px] text-[50px] sm:text-[72px] lg:text-[84px]">Your work.<br /><span className="text-[var(--cw-secondary)]">Better together.</span></h1>
-              <p className="mx-auto mt-6 max-w-[490px] text-base leading-7 text-[var(--cw-secondary)] md:text-lg">{HERO.lead}</p>
+              <h1 className="cw-display mx-auto mt-4 max-w-[960px] text-[44px] sm:text-[60px] lg:text-[72px]" data-testid="coworker-headline">{HERO.lines.map((line, index) => <span key={line} className={index === 0 ? "block" : "block cw-hero-accent"}>{index > 0 && " "}{line}</span>)}</h1>
+              <p className="mx-auto mt-4 max-w-[620px] text-base leading-7 text-[var(--cw-secondary)] md:text-lg">{HERO.lead}</p>
               <div className="mt-7 flex flex-wrap justify-center gap-3">
-                <CoworkerAction href={HERO.primary.href} action="early_access" placement="hero" className="cw-btn cw-btn--primary">{HERO.primary.label}<span aria-hidden="true">↗</span></CoworkerAction>
+                <CoworkerAction href={HERO.primary.href} action="download" placement="hero" className="cw-btn cw-btn--primary"><ArrowDownToLine size={16} aria-hidden="true" />{HERO.primary.label}</CoworkerAction>
                 <CoworkerAction href={HERO.secondary.href} action="how_it_works" placement="hero" className="cw-btn cw-btn--ghost">{HERO.secondary.label}<span aria-hidden="true">↓</span></CoworkerAction>
               </div>
-              <p className="mt-4 text-xs leading-5 text-[var(--cw-muted)]">Early access for macOS. Public download coming soon.</p>
-              <div className="mt-7 flex flex-wrap justify-center gap-x-5 gap-y-2 text-[11px] text-[var(--cw-muted)]">
+              <p className="mt-4 text-xs leading-5 text-[var(--cw-muted)]">macOS alpha available · Apple Silicon · Signed and notarized</p>
+              <div className="mt-5 flex flex-wrap justify-center gap-x-5 gap-y-2 text-[11px] text-[var(--cw-muted)]">
                 {HERO.strip.map((phrase) => <span key={phrase}>{phrase}</span>)}
               </div>
+              <a href="#openwork" className="cw-connect-path" aria-label="See how OpenWork connects your tools and coworkers">
+                <span><Plug size={16} aria-hidden="true" />Your apps</span><ArrowRight className="cw-connect-path-arrow" size={14} aria-hidden="true" />
+                <span><BookOpen size={16} aria-hidden="true" />Shared skills</span><ArrowRight className="cw-connect-path-arrow" size={14} aria-hidden="true" />
+                <span><Users size={16} aria-hidden="true" />Your coworkers</span><ArrowRight className="cw-connect-path-arrow" size={14} aria-hidden="true" />
+                <span><FileText size={16} aria-hidden="true" />Useful work</span>
+              </a>
             </div>
           </section>
 
@@ -85,12 +81,17 @@ export default function CoworkerPage() {
               <h2 className="mb-5 text-center text-sm font-normal text-[var(--cw-muted)]">Pick up the conversation.</h2>
               <figure aria-label="Interactive Open Coworker walkthrough">
                 <CoworkerVignette />
-                <figcaption id="coworker-demo-disclosure" className="mt-4 text-center text-[11px] text-[var(--cw-muted)]">Sample data and scripted replies. No sign-in needed.</figcaption>
+                <figcaption id="coworker-demo-disclosure" className="mt-4 text-center text-[11px] text-[var(--cw-muted)]">Sample data and scripted replies. No sign-in needed. A look at the developing app; the alpha download may differ.</figcaption>
                 <noscript><p className="mt-3 text-center text-sm text-[var(--cw-muted)]">Enable JavaScript to explore the interactive demo.</p></noscript>
               </figure>
+            </div>
+          </section>
+
+          <section id="team" className="px-5 pb-16 md:px-8 md:pb-20">
+            <div className="mx-auto max-w-[1040px]">
               <div className="cw-collaboration-story">
-                <div><p className="cw-eyebrow">Group chats</p><h2>Good work is<br />a team effort.</h2><p>Bring research, writing, and planning into one conversation. Name the coworker you want to hear from, or ask everyone. Answer a question, choose a direction, and keep the work moving.</p><CoworkerDemoShortcut view="group">Try the team conversation</CoworkerDemoShortcut></div>
-                <div className="cw-collaboration-example"><div className="flex items-center gap-3">{TEAM.map((person) => <CoworkerAvatar key={person.id} {...person} identity={"landing:" + person.id} motion="presentation" size={40} />)}<span className="text-xs text-[var(--cw-muted)]">+ you</span></div><p className="cw-collaboration-quote">“Scout, find the angle. Editor, make it clear. Ops, help us get it out the door.”</p><p>One shared conversation. A clear part for everyone.</p></div>
+                <div><p className="cw-eyebrow">A shared conversation</p><h2>One brief.<br />More than one perspective.</h2><p>{COLLABORATION.text}</p><CoworkerDemoShortcut view="group">Try the team conversation</CoworkerDemoShortcut></div>
+                <div className="cw-collaboration-example"><div className="flex items-center gap-3">{TEAM.map((person) => <CoworkerAvatar key={person.id} {...person} identity={"landing:" + person.id} motion="presentation" size={40} />)}<span className="text-xs text-[var(--cw-muted)]">+ you</span></div><p className="cw-collaboration-quote">“Scout, find the angle. Editor, make it clear. Ops, help us get it out the door.”</p><p>Different roles. One direction. You stay in the conversation.</p></div>
               </div>
               <div className="cw-custom-story"><div><p className="cw-eyebrow">Your team, your way</p><h2>Different coworkers.<br />A clear role for each.</h2></div><div><p>A growth partner to shape campaigns. A support partner to draft replies. A researcher to find the useful details. Add a coworker, give it responsibilities, and decide together what to take on first.</p><CoworkerDemoShortcut view="create">Make a coworker in the demo</CoworkerDemoShortcut></div></div>
               <ol className="mt-12 grid gap-8 md:grid-cols-3">
@@ -103,19 +104,49 @@ export default function CoworkerPage() {
             </div>
           </section>
 
-          <section className="px-5 pb-16 md:px-8 md:pb-24" aria-label="What your coworker helps with">
+          <section className="px-5 pb-16 md:px-8 md:pb-24" aria-label="What your coworker helps with" data-testid="coworker-benefits">
             <div className="mx-auto grid max-w-[1040px] gap-5 md:grid-cols-3">
               {BENEFITS.map((benefit, index) => {
                 const avatar = TEAM[index]!;
                 return <article key={benefit.title} className="cw-card flex flex-col p-6">
                   <div className="flex items-center gap-3"><CoworkerAvatar name={benefit.name} identity={"landing:" + avatar.id} animated={false} motion="quiet" gaze={false} color={avatar.color} glasses={avatar.glasses} size={44} /><p className="text-sm font-semibold">{benefit.name}<span className="mt-0.5 block text-xs font-normal text-[var(--cw-muted)]">{benefit.role}</span></p></div>
-                  <h2 className="mt-6 text-xl font-semibold leading-tight tracking-tight">{benefit.title}</h2>
+                  <h2 className="mt-6 text-xl font-semibold leading-tight tracking-tight" data-testid={`coworker-benefit-${index}`}>{benefit.title}</h2>
                   <p className="mt-3 text-sm leading-6 text-[var(--cw-secondary)]">{benefit.text}</p>
-                  <p className="mt-auto pt-6 text-sm leading-6 text-[var(--cw-muted)]">“{benefit.example}”</p>
+                  <div className="cw-feature-example">
+                    <div><span>{benefit.preview.label}</span><small>Example</small></div>
+                    <p>{benefit.preview.title}</p>
+                    <span className="cw-feature-example-detail">{benefit.preview.detail}</span>
+                  </div>
+                  <p className="mt-auto pt-5 text-sm leading-6 text-[var(--cw-muted)]">“{benefit.example}”</p>
                 </article>;
               })}
             </div>
           </section>
+
+          <section id="openwork" className="scroll-mt-24 px-5 pb-16 md:px-8 md:pb-24" aria-labelledby="coworker-openwork-title" data-testid="coworker-openwork">
+            <div className="mx-auto max-w-[1040px]">
+              <div className="grid gap-10 md:grid-cols-[1fr_1.15fr] md:gap-14">
+                <div>
+                  <p className="cw-eyebrow">{POWERED_BY}</p>
+                  <h2 id="coworker-openwork-title" data-testid="coworker-openwork-title" className="cw-display mt-5 max-w-sm text-[34px] md:text-[40px]">{OPENWORK.title}</h2>
+                  <p className="mt-5 text-sm leading-7 text-[var(--cw-secondary)]">{OPENWORK.lead.text}</p>
+                  <a href={OPENWORK.cta.href} className="cw-btn cw-btn--ghost mt-7">{OPENWORK.cta.label}<span aria-hidden="true">↗</span></a>
+                </div>
+                <div>
+                  <dl className="divide-y divide-[var(--cw-border)]">
+                    {OPENWORK.items.map((item, index) => <div key={item.title} className="grid grid-cols-[1.25rem_1fr] gap-x-4 py-5 first:pt-0">
+                      <dt className="col-span-2 flex gap-4 text-base font-medium"><span aria-hidden="true" className="w-5 shrink-0 pt-1 text-xs tabular-nums text-[var(--cw-muted)]">0{index + 1}</span>{item.title}</dt>
+                      <dd className="col-start-2 mt-2 text-sm leading-7 text-[var(--cw-secondary)]">{item.text}</dd>
+                    </div>)}
+                  </dl>
+                  <p data-testid="coworker-openwork-note" className="border-t border-[var(--cw-border)] pt-4 text-xs leading-6 text-[var(--cw-muted)]">{OPENWORK.note}</p>
+                </div>
+              </div>
+              <CoworkerWorkExamples />
+            </div>
+          </section>
+
+          <CoworkerFeatureLab />
 
           <section id="models" className="cw-models-band scroll-mt-16 px-5 py-16 md:px-8 md:py-20" data-testid="coworker-models">
             <div className="mx-auto grid max-w-[1040px] gap-10 md:grid-cols-[3fr_2fr] md:items-center">
@@ -147,16 +178,16 @@ export default function CoworkerPage() {
 
           <section id="get-started" className="scroll-mt-24 px-5 pb-20 text-center md:px-8 md:pb-24">
             <div className="mx-auto max-w-[720px]">
-              <CoworkerMark size={52} label="Open Coworker" />
+               <CoworkerMark size={76} />
               <h2 className="cw-display mt-6 text-[38px] md:text-[52px]">{GET_STARTED.title}</h2>
               <p className="mx-auto mt-5 max-w-lg text-base leading-7 text-[var(--cw-secondary)]">{GET_STARTED.lead}</p>
-              <CoworkerAction href={NOTIFY.email.href} action="email_early_access" placement="footer" className="cw-btn cw-btn--primary mt-7">{NOTIFY.email.label}<span aria-hidden="true">↗</span></CoworkerAction>
-              <p className="mt-3 text-xs text-[var(--cw-muted)]">Opens your email app · {COWORKER.contactEmail}</p>
+               <CoworkerAction href={COWORKER.download} action="download" placement="footer" className="cw-btn cw-btn--primary mt-7"><ArrowDownToLine size={16} aria-hidden="true" />Download alpha</CoworkerAction>
               <p className="mt-5 text-xs text-[var(--cw-muted)]">{GET_STARTED.status}</p>
-              <div className="mt-5 flex flex-wrap justify-center gap-5 text-sm">
+               <div className="mt-5 flex flex-wrap justify-center gap-5 text-sm">
                 <CoworkerAction href={COWORKER.app} action="source" placement="footer" className="underline decoration-[var(--cw-border)] underline-offset-4">Build from source</CoworkerAction>
                 <CoworkerAction href={NOTIFY.releases.href} action="releases" placement="footer" className="underline decoration-[var(--cw-border)] underline-offset-4">{NOTIFY.releases.label}</CoworkerAction>
-              </div>
+               </div>
+               <p className="mt-6 text-xs text-[var(--cw-muted)]"><CoworkerAction href={NOTIFY.email.href} action="email_early_access" placement="footer" className="underline underline-offset-4">{NOTIFY.email.label}</CoworkerAction> · Opens your email app</p>
             </div>
           </section>
         </main>

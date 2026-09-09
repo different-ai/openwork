@@ -2,14 +2,18 @@ import { expect } from "vitest";
 import { chrome } from "@openwork/hosts";
 import { emulateFocus, freezeMotion, reload, setViewport } from "@openwork/cdp";
 import { spec } from "@openwork/testkit";
+import { SkipError } from "@openwork/env";
 
 // A new visitor journey: an actual announcement page, its native links, and
 // the Models handoff. No live account or checkout is created by this spec.
 for (const width of [1280, 375]) {
-  const test = spec.world(async () => {
+  const test = spec.world(async (_seed, { place }) => {
     const origin = process.env.OPENWORK_EVAL_LANDING_URL;
     if (!origin) throw new Error("OPENWORK_EVAL_LANDING_URL is required");
-    const web = await chrome({ name: "coworker-announcement-" + width, startUrl: origin + "/coworker" });
+    if (place.kind === "daytona" && ["localhost", "127.0.0.1", "[::1]"].includes(new URL(origin).hostname)) {
+      throw new SkipError("OPENWORK_EVAL_LANDING_URL must be reachable from Daytona, not the invoking computer’s loopback");
+    }
+    const web = await chrome({ host: place.host(), name: "coworker-announcement-" + width, startUrl: origin + "/coworker" });
     try {
       await setViewport(web, { width, height: 900, deviceScaleFactor: 1 });
       // Wait for a complete document before adding the motion fixture;
@@ -26,15 +30,168 @@ for (const width of [1280, 375]) {
     }
   }, { needs: { env: ["OPENWORK_EVAL_LANDING_URL"] }, timeout: 90_000 });
 
-  test("Coworker announcement offers early access and an intentional Models handoff at " + width + "px", async ({ world, user, probe, step, evidence }) => {
+  test("Coworker connected-work examples explain integration and responsibilities at " + width + "px", { timeout: 180_000 }, async ({ world, user, probe, step, evidence }) => {
+    await step("See the connected-team promise and preserved availability", async () => {
+      await user.notSee({ label: "Primary" });
+      await user.see({ testId: "coworker-headline" }, { text: /Your AI team\.\s+Built to work together\./ });
+      expect(await probe.text()).toContain("Meet AI coworkers with their own roles, memory, and responsibilities.");
+      expect(await probe.text()).toContain("macOS alpha available · Apple Silicon · Signed and notarized");
+      await user.screenshot();
+      await user.click({ role: "link", label: "See how OpenWork connects your tools and coworkers" });
+      expect(await probe.hash()).toBe("#openwork");
+      await user.see({ testId: "coworker-openwork-title" }, { text: "Connect your tools. Put your team to work." });
+      await user.screenshot();
+      evidence.recordAssertionEvidence("The page leads with the coworker concept and keeps connections in context", "The hero introduces roles, memory, responsibilities and working together. The explanatory link reaches the OpenWork section while the page labels the signed and notarized Apple Silicon alpha.", true);
+    });
+    await step("Inspect the connected briefing example without starting work", async () => {
+      await user.see({ testId: "work-example-result" }, { text: "A weekly brief, ready to review." });
+      expect(await probe.text()).toContain("Illustrative examples · No live connections or runs");
+      expect(await probe.text()).toContain("Gmail");
+      expect(await probe.text()).toContain("Briefing skill");
+      await user.see({ testId: "work-example-scope" }, { text: /Cloud schedules can run with your computer off, but cannot read your coworker’s local files or memory\./ });
+      evidence.recordAssertionEvidence("A concrete recurring-work example explains inputs, method, result and execution limits", "The weekly example names email/calendar inputs and a shared skill. It labels the content as illustrative and states local versus Cloud memory limits.", true);
+    });
+    await step("Switch examples without mixing their results", async () => {
+      await user.click({ testId: "work-example-research" });
+      await user.see({ testId: "work-example-result" }, { text: "One source-backed recommendation." });
+      expect(await probe.text()).not.toContain("A weekly brief, ready to review.");
+      expect(await probe.text()).toContain("Bring in another perspective");
+      await user.screenshot();
+      await user.click({ testId: "work-example-team" });
+      await user.see({ testId: "work-example-result" }, { text: "A useful starting team for each teammate." });
+      expect(await probe.text()).not.toContain("One source-backed recommendation.");
+      await user.see({ testId: "work-example-scope" }, { text: /Assignment does not start work, create schedules or copy personal memory\./ });
+      await user.click({ testId: "work-example-briefing" });
+      await user.see({ testId: "work-example-result" }, { text: "A weekly brief, ready to review." });
+      expect(await probe.text()).not.toContain("A useful starting team for each teammate.");
+      evidence.recordAssertionEvidence("Each example has independent inputs, results and limits", "Research replaces the briefing result; selecting team setup explains preview-gated distribution; returning to briefing restores its scope without retaining another example’s result.", true);
+    });
+    await step("Understand editable context and the existing OpenWork connection", async () => {
+      await user.see({ testId: "coworker-benefit-0" }, { text: "Keep the context. Not the repetition." });
+      await user.see({ testId: "coworker-benefit-1" }, { text: "A document, not a wall of chat." });
+      await user.see({ testId: "coworker-benefit-2" }, { text: "Hand off the work. Keep talking." });
+      await user.see({ testId: "coworker-openwork-note" }, { text: /Prepared-team delivery is an opt-in organization preview\./ });
+      await user.see({ role: "link", label: /^Explore OpenWork Connect/ });
+      const response = await fetch(world.origin + "/coworker", { signal: AbortSignal.timeout(30_000) });
+      const html = await response.text();
+      expect(html).toMatch(/href="\/connect"[^>]*>Explore OpenWork Connect/);
+      expect(html).toContain("No separate Coworker model subscription is required.");
+      expect(html).not.toContain("apps/coworker/electron/");
+      evidence.recordAssertionEvidence("Visitors can distinguish editable memory, documents and background work", "Feature examples expose memory changes, document revisions and bounded Workers. Connect uses the existing destination and labels prepared-team delivery as opt-in.", true);
+      const socialImage = await fetch(world.origin + "/coworker/opengraph-image", { signal: AbortSignal.timeout(30_000) });
+      expect(socialImage.status).toBe(200);
+      expect(socialImage.headers.get("content-type")).toContain("image/png");
+    });
+    await step("Require separate discussion and window consent in the local computer preview", async () => {
+      await user.see({ testId: "template-preview" }, { text: /Starting profile \/ local demo[\s\S]*Milo/ });
+      await user.notSee({ testId: "computer-preview-status" });
+      await user.click({ role: "button", label: "Computer use" });
+      await user.see({ testId: "computer-preview-status" }, { text: /Off for this sample discussion/ });
+      expect(await probe.text()).toContain("Interactive examples · no live access");
+      expect(await probe.text()).toContain("Native computer-control verification remains incomplete. Remote computers are not available.");
+      await user.click({ role: "button", label: "Approve sample window" });
+      await user.see({ testId: "computer-preview-status" }, { text: /Off for this sample discussion/ });
+      await user.click({ role: "button", label: "Preview discussion access" });
+      await user.see({ testId: "computer-preview-status" }, { text: /Discussion opt-in previewed[\s\S]*No window approved\./ });
+      expect(await probe.text()).not.toContain("Step 1 of 2: inspect the sample checklist.");
+      // Discussion opt-in retains focus; Tab and Enter approve the next native button.
+      await user.press("Tab");
+      await user.press("Enter");
+      await user.see({ testId: "computer-preview-status" }, { text: /Sample window approval illustrated/ });
+      expect(await probe.text()).toContain("Step 1 of 2: inspect the sample checklist.");
+      expect(await probe.text()).not.toContain("Step 2 of 2 / sample finding:");
+      evidence.recordAssertionEvidence("Computer-use examples require two separate consent steps", "Window approval does nothing before discussion opt-in. Opt-in alone grants no window; Tab and Enter activate the separate approval button. The page labels this a local development illustration and states that native verification is incomplete.", true);
+    });
+    await step("Pause blocks the result until the person continues, and revoke clears consent", async () => {
+      await user.click({ role: "button", label: "Take over (demo)" });
+      await user.see({ testId: "computer-preview-status" }, { text: /You have control in this demo/ });
+      await user.click({ role: "button", label: "Preview checklist result" });
+      await user.press("Enter");
+      await user.see({ testId: "computer-preview-status" }, { text: /The walkthrough is paused\./ });
+      expect(await probe.text()).toContain("Paused at the sample checklist. Continue returns to this step; it does not replay an action.");
+      expect(await probe.text()).not.toContain("Step 2 of 2 / sample finding:");
+      await user.click({ role: "button", label: "Continue (demo)" });
+      await user.see({ testId: "computer-preview-status" }, { text: /Sample window approval illustrated/ });
+      expect(await probe.text()).toContain("Step 1 of 2: inspect the sample checklist.");
+      expect(await probe.text()).not.toContain("Step 2 of 2 / sample finding:");
+      await user.click({ role: "button", label: "Preview checklist result" });
+      await user.see({ testId: "computer-preview-status" }, { text: /Sample result ready for review[\s\S]*another turn still needs fresh window approval/ });
+      expect(await probe.text()).toContain("Step 2 of 2 / sample finding:");
+      await user.click({ role: "button", label: "Stop & revoke (demo)" });
+      await user.see({ testId: "computer-preview-status" }, { text: /Stopped & revoked in this demo[\s\S]*Both consent steps and the sample result are cleared\./ });
+      await user.click({ role: "button", label: "Continue (demo)" });
+      await user.click({ role: "button", label: "Approve sample window" });
+      await user.click({ role: "button", label: "Preview checklist result" });
+      await user.see({ testId: "computer-preview-status" }, { text: /Stopped & revoked in this demo/ });
+      expect(await probe.text()).not.toContain("Step 1 of 2: inspect the sample checklist.");
+      expect(await probe.text()).not.toContain("Step 2 of 2 / sample finding:");
+      await user.click({ role: "button", label: "Preview discussion access" });
+      await user.see({ testId: "computer-preview-status" }, { text: /Discussion opt-in previewed[\s\S]*No window approved\./ });
+      await user.click({ role: "button", label: "Reset example" });
+      await user.see({ testId: "computer-preview-status" }, { text: /Off for this sample discussion/ });
+      evidence.recordAssertionEvidence("Only human Continue resumes the paused preview, and revocation removes both permissions and the result", "Mouse and Enter cannot advance a paused result. Continue returns to step one without completing it; explicit preview shows step two. Revoked controls cannot resume or reveal the finding without fresh consent, and reset restores the off state.", true);
+    });
+    await step("Preview a teammate's template copy without personal history or credentials", async () => {
+      await user.click({ role: "button", label: "Coworker templates" });
+      await user.see({ testId: "template-preview" }, { text: /Starting profile \/ local demo[\s\S]*Milo/ });
+      await user.click({ role: "button", label: "Support" });
+      await user.see({ testId: "template-preview" }, { text: /Ellis[\s\S]*Prepare a weekly feedback digest/ });
+      expect(await probe.text()).not.toContain("Turn scattered information into a clear next step.");
+      await user.click({ role: "button", label: "Preview a teammate’s copy" });
+      await user.see({ testId: "template-preview" }, { text: /Teammate's own copy \/ local demo[\s\S]*Ellis[\s\S]*No prior work comes across\. Nothing was sent or shared\./ });
+      await user.see({ testId: "coworker-feature-panel" }, { text: /Not included[\s\S]*Personal memory, conversations, documents or credentials\. No model choices, schedules or active tasks\./ });
+      await user.click({ role: "button", label: "Team distribution" });
+      await user.see({ testId: "template-preview" }, { text: /Starting profile \/ local demo/ });
+      expect(await probe.text()).toContain("Opt-in organization preview, off by default and not generally available.");
+      await user.click({ role: "button", label: "Preview a teammate’s copy" });
+      await user.see({ testId: "template-preview" }, { text: /Their own conversations, documents and memory start here, independently\./ });
+      await user.click({ role: "button", label: "Reset example" });
+      await user.see({ testId: "template-preview" }, { text: /Starting profile \/ local demo[\s\S]*Milo/ });
+      expect(await probe.text()).toContain("a .coworker.json template can be imported as a personal copy");
+      expect(await probe.text()).not.toContain("Teammate's own copy / local demo");
+      expect(await probe.text()).not.toContain("Ellis");
+      evidence.recordAssertionEvidence("Template copies retain a role without transferring personal work or credentials", "Selecting Support replaces Research; the teammate preview identifies independent work and explicitly excludes memory, conversations, documents, credentials, model choices, schedules and tasks. Team distribution is opt-in and off by default. Reset restores the Research file preview.", true);
+    });
+    await step("Authorize a fictional Gmail briefing without granting another service access", async () => {
+      await user.click({ role: "button", label: "Connected apps" });
+      await user.see({ testId: "connection-preview" }, { text: /No service connected[\s\S]*Preview the Gmail authorization step first\./ });
+      await user.click({ role: "button", label: "Preview discussion briefing" });
+      await user.see({ testId: "connection-preview" }, { text: /No service connected/ });
+      await user.click({ role: "button", label: "Preview authorized connection" });
+      await user.see({ testId: "connection-preview" }, { text: /Authorization illustrated, not performed[\s\S]*assumes permission for Gmail/ });
+      expect(await probe.text()).not.toContain("Launch email briefing");
+      await user.click({ role: "button", label: "Preview discussion briefing" });
+      await user.see({ testId: "connection-preview" }, { text: /Launch email briefing[\s\S]*The launch example and release date still need a decision\.[\s\S]*Sample only\. Nothing sent, posted or changed\./ });
+      await user.click({ role: "button", label: "Slack" });
+      await user.see({ testId: "connection-preview" }, { text: /No service connected[\s\S]*Preview the Slack authorization step first\./ });
+      expect(await probe.text()).not.toContain("Launch email briefing");
+      await user.click({ role: "button", label: "Preview discussion briefing" });
+      await user.see({ testId: "connection-preview" }, { text: /No service connected/ });
+      expect(await probe.text()).not.toContain("Status note draft");
+      await user.click({ role: "button", label: "Preview authorized connection" });
+      await user.click({ role: "button", label: "Preview discussion briefing" });
+      await user.see({ testId: "connection-preview" }, { text: /Status note draft/ });
+      await user.click({ role: "button", label: "Reset example" });
+      await user.see({ testId: "connection-preview" }, { text: /No service connected[\s\S]*Preview the Gmail authorization step first\./ });
+      expect(await probe.text()).not.toContain("Launch email briefing");
+      expect(await probe.text()).not.toContain("Status note draft");
+      await user.click({ role: "button", label: "Computer use" });
+      await user.see({ testId: "computer-preview-status" }, { text: /Off for this sample discussion/ });
+      evidence.recordAssertionEvidence("Connected-app previews require authorization and isolate each service's sample state", "Gmail briefing is blocked until illustrative authorization. Selecting Slack discards Gmail's result without granting Slack access. After a separately authorized Slack preview, reset clears both results and returns to unconnected Gmail; changing features starts fresh.", true);
+    });
+  });
+
+  test("Coworker announcement offers an alpha download and an intentional Models handoff at " + width + "px", { timeout: 180_000 }, async ({ world, user, probe, step, evidence }) => {
     await step("Understand the product and its availability", async () => {
       await user.see({ text: "Introducing Open Coworker" });
       const text = await probe.text();
-      expect(text).toContain("Better together.");
-      expect(text).not.toContain("A coworker who remembers");
-      expect(text).toContain("Public download coming soon.");
+      await user.see({ testId: "coworker-headline" }, { text: /Your AI team\.\s+Built to work together\./ });
+      expect(text).not.toContain("A little help with the research");
+      expect(text).toContain("macOS alpha available · Apple Silicon · Signed and notarized");
+      expect(text).not.toContain("Public download coming soon.");
       expect(text).not.toMatch(/\$100|first 50|24 hours|unlimited/i);
-      evidence.recordAssertionEvidence("The announcement introduces coworkers and accurately labels early access", "The browser leads with Your work. Better together. and the upcoming public download, with no unapproved offer or unlimited usage claim.", true);
+      await user.screenshot();
+      evidence.recordAssertionEvidence("The announcement introduces a collaborative AI team and accurately labels the alpha", "The actual page heading reads Your AI team. Built to work together. and labels the signed and notarized Apple Silicon testing build, with no unapproved offer or unlimited usage claim.", true);
     });
     await step("Follow the explanation and read the execution limits", async () => {
       await user.click({ role: "link", text: "Try the demo" });
@@ -104,6 +261,10 @@ for (const width of [1280, 375]) {
       await user.click({ role: "button", label: "Resume sample schedule" });
       expect(await probe.text()).toContain("Mondays at 9:00 AM · Active");
       await user.click({ testId: "demo-view-connections" });
+      await user.click({ role: "button", label: "Connect Gmail demo" });
+      expect(await probe.text()).toContain("Connected in demo · 2 sample emails");
+      expect(await probe.text()).not.toContain("Connected in demo · 3 sample documents");
+      expect(await probe.text()).not.toContain("Connected in demo · #launch-team");
       await user.click({ role: "button", label: "Connect Google Drive demo" });
       expect(await probe.text()).toContain("Connected in demo · 3 sample documents");
       await user.click({ role: "button", label: "Connect Slack demo" });
@@ -112,12 +273,14 @@ for (const width of [1280, 375]) {
       await user.click({ role: "button", label: "Disconnect Google Drive demo" });
       expect(await probe.text()).not.toContain("Connected in demo · 3 sample documents");
       expect(await probe.text()).toContain("Connected in demo · #launch-team");
-      evidence.recordAssertionEvidence("Visitors can explore the assignment lifecycle and toggle independent sample connections", "A sample assignment returns a result; its schedule pauses and resumes. Drive and Slack connect in the demo, and disconnecting Drive leaves Slack connected. The page keeps these examples distinct from real actions.", true);
+      expect(await probe.text()).toContain("Connected in demo · 2 sample emails");
+      evidence.recordAssertionEvidence("Visitors can explore the assignment lifecycle and toggle independent sample connections", "A sample assignment returns a result; its schedule pauses and resumes. Gmail connects without connecting Drive or Slack; disconnecting Drive later leaves Gmail and Slack connected. The page keeps these examples distinct from real actions.", true);
     });
     await step("Explore an animated group chat and create a custom coworker", async () => {
       await user.click({ role: "link", label: "Try the team conversation" });
       await user.see({ role: "button", label: "Send group message" });
-      await user.see({ label: "Group: Scout, Editor, Ops", nth: 1 });
+      // The sidebar and panel header precede the conversation's group artwork.
+      await user.see({ label: "Group: Scout, Editor, Ops", nth: 2 });
       await user.click({ role: "button", label: "Ask Scout to reply" });
       await user.click({ role: "button", label: "Ask Ops to reply" });
       await user.see({ testId: "demo-group-mentions" }, { text: "@Editor" });
@@ -212,22 +375,28 @@ for (const width of [1280, 375]) {
       await user.see({ role: "textbox", label: "Coworker name" }, { value: "Milo" });
       await user.click({ testId: "demo-view-connections" });
       expect(await probe.text()).not.toContain("Connected in demo");
+      await user.see({ role: "button", label: "Connect Gmail demo" });
+      await user.see({ role: "button", label: "Connect Google Drive demo" });
+      await user.see({ role: "button", label: "Connect Slack demo" });
       await user.click({ role: "button", label: "Talk to Editor" });
       expect(await probe.text()).not.toContain("I’ve added that as an alternative opening");
       await user.click({ role: "button", label: "Reset demo" });
       expect(await probe.text()).toContain("Sample data and scripted replies.");
-      evidence.recordAssertionEvidence("The model selector offers membership information and reset clears the sample state", "Selecting OpenWork Models exposes a membership link. Reset restores the free source, clears every coworker's replies and both connections, and resets walkthrough progress. No checkout is completed.", true);
+      evidence.recordAssertionEvidence("The model selector offers membership information and reset clears the sample state", "Selecting OpenWork Models exposes a membership link. Reset restores the free source, clears every coworker's replies and all three connections, and resets walkthrough progress. No checkout is completed.", true);
     });
-    await step("Get early access without an unintended purchase", async () => {
-      await user.click({ role: "link", text: "Get early access", nth: 0 });
-      expect(await probe.hash()).toBe("#get-started");
+    await step("Keep email questions, source, docs and Models separate from the alpha download", async () => {
       await user.see({ role: "link", text: "Email for early access" });
+      await user.see({ role: "link", text: "Build from source" });
+      await user.see({ role: "link", text: "Docs" });
       expect(await probe.text()).toContain("Opens your email app");
       const response = await fetch(world.origin + "/coworker", { signal: AbortSignal.timeout(30_000) });
       expect(response.status).toBe(200);
       const html = await response.text();
       const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map((match) => match[1]!.replaceAll("&amp;", "&"));
       expect(hrefs).toContain("mailto:team@openworklabs.com?subject=Open%20Coworker%20early%20access");
+      expect(hrefs).toContain("/coworker/download");
+      expect(hrefs).toContain("/docs");
+      expect(hrefs).toContain("https://github.com/different-ai/openwork/tree/feature/open-coworker/apps/coworker");
       for (const mode of ["sign-up", "sign-in"]) {
         const href = hrefs.find((value) => value.includes("intent=models") && value.includes("mode=" + mode));
         expect(href).toBeTruthy();
@@ -242,14 +411,45 @@ for (const width of [1280, 375]) {
       const socialImage = await fetch(world.origin + "/coworker/opengraph-image", { signal: AbortSignal.timeout(30_000) });
       expect(socialImage.status).toBe(200);
       expect(socialImage.headers.get("content-type")).toContain("image/png");
-      evidence.recordAssertionEvidence("Early access and Models have separate, truthful destinations", "Email opens a real early-access request; signup and member sign-in links preserve Models intent and campaign attribution without tokens. Membership explicitly does not grant early access.", true);
+      expect(html).toContain('data-coworker-mark="white"');
+      expect(html).not.toContain("/coworker/app-icon.png");
+      const icon = await fetch(world.origin + "/coworker/app-icon.png", { signal: AbortSignal.timeout(30_000) });
+      expect(icon.status).toBe(200);
+      expect(icon.headers.get("content-type")).toContain("image/png");
+      evidence.recordAssertionEvidence("Download, email and Models have separate, truthful destinations", "The native alpha destination, secondary email, source and docs links remain available. Signup and member sign-in preserve Models intent and campaign attribution without tokens. Membership explicitly does not grant early access. The website uses the white logo, while the download icon and social image remain available.", true);
+    });
+    await step("Follow the native alpha link without downloading an installer", async () => {
+      await user.click({ role: "link", label: "Download alpha", nth: 0 });
+      await user.see({ testId: "coworker-download-page" }, { text: /Open Coworker for Mac\./ });
+      await user.see({ role: "link", label: "Download macOS alpha" });
+      await user.see({ role: "link", label: "Read release notes" });
+      await user.see({ testId: "coworker-download-availability" }, { text: /For Apple Silicon Macs[\s\S]*0\.1\.0-alpha\.20260908\.1[\s\S]*DMG \/ 274 MB \/ arm64/ });
+      expect(await probe.text()).toContain("An early testing build, not a stable release.");
+      expect(await probe.text()).toContain("This release is signed and notarized.");
+      expect(await probe.text()).toContain("Only the Apple Silicon installer is included in this public release.");
+      expect(await probe.text()).toContain("Native computer-control verification remains incomplete. Remote computers are not available.");
+      const response = await fetch(world.origin + "/coworker/download", { signal: AbortSignal.timeout(30_000) });
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      const hrefs = [...html.matchAll(/<a\b[^>]*href="([^"]+)"/g)].map((match) => match[1]!);
+      expect(hrefs.filter((href) => href.includes("/releases/download/") || /\.(dmg|exe|msi|zip|deb|rpm|appimage|gz)$/i.test(href))).toEqual([
+        "https://github.com/different-ai/openwork/releases/download/coworker-v0.1.0-alpha.20260908.1/open-coworker-mac-arm64-0.1.0-alpha.20260908.1.dmg",
+      ]);
+      expect(hrefs).toContain("https://github.com/different-ai/openwork/releases/tag/coworker-v0.1.0-alpha.20260908.1");
+      expect(html).toMatch(/<a\b[^>]*aria-describedby="download-alpha-warning"[^>]*>.*?Download macOS alpha<\/a>/s);
+      expect(html).toContain('src="/coworker/app-icon.png"');
+      for (const platform of ["Mac with Intel", "Windows", "Linux"]) expect(html).toContain(`<dt>${platform}</dt><dd>Not available</dd>`);
+      await user.screenshot();
+      await user.click({ role: "link", label: "Explore Open Coworker" });
+      await user.see({ testId: "coworker-headline" }, { text: /Your AI team\.\s+Built to work together\./ });
+      evidence.recordAssertionEvidence("The alpha path reaches the pinned Apple Silicon release with an accessible testing-build warning", "The native Download alpha link opens the download page and its native return link opens the announcement. The only installer anchor is the exact signed and notarized Coworker arm64 DMG, associated with the early-testing warning; Intel, Windows and Linux are unavailable. No external release link or installer is requested.", true);
     });
     await step("Discover the announcement from the main homepage", async () => {
       await user.navigate(world.origin + "/");
       await user.click({ role: "link", label: /Meet Open Coworker/ });
       await user.see({ text: "Introducing Open Coworker" });
-      expect(await probe.text()).toContain("Public download coming soon.");
-      evidence.recordAssertionEvidence("Homepage visitors can discover the Coworker announcement", "The homepage announcement link opens the real Coworker page with the same accurate early-access availability.", true);
+      expect(await probe.text()).toContain("macOS alpha available · Apple Silicon · Signed and notarized");
+      evidence.recordAssertionEvidence("Homepage visitors can discover the Coworker announcement", "The homepage announcement link opens the real Coworker page with the same accurate alpha availability.", true);
     });
   });
 }
