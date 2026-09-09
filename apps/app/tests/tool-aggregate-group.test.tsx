@@ -1,15 +1,63 @@
 /** @jsxImportSource react */
 import { describe, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToStaticMarkup as renderMarkup } from "react-dom/server";
 import type { DynamicToolUIPart } from "ai";
 
 import { DetailBox, ToolAggregateGroup, buildAggregateRows } from "../src/components/chat/tool-aggregate-group";
 import { getAggregateNowPart, getAggregateRowSearch } from "../src/lib/tool-aggregate";
 import { CurrentToolLifecycleProvider } from "../src/components/chat/current-tool-lifecycle-context";
 import { getToolAggregateLifecycle } from "../src/lib/tool-aggregate";
+import { FileChip } from "../src/components/chat/file-chip";
+import { OpenTargetProvider, type OpenTargetOptions } from "../src/lib/target-provider";
+import type { OpenTarget } from "../src/react-app/domains/session/artifacts/open-target";
+import { PlatformProvider, createDefaultPlatform } from "../src/react-app/kernel/platform";
+
+function renderToStaticMarkup(node: ReactNode) {
+  return renderMarkup(<PlatformProvider value={createDefaultPlatform()}>{node}</PlatformProvider>);
+}
+
+test("file chips open the exact referenced path and copy it without opening another file", async () => {
+  const registeredDom = typeof document === "undefined";
+  if (registeredDom) GlobalRegistrator.register();
+  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+  const previousClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  const copied: string[] = [];
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => { copied.push(text); } } });
+  const opened: { target: OpenTarget; options?: OpenTargetOptions }[] = [];
+  const path = "/tmp/Fresh Start.png";
+  const other: OpenTarget = { id: "file:fresh start.png", kind: "file", value: "Fresh Start.png", name: "Fresh Start.png", preview: "image", exists: true, confidence: 100, reason: "workspace" };
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(
+      <PlatformProvider value={{ ...createDefaultPlatform(), showContextMenu: async () => "copy-path" }}>
+        <OpenTargetProvider openTargets={[other]} onOpenTarget={(target, options) => { opened.push({ target, options }); }}>
+          <FileChip path={path} />
+        </OpenTargetProvider>
+      </PlatformProvider>,
+    ));
+    const [preview, external] = container.querySelectorAll("button");
+    if (!preview || !external) throw new Error("Missing file actions");
+    await act(async () => preview.click());
+    await act(async () => external.click());
+    expect(opened.map(({ target }) => target.value)).toEqual([path, path]);
+    expect(opened.map(({ target }) => target.exists)).toEqual([undefined, undefined]);
+    expect(opened[1]?.options).toEqual({ external: true });
+    await act(async () => preview.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 20 })));
+    expect(copied).toEqual([path]);
+    expect(opened).toHaveLength(2);
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    if (previousClipboard) Object.defineProperty(navigator, "clipboard", previousClipboard);
+    else Reflect.deleteProperty(navigator, "clipboard");
+    if (registeredDom) await GlobalRegistrator.unregister();
+  }
+});
 
 const runningCommand: DynamicToolUIPart = {
   type: "dynamic-tool",

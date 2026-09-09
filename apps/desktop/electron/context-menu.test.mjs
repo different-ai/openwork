@@ -1,10 +1,23 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
-import { contextMenuTemplate, createNativeContextMenus, editingMenuTemplate } from "./context-menu.mjs";
+import { contentMenuTemplate, contextMenuTemplate, createNativeContextMenus, editingMenuTemplate } from "./context-menu.mjs";
 
 const item = (id, overrides = {}) => ({ type: "item", id, label: id, ...overrides });
 const request = (items = [item("rename")]) => ({ requestId: "request", items, point: { x: 10.5, y: 20 } });
+
+test("image menus copy decoded pixels and addresses only after selection", () => {
+  const calls = [];
+  const contents = { copyImageAt: (x, y) => calls.push([x, y]) };
+  const clipboard = { writeText: (text) => calls.push(text) };
+  const params = { mediaType: "image", hasImageContents: true, x: 12, y: 34, srcURL: "blob:local-image", linkURL: "https://example.com/image" };
+  const items = contentMenuTemplate(contents, params, clipboard);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(items.map((item) => item.label), ["Copy Image", "Copy Image Address", "Copy Link Address"]);
+  for (const item of items) item.click();
+  assert.deepEqual(calls, [[12, 34], params.srcURL, params.linkURL]);
+  assert.equal(contentMenuTemplate(contents, { ...params, hasImageContents: false }, clipboard).some((item) => item.label === "Copy Image"), false);
+});
 
 function fixture() {
   const menus = [];

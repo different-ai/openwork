@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { OpenTarget } from "../src/react-app/domains/session/artifacts/open-target";
 import {
   isWorkspaceContainedArtifactTarget,
+  localArtifactPath,
   resolveCollectibleOpenTarget,
 } from "../src/react-app/domains/session/artifacts/resolve-open-target";
 
@@ -17,6 +18,22 @@ const target: OpenTarget = {
 };
 
 describe("on-demand artifact target resolution", () => {
+  test("native file actions preserve local paths without accepting schemes or network shares", () => {
+    expect(localArtifactPath("/workspace", "/tmp/Fresh Start.png")).toBe("/tmp/Fresh Start.png");
+    expect(localArtifactPath("/workspace", "images/Result.png")).toBe("/workspace/images/Result.png");
+    expect(localArtifactPath("/", "Result.png")).toBe("/Result.png");
+    expect(localArtifactPath("/workspace", "file:///tmp/Fresh%20Start.png")).toBe("/tmp/Fresh Start.png");
+    expect(localArtifactPath("C:/Work", "C:\\Images\\Result.png")).toBe("C:\\Images\\Result.png");
+    for (const value of ["https://example.com/image.png", "javascript:alert(1)", "file://host/image.png", "//host/image.png", "\\\\host\\image.png", "image\0.png"]) {
+      expect(localArtifactPath("/workspace", value)).toBeNull();
+    }
+    expect(localArtifactPath(undefined, "image.png")).toBeNull();
+  });
+
+  test("accepts verified files even when they need the default application", async () => {
+    const file: OpenTarget = { ...target, value: "archive.zip", preview: "external", exists: true };
+    expect(await resolveCollectibleOpenTarget({ resolveArtifacts: async () => ({ items: [file] }) }, "workspace_1", file)).toEqual(file);
+  });
   test("accepts verified collectible files contained by the workspace", async () => {
     const resolved = await resolveCollectibleOpenTarget({
       resolveArtifacts: async () => ({ items: [{ ...target, exists: true }] }),

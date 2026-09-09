@@ -24,6 +24,7 @@ import type {
 } from "../../../../app/types";
 import type { ShareWorkspaceModalProps } from "../../workspace/types";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/sonner";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -78,7 +79,7 @@ import {
 
 import { isElectronRuntime } from "../../../../app/utils";
 import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTarget, type OpenTarget } from "../artifacts/open-target";
-import { resolveCollectibleOpenTarget } from "../artifacts/resolve-open-target";
+import { localArtifactPath, resolveCollectibleOpenTarget } from "../artifacts/resolve-open-target";
 import type { OpenTargetOptions } from "@/lib/target-provider";
 import { SidePanel } from "../panel/side-panel";
 import { getSidePanelSessionKey } from "../panel/side-panel-session";
@@ -381,23 +382,6 @@ function isTrackableAccessibleTarget(target: OpenTarget) {
   return isOpenableFileTarget(target) || isLocalhostBrowserTarget(target);
 }
 
-function absoluteWorkspacePath(root: string | null | undefined, value: string) {
-  const target = value.trim();
-  if (!target) return "";
-  if (/^file:\/\//i.test(target)) {
-    try {
-      const pathname = new URL(target).pathname;
-      return /^\/[a-zA-Z]:/.test(pathname) ? pathname.slice(1) : pathname;
-    } catch {
-      return target.replace(/^file:\/\//i, "");
-    }
-  }
-  if (target.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(target)) return target;
-  const cleanRoot = root?.trim().replace(/[/\\]+$/, "") ?? "";
-  const cleanTarget = target.replace(/^[.][\\/]/, "");
-  return cleanRoot ? `${cleanRoot}/${cleanTarget}` : cleanTarget;
-}
-
 function hiddenAccessibleTargetsStorageKey(workspaceId: string | null | undefined, sessionId: string | null | undefined) {
   if (!workspaceId || !sessionId) return null;
   return `openwork.session.hiddenAccessibleTargets.v1:${workspaceId}:${sessionId}`;
@@ -682,25 +666,27 @@ export function SessionPage(props: SessionPageProps) {
       return;
     }
 
-    const openFileTarget = (fileTarget: OpenTarget) => {
-      if (options?.external && runtime.workspaceType !== "remote") {
-        const path = absoluteWorkspacePath(runtime.workspaceRoot, fileTarget.value);
-        if (path && isElectronRuntime()) {
-          void (async () => {
-            try {
-              if (options.reveal) {
-                await revealDesktopItemInDir(path);
-              } else {
-                await openDesktopPath(path);
-              }
-            } catch {
-              await revealDesktopItemInDir(path).catch(() => undefined);
-            }
-          })();
-        }
+    const reportOpenError = (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : "Could not open this file.");
+    };
+    const canOpenLocally = runtime.workspaceType !== "remote" && isElectronRuntime() && !options?.auto;
+    const openLocalFile = (fileTarget: OpenTarget) => {
+      const path = localArtifactPath(runtime.workspaceRoot, fileTarget.value);
+      if (!path) {
+        reportOpenError(new Error("This is not a local file path."));
         return;
       }
+      void (options?.reveal ? revealDesktopItemInDir(path) : openDesktopPath(path)).catch(reportOpenError);
+    };
 
+    // A person's explicit native open is not a workspace preview request.
+    // Keep remote files on the server path; never open their paths on this device.
+    if (canOpenLocally && options?.external) {
+      openLocalFile(target);
+      return;
+    }
+
+    const openFileTarget = (fileTarget: OpenTarget) => {
       if (!isCollectibleArtifactTarget(fileTarget)) {
         if (isOpenableFileTarget(fileTarget)) {
           if (runtime.workspaceType === "remote" && runtime.client && runtime.runtimeWorkspaceId) {
@@ -715,9 +701,9 @@ export function SessionPage(props: SessionPageProps) {
                 anchor.click();
                 window.setTimeout(() => URL.revokeObjectURL(url), 1000);
               })
-              .catch(() => undefined);
-          } else if (isElectronRuntime()) {
-            void openDesktopPath(absoluteWorkspacePath(runtime.workspaceRoot, fileTarget.value)).catch(() => undefined);
+              .catch(reportOpenError);
+          } else if (canOpenLocally) {
+            openLocalFile(fileTarget);
           }
         }
         return;
@@ -737,12 +723,18 @@ export function SessionPage(props: SessionPageProps) {
     };
 
     if (target.exists !== true) {
-      if (!runtime.client || !runtime.runtimeWorkspaceId) return;
+      if (!runtime.client || !runtime.runtimeWorkspaceId) {
+        if (canOpenLocally) openLocalFile(target);
+        else reportOpenError(new Error("Connect to the workspace to open this file."));
+        return;
+      }
       void resolveCollectibleOpenTarget(runtime.client, runtime.runtimeWorkspaceId, target)
         .then((resolvedTarget) => {
           if (resolvedTarget) openFileTarget(resolvedTarget);
+          else if (canOpenLocally) openLocalFile(target);
+          else reportOpenError(new Error("This file is missing or outside the workspace."));
         })
-        .catch(() => undefined);
+        .catch(reportOpenError);
       return;
     }
 

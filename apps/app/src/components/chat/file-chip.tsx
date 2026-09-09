@@ -3,6 +3,8 @@
 import { ArrowUpRight } from "lucide-react"
 
 import { useOpenArtifactPath } from "@/lib/artifacts"
+import { ActionContextMenu } from "@/components/ui/action-context-menu"
+import { toast } from "@/components/ui/sonner"
 import { cn } from "@/lib/utils"
 
 type FileChipProps = {
@@ -28,7 +30,20 @@ export function FileChip({ path, className }: FileChipProps) {
   const name = baseName(path)
 
   return (
-    <span
+    <ActionContextMenu
+      render={<span />}
+      actions={[
+        { type: "item", id: "open", label: "Open file", onSelect: () => openArtifactPath(path) },
+        { type: "item", id: "open-external", label: "Open in default app", onSelect: () => openArtifactPath(path, { external: true }) },
+        { type: "separator" },
+        { type: "item", id: "copy-path", label: "Copy path", onSelect: async () => {
+          try {
+            await navigator.clipboard.writeText(path)
+          } catch {
+            toast.error("Could not copy this path.")
+          }
+        } },
+      ]}
       className={cn(
         "group/chip inline-flex items-center overflow-hidden rounded-md bg-gray-2/70 align-middle",
         className,
@@ -53,6 +68,6 @@ export function FileChip({ path, className }: FileChipProps) {
       >
         <ArrowUpRight aria-hidden="true" className="size-2.5" />
       </button>
-    </span>
+    </ActionContextMenu>
   )
 }

@@ -371,7 +371,7 @@ export function useArtifacts(messages: UIMessage[], options: GetArtifactsOptions
 
 /** Open any file path in the artifact preview panel (markdown, code, images…). */
 export function useOpenArtifactPath() {
-  const { openTargets, onOpenTarget } = useOpenTargets();
+  const { onOpenTarget } = useOpenTargets();
 
   return React.useCallback((path: string, options?: { external?: boolean }) => {
     const normalized = normalizeArtifactPath(path);
@@ -379,10 +379,11 @@ export function useOpenArtifactPath() {
       normalized,
       getArtifactName(normalized),
       getArtifactType(normalized),
-      openTargets,
+      // Resolve this exact path, not a cached target with a matching suffix.
+      [],
     );
     onOpenTarget?.(target, options);
-  }, [onOpenTarget, openTargets]);
+  }, [onOpenTarget]);
 }
 
 export function usePreviewArtifact() {

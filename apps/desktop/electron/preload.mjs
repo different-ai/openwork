@@ -92,6 +92,12 @@ window.addEventListener("contextmenu", (event) => {
     return;
   }
   if (composedEditor) return;
+  // Preserve Chromium's image hit-test and pixel clipboard operation, including
+  // linked images. Do not let surrounding message/link menus swallow it.
+  if (eventPath.some((node) => node instanceof HTMLImageElement)) {
+    event.stopImmediatePropagation();
+    return;
+  }
   const anchor = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
   if (!anchor || anchor.isContentEditable || anchor.hasAttribute("download")) return;
   const href = anchor.getAttribute("href") ?? "";
