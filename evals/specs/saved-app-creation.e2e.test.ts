@@ -409,7 +409,13 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.type({ label: "Or paste your verification link" }, verifiedLink, { replace: true });
     await user.click("Confirm and share");
     await user.see({ text: `Shared 1 app with ${colleague.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
-    // Delivery after completion cannot consume the same link again or repeat the share.
+    // Check server-side single use independently of the unmounted UI listener.
+    const replay = await seed.api(world.den.admin, "/v1/auth/desktop-handoff/exchange", {
+      method: "POST", body: JSON.stringify({ grant: new URL(verifiedLink).searchParams.get("grant") }),
+    });
+    expect(replay.response.status, replay.text).toBe(404);
+    expect(replay.body).toMatchObject({ error: "grant_not_found" });
+    // A late callback must also leave the completed share on the dashboard.
     await world.returnVerification(verifiedLink);
     expect(await probe.hash()).toBe("#/dashboard");
     const stillStale = await seed.api(world.den.admin, `/v1/apps/${appId}/share`, {
@@ -448,7 +454,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.click("Done");
   });
   evidence.recordAssertionEvidence("Dashboard Share grants a teammate view access and adds the selected app to their dashboard", "Cancel and an unknown email left the app private. Sharing made one saved app visible on the recipient dashboard without manager access; repeat sharing did not duplicate it, the unchecked app and its separate workflow remained private, viewers could not reshare, and company dashboards stayed unchanged.", true);
-  evidence.recordAssertionEvidence("An expired admin can verify and resume sharing without losing their selection", "A real 20-minute-old session was rejected. Cancelling, an unrelated callback, a different account’s grant, and a wrong password left the app private. Browser password verification produced a real one-time link; pasting it shared only the selected app with the preserved recipient. The original stale session still could not share, and a late callback did not duplicate the dashboard entry.", true);
+  evidence.recordAssertionEvidence("An expired admin can verify and resume sharing without losing their selection", "A real 20-minute-old session was rejected. Cancelling, an unrelated callback, a different account’s grant, and a wrong password left the app private. Browser password verification produced a real one-time link; pasting it shared only the selected app with the preserved recipient. A second exchange of its consumed grant returned 404 grant_not_found. The original stale session still could not share, and a late callback did not duplicate the dashboard entry.", true);
   evidence.recordAssertionEvidence("Sharing includes the workflow, saved results, and sibling apps without adding every sibling to the dashboard", "The recipient could read the workflow and the latest saved result in both the selected app and its previously inaccessible companion. Both appeared in the accessible app list, but only the selected app was on their dashboard; the separate private workflow stayed inaccessible.", true);
 
   await step("return from browser verification and keep subsequent sharing uninterrupted", async () => {
