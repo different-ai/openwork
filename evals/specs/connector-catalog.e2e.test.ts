@@ -65,7 +65,10 @@ test("chat suggests Slack setup and lets an admin browse every quick-add connect
   expect(calls.filter(call => call.kind === "tool").every(call => call.toolName?.endsWith("search_capabilities"))).toBe(true);
   expect((await world.den.mocks.connector.requests()).filter(request => request.path === "/authorize")).toHaveLength(0);
   await appUser.click({ role: "button", label: "New session" });
-  await appUser.see({ text: "Try one of these:" });
+  await appUser.see("composer", { editable: true });
+  await probe.eventually(() => appProbe.composer(), {
+    within: 15_000, label: "new session has an empty transcript", until: state => state.userMessageCount === 0,
+  });
   await agent.on(world.app).send(allConnectorsPrompt);
   await appUser.see({ text: allConnectorsReply }, { timeoutMs: 120_000 });
   const listed = await appProbe.eval(() => {
