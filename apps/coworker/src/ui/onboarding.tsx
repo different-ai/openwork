@@ -27,15 +27,18 @@ function ArrowIcon() {
   );
 }
 
-export function OnboardingWelcome({
-  onConnect,
-  onContinueLocally,
-  onImport,
-}: {
-  onConnect: () => void;
+type WelcomeProps = {
   onContinueLocally: () => void;
+} & ({
+  replay?: false;
+  onConnect: () => void;
   onImport: () => Promise<void>;
-}) {
+} | {
+  replay: true;
+  onExit: () => void;
+});
+
+export function OnboardingWelcome(props: WelcomeProps) {
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   return (
@@ -44,17 +47,17 @@ export function OnboardingWelcome({
         <button
           type="button"
           className="window-no-drag rounded-full border border-white/9 bg-white/[0.035] px-3.5 py-1.5 text-xs font-medium text-mist transition-colors hover:border-white/16 hover:bg-white/[0.065] hover:text-snow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/45"
-          onClick={onConnect}
+          onClick={props.replay ? props.onExit : props.onConnect}
         >
-          Sign in
+          {props.replay ? "Back to my team" : "Sign in"}
         </button>
       </header>
 
       <main className="window-no-drag flex flex-1 items-center justify-center px-6 py-10 md:py-12">
         <section className="w-full max-w-[680px] text-center">
           <OnboardingMascotStack variant={{ kind: "mark", label: "Open Coworker" }} size={96} sessionKey="onboarding-welcome" className="mx-auto" />
-          <p className="mt-6 text-[10px] font-semibold uppercase tracking-[0.2em] text-spark">Welcome to Open Coworker</p>
-          <h1 className="mx-auto mt-2 max-w-[620px] text-[34px] font-semibold leading-[1.08] tracking-[-0.05em] text-snow md:text-[40px]">
+          <p className="mt-6 text-[10px] font-semibold uppercase tracking-[0.2em] text-spark">{props.replay ? "A quick look around, again" : "Welcome to Open Coworker"}</p>
+          <h1 tabIndex={-1} className="mx-auto mt-2 max-w-[620px] text-[34px] font-semibold leading-[1.08] tracking-[-0.05em] text-snow outline-none md:text-[40px]">
             Meet the team that remembers your work.
           </h1>
           <p className="mx-auto mt-3 max-w-[510px] text-sm leading-6 text-mist">
@@ -62,13 +65,18 @@ export function OnboardingWelcome({
           </p>
 
           <div className="onboarding-launcher mt-8 overflow-hidden rounded-[24px] border border-white/10 bg-panel/75 p-2 text-left" data-testid="onboarding-launcher">
-            <p className="px-3 pb-2 pt-1.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-mist/75">Choose how to get started</p>
+            <p className="px-3 pb-2 pt-1.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-mist/75">{props.replay ? "Your existing team stays put" : "Choose how to get started"}</p>
 
+            {props.replay ? <button type="button" onClick={props.onContinueLocally} className="onboarding-choice flex w-full items-center gap-3.5 rounded-[17px] border border-spark/25 bg-spark/10 px-4 py-3.5 text-left hover:bg-spark/14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50" data-testid="onboarding-replay-ai">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-spark/25 text-spark"><MacIcon /></span>
+              <span className="min-w-0 flex-1"><span className="text-[13px] font-semibold text-snow">Review AI setup</span><span className="mt-0.5 block text-[11px] leading-relaxed text-mist">A quick tour of your current setup. No account changes, no new coworkers.</span></span>
+              <ArrowIcon />
+            </button> : <>
             <button
               type="button"
               className="onboarding-choice onboarding-choice--primary group flex w-full items-center gap-3.5 rounded-[17px] border border-spark/25 bg-spark/10 px-4 py-3.5 text-left transition-colors hover:border-spark/40 hover:bg-spark/14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50"
               data-testid="onboarding-cloud-choice"
-              onClick={onConnect}
+              onClick={props.onConnect}
             >
               <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-spark/25 bg-spark/13 text-[#b7caff]">
                 <CloudIcon />
@@ -89,7 +97,7 @@ export function OnboardingWelcome({
               type="button"
               className="onboarding-choice group mt-1 flex w-full items-center gap-3.5 rounded-[17px] border border-transparent px-4 py-3.5 text-left transition-colors hover:border-white/8 hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/18"
               data-testid="onboarding-local-choice"
-              onClick={onContinueLocally}
+              onClick={props.onContinueLocally}
             >
               <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.035] text-mist">
                 <MacIcon />
@@ -102,11 +110,12 @@ export function OnboardingWelcome({
                 <ArrowIcon />
               </span>
             </button>
+            </>}
           </div>
-          <button type="button" className="mt-4 text-xs text-mist underline-offset-4 hover:text-snow hover:underline disabled:opacity-50" disabled={importing} onClick={() => {
+          {!props.replay ? <button type="button" className="mt-4 text-xs text-mist underline-offset-4 hover:text-snow hover:underline disabled:opacity-50" disabled={importing} onClick={() => {
             setImporting(true); setImportError("");
-            void onImport().catch((cause) => setImportError(cause instanceof Error ? cause.message : "This template could not be imported.")).finally(() => setImporting(false));
-          }}>{importing ? "Preparing your coworker…" : "Import a coworker template"}</button>
+            void props.onImport().catch((cause) => setImportError(cause instanceof Error ? cause.message : "This template could not be imported.")).finally(() => setImporting(false));
+          }}>{importing ? "Preparing your coworker…" : "Import a coworker template"}</button> : null}
           {importError ? <p className="mt-2 text-xs text-rose" role="alert">{importError}</p> : null}
           <p className="mx-auto mt-4 max-w-[510px] text-xs leading-5 text-mist">Conversations and local workers run while Open Coworker is open. Only responsibilities assigned to Cloud can run while this Mac is off.</p>
         </section>

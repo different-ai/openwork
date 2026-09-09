@@ -2,8 +2,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { browserScript, clickButton, coworker, evalIn, fill, needs, resolveHost, test, waitFor, waitForText } from "@openwork/testkit";
+import { browserScript, clickButton, coworker, evalIn, eventually, fill, needs, resolveHost, screenshot, test, waitFor, waitForText } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
+import { clickCoworkerControl, isolatedFreshStartCoworker } from "../worlds/coworker.ts";
 
 async function openAssignments(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
   await waitFor(app, () => {
@@ -225,6 +226,168 @@ async function invokeCoworker(app: Awaited<ReturnType<typeof coworker>>, command
   );
 }
 
+// Select the destructive case explicitly without running the unrelated setup/scheduling tour.
+const previewOnly = process.env.OPENWORK_EVAL_COWORKER_CASE === "fresh-start-preview";
+const freshStartOnly = previewOnly || process.env.OPENWORK_EVAL_COWORKER_CASE === "fresh-start";
+
+test.skipIf(!enabled)(previewOnly ? "Coworker Fresh start fullscreen preview without an engine or reset" : "Coworker Fresh start relaunches natively without resurrecting history or erasing unrelated credentials", { timeout: 600_000 }, async ({ evidence }) => {
+  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
+  if (!previewOnly && process.env.OPENWORK_EVAL_COWORKER_RESET_READY !== "confirmed") throw new Error("Destructive native proof is held until the backend owner confirms readiness. No app or reset was started.");
+  const model = await startStubModelServer();
+  onTestFinished(() => model.close());
+  await using fixture = await isolatedFreshStartCoworker(`http://127.0.0.1:${model.port}`, previewOnly);
+  const { app, invoke, history, profileDir } = fixture;
+  const create = async () => {
+    expect(await invoke("coworkers.create", { name: "Juniper", role: "Fixture partner", mission: "Use only the local reset fixture.", avatarColor: "mint", avatarGlasses: "round" })).toMatchObject({ ok: true, result: { slug: "juniper" } });
+    expect(await invoke("coworkers.update", { slug: "juniper", patch: { model: "eval-reset/stub-small", modelVariant: "" } })).toMatchObject({ ok: true });
+    await evalIn(app, () => { location.reload(); return true; });
+    await waitForText(app, "Juniper", { timeoutMs: 120_000 });
+  };
+  const send = async (message: string) => {
+    const calls = model.chatCalls();
+    await fill(app, 'textarea[aria-label="Message Juniper"]', message);
+    await clickCoworkerControl(app, { testId: "coworker-send" });
+    await eventually(() => model.chatCalls(), { within: 90_000, label: "loopback model received the native turn", until: (count) => count > calls });
+    await waitFor(app, () => document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"
+      && (document.body.innerText ?? "").includes("Hello from the stub server."), { timeoutMs: 90_000, label: "ordinary native conversation completed" });
+  };
+  const settings = async () => {
+    await clickButtonContaining(app, "OpenWork");
+    await clickCoworkerControl(app, { role: "button", label: "Fresh start" });
+  };
+  const resetPage = () => clickCoworkerControl(app, { testId: "fresh-start-factory-reset" });
+  await create();
+  if (previewOnly) {
+    for (const [name, color, glasses] of [["Piper", "rose", "square"], ["Atlas", "blue", "round"]]) {
+      expect(await invoke("coworkers.create", { name, role: "Fixture partner", mission: "Design preview only.", avatarColor: color, avatarGlasses: glasses })).toMatchObject({ ok: true });
+    }
+    await evalIn(app, () => { location.reload(); return true; });
+    await waitForText(app, "Piper", { timeoutMs: 60_000 });
+    await settings();
+    await resetPage();
+    await waitFor(app, () => Boolean(document.querySelector('[data-testid="factory-reset-counts"]')), { timeoutMs: 30_000, label: "native preview validates the isolated reset scope" });
+    await fill(app, '[data-testid="factory-reset-confirmation"]', "DEL");
+    const image = await screenshot(app);
+    const screenshotPath = path.join(profileDir, "fresh-start-fullscreen.png");
+    await writeFile(screenshotPath, image.png);
+    await evalIn(app, () => { document.querySelector('[data-testid="factory-reset-erase"]')?.scrollIntoView({ block: "end" }); return true; });
+    await writeFile(path.join(profileDir, "fresh-start-controls.png"), (await screenshot(app)).png);
+    expect(await evalIn(app, () => document.querySelector<HTMLButtonElement>('[data-testid="factory-reset-erase"]')?.disabled)).toBe(true);
+    expect(model.chatCalls()).toBe(0);
+    evidence.recordAssertionEvidence("Supplementary native UI preview, not reset proof", `Three disposable teammates are shown in the real fullscreen renderer. DEL cannot enable erase. No engine, model request or reset ran. Screenshot: ${screenshotPath}`, true);
+    console.log(`Fresh start screenshot: ${screenshotPath}`);
+    return;
+  }
+  const runtime = await invoke("runtime.info");
+  const current = await invoke("coworkers.get", { slug: "juniper" });
+  if (!isRecord(runtime) || !isRecord(runtime.result) || typeof runtime.result.serverUrl !== "string" || typeof runtime.result.ownerToken !== "string"
+    || !isRecord(current) || !isRecord(current.result) || typeof current.result.workspaceId !== "string") throw new Error("Native fixture runtime is unavailable");
+  expect(new URL(runtime.result.serverUrl).hostname).toBe("127.0.0.1");
+  const engine = `${runtime.result.serverUrl}/workspace/${encodeURIComponent(current.result.workspaceId)}/opencode`;
+  const headers = { Authorization: `Bearer ${runtime.result.ownerToken}`, "Content-Type": "application/json" };
+  const providers: unknown = await (await fetch(`${engine}/provider`, { headers, signal: AbortSignal.timeout(30_000) })).json();
+  expect(providers).toMatchObject({ connected: ["eval-reset"] });
+  expect((await fetch(`${engine}/auth/unrelated-fixture`, { method: "PUT", headers, body: JSON.stringify({ type: "api", key: "UNRELATED-ENGINE-FIXTURE-CREDENTIAL" }), signal: AbortSignal.timeout(30_000) })).ok).toBe(true);
+   const credentialsBefore = await fixture.credentials();
+  expect(JSON.stringify(credentialsBefore)).toContain("UNRELATED-ENGINE-FIXTURE-CREDENTIAL");
+  await send("Remember this old conversation for the reset check.");
+  fixture.seedUnrelatedHistory();
+  const before = history();
+  const oldIds = before.filter((row) => row.directory !== path.join(profileDir, "unrelated-project")).map((row) => row.id);
+  expect(oldIds.length).toBeGreaterThan(0);
+  const coworkersBefore = await invoke("coworkers.list");
+  await settings();
+  await resetPage();
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="factory-reset-counts"]')), { timeoutMs: 30_000, label: "native reset scope is verified" });
+  const image = await screenshot(app);
+  await writeFile(path.join(profileDir, "fresh-start-fullscreen.png"), image.png);
+  expect(await evalIn(app, () => {
+    const rect = document.querySelector('[data-testid="factory-reset-screen"]')?.getBoundingClientRect();
+    const rail = document.querySelector('[data-testid="coworker-rail"]');
+    return Boolean(rect && rect.width >= innerWidth - 1 && rect.height >= innerHeight - 1 && (!rail || rail.getClientRects().length === 0));
+  })).toBe(true);
+  for (const confirmation of ["DELET", "delete", "DELETE "]) {
+    await fill(app, '[data-testid="factory-reset-confirmation"]', confirmation);
+    expect(await evalIn(app, () => document.querySelector<HTMLButtonElement>('[data-testid="factory-reset-erase"]')?.disabled)).toBe(true);
+    expect(await invoke("maintenance.factoryReset", { confirmation })).toMatchObject({ ok: false });
+  }
+  expect(await invoke("maintenance.factoryReset", { confirmation: "DELETE", extra: true })).toMatchObject({ ok: false });
+  expect(history()).toEqual(before);
+  await clickCoworkerControl(app, { role: "button", label: "Keep my team" });
+  expect(await invoke("coworkers.list")).toEqual(coworkersBefore);
+  await clickButtonContaining(app, "Back to coworkers");
+  await send("Continue the same conversation after cancelling reset.");
+  evidence.recordAssertionEvidence("Partial and malformed confirmation cannot erase; Cancel leaves ordinary chat usable", "Native confirmation rejects partial, lowercase, padded and extra-field requests. Team and session identities were unchanged and another loopback-model turn completed.", true);
+
+  // Fixed account-storage fixture, never a real sign-in or remote origin.
+  await evalIn(app, browserScript((baseUrl) => {
+    localStorage.setItem("coworker.den.session.v1", JSON.stringify({ baseUrl, token: "reset-fixture-session", userName: "Fixture member", userEmail: "fixture@example.test", orgId: "org_reset_fixture", orgName: "Reset fixture" }));
+    location.reload();
+    return true;
+  }, [`http://127.0.0.1:${model.port}`]));
+  await waitForText(app, "Juniper", { timeoutMs: 120_000 });
+  const replayCoworkersBefore = await invoke("coworkers.list");
+  await settings();
+  const accountBefore = await evalIn(app, () => localStorage.getItem("coworker.den.session.v1"));
+  expect(accountBefore).toContain("reset-fixture-session");
+  expect(await invoke("settings.update", { maxParallelLocalRuns: 7 })).toMatchObject({ ok: true });
+  await clickCoworkerControl(app, { testId: "fresh-start-replay" });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="onboarding-replay"] [data-testid="onboarding-welcome"]')), { timeoutMs: 30_000, label: "read-only onboarding replay" });
+  await clickCoworkerControl(app, { testId: "onboarding-replay-ai" });
+  await clickCoworkerControl(app, { testId: "local-mode-continue" });
+  await settings();
+  await clickCoworkerControl(app, { testId: "fresh-start-defaults" });
+  await waitForText(app, "App defaults restored.");
+  expect(await invoke("coworkers.list")).toEqual(replayCoworkersBefore);
+  expect(history()).toEqual(before);
+  expect(await invoke("settings.get")).toMatchObject({ ok: true, result: { maxParallelLocalRuns: 2 } });
+   expect(await fixture.credentials()).toEqual(credentialsBefore);
+  expect(await evalIn(app, () => localStorage.getItem("coworker.den.session.v1"))).toEqual(accountBefore);
+  evidence.recordAssertionEvidence("Replay and Restore defaults preserve existing local identity and history", "The existing team and session IDs remained unchanged after replay and restore defaults. The local account-storage value was preserved.", true);
+
+  await resetPage();
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="factory-reset-counts"]')), { timeoutMs: 30_000, label: "second reset scope is verified" });
+  const oldPid = app.handle.pid;
+  await fill(app, '[data-testid="factory-reset-confirmation"]', "DELETE");
+  // One trusted click only. The bridge, native helper and replacement app own the rest.
+  await clickCoworkerControl(app, { testId: "factory-reset-erase" });
+  const receiptPath = path.join(profileDir, "owned/electron-userdata-recovery/reset-result-acknowledged.json");
+  const receipt = await eventually(async () => {
+    let acknowledged = true;
+    const text = await readFile(receiptPath, "utf8").catch((error: unknown) => {
+      if (!isRecord(error) || error.code !== "ENOENT") throw error;
+      acknowledged = false;
+      return readFile(path.join(path.dirname(receiptPath), "reset-result.json"), "utf8");
+    });
+    const value: unknown = JSON.parse(text);
+    if (!isRecord(value) || value.version !== 2 || !Array.isArray(value.previousProcesses) || (value.backupPath !== null && typeof value.backupPath !== "string")) throw new Error("Invalid native reset receipt");
+    const previousPids = value.previousProcesses.map((entry: unknown) => {
+      if (!isRecord(entry) || typeof entry.pid !== "number" || !Number.isSafeInteger(entry.pid) || typeof entry.boot !== "string" || typeof entry.started !== "string") throw new Error("Invalid captured native process identity");
+      return entry.pid;
+    });
+    return { phase: value.phase, recoveryRequired: value.recoveryRequired, previousPids, backupPath: value.backupPath, acknowledged, diagnostics: value.diagnostics };
+  }, { within: 180_000, label: "post-exit helper result acknowledged by replacement app", until: (value) => value.phase === "failed" || (value.phase === "completed" && value.acknowledged) });
+  expect(receipt, JSON.stringify(receipt)).toMatchObject({ phase: "completed", recoveryRequired: false, acknowledged: true, previousPids: expect.arrayContaining([oldPid]) });
+  if (typeof receipt.backupPath !== "string") throw new Error("Completed reset has no backup path");
+  for (const pid of receipt.previousPids) expect(() => process.kill(pid, 0)).toThrow();
+  await app.reconnect();
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="onboarding-welcome"]')) && !document.querySelector('[data-testid="onboarding-replay"]'), { timeoutMs: 120_000, label: "fresh first-run onboarding after relaunch" });
+  expect(await invoke("coworkers.list")).toMatchObject({ ok: true, result: [] });
+  expect(await evalIn(app, () => localStorage.getItem("coworker.den.session.v1"))).toBeNull();
+  expect(history().map((row) => row.id)).toEqual(["ses_fresh_start_unrelated"]);
+  expect(await readFile(path.join(profileDir, "credential-sentinel.json"), "utf8")).toContain("UNRELATED-FIXTURE-CREDENTIAL");
+   expect(await fixture.credentials()).toEqual(credentialsBefore);
+  expect(JSON.parse(await readFile(path.join(receipt.backupPath, "manifest.json"), "utf8"))).toMatchObject({ historyCount: oldIds.length });
+  await create();
+  expect(await evalIn(app, () => document.body.innerText)).not.toContain("Remember this old conversation");
+  await send("Start a new conversation after the fresh start.");
+  for (const id of oldIds) expect(history().map((row) => row.id)).not.toContain(id);
+  expect(history().map((row) => row.id)).toContain("ses_fresh_start_unrelated");
+   expect(await fixture.credentials()).toEqual(credentialsBefore);
+  evidence.recordAssertionEvidence("A real native exit/reset/relaunch returns to onboarding and the same slug works without old history", `The helper receipt at ${receiptPath} confirmed completion after the original PIDs exited. Juniper was recreated, received a deterministic model reply, and did not recover any pre-reset session. The unrelated history and credential sentinel survived.`, true);
+});
+
+if (!freshStartOnly) {
 test.skipIf(!enabled)("Coworker provider setup without credentials", { timeout: 300_000 }, async ({ evidence, skip }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
   await using host = await resolveHost();
@@ -1009,3 +1172,4 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     true,
   );
 });
+}

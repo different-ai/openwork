@@ -5,6 +5,32 @@ platform. Open Coworker is a second product client, not a second platform: it
 assembles existing OpenWork primitives into a coworker-centric experience and
 adds no new database concepts.
 
+## Fresh start from Settings
+
+**Settings → Fresh start** has three separate actions:
+
+- **Replay onboarding** revisits welcome and AI setup without creating another
+  team, changing accounts, or discarding work.
+- **Restore app defaults** resets app-wide scheduling and progress preferences;
+  coworkers, history, accounts and individual model choices stay unchanged.
+- **Factory reset** opens a full-screen confirmation with the current coworkers.
+  Typing exact uppercase `DELETE` changes only the illustration. A separate
+  **Erase & restart** click starts the native reset.
+
+Factory reset stops this app's work, waits for the previous native processes to
+exit, and saves a private recovery copy before clearing Coworker-owned files and
+directory-scoped engine history. It reopens directly into fresh onboarding.
+Other OpenWork profiles, engine credentials, unrelated history, external files,
+macOS permissions and Cloud resources are not erased; Cloud schedules are not
+cancelled. The preview names the recovery directory. Recovery is manual.
+
+Unknown engine history locations, mixed shared/development storage, unsupported
+schemas, unconfirmed shutdown and failed backups stop the operation rather than
+guessing. A failed reset preserves or restores the old setup; an interrupted
+mutation blocks normal startup with recovery guidance instead of opening a
+half-reset profile. Custom engine binaries require an explicit `OPENCODE_DB`
+path before factory reset can establish the history boundary.
+
 ## Team onboarding through OpenWork Connect
 
 Prepared teams are a per-organization preview, **off by default**. A platform

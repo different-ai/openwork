@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -293,6 +293,79 @@ async function eventually(check) {
   while (Date.now() < deadline) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 10)); }
   assert.fail("The collaboration did not settle within the module check's deadline.");
 }
+
+test("shutdown drains late setup writes and seals collaboration storage before returning", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture();
+    const release = Promise.withResolvers();
+    let started = false;
+    const service = createCollaboration({ directory: home, pollMs: 5, setupTimeoutMs: 100,
+      clientFor: async (slug) => {
+        started = true;
+        await release.promise;
+        await writeFile(path.join(home, "late-setup"), "last write");
+        return fixture.clientFor(slug);
+      },
+    });
+    try {
+      await service.submit({ owner: { slug: "scout", threadId: "shutdown", conversationId: "shutdown", kind: "private" }, prompt: "Queued setup" });
+      await eventually(() => started);
+      // Cancellation finishes its observer, but not the underlying setup write.
+      await assert.rejects(service.stop({ requireConfirmed: true }), /did not finish stopping/);
+      await stat(home);
+      release.resolve();
+      await service.stop({ requireConfirmed: true });
+      assert.equal(await readFile(path.join(home, "late-setup"), "utf8"), "last write");
+      await rm(home, { recursive: true });
+      await assert.rejects(service.registerOwner({ slug: "scout", threadId: "late", conversationId: "late", kind: "private" }), /storage is closed/);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await assert.rejects(stat(home), { code: "ENOENT" });
+    } finally { release.resolve(); await service.stop(); }
+  });
+});
+
+test("shutdown refuses unconfirmed native cancellation instead of swallowing it", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture(async ({ threadId }) => { fixture.held.add(threadId); });
+    const service = createCollaboration({ directory: home, pollMs: 5, setupTimeoutMs: 100,
+      clientFor: async (slug) => ({ ...await fixture.clientFor(slug), abortThread: async () => ({ accepted: false }) }),
+    });
+    try {
+      await service.submit({ owner: { slug: "scout", threadId: "shutdown", conversationId: "shutdown", kind: "private" }, prompt: "Hold this step" });
+      await eventually(() => fixture.requests.length === 1);
+      await assert.rejects(service.stop({ requireConfirmed: true }), /native cleanup could not be confirmed/);
+      assert.equal((await stat(home)).isDirectory(), true);
+    } finally { fixture.held.clear(); await service.stop(); }
+  });
+});
+
+test("shutdown retains group participant ownership until a cancelled raw write settles", async () => {
+  await withHome(async (home) => {
+    const group = await createGroup(home, { name: "Desk", participantSlugs: ["scout", "editor"] });
+    const release = Promise.withResolvers();
+    const signal = new AbortController();
+    let started = false;
+    const groups = createGroupExecution({ directory: home, setupTimeoutMs: 20,
+      clientFor: async () => ({ createThread: async () => ({ id: "participant" }) }),
+      collaboration: { registerOwner: async () => { started = true; await release.promise; await writeFile(path.join(home, "late-owner"), "last write"); } },
+    });
+    try {
+      const participant = groups.participant(group.id, "scout", signal.signal);
+      const rejected = assert.rejects(participant, /Cancelled/);
+      await eventually(() => started);
+      signal.abort(new Error("Cancelled"));
+      await rejected;
+      await assert.rejects(groups.stop(), /did not finish stopping/);
+      release.resolve();
+      await groups.stop();
+      assert.equal(await readFile(path.join(home, "late-owner"), "utf8"), "last write");
+      await rm(home, { recursive: true });
+      await assert.rejects(groups.participant(group.id, "editor"), /closing/);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await assert.rejects(stat(home), { code: "ENOENT" });
+    } finally { release.resolve(); await groups.stop(); }
+  });
+});
 
 test("fresh admission waits through an idle unfinished placeholder", async () => {
   await withHome(async (home) => {

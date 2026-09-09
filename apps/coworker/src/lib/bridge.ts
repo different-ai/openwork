@@ -444,6 +444,17 @@ async function invoke<T>(command: string, payload?: unknown): Promise<T> {
 }
 
 export const coworkerBridge = {
+  maintenance: {
+    preview: () => invoke<{ coworkerCount: number; historyCount: number; backupDirectory: string }>("maintenance.preview"),
+    factoryReset: async (input: { confirmation: string }): Promise<{ phase: "handoff"; backupDirectory: string }> => {
+      const receipt = await invoke<{ phase: "handoff"; backupDirectory: string; handoffId: string }>("maintenance.factoryReset", input);
+      // Native exit waits for this acknowledgement of the handoff, not for an
+      // assumed IPC delivery delay. The relaunched app reports the actual result.
+      void invoke("maintenance.handoffReceived", { handoffId: receipt.handoffId }).catch(() => undefined);
+      return { phase: receipt.phase, backupDirectory: receipt.backupDirectory };
+    },
+    restoreDefaults: () => invoke<CoworkerSettings>("maintenance.restoreDefaults"),
+  },
   voice: {
     status: () => invoke<{ access: "ready" | "sign_in" | "membership_required" | "unavailable"; message?: string }>("voice.status"),
     transcribe: (input: { requestId: string; data: string; format: "webm" | "wav" | "mp3" | "m4a" | "ogg" }) => invoke<{ text: string }>("voice.transcribe", input),
