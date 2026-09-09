@@ -8,7 +8,7 @@ import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../
 import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
-import { enterprisePlanRequiredSchema } from "../../openapi.js"
+import { enterprisePlanRequiredSchema, xmlResponse } from "../../openapi.js"
 import {
   deleteOrganizationSsoConnection,
   getOrganizationSsoConnection,
@@ -665,7 +665,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       description: "Returns the generated Service Provider metadata for the current organization's SAML connection.",
       security: [{ bearerAuth: [] }],
       responses: {
-        200: { description: "SAML metadata document" },
+        200: xmlResponse("SAML Service Provider metadata (an `EntityDescriptor` XML document) served as `application/xml`."),
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
         403: { description: "Only workspace owners and admins can read SSO metadata.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
