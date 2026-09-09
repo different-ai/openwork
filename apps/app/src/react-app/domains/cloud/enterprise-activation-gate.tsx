@@ -50,7 +50,7 @@ function EnterpriseActivationPage() {
   const submitServer = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    // The address field quietly accepts a pasted openwork:// sign-in link as
+    // The field accepts a pasted openwork:// sign-in link as
     // the recovery path when the browser round trip cannot come back.
     const pastedLink = parseManualAuthInput(serverInput);
     if (pastedLink?.baseUrl && pastedLink.grant) {
@@ -66,7 +66,7 @@ function EnterpriseActivationPage() {
 
     const baseUrl = normalizeOrganizationServerInput(serverInput);
     if (!baseUrl) {
-      setServerError("Enter a valid OpenWork server address.");
+      setServerError("Enter a valid workspace address or a full OpenWork sign-in link.");
       return;
     }
 
@@ -133,10 +133,10 @@ function EnterpriseActivationPage() {
       const opened = await tryOpenBrowserAuthUrl(buildDenAuthUrl(pending.baseUrl, "sign-in"));
       if (!opened) {
         setStatusMessage(null);
-        setAuthError("We couldn't open your browser automatically. Try again, or paste the sign-in link from your browser into the address field.");
+        setAuthError("We couldn't open your browser automatically. Try again, or paste the sign-in link from your browser into the Workspace address or sign-in link field.");
         return;
       }
-      setStatusMessage("Finish signing in in your browser, then return to OpenWork.");
+      setStatusMessage("Finish signing in in your browser. If OpenWork does not open, copy the sign-in link and paste it here.");
     } catch (error) {
       setStatusMessage(null);
       setServerError(
@@ -203,7 +203,7 @@ function EnterpriseActivationPage() {
               Link this app to your organization
             </h1>
             <p className="text-[15px] leading-[23px] text-muted-foreground">
-              Enter your workspace address — the page where you downloaded this app. Sign-in finishes in your browser and returns here.
+              Enter your workspace address — the page where you downloaded this app — to sign in through your browser.
             </p>
           </div>
 
@@ -214,7 +214,7 @@ function EnterpriseActivationPage() {
                   className="text-sm font-medium text-foreground"
                   htmlFor="organization-server-input"
                 >
-                  Workspace address
+                  Workspace address or sign-in link
                 </label>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
@@ -228,6 +228,7 @@ function EnterpriseActivationPage() {
                     spellCheck={false}
                     disabled={browserBusy || authBusy}
                     aria-invalid={serverError ? true : undefined}
+                    aria-describedby="organization-server-hint"
                   />
                   <Button
                     type="submit"
@@ -238,6 +239,9 @@ function EnterpriseActivationPage() {
                     Continue
                   </Button>
                 </div>
+                <p id="organization-server-hint" className="text-xs leading-5 text-muted-foreground">
+                  Browser not returning to OpenWork? Paste the full sign-in link copied from your browser, including the workspace address. A code on its own is not supported here.
+                </p>
               </form>
             )}
 
