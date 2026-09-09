@@ -1,7 +1,7 @@
 import { ComputerUseControls } from "../domains/session/surface/computer-use-controls";
 /** @jsxImportSource react */
 
-import { useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 
 import { captureAnalyticsEvent, initAnalytics } from "../../app/lib/analytics";
@@ -345,6 +345,28 @@ function BrandThemeControlActions() {
     };
   }, []);
   useControlAction(relaunchAction);
+
+  const [renderThrow, setRenderThrow] = useState<string | null>(null);
+  const renderThrowAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+    return {
+      id: "eval.app.render_throw",
+      label: "Throw during render for eval",
+      description: "Dev-only eval hook that throws during React render so the app-level recovery screen can be exercised.",
+      sideEffect: "mutation",
+      requiresArgs: true,
+      args: [{ name: "message", type: "string", required: true, description: "Error message to throw." }],
+      execute: (args) => {
+        if (typeof args !== "object" || args === null || !("message" in args) || typeof args.message !== "string") {
+          return { ok: false, error: "message is required" };
+        }
+        setRenderThrow(args.message);
+        return undefined;
+      },
+    };
+  }, []);
+  useControlAction(renderThrowAction);
+  if (renderThrow) throw new Error(renderThrow);
 
   return null;
 }
