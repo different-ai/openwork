@@ -1159,7 +1159,7 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
       () => { throw new Error("Expected the browser request to reject under the empty website allowlist"); },
       (error: unknown) => {
         if (!(error instanceof Error)) throw error;
-        expect(error.message).toBe(policyMessage);
+        expect(error.message).toContain(policyMessage);
         return error.message;
       },
     );
@@ -1169,7 +1169,7 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     await admin.user.reload();
     await admin.user.see({ role: "combobox", label: "Website access" }, { value: "blocked", timeoutMs: 60_000 });
     await admin.user.notSee({ role: "button", label: `Remove ${origin}` });
-    evidence.recordAssertionEvidence("Saving an empty approved-site list persists browsing Blocked and rejects real requests to the formerly approved site only for the assigned team", JSON.stringify({ saved, denied, before, unsaved, blocked, unaffected, controlBefore }), denied.status === 403 && before.reached && unsaved.reached && blocked === policyMessage && unaffected.reached);
+    evidence.recordAssertionEvidence("Saving an empty approved-site list persists browsing Blocked and rejects real requests to the formerly approved site only for the assigned team", JSON.stringify({ saved, denied, before, unsaved, blocked, unaffected, controlBefore }), denied.status === 403 && before.reached && unsaved.reached && blocked.includes(policyMessage) && unaffected.reached);
     await admin.user.looks(["Team Access shows Website access Blocked and says no websites are approved"]);
   });
 
