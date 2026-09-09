@@ -20,7 +20,7 @@ test(`desktop connects through ${entry.name} with one native card and confirms a
   await user.screenshot();
   evidence.recordAssertionEvidence("Ordinary discovery of an unconnected service stays quiet", "Dashboard capability search completed without a connection card, catalog, Connect button, or provider authorization request", true);
   await user.click({ role: "button", label: "New session" });
-  await user.see({ text: "Try one of these:" });
+  await user.see({ role: "button", label: "Run task" });
   expect(entry.prompt).not.toContain(world.connection.id);
   await agent.send(entry.prompt);
   await user.see({ text: connectionActionReply }, { timeoutMs: 120_000 });
