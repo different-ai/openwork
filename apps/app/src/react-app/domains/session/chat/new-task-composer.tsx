@@ -431,6 +431,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       onQueue={noop}
       onStop={noop}
       busy={false}
+      isStopping={false}
       steering={false}
       submissionPreparing={props.busy || pendingSubmission !== null || failedSubmission !== null}
       queuedCount={0}
