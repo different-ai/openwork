@@ -2825,15 +2825,26 @@ export class DenClient extends HeyApiClient {
   /**
    * List Workflow runs
    *
-   * Lists Workflow run receipts visible to the active organization member.
+   * Lists Workflow run receipts visible to the active organization member, newest first. Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page.
    */
   public getV1WorkflowRuns<ThrowOnError extends boolean = false>(
     parameters?: {
+      cursor?: string;
       limit?: number;
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "limit" }] }]);
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "cursor" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    );
     return (options?.client ?? this.client).get<GetV1WorkflowRunsResponses, GetV1WorkflowRunsErrors, ThrowOnError>({
       url: "/v1/workflow-runs",
       ...options,
