@@ -10,6 +10,11 @@ import {
   inspectDaytonaSandbox,
   refreshDaytonaSignedPreview,
 } from "./daytona.js"
+import {
+  getKubernetesWorkerRecord,
+  inspectKubernetesWorker,
+  refreshKubernetesSignedPreview,
+} from "./kubernetes.js"
 import { recoverClaimedCloudWorker, wakeCloudWorker } from "./cloud-lifecycle.js"
 import { fetchWithConnectRetry, previewFetch } from "./preview-fetch.js"
 import {
@@ -191,6 +196,18 @@ function tokenByScope(tokens: CloudRuntimeToken[], scope: CloudRuntimeToken["sco
   return tokens.find((entry) => entry.scope === scope)?.token ?? null
 }
 
+function defaultGetSandboxRecord(): GetSandboxRecord {
+  return env.provisionerMode === "kubernetes" ? getKubernetesWorkerRecord : getDaytonaSandboxRecord
+}
+
+function defaultRefreshSignedPreview(): RefreshSignedPreview {
+  return env.provisionerMode === "kubernetes" ? refreshKubernetesSignedPreview : refreshDaytonaSignedPreview
+}
+
+function defaultInspectSandbox(): InspectSandbox {
+  return env.provisionerMode === "kubernetes" ? inspectKubernetesWorker : inspectDaytonaSandbox
+}
+
 function healthUrlForPreview(signedPreviewUrl: string) {
   return `${signedPreviewUrl.replace(/\/+$/, "")}/health`
 }
@@ -332,6 +349,11 @@ function isStoppedSandboxState(state: string | null) {
 }
 
 function workerNeedsSnapshotRecycle(worker: CloudRuntimeWorker) {
+  if (env.provisionerMode === "kubernetes") {
+    const image = env.kubernetes.workerImage
+    return Boolean(image && "image_version" in worker && worker.image_version !== image)
+  }
+
   const snapshot = env.daytona.snapshot
   return Boolean(snapshot && "image_version" in worker && worker.image_version !== snapshot)
 }
@@ -474,9 +496,9 @@ export async function resolveCloudRuntimeAccess(
 
   const store = options.store ?? databaseCloudRuntimeStore
   const state = await resolveCloudRuntimeState({ worker, organizationId: ownership.organizationId }, {
-    refreshSignedPreview: options.refreshSignedPreview ?? refreshDaytonaSignedPreview,
-    getSandboxRecord: options.getSandboxRecord ?? getDaytonaSandboxRecord,
-    inspectSandbox: options.inspectSandbox ?? inspectDaytonaSandbox,
+    refreshSignedPreview: options.refreshSignedPreview ?? defaultRefreshSignedPreview(),
+    getSandboxRecord: options.getSandboxRecord ?? defaultGetSandboxRecord(),
+    inspectSandbox: options.inspectSandbox ?? defaultInspectSandbox(),
     probeSignedPreview: options.probeSignedPreview ?? probeCloudRuntimeSignedPreview,
     startWake: options.startWake ?? startDefaultWake,
     startRecovery: options.startRecovery ?? startDefaultRecovery,

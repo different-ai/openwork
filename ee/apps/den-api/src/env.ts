@@ -103,7 +103,7 @@ const EnvSchema = z.object({
   CLOUD_IDLE_STOP_MINUTES: z.string().optional(),
   CLOUD_IDLE_LOOP_SECONDS: z.string().optional(),
   CLOUD_IDLE_STOP_BATCH_SIZE: z.string().optional(),
-  PROVISIONER_MODE: z.enum(["stub", "render", "daytona"]).optional(),
+  PROVISIONER_MODE: z.enum(["stub", "render", "daytona", "kubernetes"]).optional(),
   WORKER_URL_TEMPLATE: z.string().optional(),
   WORKER_ACTIVITY_BASE_URL: z.string().optional(),
   DEN_AUTOMATIONS_ENABLED: z.string().optional(),
@@ -179,6 +179,24 @@ const EnvSchema = z.object({
   DAYTONA_DELETE_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_STOP_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
+  KUBERNETES_API_URL: z.string().optional(),
+  KUBERNETES_API_TOKEN: z.string().optional(),
+  KUBERNETES_API_CA_FILE: z.string().optional(),
+  KUBERNETES_WORKER_NAMESPACE: z.string().optional(),
+  KUBERNETES_WORKER_IMAGE: z.string().optional(),
+  KUBERNETES_WORKER_IMAGE_PULL_POLICY: z.string().optional(),
+  KUBERNETES_WORKER_PORT: z.string().optional(),
+  KUBERNETES_WORKER_APPROVAL_MODE: z.string().optional(),
+  KUBERNETES_WORKER_CPU_REQUEST: z.string().optional(),
+  KUBERNETES_WORKER_CPU_LIMIT: z.string().optional(),
+  KUBERNETES_WORKER_MEMORY_REQUEST: z.string().optional(),
+  KUBERNETES_WORKER_MEMORY_LIMIT: z.string().optional(),
+  KUBERNETES_WORKER_WORKSPACE_VOLUME_SIZE: z.string().optional(),
+  KUBERNETES_WORKER_DATA_VOLUME_SIZE: z.string().optional(),
+  KUBERNETES_WORKER_STORAGE_CLASS: z.string().optional(),
+  KUBERNETES_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
+  KUBERNETES_POLL_INTERVAL_MS: z.string().optional(),
+  KUBERNETES_WORKER_RECORD_TTL_SECONDS: z.string().optional(),
   DEN_CKPT_INTERVAL_SECONDS: z.string().optional(),
   DEN_CKPT_KEEP: z.string().optional(),
   INFERENCE_PROXY_BASE_URL: z.string().optional(),
@@ -228,6 +246,18 @@ const EnvSchema = z.object({
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: `${key} is required when PROVISIONER_MODE=daytona`,
+          path: [key],
+        })
+      }
+    }
+  }
+
+  if (value.PROVISIONER_MODE === "kubernetes") {
+    for (const key of ["KUBERNETES_WORKER_IMAGE"] as const) {
+      if (!value[key]) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${key} is required when PROVISIONER_MODE=kubernetes`,
           path: [key],
         })
       }
@@ -915,5 +945,36 @@ export const env = {
     checkpointIntervalSeconds: Number(parsed.DEN_CKPT_INTERVAL_SECONDS ?? "300"),
     checkpointKeep: Number(parsed.DEN_CKPT_KEEP ?? "3"),
     pollIntervalMs: DEN_WORKER_POLL_INTERVAL_MS,
+  },
+  kubernetes: {
+    apiUrl: optionalString(parsed.KUBERNETES_API_URL),
+    apiToken: optionalString(parsed.KUBERNETES_API_TOKEN),
+    apiCaFile: optionalString(parsed.KUBERNETES_API_CA_FILE),
+    workerNamespace:
+      optionalString(parsed.KUBERNETES_WORKER_NAMESPACE) ?? "openwork-workers",
+    workerImage: optionalString(parsed.KUBERNETES_WORKER_IMAGE),
+    workerImagePullPolicy:
+      optionalString(parsed.KUBERNETES_WORKER_IMAGE_PULL_POLICY) ?? "IfNotPresent",
+    workerPort: Number(parsed.KUBERNETES_WORKER_PORT ?? "8787"),
+    workerApprovalMode:
+      optionalString(parsed.KUBERNETES_WORKER_APPROVAL_MODE) ?? "manual",
+    workerResources: {
+      cpuRequest: optionalString(parsed.KUBERNETES_WORKER_CPU_REQUEST) ?? "500m",
+      cpuLimit: optionalString(parsed.KUBERNETES_WORKER_CPU_LIMIT) ?? "2",
+      memoryRequest: optionalString(parsed.KUBERNETES_WORKER_MEMORY_REQUEST) ?? "1Gi",
+      memoryLimit: optionalString(parsed.KUBERNETES_WORKER_MEMORY_LIMIT) ?? "4Gi",
+    },
+    workspaceVolumeSize:
+      optionalString(parsed.KUBERNETES_WORKER_WORKSPACE_VOLUME_SIZE) ?? "10Gi",
+    dataVolumeSize:
+      optionalString(parsed.KUBERNETES_WORKER_DATA_VOLUME_SIZE) ?? "10Gi",
+    workerStorageClass: optionalString(parsed.KUBERNETES_WORKER_STORAGE_CLASS),
+    healthcheckTimeoutMs: Number(
+      parsed.KUBERNETES_HEALTHCHECK_TIMEOUT_MS ?? "300000",
+    ),
+    pollIntervalMs: Number(parsed.KUBERNETES_POLL_INTERVAL_MS ?? "1000"),
+    workerRecordTtlSeconds: Number(
+      parsed.KUBERNETES_WORKER_RECORD_TTL_SECONDS ?? "3600",
+    ),
   },
 }

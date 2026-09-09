@@ -70,7 +70,7 @@ export function classifyCloudStartupFailure(error: unknown): CloudStartupFailure
   if (message.includes("provisioning deadline") || message.includes("cloud wake") && message.includes("deadline")) {
     return "provisioning_timeout"
   }
-  if (message.includes("timed out waiting for daytona worker health")) return "runtime_health_timeout"
+  if (/timed out waiting for .* worker health/.test(message)) return "runtime_health_timeout"
   if (message.includes("openwork session exited") || message.includes("binary missing")) return "runtime_start_failed"
   if (message.includes("sandbox") && message.includes("not found")) return "sandbox_missing"
   if (message.includes("start failed") || message.includes("sandbox") && message.includes("state change")) {
