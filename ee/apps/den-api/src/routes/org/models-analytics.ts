@@ -13,11 +13,17 @@ import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../op
 import { z } from "zod"
 import { ensureOrganizationAdmin, orgAccessFailureStatus, type OrgRouteVariables } from "./shared.js"
 
+// OpenAPI-only view of the shared contract: den-web and the desktop app parse
+// responses with the shared schema, so the `date-time` format is declared here.
+const modelsAnalyticsSettingsDocumentSchema = modelsAnalyticsSettingsSchema.extend({
+  consentedAt: z.string().datetime().nullable(),
+})
+
 export function registerModelsAnalyticsRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get("/v1/inference/analytics/settings", describeRoute({
     tags: ["Inference"], summary: "Read the OpenWork Models task analytics choice",
     description: "Returns the organization's task analytics state for OpenWork Models: whether the feature is available and the organization has an active Models subscription, whether collection is enabled and when it was consented to, and whether export to a configured Langfuse host is on. Any member can read it.",
-    responses: { 200: jsonResponse("Task analytics settings", modelsAnalyticsSettingsSchema) },
+    responses: { 200: jsonResponse("Task analytics settings", modelsAnalyticsSettingsDocumentSchema) },
   }), orgMemberRoute(), async (c) => {
     const context = c.get("organizationContext")
     return c.json(await readModelsAnalyticsSettings(db, context.organization.id))
@@ -26,7 +32,7 @@ export function registerModelsAnalyticsRoutes<T extends { Variables: OrgRouteVar
   app.patch("/v1/inference/analytics/settings", describeRoute({
     tags: ["Inference"], summary: "Choose whether to collect task analytics included with OpenWork Models",
     description: "Turns task analytics collection on or off for the organization. Workspace owners and admins only. Enabling requires the feature, an active OpenWork Models subscription, and consentVersion 1 (403 models_analytics_unavailable otherwise); repeating an already enabled choice keeps the original consent time as the collection cutoff, and disabling also switches export off.",
-    responses: { 200: jsonResponse("Updated task analytics choice", modelsAnalyticsSettingsSchema) },
+    responses: { 200: jsonResponse("Updated task analytics choice", modelsAnalyticsSettingsDocumentSchema) },
   }), orgRoleRoute(["admin"]), jsonValidator(modelsAnalyticsChoiceSchema), async (c) => {
     const permission = ensureOrganizationAdmin(c, "Only workspace admins can change task analytics.")
     if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
