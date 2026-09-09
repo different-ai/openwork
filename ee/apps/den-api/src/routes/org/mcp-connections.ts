@@ -433,7 +433,7 @@ const connectionResponseSchema = z.object({
   /** True when granted members may use this connection as a standard MCP server with its own tool catalog. */
   exposeDirectly: z.boolean(),
   connected: z.boolean(),
-  connectedAt: z.string().nullable(),
+  connectedAt: z.string().datetime().nullable(),
   /** Safe creator display label for admin/manageable rows. */
   createdByName: z.string().nullable().optional(),
   updatedAt: z.string().datetime().optional(),

@@ -32,7 +32,7 @@ const managedBrandAssetSchema = z.object({
   height: z.number().int().positive(),
   byteLength: z.number().int().positive(),
   originalName: z.string(),
-  uploadedAt: z.string(),
+  uploadedAt: z.string().datetime(),
 })
 
 const uploadResponseSchema = z.object({
