@@ -136,7 +136,8 @@ export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; 
       <Button
         type="button"
         variant="ghost"
-        className="window-no-drag inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60"
+        className="window-no-drag inline-flex shrink-0 items-center justify-start gap-2 rounded-lg px-2 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60"
+        title="Computer control"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
@@ -147,7 +148,8 @@ export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; 
           if (open && event.key === "Escape") { event.preventDefault(); setOpen(false); }
         }}
       >
-        Computer
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" className="size-4 shrink-0" aria-hidden="true"><rect x="2" y="3" width="16" height="11" rx="2" /><path d="M10 14v3M6 17h8" /></svg>
+        <span data-tool-label>Computer</span>
         {readError || actionError ? <AlertIcon className="size-3 text-amber" /> : snapshot?.cleanupPending ? <span className="text-amber">Pending</span> : snapshot?.enabled ? <span className="text-ready">On</span> : null}
       </Button>
       {statusSlot && canStop ? createPortal(
@@ -247,12 +249,13 @@ function ComputerControlPopover({ anchor, id, onClose, children }: { anchor: HTM
     const place = () => {
       const rect = anchor.getBoundingClientRect();
       const width = Math.min(360, window.innerWidth - 32);
-      const top = Math.max(16, rect.bottom + 8);
-      setPosition({ left: Math.max(16, Math.min(rect.right - width, window.innerWidth - width - 16)), top, maxHeight: Math.max(0, window.innerHeight - top - 16) });
+      const maxHeight = Math.max(0, Math.min(480, window.innerHeight - 32));
+      const top = Math.max(16, Math.min(rect.top, window.innerHeight - maxHeight - 16));
+      setPosition({ left: Math.max(16, Math.min(rect.right + 8, window.innerWidth - width - 16)), top, maxHeight });
     };
     place();
     const observer = new ResizeObserver(place);
-    observer.observe(anchor.closest("header") ?? anchor);
+    observer.observe(anchor.closest("aside") ?? anchor);
     window.addEventListener("resize", place);
     return () => { observer.disconnect(); window.removeEventListener("resize", place); };
   }, [anchor]);

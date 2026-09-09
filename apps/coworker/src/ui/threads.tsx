@@ -271,8 +271,8 @@ configureTurnStore({
   updateState: (slug, threadId, previous, next) => coworkerBridge.turns.update(slug, threadId, previous, next),
 });
 
-/** Where the one conversation header lets a view place its title line and its actions. */
-export type HeaderSlots = { title: HTMLElement | null; actions: HTMLElement | null };
+/** Conversation-owned content in the header and the discussion-tools sidebar. */
+export type HeaderSlots = { title: HTMLElement | null; actions: HTMLElement | null; tools: HTMLElement | null };
 
 function HeaderContent({ slots, title, actions }: { slots: HeaderSlots; title: ReactNode; actions?: ReactNode }) {
   return (
@@ -784,6 +784,7 @@ function DiscussionWelcome({
       <HeaderContent
         slots={headerSlots}
         title={<span className="whitespace-normal">New discussion</span>}
+        actions={<Button variant="ghost" disabled title="No active work to stop" data-testid="coworker-stop">Stop</Button>}
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
         {problem ? <WorkspaceProblemNote problem={problem} onRetry={onRetry} /> : null}
@@ -1978,15 +1979,14 @@ function ThreadView({
         )}
         actions={(
           <>
-            {active && kind === "discussion" && browserEligible ? <ComputerControl key={`${coworker.slug}:${threadId}`} slug={coworker.slug} threadId={threadId} statusSlot={controlStatusSlot} /> : null}
             {kind !== "discussion" ? <Button variant="ghost" onClick={onBack}>Back</Button> : null}
             {kind !== "worker" ? (
-              // Stop keeps its place while it is not offered, so the status word beside it never slides.
-              <Button variant="ghost" className={working || needsYou ? "" : "invisible pointer-events-none"} aria-hidden={working || needsYou ? undefined : true} tabIndex={working || needsYou ? undefined : -1} onClick={() => void stop()}>Stop</Button>
+              <Button variant="ghost" disabled={!active || (!working && !needsYou)} title={working || needsYou ? "Stop work in this conversation" : "No active work to stop"} data-testid="coworker-stop" onClick={() => void stop()}>Stop</Button>
             ) : null}
           </>
         )}
       />
+      {active && kind === "discussion" && browserEligible && headerSlots.tools ? createPortal(<ComputerControl key={`${coworker.slug}:${threadId}`} slug={coworker.slug} threadId={threadId} statusSlot={controlStatusSlot} />, headerSlots.tools) : null}
       {/* Progress and problems show inline in the conversation; this keeps the turn state readable to assistive tech and tests. */}
       <div className="@container/discussion min-h-0 min-w-0 flex-1">
       <div className="flex h-full min-h-0 min-w-0 flex-col @min-[760px]/discussion:flex-row">
@@ -2145,7 +2145,7 @@ function ThreadView({
         />
       )}
       </div>
-      {kind === "discussion" && browserEligible ? <DiscussionBrowser key={`${coworker.slug}:${threadId}`} active={active} slug={coworker.slug} threadId={threadId} actionsSlot={headerSlots.actions} statusSlot={controlStatusSlot} floatingSlot={floatingSlot} /> : null}
+      {kind === "discussion" && browserEligible ? <DiscussionBrowser key={`${coworker.slug}:${threadId}`} active={active} slug={coworker.slug} threadId={threadId} actionsSlot={headerSlots.tools} statusSlot={controlStatusSlot} floatingSlot={floatingSlot} /> : null}
       </div>
       </div>
     </section>

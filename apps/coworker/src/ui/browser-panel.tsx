@@ -60,7 +60,7 @@ export function DiscussionBrowser({ slug, threadId, actionsSlot, statusSlot, flo
   </>;
 
   const viewer = <section id="coworker-browser-panel" aria-label="Discussion browser" data-testid="coworker-browser-panel" data-mode={mode} className={`flex min-h-0 min-w-0 flex-col bg-panel ${full ? "h-full" : "order-first h-[48%] min-h-56 shrink-0 border-b border-line @min-[760px]/discussion:order-none @min-[760px]/discussion:h-full @min-[760px]/discussion:w-[52%] @min-[760px]/discussion:border-b-0 @min-[760px]/discussion:border-l"}`}>
-    <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-3">
+    <header className={`flex h-12 shrink-0 items-center gap-2 border-b border-line px-3 ${full ? "window-drag window-controls-inset" : ""}`}>
       <BrowserIcon /><h2 className="text-sm font-medium text-snow">Browser</h2><span className="min-w-0 flex-1 truncate text-xs text-mist" role="status">· {status}</span>{modes}
       <Button variant="ghost" className="p-1.5" aria-label={full ? "Exit full screen" : "Show floating browser"} data-testid="coworker-browser-collapse" disabled={busy} onClick={() => void command(full ? { action: "exit-fullscreen" } : { action: "present", mode: "floating" })}><BrowserIcon kind={full ? "close" : "float"} /></Button>
     </header>
@@ -96,7 +96,7 @@ export function DiscussionBrowser({ slug, threadId, actionsSlot, statusSlot, flo
   </section>;
 
   return <>
-    {actionsSlot ? createPortal(<Button variant="ghost" className="inline-flex items-center gap-1.5 px-2 text-xs" aria-expanded={expanded || mode === "floating"} aria-controls="coworker-browser-panel" data-testid="coworker-browser-toggle" disabled={busy || (!viewId && !error)} onClick={() => { if (!viewId) browser.retry(); else void command({ action: "present", mode: mode === "hidden" ? tab ? "floating" : "side" : "hidden" }); }}><BrowserIcon />Browser{handoff ? <span className="size-1.5 rounded-full bg-amber" aria-label="Waiting for you" /> : null}</Button>, actionsSlot) : null}
+    {actionsSlot ? createPortal(<Button variant="ghost" className="inline-flex items-center justify-start gap-2 rounded-lg px-2 text-xs" aria-label="Browser" title="Browser" aria-expanded={expanded || mode === "floating"} aria-controls="coworker-browser-panel" data-testid="coworker-browser-toggle" disabled={busy || (!viewId && !error)} onClick={() => { if (!viewId) browser.retry(); else void command({ action: "present", mode: mode === "hidden" ? tab ? "floating" : "side" : "hidden" }); }}><BrowserIcon className="size-4 shrink-0" /><span data-tool-label>Browser</span>{handoff ? <span className="size-1.5 shrink-0 rounded-full bg-amber" aria-label="Waiting for you" /> : null}</Button>, actionsSlot) : null}
     {statusSlot && !full ? createPortal(<>{handoffCard}{error ? <div role="alert"><ErrorNote>{error}</ErrorNote></div> : null}</>, statusSlot) : null}
     {mode === "side" ? viewer : full ? <BrowserModal onExit={() => void command({ action: "exit-fullscreen" })}>{viewer}</BrowserModal> : null}
     {mode === "floating" && tab && floatingSlot && snapshot ? createPortal(<BrowserPreview slot={floatingSlot} position={snapshot.presentation.snap} onSnap={(position) => command({ action: "snap", position })} actions={<>{modes}<Button variant="ghost" className="p-1.5" aria-label="Hide browser preview" disabled={busy} onClick={() => void command({ action: "present", mode: "hidden" })}><BrowserIcon kind="close" className="size-3.5" /></Button></>}>

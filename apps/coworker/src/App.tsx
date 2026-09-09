@@ -65,6 +65,7 @@ export default function App() {
   const [signInError, setSignInError] = useState("");
   const [coworkers, setBots] = useState<CoworkerSummary[]>([]);
   const [selectedSlug, setSelectedSlug] = useState("");
+  const [discussionToolsSlot, setDiscussionToolsSlot] = useState<HTMLDivElement | null>(null);
   const [creating, setCreating] = useState(false);
   /** Group chats: several coworkers in one conversation. Selecting one takes the main column. */
   const [groups, setGroups] = useState<CoworkerGroupSummary[]>([]);
@@ -848,6 +849,7 @@ export default function App() {
         ) : (
           <div key="team" className="view-enter flex min-w-0 flex-1">
             <CoworkerRail
+              onDiscussionToolsSlot={setDiscussionToolsSlot}
               runtime={runtime}
               session={session}
               coworkers={coworkers}
@@ -943,6 +945,7 @@ export default function App() {
               />
             ) : (
             selectedGroupId === allHandsGroup?.id ? null : <CoworkerHome
+              discussionToolsSlot={discussionToolsSlot}
               key={selected.slug}
               active={!globalSettings}
               runtime={runtime}

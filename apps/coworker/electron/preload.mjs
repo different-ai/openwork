@@ -9,6 +9,9 @@ import { contextBridge, ipcRenderer } from "electron";
  * applied here from the OS, without exposing native window controls to the page.
  */
 if (process.isMainFrame) {
+  window.addEventListener("DOMContentLoaded", () => {
+    document.documentElement.dataset.windowPlatform = process.platform;
+  }, { once: true });
   ipcRenderer.on("coworker:appearance", (_event, appearance) => {
     if (!appearance || !["none", "vibrancy", "mica"].includes(appearance.material)) return;
     document.documentElement.dataset.windowMaterial = appearance.material;

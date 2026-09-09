@@ -58,6 +58,7 @@ export function CoworkerRail({
   selectedGroupId = "",
   onSelectGroup,
   onNewGroup,
+  onDiscussionToolsSlot,
 }: {
   coworkers: CoworkerSummary[];
   runtime: RuntimeInfo;
@@ -77,6 +78,7 @@ export function CoworkerRail({
   selectedGroupId?: string;
   onSelectGroup?: (id: string) => void;
   onNewGroup?: () => void;
+  onDiscussionToolsSlot: (element: HTMLDivElement | null) => void;
 }) {
   const bySlug = new Map(coworkers.map((coworker) => [coworker.slug, coworker]));
   const membersOf = (group: CoworkerGroupSummary) => group.participantSlugs.map((slug) => bySlug.get(slug)).filter((member): member is CoworkerSummary => Boolean(member));
@@ -356,6 +358,13 @@ export function CoworkerRail({
           </div>
         </>
       )}
+      <div
+        ref={onDiscussionToolsSlot}
+        role="group"
+        aria-label="Discussion tools"
+        data-testid="coworker-discussion-tools"
+        className={`window-no-drag order-last flex shrink-0 flex-col gap-1 border-t border-line p-2 empty:hidden ${collapsed ? "items-center [&_[data-tool-label]]:hidden [&>button]:justify-center" : "[&>button]:w-full"}`}
+      />
       <div
         {...panel.separatorProps}
         aria-label="Resize team rail"
