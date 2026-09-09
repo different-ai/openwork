@@ -26,15 +26,19 @@ import {
   InferenceOrgLimitPolicyTable,
   InferenceOrgUpstreamProviderKeyTable,
   InferenceOrgUsageBucketTable,
-  InferenceProviderAccessTable,
-  InferenceProviderCredentialTable,
-  InferenceProviderModelTable,
-  InferenceProviderOauthStateTable,
-  InferenceProviderTable,
-  InferenceRequestLogTable,
+  GatewayKeyTable,
+  GatewayCredentialSetTable,
+  GatewayModelGroupTable,
+  GatewayModelGroupModelTable,
+  GatewayProviderAccessTable,
+  GatewayProviderCredentialTable,
+  GatewayProviderModelTable,
+  GatewayProviderOauthStateTable,
+  GatewayProviderTable,
+  GatewayRequestLogTable,
   InferenceUsageLedgerBucketChargeTable,
   InferenceUsageLedgerEntryTable,
-  InferenceUsageRollupTable,
+  GatewayUsageRollupTable,
   InstallLinkTable,
   InvitationTable,
   LlmProviderAccessTable,
@@ -446,20 +450,27 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           await tx.delete(InferenceUsageLedgerBucketChargeTable).where(inArray(InferenceUsageLedgerBucketChargeTable.ledger_entry_id, ledgerEntryIds))
         }
 
-        const inferenceProviderIds = (await tx
-          .select({ id: InferenceProviderTable.id })
-          .from(InferenceProviderTable)
-          .where(eq(InferenceProviderTable.organization_id, organizationId)))
+        const gatewayProviderIds = (await tx
+          .select({ id: GatewayProviderTable.id })
+          .from(GatewayProviderTable)
+          .where(eq(GatewayProviderTable.organization_id, organizationId)).for("update"))
           .map((row) => row.id)
-        if (inferenceProviderIds.length > 0) {
-          await tx.delete(InferenceProviderModelTable).where(inArray(InferenceProviderModelTable.inference_provider_id, inferenceProviderIds))
-          await tx.delete(InferenceProviderAccessTable).where(inArray(InferenceProviderAccessTable.inference_provider_id, inferenceProviderIds))
-          await tx.delete(InferenceProviderOauthStateTable).where(inArray(InferenceProviderOauthStateTable.inference_provider_id, inferenceProviderIds))
+        if (gatewayProviderIds.length > 0) {
+          await tx.delete(GatewayProviderOauthStateTable).where(inArray(GatewayProviderOauthStateTable.gateway_provider_id, gatewayProviderIds))
+          const groups = await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, gatewayProviderIds))
+          if (groups.length) await tx.delete(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id)))
+          await tx.delete(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.gateway_provider_id, gatewayProviderIds))
+          await tx.delete(GatewayProviderCredentialTable).where(inArray(GatewayProviderCredentialTable.gateway_provider_id, gatewayProviderIds))
+          await tx.delete(GatewayCredentialSetTable).where(inArray(GatewayCredentialSetTable.gateway_provider_id, gatewayProviderIds))
+          await tx.delete(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, gatewayProviderIds))
+          await tx.delete(GatewayProviderModelTable).where(inArray(GatewayProviderModelTable.gateway_provider_id, gatewayProviderIds))
         }
-        await tx.delete(InferenceProviderCredentialTable).where(eq(InferenceProviderCredentialTable.organization_id, organizationId))
-        await tx.delete(InferenceRequestLogTable).where(eq(InferenceRequestLogTable.organization_id, organizationId))
-        await tx.delete(InferenceUsageRollupTable).where(eq(InferenceUsageRollupTable.organization_id, organizationId))
-        await tx.delete(InferenceProviderTable).where(eq(InferenceProviderTable.organization_id, organizationId))
+        await tx.delete(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.organization_id, organizationId))
+        // Account erasure remains distinct from provider deletion, which retains its history.
+        await tx.delete(GatewayRequestLogTable).where(eq(GatewayRequestLogTable.organization_id, organizationId))
+        await tx.delete(GatewayUsageRollupTable).where(eq(GatewayUsageRollupTable.organization_id, organizationId))
+        await tx.delete(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, organizationId))
+        await tx.delete(GatewayKeyTable).where(eq(GatewayKeyTable.organization_id, organizationId))
 
         const llmProviderIds = (await tx
           .select({ id: LlmProviderTable.id })

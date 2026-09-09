@@ -1,7 +1,7 @@
 // Protocol classification for the org provider gateway (plan §5.3). The
 // family comes from the models.dev `npm` package; the per-request protocol
 // (which usage parser to run) comes from the forwarded path.
-import type { InferenceRequestProtocol } from "@openwork/types/den/inference"
+import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import { bedrockRuntimeHost } from "./credentials/aws-sigv4.js"
 import type { CatalogProvider } from "./provider-catalog.js"
 
@@ -57,7 +57,7 @@ export function classifyProtocolFamily(catalog: CatalogProvider | null): Protoco
   return catalog.api ? "openai_compatible" : null
 }
 
-export function classifyRequestProtocol(family: ProtocolFamily, restPath: string): InferenceRequestProtocol {
+export function classifyRequestProtocol(family: ProtocolFamily, restPath: string): GatewayRequestProtocol {
   const pathname = `/${restPath}`.split("?")[0]
   switch (family) {
     case "anthropic":

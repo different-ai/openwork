@@ -29,7 +29,7 @@ import { revokeOrganizationApiKeysForMember } from "./api-keys.js"
 import { cache } from "./cache.js"
 import { revokeMembershipSessionCredentials } from "./credential-revocation.js"
 import { revokeGoogleCredentials, revokeInferenceCredentialsForMembers } from "./llm/inference-provider-lifecycle.js"
-import { ensureMemberInferenceKey } from "./inference.js"
+import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import {
@@ -554,7 +554,7 @@ async function insertMemberIfMissing(input: {
 
   const existingMember = existing[0] ?? null
   if (existingMember) {
-    await ensureMemberInferenceKey({ organizationId: input.organizationId, memberId: existingMember.id })
+    await ensureMemberGatewayKey({ organizationId: input.organizationId, memberId: existingMember.id })
     return existingMember
   }
 
@@ -565,7 +565,7 @@ async function insertMemberIfMissing(input: {
     defaultRole: input.role,
   })
   if (invitedMember) {
-    await ensureMemberInferenceKey({ organizationId: input.organizationId, memberId: invitedMember.id })
+    await ensureMemberGatewayKey({ organizationId: input.organizationId, memberId: invitedMember.id })
     // Accepting an invite materializes membership data; cached org/member reads
     // must be invalidated here because hot cache hits do not re-check the DB.
     await cache.org.deleteMemberList(input.organizationId)
@@ -603,7 +603,7 @@ async function insertMemberIfMissing(input: {
   if (!created[0]) {
     throw new Error("failed_to_create_member")
   }
-  await ensureMemberInferenceKey({ organizationId: input.organizationId, memberId: created[0].id })
+  await ensureMemberGatewayKey({ organizationId: input.organizationId, memberId: created[0].id })
   return created[0]
 }
 
@@ -1108,7 +1108,7 @@ async function createOrganizationRecord(input: {
     userId: input.userId,
     role: "owner",
   })
-  await ensureMemberInferenceKey({ organizationId, memberId: ownerMemberId })
+  await ensureMemberGatewayKey({ organizationId, memberId: ownerMemberId })
 
   await ensureDefaultDesktopPolicyForOrganization({
     organizationId,

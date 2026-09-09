@@ -1,27 +1,28 @@
-import { InferenceRequestLogTable } from "@openwork-ee/den-db"
+import { GatewayRequestLogTable } from "@openwork-ee/den-db"
 import { eq, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type {
-  InferenceRequestOutcome,
-  InferenceRequestProtocol,
-  InferenceRequestRoute,
-  InferenceUsageSource,
-} from "@openwork/types/den/inference"
+  GatewayRequestOutcome,
+  GatewayRequestProtocol,
+  GatewayRequestRoute,
+  GatewayUsageSource,
+} from "@openwork/types/den/gateway"
 import type { InferenceReporter } from "./inference-reporting.js"
 import type { InferenceContext } from "./middleware/inference-auth.js"
+import type { GatewayContext } from "./middleware/gateway-auth.js"
 import { estimateCostMicroUsd, loadPricingCatalogFromFile } from "./pricing.js"
 import type { PricingCatalog } from "./pricing.js"
 
-export type InferenceRequestLogRow = typeof InferenceRequestLogTable.$inferInsert
+export type GatewayRequestLogRow = typeof GatewayRequestLogTable.$inferInsert
 
-export type InsertRequestLog = (row: InferenceRequestLogRow) => Promise<void>
-export type UpdateRequestLog = (row: InferenceRequestLogRow) => Promise<boolean>
+export type InsertRequestLog = (row: GatewayRequestLogRow) => Promise<void>
+export type UpdateRequestLog = (row: GatewayRequestLogRow) => Promise<boolean>
 
 export type RequestLogStartInput = {
-  identity: Pick<InferenceContext, "organizationId" | "orgMembershipId" | "inferenceKeyId">
+  identity: Pick<InferenceContext, "kind" | "organizationId" | "orgMembershipId" | "inferenceKeyId"> | GatewayContext
   openworkRequestId: string
-  route: InferenceRequestRoute
-  protocol: InferenceRequestProtocol
+  route: GatewayRequestRoute
+  protocol: GatewayRequestProtocol
   upstreamProviderId: string
   upstreamHost: string
   upstreamPath: string
@@ -29,14 +30,17 @@ export type RequestLogStartInput = {
   requestedModel: string | null
   upstreamModel: string | null
   stream: boolean
-  inferenceProviderId?: InferenceRequestLogRow["inference_provider_id"]
-  inferenceProviderCredentialId?: InferenceRequestLogRow["inference_provider_credential_id"]
+  gatewayProviderId?: GatewayRequestLogRow["gateway_provider_id"]
+  gatewayProviderCredentialId?: GatewayRequestLogRow["gateway_provider_credential_id"]
+  modelGroupId?: GatewayRequestLogRow["model_group_id"]
+  credentialSetId?: GatewayRequestLogRow["credential_set_id"]
+  accessGrantId?: GatewayRequestLogRow["access_grant_id"]
   requestBytes?: number | null
   startedAt?: Date
 }
 
 export type RequestLogUsageInput = {
-  usageSource: InferenceUsageSource
+  usageSource: GatewayUsageSource
   upstreamModel?: string | null
   inputTokens?: number | null
   outputTokens?: number | null
@@ -51,7 +55,7 @@ export type RequestLogUsageInput = {
 
 export type RequestLogFinishInput = {
   status: number | null
-  outcome: InferenceRequestOutcome
+  outcome: GatewayRequestOutcome
   errorCode?: string | null
   upstreamRequestId?: string | null
   responseBytes?: number | null
@@ -79,24 +83,24 @@ export type RequestLogRecorder = {
 
 export const insertRequestLogIntoDb: InsertRequestLog = async (row) => {
   const { db } = await import("./db.js")
-  await db.insert(InferenceRequestLogTable).values(row)
-    .onDuplicateKeyUpdate({ set: { id: sql`${InferenceRequestLogTable.id}` } })
+  await db.insert(GatewayRequestLogTable).values(row)
+    .onDuplicateKeyUpdate({ set: { id: sql`${GatewayRequestLogTable.id}` } })
 }
 
-export async function updateRequestLogInDb(row: InferenceRequestLogRow): Promise<boolean> {
+export async function updateRequestLogInDb(row: GatewayRequestLogRow): Promise<boolean> {
   const { db } = await import("./db.js")
   // A transaction/locking read also distinguishes a no-op retry from a missing
   // row without relying on driver-specific affectedRows/CLIENT_FOUND_ROWS.
   return db.transaction(async (tx) => {
-    const [existing] = await tx.select({ id: InferenceRequestLogTable.id }).from(InferenceRequestLogTable)
-      .where(eq(InferenceRequestLogTable.id, row.id)).for("update")
+    const [existing] = await tx.select({ id: GatewayRequestLogTable.id }).from(GatewayRequestLogTable)
+      .where(eq(GatewayRequestLogTable.id, row.id)).for("update")
     if (!existing) return false
-    await tx.update(InferenceRequestLogTable).set(row).where(eq(InferenceRequestLogTable.id, row.id))
+    await tx.update(GatewayRequestLogTable).set(row).where(eq(GatewayRequestLogTable.id, row.id))
     return true
   })
 }
 
-function totalTokens(usage: RequestLogUsageInput, protocol: InferenceRequestProtocol) {
+function totalTokens(usage: RequestLogUsageInput, protocol: GatewayRequestProtocol) {
   if (typeof usage.totalTokens === "number") return usage.totalTokens
   if (typeof usage.inputTokens === "number" && typeof usage.outputTokens === "number") {
     return usage.inputTokens + usage.outputTokens
@@ -140,7 +144,7 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
   let firstByteAt: Date | null = null
   let usage: RequestLogUsageInput | null = null
   let finished = false
-  let pending: InferenceRequestLogRow | null = null
+  let pending: GatewayRequestLogRow | null = null
   let startWrite: Promise<boolean> = Promise.resolve(false)
   let finishWrite: Promise<void> | null = null
 
@@ -173,9 +177,13 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         id: createDenTypeId("inferenceRequestLog"),
         organization_id: input.identity.organizationId,
         org_membership_id: input.identity.orgMembershipId,
-        inference_key_id: input.identity.inferenceKeyId,
-        inference_provider_id: input.inferenceProviderId ?? null,
-        inference_provider_credential_id: input.inferenceProviderCredentialId ?? null,
+        inference_key_id: input.identity.kind === "models" ? input.identity.inferenceKeyId : null,
+        gateway_key_id: input.identity.kind === "gateway" ? input.identity.gatewayKeyId : null,
+        gateway_provider_id: input.identity.kind === "gateway" ? input.gatewayProviderId ?? null : null,
+        gateway_provider_credential_id: input.identity.kind === "gateway" ? input.gatewayProviderCredentialId ?? null : null,
+        model_group_id: input.identity.kind === "gateway" ? input.modelGroupId ?? null : null,
+        credential_set_id: input.identity.kind === "gateway" ? input.credentialSetId ?? null : null,
+        access_grant_id: input.identity.kind === "gateway" ? input.accessGrantId ?? null : null,
         route: input.route, protocol: input.protocol,
         upstream_provider_id: input.upstreamProviderId, upstream_host: input.upstreamHost,
         upstream_path: input.upstreamPath, method: input.method,
@@ -207,14 +215,18 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         pricing = { getModelPrice: () => null }
       }
       const upstreamModel = usage?.upstreamModel ?? started.upstreamModel
-        ?? (started.protocol !== "passthrough" ? started.requestedModel : null)
-      const row: InferenceRequestLogRow = {
+        ?? (started.identity.kind === "models" && started.protocol !== "passthrough" ? started.requestedModel : null)
+      const row: GatewayRequestLogRow = {
         id: pending.id,
         organization_id: started.identity.organizationId,
         org_membership_id: started.identity.orgMembershipId,
-        inference_key_id: started.identity.inferenceKeyId,
-        inference_provider_id: started.inferenceProviderId ?? null,
-        inference_provider_credential_id: started.inferenceProviderCredentialId ?? null,
+        inference_key_id: pending.inference_key_id,
+        gateway_key_id: pending.gateway_key_id,
+        gateway_provider_id: pending.gateway_provider_id,
+        gateway_provider_credential_id: pending.gateway_provider_credential_id,
+        model_group_id: pending.model_group_id,
+        credential_set_id: pending.credential_set_id,
+        access_grant_id: pending.access_grant_id,
         route: started.route,
         protocol: started.protocol,
         upstream_provider_id: started.upstreamProviderId,

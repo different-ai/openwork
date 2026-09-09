@@ -2,9 +2,10 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { InferenceReporter } from "../src/inference-reporting.js"
 import { createRequestLogRecorder } from "../src/request-log.js"
-import type { InferenceRequestLogRow, RequestLogStartInput } from "../src/request-log.js"
+import type { GatewayRequestLogRow as InferenceRequestLogRow, RequestLogStartInput } from "../src/request-log.js"
 
 const identity: RequestLogStartInput["identity"] = {
+  kind: "models",
   organizationId: "org_01krnrcabhe8htwpbnsw0zk0bw",
   orgMembershipId: "om_01krnrcabhe8htwpbnsw0zk0bw",
   inferenceKeyId: "ink_01krnrcabhe8htwpbnsw0zk0bw",

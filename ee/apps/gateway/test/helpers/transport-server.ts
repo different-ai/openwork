@@ -6,7 +6,10 @@ import { Hono } from "hono"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
 import { createProviderCatalog } from "../../src/provider-catalog.js"
 import { inferenceAccessLogger } from "../../src/inference-reporting.js"
-import type { InferenceRequestLogRow } from "../../src/request-log.js"
+import type { GatewayRequestLogRow as InferenceRequestLogRow } from "../../src/request-log.js"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { matrixRow } from "../google-oauth-refresh-fixture.js"
+import type { GatewayAccessRow } from "../../src/provider-access.js"
 
 const requests: { url: string; headers: Record<string, string | string[] | undefined>; bytes: number[] }[] = []
 const reports: unknown[] = []
@@ -16,6 +19,11 @@ let lookups = 0
 let buckets = 0
 let upstreamReads = 0
 let config: Record<string, unknown> = {}
+const gatewayKey = `ow_gw_${"A".repeat(43)}`
+const baseAccess = matrixRow()
+const configuredModels = ["x", "fixture", "gpt-4o", "gemini", "claude"].map((model) => ({
+  id: createDenTypeId("inferenceProviderModel"), gateway_provider_id: "ipr_fixture", model_id: model, name: model, model_config: {}, created_at: new Date(0),
+}))
 function object(value: unknown): Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : {} }
 let release: (() => void) | undefined
 const marker = "SECRET_MARKER_DO_NOT_LOG"
@@ -76,7 +84,7 @@ app.get("/health", (c) => gatewayApp.fetch(c.req.raw))
 app.post("/internal/rollups/run", (c) => gatewayApp.fetch(c.req.raw))
 app.post("/webhooks/openrouter", (c) => gatewayApp.fetch(c.req.raw))
 app.use("/api/*", inferenceAccessLogger)
-app.get("/__test/state", (c) => c.json({ requests, reports, rows, cancelled, lookups, buckets, upstreamReads }))
+app.get("/__test/state", (c) => c.json({ requests, reports, rows, cancelled, lookups, buckets, upstreamReads, gatewayKey }))
 app.post("/__test/config", async (c) => {
   config = await c.req.json()
   requests.length = reports.length = rows.length = 0
@@ -92,6 +100,9 @@ app.post("/__test/config", async (c) => {
 })
 app.post("/__test/release", (c) => { release?.(); release = undefined; return c.json({ ok: true }) })
 registerProxyRoutes(app, {
+  async findActiveGatewayKey(key) {
+    return key.value === gatewayKey ? { id: "gky_fixture", organization_id: "org_fixture", org_membership_id: "om_fixture" } : null
+  },
   async findActiveInferenceKey(key) {
     if (key.value !== "ow_inf_fixture") return null
     return { id: "ink_fixture", organization_id: "org_fixture", org_membership_id: "om_fixture" }
@@ -130,21 +141,24 @@ registerProxyRoutes(app, {
   analytics: async () => () => ({ chunk() { if (config.observerFailure) throw new Error(marker) }, finish() { if (config.observerFailure) throw new Error(marker) } }),
   gateway: {
     catalog: createProviderCatalog({ openai: { npm: "@ai-sdk/openai" }, google: { npm: "@ai-sdk/google" }, azure: { npm: "@ai-sdk/azure" }, "google-vertex": { npm: "@ai-sdk/google-vertex" }, "amazon-bedrock": { npm: "@ai-sdk/amazon-bedrock" } }),
-    async loadInferenceProvider({ inferenceProviderId, organizationId }) {
+    async loadGatewayProvider({ inferenceProviderId, organizationId }) {
       return { id: inferenceProviderId, organization_id: organizationId, provider_id: typeof config.provider === "string" ? config.provider : "openai",
         provider_config: object(config.providerConfig),
         settings: config.settings ? object(config.settings) : { upstreamBaseUrl: typeof config.target === "string" ? config.target : `${origin}/v1` },
-        credential_mode: config.retryReason ? "member" : "org", status: "active", oauth_client_id: null, oauth_client_secret: null }
+        status: "active" }
     },
-    async hasProviderAccess() { return config.denied !== true },
+    async loadGatewayAccess() {
+      const credentialSet: GatewayAccessRow["credentialSet"] = { ...baseAccess.credentialSet, credential_mode: config.retryReason ? "member" : "org" }
+      return config.denied === true ? [] : configuredModels.map((model) => ({ ...baseAccess, model, credentialSet }))
+    },
     async loadProviderCredential(input) {
-      if (input.orgMembershipId !== "om_fixture" || input.inferenceProviderId !== "ipr_fixture"
+      if (input.scope.orgMembershipId !== "om_fixture" || input.scope.gatewayProviderId !== "ipr_fixture"
         || input.subject !== (config.retryReason ? "om_fixture" : "org")) return null
       if (config.retryReason) return { id: "ipc_fixture", kind: "oauth_google", secret: JSON.stringify({ accessToken: "EXPIRED_TOKEN_NEVER_FORWARD", refreshToken: "REFRESH_TOKEN_NEVER_FORWARD" }), expires_at: new Date(0), status: "active" }
       return { id: "ipc_fixture", kind: "api_key", secret: "UPSTREAM_ONLY_KEY", expires_at: null, status: "active" }
     },
     async refreshGoogleOauthToken(input) {
-      if (input.subject !== "om_fixture" || input.provider.id !== "ipr_fixture") throw new Error("Incorrect refresh scope")
+      if (input.subject !== "om_fixture" || input.provider.id !== baseAccess.credentialSet.id) throw new Error("Incorrect refresh scope")
       const reason = config.retryReason
       if (reason !== "refresh_busy" && reason !== "refresh_unavailable" && reason !== "credential_changed") throw new Error("Unexpected refresh")
       return { kind: "retry", reason }

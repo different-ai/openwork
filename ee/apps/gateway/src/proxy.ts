@@ -16,6 +16,8 @@ import {
 } from "./inference-reporting.js"
 import type { InferenceReporter } from "./inference-reporting.js"
 import { inferenceAuth } from "./middleware/inference-auth.js"
+import { gatewayAuth } from "./middleware/gateway-auth.js"
+import type { findActiveGatewayKey } from "./keys.js"
 import type { InferenceAuthVariables } from "./middleware/inference-auth.js"
 import { loadOrganizationFromDb, orgContext } from "./middleware/org-context.js"
 import type { LoadOrganization, OrganizationVariables } from "./middleware/org-context.js"
@@ -87,6 +89,7 @@ const defaultProxyDependencies: ProxyDependencies = {
 }
 
 type ProxyDependencies = {
+  findActiveGatewayKey?: typeof findActiveGatewayKey
   findActiveInferenceKey: typeof findActiveInferenceKeyFn
   assertOrganizationManagedModelsAllowed: typeof assertOrganizationManagedModelsAllowedFn
   getOpenRouterProviderKey: typeof getOpenRouterProviderKeyFn
@@ -582,7 +585,9 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     const openworkRequestId = c.get("openworkRequestId")
     c.header("x-openwork-request-id", openworkRequestId)
     c.header("cache-control", "no-store")
-    const inferenceKey = c.get("inference").key
+    const identity = c.get("inference")
+    if (identity.kind !== "models") return openAiError(401, "invalid_api_key", "An OpenWork Models key is required.")
+    const inferenceKey = identity.key
     const inference = c.get("organization")?.metadata?.inference
     if (!isJsonObject(inference) || inference.enabled !== true) {
       return openAiError(403, "inference_disabled", "OpenWork Models are not enabled for this organization.")
@@ -916,7 +921,10 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     }
   }
 
-  api.use("/api/v1/*", inferenceAuth({ findActiveInferenceKey: dependencies.findActiveInferenceKey }))
+  const authenticateModels = inferenceAuth({ findActiveInferenceKey: dependencies.findActiveInferenceKey })
+  const authenticateGateway = gatewayAuth({ findActiveGatewayKey: dependencies.findActiveGatewayKey ?? (async (key) => (await import("./keys.js")).findActiveGatewayKey(key)) })
+  api.use("/api/v1/*", (c, next) => c.req.path.startsWith("/api/v1/providers/")
+    ? authenticateGateway(c, next) : authenticateModels(c, next))
   api.use("/api/v1/*", orgContext({ loadOrganization: dependencies.loadOrganization ?? loadOrganizationFromDb }))
   registerGatewayRoutes(api, { fetch: dependencies.fetch, insertRequestLog, updateRequestLog: dependencies.updateRequestLog, reporter, ...dependencies.gateway })
   for (const path of ["/api/v1", "/api/v1/*"]) {

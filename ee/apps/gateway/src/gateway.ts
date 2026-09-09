@@ -3,10 +3,10 @@
 // configured upstream with the org/member credential, logging one row per
 // request. Never translates protocols and never returns raw credentials.
 import { and, eq } from "@openwork-ee/den-db/drizzle"
-import { InferenceProviderTable } from "@openwork-ee/den-db"
+import { GatewayProviderTable } from "@openwork-ee/den-db"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
-import type { InferenceRequestOutcome, InferenceRequestProtocol } from "@openwork/types/den/inference"
+import { GATEWAY_GRANT_HEADER, type GatewayRequestOutcome, type GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import type { Context, Hono } from "hono"
 import { sanitizeIncomingHeaders } from "./inference-reporting.js"
 import type { InferenceReporter } from "./inference-reporting.js"
@@ -30,8 +30,9 @@ import {
   vertexPublisherBase,
 } from "./protocols.js"
 import type { AuthHeader, ProtocolFamily } from "./protocols.js"
-import { hasProviderAccessFromDb } from "./provider-access.js"
-import type { HasProviderAccess } from "./provider-access.js"
+import { accessibleGatewayModels, loadGatewayAccessFromDb, sameGatewaySelection, selectGatewayGrant } from "./provider-access.js"
+import type { GatewayGrantSelection, LoadGatewayAccess } from "./provider-access.js"
+import { hasAlternateModelSelection } from "./model-selection.js"
 import { loadProviderCatalogFromFile } from "./provider-catalog.js"
 import type { CatalogProvider, ProviderCatalog } from "./provider-catalog.js"
 import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provider-credentials.js"
@@ -60,7 +61,7 @@ export type { GatewayCredential, GatewayProvider } from "./provider-credentials.
 type GatewayEnv = { Variables: InferenceAuthVariables & OrganizationVariables }
 type JsonObject = Record<string, unknown>
 
-export type LoadInferenceProvider = (input: {
+export type LoadGatewayProvider = (input: {
   inferenceProviderId: string
   organizationId: string
 }) => Promise<GatewayProvider | null>
@@ -70,8 +71,8 @@ export type GatewayDependencies = {
   insertRequestLog: InsertRequestLog
   updateRequestLog?: RequestLogRecorderDependencies["updateRequestLog"]
   reporter: InferenceReporter
-  loadInferenceProvider: LoadInferenceProvider
-  hasProviderAccess: HasProviderAccess
+  loadGatewayProvider: LoadGatewayProvider
+  loadGatewayAccess: LoadGatewayAccess
   loadProviderCredential: LoadProviderCredential
   refreshGoogleOauthToken: RefreshGoogleOauthToken
   mintGcpAccessToken: MintGcpAccessToken
@@ -85,7 +86,7 @@ export type GatewayRouteDependencies =
 
 type ResolvedUpstream = {
   family: ProtocolFamily
-  protocol: InferenceRequestProtocol
+  protocol: GatewayRequestProtocol
   url: URL
 }
 
@@ -94,6 +95,8 @@ type PreparedRequest = {
   requestedModel: string | null
   stream: boolean
   url: URL
+  json: JsonObject | null
+  pathModel: string | null
 }
 
 type UsableCredential = Extract<ResolvedUpstreamCredential, { kind: "secret" | "aws_keys" }>
@@ -110,28 +113,25 @@ const droppedResponseHeaders = new Set(["content-length", "transfer-encoding", "
 const bodylessMethods = new Set(["GET", "HEAD"])
 const vertexAnthropicVersion = "vertex-2023-10-16"
 
-export const loadInferenceProviderFromDb: LoadInferenceProvider = async (input) => {
+export const loadGatewayProviderFromDb: LoadGatewayProvider = async (input) => {
   if (!isDenTypeId("inferenceProvider", input.inferenceProviderId) || !isDenTypeId("organization", input.organizationId)) {
     return null
   }
   const { db } = await import("./db.js")
   const [row] = await db
     .select({
-      id: InferenceProviderTable.id,
-      organization_id: InferenceProviderTable.organization_id,
-      provider_id: InferenceProviderTable.provider_id,
-      provider_config: InferenceProviderTable.provider_config,
-      settings: InferenceProviderTable.settings,
-      credential_mode: InferenceProviderTable.credential_mode,
-      status: InferenceProviderTable.status,
-      oauth_client_id: InferenceProviderTable.oauth_client_id,
-      oauth_client_secret: InferenceProviderTable.oauth_client_secret,
+      id: GatewayProviderTable.id,
+      organization_id: GatewayProviderTable.organization_id,
+      provider_id: GatewayProviderTable.provider_id,
+      provider_config: GatewayProviderTable.provider_config,
+      settings: GatewayProviderTable.settings,
+      status: GatewayProviderTable.status,
     })
-    .from(InferenceProviderTable)
+    .from(GatewayProviderTable)
     .where(and(
-      eq(InferenceProviderTable.id, input.inferenceProviderId),
-      eq(InferenceProviderTable.organization_id, input.organizationId),
-      eq(InferenceProviderTable.status, "active"),
+      eq(GatewayProviderTable.id, input.inferenceProviderId),
+      eq(GatewayProviderTable.organization_id, input.organizationId),
+      eq(GatewayProviderTable.status, "active"),
     ))
     .limit(1)
   return row ?? null
@@ -176,6 +176,8 @@ function resolveUpstream(provider: GatewayProvider, catalog: CatalogProvider | n
     }
   }
   const forwardedRest = family === "google_vertex" || family === "google_vertex_anthropic" ? stripApiVersionPrefix(rest) : rest
+  // Check before URL normalization can move a file operation to another path.
+  if (rest.includes("\\") || rest.split("/").some((part) => /^(?:\.|%2e){1,2}$/i.test(part))) return { error: "Invalid upstream path." }
   const protocol = classifyRequestProtocol(family, forwardedRest)
   let url: URL
   try {
@@ -189,13 +191,12 @@ function resolveUpstream(provider: GatewayProvider, catalog: CatalogProvider | n
   return { family, protocol, url }
 }
 
-function requestedModelFromPath(protocol: InferenceRequestProtocol, pathname: string) {
-  if (protocol === "google_generate_content") return parseGoogleModelPath(pathname)?.model ?? null
-  if (protocol === "bedrock_converse") return parseBedrockModelPath(pathname)?.model ?? null
-  return null
+function requestedModelFromPath(pathname: string) {
+  const match = /\/(?:models|model|deployments)\/([^/]+?)(?::[a-zA-Z]+|\/[^/].*)?$/.exec(pathname)
+  return match ? decodeURIComponent(match[1]) : null
 }
 
-function isStreamingPath(protocol: InferenceRequestProtocol, pathname: string) {
+function isStreamingPath(protocol: GatewayRequestProtocol, pathname: string) {
   if (protocol === "google_generate_content") return parseGoogleModelPath(pathname)?.operation === "streamGenerateContent"
   if (protocol === "bedrock_converse") return parseBedrockModelPath(pathname)?.stream === true
   return false
@@ -221,11 +222,39 @@ function materializeAuth(credential: UsableCredential, provider: GatewayProvider
   }
 }
 
-async function prepareRequest(request: Request, upstream: ResolvedUpstream): Promise<PreparedRequest | { error: Response; errorCode: string }> {
+async function prepareRequest(request: Request, upstream: ResolvedUpstream, providerId: string, rest: string): Promise<PreparedRequest | { error: Response; errorCode: string }> {
   const url = new URL(upstream.url)
-  const pathModel = requestedModelFromPath(upstream.protocol, url.pathname)
+  const invalid = (status: number, code: string, message: string) => ({ error: gatewayError(status, code, message), errorCode: code })
+  let pathModel: string | null
+  try { pathModel = requestedModelFromPath(url.pathname) } catch { return invalid(400, "invalid_model_path", "Invalid model path encoding.") }
+  // Only known non-inference resource operations may omit a model. In particular
+  // batches, assistants/runs and unknown endpoints cannot execute hidden models.
+  const modelLess = /^(?:v1(?:beta|alpha)?\/)?files(?:\/[^/]+(?:\/content)?)?$/.test(rest)
+    || /^(?:upload\/)?v1beta\/files$/.test(rest)
+  const operation = stripApiVersionPrefix(rest)
+  const modelOperation = (() => {
+    switch (upstream.family) {
+      case "google":
+      case "google_vertex":
+        return /^models\/[^/]+:(?:generateContent|streamGenerateContent|embedContent|countTokens|predict|rawPredict|streamRawPredict)$/.test(operation)
+      case "bedrock":
+        return /^model\/[^/]+\/(?:converse|converse-stream|invoke|invoke-with-response-stream)$/.test(operation)
+      case "anthropic":
+      case "google_vertex_anthropic":
+        return /^messages(?:\/count_tokens)?$/.test(operation)
+      case "openai":
+      case "openai_compatible":
+      case "azure":
+        return /^(?:deployments\/[^/]+\/)?(?:chat\/completions|completions|responses|embeddings|rerank|moderations|images\/(?:generations|edits|variations)|audio\/(?:speech|transcriptions|translations))$/.test(operation)
+    }
+  })()
+  if (!modelLess && !modelOperation) return invalid(400, "unsupported_gateway_operation", "This operation cannot be authorized by a single Gateway model grant.")
+  if ([...url.searchParams.keys()].some((name) => name.toLowerCase() === GATEWAY_GRANT_HEADER || /model|deployment|preset|fallback|route/i.test(name))) {
+    return invalid(400, "unsupported_model_selection", "Model selection in query parameters is not supported.")
+  }
   if (bodylessMethods.has(request.method)) {
-    return { body: null, requestedModel: pathModel, stream: isStreamingPath(upstream.protocol, url.pathname), url }
+    if (!pathModel && !modelLess) return invalid(400, "model_required", "This operation requires a configured model.")
+    return { body: null, json: null, pathModel, requestedModel: pathModel, stream: isStreamingPath(upstream.protocol, url.pathname), url }
   }
 
   let bytes: Uint8Array<ArrayBuffer>
@@ -235,43 +264,59 @@ async function prepareRequest(request: Request, upstream: ResolvedUpstream): Pro
     return { error: gatewayError(limited ? 413 : 400, code, "Could not read the request body within gateway limits."), errorCode: code }
   }
   let json: unknown = null
-  if (upstream.protocol !== "passthrough" && isJsonContentType(request.headers.get("content-type"))) {
+  if (bytes.length && isJsonContentType(request.headers.get("content-type"))) {
     try {
       json = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
     } catch {
-      json = null
+      return invalid(400, "invalid_json", "Invalid JSON request body.")
     }
   }
   if (!isJsonObject(json)) {
-    return { body: bytes, requestedModel: pathModel, stream: isStreamingPath(upstream.protocol, url.pathname), url }
+    if (!modelLess && bytes.length) return invalid(415, "unsupported_media_type", "Model-bearing request bodies must be JSON objects.")
+    if (!modelLess && !pathModel) return invalid(400, "model_required", "This operation requires a configured model.")
+    return { body: bytes, json: null, pathModel, requestedModel: pathModel, stream: isStreamingPath(upstream.protocol, url.pathname), url }
   }
-
+  if (hasAlternateModelSelection(json, providerId)) return invalid(400, "unsupported_model_selection", "Alternate model selection is not supported.")
+  if (Object.hasOwn(json, "model") && (typeof json.model !== "string" || !json.model)) return invalid(400, "model_required", "model must be a nonempty string.")
+  if (pathModel && typeof json.model === "string" && json.model !== pathModel) return invalid(400, "conflicting_model_selection", "Body and path must select the same model.")
   const requestedModel = typeof json.model === "string" ? json.model : pathModel
+  if (!requestedModel && !modelLess) return invalid(400, "model_required", "This operation requires a configured model.")
   const stream = json.stream === true || isStreamingPath(upstream.protocol, url.pathname)
-  let modified = false
+  return { body: bytes, json, pathModel, requestedModel, stream, url }
+}
 
+function rewriteSelectedModel(prepared: PreparedRequest, upstream: ResolvedUpstream, model: string | null) {
+  const { json, url, stream } = prepared
+  let modified = false
+  if (model !== null && prepared.pathModel !== null) {
+    url.pathname = url.pathname.replace(/(\/(?:models|model|deployments)\/)([^/]+?)(?=:[a-zA-Z]+(?:$|\/)|\/|$)/,
+      (_match, prefix: string) => `${prefix}${encodeURIComponent(model)}`)
+  }
+  if (!json) return
+  if (model !== null && typeof json.model === "string" && json.model !== model) {
+    json.model = model
+    modified = true
+  }
   if (upstream.protocol === "openai_chat" && json.stream === true) {
     json.stream_options = { ...(isJsonObject(json.stream_options) ? json.stream_options : {}), include_usage: true }
     modified = true
   }
 
   if (upstream.family === "google_vertex_anthropic" && upstream.protocol === "anthropic_messages") {
-    if (!requestedModel) {
-      return { error: gatewayError(400, "model_required", "JSON request body must include a string model."), errorCode: "model_required" }
-    }
+    if (model === null) throw new Error("Missing authorized Vertex model")
     delete json.model
     json.anthropic_version = vertexAnthropicVersion
     modified = true
-    url.pathname = url.pathname.replace(/\/messages$/, `/models/${encodeURIComponent(requestedModel)}:${stream ? "streamRawPredict" : "rawPredict"}`)
+    url.pathname = url.pathname.replace(/\/messages$/, `/models/${encodeURIComponent(model)}:${stream ? "streamRawPredict" : "rawPredict"}`)
   }
 
-  return { body: modified ? JSON.stringify(json) : bytes, requestedModel, stream, url }
+  if (modified) prepared.body = JSON.stringify(json)
 }
 
 function buildUpstreamHeaders(request: Request, family: ProtocolFamily, openworkRequestId: string) {
   const headers = new Headers()
   request.headers.forEach((value, name) => {
-    if (isAllowedRequestHeader(family, name)) headers.set(name, value)
+    if (name.toLowerCase() !== GATEWAY_GRANT_HEADER && isAllowedRequestHeader(family, name)) headers.set(name, value)
   })
   headers.set("x-openwork-request-id", openworkRequestId)
   return headers
@@ -290,11 +335,11 @@ function upstreamRequestId(headers: Headers) {
   return headers.get("x-request-id") ?? headers.get("request-id") ?? headers.get("x-goog-request-id") ?? headers.get("x-amzn-requestid")
 }
 
-function upstreamOutcome(upstream: Response): InferenceRequestOutcome {
+function upstreamOutcome(upstream: Response): GatewayRequestOutcome {
   return upstream.ok ? "ok" : "upstream_error"
 }
 
-function parseJsonUsage(protocol: InferenceRequestProtocol, body: unknown): ParsedUsage | null {
+function parseJsonUsage(protocol: GatewayRequestProtocol, body: unknown): ParsedUsage | null {
   switch (protocol) {
     case "openai_chat":
       return parseOpenAiChatJsonUsage(body)
@@ -311,7 +356,7 @@ function parseJsonUsage(protocol: InferenceRequestProtocol, body: unknown): Pars
   }
 }
 
-function createStreamUsageParser(protocol: InferenceRequestProtocol, contentType: string | null): UsageParser | null {
+function createStreamUsageParser(protocol: GatewayRequestProtocol, contentType: string | null): UsageParser | null {
   if (protocol === "bedrock_converse" && isAwsEventStreamContentType(contentType)) {
     return createBedrockConverseEventStreamUsageParser()
   }
@@ -353,7 +398,7 @@ function recordUsage(recorder: RequestLogRecorder, usage: ParsedUsage, source: "
   })
 }
 
-function relayStreamResponse(upstream: Response, protocol: InferenceRequestProtocol, headers: Headers, recorder: RequestLogRecorder, lifetime: ReturnType<typeof upstreamLifetime>) {
+function relayStreamResponse(upstream: Response, protocol: GatewayRequestProtocol, headers: Headers, recorder: RequestLogRecorder, lifetime: ReturnType<typeof upstreamLifetime>) {
   if (!upstream.body) {
     lifetime.dispose()
     void recorder.finish({
@@ -368,7 +413,7 @@ function relayStreamResponse(upstream: Response, protocol: InferenceRequestProto
   const parser = createStreamUsageParser(protocol, upstream.headers.get("content-type"))
   const decoder = new TextDecoder()
   let responseBytes = 0
-  const finish = (outcome: InferenceRequestOutcome) => {
+  const finish = (outcome: GatewayRequestOutcome) => {
     try {
       if (parser) recordUsage(recorder, parser.result(), isJsonContentType(upstream.headers.get("content-type")) ? "json" : "stream")
     } catch { /* Malformed accounting must not suppress completion. */ }
@@ -415,8 +460,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     insertRequestLog: input.insertRequestLog,
     updateRequestLog: input.updateRequestLog,
     reporter: input.reporter,
-    loadInferenceProvider: input.loadInferenceProvider ?? loadInferenceProviderFromDb,
-    hasProviderAccess: input.hasProviderAccess ?? hasProviderAccessFromDb,
+    loadGatewayProvider: input.loadGatewayProvider ?? loadGatewayProviderFromDb,
+    loadGatewayAccess: input.loadGatewayAccess ?? loadGatewayAccessFromDb,
     loadProviderCredential: input.loadProviderCredential ?? loadProviderCredentialFromDb,
     refreshGoogleOauthToken: input.refreshGoogleOauthToken ?? refreshGoogleOauthTokenWithDb(),
     mintGcpAccessToken: input.mintGcpAccessToken ?? createGcpServiceAccountTokenMinter(),
@@ -426,6 +471,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
 
   async function handleGatewayRequest(c: Context<GatewayEnv>) {
     const identity = c.get("inference")
+    if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
     const inferenceProviderId = c.req.param("inferenceProviderId")
     if (!inferenceProviderId) {
       return gatewayError(404, "provider_not_found", "Missing inference provider id.")
@@ -436,17 +482,29 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const method = c.req.method
     const incomingHeaders = sanitizeIncomingHeaders(c.req.raw.headers)
 
-    const provider = await dependencies.loadInferenceProvider({ inferenceProviderId, organizationId: identity.organizationId })
+    const provider = await dependencies.loadGatewayProvider({ inferenceProviderId, organizationId: identity.organizationId })
     if (!provider) {
       return gatewayError(404, "provider_not_found", `Unknown inference provider: ${inferenceProviderId}.`)
     }
 
     const catalog = dependencies.catalog.getCatalogProvider(provider.provider_id)
     const rest = restOfPath(requestUrl.pathname, inferenceProviderId)
+    const scope = { ...identity, gatewayProviderId: provider.id }
+    const accessRows = await dependencies.loadGatewayAccess(scope)
+    if (method === "GET" && /^(?:v1(?:beta|alpha)?\/)?models\/?$/.test(rest)) {
+      if (!accessRows.length) return gatewayError(403, "provider_access_denied", "No current Gateway access grants.")
+      const grantId = c.req.header(GATEWAY_GRANT_HEADER)
+      if (grantId !== undefined && (!isDenTypeId("inferenceProviderAccess", grantId) || !accessRows.some((row) => row.grant.id === grantId))) {
+        return gatewayError(403, "invalid_gateway_selection", "The selected grant is not currently authorized.")
+      }
+      c.header("cache-control", "no-store")
+      return c.json({ object: "list", data: accessibleGatewayModels(grantId === undefined ? accessRows : accessRows.filter((row) => row.grant.id === grantId)) })
+    }
     const resolved = resolveUpstream(provider, catalog, rest, requestUrl.search)
+    let selection: GatewayGrantSelection | null = null
     const recorder = createRequestLogRecorder({ insertRequestLog: dependencies.insertRequestLog, updateRequestLog: dependencies.updateRequestLog, reporter: dependencies.reporter, now: dependencies.now })
     const startRecorder = (state: {
-      protocol: InferenceRequestProtocol
+      protocol: GatewayRequestProtocol
       url: URL | null
       requestedModel: string | null
       stream: boolean
@@ -463,10 +521,13 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         upstreamPath: state.url?.pathname ?? `/${rest}`,
         method,
         requestedModel: state.requestedModel,
-        upstreamModel: null,
+        upstreamModel: selection?.upstreamModel ?? null,
         stream: state.stream,
-        inferenceProviderId: provider.id,
-        inferenceProviderCredentialId: state.credentialId ?? null,
+        gatewayProviderId: provider.id,
+        gatewayProviderCredentialId: state.credentialId ?? null,
+        modelGroupId: selection?.row.group.id ?? null,
+        credentialSetId: selection?.row.credentialSet.id ?? null,
+        accessGrantId: selection?.row.grant.id ?? null,
         requestBytes: state.requestBytes,
         startedAt,
       })
@@ -484,7 +545,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         reason: errorCode,
         organizationId: identity.organizationId,
         orgMembershipId: identity.orgMembershipId,
-        inferenceKeyId: identity.inferenceKeyId,
+        gatewayKeyId: identity.gatewayKeyId,
         openworkRequestId,
         route: c.req.path,
         method,
@@ -501,8 +562,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       return reject(gatewayError(502, "provider_misconfigured", resolved.error), "provider_misconfigured", "Misconfigured inference provider")
     }
 
-    const allowed = await dependencies.hasProviderAccess({ inferenceProviderId: provider.id, orgMembershipId: identity.orgMembershipId })
-    if (!allowed) {
+    if (!accessRows.length) {
       startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: null, stream: false })
       return reject(
         gatewayError(403, "provider_access_denied", "You do not have access to this inference provider.", { provider_id: provider.id }),
@@ -511,9 +571,24 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       )
     }
 
+    const prepared = await prepareRequest(c.req.raw, resolved, provider.provider_id, rest)
+    if ("error" in prepared) {
+      startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: null, stream: false })
+      return reject(prepared.error, prepared.errorCode, "Invalid gateway request body")
+    }
+    const selected = selectGatewayGrant(accessRows, prepared.requestedModel, c.req.header(GATEWAY_GRANT_HEADER) ?? null)
+    if (selected.kind !== "selected") {
+      startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: prepared.requestedModel, stream: prepared.stream })
+      if (selected.kind === "conflict") return reject(Response.json(selected.conflict, { status: 409 }), "gateway_selection_required", "Gateway selection required")
+      return reject(gatewayError(403, selected.code, "No current grant authorizes this model and selection."), selected.code, "Gateway model access denied")
+    }
+    selection = selected.selection
+    rewriteSelectedModel(prepared, resolved, selection.upstreamModel)
+
     const credential = await resolveUpstreamCredential({
       provider,
-      orgMembershipId: identity.orgMembershipId,
+      scope,
+      selection,
       envNames: catalog?.env ?? [],
       loadProviderCredential: dependencies.loadProviderCredential,
       refreshGoogleOauthToken: dependencies.refreshGoogleOauthToken,
@@ -524,8 +599,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       startRecorder({
         protocol: resolved.protocol,
         url: resolved.url,
-        requestedModel: null,
-        stream: false,
+        requestedModel: prepared.requestedModel,
+        stream: prepared.stream,
         credentialId: "credentialId" in credential ? credential.credentialId : null,
       })
       switch (credential.kind) {
@@ -539,7 +614,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
             401,
             "openwork_auth_required",
             `Connect your ${provider.provider_id} account in OpenWork to use this provider (${credential.reason === "missing" ? "no credential" : `credential ${credential.reason}`}).`,
-            { provider_id: provider.id },
+            { provider_id: provider.id, credential_set_id: selection.row.credentialSet.id },
           )
           response.headers.set("x-openwork-auth-required", "1")
           return reject(response, "member_auth_required", "Member credential required")
@@ -573,15 +648,10 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
 
     const auth = materializeAuth(credential, provider, resolved.family, startedAt)
     if ("error" in auth) {
-      startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: null, stream: false, credentialId: credential.credentialId })
+      startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: prepared.requestedModel, stream: prepared.stream, credentialId: credential.credentialId })
       return reject(gatewayError(502, "provider_misconfigured", auth.error, { provider_id: provider.id }), "provider_misconfigured", "Misconfigured inference provider")
     }
 
-    const prepared = await prepareRequest(c.req.raw, resolved)
-    if ("error" in prepared) {
-      startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: null, stream: false, credentialId: credential.credentialId })
-      return reject(prepared.error, prepared.errorCode, "Invalid gateway request body")
-    }
     if (auth.kind === "signer") prepared.url.host = auth.host
     startRecorder({
       protocol: resolved.protocol,
@@ -598,6 +668,15 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
 
     if (await recorder.whenStarted?.() === false) {
       return reject(gatewayError(503, "request_log_unavailable", "Inference accounting is temporarily unavailable."), "request_log_unavailable", "Request log unavailable")
+    }
+
+    // Recheck after accounting awaits. Never reselect or materialize a fallback.
+    const currentSelection = selectGatewayGrant(await dependencies.loadGatewayAccess(scope), prepared.requestedModel, selection.row.grant.id)
+    if (currentSelection.kind !== "selected" || !sameGatewaySelection(selection, currentSelection.selection)) {
+      return reject(gatewayError(403, "gateway_selection_revoked", "The selected Gateway access is no longer available."), "gateway_selection_revoked", "Gateway selection revoked")
+    }
+    if (!await credential.isCurrent()) {
+      return reject(gatewayError(503, "provider_credential_retry", "The selected credential changed before dispatch. Retry the same selection."), "credential_changed", "Gateway credential changed")
     }
 
     const lifetime = upstreamLifetime(c.req.raw.signal, env.upstreamTimeoutMs)
@@ -618,7 +697,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         reason: "upstream_unreachable",
         organizationId: identity.organizationId,
         orgMembershipId: identity.orgMembershipId,
-        inferenceKeyId: identity.inferenceKeyId,
+        gatewayKeyId: identity.gatewayKeyId,
         openworkRequestId,
         route: c.req.path,
         method,

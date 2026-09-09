@@ -63,9 +63,15 @@ import type {
   DeleteV1DesktopPoliciesByKeyByExternalKeyResponses,
   DeleteV1InferenceAnalyticsLangfuseErrors,
   DeleteV1InferenceAnalyticsLangfuseResponses,
-  DeleteV1InferenceProvidersByInferenceProviderIdAccessByAccessIdErrors,
-  DeleteV1InferenceProvidersByInferenceProviderIdAccessByAccessIdResponses,
+  DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdErrors,
+  DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdResponses,
+  DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors,
+  DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses,
+  DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors,
+  DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses,
   DeleteV1InferenceProvidersByInferenceProviderIdErrors,
+  DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors,
+  DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses,
   DeleteV1InferenceProvidersByInferenceProviderIdOauthErrors,
   DeleteV1InferenceProvidersByInferenceProviderIdOauthResponses,
   DeleteV1InferenceProvidersByInferenceProviderIdResponses,
@@ -265,9 +271,17 @@ import type {
   GetV1InferenceAnalyticsConsumptionResponses,
   GetV1InferenceAnalyticsSettingsResponses,
   GetV1InferenceErrors,
+  GetV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors,
+  GetV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses,
   GetV1InferenceProvidersByInferenceProviderIdConnectErrors,
   GetV1InferenceProvidersByInferenceProviderIdConnectResponses,
+  GetV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors,
+  GetV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses,
   GetV1InferenceProvidersByInferenceProviderIdErrors,
+  GetV1InferenceProvidersByInferenceProviderIdModelGroupsErrors,
+  GetV1InferenceProvidersByInferenceProviderIdModelGroupsResponses,
+  GetV1InferenceProvidersByInferenceProviderIdModelsErrors,
+  GetV1InferenceProvidersByInferenceProviderIdModelsResponses,
   GetV1InferenceProvidersByInferenceProviderIdOauthStartErrors,
   GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses,
   GetV1InferenceProvidersByInferenceProviderIdResponses,
@@ -275,6 +289,8 @@ import type {
   GetV1InferenceProvidersOauthCallbackErrors,
   GetV1InferenceProvidersOauthCallbackResponses,
   GetV1InferenceProvidersResponses,
+  GetV1InferenceProvidersUsageErrors,
+  GetV1InferenceProvidersUsageResponses,
   GetV1InferenceResponses,
   GetV1InstallByPlatformErrors,
   GetV1InstallByPlatformResponses,
@@ -473,7 +489,13 @@ import type {
   PatchV1DesktopPoliciesByDesktopPolicyIdResponses,
   PatchV1InferenceAnalyticsSettingsResponses,
   PatchV1InferenceErrors,
+  PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors,
+  PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses,
+  PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors,
+  PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses,
   PatchV1InferenceProvidersByInferenceProviderIdErrors,
+  PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors,
+  PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses,
   PatchV1InferenceProvidersByInferenceProviderIdResponses,
   PatchV1InferenceResponses,
   PatchV1LlmProvidersByLlmProviderIdErrors,
@@ -611,6 +633,12 @@ import type {
   PostV1InferenceAnalyticsLangfuseConnectResponses,
   PostV1InferenceAnalyticsLangfuseTestErrors,
   PostV1InferenceAnalyticsLangfuseTestResponses,
+  PostV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors,
+  PostV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses,
+  PostV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors,
+  PostV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses,
+  PostV1InferenceProvidersByInferenceProviderIdModelGroupsErrors,
+  PostV1InferenceProvidersByInferenceProviderIdModelGroupsResponses,
   PostV1InferenceProvidersErrors,
   PostV1InferenceProvidersMigrateFromLlmProviderErrors,
   PostV1InferenceProvidersMigrateFromLlmProviderResponses,
@@ -5465,9 +5493,43 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * List organization inference gateway providers
+   * Read organization Gateway usage by UTC day
    *
-   * Lists providers routed through the OpenWork inference gateway. scope=usable (default) returns active providers the member can use; scope=manageable returns providers the member can administer with their access grants.
+   * Defaults to model grouping and the last 31 UTC calendar days including today. Empty filters mean all. Counts only org_provider traffic. Returns tokens and stored approximate cost in integer micro-USD in the same snapshot, without repricing historical requests. totalTokens, unreportedRequests and daily values remain token-only. totalCostMicroUsd sums known stored costs; unpricedRequests counts missing cost observations, or is null when legacy rollup observation counts leave coverage unknown. Daily costValues use the same stable series IDs: zero subtotals with missing or unknown cost coverage are null, fully observed zero costs are 0, and positive recorded subtotals remain numeric even with incomplete coverage indicated by unpricedRequests. Team view attributes each active org member's usage to every distinct current team membership; members without a team are omitted. Team token, cost and missing-observation totals sum these attributions and may exceed model/person totals; cost coverage is evaluated per team/day. No teams returns emptyReason=no_teams, zero totals and missing counts, and empty daily maps without querying usage. Absent keys in a day's sparse values and costValues maps mean no usage and are zero. Limits: 100 filter IDs, 366 days, 10,000 series and 20,000 filter options; oversized results fail without truncation.
+   */
+  public getV1InferenceProvidersUsage<ThrowOnError extends boolean = false>(
+    parameters?: {
+      groupBy?: "model" | "team" | "person";
+      days?: string;
+      filterIds?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "groupBy" },
+            { in: "query", key: "days" },
+            { in: "query", key: "filterIds" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersUsageResponses,
+      GetV1InferenceProvidersUsageErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/usage",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * List organization inference gateway providers
    */
   public getV1InferenceProviders<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -5489,16 +5551,12 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create inference gateway provider
-   *
-   * Creates a provider from the models.dev catalog whose calls are routed through the OpenWork inference gateway. The upstream credential is stored server-side and never delivered to devices. credentialMode member (Google Vertex only) requires the organization's own Google OAuth client via oauthClientId and oauthClientSecret; the secret is never returned.
    */
   public postV1InferenceProviders<ThrowOnError extends boolean = false>(
     parameters?: {
       name?: string;
       providerId?: string;
       modelIds?: Array<string>;
-      credentialMode?: "org" | "member";
-      status?: "active" | "disabled";
       settings?: {
         project?: string;
         location?: string;
@@ -5507,6 +5565,8 @@ export class DenClient extends HeyApiClient {
         region?: string;
         upstreamBaseUrl?: string;
       };
+      status?: "active" | "disabled";
+      credentialMode?: "org" | "member";
       credential?: {
         kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
         secret: string;
@@ -5516,9 +5576,9 @@ export class DenClient extends HeyApiClient {
       };
       oauthClientId?: string;
       oauthClientSecret?: string;
+      allMembers?: boolean;
       memberIds?: Array<string>;
       teamIds?: Array<string>;
-      allMembers?: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -5530,16 +5590,16 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "name" },
             { in: "body", key: "providerId" },
             { in: "body", key: "modelIds" },
-            { in: "body", key: "credentialMode" },
-            { in: "body", key: "status" },
             { in: "body", key: "settings" },
+            { in: "body", key: "status" },
+            { in: "body", key: "credentialMode" },
             { in: "body", key: "credential" },
             { in: "body", key: "apiKeys" },
             { in: "body", key: "oauthClientId" },
             { in: "body", key: "oauthClientSecret" },
+            { in: "body", key: "allMembers" },
             { in: "body", key: "memberIds" },
             { in: "body", key: "teamIds" },
-            { in: "body", key: "allMembers" },
           ],
         },
       ],
@@ -5562,8 +5622,6 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete inference gateway provider
-   *
-   * Deletes an inference provider together with its models, credentials, and access grants.
    */
   public deleteV1InferenceProvidersByInferenceProviderId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5585,8 +5643,6 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Get inference gateway provider
-   *
-   * Returns one inference provider for management, including access grants and which credential kinds exist. Never includes secret values.
    */
   public getV1InferenceProvidersByInferenceProviderId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5608,8 +5664,6 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update inference gateway provider
-   *
-   * Updates an inference provider. Every field is optional; omitting credential and apiKeys keeps the stored organization credential. Omitting oauthClientId or oauthClientSecret keeps the stored value; an empty string clears it.
    */
   public patchV1InferenceProvidersByInferenceProviderId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5617,8 +5671,6 @@ export class DenClient extends HeyApiClient {
       name?: string;
       providerId?: string;
       modelIds?: Array<string>;
-      credentialMode?: "org" | "member";
-      status?: "active" | "disabled";
       settings?: {
         project?: string;
         location?: string;
@@ -5627,6 +5679,8 @@ export class DenClient extends HeyApiClient {
         region?: string;
         upstreamBaseUrl?: string;
       };
+      status?: "active" | "disabled";
+      credentialMode?: "org" | "member";
       credential?: {
         kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
         secret: string;
@@ -5636,9 +5690,9 @@ export class DenClient extends HeyApiClient {
       };
       oauthClientId?: string;
       oauthClientSecret?: string;
+      allMembers?: boolean;
       memberIds?: Array<string>;
       teamIds?: Array<string>;
-      allMembers?: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -5651,16 +5705,16 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "name" },
             { in: "body", key: "providerId" },
             { in: "body", key: "modelIds" },
-            { in: "body", key: "credentialMode" },
-            { in: "body", key: "status" },
             { in: "body", key: "settings" },
+            { in: "body", key: "status" },
+            { in: "body", key: "credentialMode" },
             { in: "body", key: "credential" },
             { in: "body", key: "apiKeys" },
             { in: "body", key: "oauthClientId" },
             { in: "body", key: "oauthClientSecret" },
+            { in: "body", key: "allMembers" },
             { in: "body", key: "memberIds" },
             { in: "body", key: "teamIds" },
-            { in: "body", key: "allMembers" },
           ],
         },
       ],
@@ -5683,8 +5737,6 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Get inference gateway provider connect payload
-   *
-   * Returns the opencode provider block for one accessible inference provider, rewritten to the OpenWork gateway URL, together with the caller's OpenWork inference key. The organization's upstream credential is never returned.
    */
   public getV1InferenceProvidersByInferenceProviderIdConnect<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5705,9 +5757,573 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * List configured gateway catalog models
+   */
+  public getV1InferenceProvidersByInferenceProviderIdModels<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "inferenceProviderId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersByInferenceProviderIdModelsResponses,
+      GetV1InferenceProvidersByInferenceProviderIdModelsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/models",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * List gateway model groups
+   */
+  public getV1InferenceProvidersByInferenceProviderIdModelGroups<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "inferenceProviderId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersByInferenceProviderIdModelGroupsResponses,
+      GetV1InferenceProvidersByInferenceProviderIdModelGroupsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/model-groups",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Create gateway model group
+   */
+  public postV1InferenceProvidersByInferenceProviderIdModelGroups<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      name?: string;
+      description?: string | null;
+      modelIds?: Array<string>;
+      status?: "active" | "disabled";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "body", key: "name" },
+            { in: "body", key: "description" },
+            { in: "body", key: "modelIds" },
+            { in: "body", key: "status" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersByInferenceProviderIdModelGroupsResponses,
+      PostV1InferenceProvidersByInferenceProviderIdModelGroupsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/model-groups",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Delete gateway model group
+   */
+  public deleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupId<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      groupId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "path", key: "groupId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).delete<
+      DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses,
+      DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/model-groups/{groupId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Update gateway model group
+   */
+  public patchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupId<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      groupId: string;
+      name?: string;
+      description?: string | null;
+      modelIds?: Array<string>;
+      status?: "active" | "disabled";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "path", key: "groupId" },
+            { in: "body", key: "name" },
+            { in: "body", key: "description" },
+            { in: "body", key: "modelIds" },
+            { in: "body", key: "status" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses,
+      PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/model-groups/{groupId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * List gateway credential sets
+   */
+  public getV1InferenceProvidersByInferenceProviderIdCredentialSets<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "inferenceProviderId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses,
+      GetV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/credential-sets",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Create gateway credential set
+   */
+  public postV1InferenceProvidersByInferenceProviderIdCredentialSets<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      name?: string;
+      credentialMode?: "org" | "member";
+      credential?: {
+        kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+        secret: string;
+      };
+      apiKeys?: {
+        [key: string]: string;
+      };
+      oauthClientId?: string;
+      oauthClientSecret?: string;
+      status?: "active" | "disabled";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "body", key: "name" },
+            { in: "body", key: "credentialMode" },
+            { in: "body", key: "credential" },
+            { in: "body", key: "apiKeys" },
+            { in: "body", key: "oauthClientId" },
+            { in: "body", key: "oauthClientSecret" },
+            { in: "body", key: "status" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses,
+      PostV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/credential-sets",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Delete gateway credential set
+   */
+  public deleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetId<
+    ThrowOnError extends boolean = false,
+  >(
+    parameters: {
+      inferenceProviderId: string;
+      credentialSetId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "path", key: "credentialSetId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).delete<
+      DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses,
+      DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/credential-sets/{credentialSetId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Update gateway credential set
+   */
+  public patchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetId<
+    ThrowOnError extends boolean = false,
+  >(
+    parameters: {
+      inferenceProviderId: string;
+      credentialSetId: string;
+      name?: string;
+      credentialMode?: "org" | "member";
+      credential?: {
+        kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+        secret: string;
+      };
+      apiKeys?: {
+        [key: string]: string;
+      };
+      oauthClientId?: string;
+      oauthClientSecret?: string;
+      status?: "active" | "disabled";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "path", key: "credentialSetId" },
+            { in: "body", key: "name" },
+            { in: "body", key: "credentialMode" },
+            { in: "body", key: "credential" },
+            { in: "body", key: "apiKeys" },
+            { in: "body", key: "oauthClientId" },
+            { in: "body", key: "oauthClientSecret" },
+            { in: "body", key: "status" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses,
+      PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/credential-sets/{credentialSetId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * List gateway access grants
+   */
+  public getV1InferenceProvidersByInferenceProviderIdAccessGrants<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "inferenceProviderId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses,
+      GetV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/access-grants",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Create gateway access grant
+   */
+  public postV1InferenceProvidersByInferenceProviderIdAccessGrants<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      modelGroupId?: string;
+      credentialSetId?: string;
+      audience?:
+        | {
+            type: "organization";
+          }
+        | {
+            type: "team";
+            /**
+             * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+             */
+            teamId: string;
+          }
+        | {
+            type: "member";
+            /**
+             * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+             */
+            memberId: string;
+          };
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "body", key: "modelGroupId" },
+            { in: "body", key: "credentialSetId" },
+            { in: "body", key: "audience" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses,
+      PostV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/access-grants",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Remove inference provider access grant
+   */
+  public deleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantId<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      grantId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "path", key: "grantId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).delete<
+      DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses,
+      DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/access-grants/{grantId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Update gateway access grant
+   */
+  public patchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantId<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      grantId: string;
+      modelGroupId?: string;
+      credentialSetId?: string;
+      audience?:
+        | {
+            type: "organization";
+          }
+        | {
+            type: "team";
+            /**
+             * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+             */
+            teamId: string;
+          }
+        | {
+            type: "member";
+            /**
+             * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+             */
+            memberId: string;
+          };
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "path", key: "grantId" },
+            { in: "body", key: "modelGroupId" },
+            { in: "body", key: "credentialSetId" },
+            { in: "body", key: "audience" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses,
+      PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/access-grants/{grantId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Remove inference provider access grant
+   */
+  public deleteV1InferenceProvidersByInferenceProviderIdAccessByGrantId<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      grantId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "path", key: "grantId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).delete<
+      DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdResponses,
+      DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/access/{grantId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Begin Google sign-in for a member inference credential
+   */
+  public getV1InferenceProvidersByInferenceProviderIdOauthStart<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      credentialSetId?: string;
+      redirectTo?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "query", key: "credentialSetId" },
+            { in: "query", key: "redirectTo" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses,
+      GetV1InferenceProvidersByInferenceProviderIdOauthStartErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/oauth/start",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
    * Google OAuth callback for a member inference credential
-   *
-   * Google redirects here with code+state after the member consents. Identity comes entirely from the single-use state row created by the start endpoint, not a session cookie. Exchanges the code with the organization's own OAuth client, stores the member's token, then redirects to the validated redirectTo or serves a small static success page. Failures redirect with an error= query parameter or render the failure page.
    */
   public getV1InferenceProvidersOauthCallback<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -5741,14 +6357,12 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Begin Google sign-in for a member inference credential
-   *
-   * For providers with credentialMode member. Creates a single-use PKCE state (10 minutes) and redirects the browser to Google's authorize URL using the organization's own OAuth client; with Accept: application/json it returns { authUrl } instead so the desktop can open it. redirectTo must be an openwork: deep link or a Den-trusted web origin.
+   * Disconnect the caller's Google credential for an inference provider
    */
-  public getV1InferenceProvidersByInferenceProviderIdOauthStart<ThrowOnError extends boolean = false>(
+  public deleteV1InferenceProvidersByInferenceProviderIdOauth<ThrowOnError extends boolean = false>(
     parameters: {
       inferenceProviderId: string;
-      redirectTo?: string;
+      credentialSetId?: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -5758,34 +6372,11 @@ export class DenClient extends HeyApiClient {
         {
           args: [
             { in: "path", key: "inferenceProviderId" },
-            { in: "query", key: "redirectTo" },
+            { in: "query", key: "credentialSetId" },
           ],
         },
       ],
     );
-    return (options?.client ?? this.client).get<
-      GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses,
-      GetV1InferenceProvidersByInferenceProviderIdOauthStartErrors,
-      ThrowOnError
-    >({
-      url: "/v1/inference-providers/{inferenceProviderId}/oauth/start",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Disconnect the caller's Google credential for an inference provider
-   *
-   * Revokes the calling member's own OAuth token at Google (best effort) and marks the stored credential revoked. The next connect reports member_auth_required again.
-   */
-  public deleteV1InferenceProvidersByInferenceProviderIdOauth<ThrowOnError extends boolean = false>(
-    parameters: {
-      inferenceProviderId: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "inferenceProviderId" }] }]);
     return (options?.client ?? this.client).delete<
       DeleteV1InferenceProvidersByInferenceProviderIdOauthResponses,
       DeleteV1InferenceProvidersByInferenceProviderIdOauthErrors,
@@ -5798,43 +6389,7 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Remove inference provider access grant
-   *
-   * Removes one explicit member or team access grant from an inference provider. The creator's direct grant is protected.
-   */
-  public deleteV1InferenceProvidersByInferenceProviderIdAccessByAccessId<ThrowOnError extends boolean = false>(
-    parameters: {
-      inferenceProviderId: string;
-      accessId: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "inferenceProviderId" },
-            { in: "path", key: "accessId" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).delete<
-      DeleteV1InferenceProvidersByInferenceProviderIdAccessByAccessIdResponses,
-      DeleteV1InferenceProvidersByInferenceProviderIdAccessByAccessIdErrors,
-      ThrowOnError
-    >({
-      url: "/v1/inference-providers/{inferenceProviderId}/access/{accessId}",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
    * Move an LLM provider to the inference gateway
-   *
-   * Creates an inference provider from an existing models.dev LLM provider (name, models, access, credential), then deletes the LLM provider in the same transaction. The next desktop sync replaces the device-held credential with the member's OpenWork key.
    */
   public postV1InferenceProvidersMigrateFromLlmProvider<ThrowOnError extends boolean = false>(
     parameters?: {

@@ -1,20 +1,21 @@
-import { and, eq, inArray, isNull, or, sql } from "@openwork-ee/den-db/drizzle"
-import { InferenceProviderAccessTable, InferenceProviderCredentialTable, InferenceProviderTable, MemberTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { and, eq, sql } from "@openwork-ee/den-db/drizzle"
+import { GatewayProviderCredentialTable, GatewayProviderTable, MemberTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
-import { parseInferenceProviderSecret, type InferenceOauthTokenSecret } from "@openwork/types/den/inference"
+import { parseGatewayProviderSecret, type GatewayOauthTokenSecret } from "@openwork/types/den/gateway"
+import { loadGatewayAccess, sameGatewaySelection, selectGatewayGrant } from "../provider-access.js"
+import type { GatewayCredentialLookup } from "../provider-credentials.js"
 
 export const GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 export const REFRESH_WINDOW_MS = 60_000
 const LOCK_MS = 30_000
 const TOKEN_REQUEST_TIMEOUT_MS = 15_000
 
-type CredentialRow = typeof InferenceProviderCredentialTable.$inferSelect
+type CredentialRow = typeof GatewayProviderCredentialTable.$inferSelect
 type CredentialSnapshot = Pick<CredentialRow, "id" | "secret" | "expires_at" | "status"> & { kind: "oauth_google" | "oauth_azure" }
 export type OauthCredentialRow = CredentialSnapshot & Pick<CredentialRow,
-  "inference_provider_id" | "organization_id" | "subject" | "org_membership_id" | "updated_at" | "last_refreshed_at" | "refreshing_until"> & { secret_revision: string }
+  "gateway_provider_id" | "credential_set_id" | "organization_id" | "subject" | "org_membership_id" | "updated_at" | "last_refreshed_at" | "refreshing_until"> & { secret_revision: string }
 export type OauthClient = { id: string; oauth_client_id: string | null; oauth_client_secret: string | null }
-export type RefreshScope = { credentialId: CredentialRow["id"]; provider: OauthClient; subject: string }
+export type RefreshScope = { credentialId: CredentialRow["id"]; provider: OauthClient; subject: string; authorization: GatewayCredentialLookup }
 export type RefreshLock = { scope: RefreshScope; credential: OauthCredentialRow }
 
 export type GoogleOauthRefreshStore = {
@@ -31,13 +32,14 @@ export type GoogleOauthRefreshOutcome =
 
 export type RefreshGoogleOauthToken = (input: {
   credential: CredentialSnapshot
-  token: InferenceOauthTokenSecret
+  token: GatewayOauthTokenSecret
   provider: OauthClient
+  authorization: GatewayCredentialLookup
   subject: string
   now: Date
 }) => Promise<GoogleOauthRefreshOutcome>
 
-export function needsGoogleOauthRefresh(credential: { expires_at: Date | null }, token: InferenceOauthTokenSecret, now: Date) {
+export function needsGoogleOauthRefresh(credential: { expires_at: Date | null }, token: GatewayOauthTokenSecret, now: Date) {
   return credential.expires_at !== null && Boolean(token.refreshToken)
     && credential.expires_at.getTime() - now.getTime() <= REFRESH_WINDOW_MS
 }
@@ -45,7 +47,7 @@ export function needsGoogleOauthRefresh(credential: { expires_at: Date | null },
 // Secret comparison happens on decrypted values under a short row lock: the
 // encrypted column uses randomized ciphertext and cannot be compared with eq().
 export function sameOauthVersion(a: OauthCredentialRow, b: OauthCredentialRow) {
-  return a.id === b.id && a.inference_provider_id === b.inference_provider_id
+  return a.id === b.id && a.gateway_provider_id === b.gateway_provider_id && a.credential_set_id === b.credential_set_id
     && a.organization_id === b.organization_id && a.subject === b.subject
     && a.org_membership_id === b.org_membership_id && a.kind === b.kind
     && a.status === "active" && b.status === "active" && a.secret === b.secret
@@ -73,7 +75,7 @@ export function createGoogleOauthRefresher(deps: {
     // Advance even when the caller supplied a deterministic starting clock.
     const started = performance.now()
     const clock = () => new Date(input.now.getTime() + Math.floor(performance.now() - started))
-    const scope = { credentialId: input.credential.id, provider: input.provider, subject: input.subject }
+    const scope = { credentialId: input.credential.id, provider: input.provider, subject: input.subject, authorization: input.authorization }
     const latest = async (reason: "refresh_busy" | "refresh_unavailable" | "credential_changed"): Promise<GoogleOauthRefreshOutcome> => {
       const row = await deps.store.reloadCredential(scope)
       if (!row || row.status !== "active") return { kind: "auth_required" }
@@ -100,9 +102,9 @@ export function createGoogleOauthRefresher(deps: {
     // expiry again. Never send the caller's potentially obsolete refresh token.
     const current = await deps.store.reloadCredential(scope)
     if (!current || !sameOauthVersion(current, lock.credential)) return latest("credential_changed")
-    let token: InferenceOauthTokenSecret
+    let token: GatewayOauthTokenSecret
     try {
-      const parsed = parseInferenceProviderSecret(current.kind, current.secret)
+      const parsed = parseGatewayProviderSecret(current.kind, current.secret)
       if (parsed.kind !== "oauth_google") throw new Error("Unsupported credential")
       token = parsed.token
     } catch {
@@ -135,7 +137,7 @@ export function createGoogleOauthRefresher(deps: {
       await deps.store.recordRefreshFailure({ lock, error: permanent ? "invalid_grant" : "token_endpoint_unavailable", permanent, now: clock() })
       return latest("refresh_unavailable")
     }
-    const secret: InferenceOauthTokenSecret = {
+    const secret: GatewayOauthTokenSecret = {
       accessToken: record.access_token,
       refreshToken: typeof record.refresh_token === "string" && record.refresh_token ? record.refresh_token : token.refreshToken,
       ...(typeof record.token_type === "string" ? { tokenType: record.token_type } : token.tokenType ? { tokenType: token.tokenType } : {}),
@@ -158,31 +160,31 @@ type Db = Pick<typeof import("../db.js").db, "select" | "transaction">
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
 
 export function createDbGoogleOauthRefreshStore(db: Db): GoogleOauthRefreshStore {
-  const table = InferenceProviderCredentialTable
+  const table = GatewayProviderCredentialTable
   const where = (scope: RefreshScope) => and(eq(table.id, scope.credentialId),
-    eq(table.inference_provider_id, normalizeDenTypeId("inferenceProvider", scope.provider.id)),
-    eq(table.subject, scope.subject), eq(table.org_membership_id, normalizeDenTypeId("member", scope.subject)), eq(table.kind, "oauth_google"))
+    eq(table.gateway_provider_id, scope.authorization.scope.gatewayProviderId),
+    eq(table.credential_set_id, scope.authorization.selection.row.credentialSet.id),
+    eq(table.subject, scope.subject), eq(table.org_membership_id, scope.authorization.scope.orgMembershipId), eq(table.kind, "oauth_google"))
 
   async function lockedRow(tx: Tx, scope: RefreshScope): Promise<OauthCredentialRow | null> {
     // Match Den's lock order so member removal / client rotation serializes with
     // each local mutation, but never with the external token request.
-    const [member] = await tx.select().from(MemberTable).where(eq(MemberTable.id, normalizeDenTypeId("member", scope.subject))).for("update")
+    const authorization = scope.authorization
+    if (scope.subject !== authorization.scope.orgMembershipId || scope.subject !== authorization.subject) return null
+    const [member] = await tx.select().from(MemberTable).where(eq(MemberTable.id, authorization.scope.orgMembershipId)).for("update")
     if (!member || member.removedAt || !member.userId) return null
-    const [provider] = await tx.select().from(InferenceProviderTable).where(eq(InferenceProviderTable.id, normalizeDenTypeId("inferenceProvider", scope.provider.id))).for("update")
-    if (!provider || provider.status !== "active" || provider.credential_mode !== "member"
+    const [provider] = await tx.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, authorization.scope.gatewayProviderId)).for("update")
+    if (!provider || provider.status !== "active"
       || provider.organization_id !== member.organizationId
-      || !["google-vertex", "google-vertex-anthropic"].includes(provider.provider_id)
-      || provider.oauth_client_id !== scope.provider.oauth_client_id || provider.oauth_client_secret !== scope.provider.oauth_client_secret) return null
-    const teams = await tx.select({ id: TeamMemberTable.teamId }).from(TeamMemberTable)
+      || !["google-vertex", "google-vertex-anthropic"].includes(provider.provider_id)) return null
+    await tx.select({ id: TeamMemberTable.id }).from(TeamMemberTable)
       .innerJoin(TeamTable, eq(TeamTable.id, TeamMemberTable.teamId))
-      .where(and(eq(TeamMemberTable.orgMembershipId, member.id), eq(TeamTable.organizationId, provider.organization_id))).for("update")
-    const access = await tx.select({ id: InferenceProviderAccessTable.id }).from(InferenceProviderAccessTable)
-      .where(and(eq(InferenceProviderAccessTable.inference_provider_id, provider.id), or(
-        eq(InferenceProviderAccessTable.org_membership_id, member.id),
-        ...(teams.length ? [inArray(InferenceProviderAccessTable.team_id, teams.map((team) => team.id))] : []),
-        and(isNull(InferenceProviderAccessTable.org_membership_id), isNull(InferenceProviderAccessTable.team_id)),
-      ))).for("update")
-    if (!access.length) return null
+      .where(and(eq(TeamMemberTable.orgMembershipId, member.id), eq(TeamTable.organizationId, member.organizationId))).for("update")
+    const access = selectGatewayGrant(await loadGatewayAccess(authorization.scope, tx, true), authorization.selection.requestedModel, authorization.selection.row.grant.id)
+    if (access.kind !== "selected" || !sameGatewaySelection(authorization.selection, access.selection)) return null
+    const set = access.selection.row.credentialSet
+    if (set.credential_mode !== "member" || set.id !== scope.provider.id
+      || set.oauth_client_id !== scope.provider.oauth_client_id || set.oauth_client_secret !== scope.provider.oauth_client_secret) return null
     // Hash stored ciphertext, not a re-encrypted SQL parameter. Replacing even
     // identical plaintext in the same millisecond gets a different revision.
     const [result] = await tx.select({ credential: table, secret_revision: sql<string>`sha2(${table.secret}, 256)` })

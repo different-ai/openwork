@@ -6,7 +6,7 @@ import {
   DesktopPolicyMemberTable,
   ExternalMcpConnectionAccessGrantTable,
   InvitationTable,
-  InferenceProviderAccessTable,
+  GatewayProviderAccessTable,
   LlmProviderAccessTable,
   MarketplaceAccessGrantTable,
   MemberTable,
@@ -308,7 +308,7 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
 
     const removedAt = new Date()
     await invalidateTeamInferenceOAuth(tx, team.id)
-    await tx.delete(InferenceProviderAccessTable).where(eq(InferenceProviderAccessTable.team_id, team.id))
+    await tx.delete(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.team_id, team.id))
 
     await tx
       .update(InvitationTable)

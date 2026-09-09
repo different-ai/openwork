@@ -49,6 +49,7 @@ if (env.corsOrigins.length > 0) {
         "X-Test-Connection",
         "X-Openwork-Session-Id",
         "X-Openwork-Task-Id",
+        "X-Openwork-Gateway-Grant-Id",
       ],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       exposeHeaders: ["X-OpenWork-Request-Id", "Retry-After"],

@@ -9,6 +9,7 @@ export type InferenceRequestReport = {
   organizationId: string
   orgMembershipId: string
   inferenceKeyId: string
+  gatewayKeyId?: never
   openworkRequestId: string
   route: string
   method: string
@@ -24,6 +25,7 @@ export type InferenceHandledErrorReport = {
   organizationId?: string
   orgMembershipId?: string
   inferenceKeyId?: string
+  gatewayKeyId?: string
   openworkRequestId?: string
   route: string
   method: string
@@ -98,6 +100,7 @@ function reportAttributes(report: InferenceRequestReport | InferenceHandledError
     organizationId: report.organizationId,
     orgMembershipId: report.orgMembershipId,
     inferenceKeyId: report.inferenceKeyId,
+    gatewayKeyId: report.gatewayKeyId,
     openworkRequestId: report.openworkRequestId,
     route: report.route,
     method: report.method,

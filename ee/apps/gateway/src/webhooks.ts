@@ -388,6 +388,7 @@ function reportUnknownPricedModel(input: { span: ParsedSpan; inferenceKey: Webho
 
 async function ingestSpan(span: ParsedSpan, dependencies: WebhookDependencies) {
   const inferenceKey = await dependencies.findInferenceKey(span.inferenceKeyId)
+  // Settlement may arrive after revocation; settleUsage checks admission time.
   if (!inferenceKey) {
     return "skipped"
   }

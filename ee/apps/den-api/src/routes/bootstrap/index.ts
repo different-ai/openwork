@@ -1,6 +1,6 @@
 import { and, eq, gt, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
-import { ensureMemberInferenceKey } from "../../inference.js"
+import { ensureMemberGatewayKey } from "../../gateway-keys.js"
 import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -533,7 +533,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (session?.id) {
         await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), result.organization.id)
       }
-      await ensureMemberInferenceKey({ organizationId: result.organization.id, memberId: result.memberId })
+      await ensureMemberGatewayKey({ organizationId: result.organization.id, memberId: result.memberId })
       return c.json({ ok: true, organization: result.organization })
     },
   )

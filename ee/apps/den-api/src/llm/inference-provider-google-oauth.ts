@@ -2,8 +2,8 @@ import { OAuthTokenExchangeError, parseOAuthTokenResponse } from "../capability-
 
 /**
  * Google authorization-code + PKCE plumbing for per-member inference provider
- * credentials (plan §5.6). The OAuth client is the customer's own, stored on
- * the `inference_providers` row; this module never reads the database.
+ * credentials. The OAuth client is the customer's own, stored on the selected
+ * `gateway_credential_sets` row; this module never reads the database.
  */
 
 export const GOOGLE_OAUTH_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"

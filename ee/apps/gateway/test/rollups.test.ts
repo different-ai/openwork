@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { Hono } from "hono"
-import type { InferenceRequestLogRow } from "../src/request-log.js"
+import type { GatewayRequestLogRow as InferenceRequestLogRow } from "../src/request-log.js"
 import {
   DAY_MS,
   HOUR_MS,
@@ -29,8 +29,12 @@ function rawRow(overrides: Partial<InferenceRequestLogRow>): InferenceRequestLog
     organization_id: org,
     org_membership_id: memberA,
     inference_key_id: key,
-    inference_provider_id: provider,
-    inference_provider_credential_id: null,
+    gateway_provider_id: provider,
+    gateway_provider_credential_id: null,
+    gateway_key_id: null,
+    model_group_id: null,
+    credential_set_id: null,
+    access_grant_id: null,
     route: "org_provider",
     protocol: "anthropic_messages",
     upstream_provider_id: "anthropic",
@@ -63,11 +67,14 @@ function rawRow(overrides: Partial<InferenceRequestLogRow>): InferenceRequestLog
   }
 }
 
-function dimensionsOf(row: RollupDimensions): RollupDimensions {
+function dimensionsOf(row: Pick<InferenceRequestLogRow, keyof RollupDimensions>): RollupDimensions {
   return {
     organization_id: row.organization_id,
     org_membership_id: row.org_membership_id,
-    inference_provider_id: row.inference_provider_id ?? null,
+    gateway_provider_id: row.gateway_provider_id ?? null,
+    model_group_id: row.model_group_id ?? null,
+    credential_set_id: row.credential_set_id ?? null,
+    access_grant_id: row.access_grant_id ?? null,
     route: row.route,
     protocol: row.protocol,
     upstream_provider_id: row.upstream_provider_id,

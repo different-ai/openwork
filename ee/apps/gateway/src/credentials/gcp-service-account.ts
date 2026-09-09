@@ -3,7 +3,7 @@
 // 60s before expiry. node:crypto only.
 import { createHash, createSign } from "node:crypto"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
-import type { InferenceGcpServiceAccountSecret } from "@openwork/types/den/inference"
+import type { GatewayGcpServiceAccountSecret } from "@openwork/types/den/gateway"
 
 export const GCP_CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 const JWT_BEARER_GRANT = "urn:ietf:params:oauth:grant-type:jwt-bearer"
@@ -19,7 +19,7 @@ export type MintGcpAccessTokenResult =
 
 export type MintGcpAccessToken = (input: {
   credentialId: string
-  serviceAccount: InferenceGcpServiceAccountSecret
+  serviceAccount: GatewayGcpServiceAccountSecret
   now: Date
 }) => Promise<MintGcpAccessTokenResult>
 
@@ -27,7 +27,7 @@ function base64Url(value: string) {
   return Buffer.from(value, "utf8").toString("base64url")
 }
 
-export function buildServiceAccountJwt(serviceAccount: InferenceGcpServiceAccountSecret, now: Date, scope = GCP_CLOUD_PLATFORM_SCOPE) {
+export function buildServiceAccountJwt(serviceAccount: GatewayGcpServiceAccountSecret, now: Date, scope = GCP_CLOUD_PLATFORM_SCOPE) {
   if (serviceAccount.token_uri !== GOOGLE_TOKEN_URL) throw new Error("service account token_uri is not permitted")
   const iat = Math.floor(now.getTime() / 1000)
   const header = base64Url(JSON.stringify({ alg: "RS256", typ: "JWT" }))

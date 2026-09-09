@@ -33,12 +33,14 @@ retains its existing non-production defaults; use `.env.example` for a local set
 
 ## Stable Contracts
 
-This is a product/source rename, not a domain, identity, or database migration:
+The service rename keeps deployment and Models contracts stable. The Gateway
+access-matrix source batch requires registered migrations 0095 through 0097:
 
 - Hosted endpoint URLs, `/api/v1/*`, `/v1/inference*`, webhook and rollup paths,
   API response wrappers, SDK methods, and shared `inference` types stay stable.
-- Existing `ow_inf_` bearer keys, hashes, encrypted keys, `ipr_`/`ink_` TypeIDs,
-  database tables/columns, and Models entitlement metadata are unchanged.
+- Existing Models `ow_inf_` bearer keys, hashes, encrypted keys, limits, usage
+  buckets, ledger and entitlement metadata are unchanged. Gateway provider IDs
+  remain `ipr_`; Gateway requests now require independent `ow_gw_` keys.
 - `OPENWORK_INFERENCE_BASE_URL` remains the managed desktop sync environment
   contract. `STRIPE_INFERENCE_PRICE_ID` still configures OpenWork Models billing.
 - Helm keeps `inference.*`, `config.inference.*`, internal URL overrides, secret
@@ -53,5 +55,89 @@ This is a product/source rename, not a domain, identity, or database migration:
   `service` is now `gateway`. Access log prefixes and report titles say Gateway.
   Update any external monitors that match the old display text.
 
-No deployment is performed by this rename. Ordinary image upgrades roll pods;
-changing Helm selectors or image repositories is deliberately not part of it.
+No deployment or migration execution is performed by this source batch. Coordinate
+the schema/writer cutover described in `ee/packages/den-db/drizzle/0095_gateway_access_matrix.md`
+before running the new runtime. Do not deploy it against the old table names.
+
+## Matrix Routing
+
+- Provider summaries/details and the management `/models` response expose
+  `modelIds: string[]` as policy, not a snapshot of resolved rows. POST defaults
+  to `[]`; PATCH `[]` deliberately selects all supported catalog models. Nonempty
+  policies restrict to those IDs and remain nonempty when catalog entries vanish.
+- Den provider detail, list/connect sync, catalog and group-editing paths refresh
+  model rows using the existing ten-minute models.dev cache. Network I/O happens
+  before the provider lock; policy is reread under that lock. Failed or malformed
+  catalog loads retain previous rows, filtered by the saved policy. The inference
+  proxy itself does not fetch the upstream account's model catalog or grant it.
+- `catalogWarning?: string` is a UI hint on summaries/details and management
+  `/models`. Display it when present: "all models" means all supported catalog
+  models, excluding incompatible SDK overrides or unresolved model configuration.
+  Explicitly selecting an incompatible catalog model returns HTTP 400
+  `unsupported_model_sdk`; refresh never relaxes those safety checks.
+- Catalog refresh updates metadata without changing surviving `ipm_` IDs.
+  Removed models lose all group links before their rows are deleted, atomically
+  under the provider fence. Empty groups and grants remain, with no usable models.
+  New or returning catalog models never rejoin existing groups automatically.
+- Group `modelIds: []` means no models, never a wildcard. The initial "All
+  Allowed Models" group captures resolved rows only at creation and remains
+  visible when empty until explicitly deleted. No credential
+  or access grants are inferred from provider policy. Runtime authorization,
+  including OAuth and pre-egress checks, intersects group links with current
+  `gateway_providers.model_ids` even when materialized rows are stale.
+
+- Models `/api/v1/chat/completions` and `/api/v1/models` only authenticate the
+  original inference-key store. Gateway `/api/v1/providers/:ipr/*` only accepts
+  canonical `ow_gw_` keys with active same-organization membership. Neither key
+  type authenticates the other route; Gateway does not require a Models tier.
+- Requests resolve configured provider model rows and active group/set grants.
+  Explicit aliases constrain candidates before member > team > organization
+  priority. Equal-priority different sets return HTTP 409 with the shared
+  `{error: "gateway_selection_required", message, selections}` contract. Equivalent
+  grants using one set select the lexicographically smallest winning grant ID.
+- `gwm_<gmg suffix>_<gcs suffix>_<ipm suffix>` is selection, not permission.
+  The gateway verifies all references and rewrites body/path models to `model_id`
+  before provider-specific Vertex rewrites or AWS signing. Unambiguous raw model
+  IDs also work; response model fields are not rewritten.
+- GET provider `/models` is a local, non-cacheable list of accessible combinations,
+  not the provider-account catalog. Each entry has the alias in both `id` and
+  `config.id`, raw `upstreamModelId`, and group/set IDs and names. A listed grant
+  does not guarantee its member token is ready; management supplies per-set
+  `authorizationRequests`. The listing never materializes a credential.
+- Model-less file operations require `x-openwork-gateway-grant-id` when several
+  sets apply, even across audience priorities. The hint is reauthorized and never
+  forwarded. It also constrains model requests, never enlarging model access.
+- JSON model extraction also applies to embeddings and other supported native
+  model operations without a usage parser. Conflicting body/path selectors,
+  OpenRouter routing arrays/plugins and missing models fail before credential
+  lookup. Deferred inference (batches/assistant runs) and unrecognized operations
+  return `unsupported_gateway_operation`; non-JSON model-bearing payloads return
+  `unsupported_media_type`. File uploads keep their original bytes. Multipart
+  audio/image model calls require a separately reviewed selector extractor.
+- Credentials are selected by set + subject (`org` or the requesting member).
+  Set mode and OAuth client configuration are authoritative. OAuth refresh leases
+  recheck active membership/key/provider/group/set/grant/model links and current
+  client configuration under local row locks; no lock crosses token HTTP calls.
+  Recheck after token work and accounting awaits; never fall back to another set.
+- `openwork_auth_required` responses identify `provider_id` and
+  `credential_set_id`. Invalid/foreign selections fail closed with
+  `invalid_gateway_selection`, `model_access_denied` or `provider_access_denied`.
+  Concurrent revocation returns `gateway_selection_revoked`; credential changes
+  return `provider_credential_retry` without forwarding the old secret.
+- Logs use `gateway_request_logs`: Models fill only `inference_key_id`; Gateway
+  fills `gateway_key_id`, `gateway_provider_id`, actual
+  `gateway_provider_credential_id`, `model_group_id`, `credential_set_id` and
+  `access_grant_id` when selected. Existing route values stay unchanged.
+  Rollups use the shared `gatewayRollupDimensionKey` with nullable selection
+  dimensions. Historical hashes/unknown observation counts are not rewritten;
+  bounded source claims, transactional consumption and update-only finalization
+  remain unchanged.
+  Neither requests nor rollups record a team ID. Team usage is grouped dynamically
+  by current memberships; members in multiple teams contribute to each team, so
+  summing team totals can exceed the organization total.
+
+This batch has not run tests, typechecks or builds. Migration 0096 uses offline
+Drizzle serialization only; no migration has been applied. Existing source fixtures
+under this app are updated. The separately owned `evals/specs/inference-gateway-*`
+journeys still need Gateway key, matrix seeding and renamed SQL/column updates
+before the next authorized verification run.

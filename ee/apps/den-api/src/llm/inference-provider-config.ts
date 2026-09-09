@@ -28,7 +28,7 @@ export function isSupportedGatewayNpm(npm: string | null): npm is SupportedGatew
 }
 
 /**
- * Snapshot of the catalog block persisted in `inference_providers.provider_config`.
+ * Snapshot of the catalog block persisted in `gateway_providers.provider_config`.
  * Kept upstream-shaped (no gateway URL) because the gateway reads
  * `options.baseURL` / `api` from it as the upstream base.
  */

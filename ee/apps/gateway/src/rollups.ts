@@ -2,18 +2,19 @@
 // hour rollups, hour rollups older than hourlyRetention fold into day rollups.
 // One bounded source batch per bucket/transaction. Retried runs consume only
 // remaining source IDs; inserting new raw rows is NEW consumption, not replay.
-import { createHash, timingSafeEqual } from "node:crypto"
-import { InferenceProviderOauthStateTable, InferenceRequestLogTable, InferenceUsageRollupTable, InferenceRollupLockTable } from "@openwork-ee/den-db"
+import { timingSafeEqual } from "node:crypto"
+import { GatewayProviderOauthStateTable, GatewayRequestLogTable, GatewayUsageRollupTable, GatewayRollupLockTable } from "@openwork-ee/den-db"
+import { gatewayRollupDimensionKey } from "@openwork-ee/utils/gateway-rollups"
 import { and, eq, gte, inArray, lt, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { z } from "zod"
 
-export type RollupRow = typeof InferenceUsageRollupTable.$inferInsert
+export type RollupRow = typeof GatewayUsageRollupTable.$inferInsert
 
 export type RollupDimensions = Pick<
-  RollupRow,
-  "organization_id" | "org_membership_id" | "inference_provider_id" | "route" | "protocol" | "upstream_provider_id" | "upstream_model"
+  typeof GatewayUsageRollupTable.$inferSelect,
+  "organization_id" | "org_membership_id" | "gateway_provider_id" | "model_group_id" | "credential_set_id" | "access_grant_id" | "route" | "protocol" | "upstream_provider_id" | "upstream_model"
 >
 
 export const ROLLUP_SUM_COLUMNS = [
@@ -51,10 +52,10 @@ export type AggregatedRollup = RollupDimensions & RollupSums & Partial<Record<(t
 
 // Statements that must run inside one bucket's transaction.
 export type RollupStore = {
-  aggregateRawHour(bucketStart: Date, limit: number): Promise<{ ids: (typeof InferenceRequestLogTable.$inferSelect.id)[]; groups: AggregatedRollup[] }>
+  aggregateRawHour(bucketStart: Date, limit: number): Promise<{ ids: (typeof GatewayRequestLogTable.$inferSelect.id)[]; groups: AggregatedRollup[] }>
   aggregateHourRollupsToDay(dayStart: Date, limit: number): Promise<{ ids: RollupRow["id"][]; groups: AggregatedRollup[] }>
   upsertRollups(rows: RollupRow[]): Promise<void>
-  deleteRawIds(ids: (typeof InferenceRequestLogTable.$inferSelect.id)[]): Promise<number>
+  deleteRawIds(ids: (typeof GatewayRequestLogTable.$inferSelect.id)[]): Promise<number>
   deleteHourRollupIds(ids: RollupRow["id"][]): Promise<number>
 }
 
@@ -88,8 +89,6 @@ const DEFAULT_RAW_RETENTION_MS = 2 * DAY_MS
 const DEFAULT_HOURLY_RETENTION_MS = 90 * DAY_MS
 const DEFAULT_MAX_BUCKETS_PER_RUN = 48
 
-const DIMENSION_SEPARATOR = "\u001f"
-
 export function floorToHour(date: Date) {
   return new Date(Math.floor(date.getTime() / HOUR_MS) * HOUR_MS)
 }
@@ -98,20 +97,8 @@ export function floorToDay(date: Date) {
   return new Date(Math.floor(date.getTime() / DAY_MS) * DAY_MS)
 }
 
-// sha256 hex of the dimension values joined with U+001F, "" for nulls. MySQL
-// unique indexes treat NULLs as distinct, so this is the upsert key.
-export function rollupDimensionKey(dimensions: RollupDimensions) {
-  const parts = [
-    dimensions.organization_id,
-    dimensions.org_membership_id,
-    dimensions.inference_provider_id ?? "",
-    dimensions.route,
-    dimensions.protocol,
-    dimensions.upstream_provider_id,
-    dimensions.upstream_model ?? "",
-  ]
-  return createHash("sha256").update(parts.join(DIMENSION_SEPARATOR)).digest("hex")
-}
+// New aggregations use the shared tuple hash; historical hashes stay untouched.
+export const rollupDimensionKey = gatewayRollupDimensionKey
 
 export function buildRollupRows(granularity: RollupRow["granularity"], bucketStart: Date, groups: AggregatedRollup[]): RollupRow[] {
   // Drizzle's numeric bigint mode must not silently round a large SQL sum.
@@ -143,8 +130,8 @@ function sum(expression: ReturnType<typeof sql>) {
   return sql<number>`coalesce(sum(${expression}), 0)`.mapWith(Number)
 }
 
-const raw = InferenceRequestLogTable
-const rollup = InferenceUsageRollupTable
+const raw = GatewayRequestLogTable
+const rollup = GatewayUsageRollupTable
 
 // Rows with completed_at IS NULL (crashed mid-request) count as client_aborted.
 const rawSums = {
@@ -213,7 +200,10 @@ function createDbRollupStore(executor: DbExecutor): RollupStore {
         .select({
           organization_id: raw.organization_id,
           org_membership_id: raw.org_membership_id,
-          inference_provider_id: raw.inference_provider_id,
+          gateway_provider_id: raw.gateway_provider_id,
+          model_group_id: raw.model_group_id,
+          credential_set_id: raw.credential_set_id,
+          access_grant_id: raw.access_grant_id,
           route: raw.route,
           protocol: raw.protocol,
           upstream_provider_id: raw.upstream_provider_id,
@@ -222,7 +212,7 @@ function createDbRollupStore(executor: DbExecutor): RollupStore {
         })
         .from(raw)
         .where(inArray(raw.id, ids))
-        .groupBy(raw.organization_id, raw.org_membership_id, raw.inference_provider_id, raw.route, raw.protocol, raw.upstream_provider_id, raw.upstream_model)
+        .groupBy(raw.organization_id, raw.org_membership_id, raw.gateway_provider_id, raw.model_group_id, raw.credential_set_id, raw.access_grant_id, raw.route, raw.protocol, raw.upstream_provider_id, raw.upstream_model)
       return { ids, groups }
     },
     async aggregateHourRollupsToDay(dayStart, limit) {
@@ -239,7 +229,10 @@ function createDbRollupStore(executor: DbExecutor): RollupStore {
         .select({
           organization_id: rollup.organization_id,
           org_membership_id: rollup.org_membership_id,
-          inference_provider_id: rollup.inference_provider_id,
+          gateway_provider_id: rollup.gateway_provider_id,
+          model_group_id: rollup.model_group_id,
+          credential_set_id: rollup.credential_set_id,
+          access_grant_id: rollup.access_grant_id,
           route: rollup.route,
           protocol: rollup.protocol,
           upstream_provider_id: rollup.upstream_provider_id,
@@ -249,7 +242,7 @@ function createDbRollupStore(executor: DbExecutor): RollupStore {
         })
         .from(rollup)
         .where(inArray(rollup.id, ids))
-        .groupBy(rollup.organization_id, rollup.org_membership_id, rollup.inference_provider_id, rollup.route, rollup.protocol, rollup.upstream_provider_id, rollup.upstream_model)
+        .groupBy(rollup.organization_id, rollup.org_membership_id, rollup.gateway_provider_id, rollup.model_group_id, rollup.credential_set_id, rollup.access_grant_id, rollup.route, rollup.protocol, rollup.upstream_provider_id, rollup.upstream_model)
       return { ids, groups }
     },
     async upsertRollups(rows) {
@@ -298,7 +291,7 @@ export function createDbRollupRepository(db: typeof import("./db.js").db): Rollu
       return listBuckets(db, rollup.bucket_start, rollup, eq(rollup.granularity, "hour"), before, limit, DAY_MS)
     },
     async deleteExpiredOauthStates(now) {
-      const result = await db.delete(InferenceProviderOauthStateTable).where(lt(InferenceProviderOauthStateTable.expires_at, now)).limit(1000)
+      const result = await db.delete(GatewayProviderOauthStateTable).where(lt(GatewayProviderOauthStateTable.expires_at, now)).limit(1000)
       return affectedRows(result)
     },
     transaction(run) {
@@ -307,7 +300,7 @@ export function createDbRollupRepository(db: typeof import("./db.js").db): Rollu
         // first consistent read (aggregation) therefore sees the claimed rows.
         // Daily consumers cannot delete an hour while another worker adds to
         // it; all paths acquire this same permanent row before any source lock.
-        await tx.insert(InferenceRollupLockTable).values({ id: 1 })
+        await tx.insert(GatewayRollupLockTable).values({ id: 1 })
           .onDuplicateKeyUpdate({ set: { id: 1 } })
         return run(createDbRollupStore(tx))
       })

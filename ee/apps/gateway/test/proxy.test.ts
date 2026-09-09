@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { Hono } from "hono"
 import { assertManagedModelsAllowed, ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import type { InferenceHandledErrorReport, InferenceReporter, InferenceRequestReport } from "../src/inference-reporting.js"
-import type { InferenceRequestLogRow } from "../src/request-log.js"
+import type { GatewayRequestLogRow as InferenceRequestLogRow } from "../src/request-log.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
 process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_den"

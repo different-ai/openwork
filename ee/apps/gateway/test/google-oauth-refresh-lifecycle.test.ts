@@ -5,7 +5,7 @@ import { createGoogleOauthRefresher, sameOauthVersion } from "../src/credentials
 import { createGcpServiceAccountTokenMinter, GCP_TOKEN_CACHE_LIMIT } from "../src/credentials/gcp-service-account.js"
 import { signAwsRequest } from "../src/credentials/aws-sigv4.js"
 import { pickApiKeyFromMap, resolveUpstreamCredential, type GatewayCredential } from "../src/provider-credentials.js"
-import { deferred, memoryStore, now, provider, refreshInput, row } from "./google-oauth-refresh-fixture.js"
+import { authorization, credentialSet, deferred, memoryStore, now, provider, refreshInput, row } from "./google-oauth-refresh-fixture.js"
 
 // Offline state-machine witnesses. SQL serialization is separately covered by
 // the opt-in scratch-MySQL suite; this spec does not claim real database proof.
@@ -62,7 +62,7 @@ for (const result of ["success", "invalid_grant", "transient"]) {
       else if (change === "replacement") state.row = row({ secret: JSON.stringify({ accessToken: "replacement", refreshToken: "replacement-refresh" }), expires_at: new Date(now.getTime() + 3600_000) })
       else {
         state.row = row({ status: "revoked" })
-        if (change === "client_rotation") state.client = { ...provider, oauth_client_secret: "new-client-secret" }
+        if (change === "client_rotation") state.client = { ...credentialSet, oauth_client_secret: "new-client-secret" }
       }
       const snapshot = JSON.stringify(state.row)
       release.resolve()
@@ -109,7 +109,7 @@ test("a winner appearing before acquisition is reused without refreshing the los
 
 test("a reacquired lease rejects both old success and old failure even with the same caller clock", async () => {
   const { store, state } = memoryStore()
-  const scope = { credentialId: row().id, provider, subject: row().subject }
+  const scope = { credentialId: row().id, provider: credentialSet, subject: row().subject, authorization: authorization() }
   const first = await store.tryAcquireRefreshLock({ scope, credential: row(), now, until: new Date(now.getTime() + 30_000) })
   assert.ok(first)
   assert.equal(await store.recordRefreshFailure({ lock: first, error: null, permanent: false, now }), true)
@@ -134,7 +134,7 @@ test("wrong provider or member and missing/revoked rows cannot acquire or send t
     let calls = 0
     const refresh = createGoogleOauthRefresher({ store, tokenFetch: async () => { calls++; return tokenResponse() } })
     const input = refreshInput()
-    if (change === "provider") input.provider = { ...provider, id: "ipr_other" }
+    if (change === "provider") input.provider = { ...credentialSet, id: "gcs_other" }
     if (change === "member") input.subject = "om_other"
     assert.deepEqual(await refresh(input), { kind: "auth_required" })
     assert.equal(calls, 0)
@@ -163,7 +163,7 @@ test("expired tokens on contention and transient outages yield retry, never cred
   for (const busy of [true, false]) {
     const { store, state } = memoryStore(row({ refreshing_until: busy ? new Date(now.getTime() + 30_000) : null }))
     const refresh = createGoogleOauthRefresher({ store, tokenFetch: async () => { throw new Error("SECRET_MARKER") }, sleep: async () => {}, pollMs: 1, waitMs: 1 })
-    const result = await resolveUpstreamCredential({ provider, orgMembershipId: row().subject, envNames: [], loadProviderCredential: async () => state.row, refreshGoogleOauthToken: refresh, now })
+    const result = await resolveUpstreamCredential({ provider, ...authorization(), envNames: [], loadProviderCredential: async () => state.row, refreshGoogleOauthToken: refresh, now })
     assert.deepEqual(result, { kind: "retry", credentialId: row().id, reason: busy ? "refresh_busy" : "refresh_unavailable" })
     assert.equal(state.row?.status, "active")
     assert.ok(!(JSON.stringify(result) + state.lastError).includes("SECRET_MARKER"))
@@ -216,7 +216,9 @@ test("service-account in-flight work is bounded and failures do not poison the c
 test("provider compatibility is enforced before minting; settings are never guessed as tokens", async () => {
   let calls = 0
   const credential: GatewayCredential = { id: "ipc_sa", kind: "gcp_service_account", secret: JSON.stringify(serviceAccount), status: "active", expires_at: null }
-  const result = await resolveUpstreamCredential({ provider: { ...provider, provider_id: "openai", credential_mode: "org" }, orgMembershipId: row().subject, envNames: [], loadProviderCredential: async () => credential, mintGcpAccessToken: async () => { calls++; return { kind: "token", accessToken: "must-not-leak" } }, now })
+  const access = authorization()
+  access.selection.row.credentialSet.credential_mode = "org"
+  const result = await resolveUpstreamCredential({ provider: { ...provider, provider_id: "openai" }, ...access, envNames: [], loadProviderCredential: async () => credential, mintGcpAccessToken: async () => { calls++; return { kind: "token", accessToken: "must-not-leak" } }, now })
   assert.equal(result.kind, "invalid_secret")
   assert.equal(calls, 0)
   assert.equal(pickApiKeyFromMap({ GOOGLE_VERTEX_PROJECT: "secret-project" }, ["GOOGLE_VERTEX_PROJECT"]), null)
@@ -229,13 +231,15 @@ for (const change of ["revoke", "rotate"]) test(`service-account ${change} durin
   let credential: GatewayCredential = { id: "ipc_sa", kind: "gcp_service_account", secret: JSON.stringify(serviceAccount), status: "active", expires_at: null }
   const release = deferred<void>()
   const entered = deferred<void>()
-  const input = { provider: { ...provider, credential_mode: "org" as const }, orgMembershipId: row().subject, envNames: [], loadProviderCredential: async () => credential, now }
+  const access = authorization()
+  access.selection.row.credentialSet.credential_mode = "org"
+  const input = { provider, ...access, envNames: [], loadProviderCredential: async () => credential, now }
   const pending = resolveUpstreamCredential({ ...input, mintGcpAccessToken: async () => { entered.resolve(); await release.promise; return { kind: "token", accessToken: "old-mint" } } })
   await entered.promise
   credential = change === "revoke" ? { ...credential, status: "revoked" } : { ...credential, secret: JSON.stringify({ ...serviceAccount, client_email: "new@example.com" }) }
   release.resolve()
   const result = await pending
-  assert.equal(result.kind, change === "revoke" ? "org_credential_missing" : "retry")
+  assert.equal(result.kind, "retry")
   assert.ok(!JSON.stringify(result).includes("old-mint"))
   let calls = 0
   if (change === "revoke") {

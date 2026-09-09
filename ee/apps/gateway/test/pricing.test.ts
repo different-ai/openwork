@@ -4,7 +4,7 @@ import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { InferenceReporter } from "../src/inference-reporting.js"
 import { createPricingCatalog, estimateCostMicroUsd, loadPricingCatalogFromFile } from "../src/pricing.js"
 import { createRequestLogRecorder } from "../src/request-log.js"
-import type { InferenceRequestLogRow, RequestLogStartInput } from "../src/request-log.js"
+import type { GatewayRequestLogRow as InferenceRequestLogRow, RequestLogStartInput } from "../src/request-log.js"
 
 const catalog = createPricingCatalog({
   anthropic: {
@@ -64,9 +64,10 @@ function createRecorder(rows: InferenceRequestLogRow[]) {
 function start(overrides: Partial<RequestLogStartInput> = {}): RequestLogStartInput {
   return {
     identity: {
+      kind: "gateway",
       organizationId: createDenTypeId("organization"),
       orgMembershipId: createDenTypeId("member"),
-      inferenceKeyId: createDenTypeId("inferenceKey"),
+      gatewayKeyId: createDenTypeId("gatewayKey"),
     },
     openworkRequestId: "req-1",
     route: "org_provider",

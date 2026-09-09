@@ -1,15 +1,18 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import type { GatewayCredential, GatewayProvider } from "../src/gateway.js"
 import type { InferenceReporter } from "../src/inference-reporting.js"
 import type { MintGcpAccessToken } from "../src/credentials/gcp-service-account.js"
 import type { RefreshGoogleOauthToken } from "../src/credentials/google-oauth-refresh.js"
 import { createGoogleOauthRefresher } from "../src/credentials/google-oauth-refresh.js"
 import type { LoadProviderCredential } from "../src/provider-credentials.js"
-import { memoryStore, row as oauthRow } from "./google-oauth-refresh-fixture.js"
+import { matrixRow, memoryStore, row as oauthRow } from "./google-oauth-refresh-fixture.js"
+import type { GatewayAccessRow } from "../src/provider-access.js"
 import { createProviderCatalog } from "../src/provider-catalog.js"
-import type { InferenceRequestLogRow } from "../src/request-log.js"
+import type { GatewayRequestLogRow as InferenceRequestLogRow } from "../src/request-log.js"
 import { bedrockStreamFrames } from "./helpers/event-stream.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
@@ -23,8 +26,10 @@ const { registerProxyRoutes } = await import("../src/proxy.js")
 
 const organizationId = "org_test_org"
 const memberId = "om_test_member"
-const providerId = "ipr_test_provider"
+const providerId = createDenTypeId("inferenceProvider")
 const credentialId = "ipc_test_credential"
+const gatewayKey = `ow_gw_${"A".repeat(43)}`
+const credentialSetId = "gcs_00000000000000000000000001"
 const vertexProvider = { provider_id: "google-vertex", provider_config: { npm: "@ai-sdk/google-vertex" }, settings: { project: "test-project", location: "us-central1" } }
 
 const catalog = createProviderCatalog({
@@ -51,6 +56,8 @@ type UpstreamRequest = {
 
 type TestServerOptions = {
   provider?: Partial<GatewayProvider> | null
+  credentialSet?: Partial<GatewayAccessRow["credentialSet"]>
+  accessRows?: GatewayAccessRow[]
   credential?: Partial<GatewayCredential> | null
   access?: boolean
   fetch?: typeof fetch
@@ -67,10 +74,7 @@ function provider(overrides: Partial<GatewayProvider> = {}): GatewayProvider {
     provider_id: "openai",
     provider_config: { npm: "@ai-sdk/openai", env: ["OPENAI_API_KEY"] },
     settings: {},
-    credential_mode: "org",
     status: "active",
-    oauth_client_id: null,
-    oauth_client_secret: null,
     ...overrides,
   }
 }
@@ -156,8 +160,19 @@ function createTestServer(options: TestServerOptions = {}) {
   }
   const providerRow = options.provider === null ? null : provider(options.provider)
   const credentialRow = options.credential === null ? null : credential(options.credential)
+  const base = matrixRow()
+  const set: GatewayAccessRow["credentialSet"] = { ...base.credentialSet, id: credentialSetId, gateway_provider_id: providerId, credential_mode: "org", ...options.credentialSet }
+  const accessRows = options.accessRows ?? ["fixture", "gpt-4o", "gpt-5", "claude-sonnet-4-5", "llama-3", "x", "gemini-2.5-pro", "gemini", "claude", "anthropic.claude-3-5-sonnet-20241022-v2:0"].map((model): GatewayAccessRow => ({
+    ...base, credentialSet: set,
+    grant: { ...base.grant, gateway_provider_id: providerId, org_membership_id: null, audience_key: "organization" },
+    group: { ...base.group, gateway_provider_id: providerId },
+    model: { id: createDenTypeId("inferenceProviderModel"), gateway_provider_id: providerId, model_id: model, name: model, model_config: {}, created_at: base.group.created_at },
+  }))
 
   registerProxyRoutes(app, {
+    async findActiveGatewayKey(key) {
+      return key.value === gatewayKey ? { id: "gky_test_key", organization_id: organizationId, org_membership_id: memberId } : null
+    },
     async findActiveInferenceKey() {
       return { id: "ik_test_key", organization_id: organizationId, org_membership_id: memberId }
     },
@@ -190,13 +205,13 @@ function createTestServer(options: TestServerOptions = {}) {
       mintGcpAccessToken: options.mintGcpAccessToken ?? (async () => {
         throw new Error("unexpected gcp token mint")
       }),
-      async loadInferenceProvider(input) {
+      async loadGatewayProvider(input) {
         if (!providerRow || input.organizationId !== providerRow.organization_id || input.inferenceProviderId !== providerRow.id) return null
         return providerRow
       },
-      async hasProviderAccess(input) {
-        accessChecks.push(input)
-        return options.access ?? true
+      async loadGatewayAccess(input) {
+        accessChecks.push({ inferenceProviderId: input.gatewayProviderId, orgMembershipId: input.orgMembershipId })
+        return options.access === false ? [] : accessRows
       },
       async loadProviderCredential(input) {
         credentialLookups.push(input)
@@ -205,11 +220,11 @@ function createTestServer(options: TestServerOptions = {}) {
     },
   })
 
-  return { app, upstreamRequests, logRows, accessChecks, credentialLookups }
+  return { app, upstreamRequests, logRows, accessChecks, credentialLookups, accessRows }
 }
 
 function gatewayRequest(input: { path: string; method?: string; body?: unknown; rawBody?: string; headers?: Record<string, string>; id?: string }) {
-  const headers = new Headers({ authorization: "Bearer ow_inf_test", ...input.headers })
+  const headers = new Headers({ authorization: `Bearer ${gatewayKey}`, ...input.headers })
   const body = input.rawBody ?? (input.body === undefined ? undefined : JSON.stringify(input.body))
   if (input.body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json")
   return new Request(`http://openwork.test/api/v1/providers/${input.id ?? providerId}${input.path}`, {
@@ -245,7 +260,7 @@ test("openai chat: forwards with bearer auth, strips incoming auth, injects incl
   const response = await app.fetch(gatewayRequest({
     path: "/chat/completions",
     body: { model: "gpt-4o", stream: true, messages: [] },
-    headers: { "openai-organization": "org-abc", "x-stainless-lang": "js", cookie: "a=b", "x-api-key": "ow_inf_test", "anthropic-version": "2023-06-01" },
+    headers: { "openai-organization": "org-abc", "x-stainless-lang": "js", cookie: "a=b", "x-api-key": gatewayKey, "anthropic-version": "2023-06-01" },
   }))
 
   assert.equal(response.status, 200)
@@ -269,15 +284,19 @@ test("openai chat: forwards with bearer auth, strips incoming auth, injects incl
   assert.deepEqual(body.stream_options, { include_usage: true })
   assert.equal(body.model, "gpt-4o")
 
-  assert.deepEqual(accessChecks, [{ inferenceProviderId: providerId, orgMembershipId: memberId }])
-  assert.deepEqual(credentialLookups, Array.from({ length: 2 }, () => ({ inferenceProviderId: providerId, subject: "org", orgMembershipId: memberId })))
+  assert.deepEqual(accessChecks, Array.from({ length: 2 }, () => ({ inferenceProviderId: providerId, orgMembershipId: memberId })))
+  assert.equal(credentialLookups.length, 3)
+  assert.ok(credentialLookups.every((input) => input.scope.gatewayProviderId === providerId && input.scope.orgMembershipId === memberId && input.subject === "org" && input.selection.row.credentialSet.id === credentialSetId))
 
   const row = await waitForRows(logRows)
   assert.equal(row.route, "org_provider")
   assert.equal(row.protocol, "openai_chat")
   assert.equal(row.upstream_provider_id, "openai")
-  assert.equal(row.inference_provider_id, providerId)
-  assert.equal(row.inference_provider_credential_id, credentialId)
+  assert.equal(row.inference_key_id, null)
+  assert.equal(row.gateway_key_id, "gky_test_key")
+  assert.equal(row.gateway_provider_id, providerId)
+  assert.equal(row.gateway_provider_credential_id, credentialId)
+  assert.equal(row.credential_set_id, credentialSetId)
   assert.equal(row.upstream_host, "api.openai.com")
   assert.equal(row.upstream_path, "/v1/chat/completions")
   assert.equal(row.requested_model, "gpt-4o")
@@ -433,7 +452,7 @@ test("google: x-goog-api-key auth, key query stripped, alt=sse preserved, model 
     ], { "x-goog-request-id": "goog_1" }),
   })
   const response = await app.fetch(gatewayRequest({
-    path: "/models/gemini-2.5-pro:streamGenerateContent?alt=sse&key=ow_inf_test",
+    path: `/models/gemini-2.5-pro:streamGenerateContent?alt=sse&key=${gatewayKey}`,
     body: { contents: [] },
   }))
   assert.equal(response.status, 200)
@@ -533,24 +552,17 @@ test("google vertex: non-stream anthropic uses rawPredict; missing project/locat
   assert.equal(row.error_code, "provider_misconfigured")
 })
 
-test("passthrough: GET /models forwarded with query, no body, no usage parsed", async () => {
+test("GET provider /models returns only local accessible aliases", async () => {
   const { app, upstreamRequests, logRows } = createTestServer({
     fetch: async () => Response.json({ object: "list", data: [], usage: { prompt_tokens: 1 } }),
   })
   const response = await app.fetch(gatewayRequest({ path: "/models?limit=5", method: "GET" }))
   assert.equal(response.status, 200)
-  const upstream = upstreamRequests[0]
-  assert.ok(upstream)
-  assert.equal(upstream.url, "https://api.openai.com/v1/models?limit=5")
-  assert.equal(upstream.method, "GET")
-  assert.equal(upstream.body, null)
-  await response.arrayBuffer()
-  const row = await waitForRows(logRows)
-  assert.equal(row.protocol, "passthrough")
-  assert.equal(row.usage_source, "missing")
-  assert.equal(row.input_tokens, null)
-  assert.equal(row.outcome, "ok")
-  assert.equal(row.requested_model, null)
+  assert.equal(upstreamRequests.length, 0)
+  const body = parseJsonObject(await response.text())
+  assert.ok(Array.isArray(body.data) && body.data.length > 0)
+  assert.ok(body.data.every((model) => isRecord(model) && typeof model.id === "string" && model.id.startsWith("gwm_")))
+  assert.equal(logRows.length, 0)
 })
 
 test("rejects with 404 provider_not_found for another org's provider and unknown ids without logging", async () => {
@@ -579,13 +591,13 @@ test("rejects with 403 provider_access_denied and logs a rejected row", async ()
   assert.equal(row.outcome, "rejected")
   assert.equal(row.error_code, "provider_access_denied")
   assert.equal(row.status, 403)
-  assert.equal(row.inference_provider_id, providerId)
+  assert.equal(row.gateway_provider_id, providerId)
   assert.equal(row.upstream_host, "api.openai.com")
 })
 
 test("member mode without a credential → 401 openwork_auth_required with header", async () => {
   const { app, upstreamRequests, logRows, credentialLookups } = createTestServer({
-    provider: { credential_mode: "member" },
+    credentialSet: { credential_mode: "member" },
     credential: null,
   })
   const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
@@ -595,7 +607,9 @@ test("member mode without a credential → 401 openwork_auth_required with heade
   assert.equal(error.code, "openwork_auth_required")
   assert.equal(error.provider_id, providerId)
   assert.equal(typeof error.message, "string")
-  assert.deepEqual(credentialLookups, [{ inferenceProviderId: providerId, subject: memberId, orgMembershipId: memberId }])
+  assert.equal(credentialLookups.length, 1)
+  assert.equal(credentialLookups[0]?.subject, memberId)
+  assert.equal(credentialLookups[0]?.selection.row.credentialSet.id, credentialSetId)
   assert.equal(upstreamRequests.length, 0)
   const row = await waitForRows(logRows)
   assert.equal(row.outcome, "rejected")
@@ -605,26 +619,28 @@ test("member mode without a credential → 401 openwork_auth_required with heade
 test("member mode with an expired oauth token → 401 openwork_auth_required", async () => {
   const now = new Date("2026-09-03T12:00:00Z")
   const { app, upstreamRequests, logRows } = createTestServer({
-    provider: { ...vertexProvider, credential_mode: "member" },
+    provider: vertexProvider,
+    credentialSet: { credential_mode: "member" },
     credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "old" }), expires_at: new Date("2026-09-03T11:59:59Z") },
     now,
   })
-  const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
+  const response = await app.fetch(gatewayRequest({ path: "/models/x:generateContent", body: { contents: [] } }))
   assert.equal(response.status, 401)
   assert.equal(response.headers.get("x-openwork-auth-required"), "1")
   assert.equal((await readError(response)).code, "openwork_auth_required")
   assert.equal(upstreamRequests.length, 0)
   const row = await waitForRows(logRows)
-  assert.equal(row.inference_provider_credential_id, credentialId)
+  assert.equal(row.gateway_provider_credential_id, credentialId)
   assert.equal(row.started_at.toISOString(), now.toISOString())
 })
 
 test("member mode with a valid Vertex oauth token forwards it as the bearer", async () => {
   const { app, upstreamRequests } = createTestServer({
-    provider: { ...vertexProvider, credential_mode: "member" },
+    provider: vertexProvider,
+    credentialSet: { credential_mode: "member" },
     credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "fresh" }), expires_at: new Date(Date.now() + 600_000) },
   })
-  const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
+  const response = await app.fetch(gatewayRequest({ path: "/models/x:generateContent", body: { contents: [] } }))
   assert.equal(response.status, 200)
   assert.equal(upstreamRequests[0]?.headers.get("authorization"), "Bearer fresh")
 })
@@ -642,11 +658,12 @@ test("org mode without a credential → 502 provider_credential_missing", async 
 test("member oauth_google near expiry is refreshed under the lock and the fresh bearer is forwarded", async () => {
   const now = new Date("2026-09-03T12:00:00Z")
   const refreshCalls: Array<Parameters<RefreshGoogleOauthToken>[0]> = []
-  const currentProvider = provider({ ...vertexProvider, credential_mode: "member", oauth_client_id: "cid", oauth_client_secret: "csecret" })
-  const { state, store } = memoryStore(oauthRow({ id: credentialId, inference_provider_id: providerId, organization_id: organizationId,
+  const currentProvider = provider(vertexProvider)
+  const currentSet = { ...matrixRow().credentialSet, gateway_provider_id: providerId, oauth_client_id: "cid", oauth_client_secret: "csecret" }
+  const { state, store } = memoryStore(oauthRow({ id: credentialId, gateway_provider_id: providerId, organization_id: organizationId,
     subject: memberId, org_membership_id: memberId, updated_at: now,
     secret: JSON.stringify({ accessToken: "old", refreshToken: "rt" }), expires_at: new Date(now.getTime() + 30_000) }))
-  state.client = currentProvider
+  state.client = currentSet
   const refresh = createGoogleOauthRefresher({ store, tokenFetch: async (_url, init) => {
     assert.ok(init?.body instanceof URLSearchParams)
     assert.equal(init.body.get("refresh_token"), "rt")
@@ -655,14 +672,17 @@ test("member oauth_google near expiry is refreshed under the lock and the fresh 
   } })
   const { app, upstreamRequests, logRows } = createTestServer({
     provider: currentProvider,
+    credentialSet: currentSet,
     loadProviderCredential: async (input) => {
-      assert.deepEqual(input, { inferenceProviderId: providerId, subject: memberId, orgMembershipId: memberId })
+      assert.equal(input.scope.gatewayProviderId, providerId)
+      assert.equal(input.subject, memberId)
+      assert.equal(input.selection.row.credentialSet.id, credentialSetId)
       return state.row ? structuredClone(state.row) : null
     },
     now,
     async refreshGoogleOauthToken(input) {
       refreshCalls.push(input)
-      assert.equal(input.provider.id, providerId)
+      assert.equal(input.provider.id, credentialSetId)
       assert.equal(input.subject, memberId)
       return refresh(input)
     },
@@ -677,15 +697,16 @@ test("member oauth_google near expiry is refreshed under the lock and the fresh 
   await response.arrayBuffer()
   const row = await waitForRows(logRows)
   assert.equal(row.outcome, "ok")
-  assert.equal(row.inference_provider_credential_id, credentialId)
+  assert.equal(row.gateway_provider_credential_id, credentialId)
 })
 
 test("member oauth_google with plenty of time left is not refreshed", async () => {
   const { app, upstreamRequests } = createTestServer({
-    provider: { ...vertexProvider, credential_mode: "member" },
+    provider: vertexProvider,
+    credentialSet: { credential_mode: "member" },
     credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "current", refreshToken: "rt" }), expires_at: new Date(Date.now() + 10 * 60_000) },
   })
-  const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
+  const response = await app.fetch(gatewayRequest({ path: "/models/x:generateContent", body: { contents: [] } }))
   assert.equal(response.status, 200)
   assert.equal(upstreamRequests[0]?.headers.get("authorization"), "Bearer current")
 })
@@ -693,12 +714,13 @@ test("member oauth_google with plenty of time left is not refreshed", async () =
 test("member oauth_google refresh invalid_grant requires auth; transient retries never forward the old token", async () => {
   const now = new Date("2026-09-03T12:00:00Z")
   const failed = createTestServer({
-    provider: { ...vertexProvider, credential_mode: "member" },
+    provider: vertexProvider,
+    credentialSet: { credential_mode: "member" },
     credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "old", refreshToken: "rt" }), expires_at: new Date(now.getTime() - 1000) },
     now,
     refreshGoogleOauthToken: async () => ({ kind: "auth_required" }),
   })
-  const response = await failed.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
+  const response = await failed.app.fetch(gatewayRequest({ path: "/models/x:generateContent", body: { contents: [] } }))
   assert.equal(response.status, 401)
   assert.equal(response.headers.get("x-openwork-auth-required"), "1")
   const error = await readError(response)
@@ -711,12 +733,13 @@ test("member oauth_google refresh invalid_grant requires auth; transient retries
   const retryReasons: Array<"refresh_busy" | "refresh_unavailable" | "credential_changed"> = ["refresh_busy", "refresh_unavailable", "credential_changed"]
   for (const reason of retryReasons) {
     const retry = createTestServer({
-      provider: { ...vertexProvider, credential_mode: "member" },
+      provider: vertexProvider,
+      credentialSet: { credential_mode: "member" },
       credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "old", refreshToken: "rt" }), expires_at: new Date(now.getTime() - 1000) },
       now,
       refreshGoogleOauthToken: async (input) => {
         assert.equal(input.subject, memberId)
-        assert.equal(input.provider.id, providerId)
+        assert.equal(input.provider.id, credentialSetId)
         return { kind: "retry", reason }
       },
     })
@@ -738,7 +761,7 @@ test("org-subject oauth expired → 502 provider_credential_expired, no refresh 
     credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "old", refreshToken: "rt" }), expires_at: new Date(now.getTime() - 1000) },
     now,
   })
-  const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
+  const response = await app.fetch(gatewayRequest({ path: "/models/x:generateContent", body: { contents: [] } }))
   assert.equal(response.status, 502)
   assert.equal((await readError(response)).code, "provider_credential_expired")
   assert.equal(upstreamRequests.length, 0)
@@ -792,7 +815,7 @@ test("bedrock: aws_keys request is SigV4-signed after the body rewrite, host fro
   const response = await app.fetch(gatewayRequest({
     path: "/model/anthropic.claude-3-5-sonnet-20241022-v2%3A0/converse-stream",
     body: { messages: [{ role: "user", content: [{ text: "hi" }] }] },
-    headers: { "x-api-key": "ow_inf_test" },
+    headers: { "x-api-key": gatewayKey },
   }))
   assert.equal(response.status, 200)
   await response.text()
@@ -862,7 +885,7 @@ test("bedrock: non-stream converse JSON usage; settings.region host; missing reg
   assert.equal(missing.upstreamRequests.length, 0)
   const missingRow = await waitForRows(missing.logRows)
   assert.equal(missingRow.error_code, "provider_misconfigured")
-  assert.equal(missingRow.inference_provider_credential_id, credentialId)
+  assert.equal(missingRow.gateway_provider_credential_id, credentialId)
 })
 
 test("aws_keys on a non-bedrock provider is rejected before upstream auth materialization", async () => {
@@ -877,10 +900,11 @@ test("aws_keys on a non-bedrock provider is rejected before upstream auth materi
 
 test("unsupported Azure OAuth cannot be forwarded as a bearer", async () => {
   const { app, upstreamRequests } = createTestServer({
-    provider: { provider_id: "azure", credential_mode: "member", settings: { resourceName: "test-resource" } },
+    provider: { provider_id: "azure", settings: { resourceName: "test-resource" } },
+    credentialSet: { credential_mode: "member" },
     credential: { kind: "oauth_azure", secret: JSON.stringify({ accessToken: "not-forwarded" }) },
   })
-  const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: {} }))
+  const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
   assert.equal(response.status, 502)
   assert.equal((await readError(response)).code, "provider_credential_invalid")
   assert.equal(upstreamRequests.length, 0)
@@ -943,12 +967,12 @@ test("logs client_aborted when the client cancels mid-stream", async () => {
   assert.equal(upstreamCancelled, true)
 })
 
-test("streams non-JSON bodies unchanged and reports missing usage when the stream has none", async () => {
+test("uploads non-JSON file bytes unchanged and reports missing usage", async () => {
   const { app, upstreamRequests, logRows } = createTestServer({
     fetch: async () => sseResponse(['data: {"id":"1","choices":[{"delta":{"content":"x"}}]}\n\n', "data: [DONE]\n\n"]),
   })
   const response = await app.fetch(gatewayRequest({
-    path: "/chat/completions",
+    path: "/files",
     method: "POST",
     headers: { "content-type": "text/plain" },
     rawBody: "raw text",
@@ -960,4 +984,172 @@ test("streams non-JSON bodies unchanged and reports missing usage when the strea
   const row = await waitForRows(logRows)
   assert.equal(row.usage_source, "missing")
   assert.equal(row.requested_model, null)
+})
+
+test("Models and Gateway keys cannot authenticate each other's routes", async () => {
+  const fixture = createTestServer()
+  for (const path of ["/api/v1/models", "/api/v1/chat/completions"]) {
+    const response = await fixture.app.fetch(new Request(`http://openwork.test${path}`, { headers: { authorization: `Bearer ${gatewayKey}` } }))
+    assert.equal(response.status, 401)
+  }
+  for (const key of ["ow_inf_test", "ow_gw_malformed"]) {
+    const response = await fixture.app.fetch(gatewayRequest({ path: "/models", headers: { authorization: `Bearer ${key}` } }))
+    assert.equal(response.status, 401)
+  }
+  assert.equal(fixture.accessChecks.length, 0)
+  assert.equal(fixture.credentialLookups.length, 0)
+  assert.equal(fixture.upstreamRequests.length, 0)
+})
+
+test("wire aliases select and log a group/set/model, then rewrite embeddings to the raw model", async () => {
+  const fixture = createTestServer()
+  const selected = fixture.accessRows.find((row) => row.model?.model_id === "gpt-4o")
+  assert.ok(selected?.model)
+  const alias = createGatewayModelAlias({ modelGroupId: selected.group.id, credentialSetId: selected.credentialSet.id, gatewayProviderModelId: selected.model.id })
+  const response = await fixture.app.fetch(gatewayRequest({ path: "/embeddings", body: { model: alias, input: "sample" } }))
+  assert.equal(response.status, 200)
+  await response.text()
+  assert.equal(parseJsonObject(fixture.upstreamRequests[0]?.body ?? null).model, "gpt-4o")
+  const row = await waitForRows(fixture.logRows)
+  assert.equal(row.requested_model, alias)
+  assert.equal(row.upstream_model, "gpt-4o")
+  assert.equal(row.model_group_id, selected.group.id)
+  assert.equal(row.credential_set_id, selected.credentialSet.id)
+  assert.equal(row.access_grant_id, selected.grant.id)
+  assert.equal(row.gateway_provider_credential_id, credentialId)
+  assert.equal(row.inference_key_id, null)
+})
+
+test("unqualified overlapping grants conflict; an explicit alias constrains before specificity", async () => {
+  const seed = createTestServer()
+  const first = seed.accessRows[0]
+  assert.ok(first?.model)
+  const second: GatewayAccessRow = {
+    ...first,
+    group: { ...first.group, id: createDenTypeId("gatewayModelGroup"), name: "Other group" },
+    credentialSet: { ...first.credentialSet, id: createDenTypeId("gatewayCredentialSet"), name: "Other set" },
+    grant: { ...first.grant, id: createDenTypeId("inferenceProviderAccess") },
+  }
+  second.grant.model_group_id = second.group.id
+  second.grant.credential_set_id = second.credentialSet.id
+  const fixture = createTestServer({ accessRows: [second, first] })
+  const conflict = await fixture.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: first.model.model_id } }))
+  assert.equal(conflict.status, 409)
+  const body = parseJsonObject(await conflict.text())
+  assert.equal(body.error, "gateway_selection_required")
+  assert.ok(Array.isArray(body.selections) && body.selections.length === 2)
+  assert.equal(fixture.credentialLookups.length, 0)
+  assert.equal(fixture.upstreamRequests.length, 0)
+
+  second.grant.org_membership_id = memberId
+  second.grant.audience_key = `member:${memberId}`
+  const preferred = createTestServer({ accessRows: [first, second] })
+  const raw = await preferred.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: first.model.model_id } }))
+  assert.equal(raw.status, 200)
+  assert.equal(preferred.credentialLookups[0]?.selection.row.grant.id, second.grant.id)
+  const alias = createGatewayModelAlias({ modelGroupId: first.group.id, credentialSetId: first.credentialSet.id, gatewayProviderModelId: first.model.id })
+  const explicit = createTestServer({ accessRows: [second, first] })
+  const response = await explicit.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: alias } }))
+  assert.equal(response.status, 200)
+  assert.equal(explicit.credentialLookups[0]?.selection.row.grant.id, first.grant.id)
+  await raw.text()
+  await response.text()
+})
+
+test("model-less requests require a grant across sets and never forward the selection hint", async () => {
+  const first = createTestServer().accessRows[0]
+  assert.ok(first)
+  const second = { ...first, credentialSet: { ...first.credentialSet, id: createDenTypeId("gatewayCredentialSet") },
+    grant: { ...first.grant, id: createDenTypeId("inferenceProviderAccess"), org_membership_id: memberId, audience_key: `member:${memberId}` } }
+  second.grant.credential_set_id = second.credentialSet.id
+  const fixture = createTestServer({ accessRows: [first, second] })
+  assert.equal((await fixture.app.fetch(gatewayRequest({ path: "/files" }))).status, 409)
+  const response = await fixture.app.fetch(gatewayRequest({ path: "/files", headers: { "x-openwork-gateway-grant-id": first.grant.id } }))
+  assert.equal(response.status, 200)
+  await response.text()
+  assert.equal(fixture.credentialLookups[0]?.selection.row.credentialSet.id, first.credentialSet.id)
+  assert.equal(fixture.upstreamRequests[0]?.headers.get("x-openwork-gateway-grant-id"), null)
+})
+
+test("missing models, ungranted models, alternate selectors and deferred inference fail before secret loading", async () => {
+  for (const request of [
+    gatewayRequest({ path: "/embeddings", body: { input: "sample" } }),
+    gatewayRequest({ path: "/embeddings", body: { model: "not-configured" } }),
+    gatewayRequest({ path: "/chat/completions", body: { model: "x", models: ["not-configured"] } }),
+    gatewayRequest({ path: "/chat/completions", rawBody: '{"model":"x"}', headers: { "content-type": "text/plain" } }),
+    gatewayRequest({ path: "/batches", body: { model: "x", input_file_id: "uncontrolled" } }),
+    gatewayRequest({ path: "/chat/completions", body: { model: "gwm_invalid" } }),
+  ]) {
+    const fixture = createTestServer()
+    const response = await fixture.app.fetch(request)
+    assert.ok(response.status >= 400 && response.status < 500)
+    assert.equal(fixture.credentialLookups.length, 0)
+    assert.equal(fixture.upstreamRequests.length, 0)
+  }
+})
+
+test("selection revocation while accounting starts prevents egress", async () => {
+  const fixture = createTestServer({ loadProviderCredential: async () => {
+    fixture.accessRows.length = 0
+    return credential()
+  } })
+  const response = await fixture.app.fetch(gatewayRequest({ path: "/embeddings", body: { model: "x" } }))
+  assert.equal(response.status, 403)
+  assert.equal((await readError(response)).code, "gateway_selection_revoked")
+  assert.equal(fixture.upstreamRequests.length, 0)
+})
+
+test("equivalent winning grants attribute by stable ID, independent of row order", async () => {
+  const first = createTestServer().accessRows[0]
+  assert.ok(first?.model)
+  const second: GatewayAccessRow = { ...first,
+    group: { ...first.group, id: createDenTypeId("gatewayModelGroup") },
+    grant: { ...first.grant, id: createDenTypeId("inferenceProviderAccess") },
+  }
+  second.grant.model_group_id = second.group.id
+  const expected = [first.grant.id, second.grant.id].sort()[0]
+  for (const accessRows of [[first, second], [second, first]]) {
+    const fixture = createTestServer({ accessRows })
+    const response = await fixture.app.fetch(gatewayRequest({ path: "/embeddings", body: { model: first.model.model_id } }))
+    assert.equal(response.status, 200)
+    assert.equal(fixture.credentialLookups[0]?.selection.row.grant.id, expected)
+    await response.text()
+  }
+})
+
+test("an explicitly selected member set never falls back to the available org secret", async () => {
+  const first = createTestServer().accessRows[0]
+  assert.ok(first?.model)
+  const second: GatewayAccessRow = { ...first,
+    credentialSet: { ...first.credentialSet, id: createDenTypeId("gatewayCredentialSet"), credential_mode: "member" },
+    grant: { ...first.grant, id: createDenTypeId("inferenceProviderAccess") },
+  }
+  second.grant.credential_set_id = second.credentialSet.id
+  const fixture = createTestServer({ accessRows: [first, second], loadProviderCredential: async (input) => input.selection.row.credentialSet.id === second.credentialSet.id ? null : credential() })
+  const alias = createGatewayModelAlias({ modelGroupId: second.group.id, credentialSetId: second.credentialSet.id, gatewayProviderModelId: first.model.id })
+  const response = await fixture.app.fetch(gatewayRequest({ path: "/embeddings", body: { model: alias } }))
+  assert.equal(response.status, 401)
+  assert.equal((await readError(response)).credential_set_id, second.credentialSet.id)
+  assert.equal(fixture.credentialLookups.length, 1)
+  assert.equal(fixture.upstreamRequests.length, 0)
+})
+
+test("wire aliases are rewritten in Google, Bedrock and Vertex Anthropic paths", async () => {
+  const cases: Array<{ provider: Partial<GatewayProvider>; path: (alias: string) => string; body: (alias: string) => unknown; suffix: string }> = [
+    { provider: vertexProvider, path: (alias) => `/v1beta/models/${alias}:generateContent`, body: () => ({ contents: [] }), suffix: "/models/gemini:generateContent" },
+    { provider: { provider_id: "amazon-bedrock", settings: { region: "us-east-1" } }, path: (alias) => `/model/${alias}/converse`, body: () => ({ messages: [] }), suffix: "/model/gemini/converse" },
+    { provider: { ...vertexProvider, provider_id: "google-vertex-anthropic" }, path: () => "/messages", body: (alias) => ({ model: alias, messages: [] }), suffix: "/models/gemini:rawPredict" },
+  ]
+  for (const entry of cases) {
+    const fixture = createTestServer({ provider: entry.provider })
+    const selected = fixture.accessRows.find((row) => row.model?.model_id === "gemini")
+    assert.ok(selected?.model)
+    const alias = createGatewayModelAlias({ modelGroupId: selected.group.id, credentialSetId: selected.credentialSet.id, gatewayProviderModelId: selected.model.id })
+    const response = await fixture.app.fetch(gatewayRequest({ path: entry.path(alias), body: entry.body(alias) }))
+    assert.equal(response.status, 200)
+    assert.ok(fixture.upstreamRequests[0]?.url.endsWith(entry.suffix))
+    assert.ok(!fixture.upstreamRequests[0]?.url.includes(alias))
+    assert.ok(!fixture.upstreamRequests[0]?.body?.includes(alias))
+    await response.text()
+  }
 })

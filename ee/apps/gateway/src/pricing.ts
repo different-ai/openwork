@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import type { InferenceRequestProtocol } from "@openwork/types/den/inference"
+import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
 
 export type ModelPrice = {
   input: number
@@ -21,7 +21,7 @@ export type PricingCatalog = {
 export type CostEstimateInput = {
   providerId: string
   modelId: string
-  protocol?: InferenceRequestProtocol
+  protocol?: GatewayRequestProtocol
   inputTokens: number | null
   outputTokens: number | null
   cacheReadTokens: number | null

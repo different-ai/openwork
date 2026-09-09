@@ -2,10 +2,10 @@
 // DEN_DB_MYSQL_TEST_URL points at a database with the den-db schema applied.
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { createDenDb, InferenceProviderOauthStateTable, InferenceRequestLogTable, InferenceUsageRollupTable } from "@openwork-ee/den-db"
+import { createDenDb, GatewayProviderOauthStateTable as InferenceProviderOauthStateTable, GatewayRequestLogTable as InferenceRequestLogTable, GatewayUsageRollupTable as InferenceUsageRollupTable } from "@openwork-ee/den-db"
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import type { InferenceRequestLogRow } from "../src/request-log.js"
+import type { GatewayRequestLogRow as InferenceRequestLogRow } from "../src/request-log.js"
 import { HOUR_MS, createDbRollupRepository, rollupDimensionKey, runRollups } from "../src/rollups.js"
 
 const mysqlUrl = process.env.DEN_DB_MYSQL_TEST_URL?.trim()
@@ -35,8 +35,12 @@ test("hourly pass aggregates and deletes raw rows in MySQL", { skip: !mysqlUrl, 
     organization_id: org,
     org_membership_id: memberA,
     inference_key_id: key,
-    inference_provider_id: provider,
-    inference_provider_credential_id: null,
+    gateway_provider_id: provider,
+    gateway_provider_credential_id: null,
+    gateway_key_id: null,
+    model_group_id: null,
+    credential_set_id: null,
+    access_grant_id: null,
     route: "org_provider",
     protocol: "anthropic_messages",
     upstream_provider_id: "anthropic",
@@ -81,7 +85,8 @@ test("hourly pass aggregates and deletes raw rows in MySQL", { skip: !mysqlUrl, 
     await db.insert(InferenceRequestLogTable).values(rows)
     await db.insert(InferenceProviderOauthStateTable).values({
       id: oauthStateId,
-      inference_provider_id: provider,
+      gateway_provider_id: provider,
+      credential_set_id: createDenTypeId("gatewayCredentialSet"),
       org_membership_id: memberA,
       state: `test-${oauthStateId}`,
       code_verifier: "verifier",
