@@ -449,12 +449,18 @@ test("create, preview, save and reopen an app without changing already-open resu
   evidence.recordAssertionEvidence("Sharing includes the workflow, saved results, and sibling apps without adding every sibling to the dashboard", "The recipient could read the workflow and the latest saved result in both the selected app and its previously inaccessible companion. Both appeared in the accessible app list, but only the selected app was on their dashboard; the separate private workflow stayed inaccessible.", true);
 
   await step("return from browser verification and keep subsequent sharing uninterrupted", async () => {
+    const browserRecipient = world.den.members.browserRecipient;
+    if (!browserRecipient) throw new Error("The browser-return recipient was not provisioned.");
+    expect((await probe.api(browserRecipient, `/v1/apps/${appId}`)).response.status).toBe(403);
+    expect((await probe.api(browserRecipient, `/v1/workflows/${world.configObjectId}`)).response.status).toBe(403);
     await world.ageAdminSession();
     await user.click({ role: "button", label: "Share" });
     await user.click({ role: "checkbox", label: "Private planning" });
-    await user.type({ label: "Teammate’s email" }, colleague.email);
+    await user.type({ label: "Teammate’s email" }, browserRecipient.email);
     await user.click("Share apps");
     await user.see({ text: "Confirm your identity to share apps" });
+    expect((await probe.api(browserRecipient, `/v1/apps/${appId}`)).response.status).toBe(403);
+    expect((await probe.api(browserRecipient, `/v1/workflows/${world.configObjectId}`)).response.status).toBe(403);
     const verificationUrl = await probe.eval(() => document.querySelector<HTMLInputElement>('[aria-label="Verification address"]')?.value);
     if (typeof verificationUrl !== "string") throw new Error("Missing verification address");
     const webUser = user.on(world.web);
@@ -465,22 +471,27 @@ test("create, preview, save and reopen an app without changing already-open resu
     const returned = await probe.on(world.web).eval(() => document.querySelector<HTMLAnchorElement>('a[href^="openwork://den-reauth"]')?.href);
     if (typeof returned !== "string") throw new Error("Missing Return to OpenWork link");
     await world.returnVerification(returned);
-    await user.see({ text: `Shared 1 app with ${colleague.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
+    await user.see({ text: `Shared 1 app with ${browserRecipient.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
+    const granted = await probe.api(browserRecipient, `/v1/apps/${appId}`);
+    expect(granted.response.status, granted.text).toBe(200);
+    expect(granted.body).toMatchObject({ onDashboard: true, canManage: false, view: { id: appId }, payload: { data: { topic: "Next week’s briefing" } } });
+    expect((await probe.api(browserRecipient, `/v1/workflows/${world.configObjectId}`)).response.status).toBe(200);
+    expect((await probe.api(browserRecipient, `/v1/apps/${privateAppId}`)).response.status).toBe(403);
     await user.click("Done");
     await user.click({ role: "button", label: "Share" });
     await user.click({ role: "checkbox", label: "Private planning" });
-    await user.type({ label: "Teammate’s email" }, colleague.email);
+    await user.type({ label: "Teammate’s email" }, browserRecipient.email);
     await user.click("Share apps");
-    await user.see({ text: `Shared 1 app with ${colleague.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
+    await user.see({ text: `Shared 1 app with ${browserRecipient.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
     await user.notSee({ text: "Confirm your identity to share apps" });
-    const listed = record((await probe.api(colleague, "/v1/apps")).body).items;
+    const listed = record((await probe.api(browserRecipient, "/v1/apps")).body).items;
     if (!Array.isArray(listed)) throw new Error("Expected the recipient app list");
-    expect(listed.filter((item) => record(item).onDashboard)).toHaveLength(1);
-    expect((await probe.api(colleague, `/v1/apps/${privateAppId}`)).response.status).toBe(403);
+    expect(listed.filter((item) => record(item).onDashboard).map((item) => field(record(item).view, "id"))).toEqual([appId]);
+    expect((await probe.api(browserRecipient, `/v1/apps/${privateAppId}`)).response.status).toBe(403);
     await user.click("Done");
     await world.refreshFixtureAdmin();
   });
-  evidence.recordAssertionEvidence("Browser return resumes sharing and the fresh session avoids another prompt", "Navigating the real return link in an Electron browser tab exercised main-process interception, native IPC, preload forwarding, and the renderer startup bridge to complete the pending share. Sharing again immediately completed without verification, kept exactly one recipient dashboard entry, and left the unchecked private app inaccessible. OS protocol registration is outside this container journey.", true);
+  evidence.recordAssertionEvidence("Browser return grants new access and the fresh session avoids another prompt", "A separate recipient received 403 for the app and workflow before verification, including while the share waited for verification. Navigating the real return link in an Electron browser tab exercised main-process interception, native IPC, preload forwarding, and the renderer startup bridge. The recipient then received 200 with the app's saved result, view-only access, dashboard placement, and workflow access. Sharing again immediately completed without verification, kept exactly the selected app on their dashboard, and left the unchecked private app inaccessible. OS protocol registration is outside this container journey.", true);
 
   const cleanupCompanion = await seed.api(world.den.admin, `/v1/artifact-views/${companionAppId}/retire`, { method: "POST" });
   expect(cleanupCompanion.response.status, cleanupCompanion.text).toBe(200);
