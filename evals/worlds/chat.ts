@@ -1,14 +1,16 @@
-import { browserScript, reattachSurface } from "@openwork/cdp";
-import { spawn } from "node:child_process";
+import { browserScript, reattachSurface, type Surface } from "@openwork/cdp";
+import { execFile, spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
 import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
 import type { MockAgentWorkload } from "@openwork/labs";
 import { chatContinuity } from "./chat-continuity.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
+const execFileAsync = promisify(execFile);
 
 declare global {
   interface Window {
@@ -88,7 +90,7 @@ function sendStream(response: ServerResponse, chunks: unknown[], intervalMs = 0)
 
 export async function configureProvider(
   seed: Seed,
-  app: Awaited<ReturnType<Seed["desktop"]>>,
+  app: Surface,
   workspaceId: string,
   providerId: string,
   modelId: string,
@@ -193,7 +195,7 @@ export async function arrangeControl(
 
 async function seedSessionRetry(
   seed: Seed,
-  app: Awaited<ReturnType<Seed["desktop"]>>,
+  app: Surface,
   options: { title?: string } = {},
 ): Promise<{ sessionId: string; title: string }> {
   const deadline = Date.now() + 60_000;
@@ -223,18 +225,58 @@ export async function paletteSessionActions(seed: Seed) {
   return { app, workspace, session };
 }
 
+async function runOnDesktopHost(app: Surface, source: string): Promise<string> {
+  if (app.handle.hostKind === "local") {
+    const result = await execFileAsync(process.execPath, ["--input-type=module", "-e", source], { timeout: 90_000 });
+    return result.stdout.trim();
+  }
+  if (app.handle.hostKind !== "daytona") throw new Error(`Cannot arrange a workspace alias on ${app.handle.hostKind}.`);
+  const sandbox = app.handle.sandboxId;
+  if (!sandbox) throw new Error("Cannot arrange a workspace alias without the desktop sandbox ID.");
+  const command = `node --input-type=module -e '${source.replace(/'/g, "'\"'\"'")}'`;
+  const result = await execFileAsync("daytona", ["exec", sandbox, "--", command], { timeout: 90_000 });
+  return result.stdout.trim();
+}
+
+async function arrangeWorkspaceAlias(app: Surface, requestedPath: string, targetPath: string) {
+  const marker = "OPENWORK_WORKSPACE_ALIAS=";
+  const output = await runOnDesktopHost(app, `
+    const { mkdir, realpath, symlink } = await import("node:fs/promises");
+    const requested = ${JSON.stringify(requestedPath)};
+    const target = ${JSON.stringify(targetPath)};
+    await mkdir(target, { recursive: true });
+    await symlink(target, requested, "dir");
+    console.log(${JSON.stringify(marker)} + await realpath(requested));
+  `);
+  const canonicalPath = output.split("\n").find((line) => line.startsWith(marker))?.slice(marker.length) ?? "";
+  if (!canonicalPath || canonicalPath === requestedPath) throw new Error("Workspace alias did not resolve to a distinct canonical directory.");
+  return {
+    requestedPath,
+    canonicalPath,
+    dispose: () => runOnDesktopHost(app, `
+      const { rm } = await import("node:fs/promises");
+      await rm(${JSON.stringify(requestedPath)}, { force: true });
+      await rm(${JSON.stringify(targetPath)}, { recursive: true, force: true });
+    `).then(() => undefined),
+  };
+}
+
 async function splitPaneQuestions(
   seed: Seed,
   name: string,
   agentWorkloads: MockAgentWorkload[],
   policy: Record<string, unknown> = { permission: { question: "allow" } },
+  aliasPaths?: { requestedPath: string; targetPath: string },
 ) {
   const providerId = "split-send-mock";
   const modelId = "split-send-model";
   const mock = seed.mock({ agentWorkloads });
   const den = await seed.den({ mocks: { agent: mock } });
   const app = await seed.desktop({ name, den, as: "admin", model: `${providerId}/${modelId}` });
-  const workspace = await seed.workspace(app, seed.tmpPath(name));
+  const workspaceAlias = aliasPaths
+    ? await arrangeWorkspaceAlias(app, aliasPaths.requestedPath, aliasPaths.targetPath)
+    : null;
+  const workspace = await seed.workspace(app, workspaceAlias?.requestedPath ?? seed.tmpPath(name));
   // Arrange an allowed native question tool independently of custom-agent defaults.
   // TODO(primitive): write workspace fixture files through a first-class seed API.
   const questionPolicyWritten = await seed.evalIn(app, browserScript(async (workspaceId, content) => {
@@ -258,7 +300,7 @@ async function splitPaneQuestions(
       },
     },
   });
-  return { app, workspace, mock: den.mocks.agent };
+  return { app, workspace, mock: den.mocks.agent, workspaceAlias };
 }
 
 export async function delegatedQuestionHandoff(seed: Seed) {
@@ -313,6 +355,8 @@ export async function delegatedQuestionHandoff(seed: Seed) {
 /** Real native permissions and a provider retry, without synthetic UI events. */
 export async function permissionStopRecovery(seed: Seed) {
   const engine = resolveEvalEngine();
+  const workspacePath = seed.tmpPath("permission-stop-recovery");
+  const aliasPaths = { requestedPath: `${workspacePath}-alias`, targetPath: `${workspacePath}-canonical` };
   const retry = { prompt: "Prepare the retry reliability summary", reply: "Retry recovery finished." };
   const stopped = { prompt: "Inspect the stopped permission workspace", command: "printf STOP_PERMISSION_WITNESS" };
   const other = { prompt: "Inspect the other permission workspace", command: "printf OTHER_PERMISSION_WITNESS" };
@@ -326,10 +370,21 @@ export async function permissionStopRecovery(seed: Seed) {
       } }],
     })),
     { promptMarker: followup.prompt, latestUserTurn: true, finalReply: followup.reply, steps: [] },
-  ], { permission: { bash: "ask" } });
+  ], { permission: { bash: "ask" } }, aliasPaths);
+  const workspaceAlias = base.workspaceAlias;
+  if (!workspaceAlias) throw new Error("Permission Stop recovery did not arrange its workspace alias.");
   const stoppedSession = await seedSessionRetry(seed, base.app, { title: "Stop permission task" });
   const otherSession = await seedSessionRetry(seed, base.app, { title: "Keep permission task" });
-  return { ...base, engine, retry, followup, stopped: { ...stopped, ...stoppedSession }, other: { ...other, ...otherSession } };
+  return {
+    ...base,
+    workspaceAlias,
+    engine,
+    retry,
+    followup,
+    stopped: { ...stopped, ...stoppedSession },
+    other: { ...other, ...otherSession },
+    [Symbol.asyncDispose]: workspaceAlias.dispose,
+  };
 }
 
 /** Synthetic release/model responses, but real Electron quit, engine teardown, and relaunch. */

@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { browserScript } from "@openwork/cdp";
 import { spec } from "@openwork/testkit";
 import { parentChildPermissionWorld, scopedPermissionRefreshWorld } from "../worlds/first-run.ts";
 import { delegatedQuestionHandoff, permissionStopRecovery } from "../worlds/chat.ts";
@@ -95,6 +96,34 @@ function text(value: unknown): string {
   return value;
 }
 
+function primarySurfaceOwns(sessionId: string) {
+  return browserScript((expectedSessionId) => document
+    .querySelector<HTMLElement>('[data-workbench-pane="primary"] [data-session-surface-id]')
+    ?.dataset.sessionSurfaceId === expectedSessionId, [sessionId]);
+}
+
+function emptyComposerFor(sessionId: string) {
+  return browserScript((expectedSessionId) => {
+    const surface = document.querySelector<HTMLElement>('[data-workbench-pane="primary"] [data-session-surface-id]');
+    if (surface?.dataset.sessionSurfaceId !== expectedSessionId) return false;
+    const editor = surface.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]');
+    return editor?.isContentEditable === true && /^[\s\u200B]*$/u.test(editor.innerText ?? "");
+  }, [sessionId]);
+}
+
+function sidebarSessionAvailability(workspaceId: string, sessionId: string) {
+  return browserScript((expectedWorkspaceId, expectedSessionId) => {
+    const workspace = [...document.querySelectorAll<HTMLElement>("[data-sidebar-workspace-id]")]
+      .find((candidate) => candidate.dataset.sidebarWorkspaceId === expectedWorkspaceId);
+    return {
+      row: [...(workspace?.querySelectorAll<HTMLElement>("[data-sidebar-session-id]") ?? [])]
+        .some((candidate) => candidate.dataset.sidebarSessionId === expectedSessionId),
+      showMore: [...(workspace?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+        .some((button) => /^Show (?:\d+ )?more$/.test(button.innerText.trim())),
+    };
+  }, [workspaceId, sessionId]);
+}
+
 const stopTest = spec.world(permissionStopRecovery, { timeout: 600_000 });
 
 stopTest("retry recovery and stopping a permission leave other requests and fresh work intact", async ({ world, user, probe, step }) => {
@@ -107,15 +136,51 @@ stopTest("retry recovery and stopping a permission leave other requests and fres
   };
   const pending = async (id: string) => records(await read(v2 ? `/session/${id}/permission` : "/permission"))
     .filter((item) => item.sessionID === id);
-  const send = async (prompt: string) => { await user.type("composer", prompt, { verify: true }); await user.press("Enter"); };
+  const send = async (sessionId: string, prompt: string) => {
+    await probe.eventually(() => probe.eval(emptyComposerFor(sessionId)), {
+      within: 30_000, label: "the intended conversation owns an empty editable composer", until: Boolean,
+    });
+    await user.type("composer", prompt, { verify: true });
+    await user.press("Enter");
+  };
   const open = async (session: { title: string; sessionId: string }) => {
+    const available = await probe.eventually(() => probe.eval(sidebarSessionAvailability(world.workspace.workspaceId, session.sessionId)), {
+      within: 30_000, label: "the intended conversation or its sidebar expansion is available",
+      until: (state) => state.row || state.showMore,
+    });
+    if (!available.row) {
+      await user.click({ role: "button", label: /^Show (?:\d+ )?more$/ });
+      await probe.eventually(() => probe.eval(sidebarSessionAvailability(world.workspace.workspaceId, session.sessionId)), {
+        within: 15_000, label: "Show more reveals the intended conversation", until: (state) => state.row,
+      });
+    }
     await user.click({ text: session.title });
-    await probe.eventually(() => probe.hash(), { within: 30_000, label: "the intended conversation is selected",
-      until: (hash) => hash.includes(`/session/${session.sessionId}`) });
+    await probe.eventually(() => probe.eval(primarySurfaceOwns(session.sessionId)), {
+      within: 30_000, label: "the intended conversation owns the primary session surface", until: Boolean,
+    });
   };
 
+  await step("the configured workspace alias preserves the same native workspace across engine path semantics", async () => {
+    const registry = await probe.desktopApi("/workspaces");
+    expect(registry.status).toBe(200);
+    const configured = records(record(registry.body).items)
+      .find((workspace) => workspace.id === world.workspace.workspaceId);
+    expect(configured).toMatchObject({ id: world.workspace.workspaceId, path: world.workspaceAlias.requestedPath });
+    expect(world.workspaceAlias.requestedPath).not.toBe(world.workspaceAlias.canonicalPath);
+    for (const sessionId of [world.stopped.sessionId, world.other.sessionId]) {
+      const session = record(await read(`/session/${sessionId}`));
+      const directory = v2 ? record(session.location).directory : session.directory;
+      if (v2) expect([world.workspaceAlias.requestedPath, world.workspaceAlias.canonicalPath]).toContain(directory);
+      else expect(directory).toBe(world.workspaceAlias.canonicalPath);
+    }
+    if (!v2) {
+      const resolved = record(await read(`/path?directory=${encodeURIComponent(world.workspaceAlias.requestedPath)}`));
+      expect(resolved.directory).toBe(world.workspaceAlias.canonicalPath);
+    }
+  });
+
   await step("a native retry survives active polling and then recovers", async () => {
-    await send(world.retry.prompt);
+    await send(world.other.sessionId, world.retry.prompt);
     await user.see({ text: /Rate limited for lifecycle verification/ }, { timeoutMs: 45_000 });
     // Several authoritative reads span the sync poll cadence while the native
     // engine still owns the retry. None is evidence of completion.
@@ -133,12 +198,12 @@ stopTest("retry recovery and stopping a permission leave other requests and fres
   });
 
   const unrelated = await step("two conversations own separate real approvals", async () => {
-    await send(world.other.prompt);
+    await send(world.other.sessionId, world.other.prompt);
     await user.see({ text: world.other.command }, { timeoutMs: 45_000 });
     const other = await probe.eventually(() => pending(world.other.sessionId), { within: 30_000,
       label: "the unrelated approval is pending", until: (items) => items.length === 1 });
     await open(world.stopped);
-    await send(world.stopped.prompt);
+    await send(world.stopped.sessionId, world.stopped.prompt);
     await user.see({ text: world.stopped.command }, { timeoutMs: 45_000 });
     expect(await pending(world.stopped.sessionId)).toHaveLength(1);
     expect(await pending(world.other.sessionId)).toEqual(other);
@@ -155,13 +220,15 @@ stopTest("retry recovery and stopping a permission leave other requests and fres
     expect(await pending(world.other.sessionId)).toEqual(unrelated);
     expect((await world.mock.agentRequests({ promptMarker: world.stopped.prompt })).some((call) => call.kind === "final")).toBe(false);
     await user.reload();
-    await user.see("composer", { editable: true, timeoutMs: 45_000 });
+    await probe.eventually(() => probe.eval(emptyComposerFor(world.stopped.sessionId)), {
+      within: 45_000, label: "reload restores the stopped conversation's empty editable composer", until: Boolean,
+    });
     await user.notSee("Allow once");
     expect(await pending(world.other.sessionId)).toEqual(unrelated);
   });
 
   await step("fresh work completes once and the unrelated approval remains answerable", async () => {
-    await send(world.followup.prompt);
+    await send(world.stopped.sessionId, world.followup.prompt);
     await user.see({ text: world.followup.reply }, { timeoutMs: 45_000 });
     expect((await world.mock.agentRequests({ promptMarker: world.followup.prompt })).filter((call) => call.kind === "final")).toHaveLength(1);
     await open(world.other);
@@ -215,12 +282,15 @@ questionTest("a parent answers and stops real child questions, then finishes fre
     // A pending question replaces the composer. Navigate as a person rather
     // than waiting for the control rail's composer-based readiness check.
     await user.click({ text: title });
-    await probe.eventually(() => probe.hash(), {
-      within: 30_000, label: "the requested root conversation is selected",
-      until: (hash) => hash.includes(`/session/${sessionId}`),
+    await probe.eventually(() => probe.eval(primarySurfaceOwns(sessionId)), {
+      within: 30_000, label: "the requested root conversation owns the primary session surface",
+      until: Boolean,
     });
   };
-  const send = async (prompt: string) => {
+  const send = async (sessionId: string, prompt: string) => {
+    await probe.eventually(() => probe.eval(emptyComposerFor(sessionId)), {
+      within: 30_000, label: "the intended root owns an empty editable composer", until: Boolean,
+    });
     await user.type("composer", prompt, { verify: true });
     await user.press("Enter");
   };
@@ -246,7 +316,7 @@ questionTest("a parent answers and stops real child questions, then finishes fre
   };
 
   const unrelated = await step("an unrelated root waits for its own answer", async () => {
-    await send(world.unrelated.prompt);
+    await send(world.unrelated.sessionId, world.unrelated.prompt);
     await user.see({ text: world.unrelated.question }, { timeoutMs: 45_000 });
     const requests = await probe.eventually(pending, {
       within: 30_000, label: "the unrelated root owns a real question request",
@@ -263,7 +333,7 @@ questionTest("a parent answers and stops real child questions, then finishes fre
   const delegate = async () => {
     await open(world.root.sessionId, "Delegated question parent");
     await user.notSee({ text: world.unrelated.question });
-    await send(world.root.prompt);
+    await send(world.root.sessionId, world.root.prompt);
     const requests = await probe.eventually(pending, {
       within: 45_000, label: "the real subagent asks its question",
       until: (items) => items.some((item) => item.question === world.child.question),
@@ -349,7 +419,7 @@ questionTest("a parent answers and stops real child questions, then finishes fre
   const recovered = await step("Stop immediately followed by fresh work interrupts the child and completes only the new turn once", async () => {
     await user.click({ role: "button", label: "Stop" });
     // No reload or cleanup polling between Stop and sending the next user turn.
-    await send(world.followup.prompt);
+    await send(world.root.sessionId, world.followup.prompt);
     await user.see({ text: world.followup.reply }, { timeoutMs: 60_000 });
     await user.notSee({ role: "button", label: /^Child checklist/ });
     await user.notSee({ role: "button", label: "Stop" });

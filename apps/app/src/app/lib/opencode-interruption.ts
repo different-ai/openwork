@@ -149,8 +149,17 @@ async function stopForegroundTree(
   if (childResult.status === "rejected") throw childResult.reason;
   const root = rootResult.value;
   const before = childResult.value;
-  if (root.id !== rootID || (directory !== undefined && root.directory !== directory)) {
+  if (root.id !== rootID) {
     throw new Error("Could not verify the conversation's workspace. Stop was not confirmed.");
+  }
+  if (directory !== undefined && root.directory !== directory) {
+    // The engine may canonicalize a scoped directory (for example, a symlinked
+    // OS path). Trust the engine's scoped /path result, not a browser-side path
+    // rewrite or the session's claim alone.
+    const canonical = unwrap(await client.path.get({ directory }, options));
+    if (typeof canonical.directory !== "string" || canonical.directory.length === 0 || canonical.directory !== root.directory) {
+      throw new Error("Could not verify the conversation's workspace. Stop was not confirmed.");
+    }
   }
   const targets = new Set<string>();
   const stop = async (sessionID: string, knownChildren: string[] = []) => {

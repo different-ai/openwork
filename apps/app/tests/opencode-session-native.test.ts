@@ -561,6 +561,90 @@ describe("native Stop and follow-up handoff", () => {
     });
   });
 
+  test("accepts an engine-confirmed canonical workspace alias before stopping owned children and admitting one follow-up", async () => {
+    const requestedDirectory = "/tmp/openwork-alias";
+    const canonicalDirectory = "/private/tmp/openwork-alias";
+    const root = { ...session, id: "ses_canonical_alias", directory: canonicalDirectory };
+    const child = { ...session, id: "ses_canonical_child", directory: canonicalDirectory, parentID: root.id };
+    const aborted: string[] = [];
+    let sends = 0;
+    await withSessionFetch((request) => {
+      const url = new URL(request.url);
+      const path = url.pathname;
+      if (path.endsWith("/path")) return Response.json({ state: "", config: "", worktree: canonicalDirectory, directory: canonicalDirectory });
+      if (path.endsWith(`/session/${root.id}`)) return Response.json(root);
+      if (path.endsWith(`/session/${child.id}`)) return Response.json(child);
+      if (path.endsWith(`/session/${root.id}/message`)) return Response.json(turnMessages(root.id, [delegatedTool(child.id)]));
+      if (path.endsWith(`/session/${child.id}/message`)) return Response.json(turnMessages(child.id));
+      if (path.endsWith("/abort")) {
+        const id = path.match(/\/session\/([^/]+)\/abort$/)?.[1];
+        if (id) aborted.push(id);
+        return Response.json(true);
+      }
+      if (path.endsWith("/status")) return Response.json({});
+      if (path.endsWith("/prompt_async")) { sends += 1; return new Response(null, { status: 204 }); }
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    }, async (requests) => {
+      const client = createClient(endpoint.opencodeBaseUrl, requestedDirectory);
+      const stop = interruptSessionTurn(endpoint.opencodeBaseUrl, client, root.id, requestedDirectory, { timeoutMs: 1_000 });
+      const followUp = submitAfterInterruption(endpoint.opencodeBaseUrl, root.id, async () => unwrap(await client.session.promptAsync({
+        sessionID: root.id, parts: [{ type: "text", text: "follow-up" }],
+      })));
+      await Promise.all([stop, followUp]);
+
+      expect(aborted).toEqual([root.id, root.id, child.id]);
+      expect(sends).toBe(1);
+      expect(sessionNeedsStop(endpoint.opencodeBaseUrl, root.id)).toBe(false);
+      const pathRequests = requests.filter((request) => new URL(request.url).pathname.endsWith("/path"));
+      expect(pathRequests).toHaveLength(1);
+      expect(new URL(pathRequests[0]!.url).searchParams.get("directory")).toBe(requestedDirectory);
+    });
+  });
+
+  test("rejects mismatched root identity, invalid canonical workspaces, and failed canonical reads after attempting native abort", async () => {
+    for (const mismatch of ["sessionID", "directory", "canonical-read", "missing-directories", "empty-directories"]) {
+      const requestedDirectory = `/tmp/openwork-${mismatch}`;
+      const rootID = `ses_root_${mismatch}`;
+      const { directory: _sessionDirectory, ...sessionWithoutDirectory } = session;
+      const root = {
+        ...(mismatch === "missing-directories" ? sessionWithoutDirectory : session),
+        id: mismatch === "sessionID" ? "ses_wrong_root" : rootID,
+        ...(mismatch === "missing-directories" ? {} : {
+          directory: mismatch === "sessionID" ? requestedDirectory : mismatch === "empty-directories" ? "" : `/private${requestedDirectory}`,
+        }),
+      };
+      let sends = 0;
+      await withSessionFetch((request) => {
+        const url = new URL(request.url);
+        const path = url.pathname;
+        if (path.endsWith(`/session/${rootID}`)) return Response.json(root);
+        if (path.endsWith(`/session/${rootID}/message`)) return Response.json(turnMessages(rootID));
+        if (path.endsWith("/abort")) return Response.json(true);
+        if (path.endsWith("/path")) {
+          if (mismatch === "canonical-read") return Response.json({ message: "Canonical path unavailable" }, { status: 503 });
+          if (mismatch === "missing-directories") return Response.json({ state: "", config: "", worktree: requestedDirectory });
+          return Response.json({
+            state: "", config: "", worktree: requestedDirectory,
+            directory: mismatch === "empty-directories" ? "" : requestedDirectory,
+          });
+        }
+        if (path.endsWith("/prompt_async")) { sends += 1; return new Response(null, { status: 204 }); }
+        throw new Error(`Unexpected request: ${request.method} ${path}`);
+      }, async (requests) => {
+        const baseUrl = `${endpoint.opencodeBaseUrl}-${mismatch}`;
+        const client = createClient(baseUrl, requestedDirectory);
+        const expectedError = mismatch === "canonical-read" ? "Canonical path unavailable" : "Could not verify the conversation's workspace";
+        await expect(interruptSessionTurn(baseUrl, client, rootID, requestedDirectory, { timeoutMs: 1_000 })).rejects.toThrow(expectedError);
+        await expect(submitAfterInterruption(baseUrl, rootID, async () => { sends += 1; })).rejects.toThrow(expectedError);
+
+        expect(sessionNeedsStop(baseUrl, rootID)).toBe(true);
+        expect(sends).toBe(0);
+        expect(requests.filter((request) => request.method === "POST" && new URL(request.url).pathname.endsWith("/abort"))).toHaveLength(1);
+        expect(requests.filter((request) => new URL(request.url).pathname.endsWith("/path"))).toHaveLength(mismatch === "sessionID" ? 0 : 1);
+      });
+    }
+  });
+
   test("stops only the current foreground tree and holds follow-up through delayed child abort and authoritative idle", async () => {
     const root = { ...session, id: "ses_tree" };
     const baseUrl = endpoint.opencodeBaseUrl;
