@@ -1006,6 +1006,7 @@ function matchingConnectionForRequirement(input: {
 
 async function statusForRequirement(input: {
   allConnections: ExternalMcpConnectionRow[]
+  mode: "readiness" | "execution"
   member: McpMemberIdentity
   requirement: MarketplacePluginMcpRequirement
   usableConnections: ExternalMcpConnectionRow[]
@@ -1027,8 +1028,10 @@ async function statusForRequirement(input: {
     ...(connection && usable ? { connectionId: connection.id, connectionName: connection.name, credentialMode: connection.credentialMode } : {}),
   }
 
+  // Discovery preserves legacy credential readiness; execution still requires the mandatory client.
   if (!connection || !usable || (
-    connection.authType === "oauth"
+    input.mode === "execution"
+    && connection.authType === "oauth"
     && pluginMcpRequiresPreRegisteredOAuthClient(connection.url)
     && !await getOrgOAuthClient(connection.organizationId, connection.id)
   )) {
@@ -1153,6 +1156,7 @@ async function marketplacePluginMcpRequirements(input: {
 }
 
 async function marketplacePluginMcpRequirementStatuses(input: {
+  mode: "readiness" | "execution"
   member: McpMemberIdentity
   organizationId: OrganizationId
   pluginIds: PluginId[]
@@ -1171,6 +1175,7 @@ async function marketplacePluginMcpRequirementStatuses(input: {
   for (const requirement of requirements) {
     const status = await statusForRequirement({
       allConnections,
+      mode: input.mode,
       member: input.member,
       requirement,
       usableConnections,
@@ -1443,6 +1448,7 @@ export async function searchMarketplaceCapabilities(input: {
     rows: await listActiveCapabilityRows(organizationId),
   })
   const requirementStatusesByPluginId = await marketplacePluginMcpRequirementStatuses({
+    mode: "readiness",
     organizationId,
     member: input.member,
     pluginIds: unique(rows.map((row) => row.plugin.id)),
@@ -1656,6 +1662,7 @@ export async function executeMarketplaceCapability(input: {
 
   if (marketplaceConfigObjectExecutionMode(row.configObject.objectType) === "instructional") {
     const requirementStatuses = await marketplacePluginMcpRequirementStatuses({
+      mode: "execution",
       organizationId,
       member: input.member,
       pluginIds: [row.plugin.id],

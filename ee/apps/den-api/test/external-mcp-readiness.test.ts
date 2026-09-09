@@ -165,7 +165,7 @@ test("GitHub plugin readiness preserves legacy ready and sign-in states but stil
     DEN_MCP_RESOURCES: ["http://127.0.0.1:8790/mcp"],
     DEN_MCP_TOKEN_USE_CLAIM: "https://openworklabs.com/token_use",
   }))
-  const { resolveMarketplacePluginCloudReadiness } = await import("../src/mcp/marketplace-capabilities.js")
+  const { resolveMarketplacePluginCloudReadiness, searchMarketplaceCapabilities, executeMarketplaceCapability } = await import("../src/mcp/marketplace-capabilities.js")
   const organizationId = createDenTypeId("organization")
   const orgMembershipId = createDenTypeId("member")
   const pluginId = createDenTypeId("plugin")
@@ -211,7 +211,60 @@ test("GitHub plugin readiness preserves legacy ready and sign-in states but stil
     expect(readiness.get(pluginId)?.connections[0]?.oauthClientConfigured).toBe(input.oauth || input.authType === "oauth" ? input.client : undefined)
     expect(readiness.get(pluginId)?.connections[0]?.oauthClientRequired).toBe(input.oauth ? true : input.authType === "oauth" ? false : undefined)
     expect(selectResults).toHaveLength(0)
+
+    const skillId = createDenTypeId("configObject")
+    const row = {
+      configObject: { id: skillId, objectType: "skill", title: "Legacy GitHub", description: "Legacy readiness", searchText: "legacy github" },
+      plugin: { id: pluginId, name: "Legacy GitHub" },
+      marketplace: null,
+    }
+    const grants = [{ resourceId: pluginId, orgWide: true, role: "viewer", removedAt: null }]
+    const requirementRows = [
+      [{ configObjectId, pluginId, pluginName: "Legacy GitHub", title: "GitHub" }],
+      [{ configObjectId, normalizedPayloadJson: { mcpServers: { github: { url, oauth: input.oauth } } } }],
+      [], // Requirement bindings.
+      [candidate], // All connections.
+      [{ connection: candidate }], [], // Usable direct and plugin-sourced connections.
+    ]
+    const memberRows = input.perMember ? [input.disconnected ? [] : [{ ...account, organizationId, orgMembershipId }]] : []
+    const authMismatch = input.oauth && input.authType !== "oauth"
+    const discoveryState = authMismatch || (input.disconnected && !input.perMember)
+      ? "needs_admin_setup"
+      : input.disconnected ? "needs_connection" : "ready"
+    queueSelectResults([
+      [{ id: orgMembershipId, role: "member" }],
+      [row], [], [], // Marketplace rows, grant-only rows and their subquery.
+      [], grants,
+      ...requirementRows,
+      ...(!authMismatch ? memberRows : []),
+    ])
+    const matches = await searchMarketplaceCapabilities({ organizationId, member: { orgMembershipId, teamIds: [] }, query: "legacy github" })
+    expect(matches).toHaveLength(1)
+    expect(matches[0]?.status).toBe(discoveryState)
+    expect(matches[0]?.mcpRequirements?.[0]?.state).toBe(discoveryState)
+    if (discoveryState === "needs_connection") expect(matches[0]?.action?.surface).toBe("openwork_your_connections")
+    expect(selectResults).toHaveLength(0)
+
+    const missingClient = input.authType === "oauth" && !input.client
+    queueSelectResults([
+      [row], [{ id: orgMembershipId, role: "member" }], [], grants,
+      [{ rawSourceText: "Legacy instruction sentinel" }],
+      ...requirementRows,
+      ...(!authMismatch && input.authType === "oauth" ? [input.client ? [orgClient] : []] : []),
+      ...(!authMismatch && !missingClient ? memberRows : []),
+    ])
+    const executed = await executeMarketplaceCapability({ organizationId, member: { orgMembershipId, teamIds: [] }, pluginId, configObjectId: skillId })
+    if (!executed.ok) throw new Error(executed.message)
+    const executionState = missingClient ? "needs_admin_setup" : discoveryState
+    if (executionState === "ready") {
+      expect(executed.result.content).toBe("Legacy instruction sentinel")
+    } else {
+      expect(executed.result.status).toBe(executionState)
+      expect(executed.result.content).toBeUndefined()
+    }
+    expect(selectResults).toHaveLength(0)
   }
+  expect(transactionCalls).toBe(0)
 })
 
 test("per-member connection list readiness reads credentials without row locks", async () => {

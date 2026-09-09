@@ -6,7 +6,7 @@ function normalizedRemoteMcpUrl(value: string) {
   try {
     const url = new URL(value)
     const pathname = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, "") : url.pathname
-    return `${url.host.toLowerCase()}${pathname}`
+    return `${url.origin}${pathname}`
   } catch {
     return null
   }

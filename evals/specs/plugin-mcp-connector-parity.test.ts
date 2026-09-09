@@ -1,3 +1,4 @@
+import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
@@ -171,7 +172,8 @@ test("persisted GitHub bindings preserve desktop readiness without allowing new 
   needs({ placement: "local" });
   if (!await localMysqlIsRunning() || !await localRedisIsRunning()) skip("needs: local MySQL and Redis");
   const organizationName = `Legacy Connector ${Date.now().toString(36)}`;
-  await using den = await server({ place, web: false, org: { name: organizationName, members: { reader: {} } } });
+  const encryptionSecret = "legacy-connector-fixture-encryption-key";
+  await using den = await server({ place, web: false, env: { DEN_DB_ENCRYPTION_KEY: encryptionSecret }, org: { name: organizationName, members: { reader: {} } } });
   if (!den.database) throw new Error("Persisted legacy connector coverage requires an isolated database");
   const orgId = await organizationId(den.admin, organizationName);
   const headers = orgHeaders(den.admin, orgId);
@@ -340,12 +342,48 @@ test("persisted GitHub bindings preserve desktop readiness without allowing new 
     state: "needs_signin",
     connections: [{ id: connectionId, authType: "oauth", connectedForMe: false, oauthClientConfigured: false, oauthClientRequired: false, authTypeMismatch: false }],
   });
+  const signinSearch = await callTool("search_capabilities", { query: "legacy-github-readiness", type: "skills", limit: 20 });
+  const signinMatches = Array.isArray(signinSearch.matches) ? signinSearch.matches.filter(isRecord) : [];
+  expect(signinMatches.find((entry) => entry.name === skill.name)).toMatchObject({
+    status: "needs_connection",
+    action: { surface: "openwork_your_connections" },
+    mcpRequirements: [{ connectionId, state: "needs_connection", connectedForMe: false }],
+  });
   const blocked = await callTool("execute_capability", { name: skill.name });
   expect(blocked).toMatchObject({ status: "needs_admin_setup", action: { surface: "openwork_organization_connections" } });
   expect(blocked.content).toBeUndefined();
   evidence.recordAssertionEvidence(
     "Legacy OAuth desktop sign-in readiness does not authorize execution",
-    "An authorized non-admin member still sees needs_signin for the existing GitHub OAuth connection when the dependency permits alternative auth. With no registered OAuth client, instructional execution still returns needs_admin_setup without skill content.",
+    "An authorized non-admin member still sees needs_signin for the existing GitHub OAuth connection when the dependency permits alternative auth. Search retains the member Connect action. With no registered OAuth client, instructional execution still returns needs_admin_setup without skill content.",
+    true,
+  );
+
+  // A persisted shared token is enough for legacy display readiness, not for
+  // mandatory-client execution. The isolated fixture never contacts GitHub.
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", createHash("sha256").update(encryptionSecret).digest(), iv);
+  const ciphertext = Buffer.concat([cipher.update("legacy-fixture-token", "utf8"), cipher.final()]);
+  const encryptedToken = `enc:v1:${iv.toString("base64")}.${cipher.getAuthTag().toString("base64")}.${ciphertext.toString("base64")}`;
+  await queryDenDatabase(databaseUrl,
+    "UPDATE external_mcp_connection SET credential_mode = 'shared', access_token = ?, connected_at = NOW() WHERE organization_id = ? AND id = ?",
+    [encryptedToken, orgId, connectionId],
+  );
+  expect(await desktopReadiness(den.members.reader)).toMatchObject({
+    state: "ready",
+    connections: [{ id: connectionId, authType: "oauth", connectedForMe: true, oauthClientConfigured: false, oauthClientRequired: false }],
+  });
+  const legacySearch = await callTool("search_capabilities", { query: "legacy-github-readiness", type: "skills", limit: 20 });
+  const legacyMatches = Array.isArray(legacySearch.matches) ? legacySearch.matches.filter(isRecord) : [];
+  expect(legacyMatches.find((entry) => entry.name === skill.name)).toMatchObject({
+    status: "ready",
+    mcpRequirements: [{ connectionId, state: "ready", connectedForMe: true }],
+  });
+  const credentialedBlocked = await callTool("execute_capability", { name: skill.name });
+  expect(credentialedBlocked).toMatchObject({ status: "needs_admin_setup", action: { surface: "openwork_organization_connections" } });
+  expect(credentialedBlocked.content).toBeUndefined();
+  evidence.recordAssertionEvidence(
+    "Legacy OAuth credentials preserve readiness and search without bypassing mandatory-client execution",
+    "A persisted shared OAuth token with no organization OAuth client remains ready in resolved desktop readiness and skill search. Executing the same skill still returns needs_admin_setup and no instruction content.",
     true,
   );
 });
