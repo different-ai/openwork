@@ -4,7 +4,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, WebContents, WebContentsView, clipboard, dialog, session, shell } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, dialog, session, shell } from "electron";
 import {
   BACKGROUND_TAB_VIEWPORT,
   backgroundTabEmulationCommands,
@@ -681,9 +681,14 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     ensureWebMcpFramePolicy();
     const tabId = restoreTabId ?? createBrowserTabId();
     const { webContents: openerWebContents, ...restContentsOptions } = contentsOptions;
+    // Guard: Electron's C++ constructor requires webContents to be a real
+    // WebContents instance. When setWindowOpenHandler supplies a non-object
+    // or falsy value (e.g. undefined from certain window.open calls), drop it
+    // to avoid "TypeError: options.webContents must be a WebContents".
+    const isValidWebContents = openerWebContents != null && typeof openerWebContents === "object" && typeof openerWebContents.getURL === "function";
     const view = new WebContentsView({
       ...restContentsOptions,
-      ...(openerWebContents instanceof WebContents ? { webContents: openerWebContents } : {}),
+      ...(isValidWebContents ? { webContents: openerWebContents } : {}),
       webPreferences: {
         ...restContentsOptions.webPreferences,
         backgroundThrottling: false,
