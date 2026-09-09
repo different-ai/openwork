@@ -765,7 +765,7 @@ export async function server(options: ServerOptions): Promise<Den> {
     throw new Error("Local Den requires MySQL on 127.0.0.1:3306. Run: pnpm dev:den:mysql");
   }
   if (!await localRedisIsRunning()) {
-    throw new Error("Local Den requires Redis on 127.0.0.1:6379. Run: redis-server --port 6379 --daemonize yes --save '' --appendonly no");
+    throw new Error("Local Den requires Redis at DATABASE_REDIS_URL or redis://127.0.0.1:6379. Start an isolated Redis and configure DATABASE_REDIS_URL.");
   }
 
   const bootedMocks = await bootLocalMocks(options.place, options.mocks ?? {});

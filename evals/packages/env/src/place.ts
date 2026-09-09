@@ -101,7 +101,8 @@ export async function localMysqlIsRunning(): Promise<boolean> {
  * sign-in instead of failing, so local lanes gate on it the way they gate MySQL.
  */
 export async function localRedisIsRunning(): Promise<boolean> {
-  return canConnect(6379, "127.0.0.1");
+  const url = new URL(process.env.DATABASE_REDIS_URL?.trim() || "redis://127.0.0.1:6379");
+  return canConnect(url.port ? Number(url.port) : 6379, url.hostname);
 }
 
 class LocalPlace implements Place {
