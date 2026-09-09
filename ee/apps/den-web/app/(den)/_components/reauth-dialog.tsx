@@ -211,7 +211,8 @@ export function ReauthDialog({
       setError(null);
       void (async () => {
         try {
-          const result = await requestJson("/v1/me", { method: "GET" });
+          // Verify the cookie created by the popup, not a cached web bearer token.
+          const result = await requestJson("/api/auth/get-session", { method: "GET" });
           const verifiedUser = getUser(result.payload);
           if (!result.response.ok || !verifiedUser || verifiedUser.id !== user?.id) {
             throw new Error(`Sign in as ${user?.email} to confirm this change.`);
