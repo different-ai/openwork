@@ -711,6 +711,7 @@ test("workspace New task is instantly typable and every v1 send paints before en
       await waitHeld(creationGate);
       await world.insertFocusedText(world.failure.creationB);
       await creationGate.fail();
+      await user.see({ text: originalFailureMessage }, { timeoutMs: 15_000 });
       const creationFailure = await probe.eventually(async () => ({
         composer: await visibleFacts(world.failure.creationA),
         recovery: await recoveryUiFacts(creationRestoreLabel, originalFailureMessage),
@@ -781,6 +782,7 @@ test("workspace New task is instantly typable and every v1 send paints before en
       await waitHeld(promptGate);
       await world.insertFocusedText(world.failure.promptB);
       await promptGate.fail();
+      await user.see({ text: originalFailureMessage }, { timeoutMs: 15_000 });
       const promptFailure = await probe.eventually(async () => ({
         composer: await visibleFacts(world.failure.promptA),
         recovery: await recoveryUiFacts(existingRestoreLabel, originalFailureMessage),
