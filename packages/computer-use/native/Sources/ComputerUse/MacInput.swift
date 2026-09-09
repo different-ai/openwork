@@ -43,6 +43,12 @@ final class MacInput {
                 }
             }
             return "accessibility"
+        case .move(let point):
+            let screen = try lease.screenPoint(point)
+            try access.checkHit(screen, target: target, app: app)
+            try check()
+            // Deliver hover to the approved app without warping the system cursor.
+            try mouse(.mouseMoved, screen, app.pid, 0, target.id, lease.frame)
         case .click(let point, let count):
             let screen = try lease.screenPoint(point)
             try access.checkHit(screen, target: target, app: app)
@@ -111,6 +117,7 @@ final class MacInput {
         }
         let eventType: NSEvent.EventType
         switch type {
+        case .mouseMoved: eventType = .mouseMoved
         case .leftMouseDown: eventType = .leftMouseDown
         case .leftMouseUp: eventType = .leftMouseUp
         case .leftMouseDragged: eventType = .leftMouseDragged
@@ -119,7 +126,7 @@ final class MacInput {
         let location = NSPoint(x: point.x - frame.minX, y: frame.maxY - point.y)
         guard let native = NSEvent.mouseEvent(with: eventType, location: location, modifierFlags: [],
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: Int(windowID), context: nil,
-                eventNumber: 0, clickCount: count, pressure: type == .leftMouseUp ? 0 : 1),
+                eventNumber: 0, clickCount: count, pressure: type == .leftMouseUp || type == .mouseMoved ? 0 : 1),
               let event = native.cgEvent?.copy() else {
             throw UseError("input_failed", "Could not create a window-targeted mouse event.")
         }

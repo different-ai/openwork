@@ -65,7 +65,7 @@ struct Arguments {
 
 enum Action {
     case press(String), setValue(String, String), key(String), type(String)
-    case click(CGPoint, Int), scroll(CGPoint, Int32, Int32), drag([CGPoint])
+    case move(CGPoint), click(CGPoint, Int), scroll(CGPoint, Int32, Int32), drag([CGPoint])
 
     init(_ values: [String: Any]) throws {
         let a = Arguments(values: values)
@@ -87,6 +87,8 @@ enum Action {
             self = .key(key)
         case "type":
             try a.only(["type", "text"]); self = .type(try a.string("text", max: 8_000))
+        case "move":
+            try a.only(["type", "x", "y"]); self = .move(try Self.point(values))
         case "click", "double_click":
             try a.only(["type", "x", "y"]); self = .click(try Self.point(values), type == "click" ? 1 : 2)
         case "scroll":
@@ -111,6 +113,7 @@ enum Action {
         case .setValue: return "set_value"
         case .key: return "key"
         case .type: return "type"
+        case .move: return "move"
         case .click(_, let count): return count == 1 ? "click" : "double_click"
         case .scroll: return "scroll"
         case .drag: return "drag"

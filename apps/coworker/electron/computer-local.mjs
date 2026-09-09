@@ -169,7 +169,8 @@ export function createLocalComputerAdapter({
       if (state.readiness !== "ready") throw new Error(state.detail);
       const { Client, StdioClientTransport } = await mcp();
       const client = new Client({ name: "open-coworker-computer", version: "1.0.0" }, { capabilities: {}, enforceStrictCapabilities: true });
-      const transport = new StdioClientTransport({ command: state.binary, args: ["mcp"], env, stderr: "ignore" });
+      // Visual native controls, with standalone consent and human-only Continue.
+      const transport = new StdioClientTransport({ command: state.binary, args: ["mcp-coworker"], env, stderr: "ignore" });
       let closed = false;
       let terminationConfirmed = false;
       let busy = false;

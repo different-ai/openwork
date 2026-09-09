@@ -15,7 +15,8 @@ candidate, not a release claim.
 
 ### The experience
 
-1. Open **Computer** in a saved discussion's header. New discussions start off.
+1. Open the **Computer** icon in a saved discussion's right panel icon strip.
+   New discussions start off.
 2. Review the selected computer and **This computer** / **Remote** placement in
    the details popover. **Set up permissions** opens an in-app Coworker guide,
    not the generic OpenWork setup window. Accessibility and Screen Recording
@@ -27,26 +28,31 @@ candidate, not a release claim.
 4. The coworker discovers available app identities and asks for a scoped session.
    The person selects the exact window and approves observe, assist, or control.
 5. The native panel retains the purpose, window, expiry, Take over, Continue and
-   Stop controls. A compact persistent strip can sit above the composer through
-   `ComputerControl`'s optional `statusSlot: HTMLElement | null` prop. It appears
-   only while access is enabled, a session exists, or cleanup is pending. It shows
-   the selected computer, approved app/window when supplied, and observed phase:
-   **You have control**, **Waiting for window approval**, **Working**, or
-   **Access allowed**. Access alone does not mean work is running. Refreshing,
-   unavailable status, and pending cleanup are reported separately. A failed read
-   retains the active strip and labels its state as last known, not stopped.
-6. **Stop & revoke** is directly available in the strip as well as the details
-   popover. It disables the discussion and awaits session release. Unknown release
-   remains visibly pending. A later target cannot borrow that lease. Confirmed
-   off state removes the strip; without a status slot, only the existing header
-   control and popover are rendered.
+   Stop controls. Healthy enabled access uses a discreet green dot on the
+   Computer icon, not a persistent composer banner. The accessible name describes
+   the discussion allowance; the tooltip includes the observed session phase.
+   Access alone does not mean work is running. The details popover retains the
+   selected computer, approved app/window, and native session state.
+   `ComputerControl`'s optional `statusSlot: HTMLElement | null` shows an exception
+   strip only when enabled access, a session, or pending cleanup also needs
+   attention: a failed read/action, unavailable session status, or unconfirmed
+   cleanup. These states use an amber icon warning instead of the green dot.
+   A failed read labels the state as last known, not stopped.
+6. Open the Computer icon for **Stop & revoke**; it is also directly available
+   in the exception strip. It disables the discussion and awaits session release.
+   Unknown release remains visibly pending. A later target cannot borrow that
+   lease. Confirmed off state removes the dot and strip; without a status slot,
+   the icon and popover still expose status and revocation.
 
-The strip points to the native task panel for **Take over** and **Continue**;
+The strip points to the native floating preview for **Take over** and **Continue**;
 it does not add a renderer-side resume action. Paused tools wait for the person
 within a bounded execution; the model cannot resume them or repeat an interrupted
 action automatically. The popover remains the setup and review surface. Neither
-surface displays a computer screenshot or live computer video; window observations
-belong to the native tool flow, not a simulated preview.
+renderer surface displays computer screenshots. The native preview shows only the
+latest redacted observation sent through the tool flow, with screenshot age and
+stale/paused states, never live video. Pointer markers identify dispatched input,
+not verified results or the person's live cursor. Hiding or collapsing the preview
+does not revoke access; menu-bar controls restore it or stop the session.
 
 The guide's settings buttons run `ComputerUse permissions accessibility` or
 `ComputerUse permissions screenRecording` as a direct child, keeping the same
@@ -54,7 +60,7 @@ responsible-app context as the probe and MCP session. Only this explicit action
 requests the corresponding macOS permission and opens its System Settings pane.
 It starts no control session. System Settings opening is not proof of permission;
 Coworker waits for a new probe. The native generic `setup` command remains for
-other clients. Native window approval and the task panel are unchanged.
+other clients. Native window approval and human-only continuation remain required.
 
 The guide names the shared **OpenWork Computer Use** helper, the possible
 responsible **Open Coworker** entry, version-dependent macOS pane naming and
@@ -74,6 +80,11 @@ The local adapter launches the same native helper used by OpenWork. It inherits
 window-only capture, protected-field omission, freshness checks, at-most-once
 dispatch receipts, app identity checks, exclusive control, native consent,
 human-only continuation, idle/expiry limits, and the menu-bar task panel.
+
+Coworker uses the helper's `mcp-coworker` presentation mode, separate from
+`mcp-hosted` approval and automatic interruption recovery. The `move` action
+delivers window-scoped hover in control mode using a fresh screenshot; it does
+not promise to move the global Mac cursor.
 
 No native Swift code is copied. The six native tools stay behind a dedicated
 connection owned by the trusted Coworker broker. They are not installed as an

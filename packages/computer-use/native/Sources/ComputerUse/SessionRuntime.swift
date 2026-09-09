@@ -92,7 +92,7 @@ final class SessionRuntime {
                 await resume()
             }
             guard let opened = session, opened.id == id else { throw UseError("session_unavailable", "Access ended while starting. Stop work and wait for a new user request.", next: "human_takeover") }
-            return text(["ok": true, "session_id": id, "app_id": identity.bundleID, "pid": Int(identity.pid),
+            return text(["ok": true, "session_id": id, "app_id": identity.bundleID, "app_name": identity.name, "pid": Int(identity.pid),
                 "window_id": Int(target.id), "window_title": target.title, "mode": mode.rawValue,
                 "state": opened.paused ? "paused" : "active", "expires_in_seconds": 900,
                 "next": next(opened)])
@@ -112,7 +112,7 @@ final class SessionRuntime {
             let current = try current(try a.string("session_id"), allowPaused: true)
             var status: [String: Any] = ["ok": true, "session_id": current.id, "mode": current.mode.rawValue,
                 "state": current.paused ? "paused" : "active", "phase": phase(current),
-                "purpose": current.purpose, "window_title": current.target.title, "panel_visible": controls.isVisible,
+                "purpose": current.purpose, "app_name": current.app.name, "window_title": current.target.title, "panel_visible": controls.isVisible,
                 "actions": current.actionCount,
                 "expires_in_seconds": max(0, Int(900 - (now - current.started))),
                 "next": next(current)]
@@ -210,7 +210,7 @@ final class SessionRuntime {
             frame: bounds, imageWidth: width, imageHeight: height, stateDigest: access.digest(state), imageDigest: imageDigest)
         session?.observation = observation; session?.records = state.records; session?.lastUsed = now
         session?.needsRefresh = false
-        controls.update("OpenWork is working. You can take over at any time.", paused: false)
+        controls.update("Window observed. Ready for the next action.", paused: false)
         let elements = state.records.map { record -> [String: Any] in
             var value: [String: Any] = ["ref": record.ref, "role": record.role, "label": record.label,
                 "enabled": record.enabled, "actions": record.actions.isEmpty ? [] : ["press"], "settable": record.settable,
@@ -296,7 +296,9 @@ final class SessionRuntime {
         // A manual pause or system interruption cannot be converted into recovery
         // merely by more input. Existing standalone clients retain manual Continue.
         if SessionControls.hosted && session?.paused == true && session?.recoverableInterruption != true && resumingSessionID != session?.id { return }
-        pause("Waiting for your input to finish…")
+        // Standalone clients never resume automatically after the quiet period.
+        // Retain the next human action, not the temporary interaction message.
+        pause(SessionControls.hosted ? "Waiting for your input to finish…" : "You have control. Click Continue when you are ready.")
         session?.recoverableInterruption = SessionControls.hosted
         session?.interactionDeadline = now + 1
         controls.update(SessionControls.hosted ? "Waiting for your input to finish…" : "You have control. Waiting for your input to finish…", paused: true, canContinue: false, recoverable: SessionControls.hosted)

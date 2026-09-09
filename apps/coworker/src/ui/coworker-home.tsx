@@ -140,7 +140,6 @@ export function CoworkerHome({
   onRepairConnect,
   onConnectAccount,
   railWidth,
-  discussionToolsSlot,
   request = null,
   onCoworkerAdded,
   onHandOff,
@@ -174,7 +173,6 @@ export function CoworkerHome({
   onConnectAccount: () => void;
   /** Current width of the team rail, so the thread column keeps its minimum before this panel grows. */
   railWidth: number;
-  discussionToolsSlot: HTMLElement | null;
   /** Something another view asked this one to show on arrival: a settings section, or one thread. */
   request?: CoworkerHomeRequest | null;
 }) {
@@ -200,6 +198,7 @@ export function CoworkerHome({
   /** The conversation views place their own title line and actions into the one header. */
   const [headerTitleSlot, setHeaderTitleSlot] = useState<HTMLElement | null>(null);
   const [headerActionsSlot, setHeaderActionsSlot] = useState<HTMLElement | null>(null);
+  const [discussionToolsSlot, setDiscussionToolsSlot] = useState<HTMLDivElement | null>(null);
   const contextPanelRoom = useCallback(() => Math.max(CONTEXT_PANEL_BOUNDS.min, window.innerWidth - railWidth - MAIN_WORKSPACE_MIN_WIDTH), [railWidth]);
   const contextPanel = useResizablePanel({
     storageKey: CONTEXT_PANEL_WIDTH_KEY,
@@ -544,37 +543,41 @@ export function CoworkerHome({
         >
           <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-spark/45 group-focus-visible:bg-spark/70" />
         </div>
-        {contextPanel.collapsed ? (
-          <>
-            {/* The strip starts level with the header's controls, so the corner above it is not an empty band. */}
-            <nav aria-label="Coworker panels" className="window-drag flex flex-col items-center gap-1 px-2 pb-3 pt-[23px]">
-              {PANEL_VIEWS.map((view) => {
-                const Icon = CONTEXT_ICONS[view];
-                const active = view === contextView;
-                return (
-                  <IconButton
-                    key={view}
-                    label={PANEL_VIEW_TITLES[view]}
-                    tooltip={panelViewTooltip(view, coworker.name)}
-                    tooltipSide="left"
-                    data-testid={`context-rail-${view}`}
-                    data-active={active ? "true" : "false"}
-                    aria-current={active ? "true" : undefined}
-                    className={`window-no-drag ${active ? "bg-white/8 text-snow ring-1 ring-white/10" : ""}`}
-                    onClick={() => showContext(view)}
-                  >
-                    <span className="relative flex">
-                      <Icon />
-                      {view === "overview" && documentsChanged > 0 ? (
-                        <span className="absolute -right-1.5 -top-1 size-1.5 rounded-full bg-spark" aria-hidden="true" data-testid="documents-changed-dot" />
-                      ) : null}
-                    </span>
-                  </IconButton>
-                );
-              })}
-            </nav>
-          </>
-        ) : (
+        {/* Keep the portal host mounted when the strip folds away, preserving discussion controls and their activity. */}
+        <nav aria-label="Coworker panels" className={`window-drag flex-col items-center gap-1 px-2 pb-3 pt-[23px] ${contextPanel.collapsed ? "flex" : "hidden"}`}>
+          {PANEL_VIEWS.map((view) => {
+            const Icon = CONTEXT_ICONS[view];
+            const active = view === contextView;
+            return (
+              <IconButton
+                key={view}
+                label={PANEL_VIEW_TITLES[view]}
+                tooltip={panelViewTooltip(view, coworker.name)}
+                tooltipSide="left"
+                data-testid={`context-rail-${view}`}
+                data-active={active ? "true" : "false"}
+                aria-current={active ? "true" : undefined}
+                className={`window-no-drag ${active ? "bg-white/8 text-snow ring-1 ring-white/10" : ""}`}
+                onClick={() => showContext(view)}
+              >
+                <span className="relative flex">
+                  <Icon />
+                  {view === "overview" && documentsChanged > 0 ? (
+                    <span className="absolute -right-1.5 -top-1 size-1.5 rounded-full bg-spark" aria-hidden="true" data-testid="documents-changed-dot" />
+                  ) : null}
+                </span>
+              </IconButton>
+            );
+          })}
+          <div
+            ref={setDiscussionToolsSlot}
+            role="group"
+            aria-label="Discussion tools"
+            data-testid="coworker-discussion-tools"
+            className="window-no-drag flex shrink-0 flex-col items-center gap-1 empty:hidden"
+          />
+        </nav>
+        {!contextPanel.collapsed ? (
           <>
         <PanelHeader
           route={nav.route}
@@ -695,7 +698,7 @@ export function CoworkerHome({
           ) : null}
         </PanelContent>
           </>
-        )}
+        ) : null}
       </aside>
     </div>
   );

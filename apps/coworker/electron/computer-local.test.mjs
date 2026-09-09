@@ -188,7 +188,7 @@ test("connections are dedicated, allowlist-bound and return raw MCP results only
   assert.equal(f.connections.length, 2);
   assert.deepEqual(f.info().clientOptions, { capabilities: {}, enforceStrictCapabilities: true });
   for (const transport of f.connections) {
-    assert.deepEqual(transport.params.args, ["mcp"]);
+    assert.deepEqual(transport.params.args, ["mcp-coworker"]);
     assert.equal(transport.params.command, f.spawned[0].command);
     assert.equal(transport.params.stderr, "ignore");
     assert.equal(transport.handshakeOptions.resetTimeoutOnProgress, false);

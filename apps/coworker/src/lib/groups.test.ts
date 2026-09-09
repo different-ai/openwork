@@ -19,6 +19,7 @@ const scout = { slug: "scout", name: "Scout", role: "Research partner", mission:
 const editor = { slug: "editor", name: "Editor", role: "Writing partner", mission: "Shape drafts into clear writing." };
 const ops = { slug: "ops", name: "Ops Lead", role: "", mission: "" };
 const team = [scout, editor, ops];
+const promptPlan: Parameters<typeof groupSpeakerPrompt>[0]["plan"] = { mode: "sequential", speakers: team.map((member) => ({ slug: member.slug, part: "reply", brief: "" })) };
 
 function event(partial: Partial<GroupTimelineEvent> & Pick<GroupTimelineEvent, "kind" | "text">): GroupTimelineEvent {
   return { id: `evt_${Math.random().toString(36).slice(2)}`, at: 1, ...partial };
@@ -79,7 +80,7 @@ function fakeStore(initialEvents: GroupTimelineEvent[] = []) {
         if (!previous) throw new Error("missing speaker");
         speakers = speakers.with(index, { ...previous, ...changes, slug, part });
       }
-      const next: CoworkerGroupTurn = { ...current, speakers, mode: patch.mode ?? current.mode, routedBy: patch.routedBy ?? current.routedBy, status: patch.status ?? deriveStatus(speakers), updatedAt: clock };
+      const next: CoworkerGroupTurn = { ...current, speakers, dependsOn: patch.dependsOn ?? current.dependsOn, mode: patch.mode ?? current.mode, routedBy: patch.routedBy ?? current.routedBy, status: patch.status ?? deriveStatus(speakers), updatedAt: clock };
       turns.set(turnId, next);
       return next;
     },
@@ -134,6 +135,7 @@ test("a speaker's prompt carries the room, the recent visible conversation, earl
     earlierReplies: [{ name: "Scout", text: "Lead with the finding." }],
     nameFor: (slug) => (slug === "scout" ? "Scout" : slug),
     brief: "Propose the first sentence.",
+    plan: promptPlan,
   });
   assert.match(prompt, /- Person: Hello both\n- Scout: Hi from Scout/);
   assert.doesNotMatch(prompt, /could not reply/);
@@ -143,7 +145,7 @@ test("a speaker's prompt carries the room, the recent visible conversation, earl
 
   // Only the last RECENT_CONTEXT_EVENTS visible lines are carried.
   const long = Array.from({ length: 20 }, (_, index) => event({ kind: "user", text: `line ${index}` }));
-  const bounded = groupSpeakerPrompt({ group: { name: "Desk" }, speaker: editor, participants: [editor], message: "Go", recent: long, earlierReplies: [], nameFor: (slug) => slug });
+  const bounded = groupSpeakerPrompt({ group: { name: "Desk" }, speaker: editor, participants: [editor], message: "Go", recent: long, earlierReplies: [], nameFor: (slug) => slug, plan: promptPlan });
   assert.doesNotMatch(bounded, /line 7\b/);
   assert.match(bounded, /line 8\b/);
 });
@@ -249,6 +251,8 @@ test("a facilitator plan orders the speakers, adds a follow-up and wrap-up, and 
   assert.deepEqual(asked.map((entry) => entry.slug), ["editor", "scout", "editor", "ops"]);
   assert.match(asked[0]?.prompt ?? "", /Your part in this reply: Say what the note must promise\./);
   assert.match(asked[1]?.prompt ?? "", /Already said in reply to this message:\n- Editor: editor says 1/);
+  assert.match(asked[1]?.prompt ?? "", /First-round mode: sequential \(chained replies\)/);
+  assert.match(asked[1]?.prompt ?? "", /2\. Scout \(scout\): reply - Check the claim\. \[your step\]/);
   assert.match(asked[2]?.prompt ?? "", /Your part in this reply: Fold in what Scout found\./);
   assert.match(asked[2]?.prompt ?? "", /- Editor: editor says 1\n- Scout: scout says 2/);
   assert.match(asked[3]?.prompt ?? "", /wrap the round up/);
@@ -262,10 +266,11 @@ test("a facilitator plan orders the speakers, adds a follow-up and wrap-up, and 
   assert.equal(store.events.filter((entry) => entry.kind === "coworker").length, 4);
 });
 
-test("independent parallel replies settle into the timeline in the facilitator's order", async () => {
+test("independent parallel replies start together, then follow-up and wrap-up receive completed replies", { timeout: 2000 }, async () => {
   const store = fakeStore();
-  const plan: RoutingPlan = { speakers: [{ slug: "scout", brief: "" }, { slug: "editor", brief: "" }], mode: "parallel", dependsOn: [], followUp: null, synthesizer: null, routedBy: "facilitator" };
+  const plan: RoutingPlan = { speakers: [{ slug: "scout", brief: "" }, { slug: "editor", brief: "" }], mode: "parallel", dependsOn: [], followUp: { slug: "scout", brief: "Compare the replies." }, synthesizer: "editor", routedBy: "facilitator" };
   const started: string[] = [];
+  const prompts: string[] = [];
   let releaseScout: (() => void) | null = null;
   const result = await runGroupTurn({
     group: { id: "grp_x", name: "Desk" },
@@ -277,26 +282,35 @@ test("independent parallel replies settle into the timeline in the facilitator's
     deps: {
       ...store.deps,
       route: async () => plan,
-      ask: async (slug) => {
+      ask: async (slug, prompt, _signal, step) => {
         started.push(slug);
-        if (slug === "scout") await new Promise<void>((resolve) => { releaseScout = resolve; });
+        prompts.push(prompt);
+        if (slug === "scout" && step.part === "reply") await new Promise<void>((resolve) => { releaseScout = resolve; });
         // Editor settles first; its bubble still waits for Scout's.
-        if (slug === "editor") setTimeout(() => releaseScout?.(), 5);
+        if (slug === "editor" && step.part === "reply") releaseScout?.();
         return { text: `${slug} done`, threadId: `ses_${slug}` };
       },
     },
   });
   assert.ok(result);
-  assert.deepEqual(started, ["scout", "editor"]);
+  assert.deepEqual(started, ["scout", "editor", "scout", "editor"]);
   assert.equal(result.mode, "parallel");
-  assert.deepEqual(store.events.filter((entry) => entry.kind === "coworker").map((entry) => entry.slug), ["scout", "editor"]);
-  assert.ok(store.published.includes("running:scout=running,editor=running"), "both speakers were running at once");
+  assert.deepEqual(store.events.filter((entry) => entry.kind === "coworker").map((entry) => entry.slug), started);
+  assert.ok(store.published.includes("running:scout=running,editor=running,scout=queued,editor=queued"), "both replies run while later parts wait");
+  for (const prompt of prompts.slice(0, 2)) {
+    assert.match(prompt, /First-round mode: parallel \(independent replies\)/);
+    assert.match(prompt, /1\. Scout \(scout\): reply/);
+    assert.match(prompt, /2\. Editor \(editor\): reply/);
+    assert.doesNotMatch(prompt, /Already said in reply to this message:/, "independent replies do not see current peer output");
+  }
+  assert.match(prompts[2] ?? "", /Already said in reply to this message:\n- Scout: scout done\n- Editor: editor done/);
+  assert.match(prompts[3] ?? "", /- Scout: scout done\n- Editor: editor done\n- Scout: scout done/);
 
   const stoppedStore = fakeStore();
   const controller = new AbortController();
   const stopped = await runGroupTurn({
     group: { id: "grp_x", name: "Desk" }, participants: team, recent: [], message: "Both of you", clientMessageId: "m4", signal: controller.signal,
-    deps: { ...stoppedStore.deps, route: async () => plan, ask: async (slug) => {
+    deps: { ...stoppedStore.deps, route: async () => ({ ...plan, followUp: null, synthesizer: null }), ask: async (slug) => {
       if (slug === "scout") await new Promise<void>((_resolve, reject) => controller.signal.addEventListener("abort", () => reject(new Error("Stopped.")), { once: true }));
       else setTimeout(() => controller.abort(), 5);
       return { text: `${slug} done`, threadId: `ses_${slug}` };
