@@ -93,6 +93,9 @@ export class WebContentsView {
       getURL() { return this.url; },
       getOrCreateDevToolsTargetId() { return targetId; },
       getTitle() { return ""; },
+      copyImageAt(x, y) { effects.push({ type: "image", x, y }); },
+      copy() { effects.push({ type: "edit-copy", targetId }); },
+      paste() { effects.push({ type: "edit-paste", targetId }); },
       isLoading() { return this.loading; },
       isCurrentlyAudible() { return this.audible; },
       canGoBack() { return false; },
@@ -256,6 +259,97 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test("page link menus open a policy-checked tab in the source conversation without replacing the source", async () => {
+  const pending = gate();
+  const { invoke, onScreen, menus, policies, mainContents } = createPanel(async ({ url }) => {
+    if (url === LINK.url) await pending.promise;
+  });
+  invoke("openwork:browser:setVisibleSession", "A");
+  const source = invoke("openwork:browser:createTab", "about:blank", "A");
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  await flush();
+  const contents = onScreen().webContents;
+  contents.getZoomFactor = () => 1.5;
+  mainContents.getZoomFactor = () => 2;
+  contents.emit("context-menu", { x: 20, y: 30, linkURL: LINK.url });
+  await flush();
+  assert.deepEqual(menus.at(-1).request.point, { x: 410, y: 35 });
+  assert.equal(menus.at(-1).request.items[0].label, "Open Link in New Tab");
+  menus.at(-1).choose("open-new-tab");
+  await flush();
+  assert.equal(invoke("openwork:browser:state").tabs.length, 1, "no allocation before policy resolves");
+  pending.finish();
+  await flush();
+  const state = invoke("openwork:browser:state");
+  assert.equal(state.tabs.length, 2);
+  assert.equal(state.tabs.find(tab => tab.id === source.tabId).url, "about:blank");
+  assert.ok(state.tabs.some(tab => tab.id === state.activeTabId && tab.url === LINK.url && tab.ownerSessionId === "A"));
+  assert.ok(policies.some(request => request.url === LINK.url && request.external === false));
+  assert.deepEqual(effects, [], "never launches an external browser");
+  invoke("openwork:browser:destroy");
+});
+
+test("page menu actions reject unsafe links, denied policy, capacity overflow, and stale documents", async () => {
+  for (const mode of ["scheme", "policy", "capacity", "navigation", "frame-navigation", "closed", "conversation"]) {
+    const { invoke, onScreen, menus, views } = createPanel(async ({ url }) => {
+      if (mode === "policy" && url === LINK.url) throw new Error("Destination blocked");
+    });
+    invoke("openwork:browser:setVisibleSession", "A");
+    invoke("openwork:browser:createTab", "about:blank", "A");
+    if (mode === "capacity") for (let index = 1; index < 12; index++) invoke("openwork:browser:createTab", "about:blank", "A");
+    invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+    await flush();
+    const contents = onScreen().webContents;
+    const before = views().length;
+    contents.emit("context-menu", { x: 10, y: 20, linkURL: mode === "scheme" ? "javascript:alert(1)" : LINK.url });
+    await flush();
+    const menu = menus.at(-1);
+    if (mode === "scheme") assert.equal(menu.request.items[0].enabled, false);
+    if (mode === "navigation" || mode === "frame-navigation") contents.emit("did-start-navigation", "https://changed.example", false, mode === "navigation");
+    if (mode === "closed") contents.close();
+    if (mode === "conversation") invoke("openwork:browser:setVisibleSession", "B");
+    menu.choose("open-new-tab");
+    await flush();
+    assert.equal(views().length, before, mode);
+    assert.deepEqual(effects, ["policy", "capacity"].includes(mode) ? [{ type: "dialog" }] : [], mode);
+    invoke("openwork:browser:destroy");
+  }
+});
+
+test("page menus copy linked image pixels and addresses and respect Chromium editing flags", async () => {
+  const { invoke, onScreen, menus } = createPanel();
+  invoke("openwork:browser:setVisibleSession", "A");
+  invoke("openwork:browser:createTab", "about:blank", "A");
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  await flush();
+  const contents = onScreen().webContents;
+  for (const id of ["copy-image", "copy-image-address", "copy-link"]) {
+    contents.emit("context-menu", { x: 10, y: 20, linkURL: LINK.url, mediaType: "image", hasImageContents: true, srcURL: "data:image/png;base64,example" });
+    await flush();
+    assert.deepEqual(menus.at(-1).request.items.filter(item => item.type === "item").map(item => item.id),
+      ["open-new-tab", "copy-link", "copy-image", "copy-image-address"]);
+    menus.at(-1).choose(id);
+    await flush();
+  }
+  assert.deepEqual(effects, [{ type: "image", x: 10, y: 20 }, { type: "copy", url: "data:image/png;base64,example" }, { type: "copy", url: LINK.url }]);
+  effects.length = 0;
+  for (const id of ["paste", "copy"]) {
+    contents.emit("context-menu", { x: 10, y: 20, isEditable: true, editFlags: { canCopy: true, canPaste: false } });
+    await flush();
+    menus.at(-1).choose(id);
+    await flush();
+  }
+  assert.deepEqual(effects, [{ type: "edit-copy", targetId: contents.targetId }]);
+  contents.emit("context-menu", { x: 10, y: 20 });
+  await flush();
+  assert.deepEqual(menus.at(-1).request.items.map(({ id, enabled }) => ({ id, enabled })),
+    [{ id: "back", enabled: false }, { id: "forward", enabled: false }, { id: "reload", enabled: true }]);
+  menus.at(-1).choose("reload");
+  await flush();
+  assert.equal(invoke("openwork:browser:state").tabs.length, 1);
+  invoke("openwork:browser:destroy");
+});
 
 let preloadTestId = 0;
 async function loadPreload(t) {
