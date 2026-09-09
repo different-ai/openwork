@@ -162,9 +162,9 @@ export async function gmailDraftAttachments(place: Place) {
         }
         response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json", ...(upstream.headers.has("mcp-session-id") ? { "mcp-session-id": upstream.headers.get("mcp-session-id") ?? "" } : {}) });
         response.end(body);
-      } catch (error) {
+      } catch {
         response.writeHead(502, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+        response.end(JSON.stringify({ error: "gmail_attachment_proxy_failed" }));
       }
     });
     const cloudUrl = await listen(proxy);
