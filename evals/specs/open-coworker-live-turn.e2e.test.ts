@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { clickButton, coworker, evalIn, fill, needs, test, waitFor } from "@openwork/testkit";
+import { browserScript, clickButton, coworker, evalIn, fill, needs, test, waitFor } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 
 /**
@@ -241,8 +241,14 @@ async function startScriptedModel(): Promise<ScriptedState> {
 
 type App = Awaited<ReturnType<typeof coworker>>;
 
+declare global {
+  interface Window {
+    __LIVE_TRACE__?: { trace: Record<string, unknown>[]; observer: MutationObserver; tapped: boolean };
+  }
+}
+
 async function invokeCoworker(app: App, command: string, payload: unknown): Promise<unknown> {
-  return evalIn(app, `window.__COWORKER__.invoke(${json(command)}, ${json(payload)})`, { awaitPromise: true, timeoutMs: 120_000 });
+  return evalIn(app, browserScript((command, payload) => window.__COWORKER__.invoke(command, payload), [command, payload]), { awaitPromise: true, timeoutMs: 120_000 });
 }
 
 function resultRecord(response: unknown): Record<string, unknown> {
@@ -253,11 +259,11 @@ function resultRecord(response: unknown): Record<string, unknown> {
 }
 
 async function waitForNovaReady(app: App): Promise<void> {
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]') || document.querySelector('[data-testid="coworker-discussion-empty"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Nova")`, {
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-discussion-view"]') || document.querySelector('[data-testid="coworker-discussion-empty"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Nova"), {
     timeoutMs: 120_000,
     label: "Nova's conversation",
   });
-  await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 240_000, label: "Nova ready" });
+  await waitFor(app, () => document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready", { timeoutMs: 240_000, label: "Nova ready" });
 }
 
 async function send(app: App, prompt: string): Promise<void> {
@@ -274,44 +280,46 @@ async function pressActivityKey(app: App, key: "Enter" | "Escape"): Promise<void
 /** Open the landed receipt so privacy checks cover inspection as well. */
 async function readLandedWork(app: App): Promise<Record<string, unknown>> {
   await app.client.send("Page.bringToFront");
-  await evalIn(app, `document.querySelector('[data-testid="coworker-work-summary"]')?.focus(); true`);
+  await evalIn(app, () => { document.querySelector<HTMLElement>('[data-testid="coworker-work-summary"]')?.focus(); return true; });
   await pressActivityKey(app, "Enter");
-  const read = await waitFor(app, `(() => {
+  const read = await waitFor(app, browserScript((reasoning, payload) => {
     const popover = document.querySelector('[data-testid="coworker-work-steps"][role="dialog"]');
     if (!popover || document.activeElement !== popover) return false;
     return {
       steps: [...popover.querySelectorAll('[data-testid="coworker-work-step"]')].map((step) => step.getAttribute("data-state")),
-      ...${READ_PRIVACY},
+      reasoningInDom: reasoning.some((thought) => (document.body?.outerHTML ?? "").includes(thought)),
+      toolPayloadInDom: (document.body?.outerHTML ?? "").includes("unrecognizedField") || (document.body?.outerHTML ?? "").includes(payload),
     };
-  })()`, { timeoutMs: 10_000, label: "keyboard focus in the landed execution popover" });
+  }, [THINK_REASONING, TOOL_UNKNOWN_PAYLOAD]), { timeoutMs: 10_000, label: "keyboard focus in the landed execution popover" });
   if (!isRecord(read)) throw new Error("Execution popover facts were unavailable.");
   expect(read).toMatchObject({ reasoningInDom: false, toolPayloadInDom: false });
   await pressActivityKey(app, "Escape");
-  await waitFor(app, `!document.querySelector('[data-testid="coworker-work-steps"]')
+  await waitFor(app, () => !document.querySelector('[data-testid="coworker-work-steps"]')
     && document.activeElement === document.querySelector('[data-testid="coworker-work-summary"]')
-    && document.activeElement?.getAttribute("aria-expanded") === "false"`, { timeoutMs: 5_000, label: "Escape closes the execution popover and restores receipt focus" });
+    && document.activeElement?.getAttribute("aria-expanded") === "false", { timeoutMs: 5_000, label: "Escape closes the execution popover and restores receipt focus" });
   return read;
 }
 
 async function waitForSettled(app: App, reply: string, timeoutMs = 120_000): Promise<void> {
-  await waitFor(app, `[...document.querySelectorAll('[data-testid="coworker-reply-bubble"]')].some((bubble) => (bubble.textContent ?? "").includes(${json(reply)}))
-    && document.querySelector('[data-testid="coworker-thread-status"]')?.dataset.state === "idle"
-    && !document.querySelector('[data-testid="coworker-working"]')`, { timeoutMs, label: `the reply ${json(reply.slice(0, 24))} landed and the turn settled` });
-  expect(await evalIn(app, READ_PRIVACY), "landed DOM contains neither raw reasoning nor unknown tool payloads").toEqual({ reasoningInDom: false, toolPayloadInDom: false });
+  await waitFor(app, browserScript((reply) => [...document.querySelectorAll('[data-testid="coworker-reply-bubble"]')].some((bubble) => (bubble.textContent ?? "").includes(reply))
+    && document.querySelector<HTMLElement>('[data-testid="coworker-thread-status"]')?.dataset.state === "idle"
+    && !document.querySelector('[data-testid="coworker-working"]'), [reply]), { timeoutMs, label: `the reply ${json(reply.slice(0, 24))} landed and the turn settled` });
+  expect(await evalIn(app, browserScript(READ_PRIVACY, [THINK_REASONING, TOOL_UNKNOWN_PAYLOAD])), "landed DOM contains neither raw reasoning nor unknown tool payloads").toEqual({ reasoningInDom: false, toolPayloadInDom: false });
 }
 
 // Inspect all markup, including hidden nodes and attributes, not just visible text.
-const READ_PRIVACY = `(() => {
+const READ_PRIVACY = (reasoning: string[], payload: string) => {
   const dom = document.body?.outerHTML ?? "";
-  return { reasoningInDom: ${json(THINK_REASONING)}.some((thought) => dom.includes(thought)), toolPayloadInDom: dom.includes("unrecognizedField") || dom.includes(${json(TOOL_UNKNOWN_PAYLOAD)}) };
-})()`;
+  return { reasoningInDom: reasoning.some((thought) => dom.includes(thought)), toolPayloadInDom: dom.includes("unrecognizedField") || dom.includes(payload) };
+};
 
 /** What the live turn shows this instant. */
-const READ_LIVE = `(() => {
+const READ_LIVE = (reasoning: string[], payload: string, phase: string | null, header: string | null) => {
   const row = document.querySelector('[data-testid="coworker-working"]');
   const popover = document.querySelector('[data-testid="coworker-thinking-popover"]');
   const live = document.querySelector('[data-testid="coworker-live-bubble"]');
-  return {
+  const dom = document.body?.outerHTML ?? "";
+  const observation = {
     phase: row?.getAttribute("data-phase") ?? "",
     outcome: row?.getAttribute("data-outcome") ?? "",
     typing: Boolean(document.querySelector('[data-testid="coworker-typing"]')),
@@ -326,26 +334,51 @@ const READ_LIVE = `(() => {
     landed: document.querySelectorAll('[data-testid="coworker-reply-bubble"]').length,
     header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
     rail: document.querySelector('[data-testid="coworker-rail-line"]')?.textContent?.trim() ?? "",
-    ...${READ_PRIVACY},
+    reasoningInDom: reasoning.some((thought) => dom.includes(thought)),
+    toolPayloadInDom: dom.includes("unrecognizedField") || dom.includes(payload),
   };
-})()`;
+  if (observation.outcome !== "slow" || (phase !== null && observation.phase !== phase)) return false;
+  if (header !== null && (observation.header !== header || !document.querySelector('[data-testid="coworker-working"] [data-testid="coworker-turn-choice"][data-choice="stop"]'))) return false;
+  return observation;
+};
 
 /** Watch the live shapes as they change, and tap the typing bubble or the tool chip as soon as it shows, the way an impatient person would. */
 async function beginLiveTrace(app: App, tap: "typing" | "chip"): Promise<void> {
-  await evalIn(app, `(() => {
+  await evalIn(app, browserScript((reasoning, payload, wantPhase, selector) => {
     window.__LIVE_TRACE__?.observer?.disconnect?.();
-    const trace = [];
+    const trace: Record<string, unknown>[] = [];
     const record = () => {
-      const live = ${READ_LIVE};
+      const row = document.querySelector('[data-testid="coworker-working"]');
+      const popover = document.querySelector('[data-testid="coworker-thinking-popover"]');
+      const bubble = document.querySelector('[data-testid="coworker-live-bubble"]');
+      const dom = document.body?.outerHTML ?? "";
+      const live = {
+        phase: row?.getAttribute("data-phase") ?? "",
+        outcome: row?.getAttribute("data-outcome") ?? "",
+        typing: Boolean(document.querySelector('[data-testid="coworker-typing"]')),
+        chip: document.querySelector('[data-testid="coworker-tool-chip"]')?.textContent?.trim() ?? "",
+        indicators: document.querySelectorAll('[data-testid="coworker-typing"], [data-testid="coworker-tool-chip"], [data-testid="coworker-activity-chip"]').length,
+        rowHidden: row?.getAttribute("aria-hidden") === "true",
+        rowText: row ? (row.firstElementChild?.textContent ?? "").trim() : "",
+        note: row?.querySelector('[data-testid="coworker-still-working"]')?.textContent?.trim() ?? "",
+        popover: Boolean(popover),
+        liveText: bubble ? (bubble.textContent ?? "").trim() : "",
+        liveBubbles: document.querySelectorAll('[data-testid="coworker-live-bubble"]').length,
+        landed: document.querySelectorAll('[data-testid="coworker-reply-bubble"]').length,
+        header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
+        rail: document.querySelector('[data-testid="coworker-rail-line"]')?.textContent?.trim() ?? "",
+        reasoningInDom: reasoning.some((thought) => dom.includes(thought)),
+        toolPayloadInDom: dom.includes("unrecognizedField") || dom.includes(payload),
+      };
       const last = trace[trace.length - 1];
       const entry = { at: Date.now(), ...live };
       if (!last || JSON.stringify({ ...last, at: 0 }) !== JSON.stringify({ ...entry, at: 0 })) trace.push(entry);
-      const wantPhase = ${json(tap === "typing" ? "preparing" : "tool")};
-      const selector = ${json(tap === "typing" ? '[data-testid="coworker-typing"]' : '[data-testid="coworker-tool-chip"]')};
-      if (live.phase !== wantPhase) window.__LIVE_TRACE__.tapped = false;
-      if (live.phase === wantPhase && !live.popover && !window.__LIVE_TRACE__.tapped && document.querySelector(selector)) {
-        window.__LIVE_TRACE__.tapped = true;
-        document.querySelector(selector)?.click();
+      const state = window.__LIVE_TRACE__;
+      if (!state) throw new Error("Live trace unavailable");
+      if (live.phase !== wantPhase) state.tapped = false;
+      if (live.phase === wantPhase && !live.popover && !state.tapped && document.querySelector(selector)) {
+        state.tapped = true;
+        document.querySelector<HTMLElement>(selector)?.click();
       }
     };
     const observer = new MutationObserver(record);
@@ -353,11 +386,11 @@ async function beginLiveTrace(app: App, tap: "typing" | "chip"): Promise<void> {
     window.__LIVE_TRACE__ = { trace, observer, tapped: false };
     record();
     return true;
-  })()`);
+  }, [THINK_REASONING, TOOL_UNKNOWN_PAYLOAD, tap === "typing" ? "preparing" : "tool", tap === "typing" ? '[data-testid="coworker-typing"]' : '[data-testid="coworker-tool-chip"]']));
 }
 
 async function endLiveTrace(app: App): Promise<Record<string, unknown>[]> {
-  const value = await evalIn(app, `(() => { const t = window.__LIVE_TRACE__; t?.observer?.disconnect?.(); return t?.trace ?? []; })()`);
+  const value = await evalIn(app, () => { const t = window.__LIVE_TRACE__; t?.observer?.disconnect?.(); return t?.trace ?? []; });
   if (!Array.isArray(value)) throw new Error("The live trace was unavailable.");
   const trace = value.filter(isRecord);
   expect(trace.length).toBeGreaterThan(0);
@@ -382,7 +415,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     env: { ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "", OPENROUTER_API_KEY: "", GEMINI_API_KEY: "", GOOGLE_API_KEY: "", XAI_API_KEY: "", GROQ_API_KEY: "", MISTRAL_API_KEY: "", DEEPSEEK_API_KEY: "" },
   });
 
-  await waitFor(app, `(document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker")`, { timeoutMs: 120_000, label: "Open Coworker welcome screen" });
+  await waitFor(app, () => (document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker"), { timeoutMs: 120_000, label: "Open Coworker welcome screen" });
   const created = resultRecord(await invokeCoworker(app, "coworkers.create", { name: "Nova", role: "Research partner", mission: "Keep research work moving.", avatarColor: "mint", avatarGlasses: "round" }));
   const workspaceId = String(created.workspaceId);
   expect(workspaceId).not.toBe("");
@@ -414,18 +447,22 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   }
   expect(connected, "the engine lists the scripted provider as connected").toBe(true);
   await invokeCoworker(app, "coworkers.update", { slug: "nova", patch: { model: `${SCRIPTED_PROVIDER}/${SCRIPTED_MODEL}`, modelVariant: "" } });
-  await evalIn(app, "location.reload(); true");
+  await evalIn(app, () => { location.reload(); return true; });
   await waitForNovaReady(app);
-  const toolsConnected = await waitFor(app, `(async () => {
+  const toolsConnected = await waitFor(app, async () => {
     const runtime = (await window.__COWORKER__.invoke("runtime.info")).result;
     const coworker = (await window.__COWORKER__.invoke("coworkers.get", { slug: "nova" })).result;
+    if (typeof runtime !== "object" || runtime === null || !("serverUrl" in runtime) || typeof runtime.serverUrl !== "string" || !("ownerToken" in runtime) || typeof runtime.ownerToken !== "string") throw new Error("Runtime unavailable");
+    if (typeof coworker !== "object" || coworker === null || !("workspaceId" in coworker) || typeof coworker.workspaceId !== "string") throw new Error("Coworker workspace unavailable");
     const headers = { Authorization: "Bearer " + runtime.ownerToken };
     const base = runtime.serverUrl + "/workspace/" + encodeURIComponent(coworker.workspaceId);
     const engine = await fetch(base + "/opencode/mcp", { headers });
     if (!engine.ok) return false;
-    const status = await engine.json();
-    return status.coworker?.status === "connected" ? "connected" : false;
-  })()`, { timeoutMs: 180_000, label: "Nova's tools connected", awaitPromise: true });
+    const status: unknown = await engine.json();
+    if (typeof status !== "object" || status === null || !("coworker" in status)) return false;
+    const tool = status.coworker;
+    return typeof tool === "object" && tool !== null && "status" in tool && tool.status === "connected" ? "connected" : false;
+  }, { timeoutMs: 180_000, label: "Nova's tools connected", awaitPromise: true });
   expect(toolsConnected).toBe("connected");
 
   // --- 1. Preparing and streaming never expose reasoning, even during inspection.
@@ -447,7 +484,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   expect(writingEntries.some((entry) => entry.phase === "writing" && entry.rowHidden === true), traceText).toBe(true);
   expect(writingEntries.every((entry) => entry.typing === false && entry.popover === false && entry.landed === 0 && THINK_REPLY.startsWith(String(entry.liveText).replace(/\s+$/, ""))), traceText).toBe(true);
   expect(String(writingEntries[writingEntries.length - 1]?.liveText).length).toBeGreaterThan(String(writingEntries[0]?.liveText).length);
-  const landed = await evalIn(app, `(() => {
+  const landed = await evalIn(app, () => {
     const bubbles = [...document.querySelectorAll('[data-message-role="assistant"]')];
     const reply = document.querySelector('[data-testid="coworker-reply-bubble"]');
     return {
@@ -456,7 +493,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
       text: reply?.textContent?.trim() ?? "",
       thinkingDisclosures: document.querySelectorAll('[data-testid="coworker-thinking"], [data-testid="coworker-thinking-landed-text"]').length,
     };
-  })()`);
+  });
   expect(landed).toMatchObject({ assistantBubbles: 1, live: 0, text: THINK_REPLY, thinkingDisclosures: 0 });
   evidence.recordAssertionEvidence(
     "Preparing and streaming keep reasoning out of the DOM",
@@ -490,27 +527,27 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   // --- 3. Long preparation shows a deterministic note; the original wait budget still offers Stop.
   await beginLiveTrace(app, "typing");
   await send(app, SLOW_PROMPT);
-  const long = await waitFor(app, `(() => { const live = ${READ_LIVE}; return live.phase === "preparing" && live.outcome === "slow" ? live : false; })()`, { timeoutMs: SLOW_HOLD_MS + 60_000, label: "the deterministic long-running note" });
+  const long = await waitFor(app, browserScript(READ_LIVE, [THINK_REASONING, TOOL_UNKNOWN_PAYLOAD, "preparing", null]), { timeoutMs: SLOW_HOLD_MS + 60_000, label: "the deterministic long-running note" });
   expect(long).toMatchObject({ phase: "preparing", typing: true, outcome: "slow", note: "Preparing a reply. 0 tool steps completed.", liveText: "", reasoningInDom: false, toolPayloadInDom: false });
-  if (!await evalIn(app, `Boolean(document.querySelector('[data-testid="coworker-thinking-popover"]'))`)) {
-    await evalIn(app, `document.querySelector('[data-testid="coworker-typing"]')?.focus(); true`);
+  if (!await evalIn(app, () => Boolean(document.querySelector('[data-testid="coworker-thinking-popover"]')))) {
+    await evalIn(app, () => { document.querySelector<HTMLElement>('[data-testid="coworker-typing"]')?.focus(); return true; });
     await pressActivityKey(app, "Enter");
   }
-  await waitFor(app, `document.activeElement === document.querySelector('[data-testid="coworker-thinking-popover"][role="dialog"]')
-    && document.querySelector('[data-testid="coworker-typing"]')?.getAttribute("aria-expanded") === "true"`, { timeoutMs: 5_000, label: "focus in live activity inspection" });
+  await waitFor(app, () => document.activeElement === document.querySelector('[data-testid="coworker-thinking-popover"][role="dialog"]')
+    && document.querySelector('[data-testid="coworker-typing"]')?.getAttribute("aria-expanded") === "true", { timeoutMs: 5_000, label: "focus in live activity inspection" });
   await pressActivityKey(app, "Escape");
-  await waitFor(app, `!document.querySelector('[data-testid="coworker-thinking-popover"]')
+  await waitFor(app, () => !document.querySelector('[data-testid="coworker-thinking-popover"]')
     && document.activeElement === document.querySelector('[data-testid="coworker-typing"]')
-    && document.activeElement?.getAttribute("aria-expanded") === "false"`, { timeoutMs: 5_000, label: "Escape closes live inspection and restores typing-bubble focus" });
-  const slow = await waitFor(app, `(() => { const live = ${READ_LIVE}; return live.outcome === "slow" && live.header === "Still working" && document.querySelector('[data-testid="coworker-working"] [data-testid="coworker-turn-choice"][data-choice="stop"]') ? live : false; })()`, { timeoutMs: SLOW_HOLD_MS + 60_000, label: "the row past the wait budget" });
+    && document.activeElement?.getAttribute("aria-expanded") === "false", { timeoutMs: 5_000, label: "Escape closes live inspection and restores typing-bubble focus" });
+  const slow = await waitFor(app, browserScript(READ_LIVE, [THINK_REASONING, TOOL_UNKNOWN_PAYLOAD, null, "Still working"]), { timeoutMs: SLOW_HOLD_MS + 60_000, label: "the row past the wait budget" });
   expect(slow).toMatchObject({ phase: "preparing", typing: true, outcome: "slow", header: "Still working", rail: "Still working on it", note: "Preparing a reply. 0 tool steps completed." });
-  expect(await evalIn(app, `Boolean(document.querySelector('[data-testid="coworker-working"] [data-testid="coworker-turn-choice"][data-choice="stop"]'))`)).toBe(true);
+  expect(await evalIn(app, () => Boolean(document.querySelector('[data-testid="coworker-working"] [data-testid="coworker-turn-choice"][data-choice="stop"]')))).toBe(true);
   await waitForSettled(app, SLOW_REPLY, 90_000);
   const slowTrace = await endLiveTrace(app);
   const longEntries = slowTrace.filter((entry) => entry.phase === "preparing" && entry.outcome === "slow");
   expect(longEntries.length).toBeGreaterThan(0);
   expect(longEntries.every((entry) => entry.note === "Preparing a reply. 0 tool steps completed."), "elapsed time alone does not invent or change the progress note").toBe(true);
-  expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="failed"], [data-testid="coworker-turn-failed"]').length`)).toBe(0);
+  expect(await evalIn(app, () => document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="failed"], [data-testid="coworker-turn-failed"]').length)).toBe(0);
   evidence.recordAssertionEvidence(
     "Long preparation keeps a deterministic observed note, keyboard-accessible inspection and the existing wait-budget Stop action",
     `During the ${SLOW_HOLD_MS / 1_000} s hold, the long-running note stayed "Preparing a reply. 0 tool steps completed." Escape closed live inspection and restored focus. Past the original wait budget the header said Still working, the rail Still working on it, and inline Stop was available. Any observed streaming had no duplicate indicator; the reply landed with nothing marked failed.`,
@@ -518,13 +555,14 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   );
 
   // --- 4. Reload keeps safe tool inspection, not raw reasoning or payloads.
-  await evalIn(app, "location.reload(); true");
+  await evalIn(app, () => { location.reload(); return true; });
   await waitForNovaReady(app);
-  const afterReload = await waitFor(app, `(() => {
+  const afterReload = await waitFor(app, browserScript((reasoning, payload) => {
     const bubbles = [...document.querySelectorAll('[data-testid="coworker-reply-bubble"]')];
     if (bubbles.length !== 3) return false;
-    return { thinkingDisclosures: document.querySelectorAll('[data-testid="coworker-thinking"], [data-testid="coworker-thinking-landed-text"]').length, ...${READ_PRIVACY} };
-  })()`, { timeoutMs: 60_000, label: "the replies after a reload" });
+    const dom = document.body?.outerHTML ?? "";
+    return { thinkingDisclosures: document.querySelectorAll('[data-testid="coworker-thinking"], [data-testid="coworker-thinking-landed-text"]').length, reasoningInDom: reasoning.some((thought) => dom.includes(thought)), toolPayloadInDom: dom.includes("unrecognizedField") || dom.includes(payload) };
+  }, [THINK_REASONING, TOOL_UNKNOWN_PAYLOAD]), { timeoutMs: 60_000, label: "the replies after a reload" });
   expect(afterReload).toMatchObject({ thinkingDisclosures: 0, reasoningInDom: false, toolPayloadInDom: false });
   expect((await readLandedWork(app)).steps).toEqual(landedWork.steps);
   evidence.recordAssertionEvidence(
@@ -550,15 +588,25 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   });
   expect(coordinatorPatch.status).toBe(200);
   expect((await fetch(`${serverUrl}/workspace/${encodeURIComponent(coordinatorId)}/engine/reload`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` }, body: JSON.stringify({ force: true }) })).status).toBe(200);
-  await waitFor(app, `(async () => {
+  await waitFor(app, browserScript(async (modelId) => {
     const response = await window.__COWORKER__.invoke("settings.progressModels", {});
-    return response.ok && response.result.some((model) => model.id === ${json(`${SCRIPTED_PROVIDER}/${PROGRESS_MODEL}`)} && model.cost.input === 0.1 && model.cost.output === 0.2);
-  })()`, { awaitPromise: true, timeoutMs: 120_000, label: "explicit eligible progress model with known prices" });
-  const readProgress = `(async () => {
+    return response.ok && Array.isArray(response.result) && response.result.some((model: unknown) => {
+      if (typeof model !== "object" || model === null || !("id" in model) || model.id !== modelId || !("cost" in model)) return false;
+      const cost = model.cost;
+      return typeof cost === "object" && cost !== null && "input" in cost && cost.input === 0.1 && "output" in cost && cost.output === 0.2;
+    });
+  }, [`${SCRIPTED_PROVIDER}/${PROGRESS_MODEL}`]), { awaitPromise: true, timeoutMs: 120_000, label: "explicit eligible progress model with known prices" });
+  const readProgress = async (selectedOnly: boolean) => {
     const coworker = (await window.__COWORKER__.invoke("coworkers.get", { slug: "nova" })).result;
+    if (typeof coworker !== "object" || coworker === null || !("conversationThreadId" in coworker) || typeof coworker.conversationThreadId !== "string") throw new Error("Private thread unavailable");
     const response = await window.__COWORKER__.invoke("turns.activity", { slug: "nova", threadId: coworker.conversationThreadId });
-    return response.ok ? response.result.find((entry) => entry.state === "running") : null;
-  })()`;
+    if (!response.ok) return null;
+    if (!Array.isArray(response.result)) throw new Error("Turn activity unavailable");
+    const entry: unknown = response.result.find((entry: unknown) => typeof entry === "object" && entry !== null && "state" in entry && entry.state === "running");
+    if (!selectedOnly) return entry;
+    const note = typeof entry === "object" && entry !== null && "progressNote" in entry ? entry.progressNote : null;
+    return typeof note === "object" && note !== null && "source" in note && note.source === "selected";
+  };
   const waitRequests = async (count: number) => {
     const until = Date.now() + 45_000;
     while (scripted.progressRequests.length < count && Date.now() < until) await sleep(100);
@@ -586,14 +634,14 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     await send(app, PROGRESS_PARENT);
     const request = await waitRequests(before + 1);
     assertProgressBody(request.body);
-    const beforeActivity = await evalIn(app, readProgress, { awaitPromise: true });
+    const beforeActivity = await evalIn(app, browserScript(readProgress, [false]), { awaitPromise: true });
     if (!isRecord(beforeActivity)) throw new Error("Originating execution missing");
     if (mode === "valid") {
-      await waitFor(app, `(async () => (await ${readProgress})?.progressNote?.source === "selected")()`, { awaitPromise: true, timeoutMs: 10_000, label: "main-owned validated fact selection" });
-      await waitFor(app, `document.querySelector('[data-testid="coworker-still-working"]')?.textContent === "Preparing a reply."`, { timeoutMs: 10_000, label: "row consumes the safe main-owned selection" });
+      await waitFor(app, browserScript(readProgress, [true]), { awaitPromise: true, timeoutMs: 10_000, label: "main-owned validated fact selection" });
+      await waitFor(app, () => document.querySelector('[data-testid="coworker-still-working"]')?.textContent === "Preparing a reply.", { timeoutMs: 10_000, label: "row consumes the safe main-owned selection" });
       // A renderer reload/remount and settings toggles do not buy another request.
-      await evalIn(app, "location.reload(); true");
-      await waitFor(app, "Boolean(document.querySelector('[data-testid=\"coworker-working\"]'))", { timeoutMs: 30_000, label: "same execution after row remount" });
+      await evalIn(app, () => { location.reload(); return true; });
+      await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-working"]')), { timeoutMs: 30_000, label: "same execution after row remount" });
       await invokeCoworker(app, "settings.update", { progressSummariesEnabled: false });
       await invokeCoworker(app, "settings.update", { progressSummariesEnabled: true });
       await sleep(32_000);
@@ -631,17 +679,17 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
       await sleep(7_000);
       expect(scripted.progressRequests, "503 and invalid prose never trigger another provider attempt").toHaveLength(before + 1);
     }
-    const afterActivity = await evalIn(app, readProgress, { awaitPromise: true });
+    const afterActivity = await evalIn(app, browserScript(readProgress, [false]), { awaitPromise: true });
     expect(afterActivity).toMatchObject({ executionId: beforeActivity.executionId, state: "running" });
     if (mode !== "valid") {
       expect(isRecord(afterActivity) && isRecord(afterActivity.progressNote) ? afterActivity.progressNote.source : null).not.toBe("selected");
-      expect(await evalIn(app, `document.querySelector('[data-testid="coworker-still-working"]')?.textContent`)).toBe("Preparing a reply. 0 tool steps completed.");
+      expect(await evalIn(app, () => document.querySelector('[data-testid="coworker-still-working"]')?.textContent)).toBe("Preparing a reply. 0 tool steps completed.");
     }
     await finish();
     scripted.sendLate?.();
     await sleep(500);
     expect(scripted.progressRequests).toHaveLength(before + (mode === "valid" ? 3 : 1));
-    expect(await evalIn(app, `Boolean(document.querySelector('[data-testid="coworker-working"]'))`)).toBe(false);
+    expect(await evalIn(app, () => Boolean(document.querySelector('[data-testid="coworker-working"]')))).toBe(false);
   }
   const parentRequests = scripted.mainRequests.filter((request) => lastUserText(request).includes("Progress transport fixture:"));
   expect(parentRequests).toHaveLength(7);
