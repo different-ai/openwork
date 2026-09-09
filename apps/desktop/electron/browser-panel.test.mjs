@@ -561,8 +561,9 @@ test("confirmed suspension frees native resources but retains identity and owner
   assert.deepEqual(invoke("openwork:browser:state").tabs, []);
 });
 
-test("automation is protected before marker loading and returns only after first-document background emulation", async (t) => {
-  const { invoke, views, commands } = createTaskPanel(t);
+test("automation is protected before navigation consent and returns its native target only after first-document background emulation", async (t) => {
+  const { invoke, views, commands, approve } = createTaskPanel(t);
+  invoke("openwork:browser:show", PANEL_BOUNDS, "B");
   const document = gate();
   const emulation = gate();
   controls.beforeLoad = () => document.promise;
@@ -570,9 +571,18 @@ test("automation is protected before marker loading and returns only after first
   let returned = false;
   const opening = invoke("openwork:browser:openUrl", "https://example.com", "builtin", { sessionId: "B" });
   void opening.then(() => { returned = true; });
+  await flush();
   const tab = invoke("openwork:browser:state").tabs[0];
   assert.equal(tab.automationProtected, true);
+  assert.deepEqual(views()[0].webContents.loads, [], "navigation waits for the owner's consent");
   assert.deepEqual(commands(views()[0]), [], "no Emulation before the first dom-ready");
+  await assert.rejects(invoke("openwork:browser:suspendTab", tab.id), /protected or busy/);
+  assert.throws(() => invoke("openwork:browser:releaseTab", tab.id, "B"), /busy/);
+  assert.equal(approve(true, tab.id), true);
+  await flush();
+  assert.deepEqual(views()[0].webContents.loads, ["https://example.com/"], "the approved destination loads without a marker page");
+  invoke("openwork:browser:setVisibleSession", "A");
+  assert.deepEqual(commands(views()[0]), [], "background emulation still waits for the first document");
   await assert.rejects(invoke("openwork:browser:suspendTab", tab.id), /protected or busy/);
   assert.throws(() => invoke("openwork:browser:releaseTab", tab.id, "B"), /busy/);
   document.finish();
@@ -591,8 +601,13 @@ test("automation is protected before marker loading and returns only after first
 });
 
 test("restore and release enforce exact ownership and protection lasts until explicit release", async (t) => {
-  const { invoke, views } = createTaskPanel(t);
-  const first = await invoke("openwork:browser:openUrl", "https://example.com", "builtin", { sessionId: "B" });
+  const { invoke, views, approve } = createTaskPanel(t);
+  invoke("openwork:browser:show", PANEL_BOUNDS, "B");
+  const opening = invoke("openwork:browser:openUrl", "https://example.com", "builtin", { sessionId: "B" });
+  await flush();
+  assert.deepEqual(views()[0].webContents.loads, [], "navigation waits for the owner's consent");
+  assert.equal(approve(), true);
+  const first = await opening;
   const tabId = first.tab_id;
   controls.confirm = async () => 1;
   for (const owner of [undefined, null, "", "A"]) {

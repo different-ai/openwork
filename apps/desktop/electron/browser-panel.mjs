@@ -27,6 +27,7 @@ const BROWSER_NEW_TAB_URL = "https://www.google.com";
 // than evicting a live document (unsaved input and CDP handles cannot be restored
 // from a URL). This is a tab bound, not a Chromium process or memory limit.
 const MAX_BROWSER_TABS = 12;
+const BROWSER_TARGET_RESOLVE_TIMEOUT_MS = 2500;
 const MENU_OVERLAY_HTML = "overlay.html";
 const MENU_OVERLAY_WIDTH = 196;
 const MENU_OVERLAY_HEIGHT = 176;
@@ -226,7 +227,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       browser_url: cdpBrowserUrl(),
       target_id: targetId,
       tab_id: result.tabId,
-      url,
+      url: getBrowserTab(result.tabId).view.webContents.getURL(),
       owner_session_id: registry.ownerOf(result.tabId),
       visible: registry.surfacingFor(result.tabId) === "foreground",
     };
@@ -235,6 +236,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   async function openBrowserTab(url, ownerSessionId, signal = undefined, beforeLoad = undefined) {
     signal?.throwIfAborted();
     const tab = createBrowserTab("about:blank", { select: true, initializeBlank: false, deferBackground: true, ownerSessionId, automationProtected: true });
+    tab.operation = true;
     const stop = () => {
       if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop();
       closeBrowserTab(tab.tabId);
@@ -247,6 +249,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       await tab.view.webContents.loadURL(url); signal?.throwIfAborted();
       tab.deferBackground = false;
       applySurfacing();
+      await tab.emulation;
+      signal?.throwIfAborted();
       return tab;
     }
     catch (error) {
@@ -254,7 +258,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       closeBrowserTab(tab.tabId);
       throw error;
     }
-    finally { signal?.removeEventListener("abort", stop); }
+    finally { signal?.removeEventListener("abort", stop); tab.operation = false; sendBrowserState(); }
   }
 
   function getBrowserTab(tabId = registry.onScreenTabId()) {
