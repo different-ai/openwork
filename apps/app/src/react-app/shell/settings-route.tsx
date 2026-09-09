@@ -81,6 +81,7 @@ import { useSettingsExtensionController } from "@/react-app/domains/settings/set
 import { buildExtensionItems } from "@/react-app/domains/settings/extension-items";
 import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { PreferencesView } from "@/react-app/domains/settings/pages/preferences-view";
+import { ConnectionsView } from "@/react-app/domains/settings/pages/connections-view";
 import { GeneralSettingsView } from "@/react-app/domains/settings/pages/general-view";
 import { AuthorizedFoldersPanel } from "@/react-app/domains/settings/panels/authorized-folders-panel";
 import { BrowserLoginsPanel } from "../domains/browser-logins/browser-logins-panel";
@@ -315,7 +316,7 @@ export function parseSettingsPath(pathname: string): {
     case "cloud-providers":
       return { tab: head, redirectPath: null };
     case "connect":
-      return { tab: "extensions", redirectPath: "extensions", extensionsSection: "all" };
+      return { tab: "connect", redirectPath: null, ...(tail ? { extensionDetailId: decodeURIComponent(tail) } : {}) };
     case "recovery":
       return { tab: "advanced", redirectPath: "advanced" };
     case "skills":
@@ -422,8 +423,8 @@ function findSessionWorkspaceId(
 
 export function settingsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
   if (route.tab === "advanced" && route.advancedSection) return `advanced/${route.advancedSection}`;
-  if (route.tab === "extensions" && route.extensionDetailId) {
-    return `extensions/${encodeURIComponent(route.extensionDetailId)}`;
+  if ((route.tab === "extensions" || route.tab === "connect") && route.extensionDetailId) {
+    return `${route.tab}/${encodeURIComponent(route.extensionDetailId)}`;
   }
   if (route.tab === "extensions" && route.extensionsSection && route.extensionsSection !== "all") {
     return `extensions/${route.extensionsSection}`;
@@ -2397,6 +2398,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             }}
           />
         );
+      case "connect":
+        if (!route.extensionDetailId) {
+          return <ConnectionsView entries={extensionItems.quickConnectEntries} builtInsDisabled={builtInExtensionsDisabled} onNavigate={navigateSettingsPath} />;
+        }
+        // Reuse the same policy checks and setup controllers for native settings.
       case "extensions":
         return (
           <ExtensionsView
@@ -2412,7 +2418,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             initialSection={route.extensionsSection}
             detailId={route.extensionDetailId ?? null}
             onDetailIdChange={(id) => {
-              navigateSettingsPath(id ? `extensions/${encodeURIComponent(id)}` : "extensions");
+              const home = route.tab === "connect" ? "connect" : "extensions";
+              navigateSettingsPath(id ? `${home}/${encodeURIComponent(id)}` : home);
             }}
             setSectionRoute={(section) => {
               const path = section === "all" ? "extensions" : `extensions/${section}`;
@@ -2432,6 +2439,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             }}
             mcpView={({ initialFilter, onFilterChange, initialState, onStateChange, detailId, onDetailIdChange, onRefresh }) => (
               <McpView
+                detailBackLabel={route.tab === "connect" ? "Connections" : undefined}
                 busy={busy}
                 selectedWorkspaceRoot={selectedWorkspaceRoot}
                 isRemoteWorkspace={isRemoteWorkspace}

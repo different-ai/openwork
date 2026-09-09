@@ -108,7 +108,7 @@ export function getSettingsTabLabel(tab: SettingsTab) {
     case "cloud-account":
       return t("settings.tab_cloud_account");
     case "connect":
-      return t("settings.tab_connect");
+      return "Connections";
     case "cloud-marketplaces":
       return t("settings.tab_cloud_marketplaces");
     case "cloud-providers":
@@ -147,7 +147,7 @@ export function getSettingsTabDescription(tab: SettingsTab) {
     case "cloud-account":
       return t("settings.tab_description_cloud_account");
     case "connect":
-      return t("settings.tab_description_connect");
+      return "Set up computer access, local AI, and connected services";
     case "cloud-marketplaces":
       return t("settings.tab_description_cloud_marketplaces");
     case "cloud-providers":
@@ -176,7 +176,7 @@ export function getSettingsTabDescription(tab: SettingsTab) {
 }
 
 export function getWorkspaceSettingsTabs(): SettingsTab[] {
-  return ["preferences", "permissions", "extensions", "advanced"];
+  return ["preferences", "permissions", "connect", "extensions", "advanced"];
 }
 
 export function getGlobalSettingsTabs(

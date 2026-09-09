@@ -185,6 +185,7 @@ export type McpViewProps = {
   allowManageExtensions: boolean;
   selectedMcp: string | null;
   setSelectedMcp: (name: string | null) => void;
+  detailBackLabel?: string;
   quickConnect: McpDirectoryInfo[];
   connectMcp: (entry: McpDirectoryInfo) => Promise<McpConnectResult>;
   authorizeMcp: (entry: McpServerEntry) => void;
@@ -1007,7 +1008,7 @@ export function McpView(props: McpViewProps) {
             open={!!detailEntry}
             onClose={closeDetail}
             presentation={detailPresentation}
-            backLabel={t("extensions.title")}
+            backLabel={props.detailBackLabel ?? t("extensions.title")}
             name={detailEntry.name}
             description={detailEntry.description}
             iconSlug={detailEntry.iconSlug}

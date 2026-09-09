@@ -67,11 +67,66 @@ test(title, async ({ evidence, place }) => {
   });
 
   await desktop.client.send("Emulation.setDeviceMetricsOverride", {
-    width: 820,
+    width: 1280,
     height: 760,
     deviceScaleFactor: 1,
     mobile: false,
   });
+  await waitFor(desktop, `[...document.querySelectorAll('button')].some((button) => button.textContent?.trim() === 'Connections')`, {
+    timeoutMs: 90_000, label: "Connections in app navigation",
+  });
+  expect(await evalIn(desktop, `(() => {
+    const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.trim() === 'Connections');
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`)).toBe(true);
+  await waitFor(desktop, `Boolean(document.querySelector('[data-testid="connections-home"]'))`, {
+    timeoutMs: 30_000, label: "native Connections home",
+  });
+  await desktop.client.send("Emulation.setDeviceMetricsOverride", {
+    width: 820, height: 760, deviceScaleFactor: 1, mobile: false,
+  });
+  const home = await evalIn(desktop, `(() => {
+    const home = document.querySelector('[data-testid="connections-home"]');
+    return { text: home?.textContent, route: location.hash, overflow: document.documentElement.scrollWidth > innerWidth };
+  })()`);
+  expect(home).toMatchObject({ route: expect.stringContaining('/settings/connect'), overflow: false });
+  for (const label of ['On your computer', 'Local AI', 'Ollama', 'Connected accounts', 'Custom tools', 'AI providers']) {
+    expect(home).toMatchObject({ text: expect.stringContaining(label) });
+  }
+  await screenshot(desktop);
+  for (const name of ['OpenWork Browser', 'Ollama']) {
+    expect(await evalIn(desktop, `(() => {
+      const button = [...document.querySelectorAll('[data-testid="connections-home"] button')]
+        .find((item) => item.textContent?.includes(${JSON.stringify(name)}));
+      if (!button) return false;
+      button.click();
+      return true;
+    })()`)).toBe(true);
+    await waitFor(desktop, `location.hash.includes('/settings/connect/') && !document.querySelector('[data-testid="connections-home"]')
+      && [...document.querySelectorAll('button')].some((button) => button.textContent?.trim() === 'Connections')`, {
+      timeoutMs: 30_000, label: `${name} setup within Connections`,
+    });
+    expect(await evalIn(desktop, `document.body.textContent.includes(${JSON.stringify(name)})`)).toBe(true);
+    // Navigate using the detail's own back button, excluding sidebar destinations.
+    expect(await evalIn(desktop, `(() => {
+      const button = [...document.querySelectorAll('button')].find((item) =>
+        item.textContent?.trim() === 'Connections' && !item.hasAttribute('data-sidebar'));
+      if (!button) return false;
+      button.click();
+      return true;
+    })()`)).toBe(true);
+    await waitFor(desktop, `Boolean(document.querySelector('[data-testid="connections-home"]')) && !location.hash.includes('/extensions')`, {
+      timeoutMs: 30_000, label: `${name} returns to Connections rather than Library`,
+    });
+  }
+  evidence.recordAssertionEvidence(
+    "Connections is discoverable from the app and local setup returns to its native home",
+    "App navigation opened Connections; device tools, Ollama, account and custom-tool entry points fit the viewport. Browser and Ollama detail routes returned to Connections without entering Library.",
+    true,
+  );
+
   await go(desktop, `/workspace/${desktop.workspaceId}/extensions`);
   await waitFor(desktop, () => ([...document.querySelectorAll("button")]
     .some((button) => (button.textContent ?? "").trim() === "Add")), {

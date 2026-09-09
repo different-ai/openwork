@@ -36,17 +36,21 @@ describe("settings route parsing", () => {
     });
   });
 
-  test("redirects Connect settings into Extensions", () => {
+  test("opens native Connections settings", () => {
     expect(parseSettingsPath("/settings/connect")).toEqual({
-      tab: "extensions",
-      redirectPath: "extensions",
-      extensionsSection: "all",
+      tab: "connect",
+      redirectPath: null,
     });
     expect(parseSettingsPath("/workspace/workspace_1/settings/connect")).toEqual({
-      tab: "extensions",
-      redirectPath: "extensions",
-      extensionsSection: "all",
+      tab: "connect",
+      redirectPath: null,
     });
+  });
+
+  test("round-trips Connections setup deep links", () => {
+    const route = parseSettingsPath("/workspace/workspace_1/settings/connect/ollama");
+    expect(route).toEqual({ tab: "connect", redirectPath: null, extensionDetailId: "ollama" });
+    expect(settingsPathForRoute(route)).toBe("connect/ollama");
   });
 
   test("preserves extension section deep links", () => {
@@ -102,7 +106,7 @@ describe("settings route parsing", () => {
 
 describe("settings navigation", () => {
   test("includes Library in workspace settings", () => {
-    expect(getWorkspaceSettingsTabs()).toEqual(["preferences", "permissions", "extensions", "advanced"]);
+    expect(getWorkspaceSettingsTabs()).toEqual(["preferences", "permissions", "connect", "extensions", "advanced"]);
     expect(getSettingsTabLabel("extensions")).toBe("Library");
   });
 
