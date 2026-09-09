@@ -10,9 +10,10 @@ export function windowMaterial(theme, platform = process.platform, systemVersion
 }
 
 export function bindWindowAppearance(window, theme, platform = process.platform, systemVersion = release()) {
+  const contents = window.webContents;
   let material = "none";
   const publish = () => {
-    window.webContents.send("coworker:appearance", { material, focused: window.isFocused() });
+    contents.send("coworker:appearance", { material, focused: window.isFocused() });
   };
   const update = () => {
     material = windowMaterial(theme, platform, systemVersion);
@@ -25,11 +26,12 @@ export function bindWindowAppearance(window, theme, platform = process.platform,
   theme.on("updated", update);
   window.on("focus", publish);
   window.on("blur", publish);
-  window.webContents.on("did-finish-load", publish);
+  contents.on("did-finish-load", publish);
   window.once("closed", () => {
     theme.removeListener("updated", update);
     window.removeListener("focus", publish);
     window.removeListener("blur", publish);
-    window.webContents.removeListener("did-finish-load", publish);
+    // BrowserWindow's native getter is no longer usable once it is closed.
+    contents.removeListener("did-finish-load", publish);
   });
 }
