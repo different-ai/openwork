@@ -7,8 +7,9 @@ import type { Den, MockHandle, Seed } from "@openwork/env";
 import { denFetch, evalIn as rawEvalIn } from "@openwork/behaviors";
 import type { DenFetchResult, DenSession } from "@openwork/behaviors";
 import { allocateFreePort } from "@openwork/cdp";
-import { startMockMcp } from "@openwork/labs";
+import { startMockMcp, type MockMcpTool } from "@openwork/labs";
 import { captureExternalBrowserUrls, electronProfilePaths } from "@openwork/hosts";
+import { readCloudMcpHealth } from "@openwork/testkit";
 import { configureProvider } from "./chat.ts";
 
 export const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -861,13 +862,14 @@ async function configureWorkspaceModel(seed: Seed, input: {
   providerId: string;
   modelId: string;
   fixtureUrl: string;
+  realApiKey?: string;
   denApiUrl?: string;
   mcpToken?: string;
   appHostToken?: string;
   directMcp?: { name: string; url: string };
 }): Promise<void> {
   // TODO(primitive): seed.workspaceRuntimeConfig
-  const result = await rawEvalIn(input.app, browserScript(async (inputWorkspaceId, providerId, value, modelId, inputValue, inputValue2, inputProviderId, inputModelId, inputValue3) => {
+  const result = await rawEvalIn(input.app, browserScript(async (inputWorkspaceId, providerId, value, modelId, inputValue, inputValue2, inputProviderId, inputModelId, inputValue3, realApiKey) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return "missing local server credentials";
@@ -884,7 +886,7 @@ async function configureWorkspaceModel(seed: Seed, input: {
       method: "PATCH",
       body: JSON.stringify({ opencode: {
         provider: {
-          [providerId]: {
+          [providerId]: realApiKey ? { options: { apiKey: realApiKey } } : {
             npm: "@ai-sdk/openai-compatible",
             name: "E2E MCP App model",
             options: { baseURL: value, apiKey: "sk-e2e-fixture" },
@@ -925,7 +927,7 @@ async function configureWorkspaceModel(seed: Seed, input: {
       },
       appHostAuthorization: input.appHostToken ? `Bearer ${input.appHostToken}` : undefined,
       provider: input.providerId, model: input.modelId, trigger: "spec-primitives-migration",
-    } : null, input.providerId, input.modelId, `${input.providerId}/${input.modelId}`]), { awaitPromise: true, timeoutMs: 120_000 });
+    } : null, input.providerId, input.modelId, `${input.providerId}/${input.modelId}`, input.realApiKey ?? null]), { awaitPromise: true, timeoutMs: 120_000 });
   if (result !== "ok") throw new Error(`Configuring the fixture model failed: ${String(result)}`);
 }
 
@@ -1400,6 +1402,45 @@ export async function remoteMcpApps(seed: Seed) {
     await rm(profileDir, { recursive: true, force: true });
     throw error;
   }
+}
+
+/** Real model selection and execution; only the remote service is a deterministic MCP witness. */
+export async function nativeConnectionSetup(seed: Seed) {
+  const modelId = process.env.OPENWORK_EVAL_MODEL?.trim();
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!modelId || !apiKey) throw new SkipError("native setup requires OPENWORK_EVAL_MODEL and OPENAI_API_KEY");
+  const tools: MockMcpTool[] = [{ name: "read_connection_status", description: "Read the service's current connection status.", inputSchema: { type: "object", properties: {} }, annotations: { readOnlyHint: true, destructiveHint: false }, result: { content: [{ type: "text", text: "The workspace service is operational. Verification code: violet-orbit-42." }] } }];
+  const den = await seed.den({ org: { name: `Native Setup ${Date.now()}`, admin: { name: "Setup Admin" }, members: { member: { name: "Setup Member" } } }, mocks: { connector: seed.mock({ tools }) } });
+  const proxy = await seed.faultProxy(den);
+  await proxy.faults.status("/api/runtime-config", 200, { times: 1000, body: { denApiUrl: proxy.ref.apiUrl } });
+  const setToolsUnavailable = async (unavailable: boolean) => {
+    const response = await fetch(`${den.mocks.connector.url}/admin/tools`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tools, toolsUnavailable: unavailable, requireConsent: true }) });
+    if (!response.ok) throw new Error("Could not configure the MCP witness");
+  };
+  // The real OS browser opens immediately; require a human approval click so
+  // pending sign-in and retry are stable states rather than an auto-consent race.
+  await setToolsUnavailable(false);
+  const organizationId = await activeOrganizationId(seed, den.admin);
+  const sessions: Record<string, { workspaceId: string; sessionId: string }> = {};
+  const desktopFor = async (identity: string) => {
+    const session = identity === "admin" ? den.admin : den.members[identity];
+    if (!session) throw new Error("Missing setup identity");
+    const tokens = await seed.api(session, "/v1/mcp/token", { method: "POST", headers: { "x-openwork-org-id": organizationId }, body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }) });
+    const app = await seed.desktop({ den: { ...den, ref: proxy.ref }, as: identity, model: modelId, enterpriseActivated: true, name: `native-setup-${identity}` });
+    const workspace = await seed.workspace(app, seed.tmpPath(`native-setup-${identity}`));
+    await configureWorkspaceModel(seed, { app, workspaceId: workspace.workspaceId, providerId: "openai", modelId, fixtureUrl: "https://api.openai.com", realApiKey: apiKey, denApiUrl: den.ref.apiUrl, mcpToken: stringField(tokens.body, "token"), appHostToken: stringField(tokens.body, "appHostToken") });
+    await reloadConfiguredApp(app);
+    const sessionState = await seed.session(app);
+    sessions[identity] = { workspaceId: workspace.workspaceId, sessionId: sessionState.sessionId };
+    const health = await readCloudMcpHealth(app, workspace.workspaceId, { probe: true, timeoutMs: 60_000 });
+    if (health.usable !== true) throw new Error(`Setup world needs usable Connect tools: ${JSON.stringify({ phase: health.phase, engineStatus: health.engineStatus, tools: health.tools, direct: health.direct })}`);
+    return app;
+  };
+  const app = await desktopFor("admin");
+  const memberApp = await desktopFor("member");
+  const web = await seed.web({ den, signedInAs: den.admin, headless: true });
+  const browserUrls = await captureExternalBrowserUrls(app.handle);
+  return withDispose({ app, memberApp, den, proxy, organizationId, web, browserUrls, setToolsUnavailable, modelId, sessions }, async () => { await browserUrls[Symbol.asyncDispose](); });
 }
 
 export async function connectorCatalogDiscovery(seed: Seed) {

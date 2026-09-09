@@ -12,10 +12,12 @@ import {
 
 export const SECURITY_CONFIGURATION_PERMISSION_RESOURCE = "security_configuration"
 export const SECURITY_CONFIGURATION_PERMISSION_ACTION = "manage"
+export const MCP_CONNECTIONS_PERMISSION_RESOURCE = "mcp_connections"
 
 const denOrganizationStatements = {
   ...defaultStatements,
   [SECURITY_CONFIGURATION_PERMISSION_RESOURCE]: [SECURITY_CONFIGURATION_PERMISSION_ACTION],
+  [MCP_CONNECTIONS_PERMISSION_RESOURCE]: ["manage"],
 } as const
 
 export const denOrganizationAccess = createAccessControl(denOrganizationStatements)
@@ -55,8 +57,10 @@ type InvitationRoleValidationResult = {
 const denOwnerStatements = {
   ...defaultRoles.owner.statements,
   [SECURITY_CONFIGURATION_PERMISSION_RESOURCE]: [SECURITY_CONFIGURATION_PERMISSION_ACTION],
+  [MCP_CONNECTIONS_PERMISSION_RESOURCE]: ["manage"],
 } as const
 const denAdminStatements = {
+  [MCP_CONNECTIONS_PERMISSION_RESOURCE]: ["manage"],
   invitation: ["create", "cancel"],
   member: ["delete"],
   team: ["create", "update", "delete"],
@@ -285,4 +289,12 @@ export function canManageSecurityConfiguration(payload: SecurityConfigurationPer
     requiredRole: ORGANIZATION_SUPER_ADMIN_ROLE,
     isOwner: payload.currentMember.isOwner,
   })
+}
+
+export function canManageMcpConnections(payload: SecurityConfigurationPermissionPayload) {
+  return organizationRoleValueSatisfies({
+    roleValue: payload.currentMember.role,
+    requiredRole: ORGANIZATION_ADMIN_ROLE,
+    isOwner: payload.currentMember.isOwner,
+  }) || hasPermission(resolveOrganizationPermissionRecord(payload.currentMember.role, payload.roles), MCP_CONNECTIONS_PERMISSION_RESOURCE, "manage")
 }

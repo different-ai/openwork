@@ -124,6 +124,11 @@
       "development": "./src/den/desktop-policies.ts",
       "bun": "./src/den/desktop-policies.ts",
       "default": "./dist/den/desktop-policies.js"
+    },
+    "./connection-setup": {
+      "types": "./src/connection-setup.ts",
+      "development": "./src/connection-setup.ts",
+      "default": "./src/connection-setup.ts"
     }
   },
   "files": [

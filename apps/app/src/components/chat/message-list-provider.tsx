@@ -37,6 +37,8 @@ interface MessageListContextValue {
     onProgress: (progress: ChatToolReconnectProgress) => void,
   ) => Promise<ChatToolReconnectResult>
   onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string) => Promise<void>
+  onConnectionSetup: (target: string) => void | Promise<void>
+  readyConnectionTargets: ReadonlySet<string>
   onMcpRetry: (action: ChatToolReconnectAction) => void | Promise<void>
 }
 
@@ -59,6 +61,8 @@ interface MessageListProviderProps {
     onProgress: (progress: ChatToolReconnectProgress) => void,
   ) => Promise<ChatToolReconnectResult>
   onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string) => Promise<void>
+  onConnectionSetup: (target: string) => void | Promise<void>
+  readyConnectionTargets: ReadonlySet<string>
   onMcpRetry: (action: ChatToolReconnectAction) => void | Promise<void>
   displaySuggestions: boolean
   providerConnectedCount: number
@@ -95,6 +99,8 @@ export function MessageListProvider({
   onMcpReconnect,
   onMcpReopenAuthorization,
   onMcpRetry,
+  onConnectionSetup,
+  readyConnectionTargets,
 }: MessageListProviderProps) {
   const handlersRef = React.useRef({
     dispatchAction,
@@ -107,6 +113,7 @@ export function MessageListProvider({
     onMcpReconnect,
     onMcpReopenAuthorization,
     onMcpRetry,
+    onConnectionSetup,
   })
   React.useEffect(() => {
     handlersRef.current = {
@@ -120,6 +127,7 @@ export function MessageListProvider({
       onMcpReconnect,
       onMcpReopenAuthorization,
       onMcpRetry,
+      onConnectionSetup,
     }
   }, [
     dispatchAction,
@@ -132,6 +140,7 @@ export function MessageListProvider({
     onMcpReconnect,
     onMcpReopenAuthorization,
     onMcpRetry,
+    onConnectionSetup,
   ])
   const stableHandlers = React.useMemo(() => ({
     dispatchAction: (action: DispatchAction) => handlersRef.current.dispatchAction(action),
@@ -149,6 +158,7 @@ export function MessageListProvider({
       handlersRef.current.onMcpReopenAuthorization(action, authorizeUrl)
     ),
     onMcpRetry: (action: ChatToolReconnectAction) => handlersRef.current.onMcpRetry(action),
+    onConnectionSetup: (target: string) => handlersRef.current.onConnectionSetup(target),
   }), [])
   const canOpenSubagentSession = Boolean(onOpenSubagentSession)
   const canResumeInterrupted = Boolean(onResumeInterrupted)
@@ -162,6 +172,7 @@ export function MessageListProvider({
       displaySuggestions,
       providerConnectedCount,
       connectorIdentities,
+      readyConnectionTargets,
       syncDegraded,
       ...stableHandlers,
       onOpenSubagentSession: canOpenSubagentSession
@@ -180,6 +191,7 @@ export function MessageListProvider({
       displaySuggestions,
       providerConnectedCount,
       connectorIdentities,
+      readyConnectionTargets,
       syncDegraded,
       stableHandlers,
       canOpenSubagentSession,

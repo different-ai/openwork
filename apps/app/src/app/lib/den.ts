@@ -2,6 +2,7 @@ import {
   normalizeDesktopConfig,
   type DesktopConfig as SharedDesktopConfig,
 } from "@openwork/types/den/desktop-policies";
+import { connectionSetupSchema, connectionReadinessSchema, type ConnectionSetupInput, type CreateSetupConnection } from "@openwork/types/connection-setup";
 import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
   AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER,
@@ -3071,7 +3072,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
     },
     async saveApp(orgId: string, appId: string, input: SaveApp) {
       return generatedArtifactViewSchema.parse(await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}/save`, {
-        method: "POST", token, organizationId: orgId, body: input,
+        method: "POST", token, organizationId: orgId, body: input, timeoutMs: 120_000,
       }));
     },
     async deleteApp(orgId: string, appId: string) {
@@ -3436,6 +3437,40 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         { method: "GET", token, organizationId: orgId },
       );
       return getDenExternalMcpPresets(payload);
+    },
+
+    async readConnectionSetup(orgId: string, input: ConnectionSetupInput) {
+      return connectionSetupSchema.parse(await requestJson<unknown>(baseUrls, "/v1/mcp-connections/setup", {
+        method: "POST", token, organizationId: orgId, body: input, timeoutMs: 120_000,
+      }));
+    },
+
+    async createSetupConnection(orgId: string, input: CreateSetupConnection) {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/mcp-connections", {
+        method: "POST", token, organizationId: orgId, body: input, timeoutMs: 120_000,
+      });
+      const connection = parseDenExternalMcpConnection(payload);
+      if (!connection) throw new DenApiError(500, "invalid_mcp_connection_payload", "Connection setup returned an invalid response.");
+      return connection;
+    },
+
+    async replaceSetupCredentials(orgId: string, connection: import("@openwork/types/connection-setup").SetupConnection, kind: "external_mcp" | "native_provider", credentials: Pick<CreateSetupConnection, "apiKey" | "oauthClient">) {
+      if (!connection.access) throw new Error("Connection management permission is required.");
+      if (kind === "native_provider") {
+        return requestJson<unknown>(baseUrls, `/v1/oauth-providers/${encodeURIComponent(connection.id)}/client`, {
+          method: "POST", token, organizationId: orgId, body: credentials.oauthClient, timeoutMs: 120_000,
+        });
+      }
+      return requestJson<unknown>(baseUrls, `/v1/mcp-connections/${encodeURIComponent(connection.id)}`, {
+        method: "PUT", token, organizationId: orgId, timeoutMs: 120_000,
+        body: { expectedUpdatedAt: connection.updatedAt, name: connection.name, url: connection.url, authType: connection.authType, credentialMode: connection.credentialMode, access: connection.access, ...credentials },
+      });
+    },
+
+    async checkConnectionReadiness(orgId: string, connectionId: string) {
+      return connectionReadinessSchema.parse(await requestJson<unknown>(baseUrls, `/v1/mcp-connections/${encodeURIComponent(connectionId)}/readiness`, {
+        method: "GET", token, organizationId: orgId, timeoutMs: 120_000,
+      }));
     },
 
     async startMcpConnectionConnect(orgId: string, connectionId: string): Promise<DenMcpConnectionConnectStart> {

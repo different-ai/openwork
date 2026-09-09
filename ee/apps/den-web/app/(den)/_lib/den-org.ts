@@ -288,6 +288,7 @@ export const DEN_ROLE_PERMISSION_OPTIONS = {
   team: ["create", "update", "delete"],
   ac: ["create", "read", "update", "delete"],
   security_configuration: ["manage"],
+  mcp_connections: ["manage"],
 } as const;
 
 export const PENDING_ORG_INVITATION_STORAGE_KEY = "openwork:web:pending-org-invitation";

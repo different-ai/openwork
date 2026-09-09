@@ -1,79 +1,188 @@
+import type { Target } from "@openwork/cdp";
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { allConnectorsPrompt, allConnectorsReply, connectorCatalogDiscovery, connectorCatalogPrompt, connectorCatalogReply } from "../worlds/library.ts";
+import { nativeConnectionSetup, records, isRecord } from "../worlds/library.ts";
 
-const test = spec.world(connectorCatalogDiscovery, { timeout: 600_000 });
+const test = spec.world(nativeConnectionSetup, {
+  timeout: 1_200_000,
+  needs: { model: "tool-capable", env: ["OPENAI_API_KEY"], optIn: ["OPENWORK_EVAL_E2E_TESTS"] },
+});
 
-test("chat suggests Slack setup and lets an admin browse every quick-add connector", async ({ world, agent, user, probe, evidence }) => {
+test("a real model guides native setup, resumes with usable tools, and respects member access", { timeout: 1_200_000 }, async ({ world, agent, user, probe, evidence, step }) => {
   const appUser = user.on(world.app);
+  const memberUser = user.on(world.memberApp);
   const appProbe = probe.on(world.app);
-  const webUser = user.on(world.web);
-  expect(connectorCatalogPrompt).not.toContain(world.connection.id);
-  await agent.on(world.app).send(connectorCatalogPrompt);
-  await appUser.see({ text: connectorCatalogReply }, { timeoutMs: 120_000 });
-  await appUser.see({ testId: "connector-catalog" });
-  await appUser.see({ role: "button", label: "Set up Slack" });
-  await appUser.see({ text: "Admin setup" });
-  await appUser.notSee({ testId: "desktop-connection-card" });
-  const visibleIds = () => appProbe.eval(() => (Array.from(document.querySelectorAll<HTMLElement>('[data-connector-preset]'), element => element.getAttribute('data-connector-preset'))));
-  expect(await visibleIds()).toEqual(["slack"]);
-  const suggestedWidth = await appProbe.eval(() => (document.querySelector<HTMLElement>('[data-testid="connector-catalog"]')?.getBoundingClientRect().width));
-  await appUser.screenshot();
-  evidence.recordAssertionEvidence("A Slack request offers setup without claiming the service is connected", "Only Slack is suggested with Admin setup; no account connection card is shown", true);
+  const endpoint = world.den.mocks.connector.mcpUrl;
+  const hostname = new URL(endpoint).hostname;
+  const setupButton: Target = { role: "button", label: `Set up ${hostname}` };
+  const prompt = `I want to connect the MCP service at ${endpoint}. Help me set it up here. Once I finish signing in, read the service's current connection status.`;
+  expect(prompt).not.toContain("violet-orbit-42");
+  const inventory = async () => {
+    const result = await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable");
+    expect(result.response.status).toBe(200);
+    return isRecord(result.body) ? records(result.body.connections) : [];
+  };
+  let connectionId = "";
+  const unsentDraft = "Keep this note in my composer for later.";
 
-  await appUser.click({ role: "button", label: `Browse all ${world.expectedIds.length}` });
-  await appUser.see({ role: "textbox", label: "Filter connectors" });
-  expect(await visibleIds()).toEqual(world.expectedIds);
-  const expandedWidth = await appProbe.eval(() => (document.querySelector<HTMLElement>('[data-testid="connector-catalog"]')?.getBoundingClientRect().width));
-  expect(expandedWidth).toBe(suggestedWidth);
-  evidence.recordAssertionEvidence("Browsing all connectors preserves the suggestion card width", JSON.stringify({ suggestedWidth, expandedWidth }), true);
-  await appUser.see({ role: "button", label: "Set up Linear" });
-  await appUser.screenshot();
-  evidence.recordAssertionEvidence("Browse all includes the complete Den preset catalog and both productivity suites", JSON.stringify(world.expectedIds), true);
-  await appUser.type({ role: "textbox", label: "Filter connectors" }, "no such connector", { replace: true });
-  await appUser.see({ text: "No connectors match your search." });
-  expect(await visibleIds()).toEqual([]);
-  await appUser.type({ role: "textbox", label: "Filter connectors" }, "slack", { replace: true });
-  expect(await visibleIds()).toEqual(["slack"]);
-  await probe.eventually(
-    () => appProbe.eval(() => (document.querySelector<HTMLButtonElement>('button[aria-label="Set up Slack"]')?.disabled === false)),
-    { within: 15_000, label: "admin setup action is enabled", until: value => value === true },
-  );
-  expect(await world.browserUrls.opened()).toEqual([]);
-  await appUser.click({ role: "button", label: "Set up Slack" });
-  await appUser.notSee({ role: "alert" });
+  try {
+  await step("A real model discovers setup without creating a connection", async () => {
+    expect(await inventory()).toEqual([]);
+    await agent.on(world.app).send(prompt);
+    await appUser.see(setupButton, { timeoutMs: 120_000 });
+    await probe.eventually(() => appProbe.composer(), { within: 120_000, label: "initial setup reply finishes before selecting its card", until: state => state.runTaskVisible });
+    expect(await inventory()).toEqual([]);
+    expect(await world.browserUrls.opened()).toEqual([]);
+    await appUser.screenshot();
+    await appUser.type("composer", unsentDraft);
+    await appUser.click(setupButton);
+    await appUser.see({ testId: "connection-setup-sheet" });
+    await appUser.see({ role: "button", label: "Save and sign in" }, { timeoutMs: 45_000 });
+    await appUser.type({ role: "textbox", label: "Connection name" }, "Workspace Service", { replace: true });
+    expect(await appProbe.eval(() => document.querySelector<HTMLSelectElement>('#connection-audience')?.value)).toBe("me");
+    expect(await appProbe.eval(() => document.querySelector<HTMLSelectElement>('#connection-account-mode')?.value)).toBe("per_member");
+    expect(await world.browserUrls.opened()).toEqual([]);
+    await appUser.click({ role: "button", label: "OAuth app settings" });
+    await appUser.see({ role: "textbox", label: "Requested scopes" });
+    expect(await appProbe.eval(() => document.querySelector<HTMLSelectElement>('#connection-client-auth')?.value)).toBe("");
+    await appUser.screenshot();
+    evidence.recordAssertionEvidence("Native setup is offered by a real model without creating or authorizing a connection", `Model ${world.modelId}; a visible native form defaults to each person signing in and Only me. Den inventory and OS browser requests are empty before Save.`, true);
+  });
 
-  // Observe the URL Electron actually handed to the OS before bridging that
-  // exact handoff into our signed-in browser. A no-op or wrong URL fails here.
-  const openedUrls = await probe.eventually(() => world.browserUrls.opened(), {
-    within: 30_000, label: "Slack setup asks the OS to open its destination", until: urls => urls.length > 0,
+  await step("The admin saves once, signs in, and the original task uses the service", async () => {
+    await appUser.click({ role: "button", label: "Save and sign in" });
+    await appUser.see({ text: "Finish sign-in in your browser" }, { timeoutMs: 60_000 });
+    await appUser.screenshot();
+    await appUser.click({ role: "button", label: "Stop waiting" });
+    await appUser.see({ role: "button", label: "Sign in" });
+    await appUser.click({ text: "Update OAuth app" });
+    await appUser.see({ role: "textbox", label: "Client ID" });
+    await appUser.screenshot();
+    expect(await inventory()).toHaveLength(1);
+    await appUser.click({ role: "button", label: "Sign in" });
+    await probe.eventually(async () => (await world.browserUrls.opened()).length, { within: 30_000, label: "provider sign-in reopened", until: value => value === 2 });
+    const urls = await world.browserUrls.opened();
+    const url = urls[1];
+    if (!url) throw new Error("The provider sign-in did not open");
+    expect(new URL(url).origin).toBe(new URL(world.den.mocks.connector.url).origin);
+    const saved = await inventory();
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.connectedForMe).toBe(false);
+    connectionId = String(saved[0]?.id);
+    expect(prompt).not.toContain(connectionId);
+    // Capture and use the exact OS handoff; only the provider approval is in the browser.
+    await user.on(world.web).navigate(url);
+    await user.on(world.web).click({ role: "button", label: "Approve OpenWork" });
+    await user.on(world.web).see({ text: "You're connected" }, { timeoutMs: 30_000 });
+    await appUser.see({ text: "Ready to use" }, { timeoutMs: 90_000 });
+    await appUser.screenshot();
+    await appUser.click({ role: "button", label: "Back to task" });
+    await appUser.see({ text: "violet-orbit-42" }, { timeoutMs: 120_000 });
+    const calls = await probe.toolCalls(world.den.mocks.connector, { name: "read_connection_status", atLeast: 1, timeoutMs: 15_000 });
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every(call => call.tokenId !== null)).toBe(true);
+    const session = world.sessions.admin;
+    if (!session) throw new Error("Missing original task identity");
+    const transcript = await appProbe.desktopApi(`/workspace/${session.workspaceId}/opencode/session/${session.sessionId}/message`);
+    expect(transcript.status).toBe(200);
+    const assistantInfo = records(transcript.body).map(message => message.info).filter(isRecord).filter(info => info.role === "assistant");
+    expect(assistantInfo.length).toBeGreaterThan(0);
+    expect(assistantInfo.every(info => info.providerID === "openai" && info.modelID === world.modelId)).toBe(true);
+    expect(await inventory()).toHaveLength(1);
+    expect((await appProbe.composer()).draftText).toBe(unsentDraft);
+    await appUser.screenshot();
+    evidence.recordAssertionEvidence("Saving and provider sign-in resume the original task with a real service call", `Exactly one Den row was saved before authorization, including after pausing and retrying sign-in; OAuth app repair fields were available. The app showed Ready only after sign-in. The real model called read_connection_status ${calls.length} time(s) with a member credential and rendered the service-only verification code; the prompt contained neither the code nor a connection ID, and an unrelated unsent composer draft was preserved.`, true);
   });
-  expect(openedUrls).toHaveLength(1);
-  const openedUrl = openedUrls[0];
-  if (!openedUrl) throw new Error("Slack setup did not open a URL");
-  const setupUrl = new URL(openedUrl);
-  expect(setupUrl.origin).toBe(new URL(world.den.ref.webUrl).origin);
-  expect(setupUrl.pathname).toBe("/dashboard/mcp-connections");
-  expect([...setupUrl.searchParams.entries()]).toEqual([["quickAdd", "slack"]]);
-  await webUser.navigate(openedUrl);
-  await webUser.see({ text: "OAuth app" }, { timeoutMs: 90_000 });
-  await webUser.see({ text: "Client ID (optional for now)" });
-  await webUser.see({ text: "Client secret (optional for now)" });
-  await webUser.screenshot();
-  const calls = await world.den.mocks.connector.agentRequests({ promptMarker: connectorCatalogPrompt });
-  expect(calls.filter(call => call.kind === "tool")).toHaveLength(1);
-  expect(calls.filter(call => call.kind === "tool").every(call => call.toolName?.endsWith("search_capabilities"))).toBe(true);
-  expect((await world.den.mocks.connector.requests()).filter(request => request.path === "/authorize")).toHaveLength(0);
-  await appUser.click({ role: "button", label: "New session" });
-  await appUser.see({ text: "Try one of these:" });
-  await agent.on(world.app).send(allConnectorsPrompt);
-  await appUser.see({ text: allConnectorsReply }, { timeoutMs: 120_000 });
-  const listed = await appProbe.eval(() => {
-    const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="connector-catalog"]'));
-    return Array.from(cards.at(-1)?.querySelectorAll<HTMLElement>('[data-connector-preset]') ?? [], entry => entry.getAttribute('data-connector-preset'));
+
+  await step("An ordinary member cannot create or use the admin's private connection", async () => {
+    await agent.on(world.memberApp).send(`Help me set up the MCP service at ${endpoint}.`);
+    await memberUser.see(setupButton, { timeoutMs: 120_000 });
+    await probe.eventually(() => probe.on(world.memberApp).composer(), { within: 120_000, label: "member setup reply finishes before selecting its card", until: state => state.runTaskVisible });
+    await memberUser.click(setupButton);
+    await memberUser.see({ testId: "connection-setup-sheet" });
+    await memberUser.see({ text: "An organization admin or connection manager needs to set up this service and grant you access." });
+    await memberUser.notSee({ role: "button", label: "Save and sign in" });
+    await memberUser.notSee({ role: "button", label: "Sign in" });
+    await memberUser.screenshot();
+    const memberInventory = await probe.api(world.den.members.member!, "/v1/mcp-connections");
+    expect(memberInventory.response.status).toBe(200);
+    expect(isRecord(memberInventory.body) ? records(memberInventory.body.connections) : []).toEqual([]);
+    expect(await inventory()).toHaveLength(1);
+    evidence.recordAssertionEvidence("A member sees an access explanation and cannot inherit the admin's account", "A second real model found setup for the same endpoint. The member saw no save or sign-in action and their usable inventory remained empty; the admin still has exactly one connection.", true);
   });
-  expect(listed).toEqual(world.expectedIds);
-  await appUser.screenshot();
-  evidence.recordAssertionEvidence("Asking for all quick adds immediately opens the complete catalog", JSON.stringify(listed), true);
-  evidence.recordAssertionEvidence("Filtering selects Slack and its setup destination opens the OAuth client form", "Clicking Set up Slack emitted exactly one OS browser request for the expected Den origin, connector page, and quickAdd=slack. Navigating that captured URL renders client fields; the agent only searched and did not execute setup or authorize an account", true);
+
+  await step("A service outage preserves sign-in without claiming readiness", async () => {
+    await world.setToolsUnavailable(true);
+    await appUser.click({ role: "button", label: `Manage ${hostname}` });
+    await appUser.see({ role: "button", label: "Check connection" });
+    await appUser.click({ role: "button", label: "Check connection" });
+    await appUser.see({ text: "Sign-in is saved, but the service's tools could not be loaded. Try checking again." }, { timeoutMs: 90_000 });
+    await appUser.notSee({ text: "Ready to use" });
+    await appUser.screenshot();
+    const saved = await inventory();
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.id).toBe(connectionId);
+    expect(saved[0]?.connectedForMe).toBe(true);
+    await world.setToolsUnavailable(false);
+    await appUser.click({ role: "button", label: "Check connection" });
+    await appUser.see({ text: "Ready to use" }, { timeoutMs: 90_000 });
+    expect(await world.browserUrls.opened()).toHaveLength(2);
+    expect(await inventory()).toHaveLength(1);
+    await appUser.screenshot();
+    await appUser.click({ role: "button", label: "Back to task" });
+    await appUser.see({ role: "button", label: `Manage ${hostname}` });
+    evidence.recordAssertionEvidence("Saved authorization and live tool readiness are separate, recoverable states", "An injected tools/list outage produced the explicit failure state while Den retained one connected row. Checking after recovery returned Ready in the sheet and restored the chat card's Connected action without creating a second row or opening OAuth again.", true);
+  });
+
+  await step("The same native sheet shows the required OAuth app fields", async () => {
+    await agent.on(world.app).createSession();
+    await agent.on(world.app).send("Show me all the quick-add connectors so I can set up Google Workspace. After showing the catalog, explain individual and shared accounts in three short paragraphs.");
+    await appUser.see({ role: "button", label: "Set up Google Workspace" }, { timeoutMs: 120_000 });
+    await appUser.click({ role: "button", label: "Set up Google Workspace" });
+    await appUser.see({ role: "textbox", label: "Client ID" });
+    await appUser.see({ text: "Client secret" });
+    await appUser.see({ role: "textbox", label: "Redirect URI" });
+    await appUser.type({ role: "textbox", label: "Connection name" }, "Workspace OAuth setup", { replace: true });
+    await probe.eventually(() => appProbe.composer(), { within: 120_000, label: "real-model response finishes while setup stays open", until: state => state.runTaskVisible });
+    await appUser.see({ role: "textbox", label: "Client ID" });
+    expect(await appProbe.eval(() => document.querySelector<HTMLInputElement>('#connection-name')?.value)).toBe("Workspace OAuth setup");
+    const callback = await appProbe.eval(() => document.querySelector<HTMLInputElement>('#connection-callback')?.value);
+    expect(new URL(String(callback)).pathname).toBe("/v1/oauth-providers/google-workspace/connect/callback");
+    expect(await appProbe.eval(() => Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Save and sign in')?.disabled)).toBe(true);
+    expect(await inventory()).toHaveLength(1);
+    await appUser.screenshot();
+    evidence.recordAssertionEvidence("Provider app configuration stays in the task and cannot save incomplete credentials", "The real model's catalog opens Google's native OAuth app form, with the provider callback and client fields. The form remains open with its entered name when the model response finishes. Save is disabled with no client ID, and Den has no new connection. No real Google authorization was attempted.", true);
+  });
+  await step("An older server retains its organization setup path", async () => {
+    await appUser.click({ role: "button", label: "Close" });
+    await probe.eventually(() => appProbe.dom('[data-testid="connection-setup-sheet"]'), { within: 10_000, label: "native sheet finishes closing", until: state => state.elements.length === 0 });
+    await appUser.notSee({ testId: "connection-setup-sheet" });
+    await world.proxy.faults.status("/api/den/v1/mcp-connections/setup", 404, { times: 100, body: { error: "not_found", message: "Not Found" } });
+    await appUser.click({ role: "button", label: "Set up Google Workspace" });
+    await appUser.see({ text: "This OpenWork server doesn't support setup in the app yet." });
+    await appUser.notSee({ role: "button", label: "Save and sign in" });
+    await appUser.screenshot();
+    await appUser.click({ role: "button", label: "Open organization setup" });
+    await probe.eventually(async () => (await world.browserUrls.opened()).length, { within: 30_000, label: "organization setup browser handoff", until: value => value === 3 });
+    const opened = (await world.browserUrls.opened())[2];
+    expect(opened).toBe(new URL("/dashboard/mcp-connections", world.proxy.ref.webUrl).toString());
+    expect((await world.proxy.requestLog()).some(request => request.faulted && request.path.startsWith("/api/den/v1/mcp-connections/setup") && request.status === 404)).toBe(true);
+    expect(await inventory()).toHaveLength(1);
+    evidence.recordAssertionEvidence("An unsupported Den server keeps a usable setup path", "A transport proxy returned the older-server 404 for native setup. The real model's catalog showed the compatibility explanation and opened only the configured Den organization's setup URL, with no new connection created. This simulates the missing endpoint; it does not boot a historical Den release.", true);
+  });
+  } catch (error) {
+    const connections = await inventory().catch(() => []);
+    evidence.recordAssertionEvidence("Diagnostic: connection state at failure", JSON.stringify(connections.map(row => ({ name: row.name, authType: row.authType, credentialMode: row.credentialMode, connected: row.connected, connectedForMe: row.connectedForMe, registration: row.oauthRegistrationSource }))), false);
+    await appUser.screenshot().catch(() => undefined);
+    await memberUser.screenshot().catch(() => undefined);
+    await user.on(world.web).screenshot().catch(() => undefined);
+    const session = world.sessions.admin;
+    if (session) {
+      const transcript = await appProbe.desktopApi(`/workspace/${session.workspaceId}/opencode/session/${session.sessionId}/message`).catch(() => null);
+      const calls = records(transcript?.body).flatMap(message => records(message.parts).filter(part => part.type === "tool").map(part => ({ tool: part.tool, state: isRecord(part.state) ? part.state.status : null })));
+      evidence.recordAssertionEvidence("Diagnostic: real-model tool path at failure", JSON.stringify(calls), false);
+    }
+    throw error;
+  }
+
 });

@@ -56,6 +56,8 @@ const drafts = [];
 let agentWorkloads = [];
 let agentRequiredHeader = null;
 let configuredTools = [];
+let toolsUnavailable = false;
+let requireConsent = false;
 
 const gmailThreadId = "thread-q3-launch";
 
@@ -624,13 +626,15 @@ function authorize(req, res, url) {
   if (!requireStrictAuthorizeContract(res, url.searchParams)) {
     return;
   }
-  if (autoApprove && url.searchParams.get("force_consent") !== "1") {
+  if (autoApprove && !requireConsent && url.searchParams.get("force_consent") !== "1") {
     redirectWithCode(res, url.searchParams);
     return;
   }
 
   const approveUrl = new URL(`${issuer}/approve`);
   for (const [key, value] of url.searchParams) approveUrl.searchParams.set(key, value);
+  const callback = new URL(url.searchParams.get("redirect_uri") || issuer);
+  const callbackOrigin = ["http:", "https:"].includes(callback.protocol) ? callback.origin : "";
   const requestedScopes = (url.searchParams.get("scope") || "").split(/\s+/).filter(Boolean);
   const requestedScopesHtml = requestedScopes.length > 0
     ? `<h2>Requested scopes</h2><ul>${requestedScopes.map((scope) => `<li><code>${escapeHtml(scope)}</code></li>`).join("")}</ul>`
@@ -646,7 +650,10 @@ function authorize(req, res, url) {
       <button style="font: inherit; padding: 10px 14px;">Approve OpenWork</button>
     </form>
   </body>
-</html>`);
+</html>`, {
+    // Chromium applies form-action to the post-consent redirect as well.
+    "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${callbackOrigin}; base-uri 'none'; frame-ancestors 'none'`,
+  });
 }
 
 async function registerClient(req, res, entry) {
@@ -784,6 +791,7 @@ function tokenFingerprint(req) {
 }
 
 function mcpResult(message) {
+  if (toolsUnavailable && message.method === "tools/list") throw new Error("Fixture tools are temporarily unavailable");
   if (configuredTools.length && message.method === "tools/list") {
     return { tools: configuredTools.map(({ result, delayMs, appHtml, validateRequiredArguments, ...tool }) => tool) };
   }
@@ -1069,6 +1077,8 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       configuredTools = body.tools;
+      toolsUnavailable = body.toolsUnavailable === true;
+      requireConsent = body.requireConsent === true;
       json(res, 200, { configured: configuredTools.length });
       return;
     }
