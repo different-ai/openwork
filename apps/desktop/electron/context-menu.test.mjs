@@ -89,11 +89,13 @@ test("editing uses Chromium edit flags, selected-text copy and dictionary action
     isEditable: true, misspelledWord: "helo", dictionarySuggestions: ["hello"],
     editFlags: { canUndo: true, canRedo: false, canCut: false, canCopy: false, canPaste: true, canSelectAll: true },
   });
-  template[0].click();
-  template[1].click();
+  for (const action of template.slice(0, 2)) {
+    assert.ok("click" in action && typeof action.click === "function");
+    action.click();
+  }
   assert.deepEqual(calls, ["hello", "helo"]);
-  assert.equal(template.find((item) => item.role === "cut").enabled, false);
-  assert.equal(template.find((item) => item.role === "paste").enabled, true);
+  assert.deepEqual(template.filter((item) => "role" in item && item.role === "cut"), [{ role: "cut", enabled: false }]);
+  assert.deepEqual(template.filter((item) => "role" in item && item.role === "paste"), [{ role: "paste", enabled: true }]);
   assert.deepEqual(editingMenuTemplate(contents, { selectionText: "selected", editFlags: { canCopy: true } }), [{ role: "copy", enabled: true }]);
   assert.deepEqual(editingMenuTemplate(contents, {}), []);
 });

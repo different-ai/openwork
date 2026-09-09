@@ -179,6 +179,7 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
     webContents: Object.assign(new EventEmitter(), {
       mainFrame: {},
       getURL: () => "http://localhost/index.html",
+      /** @returns {number} */
       getZoomFactor: () => 1,
       destroyed: false,
       isDestroyed() { return this.destroyed; },
