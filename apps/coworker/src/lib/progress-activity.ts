@@ -8,7 +8,8 @@ export type ExecutionActivity = {
   messageId: string;
   threadId: string;
   slug: string;
-  state: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  state: "queued" | "running" | "waiting-person" | "succeeded" | "failed" | "cancelled";
+  timelineEventId?: string;
   startedAt: number | null;
   completedAt: number | null;
   continuation: boolean;
@@ -18,7 +19,7 @@ export type ExecutionActivity = {
   pendingWorkers: number;
   available: boolean;
   nativeStatus: "busy" | "idle" | "retry" | "unknown";
-  replies: Array<{ id: string; parentId: string; parts: Array<{ id: string; text: string }> }>;
+  replies: Array<{ id: string; parentId: string; parts: Array<{ id: string; text: string; ended?: boolean }> }>;
   tools: Array<ExecutionMetadataInput & { partId: string }>;
   completedSteps: number;
   failedSteps: number;
@@ -56,7 +57,7 @@ export async function readExecutionActivity(input: {
     for (const part of message.parts) {
       if (part.type === "text" && !part.synthetic && !part.ignored && remainingParts > 0 && remainingChars > 0) {
         const text = part.text.slice(0, remainingChars);
-        parts.push({ id: part.id, text });
+        parts.push({ id: part.id, text, ended: part.time?.end !== undefined });
         remainingChars -= text.length;
         remainingParts--;
       }
@@ -82,7 +83,7 @@ export function executionProgress(activity: ExecutionActivity, hasText = false):
   const tool = activity.tools.findLast((call) => call.status === "running" || call.status === "pending") ?? null;
   return {
     executionId: activity.executionId,
-    status: activity.state === "succeeded" ? "completed" : activity.state === "failed" ? "failed" : activity.state === "cancelled" ? "cancelled" : activity.state === "queued" ? "sending" : hasText ? "streaming" : !activity.available || activity.nativeStatus === "unknown" ? "unknown" : activity.nativeStatus === "retry" ? "retrying" : activity.nativeStatus === "idle" ? "waiting" : tool ? "tool" : activity.continuation ? "resuming" : "preparing",
+    status: activity.state === "succeeded" ? "completed" : activity.state === "failed" ? "failed" : activity.state === "cancelled" ? "cancelled" : activity.state === "waiting-person" ? "waiting" : activity.state === "queued" ? "sending" : !activity.available || activity.nativeStatus === "unknown" ? "unknown" : activity.nativeStatus === "retry" ? "retrying" : activity.nativeStatus === "idle" ? "waiting" : tool ? "tool" : hasText ? "streaming" : activity.continuation ? "resuming" : "preparing",
     startedAt: activity.startedAt,
     completedAt: activity.completedAt,
     tool,

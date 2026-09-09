@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="760" height="600" viewBox="0 0 760 600">
   <rect width="760" height="600" fill="#f3f4f6"/>
-  <!-- A quiet architectural backdrop rewards a closer look. -->
-  <image data-decoration="office-activity" x="0" y="61" width="760" height="507" opacity=".12" xlink:href="office-activity-outline.png"/>
+  <!-- Keep the office scene visible without competing with the installation steps. -->
+  <image data-decoration="office-activity" x="0" y="61" width="760" height="507" opacity=".35" xlink:href="office-activity-outline.png"/>
   <g font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif">
     <image data-brand="white-coworker" x="30" y="20" width="48" height="48" xlink:href="../../public/open-coworker.svg"/>
     <text x="80" y="48" font-size="14" font-weight="600" letter-spacing="-.2" fill="#303744">Open Coworker</text>

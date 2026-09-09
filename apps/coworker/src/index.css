@@ -822,6 +822,11 @@ body.is-resizing-panel * {
   user-select: none;
 }
 
+/* Full-window content shares the hiddenInset titlebar's traffic-light corner. */
+:root[data-window-platform="darwin"] .window-controls-inset {
+  padding-left: 96px;
+}
+
 .window-no-drag,
 button,
 input,
