@@ -23,6 +23,7 @@ test("a render throw shows a recovery screen with the error instead of a blank w
     await user.see({ role: "button", label: /^reload$/i });
     await user.see({ role: "button", label: /copy details/i });
     await user.see({ role: "button", label: /open logs folder/i });
+    await user.screenshot();
   });
 
   await step("copy puts message, stack, app version and flavor on the clipboard", async () => {
@@ -41,11 +42,11 @@ test("a render throw shows a recovery screen with the error instead of a blank w
 
   await step("reload brings the app back", async () => {
     await user.click({ role: "button", label: /^reload$/i });
-    await user.notSee(heading, { timeoutMs: 60_000 });
     await probe.eventually(() => probe.text(), {
       within: 120_000,
       label: "app content after reload",
       until: (text) => text.trim().length > 40 && !/OpenWork hit an unexpected error/.test(text),
     });
+    await user.notSee(heading);
   });
 });
