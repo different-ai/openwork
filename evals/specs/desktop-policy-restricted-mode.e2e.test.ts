@@ -1,7 +1,7 @@
 import { expect } from "vitest";
 import { selectModel } from "@openwork/behaviors";
 import { spec } from "@openwork/testkit";
-import { defaultPolicyEditorAndMemberDesktop, readDefaultDesktopPolicy, teamAccess } from "../worlds/desktop-policies.ts";
+import { defaultPolicyEditorAndMemberDesktop, managedPolicyRecovery, readDefaultDesktopPolicy, teamAccess } from "../worlds/desktop-policies.ts";
 
 // An organization that wants a vanilla OpenWork picks one decision, Restricted,
 // in the Den policy editor. This spec drives the real editor as the admin and a
@@ -10,16 +10,20 @@ import { defaultPolicyEditorAndMemberDesktop, readDefaultDesktopPolicy, teamAcce
 // collapse to what the policy leaves reachable.
 const defaultJourney = "an admin restricts the default policy and the member desktop enforces it";
 const teamJourney = "team access overrides overlapping grants and restores only selected desktop capabilities";
+const recoveryJourney = "managed policy evaluation bounds transient Den retries and never reuses stale access";
 // Register one fixture extension: Vitest 3 accumulates fixtures when the same
 // base is extended twice. Choose the setup at the test boundary, keeping the
 // worlds framework-free and each sequential journey isolated.
 const test = spec.world(async (seed) => {
   const name = expect.getState().currentTestName;
   if (name?.endsWith(defaultJourney)) {
-    return { defaultPolicy: await defaultPolicyEditorAndMemberDesktop(seed), team: null };
+    return { defaultPolicy: await defaultPolicyEditorAndMemberDesktop(seed), team: null, recovery: null };
   }
   if (name?.endsWith(teamJourney)) {
-    return { defaultPolicy: null, team: await teamAccess(seed) };
+    return { defaultPolicy: null, team: await teamAccess(seed), recovery: null };
+  }
+  if (name?.endsWith(recoveryJourney)) {
+    return { defaultPolicy: null, team: null, recovery: await managedPolicyRecovery(seed) };
   }
   throw new Error(`No desktop policy world selected for ${name}`);
 }, { timeout: 900_000 });
@@ -324,6 +328,82 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
     libraryHashAfter.includes("/extensions") && builtInNoticeShown && restrictedMcpText.includes("Saved to your organization Library as a remote MCP connection.") && !restrictedMcpText.includes("Workspace MCP") && !restrictedMcpText.includes("Add workspace MCP"),
   );
 
+});
+
+test(recoveryJourney, { timeout: 300_000 }, async ({ world: selectedWorld, step, evidence }) => {
+  const world = selectedWorld.recovery;
+  if (!world) throw new Error("Expected the managed-policy recovery world");
+  const policyPath = "/v1/me/desktop-config";
+  const builtInModel = { action: "model", input: { providerID: "opencode", id: "policy-retry-proof" } };
+  const code = (body: unknown) => isRecord(body) && typeof body.code === "string" ? body.code : null;
+  const faultedEvaluation = async (statusCode: number, times: number, body?: unknown) => {
+    await world.proxy.faults.clear();
+    const start = (await world.proxy.requestLog()).length;
+    await world.proxy.faults.status(policyPath, statusCode, { times, body });
+    const result = await world.evaluate(builtInModel);
+    const requests = (await world.proxy.requestLog()).slice(start).filter((request) => request.path === policyPath);
+    return { result, requests };
+  };
+
+  await step("one transient response retries once and applies the live allow", async () => {
+    const recovered = await faultedEvaluation(503, 1);
+    expect(recovered.result.status).toBe(200);
+    expect(recovered.requests).toMatchObject([
+      { status: 503, faulted: true },
+      { status: 200, faulted: false },
+    ]);
+    expect(recovered.requests).toHaveLength(2);
+    evidence.recordAssertionEvidence(
+      "A transient Den failure retries exactly once and the real OpenWork server applies the live allow",
+      JSON.stringify(recovered),
+      recovered.result.status === 200 && recovered.requests.length === 2
+        && recovered.requests[0]?.status === 503 && recovered.requests[1]?.status === 200,
+    );
+  });
+
+  await step("persistent and non-retryable verification failures stay closed", async () => {
+    const outage = await faultedEvaluation(503, 2);
+    expect(outage.result.status).toBe(403);
+    expect(code(outage.result.body)).toBe("policy_unavailable");
+    expect(outage.requests).toHaveLength(2);
+    expect(outage.requests.map((request) => request.status)).toEqual([503, 503]);
+
+    const nonRetryable = [];
+    for (const fault of [
+      { name: "unauthenticated", status: 401 },
+      { name: "forbidden", status: 403 },
+      { name: "rate limited", status: 429 },
+      { name: "invalid schema", status: 200, body: { allowZenModel: "invalid" } },
+    ]) {
+      const observed = await faultedEvaluation(fault.status, 2, fault.body);
+      expect(observed.result.status, fault.name).toBe(403);
+      expect(code(observed.result.body), fault.name).toBe("policy_unavailable");
+      expect(observed.requests, fault.name).toHaveLength(1);
+      nonRetryable.push({ fault: fault.name, ...observed });
+    }
+    evidence.recordAssertionEvidence(
+      "Persistent outage, authentication, authorization, rate limit, and invalid policy responses fail closed without stale access",
+      JSON.stringify({ outage, nonRetryable }),
+      outage.result.status === 403 && code(outage.result.body) === "policy_unavailable" && outage.requests.length === 2
+        && nonRetryable.every((item) => item.result.status === 403 && code(item.result.body) === "policy_unavailable" && item.requests.length === 1),
+    );
+  });
+
+  await step("a retry reads and applies a fresh denial instead of the prior allow", async () => {
+    const updated = await world.updateBuiltInModel(false);
+    expect(updated.response.ok).toBe(true);
+    const denied = await faultedEvaluation(503, 1);
+    expect(denied.result.status).toBe(403);
+    expect(code(denied.result.body)).toBe("organization_policy_denied");
+    expect(denied.requests).toHaveLength(2);
+    expect(denied.requests.map((request) => request.status)).toEqual([503, 200]);
+    evidence.recordAssertionEvidence(
+      "After an earlier allow, the retry uses the fresh Den denial rather than stale policy",
+      JSON.stringify(denied),
+      denied.result.status === 403 && code(denied.result.body) === "organization_policy_denied"
+        && denied.requests.length === 2 && denied.requests[0]?.status === 503 && denied.requests[1]?.status === 200,
+    );
+  });
 });
 
 test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user, agent, probe, step, evidence, seed }) => {

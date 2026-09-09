@@ -1,6 +1,9 @@
-import { mcpMock } from "@openwork/env";
+import { faultProxy, mcpMock } from "@openwork/env";
 import type { Seed } from "@openwork/env";
+import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { isRecord, records } from "./library.ts";
+import { bootServer, stopChild } from "./openwork-server-cli.ts";
 
 /**
  * The organization's default desktop policy as Den returns it, with the shape
@@ -159,4 +162,99 @@ export async function teamAccess(seed: Seed) {
   const admin = await seed.web({ den, signedInAs: den.admin, startPath: editorPath, headless: true, viewport: { width: 1440, height: 2100 } });
   return { den, member, control, admin, commandProofs, nonce, providerId: llmProvider.id, teamId, grantTeamId, controlTeamId,
     memberId: currentMember.id, controlMemberId: controlMember.id, editorPath, pluginId, pluginName, rawSourceText };
+}
+
+/** A real OpenWork server signed in to Den through a fault proxy, without an
+ * Electron renderer. The journey can therefore count only policy verification
+ * requests caused by each evaluation. */
+export async function managedPolicyRecovery(seed: Seed) {
+  const den = await seed.den({
+    org: {
+      name: `Managed policy recovery ${Date.now()}`,
+      admin: { name: "Policy Recovery Admin" },
+      members: { member: { name: "Policy Recovery Member" } },
+    },
+  });
+  const member = den.members.member;
+  if (!member) throw new Error("Missing policy recovery member session");
+  const org = await seed.api(member, "/v1/org");
+  const organization = isRecord(org.body) && isRecord(org.body.organization) ? org.body.organization : null;
+  if (!org.response.ok || typeof organization?.id !== "string") throw new Error("Missing policy recovery organization ID");
+
+  const stored = await readDefaultDesktopPolicy(seed, den.admin);
+  if (!isRecord(stored.policy) || typeof stored.id !== "string" || typeof stored.policyName !== "string") {
+    throw new Error("Missing default policy for recovery proof");
+  }
+  const allowedPolicy = { ...stored.policy, allowZenModel: true };
+  const updateBuiltInModel = async (allowed: boolean) => seed.api(den.admin, `/v1/desktop-policies/${stored.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ policyName: stored.policyName, policy: { ...allowedPolicy, allowZenModel: allowed } }),
+  });
+  const allowed = await updateBuiltInModel(true);
+  if (!allowed.response.ok) throw new Error(`Allowing the built-in model failed: HTTP ${allowed.response.status}`);
+
+  const root = seed.tmpPath("managed-policy-recovery");
+  const workspace = join(root, "workspace");
+  const home = join(root, "home");
+  await mkdir(workspace, { recursive: true });
+  await mkdir(home, { recursive: true });
+  // The OpenWork server below runs beside Vitest, so its Den fault boundary
+  // must run there too even when Den is on Daytona. Point it at the API origin
+  // directly: unlike browser traffic, server verification has no web Origin.
+  const proxy = await faultProxy({ ...den.ref, webUrl: den.ref.apiUrl });
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPENWORK_") && !key.startsWith("OPENCODE")));
+  const token = "owt_managed_policy_recovery";
+  const booted = bootServer({
+    ...inherited,
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, ".config"),
+    XDG_DATA_HOME: join(home, ".local", "share"),
+    XDG_CACHE_HOME: join(home, ".cache"),
+    XDG_STATE_HOME: join(home, ".local", "state"),
+    OPENWORK_MANAGE_OPENCODE: "0",
+  }, token, workspace, () => {});
+  try {
+    const baseUrl = await booted.listening;
+    const request = async (path: string, input: { method?: string; host?: boolean; body?: unknown } = {}) => {
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (input.host) headers["x-openwork-host-token"] = `${token}-host`;
+      else headers.authorization = `Bearer ${token}`;
+      const response = await fetch(`${baseUrl}${path}`, {
+        method: input.method ?? "GET",
+        headers,
+        body: input.body === undefined ? undefined : JSON.stringify(input.body),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await response.text();
+      let body: unknown = null;
+      try { body = text ? JSON.parse(text) : null; }
+      catch { body = text; }
+      return { status: response.status, body };
+    };
+    const session = await request("/den-session", {
+      method: "PUT",
+      host: true,
+      body: { baseUrl: proxy.ref.webUrl, token: member.token, orgId: organization.id },
+    });
+    if (session.status !== 204) throw new Error(`Setting the policy recovery Den session failed: HTTP ${session.status} ${JSON.stringify(session.body)}`);
+    let disposed = false;
+    return {
+      den,
+      proxy,
+      updateBuiltInModel,
+      evaluate: (body: Record<string, unknown>) => request("/managed-policy/evaluate", { method: "POST", body }),
+      async [Symbol.asyncDispose]() {
+        if (disposed) return;
+        disposed = true;
+        await stopChild(booted.child);
+        await proxy[Symbol.asyncDispose]();
+        await rm(root, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    await stopChild(booted.child);
+    await proxy[Symbol.asyncDispose]();
+    await rm(root, { recursive: true, force: true });
+    throw error;
+  }
 }
