@@ -7,6 +7,7 @@ const definitions = {
   'org-team-lifecycle-critical-path.e2e.test.ts': { name: 'Set up a working two-person team', critical: true, model: 'live' },
   'desktop-policy-restricted-mode.e2e.test.ts': { name: 'Apply organization and team permissions', critical: true },
   'cross-server-handoff-atomic-commit.e2e.test.ts': { name: 'Switch servers and recover enrollment', critical: true, placement: 'local' },
+  'workspace-new-task-hit-target.e2e.test.ts': { name: 'Keep new tasks and sends instantly responsive', placement: 'local' },
 };
 
 export async function catalog(root = new URL('../specs/', import.meta.url)) {
