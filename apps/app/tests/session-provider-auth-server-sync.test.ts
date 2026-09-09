@@ -825,6 +825,40 @@ describe("session-route cloud provider sync wiring", () => {
     });
   }
 
+  for (const origin of [REMOTE_SERVER_ORIGIN, "http://192.0.2.10:7899", "https://localhost.example"]) {
+    test(`a local workspace override at ${origin} stays hostless`, async () => {
+      const storage = installWindow();
+      installCloudSession(storage);
+      storage.setItem("openwork.server.hostToken", "host-token-stored");
+      const requests: RecordedRequest[] = [];
+      installFetchMock(requests);
+      const endpoint = makeEndpoint({ origin, isRemote: false });
+      const adapter = createSessionOpenworkServer({
+        endpoint: () => endpoint,
+        hostToken: () => "host-token-live",
+        generation: () => 2,
+      });
+      expect(adapter.getSnapshot().openworkServerCapabilities?.providerSync).not.toBe(true);
+      expect(adapter.getSnapshot().openworkServerAuth?.hostToken).toBeUndefined();
+      expect(adapter.getSnapshot().openworkServerClient).toBe(endpoint.client);
+      const store = createSessionRouteStore({ endpoint, hostToken: "host-token-live", generation: 2 });
+      try {
+        await store.runCloudProviderSync("sign_in");
+        expect(sessionPuts(requests)).toHaveLength(0);
+        expect(syncRuns(requests)).toHaveLength(0);
+        const overrideRequests = requests.filter((request) => new URL(request.url).origin === origin);
+        expect(overrideRequests.length).toBeGreaterThan(0);
+        expect(overrideRequests.every((request) =>
+          !request.headers["x-openwork-host-token"] && !request.body?.includes("den-token"),
+        )).toBe(true);
+        // Config-only reconciliation still works with the endpoint's own token.
+        expect(overrideRequests.every((request) => request.headers.authorization === "Bearer client-token")).toBe(true);
+      } finally {
+        store.dispose();
+      }
+    });
+  }
+
   test("remote workspaces never receive the desktop's Den session and keep the legacy client path", async () => {
     const storage = installWindow();
     installCloudSession(storage);
