@@ -2843,6 +2843,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List accessible Workflows
+   *
+   * Lists every Workflow the calling member can reach through Plugin or direct grants, each with the Plugin it executes under, its latest immutable version id, declared inputSchema and outputSchema, and the capabilities it calls. Workflows whose latest version cannot be parsed are omitted. Use the returned configObjectVersionId to run an exact version.
    */
   public getV1Workflows<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1WorkflowsResponses, GetV1WorkflowsErrors, ThrowOnError>({
@@ -2853,6 +2855,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Save a successful Code Mode run as a Workflow inside an OpenWork Connect Plugin
+   *
+   * Turns the caller's most recent successful execute_capability_script run into a reusable Workflow: code must match that run byte-for-byte and the run must be less than 15 minutes old (400 workflow_recent_receipt_required), and the tool calls the run made become the Workflow's requiredCapabilities (400 workflow_capability_unavailable when one is no longer in the caller's tool tree). Omit pluginId to save into the member's private My Workflows Plugin, created on first use; passing pluginId requires editor access to that Plugin. Saving a name that already exists in the Plugin adds a new immutable version to that Workflow, which requires manager access to it.
    */
   public saveWorkflow<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2896,6 +2900,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Inspect a Workflow
+   *
+   * Returns the Workflow's library entry (caller role, connection readiness, result freshness, view state, Automation count), its detail (current and past versions, latest snapshot, latest successful snapshot), and the generated Artifact views bound to it. maxAgeMs (60 seconds to 30 days, default 24 hours) is the threshold that classifies the latest result as fresh or stale. Version code and example input are redacted for members without manager access; when generated Artifact views are disabled for the deployment, views is empty and viewState is default.
    */
   public getV1WorkflowsByConfigObjectId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2928,6 +2934,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List saved reusable apps
+   *
+   * Lists active Artifact views that have a saved revision and whose Workflow the caller can read, newest first, each with the Workflow title, whether the caller can manage it, and whether it is on the caller's personal dashboard. When generated Artifact views are disabled for the deployment, returns enabled: false and an empty list.
    */
   public getV1Apps<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1AppsResponses, unknown, ThrowOnError>({
@@ -2938,6 +2946,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Share a saved app with a teammate
+   *
+   * Grants the teammate identified by email viewer access to the app's underlying Workflow and places the app on their personal dashboard; result data is never copied. An existing editor or manager grant for that teammate is kept, so repeated shares never downgrade access. Requires manager access to the Workflow and an app with an active saved revision; fails with teammate_not_found when no active member of the organization has that email.
    */
   public postV1AppsByAppIdShare<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2975,6 +2985,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Open an app or an exact draft preview
+   *
+   * Returns the app with the compiled HTML of one revision and the artifact payload it should render. Without revisionId the active saved revision is used; pass revisionId to preview an exact draft revision instead. The data comes from the Workflow's latest successful snapshot, or from the snapshot named by receiptId. When the revision has not finished building, no readable successful result exists, or the result's output schema no longer matches the revision, html and payload are null and previewNotice explains why.
    */
   public getV1AppsByAppId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3005,6 +3017,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Add or remove an app on your personal dashboard
+   *
+   * Adds (added: true) or removes (added: false) the app on the calling member's personal dashboard. Adding requires an app with an active saved revision that the caller can read; removal also works after access to the app has been revoked. Both directions are idempotent.
    */
   public postV1AppsByAppIdDashboard<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3038,6 +3052,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Save an exact app revision for reuse
+   *
+   * Activates the exact revisionId as the app's saved revision, sets its title and useInWorkflow flag, and places the app on the caller's dashboard in one transaction. Requires manager access to the Workflow; the revision must have finished building (artifact_view_revision_not_ready) and its output schema must match the Workflow's current version (artifact_view_schema_incompatible). expectedActiveRevisionId must equal the revision that is active right now (null when none); otherwise the save is refused with 409 app_changed_since_preview so a stale preview cannot overwrite a newer save.
    */
   public postV1AppsByAppIdSave<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3077,6 +3093,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List generated Artifact views for a Workflow
+   *
+   * Lists the generated Artifact views bound to this Workflow, newest first, each with its recent revisions and their build status. Requires read access to the Workflow. Returns an empty list when generated Artifact views are disabled for the deployment.
    */
   public getV1WorkflowsByConfigObjectIdViews<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3098,6 +3116,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Activate or roll back an immutable Artifact view revision
+   *
+   * Makes revisionId the active revision of the Artifact view and marks the view active; selecting an older revision performs a rollback without changing its bytes. The revision must have built successfully and not be retired (artifact_view_revision_not_ready), and its output schema digest must match the Workflow's current version (artifact_view_schema_incompatible). Requires manager access to the Workflow.
    */
   public postV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivate<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3130,6 +3150,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Retire a generated Artifact view
+   *
+   * Retires the Artifact view: its status becomes retired, it loses its active revision and useInWorkflow flag, and it is removed from every member's dashboard. Immutable revisions are kept, so activating one later restores the view. Requires manager access to the Workflow.
    */
   public postV1ArtifactViewsByArtifactViewIdRetire<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3151,6 +3173,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List immutable Workflow versions
+   *
+   * Lists the Workflow's immutable versions, newest first, each with its code, call graph, schemas, requiredCapabilities, digests, and the caller's own Automations that pin it. Code, example input, and source-derived graph labels are redacted for members without manager access. Requires read access to the Workflow.
    */
   public getV1WorkflowsByConfigObjectIdVersions<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3172,6 +3196,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create an immutable Workflow version using the immediately preceding matching test receipt and unchanged draft
+   *
+   * Appends a new immutable version to the Workflow and updates its name and description. receiptId must reference a successful draft test by the caller that is less than 15 minutes old, has not already produced a version, and whose code, exampleInput, inputSchema, outputSchema, name, description, and requiredCapabilities all match this body byte-for-byte (400 workflow_matching_test_receipt_required). Every capability the test actually called must be listed in requiredCapabilities and still be available to the caller (400 workflow_capability_unavailable). Requires manager access to the Workflow.
    */
   public postV1WorkflowsByConfigObjectIdVersions<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3226,6 +3252,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List Workflow artifact snapshots
+   *
+   * Lists run receipts of saved versions of this Workflow, most recently finished first, including failed runs and runs whose content was deleted (value and markdown are null and contentDeletedAt is set). Draft test runs are not snapshots and never appear here. limit caps the result at 1 to 200 rows (default 100). Requires read access to the Workflow.
    */
   public getV1WorkflowsByConfigObjectIdSnapshots<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3258,6 +3286,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Inspect one Workflow artifact snapshot
+   *
+   * Returns one run receipt of a saved version of this Workflow: the validated result value, its Markdown rendering, code and schema digests, tool calls, status, error details, and whether it was produced by an Automation. value and markdown are null once the content has been deleted. Requires read access to the Workflow; receiptId must belong to this Workflow.
    */
   public getV1WorkflowsByConfigObjectIdSnapshotsByReceiptId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3290,6 +3320,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Test the exact Workflow draft and return the receiptId required to create that unchanged version
+   *
+   * Executes the draft code once with exampleInput against the caller's live tools, validating the input against inputSchema and the result against outputSchema, and records a durable test receipt. The returned receiptId is the proof required by POST /v1/workflows/{configObjectId}/versions and is only accepted when every draft field is resubmitted unchanged within 15 minutes. Requires manager access to the Workflow; a script failure, argument mismatch, or result mismatch is returned as a 400 with the error code and message.
    */
   public postV1WorkflowsTest<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3340,6 +3372,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Run an exact Workflow version
+   *
+   * Executes the version identified by configObjectVersionId of this Workflow, under the Plugin named by pluginId, with input as the script's input, using the caller's live tools, and records a snapshot receipt. The input is validated against the version's inputSchema and the result against its outputSchema; a mismatch is rejected with 400 invalid_capability_arguments, a required capability that is unavailable with capability_unavailable, and a thrown script error with script_failed. The caller needs a Workflow, Plugin, or Marketplace grant that covers this Workflow; an unknown Workflow or Plugin returns unknown_capability and a missing grant returns forbidden, both as 400.
    */
   public postV1WorkflowsByConfigObjectIdRun<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3381,6 +3415,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete artifact content while retaining its audit receipt
+   *
+   * Clears the stored input, result value, and Markdown of one snapshot and stamps contentDeletedAt, while the receipt itself (digests, tool calls, status, timings) stays in history. When the snapshot came from an Automation, that Automation's latest successful result is re-pointed to its newest remaining readable snapshot. Idempotent: deleting already-deleted content returns the snapshot unchanged. Requires manager access to the Workflow.
    */
   public deleteV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdContent<ThrowOnError extends boolean = false>(
     parameters: {
