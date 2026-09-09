@@ -157,7 +157,8 @@ type TextStream = {
   messageID: string;
   partID: string;
   ordinal: number;
-  text: string;
+  // Missing after completion: retain identity, not another copy of the transcript.
+  text?: string;
   start: number;
 };
 
@@ -171,13 +172,24 @@ type ToolStream = {
   input: Record<string, unknown>;
   metadata: Record<string, unknown>;
   start?: number;
+  inputEnded?: boolean;
 };
+
+type V2EventPosition = { sequence?: number; created?: number };
+
+// /api/event is live-only, not a replay log. Defensively guard recent retired
+// sessions; arbitrary replay beyond this window requires authoritative history.
+// Active executions keep their own watermark and are never capacity-evicted.
+const V2_TERMINAL_SESSION_LIMIT = 256;
 
 export type V2EventTranslationState = {
   streams: Map<string, TextStream>;
-  tools: Map<string, ToolStream>;
+  // Null marks a completed call until its execution ends; late events are no-ops.
+  tools: Map<string, ToolStream | null>;
   latestStreamKeyBySession: Map<string, string>;
   nextOrdinalByMessage: Map<string, number>;
+  executionBySession: Map<string, V2EventPosition & { terminal?: boolean; retired?: V2EventPosition }>;
+  terminalBySession: Map<string, V2EventPosition>;
   unknownTypes: Set<string>;
 };
 
@@ -691,7 +703,7 @@ function readToolCallID(value: Record<string, unknown>): string {
 }
 
 function toolStreamKey(sessionID: string, callID: string): string {
-  return `${sessionID}:${callID}`;
+  return JSON.stringify([sessionID, callID]);
 }
 
 function resolveToolStream(
@@ -792,12 +804,66 @@ function failedToolPart(
   };
 }
 
+function trackV2Execution(
+  state: V2EventTranslationState,
+  value: Record<string, unknown>,
+  properties: Record<string, unknown>,
+): void {
+  const sessionID = readSessionID(properties);
+  const current = state.executionBySession.get(sessionID) ?? { retired: state.terminalBySession.get(sessionID) };
+  const sequence = readNumber(value.durable, "seq");
+  const created = readNumber(properties, "timestamp") ?? readNumber(value, "created");
+  if (sequence !== undefined) current.sequence = Math.max(current.sequence ?? sequence, sequence);
+  if (created !== undefined) current.created = Math.max(current.created ?? created, created);
+  current.terminal = false;
+  state.executionBySession.set(sessionID, current);
+}
+
+function isRetiredV2Event(
+  state: V2EventTranslationState,
+  value: Record<string, unknown>,
+  properties: Record<string, unknown>,
+): boolean {
+  const sessionID = readSessionID(properties);
+  const retired = state.executionBySession.get(sessionID)?.retired ?? state.terminalBySession.get(sessionID);
+  const sequence = readNumber(value.durable, "seq");
+  if (sequence !== undefined && retired?.sequence !== undefined) return sequence <= retired.sequence;
+  const created = readNumber(properties, "timestamp") ?? readNumber(value, "created");
+  // Equal wall-clock timestamps do not order a legacy successor against a terminal.
+  return created !== undefined && retired?.created !== undefined && created < retired.created;
+}
+
+function clearV2SessionTranslation(state: V2EventTranslationState, sessionID: string, deleted = false): void {
+  if (!deleted) {
+    if (!state.executionBySession.get(sessionID)?.terminal) return;
+    // /api/event is volatile, not a durable-log drain marker. A session terminal
+    // must not discard input/identity needed by a late final part update.
+    for (const stream of state.streams.values()) {
+      if (stream.sessionID === sessionID && stream.text !== undefined) return;
+    }
+    for (const stream of state.tools.values()) {
+      if (stream?.sessionID === sessionID) return;
+    }
+  }
+  // Every translation key is a JSON tuple with the session first. Keep counters
+  // and completion markers through retries/tool steps, but not across executions.
+  const prefix = `${JSON.stringify([sessionID]).slice(0, -1)},`;
+  for (const map of [state.streams, state.tools, state.latestStreamKeyBySession, state.nextOrdinalByMessage]) {
+    for (const key of map.keys()) {
+      if (key.startsWith(prefix)) map.delete(key);
+    }
+  }
+  state.executionBySession.delete(sessionID);
+}
+
 export function createV2EventTranslationState(): V2EventTranslationState {
   return {
     streams: new Map(),
     tools: new Map(),
     latestStreamKeyBySession: new Map(),
     nextOrdinalByMessage: new Map(),
+    executionBySession: new Map(),
+    terminalBySession: new Map(),
     unknownTypes: new Set(),
   };
 }
@@ -841,6 +907,38 @@ export function translateV2Event(
 
   if (type.startsWith("session.execution.")) {
     if (!sessionID) return null;
+    if (type === "session.execution.started") {
+      if (isRetiredV2Event(state, value, properties)) return null;
+      trackV2Execution(state, value, properties);
+    }
+    if (type === "session.execution.succeeded" || type === "session.execution.failed" || type === "session.execution.interrupted") {
+      const current = state.executionBySession.get(sessionID);
+      const sequence = readNumber(value.durable, "seq");
+      const created = readNumber(properties, "timestamp") ?? readNumber(value, "created");
+      // A replayed terminal from a predecessor must not discard its successor's
+      // active buffers. Prefer native ordering; timestamps cover legacy envelopes.
+      const stale = sequence !== undefined && current?.sequence !== undefined
+        ? sequence <= current.sequence
+        : created !== undefined && current?.created !== undefined && created < current.created;
+      if (!stale && !isRetiredV2Event(state, value, properties)) {
+        const retired = { sequence, created };
+        if (sequence !== undefined || created !== undefined) {
+          state.terminalBySession.delete(sessionID);
+          state.terminalBySession.set(sessionID, retired);
+          if (state.terminalBySession.size > V2_TERMINAL_SESSION_LIMIT) {
+            const oldest = state.terminalBySession.keys().next().value;
+            if (oldest !== undefined) state.terminalBySession.delete(oldest);
+          }
+        }
+        // Active successors retain their predecessor's watermark even if its
+        // idle-cache entry is evicted. No active buffers are capacity-evicted.
+        state.executionBySession.set(sessionID, {
+          ...current, terminal: true,
+          retired: sequence !== undefined || created !== undefined ? retired : current?.retired,
+        });
+        clearV2SessionTranslation(state, sessionID);
+      }
+    }
     return [{ type, properties: {
       ...properties, sequence: readNumber(value.durable, "seq"),
       ...(type === "session.execution.failed" ? {
@@ -853,6 +951,8 @@ export function translateV2Event(
     const attempt = readNumber(properties, "attempt");
     const next = readNumber(properties, "at");
     if (!sessionID || attempt === undefined || next === undefined) return null;
+    if (isRetiredV2Event(state, value, properties)) return null;
+    trackV2Execution(state, value, properties);
     return [{ type: "session.status", properties: {
       sessionID,
       sequence: readNumber(value.durable, "seq"),
@@ -861,6 +961,8 @@ export function translateV2Event(
   }
 
   if (type === "session.step.started") {
+    if (isRetiredV2Event(state, value, properties)) return null;
+    if (sessionID) trackV2Execution(state, value, properties);
     return sessionID ? [{ type: "session.execution.progress", properties: {
       sessionID, sequence: readNumber(value.durable, "seq"),
     } }] : null;
@@ -870,6 +972,7 @@ export function translateV2Event(
   if (type === `session.${kind}.started` || type === `session.next.${kind}.started`) {
     const messageID = readMessageID(properties);
     if (!sessionID || !messageID) return null;
+    if (isRetiredV2Event(state, value, properties)) return null;
     const key = streamKey(properties, sessionID, messageID, kind);
     const counterKey = JSON.stringify([sessionID, messageID, kind]);
     const candidate = state.streams.get(key);
@@ -886,6 +989,8 @@ export function translateV2Event(
       text: "",
       start: toolEventTimestamp(value, properties),
     };
+    if (stream.text === undefined) return null;
+    trackV2Execution(state, value, properties);
     state.streams.set(key, stream);
     state.latestStreamKeyBySession.set(JSON.stringify([sessionID, kind]), key);
     if (!existing) {
@@ -917,7 +1022,7 @@ export function translateV2Event(
   if (type === `session.${kind}.delta` || type === `session.next.${kind}.delta`) {
     const stream = resolveTextStream(properties, state, kind);
     const delta = readString(properties, "delta");
-    if (!stream || delta === undefined) return null;
+    if (!stream || stream.text === undefined || delta === undefined) return null;
     stream.text += delta;
     return [{
       type: "message.part.delta",
@@ -933,7 +1038,7 @@ export function translateV2Event(
 
   if (type === `session.${kind}.ended` || type === `session.next.${kind}.ended`) {
     const stream = resolveTextStream(properties, state, kind);
-    if (!stream) return null;
+    if (!stream || stream.text === undefined) return null;
     const fullText = readString(properties, "text");
     if (fullText !== undefined) stream.text = fullText;
     const part: TextPart | ReasoningPart = {
@@ -946,6 +1051,8 @@ export function translateV2Event(
         time: { start: stream.start, end: toolEventTimestamp(value, properties) },
       } : { type: kind }),
     };
+    delete stream.text;
+    clearV2SessionTranslation(state, stream.sessionID);
     return [{ type: "message.part.updated", properties: { part } }];
   }
 
@@ -954,8 +1061,10 @@ export function translateV2Event(
     const callID = readToolCallID(properties);
     const sourceTool = readString(properties, "name") ?? readString(properties, "tool");
     if (!sessionID || !messageID || !callID || !sourceTool) return null;
+    if (isRetiredV2Event(state, value, properties)) return null;
     const key = toolStreamKey(sessionID, callID);
     const existing = state.tools.get(key);
+    if (existing === null || existing?.inputEnded || existing?.start !== undefined) return null;
     const stream = existing ?? {
       sessionID,
       messageID,
@@ -966,6 +1075,7 @@ export function translateV2Event(
       input: {},
       metadata: {},
     };
+    trackV2Execution(state, value, properties);
     state.tools.set(key, stream);
     return [
       {
@@ -986,7 +1096,7 @@ export function translateV2Event(
   if (type === "session.tool.input.delta" || type === "session.next.tool.input.delta") {
     const stream = resolveToolStream(properties, state);
     const delta = readString(properties, "delta");
-    if (!stream || delta === undefined) return null;
+    if (!stream || stream.inputEnded || stream.start !== undefined || delta === undefined) return null;
     stream.raw += delta;
     stream.input = parseToolInput(stream.raw, stream.tool);
     return [{ type: "message.part.updated", properties: { part: pendingToolPart(stream) } }];
@@ -995,17 +1105,21 @@ export function translateV2Event(
   if (type === "session.tool.input.ended" || type === "session.next.tool.input.ended") {
     const stream = resolveToolStream(properties, state);
     const text = readString(properties, "text");
-    if (!stream || text === undefined) return null;
+    if (!stream || stream.inputEnded || stream.start !== undefined || text === undefined) return null;
     stream.raw = text;
     stream.input = parseToolInput(text, stream.tool);
-    return [{ type: "message.part.updated", properties: { part: pendingToolPart(stream) } }];
+    const part = pendingToolPart(stream);
+    stream.inputEnded = true;
+    stream.raw = "";
+    return [{ type: "message.part.updated", properties: { part } }];
   }
 
   if (type === "session.tool.called" || type === "session.next.tool.called") {
     const stream = resolveToolStream(properties, state);
     if (!stream) return null;
     stream.input = parseToolInput(properties.input, stream.tool);
-    stream.start = toolEventTimestamp(value, properties);
+    stream.raw = "";
+    stream.start ??= toolEventTimestamp(value, properties);
     return [{
       type: "message.part.updated",
       properties: { part: runningToolPart(stream, stream.start) },
@@ -1018,6 +1132,7 @@ export function translateV2Event(
     stream.metadata = readRecord(properties, "metadata") ?? readRecord(properties, "structured") ?? stream.metadata;
     const start = stream.start ?? toolEventTimestamp(value, properties);
     stream.start = start;
+    stream.raw = "";
     return [{
       type: "message.part.updated",
       properties: { part: runningToolPart(stream, start) },
@@ -1029,6 +1144,8 @@ export function translateV2Event(
     if (!stream) return null;
     stream.metadata = readRecord(properties, "metadata") ?? readRecord(properties, "structured") ?? stream.metadata;
     const part = completedToolPart(stream, properties, toolEventTimestamp(value, properties));
+    state.tools.set(toolStreamKey(stream.sessionID, stream.callID), null);
+    clearV2SessionTranslation(state, stream.sessionID);
     return [{ type: "message.part.updated", properties: { part } }];
   }
 
@@ -1037,6 +1154,8 @@ export function translateV2Event(
     if (!stream) return null;
     stream.metadata = readRecord(properties, "metadata") ?? stream.metadata;
     const part = failedToolPart(stream, properties, toolEventTimestamp(value, properties));
+    state.tools.set(toolStreamKey(stream.sessionID, stream.callID), null);
+    clearV2SessionTranslation(state, stream.sessionID);
     return [{ type: "message.part.updated", properties: { part } }];
   }
 
@@ -1095,6 +1214,8 @@ export function translateV2Event(
     const info = mapV2Session(properties, readString(readRecord(value, "location") ?? {}, "directory"));
     const deletedSessionID = sessionID || info?.id || "";
     if (!deletedSessionID) return null;
+    clearV2SessionTranslation(state, deletedSessionID, true);
+    state.terminalBySession.delete(deletedSessionID);
     return [{
       type: "session.deleted",
       properties: { sessionID: deletedSessionID, ...(info ? { info } : {}) },
@@ -1130,6 +1251,8 @@ function translateV2Events(
     if (stopped) return;
     stopped = true;
     signal?.removeEventListener("abort", stop);
+    for (const collection of Object.values(state)) collection.clear();
+    discoveredForks.clear();
     for (const lookup of lookups.values()) lookup.abort();
     lookups.clear();
     discoveries.length = 0;

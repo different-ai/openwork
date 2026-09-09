@@ -58,6 +58,7 @@ type EditorProps = {
   onChange: (value: string) => void;
   onSubmit: (options: { queue: boolean }) => void | Promise<void>;
   onExpandPastedText?: (label: string) => void;
+  onExpandAttachment?: (id: string) => void;
   onRemoveAttachment?: (id: string) => void;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
   onPasteText?: (text: string) => void;
@@ -462,12 +463,19 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
   dom.dataset.attachmentStatus = "ready";
 
   if (attachment.kind === "image" && attachment.previewUrl) {
+    // Clicking the thumbnail opens the full-size lightbox (see AttachmentChipPlugin).
+    const expand = document.createElement("button");
+    expand.type = "button";
+    expand.className = "h-10 w-10 cursor-zoom-in overflow-hidden rounded-xl border border-border/70 transition-opacity hover:opacity-90";
+    expand.setAttribute("aria-label", `Expand ${attachment.name}`);
+    expand.dataset.attachmentExpandId = attachment.id;
     const img = document.createElement("img");
     img.src = attachment.previewUrl;
     img.alt = attachment.name;
     img.decoding = "async";
-    img.className = "h-10 w-10 rounded-xl border border-border/70 object-cover";
-    dom.append(img);
+    img.className = "h-full w-full object-cover";
+    expand.append(img);
+    dom.append(expand);
   } else {
     const chip = document.createElement("span");
     chip.className = "inline-flex h-10 max-w-[140px] items-center gap-1.5 rounded-xl border border-border/70 bg-muted/40 px-2";
@@ -530,6 +538,11 @@ function updateAttachmentChipDom(dom: HTMLElement, attachment: ComposerAttachmen
   if (remove instanceof HTMLButtonElement) {
     remove.dataset.attachmentRemoveId = attachment.id;
     remove.setAttribute("aria-label", `Remove ${attachment.name}`);
+  }
+  const expand = dom.querySelector("button[data-attachment-expand-id]");
+  if (expand instanceof HTMLButtonElement) {
+    expand.dataset.attachmentExpandId = attachment.id;
+    expand.setAttribute("aria-label", `Expand ${attachment.name}`);
   }
   const img = dom.querySelector("img");
   if (img instanceof HTMLImageElement && attachment.previewUrl) {
@@ -1171,35 +1184,39 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
   return null;
 }
 
-function attachmentRemoveButton(target: EventTarget | null) {
+function attachmentChipButton(target: EventTarget | null) {
   if (!(target instanceof Element)) return null;
-  const button = target.closest("button[data-attachment-remove-id]");
+  const button = target.closest("button[data-attachment-remove-id], button[data-attachment-expand-id]");
   return button instanceof HTMLButtonElement ? button : null;
 }
 
-function AttachmentRemovePlugin(props: { onRemoveAttachment?: (id: string) => void }) {
+function AttachmentChipPlugin(props: { onRemoveAttachment?: (id: string) => void; onExpandAttachment?: (id: string) => void }) {
   const [editor] = useLexicalComposerContext();
   const onRemoveAttachmentRef = useRef(props.onRemoveAttachment);
+  const onExpandAttachmentRef = useRef(props.onExpandAttachment);
 
   useEffect(() => {
     onRemoveAttachmentRef.current = props.onRemoveAttachment;
-  }, [props.onRemoveAttachment]);
+    onExpandAttachmentRef.current = props.onExpandAttachment;
+  }, [props.onExpandAttachment, props.onRemoveAttachment]);
 
   useEffect(() => {
     const handleMouseDown = (event: MouseEvent) => {
-      if (!attachmentRemoveButton(event.target)) return;
+      if (!attachmentChipButton(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
     };
 
     const handleClick = (event: MouseEvent) => {
-      const button = attachmentRemoveButton(event.target);
+      const button = attachmentChipButton(event.target);
       if (!button) return;
-      const id = button.dataset.attachmentRemoveId;
-      if (!id) return;
+      const removeId = button.dataset.attachmentRemoveId;
+      const expandId = button.dataset.attachmentExpandId;
+      if (!removeId && !expandId) return;
       event.preventDefault();
       event.stopPropagation();
-      onRemoveAttachmentRef.current?.(id);
+      if (removeId) onRemoveAttachmentRef.current?.(removeId);
+      if (expandId) onExpandAttachmentRef.current?.(expandId);
     };
 
     return editor.registerRootListener((rootElement, previousRootElement) => {
@@ -1291,7 +1308,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         <SubmitPlugin onSubmit={props.onSubmit} disabled={props.submitDisabled} />
         <PasteChipPlugin onPasteText={props.onPasteText} />
         <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
-        <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />
+        <AttachmentChipPlugin onRemoveAttachment={props.onRemoveAttachment} onExpandAttachment={props.onExpandAttachment} />
         <MentionChipNavigationPlugin />
         <ImperativeHandlePlugin editorRef={ref} />
       </div>

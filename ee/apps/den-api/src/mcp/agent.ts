@@ -60,6 +60,8 @@ import {
 } from "./capability-registry.js"
 import { runCodemodeScript } from "./codemode-run.js"
 import { normalizeToolBody } from "./invoke.js"
+import { parseNativeCapabilityName } from "./native-capabilities.js"
+import { gmailFileInputPreflightSchema } from "../capability-sources/gmail-file-input.js"
 import { recordWorkflowResult } from "../workflow-runs.js"
 import {
   activateArtifactViewRevision,
@@ -591,6 +593,24 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             executeCapability(capabilityContext, { name, schemaDigest, path, query, body })
           ),
         })
+        // Only this direct call may hand off to the host's fixed Gmail upload
+        // action. Keep the explicit no-draft failure body; scripts stay errors.
+        const native = parseNativeCapabilityName(name)
+        if (result.isError === true
+          && native?.toolName === "postCapabilitiesGoogleWorkspaceGmailDrafts"
+          && (native.connectionId === "google-workspace" || /^emc_[0-9a-hjkmnp-tv-z]{26}$/.test(native.connectionId))
+          && result.content.length === 1) {
+          const part = result.content[0]
+          if (part?.type === "text") {
+            try {
+              if (gmailFileInputPreflightSchema.safeParse(JSON.parse(part.text)).success) {
+                return { ...result, isError: false }
+              }
+            } catch {
+              // Non-JSON and unrelated errors retain their original transport.
+            }
+          }
+        }
         return result
       },
     )

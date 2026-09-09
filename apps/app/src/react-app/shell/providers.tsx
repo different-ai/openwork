@@ -50,10 +50,19 @@ type AppProvidersProps = {
   children: ReactNode;
 };
 
-function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
+export function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
   const activationRequired = useEnterpriseActivationRequired();
   if (activationRequired) {
-    return <ConnectLinkProvider>{children}</ConnectLinkProvider>;
+    // Pre-activation children still include AppRoot-level consumers
+    // (DesktopUpdaterProvider since #4482) whose hooks read the local and
+    // desktop-config contexts, so those providers must stay mounted here too.
+    return (
+      <ConnectLinkProvider>
+        <DesktopConfigProvider>
+          <LocalProvider>{children}</LocalProvider>
+        </DesktopConfigProvider>
+      </ConnectLinkProvider>
+    );
   }
   return (
     <>

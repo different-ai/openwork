@@ -623,6 +623,19 @@ export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Pla
   };
 }
 
+/**
+ * A healthy desktop whose render tree is about to throw. The spec triggers the
+ * throw through the dev-only `eval.app.render_throw` control action and reads
+ * back what the recovery screen put on the clipboard.
+ */
+export async function renderCrashWorld(seed: Seed) {
+  const app = await seed.desktop({ name: "render-crash" });
+  return {
+    app,
+    readClipboard: () => seed.evalIn(app, () => (navigator.clipboard.readText()), { awaitPromise: true }),
+  };
+}
+
 async function installUpdaterRaceBridge(app: Awaited<ReturnType<typeof desktop>>, delayStable: boolean) {
   const installed = await evalIn(app, browserScript((delayStable) => {
     const nativeUpdater = window.__OPENWORK_ELECTRON__?.updater;

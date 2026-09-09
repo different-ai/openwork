@@ -28,7 +28,8 @@ Contract surfaces:
 Severity is the gating contract. Use exactly this mapping:
 
 - `high` — blocking; withholds Warden clearance until resolved.
-- `medium` — advisory; posted as a comment but never blocks clearance.
+- `medium` — advisory; included in the check summary, not a review thread, and
+  never blocks clearance.
 - Never report `low` findings from this skill.
 
 Report a HIGH (blocking) finding only in these two cases:
@@ -75,12 +76,16 @@ Do NOT report:
 
 For each finding, report:
 
-- The exact file and changed lines that introduce the drift.
-- Which published-vs-deployed pair breaks: what the published desktop calls
-  or expects, and what den now serves (or vice versa).
+- One finding per root cause, grouping all related file/line locations and
+  identifying the changed lines that cause the drift.
+- The exact compatibility pair: what client code calls or expects and what den
+  serves (or vice versa). For a removed client usage, cite its before-change
+  reference. Check and address contrary evidence; do not invent deployment,
+  publication, or adoption state.
 - Severity per the mapping above.
 - The concrete rollout fix: what ships first, what waits, and what change in
   this diff should be split out.
+- `Clear when:` followed by the observable compatibility condition.
 
 If the diff introduces no desktop<->den drift, report nothing. Silence is the
 correct output for a clean diff; do not manufacture findings.

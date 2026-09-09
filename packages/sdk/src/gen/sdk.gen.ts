@@ -5847,9 +5847,9 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Create a Gmail draft or threaded reply draft without attachments
+   * Create a Gmail draft or threaded reply with optional workspace attachments
    *
-   * Creates a plain-text Gmail draft in the calling member own mailbox. For workspace attachments, use the openwork-cloud-uploads gmail_create_draft_with_attachments action so file bytes stay outside model context. Set threadId for replies and forwards. Always share the returned draftUrl.
+   * Creates a plain-text Gmail draft in the calling member own mailbox. Optional attachments are workspace paths, up to 10 files totaling at most 4 MiB, fulfilled outside model context by a supporting OpenWork host on direct execute_capability calls. Code Mode and other MCP hosts cannot fulfill attachments and create no draft. Set threadId for replies and forwards. Always share the returned draftUrl.
    */
   public postV1CapabilitiesGoogleWorkspaceGmailDrafts<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5859,6 +5859,7 @@ export class DenClient extends HeyApiClient {
       subject: string;
       body: string;
       threadId?: string;
+      attachments?: Array<string>;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -5873,6 +5874,7 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "subject" },
             { in: "body", key: "body" },
             { in: "body", key: "threadId" },
+            { in: "body", key: "attachments" },
           ],
         },
       ],

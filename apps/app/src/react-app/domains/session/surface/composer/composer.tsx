@@ -16,6 +16,7 @@ import {
   type ComposerSettingsSection,
 } from "@/react-app/domains/settings/library";
 import { ModelSelect } from "@/components/model-select";
+import { ImageLightbox } from "@/components/chat/image-lightbox";
 import { LexicalPromptEditor, syncAttachmentChipStatus, type ComposerAttachmentToken, type LexicalPromptEditorHandle } from "./editor";
 import { listRunningAppsForMention } from "./app-mentions";
 import { COMPUTER_MENTIONS } from "./computer-mentions";
@@ -744,6 +745,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     props.onExpandPastedText(target.id);
   }, [props.onExpandPastedText, props.pastedText]);
 
+  // Draft image chip clicked: show it full-size so it can be inspected before sending.
+  const [expandedAttachmentId, setExpandedAttachmentId] = useState<string | null>(null);
+  const expandedAttachment = props.attachments.find((attachment) => attachment.id === expandedAttachmentId);
+
   const activeMenu = slashOpen ? "slash" : mentionOpen ? "mention" : null;
   const activeItems = activeMenu === "slash" ? slashFiltered : activeMenu === "mention" ? mentionFiltered : [];
   const toolCommandItems = commands.filter(isLibraryCommand);
@@ -1332,6 +1337,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               onChange={props.onDraftChange}
               onSubmit={handleEditorSubmit}
               onExpandPastedText={handleExpandPastedText}
+              onExpandAttachment={setExpandedAttachmentId}
               onRemoveAttachment={props.onRemoveAttachment}
               onPasteText={props.onPasteText}
               onPaste={(event) => {
@@ -1869,6 +1875,17 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
 
       </div>
     </div>
+    {/* Sibling of the composer root so Escape closes the lightbox without arming stop. */}
+    {expandedAttachment?.previewUrl ? (
+      <ImageLightbox
+        src={expandedAttachment.previewUrl}
+        alt={expandedAttachment.name}
+        open
+        onOpenChange={(open) => {
+          if (!open) setExpandedAttachmentId(null);
+        }}
+      />
+    ) : null}
     </DevProfiler>
   );
 });

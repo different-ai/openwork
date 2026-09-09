@@ -48,7 +48,7 @@ export function listExperimentalExtensionActions(extensionId: string, connectSna
   return actions.filter((action) => action.extensionId !== GOOGLE_WORKSPACE_EXTENSION_ID || action.action === "status");
 }
 
-export async function callExperimentalExtensionAction(config: ServerConfig, env: EnvService, input: unknown, connectSnapshot?: ConnectSnapshot) {
+export async function callExperimentalExtensionAction(config: ServerConfig, env: EnvService, input: unknown, connectSnapshot?: ConnectSnapshot, signal?: AbortSignal) {
   if (!isRecord(input)) {
     throw new ApiError(400, "invalid_payload", "Expected extension action call payload");
   }
@@ -88,7 +88,7 @@ export async function callExperimentalExtensionAction(config: ServerConfig, env:
   }
 
   if (extensionId === OPENWORK_CLOUD_UPLOADS_EXTENSION_ID) {
-    const result = await callOpenWorkCloudUploadAction(config, action, args, context);
+    const result = await callOpenWorkCloudUploadAction(config, action, args, context, { signal });
     if (result) return result;
   }
 

@@ -5,7 +5,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function record(value: unknown): Record<string, unknown> { return isRecord(value) ? value : {}; }
-export async function checkManagedTool(tool: string, raw: unknown): Promise<void> {
+export async function checkManagedTool(tool: string, raw: unknown, evaluate = check): Promise<void> {
   const input = record(raw);
   let action: ManagedPolicyAction | undefined;
   if (tool === "bash" || tool === "shell") action = "shell";
@@ -13,12 +13,12 @@ export async function checkManagedTool(tool: string, raw: unknown): Promise<void
   else if (tool === "webfetch" || tool === "websearch") action = tool;
   else if (tool === "browser_navigate" || tool === "browser_open") action = "browser";
   else if (tool === "openwork_execute") {
-    if (input.id === "browser.open_url") return check("browser", record(input.args));
+    if (input.id === "browser.open_url") return evaluate("browser", record(input.args));
     if (typeof input.id === "string" && /^(?:plugin|skill|mcp)\.(?:install|add|update|remove)/.test(input.id)) action = "extensions";
   }
   // Even read-only tools synchronize policy, so unknown identities cannot keep
   // running with a previous member's loaded configuration.
-  await check(action ?? "sync", input);
+  await evaluate(action ?? "sync", input);
 }
 export async function check(action: ManagedPolicyAction, input: Record<string, unknown>): Promise<void> {
   const base = process.env.OPENWORK_SERVER_URL;

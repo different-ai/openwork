@@ -13435,6 +13435,10 @@ export type PostV1CapabilitiesGoogleWorkspaceGmailDraftsData = {
      * Gmail thread id to reply on. Required for replies and forwards; get it from the gmail-messages capability. When set, the draft is attached to that thread as a reply — keep the thread's subject (e.g. 'Re: …').
      */
     threadId?: string;
+    /**
+     * Optional workspace file paths, 1 to 10 files totaling at most 4 MiB. File bytes stay outside model context. Requires a direct execute_capability call from a supporting OpenWork host; Code Mode and other MCP hosts are unsupported and create no draft. Do not retry without attachments.
+     */
+    attachments?: Array<string>;
   };
   path?: never;
   query?: never;
@@ -13454,6 +13458,15 @@ export type PostV1CapabilitiesGoogleWorkspaceGmailDraftsErrors = {
    * The calling member has not connected their Google account or is missing permission.
    */
   409: GoogleWorkspaceNeedsConnectionError;
+  /**
+   * Workspace attachments require a supporting OpenWork host; no draft was created.
+   */
+  422: {
+    ok: false;
+    error: "file_input_requires_host";
+    created: false;
+    message: "Workspace attachments require a supporting OpenWork host. No draft was created. Do not retry without attachments.";
+  };
   /**
    * Google rejected the request.
    */

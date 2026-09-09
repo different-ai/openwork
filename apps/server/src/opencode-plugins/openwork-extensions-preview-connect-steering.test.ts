@@ -22,8 +22,8 @@ type CloudFailure = NonNullable<CloudHealth["firstFailure"]>;
 const originalServerUrl = process.env.OPENWORK_SERVER_URL;
 const originalServerToken = process.env.OPENWORK_SERVER_TOKEN;
 
-const UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION =
-  "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action.";
+const EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION =
+  "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action. Do not use another route to bypass a failed connection; follow its connection guidance.";
 
 beforeEach(() => {
   resetOpenWorkExtensionDiscoveryInstructionCacheForTests();
@@ -64,7 +64,7 @@ function expectNoDegradedSteering(instruction: string): void {
   expect(instruction).not.toContain("Do not use OpenWork documentation tools");
   expect(instruction).not.toContain("Do not substitute docs");
   expect(instruction).not.toContain("as a substitute for performing an action against a connected service");
-  expect(instruction).not.toMatch(/do NOT use/i);
+  expect(instruction).not.toMatch(/do NOT use (?:tools|OpenWork Cloud)/i);
   expect(instruction).not.toMatch(/Do not try/);
 }
 
@@ -103,25 +103,27 @@ describe("composeSteeringFromEngineMcpStatus", () => {
 });
 
 describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
-  test("keeps the fallback instruction byte-identical when state is unavailable or generic discovery is gated", () => {
-    expect(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(composeOpenWorkExtensionDiscoveryInstruction(null)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(null), connectCatalogEnabled: false })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+  test("keeps bounded fallback discovery when state is unavailable or generic discovery is gated", () => {
+    expect(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(composeOpenWorkExtensionDiscoveryInstruction(null)).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(null), connectCatalogEnabled: false })).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 
   test("keeps fallback when only legacy Google Workspace is configured", () => {
-    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(null), googleWorkspace: { legacyConfigured: true } })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(null), googleWorkspace: { legacyConfigured: true } })).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 
   test("steers ready Connect users to verified openwork-cloud capabilities first", () => {
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("verified ready for this exact workspace/model");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("Discover the native Gmail draft schema");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("host file transport");
+    expect(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION).toContain("Do not use another route to bypass a failed connection");
     // Tool mechanics and the "only name what search returns" rule live once in
-    // the base agent prompt; ready steering is the availability signal only.
+    // the base agent prompt; ready steering adds only the host-specific path.
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("openwork-cloud_search_capabilities with");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("available_skills");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("A successful search proves");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Skill creation:");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Gmail");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("image generation");
     // The detailed Connect contract ships as the openwork-cloud server's MCP
     // initialize instructions, present exactly when this steering is chosen.
@@ -129,7 +131,7 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("server instructions in this prompt are authoritative for search-first discovery, MCP Apps, connection_status results, schema guidance, and retry rules");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("relay connectionStatus.action exactly");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("results are live, not cached");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION.length).toBeLessThan(600);
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION.length).toBeLessThan(700);
     expect(composeOpenWorkExtensionDiscoveryInstruction(state(health()))).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), connectCatalogEnabled: false })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), googleWorkspace: { legacyConfigured: true } })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
@@ -388,7 +390,7 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       return Response.json({ message: "unexpected" }, { status: 500 });
     };
 
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
     expect(serverFetchCalls).toBe(0);
   });
 
@@ -400,7 +402,7 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       return Response.json({ message: "unexpected" }, { status: 500 });
     };
 
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
     expect(serverFetchCalls).toBe(0);
   });
 
@@ -462,7 +464,7 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       context: { directory: "/tmp/ws_1" },
       model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
     };
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction(input, fakeFetch)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction(input, fakeFetch)).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
     expect(await resolveOpenWorkExtensionDiscoveryInstruction(input, fakeFetch)).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(calls).toBe(2);
     expect(urls).toEqual([
@@ -502,7 +504,7 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
     };
     const invalidFetch = async (): Promise<Response> => Response.json({ ok: true });
 
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, failingFetch)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, invalidFetch)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, failingFetch)).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, invalidFetch)).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 });

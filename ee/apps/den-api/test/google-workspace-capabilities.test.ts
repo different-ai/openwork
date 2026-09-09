@@ -470,9 +470,80 @@ let searchCapabilities: typeof import("../src/mcp/search.js").searchCapabilities
 const userId = createDenTypeId("user")
 const organizationId = createDenTypeId("organization")
 const memberId = createDenTypeId("member")
+const otherUserId = createDenTypeId("user")
+const otherMemberId = createDenTypeId("member")
 const authSessionId = createDenTypeId("session")
 const authSessionToken = `gws-caps-session-${authSessionId}`
 let directUploadMcpToken = ""
+
+const workspaceDraft = {
+  to: "sam@acme.test",
+  subject: "Workspace notes",
+  body: "Please review the attached notes.",
+  attachments: ["notes.txt"],
+}
+const expectedFileInputPreflight = {
+  ok: false,
+  error: "file_input_requires_host",
+  created: false,
+  message: "Workspace attachments require a supporting OpenWork host. No draft was created. Do not retry without attachments.",
+}
+
+function gmailUploadForm(payload: Record<string, unknown> = {}) {
+  const form = new FormData()
+  form.append("payload", JSON.stringify({
+    to: workspaceDraft.to,
+    subject: workspaceDraft.subject,
+    body: workspaceDraft.body,
+    ...payload,
+  }))
+  form.append("file", new File(["workspace notes"], "notes.txt", { type: "text/plain" }))
+  return form
+}
+
+async function seedUploadConnection(options: {
+  providerKey?: string
+  restricted?: boolean
+  otherAccountOnly?: boolean
+} = {}) {
+  const { createExternalMcpConnection } = await import("../src/capability-sources/external-mcp-connections.js")
+  const { upsertOrgOAuthClient } = await import("../src/capability-sources/oauth-credentials.js")
+  const connection = await createExternalMcpConnection({
+    organizationId,
+    name: "Workspace Mail",
+    url: "https://workspace.google.com",
+    authType: "oauth",
+    kind: "native_provider",
+    nativeProviderKey: options.providerKey ?? "google-workspace",
+    credentialMode: "per_member",
+    createdByOrgMembershipId: otherMemberId,
+    access: { orgWide: !options.restricted, memberIds: options.restricted ? [otherMemberId] : [], teamIds: [] },
+  })
+  await upsertOrgOAuthClient({
+    organizationId,
+    providerId: connection.id,
+    clientId: `client-${connection.id}`,
+    clientSecret: "test-client-secret",
+    createdByOrgMembershipId: otherMemberId,
+  })
+  // Both members can own an account on the same connector; only the caller's
+  // credential may be used, even when another member configured it.
+  for (const accountMemberId of options.otherAccountOnly ? [otherMemberId] : [memberId, otherMemberId]) {
+    await upsertConnectedAccount({
+      organizationId,
+      orgMembershipId: accountMemberId,
+      providerId: connection.id,
+      externalAccountId: `${accountMemberId}@acme.test`,
+      scopes: FULL_SCOPES,
+      accessToken: `${connection.id}-${accountMemberId}`,
+      refreshToken: "test-refresh-token",
+      tokenType: "Bearer",
+      expiresAt: new Date("2037-01-01T00:00:00Z"),
+      pendingCodeVerifier: null,
+    })
+  }
+  return connection.id
+}
 
 async function seedConnectedAccount(scopes: string[] | null = FULL_SCOPES) {
   await upsertConnectedAccount({
@@ -517,12 +588,12 @@ function requestForm(path: string, form: FormData) {
   })
 }
 
-async function mcpToolCall(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function mcpToolCall(name: string, args: Record<string, unknown>, token = directUploadMcpToken): Promise<Record<string, unknown>> {
   const response = await app.request("http://den-api.local/mcp/agent", {
     method: "POST",
     headers: {
       accept: "application/json, text/event-stream",
-      authorization: `Bearer ${directUploadMcpToken}`,
+      authorization: `Bearer ${token}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
@@ -581,6 +652,11 @@ beforeAll(async () => {
     name: "Google Workspace Capabilities User",
     email: `gws-caps+${userId}@test.local`,
   })
+  await db.insert(schema.AuthUserTable).values({
+    id: otherUserId,
+    name: "Other Workspace Member",
+    email: `gws-caps+${otherUserId}@test.local`,
+  })
   await db.insert(schema.OrganizationTable).values({
     id: organizationId,
     name: "Google Workspace Capabilities Org",
@@ -590,6 +666,12 @@ beforeAll(async () => {
     id: memberId,
     organizationId,
     userId,
+    role: "member",
+  })
+  await db.insert(schema.MemberTable).values({
+    id: otherMemberId,
+    organizationId,
+    userId: otherUserId,
     role: "member",
   })
   await db.insert(schema.AuthSessionTable).values({
@@ -622,18 +704,26 @@ beforeAll(async () => {
 beforeEach(async () => {
   resetFakeGoogle()
   await db.delete(schema.ConnectedAccountTable).where(drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId))
+  await db.delete(schema.OrgOAuthClientTable).where(drizzle.and(
+    drizzle.eq(schema.OrgOAuthClientTable.organizationId, organizationId),
+    drizzle.sql`${schema.OrgOAuthClientTable.providerId} <> ${"google-workspace"}`,
+  ))
+  await db.delete(schema.ExternalMcpConnectionAccessGrantTable).where(drizzle.eq(schema.ExternalMcpConnectionAccessGrantTable.organizationId, organizationId))
+  await db.delete(schema.ExternalMcpConnectionTable).where(drizzle.eq(schema.ExternalMcpConnectionTable.organizationId, organizationId))
   await seedConnectedAccount()
 })
 
 afterAll(async () => {
   await db.delete(schema.ConnectedAccountTable).where(drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId))
   await db.delete(schema.OrgOAuthClientTable).where(drizzle.eq(schema.OrgOAuthClientTable.organizationId, organizationId))
+  await db.delete(schema.ExternalMcpConnectionAccessGrantTable).where(drizzle.eq(schema.ExternalMcpConnectionAccessGrantTable.organizationId, organizationId))
+  await db.delete(schema.ExternalMcpConnectionTable).where(drizzle.eq(schema.ExternalMcpConnectionTable.organizationId, organizationId))
   await db.delete(schema.OAuthAccessTokenTable).where(drizzle.eq(schema.OAuthAccessTokenTable.referenceId, organizationId))
   await db.delete(schema.AuthSessionTable).where(drizzle.eq(schema.AuthSessionTable.id, authSessionId))
   await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, organizationId))
   await db.delete(schema.OrganizationRoleTable).where(drizzle.eq(schema.OrganizationRoleTable.organizationId, organizationId))
   await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, organizationId))
-  await db.delete(schema.AuthUserTable).where(drizzle.eq(schema.AuthUserTable.id, userId))
+  await db.delete(schema.AuthUserTable).where(drizzle.inArray(schema.AuthUserTable.id, [userId, otherUserId]))
   fakeGoogleServer.stop(true)
   mock.restore()
 })
@@ -927,6 +1017,193 @@ test("gmail plain draft supports cc without requiring a thread", async () => {
     threadId: null,
     quotedHistoryIncluded: false,
   })
+})
+
+test("Gmail JSON attachments return the exact no-write host preflight before reading a thread", async () => {
+  for (const body of [workspaceDraft, { ...workspaceDraft, threadId: "thread_1" }]) {
+    const response = await request("/v1/capabilities/google-workspace/gmail-drafts", { method: "POST", body })
+    expect(response.status).toBe(422)
+    expect(await response.json()).toEqual(expectedFileInputPreflight)
+    expect(googleCallCount).toBe(0)
+    expect(lastDraftPayload).toBeNull()
+  }
+})
+
+test("Gmail JSON attachment paths must be a nonempty bounded array of nonempty strings", async () => {
+  for (const attachments of [[], [""], ["  "], Array.from({ length: 11 }, () => "notes.txt"), "notes.txt", [null]]) {
+    const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+      method: "POST", body: { ...workspaceDraft, attachments },
+    })
+    expect(response.status).toBe(400)
+    expect(googleCallCount).toBe(0)
+  }
+  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST", body: { ...workspaceDraft, attachments: Array.from({ length: 10 }, () => "notes.txt") },
+  })
+  expect(response.status).toBe(422)
+  expect(await response.json()).toEqual(expectedFileInputPreflight)
+  expect(googleCallCount).toBe(0)
+})
+
+test("Gmail attachment preflight preserves authentication, account and threaded scope gates", async () => {
+  const unauthenticated = await app.request("http://den-api.local/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(workspaceDraft),
+  })
+  expect(unauthenticated.status).toBe(401)
+  await seedConnectedAccount([DRIVE_READ_SCOPE])
+  const missingScope = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST", body: { ...workspaceDraft, threadId: "thread_1" },
+  })
+  expect(missingScope.status).toBe(409)
+  expect(expectMessage(await missingScope.json())).toContain("missing the Gmail read permission")
+  await db.delete(schema.ConnectedAccountTable).where(drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId))
+  const missingAccount = await request("/v1/capabilities/google-workspace/gmail-drafts", { method: "POST", body: workspaceDraft })
+  expect(missingAccount.status).toBe(409)
+  expect(expectRecord(await missingAccount.json(), "missing account").error).toBe("needs_connection")
+  expect(googleCallCount).toBe(0)
+})
+
+test("only direct native Gmail execution returns the non-error host handoff; Code Mode remains an error", async () => {
+  const search = await mcpToolCall("search_capabilities", { query: "gmail draft attachments", limit: 10 })
+  const matches = expectRecord(search.structuredContent, "search result").matches
+  if (!Array.isArray(matches)) throw new Error("Expected capability matches")
+  const draft = expectRecord(matches.find((match) => isRecord(match)
+    && match.name === "native:google-workspace:postCapabilitiesGoogleWorkspaceGmailDrafts"), "draft capability")
+  const name = expectString(draft.name, "draft name")
+  const direct = await mcpToolCall("execute_capability", { name, body: JSON.stringify(workspaceDraft) })
+  expect(direct.isError).toBe(false)
+  expect(JSON.parse(mcpText(direct))).toEqual(expectedFileInputPreflight)
+  expect(googleCallCount).toBe(0)
+
+  const scriptPath = expectString(draft.scriptPath, "draft script path")
+  const script = await mcpToolCall("execute_capability_script", {
+    code: `return await ${scriptPath}({ body: input });`, input: workspaceDraft,
+  })
+  expect(script.isError).toBe(true)
+  expect(mcpText(script)).toContain("file_input_requires_host")
+  expect(googleCallCount).toBe(0)
+  expect(lastDraftPayload).toBeNull()
+
+  const invalid = await mcpToolCall("execute_capability", { name, body: { ...workspaceDraft, attachments: [] } })
+  expect(invalid.isError).toBe(true)
+  expect(mcpText(invalid)).not.toContain("file_input_requires_host")
+  for (const unrelatedName of [
+    `mcp:${createDenTypeId("externalMcpConnection")}:postCapabilitiesGoogleWorkspaceGmailDrafts`,
+    "native:microsoft-365:postCapabilitiesGoogleWorkspaceGmailDrafts",
+    `${name}:other`,
+  ]) {
+    const result = await mcpToolCall("execute_capability", { name: unrelatedName, body: workspaceDraft })
+    expect(result.isError).toBe(true)
+    expect(mcpText(result)).not.toContain("file_input_requires_host")
+    expect(googleCallCount).toBe(0)
+  }
+  const unrelated = await mcpToolCall("execute_capability", {
+    name: "native:google-workspace:getCapabilitiesGoogleWorkspaceGmailAttachment",
+    path: { messageId: "msg_1", attachmentId: "missing" },
+  })
+  expect(unrelated.isError).toBe(true)
+  expect(mcpText(unrelated)).toContain("google_api_error")
+  expect(lastDraftPayload).toBeNull()
+})
+
+test("direct Gmail uploads select the exact native connection and calling member account", async () => {
+  const selectedId = await seedUploadConnection()
+  await seedUploadConnection()
+  const preflight = await mcpToolCall("execute_capability", {
+    name: `native:${selectedId}:postCapabilitiesGoogleWorkspaceGmailDrafts`, body: workspaceDraft,
+  })
+  expect(preflight.isError).toBe(false)
+  expect(JSON.parse(mcpText(preflight))).toEqual(expectedFileInputPreflight)
+  expect(googleCallCount).toBe(0)
+  const response = await requestForm("/v1/direct-uploads/google-workspace/gmail-drafts", gmailUploadForm({ connectionId: selectedId }))
+  expect(response.status).toBe(200)
+  expect(googleCallCount).toBe(1)
+  expect(lastAuthorization).toBe(`Bearer ${selectedId}-${memberId}`)
+  expect(decodeDraftRaw()).toContain(Buffer.from("workspace notes").toString("base64"))
+  expect(expectRecord(await response.json(), "selected draft").draftUrl).toContain(encodeURIComponent(`${memberId}@acme.test`))
+})
+
+test("explicit unavailable, wrong-provider, restricted and other-member Gmail upload selections never fall back", async () => {
+  const selectedIds = [
+    createDenTypeId("externalMcpConnection"),
+    "unknown-provider",
+    await seedUploadConnection({ providerKey: "microsoft-365" }),
+    await seedUploadConnection({ restricted: true }),
+    await seedUploadConnection({ otherAccountOnly: true }),
+  ]
+  for (const connectionId of selectedIds) {
+    const response = await requestForm("/v1/direct-uploads/google-workspace/gmail-drafts", gmailUploadForm({ connectionId }))
+    expect(response.status).toBe(409)
+    expect(expectRecord(await response.json(), "unavailable selection").error).toBe("needs_connection")
+    expect(googleCallCount).toBe(0)
+    expect(lastDraftPayload).toBeNull()
+  }
+})
+
+test("explicit legacy Gmail upload uses only the legacy credential, never a usable connector fallback", async () => {
+  await seedUploadConnection()
+  const response = await requestForm("/v1/direct-uploads/google-workspace/gmail-drafts", gmailUploadForm({ connectionId: "google-workspace" }))
+  expect(response.status).toBe(200)
+  expect(lastAuthorization).toBe("Bearer gws-token")
+  await db.delete(schema.ConnectedAccountTable).where(drizzle.and(
+    drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId),
+    drizzle.eq(schema.ConnectedAccountTable.providerId, "google-workspace"),
+  ))
+  resetFakeGoogle()
+  const unavailable = await requestForm("/v1/direct-uploads/google-workspace/gmail-drafts", gmailUploadForm({ connectionId: "google-workspace" }))
+  expect(unavailable.status).toBe(409)
+  expect(googleCallCount).toBe(0)
+  expect(lastDraftPayload).toBeNull()
+})
+
+test("direct Gmail multipart payload rejects model attachment paths and empty connection selection", async () => {
+  for (const payload of [{ attachments: ["notes.txt"] }, { connectionId: "" }, { connectionId: null }]) {
+    const response = await requestForm("/v1/direct-uploads/google-workspace/gmail-drafts", gmailUploadForm(payload))
+    expect(response.status).toBe(400)
+    expect(googleCallCount).toBe(0)
+  }
+})
+
+test("Gmail attachment preflight and direct upload preserve MCP write-scope enforcement", async () => {
+  const tokenResponse = await app.request("http://den-api.local/v1/mcp/token", {
+    method: "POST",
+    headers: { authorization: `Bearer ${authSessionToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ scopes: ["mcp:read"] }),
+  })
+  expect(tokenResponse.status).toBe(200)
+  const readToken = expectString(expectRecord(await tokenResponse.json(), "read token").token, "read token value")
+  const preflight = await mcpToolCall("execute_capability", {
+    name: "native:google-workspace:postCapabilitiesGoogleWorkspaceGmailDrafts", body: workspaceDraft,
+  }, readToken)
+  expect(preflight.isError).toBe(true)
+  expect(JSON.parse(mcpText(preflight))).toEqual({ error: "insufficient_mcp_scope", requiredScope: "mcp:write" })
+  const upload = await app.request("http://den-api.local/v1/direct-uploads/google-workspace/gmail-drafts", {
+    method: "POST", headers: { authorization: `Bearer ${readToken}` }, body: gmailUploadForm(),
+  })
+  expect(upload.status).toBe(403)
+  expect(await upload.json()).toEqual({ error: "insufficient_mcp_scope", requiredScope: "mcp:write" })
+  expect(googleCallCount).toBe(0)
+  expect(lastDraftPayload).toBeNull()
+})
+
+test("direct Gmail upload does not accept signed internal headers as host authentication or selection", async () => {
+  const selectedId = await seedUploadConnection()
+  const headers = authHeaders()
+  headers.set("x-den-internal-capability-connector", session.createInternalCapabilityConnectorHeader({
+    userId, organizationId, connectorId: selectedId,
+  }))
+  const unauthenticated = await app.request("http://den-api.local/v1/direct-uploads/google-workspace/gmail-drafts", {
+    method: "POST", headers, body: gmailUploadForm(),
+  })
+  expect(unauthenticated.status).toBe(401)
+  expect(googleCallCount).toBe(0)
+  headers.set("authorization", `Bearer ${directUploadMcpToken}`)
+  const response = await app.request("http://den-api.local/v1/direct-uploads/google-workspace/gmail-drafts", {
+    method: "POST", headers, body: gmailUploadForm(),
+  })
+  expect(response.status).toBe(200)
+  expect(lastAuthorization).toBe("Bearer gws-token")
+  expect(googleCallCount).toBe(1)
 })
 
 test("direct Gmail upload attaches exact workspace bytes without model-facing base64", async () => {
@@ -1576,9 +1853,9 @@ test("Google Workspace capability tools are discoverable and keep readable names
   expect(gmailMatch?.name).toBe("getCapabilitiesGoogleWorkspaceGmailMessages")
   expect(gmailMatch?.queryParams).toEqual(["q", "maxResults"])
   expect(searchCapabilities(catalog, "outlook mail messages", 20).find((match) => match.name === "getCapabilitiesMicrosoft365MailMessages")?.queryParams).toEqual(["search", "maxResults"])
-  const draftMatch = searchCapabilities(catalog, "gmail draft without attachments", 10)[0]
+  const draftMatch = searchCapabilities(catalog, "gmail draft attachments", 10)[0]
   expect(draftMatch?.name).toBe("postCapabilitiesGoogleWorkspaceGmailDrafts")
-  expect(draftMatch?.summary).toContain("without attachments")
+  expect(draftMatch?.summary).toContain("optional workspace attachments")
   expect(searchCapabilities(catalog, "download gmail attachment bytes", 10)[0]?.name).toBe("getCapabilitiesGoogleWorkspaceGmailAttachment")
 
   const expectedNames = [
@@ -1639,7 +1916,7 @@ test("search_capabilities exposes query parameter constraints as JSON schema ins
   expect(timeMinSchema.format).toBe("date-time")
   expect(expectString(timeMinSchema.description, "calendar timeMin description")).toContain("+02:00")
 
-  const draftSearch = await mcpToolCall("search_capabilities", { query: "gmail draft without attachments", limit: 10 })
+  const draftSearch = await mcpToolCall("search_capabilities", { query: "gmail draft attachments", limit: 10 })
   const draftStructuredContent = expectRecord(draftSearch.structuredContent, "Gmail draft capability search structured content")
   if (!Array.isArray(draftStructuredContent.matches)) {
     throw new Error("Expected Gmail draft capability search matches to be an array")
@@ -1650,4 +1927,16 @@ test("search_capabilities exposes query parameter constraints as JSON schema ins
     "Gmail draft capability match",
   )
   expect(draftMatch).not.toHaveProperty("querySchema")
+  expect(draftMatch.summary).toContain("optional workspace attachments")
+  const bodySchema = expectRecord(draftMatch.bodySchema, "draft body schema")
+  expect(bodySchema.required).not.toContain("attachments")
+  const properties = expectRecord(bodySchema.properties, "draft properties")
+  const attachments = expectRecord(properties.attachments, "attachment input schema")
+  expect(attachments).toMatchObject({ type: "array", minItems: 1, maxItems: 10, items: { type: "string", minLength: 1 } })
+  const description = expectString(attachments.description, "attachment description")
+  for (const guidance of ["workspace file paths", "4 MiB", "outside model context", "direct execute_capability", "supporting OpenWork host", "Code Mode", "no draft"]) {
+    expect(description).toContain(guidance)
+  }
+  expect(properties).not.toHaveProperty("connectionId")
+  expect(attachments).not.toHaveProperty("x-mcp-file")
 })
