@@ -21,7 +21,6 @@ export function WorkerDetail({ coworker, initialWorker, onChanged, onOpenThread,
   const [readError, setReadError] = useState("");
   const [findingsError, setFindingsError] = useState("");
   const [actionError, setActionError] = useState("");
-  const [stopUnconfirmed, setStopUnconfirmed] = useState(false);
   const [notice, setNotice] = useState("");
   const [verified, setVerified] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -90,11 +89,9 @@ export function WorkerDetail({ coworker, initialWorker, onChanged, onOpenThread,
         setSteer((current) => current.trim() === steering ? "" : current);
         setNotice("Steering queued for the next step, not applied mid-action. The timeline records when it is applied.");
       }
-      if (label === "Stop") setStopUnconfirmed(false);
     } catch (cause) {
       if (version !== request.current) return;
       setVerified(false);
-      if (label === "Stop") setStopUnconfirmed(true);
       setActionError(`${label} was not confirmed. ${cause instanceof Error ? cause.message : String(cause)} Check status before retrying; no action is repeated automatically.`);
     } finally {
       if (version === request.current) { changing.current = false; setBusy(""); }
@@ -143,7 +140,7 @@ export function WorkerDetail({ coworker, initialWorker, onChanged, onOpenThread,
     <div className="flex flex-wrap items-center gap-1">
       {alive && worker.status !== "paused" ? <Button type="button" variant="ghost" className="text-xs" disabled={Boolean(busy) || !verified} data-testid="worker-pause" onClick={() => void act("Pause", () => coworkerBridge.workers.pause(coworker.slug, worker.id))}>Pause after step</Button> : null}
       {worker.status === "paused" && (!control || control.state === "approved") ? <Button type="button" className="text-xs" disabled={Boolean(busy) || !verified} data-testid="worker-resume" onClick={() => void act("Resume", () => coworkerBridge.workers.resume(coworker.slug, worker.id))}>Resume</Button> : null}
-      {alive || stopUnconfirmed ? <Button type="button" variant="ghost" className="text-xs text-rose" disabled={Boolean(busy)} aria-busy={busy === "Stop"} data-testid="worker-stop" onClick={() => void act("Stop", () => coworkerBridge.workers.cancel(coworker.slug, worker.id))}>{stopUnconfirmed ? "Retry Stop" : "Stop task"}</Button> : null}
+      {alive || worker.cleanupPending ? <Button type="button" variant="ghost" className="text-xs text-rose" disabled={Boolean(busy)} aria-busy={busy === "Stop"} data-testid="worker-stop" onClick={() => void act("Stop", () => coworkerBridge.workers.cancel(coworker.slug, worker.id))}>{worker.cleanupPending ? "Retry Stop" : "Stop task"}</Button> : null}
       <Button type="button" variant="ghost" className="ml-auto text-xs" disabled={Boolean(busy) || refreshing} onClick={() => void refresh()} data-testid="worker-refresh">{refreshing ? "Checking..." : "Check status"}</Button>
     </div>
     {notice ? <p role="status" data-testid="worker-steer-notice">{notice}</p> : null}

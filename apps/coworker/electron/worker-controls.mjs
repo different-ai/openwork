@@ -49,6 +49,8 @@ export function assertWorkerSupervisor(entry, worker) {
 /** Requests survive restart; none of the controller authority in this map does. */
 export function createWorkerControls({ discussionFor, taskFor, readWorker, updateWorker, liveRuns, browser, computer, stopNative, now = Date.now, approvalMs = 15 * 60_000, cleanupMs = 4000 }) {
   const records = new Map();
+  // Stop receipts belong to the backend, not the lifetime of an expanded row.
+  const pendingStops = new Set();
   let closed = false;
   function record(worker) {
     if (!worker.control) return null;
@@ -69,11 +71,14 @@ export function createWorkerControls({ discussionFor, taskFor, readWorker, updat
   }
   function summary(worker) {
     const current = record(worker);
-    if (!current) return worker;
-    if (current.state === "approved") {
+    if (current?.state === "approved") {
       try { assertGrant(current); } catch { void invalidate(current, "Control approval ended. Approve again before continuing."); }
     }
-    return { ...worker, control: { surface: current.surface, state: current.state, revision: current.revision, detail: current.detail } };
+    const run = liveRuns.get(keyFor(worker.slug, worker.id));
+    const cleanupPending = pendingStops.has(keyFor(worker.slug, worker.id))
+      || Boolean(run?.cleanupError || run?.controller.signal.aborted)
+      || Boolean(current && current.state !== "approved" && (current.pending || current.reserved || !current.cleaned));
+    return { ...worker, cleanupPending, ...(current ? { control: { surface: current.surface, state: current.state, revision: current.revision, detail: current.detail } } : {}) };
   }
   function expectRevision(current, revision) {
     if (!current || !Number.isSafeInteger(revision) || revision !== current.revision) throw new Error("Worker control changed. Refresh before approving or revoking it.");
@@ -115,6 +120,8 @@ export function createWorkerControls({ discussionFor, taskFor, readWorker, updat
   }
   const api = {
     summary,
+    startStop(slug, id) { pendingStops.add(keyFor(slug, id)); },
+    finishStop(slug, id) { pendingStops.delete(keyFor(slug, id)); },
     allowed(worker) {
       const current = record(worker);
       if (!current) return true;
