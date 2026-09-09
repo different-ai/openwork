@@ -10,6 +10,10 @@ const page = `<!doctype html><meta charset="utf-8"><title>Browser task fixture</
 <p id="status">Nothing saved</p><input aria-label="Draft title" oninput="fetch('/input',{method:'POST',body:this.value})">
 <button id="save">Save draft</button><button id="popup" onclick="window.open('/popup','_blank','webSecurity=no,nodeIntegration=yes,contextIsolation=no,sandbox=no')">Open details</button>
 <script>
+window.addEventListener('load',()=>{
+  const stylesheet=document.querySelector('#project-stylesheet');
+  if(stylesheet)fetch('/stylesheet-report?'+new URLSearchParams({documentId:stylesheet.dataset.documentId,path:location.pathname,color:getComputedStyle(document.querySelector('h1')).color}));
+},{once:true});
 function authenticated(){document.querySelector('#auth').textContent='Session active';document.querySelector('#signin')?.remove();}
 if(document.cookie.includes('fixture_session=controlled'))authenticated();
 document.querySelector('#signin')?.addEventListener('submit',async(event)=>{
@@ -139,6 +143,8 @@ export interface BrowserFixtureState {
   signInCount: number;
   records: Array<{ method: string; count: number; signedIn: boolean }>;
   pageRequests: Array<{ path: string; signedIn: boolean }>;
+  stylesheetRequests: string[];
+  stylesheetReports: Array<{ documentId: string; path: string; color: string }>;
   signals: string[];
   sessionReads: number;
   popups: boolean[];
@@ -157,7 +163,7 @@ export async function startBrowserFixture(app: Surface, { requireSignIn = true }
   const ready = `/tmp/browser-task-fixture-${randomUUID()}.json`;
   const fixturePage = requireSignIn ? page : page.replace(/<form id="signin">[\s\S]*?<\/form>/, "");
   const source = `import {createServer} from 'node:http';import {writeFileSync} from 'node:fs';
-    const records=[],signals=[],popups=[],privileges=[],pageRequests=[],frameInputs=[],originPolicyReports=[];
+    const records=[],signals=[],popups=[],privileges=[],pageRequests=[],frameInputs=[],originPolicyReports=[],stylesheetRequests=[],stylesheetReports=[];
     let signInCount=0,sessionReads=0,frameClicks=0,uploads=0,inputValue='',originPolicyCallbacks=0;
     let holdDiscovery=false;
     const discovery={waiting:0,released:0,canceled:0,resumed:0,callbacks:0},pendingDiscovery=new Set();
@@ -170,7 +176,14 @@ export async function startBrowserFixture(app: Surface, { requireSignIn = true }
       res.setHeader('Cache-Control','no-store');res.setHeader('Origin-Agent-Cluster',url.pathname==='/origin-policy-opt-out'?'?0':'?1');
       res.setHeader('Permissions-Policy',url.pathname==='/denied'?'tools=()':['/frames','/origin-policy'].includes(url.pathname)?'tools=(self "http://localhost:'+server.address().port+'" "http://127.0.0.2:'+server.address().port+'")':'tools=(self)');
       if(req.method==='GET'&&url.pathname==='/state'){
-        res.setHeader('Content-Type','application/json');res.end(JSON.stringify({records,signals,popups,privileges,pageRequests,signInCount,sessionReads,frameClicks,frameInputs,uploads,inputValue,model,discovery,originPolicyReports,originPolicyCallbacks}));return;
+        res.setHeader('Content-Type','application/json');res.end(JSON.stringify({records,signals,popups,privileges,pageRequests,signInCount,sessionReads,frameClicks,frameInputs,uploads,inputValue,model,discovery,originPolicyReports,originPolicyCallbacks,stylesheetRequests,stylesheetReports}));return;
+      }
+      if(req.method==='GET'&&url.pathname==='/project.css'){
+        stylesheetRequests.push(url.searchParams.get('documentId'));res.setHeader('Content-Type','text/css');res.end('h1{color:rgb(23,87,131)}');return;
+      }
+      // GET keeps this page-side witness available while browser uploads are denied.
+      if(req.method==='GET'&&url.pathname==='/stylesheet-report'){
+        stylesheetReports.push(Object.fromEntries(url.searchParams));res.writeHead(204);res.end();return;
       }
       if(req.method==='GET'&&url.pathname==='/discovery'){
         res.setHeader('Content-Type','application/json');
@@ -213,7 +226,8 @@ export async function startBrowserFixture(app: Surface, { requireSignIn = true }
       if(url.pathname==='/popup')popups.push(signedIn);
       res.setHeader('Content-Type','text/html');
       const title=url.searchParams.get('viewport-probe')||(url.pathname==='/'?'home':url.pathname.slice(1));
-      const document=page.replace('<title>Browser task fixture</title>','<title>Project '+title.replace(/[^a-z-]/g,'')+'</title>');
+      let document=page.replace('<title>Browser task fixture</title>','<title>Project '+title.replace(/[^a-z-]/g,'')+'</title>');
+      if(url.pathname==='/'||url.pathname==='/allowed')document=document.replace('<style>','<link id="project-stylesheet" rel="stylesheet" data-document-id="'+pageRequests.length+'" href="http://localhost:'+server.address().port+'/project.css?documentId='+pageRequests.length+'"><style>');
       res.end(['/frames','/origin-policy'].includes(url.pathname)?framesPage:url.pathname.startsWith('/origin-policy-')?originPolicyPage:url.pathname.startsWith('/frame-')?framePage:document);
     });
     server.listen(0,'0.0.0.0',()=>writeFileSync(${browserScriptValue(ready)},JSON.stringify({pid:process.pid,port:server.address().port})));
@@ -261,6 +275,8 @@ export async function readBrowserFixtureState(app: Surface, origin: string): Pro
     frameInputs: array(state.frameInputs).map((item) => { const row = object(item); return { page: string(row.page), type: string(row.type), x: number(row.x), y: number(row.y), target: string(row.target), trusted: boolean(row.trusted) }; }),
     records: array(state.records).map((item) => { const row = object(item); return { method: string(row.method), count: number(row.count), signedIn: boolean(row.signedIn) }; }),
     pageRequests: array(state.pageRequests).map((item) => { const row = object(item); return { path: string(row.path), signedIn: boolean(row.signedIn) }; }),
+    stylesheetRequests: array(state.stylesheetRequests).map(string),
+    stylesheetReports: array(state.stylesheetReports).map((item) => { const row = object(item); return { documentId: string(row.documentId), path: string(row.path), color: string(row.color) }; }),
     privileges: array(state.privileges).map((item) => { const row = object(item); return { page: string(row.page), require: string(row.require), process: string(row.process), Buffer: string(row.Buffer), ...(row.blocked === undefined ? {} : { blocked: boolean(row.blocked) }) }; }),
     model: { requests: number(model.requests), toolNames: array(model.toolNames).map(string), receivedSaveResult: boolean(model.receivedSaveResult), observedSaved: boolean(model.observedSaved) },
     discovery: { waiting: number(discovery.waiting), released: number(discovery.released), canceled: number(discovery.canceled), resumed: number(discovery.resumed), callbacks: number(discovery.callbacks) },

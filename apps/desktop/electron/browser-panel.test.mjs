@@ -110,10 +110,15 @@ export class WebContentsView {
         if ((await this.request(url)).cancel) throw new Error("ERR_BLOCKED_BY_CLIENT");
         await navigation.load(url, this);
         if (this.destroyed) throw new Error("Contents destroyed");
+        this.emit("did-navigate", url);
         this.domReady = true;
         this.emit("dom-ready");
       },
       stop() { this.stops++; },
+      reload() {
+        this.emit("did-start-navigation", this.url, false, true);
+        this.emit("did-navigate", this.url);
+      },
       focus() {},
       close(options) {
         if (options?.waitForBeforeUnload && this.closeMode === "pending") return;
@@ -1538,6 +1543,92 @@ test("managed policy denial precedes loading and is rechecked after navigation a
   assert.deepEqual(contents.destinations, ["http://localhost:4173/"]);
 });
 
+test("managed subresource warnings survive aborted navigation and persist until a document commits", async () => {
+  let failureCode = "policy_unavailable";
+  const { invoke, views, policies } = createPanel(async ({ url }) => {
+    if (url.endsWith("/blocked.css")) throw Object.assign(new Error(url), { code: failureCode });
+  });
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  invoke("openwork:browser:createTab", "about:blank", "A");
+  await flush();
+  const contents = views()[0].webContents;
+  const loadError = () => invoke("openwork:browser:state").tabs[0].loadError;
+  const stylesheet = "https://cdn.example/blocked.css";
+  const loads = [...contents.loads];
+  contents.emit("did-start-navigation", "https://page.example/", false, true);
+  contents.emit("did-navigate", "https://page.example/");
+  assert.deepEqual(await contents.request(stylesheet, { resourceType: "stylesheet" }), { cancel: true });
+  const warning = {
+    code: "policy_unavailable",
+    message: "This page may be incomplete. Your organization's policy could not be verified.",
+  };
+  assert.deepEqual(loadError(), warning);
+  assert.deepEqual(await contents.request("https://cdn.example/ok.js", { resourceType: "script" }), { cancel: false });
+  for (const [event, ...args] of [
+    ["did-start-navigation", "https://frame.example/", false, false],
+    ["did-start-navigation", "https://page.example/#section", true, true],
+    ["did-navigate-in-page", "https://page.example/#section", true],
+    ["did-start-navigation", "https://page.example/aborted", false, true],
+    ["did-fail-provisional-load", -3, "ERR_ABORTED", "https://page.example/aborted", true],
+    ["did-stop-loading"],
+  ]) {
+    contents.emit(event, ...args);
+    assert.deepEqual(loadError(), warning, `${event} must retain the warning`);
+  }
+  await flush();
+  assert.equal(policies.filter(({ url }) => url === stylesheet).length, 1, "no policy retry");
+  assert.deepEqual(contents.loads, loads, "no automatic reload");
+  contents.emit("did-start-navigation", "https://page.example/next", false, true);
+  assert.deepEqual(loadError(), warning, "a pending navigation still displays the old document");
+  contents.emit("did-navigate", "https://page.example/next");
+  assert.equal(loadError(), null);
+  failureCode = "organization_policy_denied";
+  assert.deepEqual(await contents.request(stylesheet, { resourceType: "image" }), { cancel: true });
+  assert.deepEqual(loadError(), {
+    code: "organization_policy_denied",
+    message: "This page may be incomplete. Your organization's policy blocked a browser request.",
+  });
+  invoke("openwork:browser:reload");
+  assert.equal(loadError(), null, "manual reload commits a new document");
+  failureCode = "user_denied";
+  assert.deepEqual(await contents.request(stylesheet, { resourceType: "stylesheet" }), { cancel: true });
+  assert.equal(loadError(), null, "non-policy errors must not become policy warnings");
+});
+
+test("late managed subresource failures belong to the committed document, not a pending navigation", async () => {
+  for (const ending of ["navigate", "reload", "close", "abort"]) {
+    /** @type {() => void} */
+    let fail = () => assert.fail("Policy check has not started");
+    const { invoke, views } = createPanel(async ({ url }) => {
+      if (url.endsWith("/held.css")) await new Promise((_resolve, reject) => {
+        fail = () => reject(Object.assign(new Error("Private response details"), { code: "policy_unavailable" }));
+      });
+    });
+    invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+    const { tabId } = invoke("openwork:browser:createTab", "about:blank", "A");
+    await flush();
+    const contents = views()[0].webContents;
+    const request = contents.request("https://cdn.example/held.css", { resourceType: "stylesheet" });
+    await flush();
+    if (ending === "navigate" || ending === "abort") {
+      contents.emit("did-start-navigation", "https://next.example/", false, true);
+      if (ending === "navigate") contents.emit("did-navigate", "https://next.example/");
+      else contents.emit("did-fail-provisional-load", -3, "ERR_ABORTED", "https://next.example/", true);
+    }
+    if (ending === "reload") invoke("openwork:browser:reload");
+    if (ending === "close") {
+      invoke("openwork:browser:closeTab", tabId);
+      invoke("openwork:browser:createTab", "about:blank", "B");
+    }
+    fail();
+    assert.deepEqual(await request, { cancel: true });
+    const loadError = invoke("openwork:browser:state").tabs[0].loadError;
+    if (ending === "abort") assert.equal(loadError?.code, "policy_unavailable", "the old document's pending resources still warn");
+    else assert.equal(loadError, null, ending);
+    assert.deepEqual(contents.destinations, [], "stale failures remain fail-closed");
+  }
+});
+
 test("takeover cancels pending navigation, permits manual browsing without grants, and requires fresh consent on resume", async () => {
   const { invoke, emit, panel, views, approve, mainContents } = createPanel();
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");
@@ -1633,6 +1724,7 @@ test("task popups inherit the navigation gate but no grants, including late popu
   assert.deepEqual(child.destinations, []);
   approve(false);
   assert.deepEqual(await pending, { cancel: true });
+  assert.equal(invoke("openwork:browser:state").tabs.at(-1).loadError, null, "declining consent is not a policy failure");
   invoke("openwork:browser:taskControl", tabId, "pause");
   const lateChild = popup();
   assert.deepEqual(await lateChild.request(url), { cancel: true });

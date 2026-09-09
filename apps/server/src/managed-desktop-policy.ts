@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { desktopConfigSchema, type DesktopConfig } from "@openwork/types/den/desktop-policies-runtime";
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
 import type { ServerConfig } from "./types.js";
@@ -13,6 +14,7 @@ const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
 const DEN_READ_DEADLINE_MS = 6_000;
 const DEN_READ_ATTEMPT_TIMEOUT_MS = 3_500;
 const DEN_READ_MAX_ATTEMPTS = 2;
+const DEN_READ_RETRY_DELAY_MS = 200;
 const RETRYABLE_DEN_STATUSES = new Set([502, 503, 504]);
 const RETRYABLE_TRANSPORT_CODES = new Set([
   "ABORT_ERR",
@@ -97,6 +99,14 @@ class ManagedDesktopPolicy {
     const deadline = performance.now() + DEN_READ_DEADLINE_MS;
     for (let attempt = 1; attempt <= DEN_READ_MAX_ATTEMPTS; attempt += 1) {
       this.identityChanged(generation);
+      if (attempt > 1) {
+        // An immediate retry can hit the same brief outage and leave a page's
+        // stylesheet canceled. Back off inside the existing deadline, without
+        // adding attempts or retrying denials, rate limits, or identity changes.
+        if (deadline - performance.now() <= DEN_READ_RETRY_DELAY_MS) throw new Error("Den read deadline exceeded");
+        await delay(DEN_READ_RETRY_DELAY_MS);
+        this.identityChanged(generation);
+      }
       const remainingMs = Math.floor(deadline - performance.now());
       if (remainingMs <= 0) throw new Error("Den read deadline exceeded");
       try {

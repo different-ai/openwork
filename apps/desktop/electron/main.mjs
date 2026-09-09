@@ -1082,15 +1082,23 @@ browserPanel = createBrowserPanel({
   getWindow: () => mainWindow,
   onDeepLink: (urls) => queueDeepLinks(urls),
   checkPolicy: async (input) => {
-    const server = await runtimeManager.openworkServerInfo();
-    if (!server.baseUrl || !(server.clientToken ?? server.ownerToken)) throw new Error("OpenWork policy service is unavailable.");
-    // loopback-fetch: the policy service is the locally managed OpenWork server.
-    const response = await fetch(`${server.baseUrl}/managed-policy/evaluate`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ action: input.external ? "browser_external" : "browser", input }), signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) throw new Error("Your organization's policy blocked this browser request.");
+    let code = "policy_unavailable";
+    try {
+      const server = await runtimeManager.openworkServerInfo();
+      if (!server.baseUrl || !(server.clientToken ?? server.ownerToken)) throw new Error("Policy service unavailable");
+      // loopback-fetch: the policy service is the locally managed OpenWork server.
+      const response = await fetch(`${server.baseUrl}/managed-policy/evaluate`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: input.external ? "browser_external" : "browser", input }), signal: AbortSignal.timeout(15_000),
+      });
+      if (response.ok) return;
+      const payload = await response.json();
+      if (payload?.code === "organization_policy_denied" || payload?.code === "policy_unavailable") code = payload.code;
+    } catch { /* Fail closed without exposing transport or response details. */ }
+    throw Object.assign(new Error(code === "organization_policy_denied"
+      ? "Your organization's policy blocked this browser request."
+      : "Your organization's policy could not be verified."), { code });
   },
 });
 

@@ -62,6 +62,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (["about:", "data:", "blob:"].some((scheme) => details.url.startsWith(scheme))) { callback({ cancel: false }); return; }
       const tab = [...browserTabs.values()].find((item) => item.view.webContents.id === details.webContentsId);
       const owner = registry.ownerOf(tab?.tabId);
+      const documentGeneration = tab?.documentGeneration;
       const guard = details.resourceType === "mainFrame" ? taskHost.navigationGuard(tab?.tabId) : null;
       const request = { url: details.url, method: details.method, hasUpload: Boolean(details.uploadData?.length) };
       Promise.resolve().then(async () => {
@@ -78,7 +79,20 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
             if (tab && details.resourceType === "mainFrame" && (getBrowserTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed() || registry.ownerOf(tab.tabId) !== owner)) throw new Error("Browser navigation owner changed");
           } catch { callback({ cancel: true }); return; }
           callback({ cancel: false });
-        }, () => callback({ cancel: true }));
+        }, (error) => {
+          if (tab && getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed()
+            && registry.ownerOf(tab.tabId) === owner && tab.documentGeneration === documentGeneration
+            && (error?.code === "policy_unavailable" || error?.code === "organization_policy_denied")) {
+            tab.loadError = {
+              code: error.code,
+              message: error.code === "organization_policy_denied"
+                ? "This page may be incomplete. Your organization's policy blocked a browser request."
+                : "This page may be incomplete. Your organization's policy could not be verified.",
+            };
+            sendBrowserState();
+          }
+          callback({ cancel: true });
+        });
     });
   }
   // tabId -> { tabId, view, favicon, background }. Order, ownership, the active
@@ -274,6 +288,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       canGoForward: webContents.canGoForward(),
       ownerSessionId: registry.ownerOf(tabId),
       browserApproval: tab.browserApproval ?? null,
+      loadError: tab.loadError,
       browserTask: tab.browserTask ?? { status: "idle", operation: null },
       siteToolCount: Number.isInteger(tab.webMcpToolCount) ? tab.webMcpToolCount : 0,
       siteTools: Array.isArray(tab.webMcpTools) ? tab.webMcpTools : [],
@@ -683,6 +698,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       /** @type {((error: Error | null) => void) | null} */
       finishSuspension: null,
       webMcpRevision: 0,
+      documentGeneration: 0,
+      /** @type {import("@openwork/browser-tabs").BrowserPanelTab["loadError"]} */
+      loadError: null,
       webMcpToolCount: 0,
       webMcpTools: [],
       webMcpActivity: [],
@@ -771,7 +789,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       }
       sendToRenderer("openwork:browser:panel-opened", { ownerSessionId: registry.ownerOf(tabId) });
     });
-    view.webContents.on("did-navigate", () => sendBrowserState());
+    view.webContents.on("did-navigate", () => {
+      // Only a main-frame commit replaces the document. Aborts and downloads
+      // retain its warning; old resource failures cannot affect the new document.
+      tab.documentGeneration += 1;
+      tab.loadError = null;
+      sendBrowserState();
+    });
     view.webContents.on("did-navigate-in-page", () => sendBrowserState());
     view.webContents.on("page-title-updated", () => sendBrowserState());
     view.webContents.on("page-favicon-updated", (_event, favicons) => {

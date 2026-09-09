@@ -358,9 +358,11 @@ test(recoveryJourney, { timeout: 300_000 }, async ({ world: selectedWorld, step,
     await world.proxy.faults.clear();
     const start = (await world.proxy.requestLog()).length;
     await world.proxy.faults.status(path, statusCode, { times, body });
+    const startedAt = performance.now();
     const result = await world.evaluate(evaluation);
+    const elapsedMs = performance.now() - startedAt;
     const requests = await waitForRequests(start, path, statusCode === 503 ? 2 : 1);
-    return { result, requests };
+    return { result, requests, elapsedMs };
   };
   const latencyEvaluation = async (path: string, evaluation: Record<string, unknown>, times: number) => {
     await world.proxy.faults.clear();
@@ -415,7 +417,7 @@ test(recoveryJourney, { timeout: 300_000 }, async ({ world: selectedWorld, step,
     );
   });
 
-  await step("one transient policy response retries once and applies the live allow", async () => {
+  await step("one transient policy response backs off before retrying once and applies the live allow", async () => {
     const recovered = await faultedEvaluation(policyPath, builtInModel, 503, 1);
     expect(recovered.result.status).toBe(200);
     expect(recovered.requests).toMatchObject([
@@ -423,10 +425,11 @@ test(recoveryJourney, { timeout: 300_000 }, async ({ world: selectedWorld, step,
       { status: 200, faulted: false },
     ]);
     expect(recovered.requests).toHaveLength(2);
+    expect(recovered.elapsedMs).toBeGreaterThanOrEqual(190);
     evidence.recordAssertionEvidence(
-      "A transient Den policy failure retries exactly once and the real OpenWork server applies the live allow",
+      "A transient Den policy failure backs off before retrying exactly once and the real OpenWork server applies the live allow",
       JSON.stringify(recovered),
-      recovered.result.status === 200 && recovered.requests.length === 2
+      recovered.result.status === 200 && recovered.requests.length === 2 && recovered.elapsedMs >= 190
         && recovered.requests[0]?.status === 503 && recovered.requests[1]?.status === 200,
     );
   });

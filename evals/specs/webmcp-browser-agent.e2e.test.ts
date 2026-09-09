@@ -64,6 +64,16 @@ test("a conversation signs in, uses site tools and page controls with consent, i
   expect(handle.tabId).toBe(tabId);
   await using site = await attachBuiltinTab(world.app, handle.targetId);
   expect((await witness()).pageRequests).toEqual([{ path: "/", signedIn: false }]);
+  await step("The first document applies its external stylesheet without a reload", async () => {
+    const styled = await probe.eventually(witness, {
+      within: 10_000, until: (value) => value.stylesheetReports.length === 1,
+      label: "the first document reports its computed heading color after load",
+    });
+    expect(styled.stylesheetReports).toEqual([{ documentId: "1", path: "/", color: "rgb(23, 87, 131)" }]);
+    expect(styled.stylesheetRequests).toEqual(["1"]);
+    expect(styled.pageRequests).toEqual([{ path: "/", signedIn: false }]);
+    await user.notSee({ text: "This page may be incomplete." });
+  });
   const save = listed.tools.find((tool) => tool.name === "save_draft");
   if (!save) throw new Error("No concrete save tool.");
 
@@ -491,8 +501,32 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     if (afterRedirect.ok) expect(afterRedirect.url && new URL(afterRedirect.url).origin).toBe(world.origin);
     expect((await witness()).pageRequests).toEqual(before.pageRequests);
     expect(await task("navigate", { tabId, url: `${world.origin}/allowed` })).toMatchObject({ ok: true });
+    const warning = "This page may be incomplete. Your organization's policy blocked a browser request.";
+    await user.see({ text: warning });
+    const incomplete = await probe.eventually(witness, {
+      within: 10_000, until: (value) => value.stylesheetReports.at(-1)?.documentId === String(value.pageRequests.length),
+      label: "the allowed document finishes loading despite its blocked external stylesheet",
+    });
+    expect(incomplete.stylesheetReports.at(-1)).toEqual({ documentId: String(incomplete.pageRequests.length), path: "/allowed", color: "rgb(0, 0, 0)" });
+    expect(incomplete.stylesheetRequests).toEqual(before.stylesheetRequests);
     // Reuse the owned page; isolate upload enforcement from origin enforcement.
     await policy(null, true);
+    await user.see({ text: warning });
+    expect(await witness()).toMatchObject({
+      pageRequests: incomplete.pageRequests, stylesheetRequests: incomplete.stylesheetRequests, stylesheetReports: incomplete.stylesheetReports,
+    });
+    // Restoring policy must not silently retry the failed resource; reload explicitly.
+    await user.click({ role: "button", label: "Reload page" });
+    const recovered = await probe.eventually(witness, {
+      within: 10_000, until: (value) => value.stylesheetReports.at(-1)?.documentId === String(incomplete.pageRequests.length + 1),
+      label: "a new document in the same tab applies the now-allowed stylesheet",
+    });
+    const documentId = String(incomplete.pageRequests.length + 1);
+    expect(recovered.stylesheetReports.at(-1)).toEqual({ documentId, path: "/allowed", color: "rgb(23, 87, 131)" });
+    expect(recovered.stylesheetRequests).toEqual([...incomplete.stylesheetRequests, documentId]);
+    expect(recovered.pageRequests).toEqual([...incomplete.pageRequests, { path: "/allowed", signedIn: true }]);
+    expect(await probe.browserState()).toMatchObject({ activeTabId: tabId, visibleSessionId: sessionId });
+    await user.notSee({ text: "This page may be incomplete." });
     expect(await agent.browserRequest({ url: `${world.origin}/upload`, method: "POST", body: "controlled-upload" })).toMatchObject({ reached: false });
     expect(await witness()).toMatchObject({ uploads: 0, signInCount: 1, records: before.records });
     await policy([]);

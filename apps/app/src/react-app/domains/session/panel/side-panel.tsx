@@ -465,6 +465,11 @@ function BrowserPanelContent({
           <X />
         </Button>
       </div>
+      {tab.loadError ? (
+        <div role="alert" className="shrink-0 border-b border-border bg-muted px-3 py-2 text-xs">
+          {tab.loadError.message}
+        </div>
+      ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {isAvailable ? (
           <div ref={contentRef} className="h-full overflow-hidden">
