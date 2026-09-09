@@ -167,6 +167,9 @@ export function createKubernetesClient(config: KubernetesClientConfig & { namesp
     async deleteService(name: string) {
       await request(`/api/v1/namespaces/${namespace}/services/${name}`, { method: "DELETE" })
     },
+    async getSecret(name: string) {
+      return requestJson<KubernetesObject>(`/api/v1/namespaces/${namespace}/secrets/${name}`)
+    },
     async createSecret(manifest: KubernetesObject) {
       return requestJson<KubernetesObject>(`/api/v1/namespaces/${namespace}/secrets`, {
         method: "POST",
@@ -191,9 +194,6 @@ export function createKubernetesClient(config: KubernetesClientConfig & { namesp
     async listPods(labelSelector: string) {
       const query = new URLSearchParams({ labelSelector })
       return requestJson<{ items?: KubernetesObject[] }>(`/api/v1/namespaces/${namespace}/pods?${query.toString()}`)
-    },
-    async getPod(name: string) {
-      return requestJson<KubernetesObject>(`/api/v1/namespaces/${namespace}/pods/${name}`)
     },
     async getPodLogs(name: string, options: { tailLines?: number } = {}) {
       const query = new URLSearchParams()

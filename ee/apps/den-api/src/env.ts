@@ -104,6 +104,8 @@ const EnvSchema = z.object({
   CLOUD_IDLE_LOOP_SECONDS: z.string().optional(),
   CLOUD_IDLE_STOP_BATCH_SIZE: z.string().optional(),
   PROVISIONER_MODE: z.enum(["stub", "render", "daytona", "kubernetes"]).optional(),
+  // {workerId} receives the DNS-safe hyphenated worker name (e.g. wrk-abc...) for
+  // the kubernetes provisioner; the raw worker id's underscore is invalid in DNS.
   WORKER_URL_TEMPLATE: z.string().optional(),
   WORKER_ACTIVITY_BASE_URL: z.string().optional(),
   DEN_AUTOMATIONS_ENABLED: z.string().optional(),
@@ -957,7 +959,9 @@ export const env = {
       optionalString(parsed.KUBERNETES_WORKER_IMAGE_PULL_POLICY) ?? "IfNotPresent",
     workerPort: Number(parsed.KUBERNETES_WORKER_PORT ?? "8787"),
     workerApprovalMode:
-      optionalString(parsed.KUBERNETES_WORKER_APPROVAL_MODE) ?? "manual",
+      // Cloud workers run --approval auto: manual mode's gated writes time out
+      // with 403 because nothing is wired to answer approvals in a sandbox.
+      optionalString(parsed.KUBERNETES_WORKER_APPROVAL_MODE) ?? "auto",
     workerResources: {
       cpuRequest: optionalString(parsed.KUBERNETES_WORKER_CPU_REQUEST) ?? "500m",
       cpuLimit: optionalString(parsed.KUBERNETES_WORKER_CPU_LIMIT) ?? "2",

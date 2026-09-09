@@ -116,7 +116,10 @@ function workerServiceUrl(workerId: WorkerId) {
 function provisionedInstanceUrl(workerId: WorkerId) {
   const template = env.workerUrlTemplate?.trim()
   if (template) {
-    return template.replace("{workerId}", workerId)
+    // The template is a URL host, so the placeholder receives the DNS-safe
+    // hyphenated worker name rather than the raw worker id (its underscore is
+    // invalid in DNS labels).
+    return template.replace("{workerId}", kubernetesWorkerName(workerId))
   }
 
   return workerServiceUrl(workerId)
@@ -138,10 +141,6 @@ function workerRecord(workerId: WorkerId, nowMs: number): KubernetesWorkerRecord
     signed_preview_url: provisionedInstanceUrl(workerId),
     signed_preview_url_expires_at: new Date(nowMs + env.kubernetes.workerRecordTtlSeconds * 1000),
   }
-}
-
-function base64(value: string) {
-  return Buffer.from(value, "utf8").toString("base64")
 }
 
 function tokenSecretManifest(input: ProvisionInput) {
@@ -192,9 +191,8 @@ function containerEnv(input: ProvisionInput) {
     { name: "OPENWORK_DATA_DIR", value: "/data/openwork-server" },
     { name: "OPENWORK_SIDECAR_DIR", value: "/data/sidecars" },
     { name: "OPENWORK_PORT", value: String(env.kubernetes.workerPort) },
-    // The worker must answer on the pod IP for the ClusterIP service to route,
-    // so the entrypoint default loopback bind is explicitly overridden.
-    { name: "OPENWORK_CONNECT_HOST", value: "0.0.0.0" },
+    // The microsandbox entrypoint already starts openwork-server with
+    // `--host 0.0.0.0` (CLI beats env), so no bind override is needed here.
     { name: "OPENWORK_APPROVAL_MODE", value: env.kubernetes.workerApprovalMode },
     { name: "OPENWORK_CORS_ORIGINS", value: "*" },
     { name: "OPENWORK_TOKEN", ...secretKeyRef("OPENWORK_TOKEN") },
@@ -218,6 +216,12 @@ function deploymentManifest(input: ProvisionInput) {
     },
     spec: {
       replicas: 1,
+      // Recreate instead of RollingUpdate: the workspace/data PVCs are
+      // ReadWriteOnce, so a surge pod during a rolling image patch would
+      // MultiAttach-stall behind the terminating pod.
+      strategy: {
+        type: "Recreate",
+      },
       selector: {
         matchLabels: podLabels(input.workerId),
       },
@@ -338,7 +342,27 @@ async function ensureWorkspaceReady(client: KubernetesClient, workerId: WorkerId
   await client.getPvc(dataVolumeName(workerId))
 }
 
-async function diagnosticSnapshot(client: KubernetesClient, workerId: WorkerId) {
+// The worker entrypoint prints the client/host tokens at startup, so the log
+// tail embedded in health-timeout errors must never carry them.
+function redactPodLogs(logs: string, input: ProvisionInput) {
+  return logs
+    .split("\n")
+    .map((line) => {
+      let redacted = line
+      for (const token of [input.clientToken, input.hostToken, input.activityToken]) {
+        if (token) {
+          redacted = redacted.split(token).join("[REDACTED]")
+        }
+      }
+      if (redacted.toLowerCase().includes("token:")) {
+        redacted = "[REDACTED]"
+      }
+      return redacted
+    })
+    .join("\n")
+}
+
+async function diagnosticSnapshot(client: KubernetesClient, workerId: WorkerId, input: ProvisionInput) {
   try {
     const pods = await client.listPods(`openwork.den.worker-id=${workerId}`)
     const items = Array.isArray(pods.items) ? pods.items : []
@@ -359,7 +383,7 @@ async function diagnosticSnapshot(client: KubernetesClient, workerId: WorkerId) 
 
       const logs = await client.getPodLogs(name, { tailLines: podLogTailLines }).catch(() => null)
       if (logs?.trim()) {
-        lines.push(`logs:\n${logs.trim().slice(-4000)}`)
+        lines.push(`logs:\n${redactPodLogs(logs.trim(), input).slice(-4000)}`)
       }
     }
 
@@ -370,7 +394,7 @@ async function diagnosticSnapshot(client: KubernetesClient, workerId: WorkerId) 
   }
 }
 
-async function waitForHealth(url: string, timeoutMs: number, runtime: KubernetesProvisioningRuntime, workerId: WorkerId) {
+async function waitForHealth(url: string, timeoutMs: number, runtime: KubernetesProvisioningRuntime, workerId: WorkerId, input: ProvisionInput) {
   const fetchImpl = runtime.healthFetch ?? fetch
   const startedAt = Date.now()
 
@@ -394,7 +418,7 @@ async function waitForHealth(url: string, timeoutMs: number, runtime: Kubernetes
     }
   }
 
-  const diagnostics = await diagnosticSnapshot(runtime.client, workerId)
+  const diagnostics = await diagnosticSnapshot(runtime.client, workerId, input)
   throw new Error(
     [
       `Timed out waiting for Kubernetes worker health at ${url.replace(/\/$/, "")}/health`,
@@ -403,6 +427,12 @@ async function waitForHealth(url: string, timeoutMs: number, runtime: Kubernetes
       .filter(Boolean)
       .join("\n\n"),
   )
+}
+
+function deploymentContainerImage(deployment: Record<string, unknown>) {
+  const containers = (deployment.spec as { template?: { spec?: { containers?: Array<{ image?: string }> } } } | undefined)
+    ?.template?.spec?.containers
+  return containers?.[0]?.image ?? null
 }
 
 async function adoptExistingWorker(input: {
@@ -414,12 +444,52 @@ async function adoptExistingWorker(input: {
   await ensureWorkspaceReady(input.runtime.client, input.provisionInput.workerId)
 
   const replicas = deploymentReplicas(input.deployment)
-  if (replicas === null || replicas < 1) {
+  const runningImage = deploymentContainerImage(input.deployment)
+  if (runningImage && runningImage !== env.kubernetes.workerImage) {
+    // The deployment was adopted with an older image; reconcile it before
+    // reporting healthy so the DB imageVersion and the running pod agree.
+    await patchWorkerDeployment(input.runtime.client, input.provisionInput.workerId, {
+      spec: {
+        replicas: 1,
+        template: {
+          spec: {
+            containers: [
+              {
+                name: "openwork-server",
+                image: env.kubernetes.workerImage,
+              },
+            ],
+          },
+        },
+      },
+    })
+  } else if (replicas === null || replicas < 1) {
     await patchWorkerDeployment(input.runtime.client, input.provisionInput.workerId, { spec: { replicas: 1 } })
   }
 
-  await waitForHealth(workerServiceUrl(input.provisionInput.workerId), env.kubernetes.healthcheckTimeoutMs, input.runtime, input.provisionInput.workerId)
+  await waitForHealth(workerServiceUrl(input.provisionInput.workerId), env.kubernetes.healthcheckTimeoutMs, input.runtime, input.provisionInput.workerId, input.provisionInput)
   return provisionedInstance(input.provisionInput.workerId)
+}
+
+// A 409 on a supporting-object create means a concurrent replica (or a
+// half-completed deprovision) already created it; verify the object exists
+// and continue instead of dead-ending the provision attempt.
+async function createOrAdoptObject(
+  client: KubernetesClient,
+  create: () => Promise<unknown>,
+  verify: () => Promise<unknown>,
+  label: string,
+  workerId: WorkerId,
+) {
+  try {
+    await create()
+  } catch (error) {
+    if (!(error instanceof KubernetesApiError && error.status === 409)) {
+      throw error
+    }
+    await verify()
+    logger.info("adopted existing Kubernetes worker object after create conflict", { object: label, worker_id: workerId })
+  }
 }
 
 async function provisionFreshWorker(input: {
@@ -429,13 +499,37 @@ async function provisionFreshWorker(input: {
   const { client } = input.runtime
   const workerId = input.provisionInput.workerId
 
-  await client.createPvc(pvcManifest(workspaceVolumeName(workerId), workerId, env.kubernetes.workspaceVolumeSize))
-  await client.createPvc(pvcManifest(dataVolumeName(workerId), workerId, env.kubernetes.dataVolumeSize))
-  await client.createSecret(tokenSecretManifest(input.provisionInput))
+  await createOrAdoptObject(
+    client,
+    () => client.createPvc(pvcManifest(workspaceVolumeName(workerId), workerId, env.kubernetes.workspaceVolumeSize)),
+    () => client.getPvc(workspaceVolumeName(workerId)),
+    "workspace-pvc",
+    workerId,
+  )
+  await createOrAdoptObject(
+    client,
+    () => client.createPvc(pvcManifest(dataVolumeName(workerId), workerId, env.kubernetes.dataVolumeSize)),
+    () => client.getPvc(dataVolumeName(workerId)),
+    "data-pvc",
+    workerId,
+  )
+  await createOrAdoptObject(
+    client,
+    () => client.createSecret(tokenSecretManifest(input.provisionInput)),
+    () => client.getSecret(tokenSecretName(workerId)),
+    "token-secret",
+    workerId,
+  )
   await client.createDeployment(deploymentManifest(input.provisionInput))
-  await client.createService(serviceManifest(input.provisionInput))
+  await createOrAdoptObject(
+    client,
+    () => client.createService(serviceManifest(input.provisionInput)),
+    () => client.getService(kubernetesWorkerName(workerId)),
+    "service",
+    workerId,
+  )
 
-  await waitForHealth(workerServiceUrl(workerId), env.kubernetes.healthcheckTimeoutMs, input.runtime, workerId)
+  await waitForHealth(workerServiceUrl(workerId), env.kubernetes.healthcheckTimeoutMs, input.runtime, workerId, input.provisionInput)
   return provisionedInstance(workerId)
 }
 
@@ -521,7 +615,7 @@ async function wakeExistingWorker(input: {
     await patchWorkerDeployment(input.runtime.client, input.provisionInput.workerId, { spec: { replicas: 1 } })
   }
 
-  await waitForHealth(workerServiceUrl(input.provisionInput.workerId), env.kubernetes.healthcheckTimeoutMs, input.runtime, input.provisionInput.workerId)
+  await waitForHealth(workerServiceUrl(input.provisionInput.workerId), env.kubernetes.healthcheckTimeoutMs, input.runtime, input.provisionInput.workerId, input.provisionInput)
   return provisionedInstance(input.provisionInput.workerId)
 }
 

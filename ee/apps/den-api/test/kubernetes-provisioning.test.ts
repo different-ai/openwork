@@ -1,7 +1,7 @@
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { beforeAll, describe, expect, test } from "bun:test"
 import type { KubernetesClient } from "../src/workers/kubernetes-client.js"
-import { KubernetesNotFoundError } from "../src/workers/kubernetes-client.js"
+import { KubernetesApiError, KubernetesNotFoundError } from "../src/workers/kubernetes-client.js"
 import { env } from "../src/env.js"
 
 type KubernetesModule = typeof import("../src/workers/kubernetes.js")
@@ -52,12 +52,36 @@ function makeClient(input: {
   deployment?: Record<string, unknown> | null
   podPhase?: string
   podLogs?: string
+  conflictOnCreate?: Array<"createPvc" | "createSecret" | "createService">
 } = {}) {
   const ops: RecordedOp[] = []
   let deployment = input.deployment ?? null
+  // A pre-existing deployment implies a pre-existing worker whose PVCs exist.
+  let pvc: Record<string, unknown> | null = input.deployment ? {} : null
+  let secret: Record<string, unknown> | null = null
+  let service: Record<string, unknown> | null = null
 
   const notFound = (name: string) => {
     throw new KubernetesNotFoundError(`deployments/${name}`, "")
+  }
+
+  // Simulates a concurrent replica winning the create: the object lands in the
+  // store and the create reports 409 once per listed occurrence.
+  const pendingConflicts = [...(input.conflictOnCreate ?? [])]
+  const conflictIfRequested = (op: "createPvc" | "createSecret" | "createService") => {
+    const index = pendingConflicts.indexOf(op)
+    if (index === -1) {
+      return
+    }
+    pendingConflicts.splice(index, 1)
+    if (op === "createPvc") {
+      pvc = pvc ?? {}
+    } else if (op === "createSecret") {
+      secret = secret ?? {}
+    } else {
+      service = service ?? {}
+    }
+    throw new KubernetesApiError(`Kubernetes API POST ${op} failed (409)`, 409, "already exists")
   }
 
   const client = {
@@ -80,36 +104,70 @@ function makeClient(input: {
     },
     async deleteDeployment(name: string) {
       ops.push({ op: "deleteDeployment", name })
+      if (!deployment) {
+        notFound(name)
+      }
       deployment = null
     },
     async getService(name: string) {
       ops.push({ op: "getService", name })
-      return {}
+      if (!service) {
+        notFound(name)
+      }
+      return service
     },
     async createService(manifest: Record<string, unknown>) {
       ops.push({ op: "createService" })
+      conflictIfRequested("createService")
+      service = manifest
       return manifest
     },
     async deleteService(name: string) {
       ops.push({ op: "deleteService", name })
+      if (!service) {
+        notFound(name)
+      }
+      service = null
+    },
+    async getSecret(name: string) {
+      ops.push({ op: "getSecret", name })
+      if (!secret) {
+        notFound(name)
+      }
+      return secret
     },
     async createSecret(manifest: Record<string, unknown>) {
       ops.push({ op: "createSecret" })
+      conflictIfRequested("createSecret")
+      secret = manifest
       return manifest
     },
     async deleteSecret(name: string) {
       ops.push({ op: "deleteSecret", name })
+      if (!secret) {
+        notFound(name)
+      }
+      secret = null
     },
     async createPvc(manifest: Record<string, unknown>) {
       ops.push({ op: "createPvc" })
+      conflictIfRequested("createPvc")
+      pvc = manifest
       return manifest
     },
     async getPvc(name: string) {
       ops.push({ op: "getPvc", name })
-      return {}
+      if (!pvc) {
+        notFound(name)
+      }
+      return pvc
     },
     async deletePvc(name: string) {
       ops.push({ op: "deletePvc", name })
+      if (!pvc) {
+        notFound(name)
+      }
+      pvc = null
     },
     async listPods(_labelSelector: string) {
       ops.push({ op: "listPods" })
@@ -121,10 +179,6 @@ function makeClient(input: {
           },
         ],
       }
-    },
-    async getPod(name: string) {
-      ops.push({ op: "getPod", name })
-      return {}
     },
     async getPodLogs(_name: string, _options?: { tailLines?: number }) {
       ops.push({ op: "getPodLogs" })
@@ -206,6 +260,73 @@ describe("Kubernetes worker provisioning", () => {
 
     const patch = fake.ops.find((entry) => entry.op === "patchDeployment")?.patch as { spec?: { replicas?: number } } | undefined
     expect(patch?.spec?.replicas).toBe(1)
+  })
+
+  test("tolerates 409 conflicts on supporting-object creates in the fresh path", async () => {
+    const input = provisionInput()
+    const fake = makeClient({ conflictOnCreate: ["createPvc", "createPvc", "createSecret", "createService"] })
+    const provisioned = await kubernetes.provisionWorkerOnKubernetesWithRuntime(
+      input,
+      makeRuntime(fake.client),
+    )
+
+    expect(fake.ops.filter((entry) => entry.op === "getPvc").length).toBe(2)
+    expect(fake.ops.some((entry) => entry.op === "getSecret")).toBe(true)
+    expect(fake.ops.some((entry) => entry.op === "getService")).toBe(true)
+    expect(provisioned.status).toBe("healthy")
+  })
+
+  test("upserts the token secret by delete and recreate after a create conflict", async () => {
+    const input = provisionInput()
+    const fake = makeClient({ deployment: { spec: { replicas: 1 } }, conflictOnCreate: ["createSecret"] })
+    const provisioned = await kubernetes.provisionWorkerOnKubernetesWithRuntime(
+      input,
+      makeRuntime(fake.client),
+    )
+
+    const secretOps = fake.ops.filter((entry) => entry.op === "createSecret" || entry.op === "deleteSecret").map((entry) => entry.op)
+    expect(secretOps).toEqual(["createSecret", "deleteSecret", "createSecret"])
+    expect(provisioned.status).toBe("healthy")
+  })
+
+  test("patches an adopted deployment running a stale image before reporting healthy", async () => {
+    const input = provisionInput()
+    const fake = makeClient({
+      deployment: {
+        spec: {
+          replicas: 1,
+          template: {
+            spec: {
+              containers: [{ name: "openwork-server", image: "registry.test/openwork-worker:stale" }],
+            },
+          },
+        },
+      },
+    })
+    const provisioned = await kubernetes.provisionWorkerOnKubernetesWithRuntime(
+      input,
+      makeRuntime(fake.client),
+    )
+
+    const patch = fake.ops.find((entry) => entry.op === "patchDeployment")?.patch as {
+      spec?: { template?: { spec?: { containers?: Array<{ image?: string }> } } }
+    } | undefined
+    expect(patch?.spec?.template?.spec?.containers?.[0]?.image).toBe("registry.test/openwork-worker:test")
+    expect(provisioned.imageVersion).toBe("registry.test/openwork-worker:test")
+  })
+
+  test("substitutes the DNS-safe worker name into WORKER_URL_TEMPLATE", async () => {
+    const input = provisionInput()
+    const original = env.workerUrlTemplate
+    env.workerUrlTemplate = "https://{workerId}.workers.example.test:8787"
+    try {
+      const fake = makeClient()
+      const provisioned = await kubernetes.provisionWorkerOnKubernetesWithRuntime(input, makeRuntime(fake.client))
+      expect(provisioned.url).toBe(`https://${kubernetes.kubernetesWorkerName(input.workerId)}.workers.example.test:8787`)
+      expect(provisioned.url).not.toContain("_")
+    } finally {
+      env.workerUrlTemplate = original
+    }
   })
 })
 
@@ -320,6 +441,26 @@ describe("Kubernetes health deadline", () => {
 
     expect(
       kubernetes.provisionWorkerOnKubernetesWithRuntime(input, runtime),
-    ).rejects.toThrow("Timed out waiting for Kubernetes worker health")
+    ).rejects.toThrow(/CrashLoopBackOff[\s\S]*worker crashed at boot/s)
+  })
+
+  test("redacts tokens printed by the worker entrypoint from health-timeout diagnostics", async () => {
+    const input = provisionInput()
+    const logs = [
+      "Starting OpenWork micro-sandbox",
+      `- client token: ${input.clientToken}`,
+      `- host token: ${input.hostToken}`,
+      "worker crashed at boot",
+    ].join("\n")
+    const fake = makeClient({ podPhase: "CrashLoopBackOff", podLogs: logs })
+    const runtime = makeRuntime(fake.client, failingFetch())
+
+    const error = await kubernetes.provisionWorkerOnKubernetesWithRuntime(input, runtime).catch((e) => e)
+    const message = error instanceof Error ? error.message : String(error)
+    expect(message).toContain("CrashLoopBackOff")
+    expect(message).toContain("worker crashed at boot")
+    expect(message).not.toContain(input.clientToken)
+    expect(message).not.toContain(input.hostToken)
+    expect(message).toContain("[REDACTED]")
   })
 })
