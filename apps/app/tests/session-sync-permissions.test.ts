@@ -721,6 +721,9 @@ describe("session transcript sync", () => {
       const late = snapshotWithMessages([]);
       markSessionSnapshotFetchStart(late, 150);
       seedSessionState("workspace-a", late);
+      const tied = snapshotWithMessages([]);
+      markSessionSnapshotFetchStart(tied, 200);
+      seedSessionState("workspace-a", tied);
       expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toEqual(completed);
       expect(queryClient.getQueryData(todoKey("workspace-a", "session-b"))).toEqual([]);
       const fresh = snapshotWithMessages([]);
@@ -744,10 +747,17 @@ describe("session transcript sync", () => {
       const release = trackWorkspaceSessionSync(input, "session-a");
       const queryClient = getReactQueryClient();
       const key = transcriptKey("workspace-a", "session-a");
+      const releaseNeighbor = trackWorkspaceSessionSync(input, "session-b");
       try {
         if (declared) seedSessionState("workspace-a", snapshotWithMessages([
           { id: "answer", role: "assistant", text: "hello" },
         ]));
+        __applySessionSyncEventForTest(input, {
+          type: "message.part.delta", properties: {
+            sessionID: "session-b", messageID: "answer", partID: "part_answer", delta: "neighbor text stays separate",
+          },
+        });
+        for (const run of scheduled.splice(0)) run();
         const delta = (messageId: string, text: string) => __applySessionSyncEventForTest(input, {
           type: "message.part.delta", properties: {
             sessionID: "session-a", messageID: messageId, partID: `part_${messageId}`, delta: text,
@@ -755,13 +765,16 @@ describe("session transcript sync", () => {
         });
         delta("answer", declared ? " world" : "hello world");
         delta("unknown", "retained");
-        seedSessionState("workspace-a", snapshotWithMessages([
-          { id: "answer", role: "assistant", text: "hello world" },
-        ]));
+        const snapshot = snapshotWithMessages([
+          { id: "answer", role: "assistant", text: declared ? "hello world" : "hello" },
+        ]);
+        seedSessionState("workspace-a", snapshot);
+        expect(snapshot.messages[0]?.parts[0]).toMatchObject({ text: declared ? "hello world" : "hello" });
         for (const run of scheduled.splice(0)) run();
         expect(queryClient.getQueryData<UIMessage[]>(key)?.find((m) => m.id === "answer")?.parts[0])
           .toMatchObject({ text: "hello world" });
         delta("answer", "!");
+        seedSessionState("workspace-a", snapshot);
         for (const run of scheduled.splice(0)) run();
         expect(queryClient.getQueryData<UIMessage[]>(key)?.find((m) => m.id === "answer")?.parts[0])
           .toMatchObject({ text: "hello world!" });
@@ -772,7 +785,27 @@ describe("session transcript sync", () => {
         });
         expect(queryClient.getQueryData<UIMessage[]>(key)?.find((m) => m.id === "unknown")?.parts[0])
           .toMatchObject({ text: "retained" });
-      } finally { release(); cleanup(); __setSessionSyncDeltaFlushSchedulerForTest(null); }
+        __applySessionSyncEventForTest(input, {
+          type: "message.part.updated", properties: { part: {
+            id: "part_answer", sessionID: "session-b", messageID: "answer", type: "text", text: "",
+          } },
+        });
+        expect(queryClient.getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-b"))?.[0]?.parts[0])
+          .toMatchObject({ text: "neighbor text stays separate" });
+        __applySessionSyncEventForTest(input, {
+          type: "message.part.delta", properties: {
+            sessionID: "session-b", messageID: "answer", partID: "part_answer", delta: "!",
+          },
+        });
+        __applySessionSyncEventForTest(input, {
+          type: "message.part.updated", properties: { part: {
+            id: "part_answer", sessionID: "session-a", messageID: "answer", type: "text", text: "hello world!",
+          } },
+        });
+        for (const run of scheduled.splice(0)) run();
+        expect(queryClient.getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-b"))?.[0]?.parts[0])
+          .toMatchObject({ text: "neighbor text stays separate!" });
+      } finally { releaseNeighbor(); release(); cleanup(); __setSessionSyncDeltaFlushSchedulerForTest(null); }
     });
   }
 

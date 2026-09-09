@@ -1168,7 +1168,8 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (!isTrackedSession(entry, part.sessionID)) return;
     const [mapped, ...attachments] = toUIParts(part);
     if (!mapped) return;
-    const pending = entry.pendingDeltas.get(part.id);
+    const pendingKey = JSON.stringify([part.sessionID, part.messageID, part.id]);
+    const pending = entry.pendingDeltas.get(pendingKey);
     // Seed the new part with any deltas that arrived before this
     // declaration. We deliberately ignore `pending.reasoning` — it
     // can't be trusted because opencode emits `field: "text"` for
@@ -1194,7 +1195,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     // cumulative text we just wrote, duplicating bytes mid-stream.
     if (entry.deltaFlushBuffer.length > 0) {
       entry.deltaFlushBuffer = entry.deltaFlushBuffer.filter(
-        (item) => item.partId !== part.id,
+        (item) => item.sessionId !== part.sessionID || item.messageId !== part.messageID || item.partId !== part.id,
       );
     }
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, part.sessionID), (current = []) => {
@@ -1214,7 +1215,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       }
       return next;
     });
-    if (pending) entry.pendingDeltas.delete(part.id);
+    if (pending) entry.pendingDeltas.delete(pendingKey);
     useSessionActivityStore.getState().observeTranscript(workspaceId, part.sessionID,
       queryClient.getQueryData<UIMessage[]>(transcriptKey(workspaceId, part.sessionID)) ?? []);
     return;
@@ -1323,13 +1324,14 @@ function commitDeltas(entry: SyncEntry, workspaceId: string, items: PendingDelta
           // The declaration event is the source of truth for text versus
           // reasoning. Hold early deltas until that event arrives instead of
           // projecting them into the wrong Markdown surface.
-          const existing = entry.pendingDeltas.get(item.partId) ?? {
+          const pendingKey = JSON.stringify([sessionId, item.messageId, item.partId]);
+          const existing = entry.pendingDeltas.get(pendingKey) ?? {
             messageId: item.messageId,
             reasoning: item.reasoning,
             text: "",
           };
           existing.text += item.delta;
-          entry.pendingDeltas.set(item.partId, existing);
+          entry.pendingDeltas.set(pendingKey, existing);
         }
         return result.messages;
       },
@@ -1771,17 +1773,19 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
   for (const entry of syncs.values()) {
     if (entry.input.workspaceId !== workspaceId) continue;
     flushSessionDeltas(entry, workspaceId, snapshot.session.id);
+    if (entry.pendingDeltas.size === 0) continue;
     for (const message of incoming) {
       for (const part of message.parts) {
         if (part.type !== "text" && part.type !== "reasoning") continue;
         const partId = getPartMetadataId(part);
         if (!partId) continue;
-        const pending = entry.pendingDeltas.get(partId);
+        const pendingKey = JSON.stringify([snapshot.session.id, message.id, partId]);
+        const pending = entry.pendingDeltas.get(pendingKey);
         if (!pending || pending.messageId !== message.id) continue;
         // Early deltas and the declaration are cumulative views, as with
         // message.part.updated. Unrepresented parts remain pending.
         if (pending.text.length > part.text.length) part.text = pending.text;
-        entry.pendingDeltas.delete(partId);
+        entry.pendingDeltas.delete(pendingKey);
       }
     }
   }
@@ -1832,7 +1836,8 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
   const todosStartedAt = snapshotStartedAt ?? todoSnapshotFirstSeen.get(snapshot) ?? Date.now();
   todoSnapshotFirstSeen.set(snapshot, todosStartedAt);
   const todosState = queryClient.getQueryState(todosKey);
-  if (!todosState || todosStartedAt > todosState.dataUpdatedAt) {
+  // Millisecond ties cannot establish that a snapshot is newer than live data.
+  if (todosState?.data === undefined || todosStartedAt > todosState.dataUpdatedAt) {
     queryClient.setQueryData(todosKey, snapshot.todos, { updatedAt: todosStartedAt });
   }
   useSessionActivityStore.getState().observeTranscript(workspaceId, snapshot.session.id,
