@@ -681,10 +681,11 @@ import type {
   UpdateAutomationResponses,
 } from "./types.gen.js";
 
-export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<
-  TData,
-  ThrowOnError
-> & {
+export type Options<
+  TData extends TDataShape = TDataShape,
+  ThrowOnError extends boolean = boolean,
+  TResponse = unknown,
+> = Options2<TData, ThrowOnError, TResponse> & {
   /**
    * You can provide a client instance returned by `createClient()` instead of
    * individual options. This might be also useful if you want to implement a
@@ -867,8 +868,8 @@ export class DenClient extends HeyApiClient {
   public patchV1AdminOrganizationsByOrganizationIdDpa<ThrowOnError extends boolean = false>(
     parameters: {
       organizationId: string;
-      dpaSigned?: boolean;
-      reason?: string;
+      dpaSigned: boolean;
+      reason: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1338,8 +1339,8 @@ export class DenClient extends HeyApiClient {
    * Creates a provisional workspace, setup member, starter skill, and short-lived claim links without requiring an email account first.
    */
   public postV1BootstrapWorkspace<ThrowOnError extends boolean = false>(
-    parameters?: {
-      workspaceName?: string;
+    parameters: {
+      workspaceName: string;
       skillName?: string;
       devicePublicKey?: string;
       claimRoles?: Array<"owner" | "admin" | "member">;
@@ -1385,8 +1386,8 @@ export class DenClient extends HeyApiClient {
    * Lets a signed-in human claim ownership or membership of a provisional agent-created workspace.
    */
   public postV1BootstrapClaimsAccept<ThrowOnError extends boolean = false>(
-    parameters?: {
-      token?: string;
+    parameters: {
+      token: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1762,9 +1763,9 @@ export class DenClient extends HeyApiClient {
    * Updates the signed-in user's display name.
    */
   public patchV1MeProfile<ThrowOnError extends boolean = false>(
-    parameters?: {
-      firstName?: string;
-      lastName?: string;
+    parameters: {
+      firstName: string;
+      lastName: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1810,14 +1811,14 @@ export class DenClient extends HeyApiClient {
    * Mints a time-limited runner-only credential for the desktop SSE connection and HTTP runner APIs.
    */
   public mintAutomationRunnerToken<ThrowOnError extends boolean = false>(
-    parameters?: {
-      runnerId?: string;
-      protocolVersion?: 1;
-      supportedExecutionTargets?: ["desktop"];
+    parameters: {
+      runnerId: string;
+      protocolVersion: 1;
+      supportedExecutionTargets: ["desktop"];
       capabilities?: Array<"model_attention_v1" | "remote_session_v1">;
-      appVersion?: string;
-      platform?: "darwin" | "win32" | "linux";
-      concurrency?: number;
+      appVersion: string;
+      platform: "darwin" | "win32" | "linux";
+      concurrency: number;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1963,7 +1964,7 @@ export class DenClient extends HeyApiClient {
   public postV1AutomationRunsByIdHeartbeat<ThrowOnError extends boolean = false>(
     parameters: {
       id: string;
-      attempt?: number;
+      attempt: number;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1993,13 +1994,13 @@ export class DenClient extends HeyApiClient {
   public postV1AutomationRunsByIdEvents<ThrowOnError extends boolean = false>(
     parameters: {
       id: string;
-      attempt?: number;
-      sequence?: number;
-      type?: "user" | "assistant" | "capability_search" | "capability_execution" | "usage" | "warning" | "terminal";
-      payload?: {
+      attempt: number;
+      sequence: number;
+      type: "user" | "assistant" | "capability_search" | "capability_execution" | "usage" | "warning" | "terminal";
+      payload: {
         [key: string]: unknown;
       };
-      createdAt?: number;
+      createdAt: number;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2033,17 +2034,17 @@ export class DenClient extends HeyApiClient {
   public postV1AutomationRunsByIdComplete<ThrowOnError extends boolean = false>(
     parameters: {
       id: string;
-      attempt?: number;
-      status?: "succeeded" | "failed" | "cancelled";
-      sessionId?: string | null;
-      workspaceId?: string | null;
-      resultSummary?: string | null;
-      usage?: {
+      attempt: number;
+      status: "succeeded" | "failed" | "cancelled";
+      sessionId: string | null;
+      workspaceId: string | null;
+      resultSummary: string | null;
+      usage: {
         inputTokens: number | null;
         outputTokens: number | null;
         costMicros: number | null;
       };
-      error?: {
+      error: {
         code:
           | "owner_membership_lost"
           | "model_access_lost"
@@ -2223,9 +2224,9 @@ export class DenClient extends HeyApiClient {
    * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. This is the Web and Cloud Chat creation surface. Placement is fixed to OpenWork Cloud and the Automation can wake a stopped Cloud container without a desktop. Create only when the person explicitly asks to create or schedule it; there is no draft step.
    */
   public createCloudAutomation<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
-      schedule?:
+    parameters: {
+      name: string;
+      schedule:
         | {
             kind: "once";
             timezone: string;
@@ -2244,7 +2245,7 @@ export class DenClient extends HeyApiClient {
             hour: number;
             minute: number;
           };
-      action?:
+      action:
         | {
             kind: "agent";
             instructions: string;
@@ -2659,8 +2660,8 @@ export class DenClient extends HeyApiClient {
    * Accepts an organization invitation for the current signed-in user and switches their active organization to the accepted workspace.
    */
   public postV1OrgsInvitationsAccept<ThrowOnError extends boolean = false>(
-    parameters?: {
-      id?: string;
+    parameters: {
+      id: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2802,11 +2803,11 @@ export class DenClient extends HeyApiClient {
    * Save a successful Code Mode run as a Workflow inside an OpenWork Connect Plugin
    */
   public saveWorkflow<ThrowOnError extends boolean = false>(
-    parameters?: {
+    parameters: {
       pluginId?: string;
-      name?: string;
+      name: string;
       description?: string;
-      code?: string;
+      code: string;
       currentInput?: unknown;
       inputSchema?: unknown;
       outputSchema?: unknown;
@@ -2889,7 +2890,7 @@ export class DenClient extends HeyApiClient {
   public postV1AppsByAppIdShare<ThrowOnError extends boolean = false>(
     parameters: {
       appId: string;
-      email?: string;
+      email: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2956,7 +2957,7 @@ export class DenClient extends HeyApiClient {
   public postV1AppsByAppIdDashboard<ThrowOnError extends boolean = false>(
     parameters: {
       appId: string;
-      added?: boolean;
+      added: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2989,10 +2990,10 @@ export class DenClient extends HeyApiClient {
   public postV1AppsByAppIdSave<ThrowOnError extends boolean = false>(
     parameters: {
       appId: string;
-      revisionId?: string;
-      title?: string;
-      useInWorkflow?: boolean;
-      expectedActiveRevisionId?: string | null;
+      revisionId: string;
+      title: string;
+      useInWorkflow: boolean;
+      expectedActiveRevisionId: string | null;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3117,17 +3118,17 @@ export class DenClient extends HeyApiClient {
   public postV1WorkflowsByConfigObjectIdVersions<ThrowOnError extends boolean = false>(
     parameters: {
       configObjectId: string;
-      name?: string;
+      name: string;
       description?: string;
-      code?: string;
+      code: string;
       exampleInput?: unknown;
       inputSchema?: unknown;
       outputSchema?: unknown;
-      requiredCapabilities?: Array<{
+      requiredCapabilities: Array<{
         capabilityName: string;
         scriptPath: string;
       }>;
-      receiptId?: string;
+      receiptId: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3233,18 +3234,18 @@ export class DenClient extends HeyApiClient {
    * Test the exact Workflow draft and return the receiptId required to create that unchanged version
    */
   public postV1WorkflowsTest<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
+    parameters: {
+      name: string;
       description?: string;
-      code?: string;
+      code: string;
       exampleInput?: unknown;
       inputSchema?: unknown;
       outputSchema?: unknown;
-      requiredCapabilities?: Array<{
+      requiredCapabilities: Array<{
         capabilityName: string;
         scriptPath: string;
       }>;
-      configObjectId?: string;
+      configObjectId: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3285,8 +3286,8 @@ export class DenClient extends HeyApiClient {
   public postV1WorkflowsByConfigObjectIdRun<ThrowOnError extends boolean = false>(
     parameters: {
       configObjectId: string;
-      pluginId?: string;
-      configObjectVersionId?: string;
+      pluginId: string;
+      configObjectVersionId: string;
       input?: unknown;
     },
     options?: Options<never, ThrowOnError>,
@@ -3366,8 +3367,8 @@ export class DenClient extends HeyApiClient {
    * Create dashboard
    */
   public postV1Dashboards<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
+    parameters: {
+      name: string;
       elements?: Array<DashboardElement>;
     },
     options?: Options<never, ThrowOnError>,
@@ -3508,7 +3509,7 @@ export class DenClient extends HeyApiClient {
       orgMembershipId?: string;
       teamId?: string;
       orgWide?: boolean;
-      role?: "viewer" | "editor" | "manager";
+      role: "viewer" | "editor" | "manager";
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3634,8 +3635,8 @@ export class DenClient extends HeyApiClient {
   public putV1DesktopPoliciesByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
       externalKey: string;
-      policyName?: string;
-      policy?: DenDesktopPolicyDocumentWrite;
+      policyName: string;
+      policy: DenDesktopPolicyDocumentWrite;
       priority?: number;
       isEnabled?: boolean;
       memberIds?: Array<string>;
@@ -3725,8 +3726,8 @@ export class DenClient extends HeyApiClient {
   public patchV1DesktopPoliciesByDesktopPolicyId<ThrowOnError extends boolean = false>(
     parameters: {
       desktopPolicyId: string;
-      policyName?: string;
-      policy?: DenDesktopPolicyDocumentWrite;
+      policyName: string;
+      policy: DenDesktopPolicyDocumentWrite;
       priority?: number;
       isEnabled?: boolean;
       memberIds?: Array<string>;
@@ -3783,9 +3784,9 @@ export class DenClient extends HeyApiClient {
    * Create desktop policy
    */
   public postV1DesktopPolicies<ThrowOnError extends boolean = false>(
-    parameters?: {
-      policyName?: string;
-      policy?: DenDesktopPolicyDocumentWrite;
+    parameters: {
+      policyName: string;
+      policy: DenDesktopPolicyDocumentWrite;
       priority?: number;
       isEnabled?: boolean;
       memberIds?: Array<string>;
@@ -3883,8 +3884,8 @@ export class DenClient extends HeyApiClient {
    * Enables or disables OpenWork Models for the active organization.
    */
   public patchV1Inference<ThrowOnError extends boolean = false>(
-    parameters?: {
-      enabled?: boolean;
+    parameters: {
+      enabled: boolean;
       tier?: "tier1" | "tier2";
     },
     options?: Options<never, ThrowOnError>,
@@ -3926,8 +3927,8 @@ export class DenClient extends HeyApiClient {
    * Choose whether to collect task analytics included with OpenWork Models
    */
   public patchV1InferenceAnalyticsSettings<ThrowOnError extends boolean = false>(
-    parameters?: {
-      enabled?: boolean;
+    parameters: {
+      enabled: boolean;
       consentVersion?: 1;
     },
     options?: Options<never, ThrowOnError>,
@@ -3956,8 +3957,8 @@ export class DenClient extends HeyApiClient {
   }
 
   public postV1InferenceAnalyticsEvents<ThrowOnError extends boolean = false>(
-    parameters?: {
-      events?: Array<{
+    parameters: {
+      events: Array<{
         id: string;
         type:
           | "task.started"
@@ -4078,10 +4079,10 @@ export class DenClient extends HeyApiClient {
   }
 
   public postV1InferenceAnalyticsLangfuseTest<ThrowOnError extends boolean = false>(
-    parameters?: {
-      host?: string;
-      publicKey?: string;
-      secretKey?: string;
+    parameters: {
+      host: string;
+      publicKey: string;
+      secretKey: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4110,10 +4111,10 @@ export class DenClient extends HeyApiClient {
   }
 
   public postV1InferenceAnalyticsLangfuseConnect<ThrowOnError extends boolean = false>(
-    parameters?: {
-      host?: string;
-      publicKey?: string;
-      secretKey?: string;
+    parameters: {
+      host: string;
+      publicKey: string;
+      secretKey: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4184,8 +4185,8 @@ export class DenClient extends HeyApiClient {
    * Controls whether provisioned SCIM Groups remain metadata or create and manage organization teams.
    */
   public patchV1Scim<ThrowOnError extends boolean = false>(
-    parameters?: {
-      groupMappingMode?: "metadata_only" | "create_teams";
+    parameters: {
+      groupMappingMode: "metadata_only" | "create_teams";
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4391,9 +4392,9 @@ export class DenClient extends HeyApiClient {
    * Creates or refreshes a pending organization invitation for an email address and sends the invite email. Returns 502 when the invitation row is persisted but the configured email provider failed to send; the client should surface the error and give the user a retry affordance.
    */
   public postV1Invitations<ThrowOnError extends boolean = false>(
-    parameters?: {
-      email?: string;
-      role?: string;
+    parameters: {
+      email: string;
+      role: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4543,8 +4544,8 @@ export class DenClient extends HeyApiClient {
    * Reports whether a short-lived organization connection code is still pending or has been accepted by a desktop.
    */
   public postV1InstallConnectStatus<ThrowOnError extends boolean = false>(
-    parameters?: {
-      code?: string;
+    parameters: {
+      code: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4571,8 +4572,8 @@ export class DenClient extends HeyApiClient {
    * Resolves a short-lived organization connection code without consuming it.
    */
   public postV1InstallConnectPreview<ThrowOnError extends boolean = false>(
-    parameters?: {
-      code?: string;
+    parameters: {
+      code: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4599,8 +4600,8 @@ export class DenClient extends HeyApiClient {
    * Consumes a short-lived organization connection code exactly once.
    */
   public postV1InstallConnectExchange<ThrowOnError extends boolean = false>(
-    parameters?: {
-      code?: string;
+    parameters: {
+      code: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4705,8 +4706,8 @@ export class DenClient extends HeyApiClient {
   public putV1LlmProvidersByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
       externalKey: string;
-      name?: string;
-      source?: "models_dev" | "custom";
+      name: string;
+      source: "models_dev" | "custom";
       providerId?: string;
       modelIds?: Array<string>;
       customConfigText?: string;
@@ -4812,8 +4813,8 @@ export class DenClient extends HeyApiClient {
   public patchV1LlmProvidersByLlmProviderId<ThrowOnError extends boolean = false>(
     parameters: {
       llmProviderId: string;
-      name?: string;
-      source?: "models_dev" | "custom";
+      name: string;
+      source: "models_dev" | "custom";
       providerId?: string;
       modelIds?: Array<string>;
       customConfigText?: string;
@@ -4873,8 +4874,8 @@ export class DenClient extends HeyApiClient {
    * Probes an OpenAI-compatible endpoint (Azure AI Foundry, LiteLLM, vLLM, gateways) with the given credential: normalizes common base-URL mistakes, calls GET /models, and returns the model ids the endpoint actually serves — on Azure these are the deployment names. Nothing is stored.
    */
   public postV1LlmProvidersTestConnection<ThrowOnError extends boolean = false>(
-    parameters?: {
-      api?: string;
+    parameters: {
+      api: string;
       apiKey?: string;
       modelIds?: Array<string>;
     },
@@ -4969,9 +4970,9 @@ export class DenClient extends HeyApiClient {
    * Creates a new organization-scoped LLM provider from either a models.dev provider template, pasted JSON/JSONC custom configuration, or MCP-supplied customConfig object.
    */
   public postV1LlmProviders<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
-      source?: "models_dev" | "custom";
+    parameters: {
+      name: string;
+      source: "models_dev" | "custom";
       providerId?: string;
       modelIds?: Array<string>;
       customConfigText?: string;
@@ -5255,7 +5256,7 @@ export class DenClient extends HeyApiClient {
   public postV1MembersByMemberIdRole<ThrowOnError extends boolean = false>(
     parameters: {
       memberId: string;
-      role?: string;
+      role: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -5851,12 +5852,12 @@ export class DenClient extends HeyApiClient {
    * Creates a plain-text Gmail draft in the calling member own mailbox. For workspace attachments, use the openwork-cloud-uploads gmail_create_draft_with_attachments action so file bytes stay outside model context. Set threadId for replies and forwards. Always share the returned draftUrl.
    */
   public postV1CapabilitiesGoogleWorkspaceGmailDrafts<ThrowOnError extends boolean = false>(
-    parameters?: {
-      to?: string;
+    parameters: {
+      to: string;
       cc?: string;
       bcc?: string;
-      subject?: string;
-      body?: string;
+      subject: string;
+      body: string;
       threadId?: string;
     },
     options?: Options<never, ThrowOnError>,
@@ -6673,11 +6674,11 @@ export class DenClient extends HeyApiClient {
   public putV1McpConnectionsByConnectionId<ThrowOnError extends boolean = false>(
     parameters: {
       connectionId: string;
-      expectedUpdatedAt?: string;
-      name?: string;
-      url?: string;
-      authType?: "oauth" | "apikey" | "none";
-      credentialMode?: "shared" | "per_member";
+      expectedUpdatedAt: string;
+      name: string;
+      url: string;
+      authType: "oauth" | "apikey" | "none";
+      credentialMode: "shared" | "per_member";
       exposeDirectly?: boolean;
       apiKey?: string;
       oauthClient?: {
@@ -6687,7 +6688,7 @@ export class DenClient extends HeyApiClient {
       };
       authorizationServerIssuer?: string | null;
       requestedScopes?: Array<string>;
-      access?: ExternalMcpConnectionAccessInput;
+      access: ExternalMcpConnectionAccessInput;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -6736,7 +6737,7 @@ export class DenClient extends HeyApiClient {
   public putV1McpConnectionsByConnectionIdAccess<ThrowOnError extends boolean = false>(
     parameters: {
       connectionId: string;
-      access?: ExternalMcpConnectionAccessInput;
+      access: ExternalMcpConnectionAccessInput;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -6880,8 +6881,8 @@ export class DenClient extends HeyApiClient {
    * Builds a GitHub App install redirect URL for the current organization.
    */
   public postV1ConnectorsGithubInstallStart<ThrowOnError extends boolean = false>(
-    parameters?: {
-      returnPath?: string;
+    parameters: {
+      returnPath: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -6908,9 +6909,9 @@ export class DenClient extends HeyApiClient {
    * Completes a GitHub App installation for the current organization and returns visible repositories.
    */
   public postV1ConnectorsGithubInstallComplete<ThrowOnError extends boolean = false>(
-    parameters?: {
-      installationId?: number;
-      state?: string;
+    parameters: {
+      installationId: number;
+      state: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -7002,8 +7003,8 @@ export class DenClient extends HeyApiClient {
    * Creates a new private config object and initial immutable version.
    */
   public postV1ConfigObjects<ThrowOnError extends boolean = false>(
-    parameters?: {
-      type?:
+    parameters: {
+      type:
         | "skill"
         | "agent"
         | "command"
@@ -7015,9 +7016,9 @@ export class DenClient extends HeyApiClient {
         | "script"
         | "workflow"
         | "app";
-      sourceMode?: "cloud" | "import" | "connector";
+      sourceMode: "cloud" | "import" | "connector";
       pluginIds?: Array<string>;
-      input?: {
+      input: {
         rawSourceText?: string;
         normalizedPayloadJson?: {
           [key: string]: unknown;
@@ -7127,7 +7128,7 @@ export class DenClient extends HeyApiClient {
   public postV1ConfigObjectsByConfigObjectIdVersions<ThrowOnError extends boolean = false>(
     parameters: {
       configObjectId: string;
-      input?: {
+      input: {
         rawSourceText?: string;
         normalizedPayloadJson?: {
           [key: string]: unknown;
@@ -7327,7 +7328,7 @@ export class DenClient extends HeyApiClient {
   public postV1ConfigObjectsByConfigObjectIdPlugins<ThrowOnError extends boolean = false>(
     parameters: {
       configObjectId: string;
-      pluginId?: string;
+      pluginId: string;
       membershipSource?: "manual" | "connector" | "api" | "system";
     },
     options?: Options<never, ThrowOnError>,
@@ -7428,7 +7429,7 @@ export class DenClient extends HeyApiClient {
       orgMembershipId?: string;
       teamId?: string;
       orgWide?: boolean;
-      role?: "viewer" | "editor" | "manager";
+      role: "viewer" | "editor" | "manager";
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -7536,8 +7537,8 @@ export class DenClient extends HeyApiClient {
    * Creates a plugin and can also create components, share org-wide, and publish to a marketplace in one request. An mcp component may carry the same connection setup as the Connections page (authentication, credential mode, API key, OAuth app), or instead reference an existing organization connection by connectionId, so its server is configured immediately; owners and admins only.
    */
   public postV1Plugins<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
+    parameters: {
+      name: string;
       description?: string | null;
       sourceRepositoryUrl?: string;
       components?: Array<{
@@ -7748,7 +7749,7 @@ export class DenClient extends HeyApiClient {
   public postV1PluginsByPluginIdConfigObjects<ThrowOnError extends boolean = false>(
     parameters: {
       pluginId: string;
-      configObjectId?: string;
+      configObjectId: string;
       membershipSource?: "manual" | "connector" | "api" | "system";
     },
     options?: Options<never, ThrowOnError>,
@@ -7853,8 +7854,8 @@ export class DenClient extends HeyApiClient {
         clientId: string;
         clientSecret?: string;
       };
-      configObjectId?: string;
-      serverName?: string;
+      configObjectId: string;
+      serverName: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -7896,8 +7897,8 @@ export class DenClient extends HeyApiClient {
    * Reads a public GitHub plugin URL and returns skills and remote MCP servers that can be imported into an organization marketplace.
    */
   public postV1PluginsImportMcpsFromGithubUrlPreview<ThrowOnError extends boolean = false>(
-    parameters?: {
-      githubUrl?: string;
+    parameters: {
+      githubUrl: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -7924,8 +7925,8 @@ export class DenClient extends HeyApiClient {
    * Creates one plugin from selected skills and remote MCP servers in a public GitHub plugin URL, applies the requested access grants, and optionally publishes it into an organization marketplace. Declared and known-server authentication requirements take precedence over the request-wide auth fallback.
    */
   public postV1PluginsImportMcpsFromGithubUrl<ThrowOnError extends boolean = false>(
-    parameters?: {
-      githubUrl?: string;
+    parameters: {
+      githubUrl: string;
       access?: {
         orgWide?: boolean;
         memberIds?: Array<string>;
@@ -8011,7 +8012,7 @@ export class DenClient extends HeyApiClient {
       orgMembershipId?: string;
       teamId?: string;
       orgWide?: boolean;
-      role?: "viewer" | "editor" | "manager";
+      role: "viewer" | "editor" | "manager";
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -8176,7 +8177,7 @@ export class DenClient extends HeyApiClient {
   public putV1MarketplacesByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
       externalKey: string;
-      name?: string;
+      name: string;
       description?: string | null;
       logoUrl?: string | null;
     },
@@ -8251,8 +8252,8 @@ export class DenClient extends HeyApiClient {
    * Creates a new private marketplace and grants the creator manager access.
    */
   public postV1Marketplaces<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
+    parameters: {
+      name: string;
       description?: string | null;
       logoUrl?: string | null;
     },
@@ -8448,7 +8449,7 @@ export class DenClient extends HeyApiClient {
   public postV1MarketplacesByMarketplaceIdPlugins<ThrowOnError extends boolean = false>(
     parameters: {
       marketplaceId: string;
-      pluginId?: string;
+      pluginId: string;
       membershipSource?: "manual" | "connector" | "api" | "system";
     },
     options?: Options<never, ThrowOnError>,
@@ -8572,7 +8573,7 @@ export class DenClient extends HeyApiClient {
       orgMembershipId?: string;
       teamId?: string;
       orgWide?: boolean;
-      role?: "viewer" | "editor" | "manager";
+      role: "viewer" | "editor" | "manager";
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -8686,11 +8687,11 @@ export class DenClient extends HeyApiClient {
    * Creates a connector account such as a GitHub App installation binding.
    */
   public postV1ConnectorAccounts<ThrowOnError extends boolean = false>(
-    parameters?: {
-      connectorType?: "github";
-      remoteId?: string;
+    parameters: {
+      connectorType: "github";
+      remoteId: string;
       externalAccountRef?: string | null;
-      displayName?: string;
+      displayName: string;
       metadata?: {
         [key: string]: unknown;
       };
@@ -8839,11 +8840,11 @@ export class DenClient extends HeyApiClient {
    * Creates a new connector instance.
    */
   public postV1ConnectorInstances<ThrowOnError extends boolean = false>(
-    parameters?: {
-      connectorAccountId?: string;
-      connectorType?: "github";
+    parameters: {
+      connectorAccountId: string;
+      connectorType: "github";
       remoteId?: string | null;
-      name?: string;
+      name: string;
       config?: {
         [key: string]: unknown;
       };
@@ -9073,7 +9074,7 @@ export class DenClient extends HeyApiClient {
   public postV1ConnectorInstancesByConnectorInstanceIdAutoImport<ThrowOnError extends boolean = false>(
     parameters: {
       connectorInstanceId: string;
-      autoImportNewPlugins?: boolean;
+      autoImportNewPlugins: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -9197,7 +9198,7 @@ export class DenClient extends HeyApiClient {
     parameters: {
       connectorInstanceId: string;
       autoImportNewPlugins?: boolean;
-      selectedKeys?: Array<string>;
+      selectedKeys: Array<string>;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -9263,7 +9264,7 @@ export class DenClient extends HeyApiClient {
       orgMembershipId?: string;
       teamId?: string;
       orgWide?: boolean;
-      role?: "viewer" | "editor" | "manager";
+      role: "viewer" | "editor" | "manager";
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -9379,11 +9380,11 @@ export class DenClient extends HeyApiClient {
   public postV1ConnectorInstancesByConnectorInstanceIdTargets<ThrowOnError extends boolean = false>(
     parameters: {
       connectorInstanceId: string;
-      connectorType?: "github";
-      remoteId?: string;
-      targetKind?: "repository_branch";
+      connectorType: "github";
+      remoteId: string;
+      targetKind: "repository_branch";
       externalTargetRef?: string | null;
-      config?: {
+      config: {
         [key: string]: unknown;
       };
     },
@@ -9574,9 +9575,9 @@ export class DenClient extends HeyApiClient {
   public postV1ConnectorTargetsByConnectorTargetIdMappings<ThrowOnError extends boolean = false>(
     parameters: {
       connectorTargetId: string;
-      mappingKind?: "path" | "api" | "custom";
-      selector?: string;
-      objectType?:
+      mappingKind: "path" | "api" | "custom";
+      selector: string;
+      objectType:
         | "skill"
         | "agent"
         | "command"
@@ -9807,11 +9808,11 @@ export class DenClient extends HeyApiClient {
    * Persists one GitHub App installation as a connector account.
    */
   public postV1ConnectorsGithubAccounts<ThrowOnError extends boolean = false>(
-    parameters?: {
-      installationId?: number;
-      accountLogin?: string;
-      accountType?: "Organization" | "User";
-      displayName?: string;
+    parameters: {
+      installationId: number;
+      accountLogin: string;
+      accountType: "Organization" | "User";
+      displayName: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -9850,14 +9851,14 @@ export class DenClient extends HeyApiClient {
    * Creates a GitHub connector account, instance, target, and initial mappings in one flow.
    */
   public postV1ConnectorsGithubSetup<ThrowOnError extends boolean = false>(
-    parameters?: {
-      installationId?: number;
+    parameters: {
+      installationId: number;
       connectorAccountId?: string;
-      connectorInstanceName?: string;
-      repositoryId?: number;
-      repositoryFullName?: string;
-      branch?: string;
-      ref?: string;
+      connectorInstanceName: string;
+      repositoryId: number;
+      repositoryFullName: string;
+      branch: string;
+      ref: string;
       mappings?: Array<{
         mappingKind: "path" | "api" | "custom";
         selector: string;
@@ -9959,12 +9960,12 @@ export class DenClient extends HeyApiClient {
    * Validates one repository-branch target before persisting it.
    */
   public postV1ConnectorsGithubValidateTarget<ThrowOnError extends boolean = false>(
-    parameters?: {
-      installationId?: number;
-      repositoryId?: number;
-      repositoryFullName?: string;
-      branch?: string;
-      ref?: string;
+    parameters: {
+      installationId: number;
+      repositoryId: number;
+      repositoryFullName: string;
+      branch: string;
+      ref: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10004,9 +10005,9 @@ export class DenClient extends HeyApiClient {
    * Creates a custom organization role with a named permission map.
    */
   public postV1Roles<ThrowOnError extends boolean = false>(
-    parameters?: {
-      roleName?: string;
-      permission?: {
+    parameters: {
+      roleName: string;
+      permission: {
         [key: string]: Array<string>;
       };
     },
@@ -10174,7 +10175,7 @@ export class DenClient extends HeyApiClient {
   public putV1TeamsByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
       externalKey: string;
-      name?: string;
+      name: string;
       memberIds?: Array<string>;
       grantsOrganizationAdmin?: boolean;
     },
@@ -10298,8 +10299,8 @@ export class DenClient extends HeyApiClient {
    * Creates a team inside an organization and can optionally attach existing organization members to it.
    */
   public postV1Teams<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
+    parameters: {
+      name: string;
       memberIds?: Array<string>;
       grantsOrganizationAdmin?: boolean;
     },
@@ -10363,7 +10364,7 @@ export class DenClient extends HeyApiClient {
     parameters: {
       id: string;
       sentAt?: string;
-      isActiveRecently?: boolean;
+      isActiveRecently: boolean;
       lastActivityAt?: string | null;
       openSessionCount?: number;
     },
@@ -10424,10 +10425,10 @@ export class DenClient extends HeyApiClient {
    * Creates a local worker or cloud worker for the active organization and returns the initial tokens needed to connect to it.
    */
   public postV1Workers<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
+    parameters: {
+      name: string;
       description?: string;
-      destination?: "local" | "cloud";
+      destination: "local" | "cloud";
       workspacePath?: string;
       sandboxBackend?: string;
       imageVersion?: string;
@@ -10511,7 +10512,7 @@ export class DenClient extends HeyApiClient {
   public patchV1WorkersById<ThrowOnError extends boolean = false>(
     parameters: {
       id: string;
-      name?: string;
+      name: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10722,8 +10723,8 @@ export class DenClient extends HeyApiClient {
    * Receives a batch of telemetry events from the OpenWork app or workers. Auth provides org and member identity. Unknown event types and disallowed fields are dropped. Always returns 204.
    */
   public postV1TelemetryIngest<ThrowOnError extends boolean = false>(
-    parameters?: {
-      events?: Array<{
+    parameters: {
+      events: Array<{
         type: string;
         timestamp: string;
         source?: string;
