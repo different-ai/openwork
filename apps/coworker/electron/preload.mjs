@@ -15,7 +15,10 @@ if (process.isMainFrame) {
     document.documentElement.dataset.windowFocused = String(appearance.focused === true);
   });
   contextBridge.exposeInMainWorld("__COWORKER__", {
-    invoke: (command, payload) => ipcRenderer.invoke("coworker:invoke", { command, payload }),
+    invoke: (command, payload) => ipcRenderer.invoke("coworker:invoke", {
+      command, payload,
+      userGesture: command === "voice.microphone" && navigator.userActivation.isActive,
+    }),
     onDeepLink: (listener) => {
       const handler = (_event, urls) => {
         if (Array.isArray(urls)) listener(urls.filter((url) => typeof url === "string"));

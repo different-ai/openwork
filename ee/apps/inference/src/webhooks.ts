@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, gt, inArray, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import type { Hono } from "hono"
 import { InferenceKeyTable, InferenceOrgLimitPolicyTable, InferenceUsageLedgerBucketChargeTable, InferenceUsageLedgerEntryTable, InferenceOrgUsageBucketTable } from "@openwork-ee/den-db"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -8,7 +8,8 @@ import * as Sentry from "@sentry/node"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { constantTimeEquals } from "./keys.js"
-import { resolveModelByUpstreamModel } from "./model-catalog.js"
+import { isVoiceModel, resolveModelByUpstreamModel, voiceReservationAmount } from "./model-catalog.js"
+import { voiceReservationsForBucket } from "./limits.js"
 
 type JsonRecord = Record<string, unknown>
 
@@ -66,10 +67,11 @@ type WebhookInferenceKey = {
   org_membership_id: DenTypeId<"member">
 }
 
-type SettleUsageInput = {
+export type SettleUsageInput = {
   inferenceKey: WebhookInferenceKey
   span: ParsedSpan
   costAmount: number | null
+  admitVoice?: boolean
 }
 
 type WebhookDependencies = {
@@ -132,8 +134,8 @@ function spanString(span: JsonRecord, key: string) {
 
 function usageUnitsForModel(input: { upstreamModel: string; inputCost: number | null; outputCost: number | null }) {
   const model = resolveModelByUpstreamModel(input.upstreamModel)
-  if (!model || input.inputCost === null || input.outputCost === null) return null
-  const amount = Math.max(1, Math.ceil((input.inputCost + input.outputCost) * INFERENCE_USAGE_CONVERSION_FACTOR * model.usageFactor))
+  if ((!model && !isVoiceModel(input.upstreamModel)) || input.inputCost === null || input.outputCost === null) return null
+  const amount = Math.max(1, Math.ceil((input.inputCost + input.outputCost) * INFERENCE_USAGE_CONVERSION_FACTOR * (model?.usageFactor ?? 1)))
   return Number.isSafeInteger(amount) ? amount : null
 }
 
@@ -286,58 +288,121 @@ const defaultWebhookDependencies: WebhookDependencies = {
       .limit(1)
     return inferenceKey ?? null
   },
-  async settleUsage({ inferenceKey, span, costAmount }) {
+  settleUsage: recordInferenceRequest,
+}
+
+// Audio uses the same receipt and bucket-charge identities. Its pending event
+// type represents unknown cost without mislabelling response facts as OTLP.
+const voiceReceiptTypes = ["openrouter_audio_pending", "openrouter_audio"]
+
+// Retry a bounded set of recoverable receipts, never a generation. Lost IDs
+// cannot monopolize this queue or couple readiness to an unresolvable old row.
+export async function pendingVoiceRequests(organizationId: string, memberId: string) {
+  return db.select().from(InferenceUsageLedgerEntryTable).where(and(
+    eq(InferenceUsageLedgerEntryTable.organization_id, normalizeDenTypeId("organization", organizationId)),
+    eq(InferenceUsageLedgerEntryTable.org_membership_id, normalizeDenTypeId("member", memberId)),
+    sql`${InferenceUsageLedgerEntryTable.external_event_id} is not null`,
+    inArray(InferenceUsageLedgerEntryTable.event_type, voiceReceiptTypes),
+    or(eq(InferenceUsageLedgerEntryTable.event_type, "openrouter_audio_pending"), sql`(
+      select count(*) from ${InferenceUsageLedgerBucketChargeTable}
+      where ${InferenceUsageLedgerBucketChargeTable.ledger_entry_id} = ${InferenceUsageLedgerEntryTable.id}
+    ) < ${INFERENCE_WINDOW_TYPES.length}`),
+  )).orderBy(sql`${InferenceUsageLedgerEntryTable.occurred_at} desc`).limit(4)
+}
+
+export async function recordInferenceRequest({ inferenceKey, span, costAmount, admitVoice }: SettleUsageInput): Promise<"ingested" | "deferred" | "skipped"> {
+    const audio = isVoiceModel(span.reportedModel)
+    if (costAmount !== null && (!Number.isSafeInteger(costAmount) || costAmount < 0)) throw new Error("Invalid usage amount")
     return db.transaction(async (tx) => {
       // Shared with both bucket writers and admin reset. Historical settlement
       // never provisions access, changes a limit, or advances a current pointer.
       const policies = await tx.select().from(InferenceOrgLimitPolicyTable)
         .where(eq(InferenceOrgLimitPolicyTable.organization_id, inferenceKey.organization_id))
         .orderBy(asc(InferenceOrgLimitPolicyTable.window_type)).for("update")
+      let reservation: NonNullable<typeof InferenceUsageLedgerEntryTable.$inferSelect.provider_usage>["reservation"]
+      if (admitVoice) {
+        if (!audio || costAmount !== null || policies.length !== INFERENCE_WINDOW_TYPES.length) return "skipped"
+        reservation = { amount: voiceReservationAmount(span.reportedModel), bucketIds: [] }
+        for (const policy of policies) {
+          if (!policy.current_bucket_id) return "skipped"
+          const [bucket] = await tx.select().from(InferenceOrgUsageBucketTable)
+            .where(eq(InferenceOrgUsageBucketTable.id, policy.current_bucket_id)).limit(1).for("update")
+          if (!bucket || bucket.window_start_at > span.occurredAt || bucket.window_end_at <= span.occurredAt || bucket.window_end_at <= new Date()) return "skipped"
+          const holds = await voiceReservationsForBucket(tx, inferenceKey.organization_id, bucket.id)
+          // Bound simultaneous work and unresolved debt, including across key
+          // rotation and short-window rollover. Four packets/member allows
+          // overlapping capture/playback; 32/org bounds shared exposure.
+          if (holds.length >= 32 || holds.filter((hold) => hold.memberId === inferenceKey.org_membership_id).length >= 4) return "skipped"
+          const reserved = holds.reduce((sum, hold) => sum + hold.usage!.reservation!.amount, 0)
+          if (bucket.limit_amount - bucket.used_amount - reserved < reservation.amount) return "skipped"
+          reservation.bucketIds.push(bucket.id)
+        }
+      }
       const identity = or(
-        and(eq(InferenceUsageLedgerEntryTable.external_job_id, span.openworkRequestId), eq(InferenceUsageLedgerEntryTable.event_type, "openrouter_usage")),
+        and(eq(InferenceUsageLedgerEntryTable.external_job_id, span.openworkRequestId),
+          inArray(InferenceUsageLedgerEntryTable.event_type, audio ? [...voiceReceiptTypes, "openrouter_usage"] : ["openrouter_usage"])),
         span.externalEventId ? eq(InferenceUsageLedgerEntryTable.external_event_id, span.externalEventId) : undefined,
       )
       const matchesIdentity = (entry: typeof InferenceUsageLedgerEntryTable.$inferSelect) =>
         entry.organization_id === inferenceKey.organization_id && entry.org_membership_id === inferenceKey.org_membership_id &&
-        entry.inference_key_id === inferenceKey.id && entry.external_job_id === span.openworkRequestId && entry.event_type === "openrouter_usage"
+        entry.inference_key_id === inferenceKey.id && entry.external_job_id === span.openworkRequestId &&
+        (entry.event_type === "openrouter_usage" || audio && voiceReceiptTypes.includes(entry.event_type) && entry.model_id === span.reportedModel)
       const existing = await tx.select().from(InferenceUsageLedgerEntryTable).where(identity).for("update")
       if (existing.some((entry) => !matchesIdentity(entry))) return "skipped"
+      if (admitVoice && existing.length) return "skipped" // Never dispatch an admitted identity twice.
+      // Only admission can create audio identities; an OTLP delivery without
+      // our request identity cannot become a second charge for that generation.
+      if (audio && !existing.length && !admitVoice) return "skipped"
       const occurredAt = existing[0]?.occurred_at ?? span.occurredAt
       if (inferenceKey.status !== "active" && (!inferenceKey.revoked_at || occurredAt > inferenceKey.revoked_at)) return "skipped"
-      const providerUsage = {
-        source: "openrouter_otlp" as const,
+      const providerUsage: NonNullable<typeof InferenceUsageLedgerEntryTable.$inferSelect.provider_usage> = {
+        source: audio ? "openrouter_audio" : "openrouter_otlp",
         status: costAmount === null ? "unpriced" as const : "priced" as const,
         requestModel: span.requestModel, responseModel: span.responseModel,
         inputCost: span.inputCost, outputCost: span.outputCost, currency: span.usageMetadata.currency,
+        ...(audio ? { reservation: existing[0]?.provider_usage?.reservation ?? reservation } : {}),
       }
       if (!existing[0]) {
         await tx.insert(InferenceUsageLedgerEntryTable).values({
           id: createDenTypeId("inferenceUsageLedgerEntry"),
           organization_id: inferenceKey.organization_id, org_membership_id: inferenceKey.org_membership_id,
           inference_key_id: inferenceKey.id, external_job_id: span.openworkRequestId, external_event_id: span.externalEventId,
+          // The legacy non-null numeric column is inert while status=unpriced;
+          // no actual charge exists until provider facts supply a cost.
           cost_amount: costAmount ?? 0, model_id: span.reportedModel, provider_id: "openrouter",
           input_tokens: span.usageMetadata.inputTokens, output_tokens: span.usageMetadata.outputTokens, total_tokens: span.usageMetadata.totalTokens,
-          event_type: "openrouter_usage", occurred_at: occurredAt, provider_usage: providerUsage,
+          event_type: audio ? costAmount === null ? "openrouter_audio_pending" : "openrouter_audio" : "openrouter_usage", occurred_at: occurredAt, provider_usage: providerUsage,
         }).onDuplicateKeyUpdate({ set: { id: sql`${InferenceUsageLedgerEntryTable.id}` } })
       }
       // A unique event can collide across organizations despite the policy lock.
       const entries = await tx.select().from(InferenceUsageLedgerEntryTable).where(identity).for("update")
       const entry = entries[0]
       if (!entry || entries.length !== 1 || !matchesIdentity(entry)) return "skipped"
-      if (entry.provider_usage?.status === "unpriced" && costAmount !== null) {
-        await tx.update(InferenceUsageLedgerEntryTable).set({ cost_amount: costAmount, provider_usage: providerUsage })
+      if (audio && span.generationId) {
+        if (entry.external_event_id && entry.external_event_id !== span.generationId) return "skipped"
+        if (!entry.external_event_id) {
+          await tx.update(InferenceUsageLedgerEntryTable).set({ external_event_id: span.generationId }).where(eq(InferenceUsageLedgerEntryTable.id, entry.id))
+        }
+      }
+      if ((entry.provider_usage?.status === "unpriced" || entry.event_type === "openrouter_audio_pending") && costAmount !== null) {
+        await tx.update(InferenceUsageLedgerEntryTable).set({ cost_amount: costAmount, provider_usage: providerUsage,
+          ...(audio ? { event_type: "openrouter_audio" } : {}),
+        })
           .where(eq(InferenceUsageLedgerEntryTable.id, entry.id))
         entry.cost_amount = costAmount
         entry.provider_usage = providerUsage
+        if (audio) entry.event_type = "openrouter_audio"
       }
-      if (entry.provider_usage?.status === "unpriced") return "deferred"
+      if (entry.provider_usage?.status === "unpriced" || entry.event_type === "openrouter_audio_pending") return "deferred"
 
       const buckets: typeof InferenceOrgUsageBucketTable.$inferSelect[] = []
       for (const policy of policies) {
         const matches = await tx.select().from(InferenceOrgUsageBucketTable).where(and(
           eq(InferenceOrgUsageBucketTable.policy_id, policy.id),
           eq(InferenceOrgUsageBucketTable.organization_id, entry.organization_id),
-          lte(InferenceOrgUsageBucketTable.window_start_at, entry.occurred_at), gt(InferenceOrgUsageBucketTable.window_end_at, entry.occurred_at),
+          entry.provider_usage?.reservation
+            ? inArray(InferenceOrgUsageBucketTable.id, entry.provider_usage.reservation.bucketIds)
+            : and(lte(InferenceOrgUsageBucketTable.window_start_at, entry.occurred_at), gt(InferenceOrgUsageBucketTable.window_end_at, entry.occurred_at)),
         )).orderBy(asc(InferenceOrgUsageBucketTable.id)).limit(2).for("update")
         // Older writers could create overlapping windows. Do not guess which
         // allowance owns this usage; retain it until that history is repaired.
@@ -354,7 +419,7 @@ const defaultWebhookDependencies: WebhookDependencies = {
         if (charge) continue // Includes admin-forgiven zero-amount identities.
         // Before provider facts existed, reset deleted identities. A legacy gap
         // cannot safely be distinguished from forgiveness, so never backfill it.
-        if (entry.provider_usage === null) return "deferred"
+        if (entry.provider_usage === null && entry.event_type !== "openrouter_audio") return "deferred"
         if (!Number.isSafeInteger(bucket.used_amount + entry.cost_amount)) throw new Error("Usage total exceeds safe integer range")
         await tx.insert(InferenceUsageLedgerBucketChargeTable).values({
           id: createDenTypeId("inferenceUsageLedgerBucketCharge"), ledger_entry_id: entry.id, bucket_id: bucket.id, amount: entry.cost_amount,
@@ -364,7 +429,6 @@ const defaultWebhookDependencies: WebhookDependencies = {
       }
       return "ingested"
     })
-  },
 }
 
 function reportUnknownPricedModel(input: { span: ParsedSpan; inferenceKey: WebhookInferenceKey; reporter: OpenRouterUsageWebhookReporter }) {
@@ -387,6 +451,7 @@ function reportUnknownPricedModel(input: { span: ParsedSpan; inferenceKey: Webho
 }
 
 async function ingestSpan(span: ParsedSpan, dependencies: WebhookDependencies) {
+  if (isVoiceModel(span.reportedModel) && span.generationId) span.externalEventId = span.generationId
   const inferenceKey = await dependencies.findInferenceKey(span.inferenceKeyId)
   if (!inferenceKey) {
     return "skipped"

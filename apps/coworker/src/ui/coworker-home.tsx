@@ -464,7 +464,7 @@ export function CoworkerHome({
         ) : null}
         <main className="min-h-0 flex-1 overflow-hidden">
           <ThreadsPanel
-            active={active}
+            active={active && !overlayPanel && (contextPanel.collapsed || contextView !== "settings")}
             runtime={runtime}
             session={session}
             coworker={coworker}

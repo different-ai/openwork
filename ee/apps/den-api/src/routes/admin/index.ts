@@ -1503,6 +1503,29 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         await tx.select({ id: InferenceOrgLimitPolicyTable.id }).from(InferenceOrgLimitPolicyTable)
           .where(inArray(InferenceOrgLimitPolicyTable.organization_id, memberships.map((member) => member.organizationId)))
           .orderBy(asc(InferenceOrgLimitPolicyTable.organization_id), asc(InferenceOrgLimitPolicyTable.window_type)).for("update")
+        // Reset also forgives outstanding voice holds in these current windows.
+        // Retain zero charge identities, not a fabricated zero provider cost:
+        // eventual actual receipts still update the ledger but cannot recharge.
+        const reservations = await tx.select({
+          entryId: InferenceUsageLedgerEntryTable.id,
+          bucketId: InferenceOrgLimitPolicyTable.current_bucket_id,
+        }).from(InferenceUsageLedgerEntryTable)
+          .innerJoin(MemberTable, and(
+            eq(InferenceUsageLedgerEntryTable.org_membership_id, MemberTable.id),
+            eq(InferenceUsageLedgerEntryTable.organization_id, MemberTable.organizationId),
+          ))
+          .innerJoin(InferenceOrgLimitPolicyTable, and(
+            eq(InferenceUsageLedgerEntryTable.organization_id, InferenceOrgLimitPolicyTable.organization_id),
+            sql`json_contains(${InferenceUsageLedgerEntryTable.provider_usage}, json_quote(${InferenceOrgLimitPolicyTable.current_bucket_id}), '$.reservation.bucketIds')`,
+          ))
+          .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt))).for("update")
+        for (const reservation of reservations) {
+          if (!reservation.bucketId) continue
+          await tx.insert(InferenceUsageLedgerBucketChargeTable).values({
+            id: createDenTypeId("inferenceUsageLedgerBucketCharge"), ledger_entry_id: reservation.entryId,
+            bucket_id: reservation.bucketId, amount: 0,
+          }).onDuplicateKeyUpdate({ set: { id: sql`${InferenceUsageLedgerBucketChargeTable.id}` } })
+        }
         const charges = await tx
           .select({
             id: InferenceUsageLedgerBucketChargeTable.id,

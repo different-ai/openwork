@@ -1,6 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import type { VoiceDependencies } from "../src/voice.js"
+import type { SettleUsageInput } from "../src/webhooks.js"
 import { assertManagedModelsAllowed, ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import type { InferenceHandledErrorReport, InferenceReporter, InferenceRequestReport } from "../src/inference-reporting.js"
 
@@ -10,6 +13,8 @@ process.env.DEN_DB_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1
 process.env.OPENROUTER_UPSTREAM_URL = "https://upstream.test/api/v1"
 
 const { registerProxyRoutes } = await import("../src/proxy.js")
+const { registerVoiceRoutes, validateSpeechAudio } = await import("../src/voice.js")
+const { VOICE_SPEECH_MODEL, VOICE_TRANSCRIPTION_MODEL } = await import("../src/model-catalog.js")
 
 type UpstreamRequest = {
   url: string
@@ -1001,4 +1006,313 @@ test("authenticates before rejecting unsupported routes", async () => {
   assert.equal(calls.ensureUsableBuckets, 0)
   assert.equal(calls.getOpenRouterProviderKey, 0)
   assert.equal(upstreamRequests.length, 0)
+})
+
+function mp3(frames = 3) {
+  const bytes = new Uint8Array(417 * frames)
+  for (let frame = 0; frame < frames; frame++) bytes.set([255, 251, 144, 100], frame * 417)
+  return bytes
+}
+
+function voiceServer(overrides: Partial<VoiceDependencies> = {}) {
+  const app = new Hono()
+  const key: NonNullable<Awaited<ReturnType<VoiceDependencies["findActiveInferenceKey"]>>> = {
+    id: createDenTypeId("inferenceKey"), organization_id: createDenTypeId("organization"), org_membership_id: createDenTypeId("member"),
+    status: "active", revoked_at: null, name: "Fixture", key_hash: "fixture-hash", key_prefix: "fixture", created_at: new Date(), updated_at: new Date(),
+  }
+  const calls: UpstreamRequest[] = []
+  const receipts: SettleUsageInput[] = []
+  const dependencies: VoiceDependencies = {
+    async findActiveInferenceKey() { return key },
+    async findInferenceKeyById() { return key },
+    async assertOrganizationManagedModelsAllowed() {},
+    async readVoiceMembership() { return "ready" },
+    async getOpenRouterProviderKey() { return {
+      id: createDenTypeId("inferenceOrgProviderKey"), organization_id: key.organization_id, provider: "openrouter", encrypted_api_key: "server-only-provider-key",
+      key_prefix: "fixture", external_key_hash: null, external_workspace_id: null, status: "active", revoked_at: null, created_at: new Date(), updated_at: new Date(),
+    } },
+    async ensureUsableBuckets() { return { ok: true, admittedAt: new Date(), bucketLimits: {}, bucketIds: {
+      five_hour: createDenTypeId("inferenceOrgUsageBucket"), weekly: createDenTypeId("inferenceOrgUsageBucket"), monthly: createDenTypeId("inferenceOrgUsageBucket"),
+    } } },
+    async pendingVoiceRequests() {
+      const latest = new Map(receipts.map((entry) => [entry.span.openworkRequestId, entry]))
+      return [...latest.values()].filter((entry) => entry.costAmount === null).map(({ inferenceKey, span }) => ({
+        id: createDenTypeId("inferenceUsageLedgerEntry"), organization_id: inferenceKey.organization_id,
+        org_membership_id: inferenceKey.org_membership_id, inference_key_id: inferenceKey.id,
+        external_job_id: span.openworkRequestId, external_event_id: span.externalEventId, cost_amount: 0, model_id: span.reportedModel,
+        provider_id: "openrouter", input_tokens: null, output_tokens: null, total_tokens: null, event_type: "openrouter_audio_pending",
+        provider_usage: null, occurred_at: span.occurredAt, created_at: span.occurredAt,
+      }))
+    },
+    async recordInferenceRequest(input) {
+      receipts.push(structuredClone(input))
+      return input.costAmount === null ? "deferred" : "ingested"
+    },
+    async fetch(url, init) {
+      calls.push({ url: requestUrl(url), method: init?.method, body: readInitBody(init?.body), headers: new Headers(init?.headers), redirect: init?.redirect })
+      if (requestUrl(url).includes("/generation?")) return Response.json({ data: { id: "gen-fixture", model: VOICE_SPEECH_MODEL, api_type: null, total_cost: 0.002 } })
+      if (requestUrl(url).endsWith("/speech")) return new Response(mp3(), { headers: { "content-type": "audio/mpeg", "x-generation-id": "gen-fixture" } })
+      return Response.json({ text: "A transcription", usage: { cost: 0.001 } }, { headers: { "x-generation-id": "gen-fixture" } })
+    },
+    timeoutMs: 1000,
+    ...overrides,
+  }
+  registerVoiceRoutes(app, dependencies)
+  const request = (path: string, body?: unknown, signal?: AbortSignal) => app.fetch(new Request(`http://inference.test/api/v1/${path}`, {
+    method: body === undefined ? "GET" : "POST", headers: authHeaders(body === undefined ? undefined : "application/json"),
+    body: body === undefined ? undefined : JSON.stringify(body), signal,
+  }))
+  return { app, request, calls, receipts, key, dependencies }
+}
+
+test("voice status and dispatch enforce membership, credentials, policy, readiness and quota", async () => {
+  for (const [override, status, access, code] of [
+    [{ readVoiceMembership: async () => "membership_required" }, 403, "membership_required", "voice_membership_required"],
+    [{ assertOrganizationManagedModelsAllowed: async () => { throw new Error("private database details") } }, 503, "unavailable", "voice_unavailable"],
+    [{ getOpenRouterProviderKey: async () => null }, 503, "unavailable", "voice_unavailable"],
+    [{ ensureUsableBuckets: async () => ({ ok: false, bucketIds: {}, bucketLimits: {}, limitedBy: "fixture", windowType: "monthly" }) }, 429, "unavailable", "voice_quota_exhausted"],
+  ] satisfies Array<[Partial<VoiceDependencies>, number, string, string]>) {
+    const server = voiceServer(override)
+    const read = await server.request("voice")
+    assert.equal(read.status, 200)
+    assert.equal((await read.json()).access, access)
+    const denied = await server.request("audio/speech", { input: "Hello" })
+    assert.equal(denied.status, status)
+    assert.equal(await readErrorCode(denied), code)
+    assert.equal(server.calls.length, 0)
+    assert.equal(server.receipts.length, 0)
+  }
+  const invalid = voiceServer({ findActiveInferenceKey: async () => null })
+  assert.equal((await invalid.request("voice")).status, 401)
+  const ready = voiceServer()
+  assert.deepEqual(await (await ready.request("voice")).json(), { access: "ready" })
+  assert.equal(ready.calls.length, 0)
+  assert.equal(ready.receipts.length, 0)
+})
+
+test("voice pins OpenRouter models, counts response cost once, and returns only text or validated MP3", async () => {
+  const stt = voiceServer()
+  const response = await stt.request("audio/transcriptions", { input_audio: { data: "AQID", format: "webm" } })
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), { text: "A transcription" })
+  assert.equal(stt.calls.length, 1)
+  assert.equal(stt.calls[0]!.url, "https://upstream.test/api/v1/audio/transcriptions")
+  const sent = parseJsonObject(stt.calls[0]!.body!)
+  assert.equal(sent.model, VOICE_TRANSCRIPTION_MODEL)
+  assert.equal(sent.user, stt.key.org_membership_id)
+  assert.equal(stt.calls[0]!.headers.get("authorization"), "Bearer server-only-provider-key")
+  assert.equal(stt.calls[0]!.redirect, "error")
+  assert.equal(stt.receipts[0]!.admitVoice, true)
+  assert.deepEqual(stt.receipts.map((entry) => entry.costAmount), [null, null, 100000])
+  assert.equal(new Set(stt.receipts.map((entry) => entry.span.openworkRequestId)).size, 1)
+  assert.equal(stt.receipts.at(-1)!.span.externalEventId, "gen-fixture")
+  assert.equal(JSON.stringify(stt.receipts).includes("A transcription"), false)
+
+  const tts = voiceServer()
+  const speech = await tts.request("audio/speech", { input: "Hello" })
+  assert.equal(speech.status, 200)
+  assert.equal(speech.headers.get("content-type"), "audio/mpeg")
+  assert.deepEqual(new Uint8Array(await speech.arrayBuffer()), mp3())
+  assert.deepEqual(parseJsonObject(tts.calls[0]!.body!).voice, "coral")
+  assert.equal(parseJsonObject(tts.calls[0]!.body!).model, VOICE_SPEECH_MODEL)
+  assert.equal(tts.calls[1]!.url, "https://upstream.test/api/v1/generation?id=gen-fixture")
+  assert.equal(tts.calls[1]!.redirect, "error")
+  assert.equal(tts.receipts.at(-1)!.costAmount, 200000)
+})
+
+test("voice rejects invalid or oversized input before admission, including streamed bodies without length", async () => {
+  const server = voiceServer()
+  for (const input of [{ input: " " }, { input: "x".repeat(601) }, { input: "Hi", model: "other" }, { input: "Hi", voice: "other" }]) {
+    assert.equal((await server.request("audio/speech", input)).status, 400)
+  }
+  for (const data of ["", "%%==", "AR==", "AQID\n", "data:audio/webm;base64,AQID"]) {
+    assert.equal((await server.request("audio/transcriptions", { input_audio: { data, format: "webm" } })).status, 400)
+  }
+  assert.equal((await server.request("audio/transcriptions", { input_audio: { data: "AQID", format: "flac" } })).status, 400)
+  let cancelled = false
+  const request = new Request("http://inference.test/api/v1/audio/transcriptions", {
+    method: "POST", headers: authHeaders("application/json"), duplex: "half",
+    body: new ReadableStream({ pull(controller) { controller.enqueue(new Uint8Array(1024 * 1024)) }, cancel() { cancelled = true } }),
+  })
+  assert.equal((await server.app.fetch(request)).status, 413)
+  assert.equal(cancelled, true)
+  assert.equal(server.receipts.length, 0)
+  assert.equal(server.calls.length, 0)
+})
+
+test("voice rechecks revocation at dispatch and settles a known undispatched request as zero", async () => {
+  let checks = 0
+  const server = voiceServer({ readVoiceMembership: async () => ++checks === 1 ? "ready" : "membership_required" })
+  const response = await server.request("audio/speech", { input: "Hello" })
+  assert.equal(response.status, 403)
+  assert.equal(await readErrorCode(response), "voice_membership_required")
+  assert.equal(server.calls.length, 0)
+  assert.equal(server.receipts.at(-1)!.costAmount, 0)
+
+  const revoked = voiceServer()
+  let providerReads = 0
+  let removed = false
+  const provider = revoked.dependencies.getOpenRouterProviderKey
+  revoked.dependencies.getOpenRouterProviderKey = async (org) => {
+    const result = await provider(org)
+    if (++providerReads === 2) removed = true
+    return result
+  }
+  revoked.dependencies.findActiveInferenceKey = async () => removed ? null : revoked.key
+  assert.equal((await revoked.request("audio/speech", { input: "No longer authorized" })).status, 401)
+  assert.equal(revoked.calls.length, 0)
+  assert.equal(revoked.receipts.at(-1)!.costAmount, 0)
+})
+
+test("missing or mismatched generation accounting retains an unknown receipt under its hold", async () => {
+  for (const payload of [null, { id: "different", model: VOICE_SPEECH_MODEL, api_type: "tts", total_cost: 1 }, { id: "gen-fixture", model: VOICE_SPEECH_MODEL, api_type: "tts", total_cost: null }, { id: "gen-fixture", model: VOICE_SPEECH_MODEL, api_type: "stt", total_cost: 1 }]) {
+    let generations = 0
+    const server = voiceServer({ fetch: async (url) => {
+      if (requestUrl(url).includes("/generation?")) return Response.json({ data: payload })
+      generations++
+      return new Response(mp3(), { headers: { "content-type": "audio/mpeg", "x-generation-id": "gen-fixture" } })
+    } })
+    const response = await server.request("audio/speech", { input: "Hello" })
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get("content-type"), "audio/mpeg")
+    assert.equal(server.receipts.at(-1)!.costAmount, null)
+    assert.equal(generations, 1)
+  }
+  const noPrice = voiceServer({ fetch: async () => Response.json({ text: "Not free", usage: { cost: null } }) })
+  assert.equal((await noPrice.request("audio/transcriptions", { input_audio: { data: "AQID", format: "wav" } })).status, 200)
+  assert.equal(noPrice.receipts.at(-1)!.costAmount, null)
+})
+
+test("voice cancellation finishes one admitted packet for accounting and the next status is ready", async () => {
+  for (const operation of ["speech", "transcriptions"]) for (const phase of ["headers", "body"]) {
+    const controller = new AbortController()
+    let generations = 0
+    let readComplete = false
+    const server = voiceServer({ fetch: async (url, init) => {
+      if (requestUrl(url).includes("/generation?")) {
+        assert.equal(readComplete, true)
+        assert.equal(init?.signal?.aborted, false)
+        return Response.json({ data: { id: "gen-fixture", model: VOICE_SPEECH_MODEL, api_type: null, total_cost: 0.003 } })
+      }
+      generations++
+      if (phase === "headers") controller.abort()
+      assert.equal(init?.signal?.aborted, false)
+      return new Response(new ReadableStream({ pull(output) {
+        if (phase === "body") controller.abort()
+        assert.equal(init?.signal?.aborted, false)
+        output.enqueue(operation === "speech" ? mp3() : new TextEncoder().encode(JSON.stringify({ text: "Never delivered", usage: { cost: 0.003 } })))
+        output.close()
+        readComplete = true
+      } }, { highWaterMark: 0 }), { headers: { "content-type": operation === "speech" ? "audio/mpeg" : "application/json", "x-generation-id": "gen-fixture" } })
+    } })
+    const response = await server.request(`audio/${operation}`, operation === "speech" ? { input: "Hello" } : { input_audio: { data: "AQID", format: "wav" } }, controller.signal)
+    assert.equal(response.status, 408)
+    assert.equal(await readErrorCode(response), "voice_request_cancelled")
+    assert.equal(readComplete, true)
+    assert.equal(server.receipts.at(-1)!.costAmount, 300000)
+    assert.deepEqual(await (await server.request("voice")).json(), { access: "ready" })
+    assert.equal(generations, 1)
+  }
+
+  const before = voiceServer()
+  const controller = new AbortController()
+  const record = before.dependencies.recordInferenceRequest
+  before.dependencies.recordInferenceRequest = async (receipt) => {
+    const result = await record(receipt)
+    if (receipt.admitVoice) controller.abort()
+    return result
+  }
+  assert.equal((await before.request("audio/speech", { input: "Do not send" }, controller.signal)).status, 408)
+  assert.equal(before.calls.length, 0)
+  assert.equal(before.receipts.at(-1)!.costAmount, 0)
+  assert.deepEqual(await (await before.request("voice")).json(), { access: "ready" })
+})
+
+test("known provider rejections settle zero without blocking retry; ambiguous failures stay pending", async () => {
+  for (const status of [400, 401, 402, 403, 404, 405, 413, 415, 422, 429, 408, 500]) {
+    const server = voiceServer()
+    const fetch = server.dependencies.fetch
+    server.dependencies.fetch = async () => Response.json({ error: "Rejected" }, { status })
+    assert.equal((await server.request("audio/speech", { input: "Hello" })).status, 503)
+    const unknown = status === 408 || status === 500
+    assert.equal(server.receipts.at(-1)!.costAmount, unknown ? null : 0)
+    server.dependencies.fetch = fetch
+    assert.equal((await (await server.request("voice")).json()).access, "ready")
+    if (status === 404) assert.equal((await server.request("audio/speech", { input: "Retry" })).status, 200)
+  }
+  const withGeneration = voiceServer({ fetch: async (url) => requestUrl(url).includes("/generation?")
+    ? Response.json({ data: { id: "gen-fixture", model: VOICE_SPEECH_MODEL, api_type: null, total_cost: 0.001 } })
+    : Response.json({ error: "Rejected after generation" }, { status: 400, headers: { "x-generation-id": "gen-fixture" } }),
+  })
+  assert.equal((await withGeneration.request("audio/speech", { input: "Hello" })).status, 503)
+  assert.equal(withGeneration.receipts.at(-1)!.costAmount, 100000)
+})
+
+test("speech rejects truncated and over-duration MP3 and still accounts for rejected output", async () => {
+  assert.doesNotThrow(() => validateSpeechAudio(mp3()))
+  for (const bytes of [new Uint8Array(), mp3().slice(0, -1), mp3(4600)]) assert.throws(() => validateSpeechAudio(bytes))
+  const server = voiceServer({ fetch: async (url) => requestUrl(url).includes("/generation?")
+    ? Response.json({ data: { id: "gen-fixture", model: VOICE_SPEECH_MODEL, api_type: "tts", total_cost: 0.002 } })
+    : new Response(mp3().slice(0, -1), { headers: { "content-type": "audio/mpeg", "x-generation-id": "gen-fixture" } }),
+  })
+  assert.equal((await server.request("audio/speech", { input: "Hello" })).status, 503)
+  assert.equal(server.receipts.at(-1)!.costAmount, 200000)
+})
+
+test("voice recovery never resynthesizes an old request or couples readiness to a lost receipt", async () => {
+  const server = voiceServer()
+  let pending = true
+  let id: string | null = "gen-fixture"
+  server.dependencies.pendingVoiceRequests = async () => pending ? [{
+    id: createDenTypeId("inferenceUsageLedgerEntry"), organization_id: server.key.organization_id,
+    org_membership_id: server.key.org_membership_id, inference_key_id: server.key.id,
+    external_job_id: "original-request", external_event_id: id, cost_amount: 0, model_id: VOICE_SPEECH_MODEL,
+    provider_id: "openrouter", input_tokens: null, output_tokens: null, total_tokens: null, event_type: "openrouter_audio_pending",
+    provider_usage: null, occurred_at: new Date("2026-09-08T12:00:00Z"), created_at: new Date(),
+  }] : []
+  const originalRecord = server.dependencies.recordInferenceRequest
+  server.dependencies.recordInferenceRequest = async (receipt) => {
+    const result = await originalRecord(receipt)
+    if (result === "ingested") pending = false
+    return result
+  }
+  assert.deepEqual(await (await server.request("voice")).json(), { access: "ready" })
+  assert.equal(server.calls.length, 0)
+  assert.equal((await server.request("audio/speech", { input: "New packet" })).status, 200)
+  assert.equal(server.calls.filter((call) => call.method === "POST").length, 1)
+  assert.ok(server.calls[0]!.url.includes("/generation?"))
+  assert.equal(server.receipts[0]!.span.openworkRequestId, "original-request")
+  assert.equal(server.receipts[0]!.span.occurredAt.toISOString(), "2026-09-08T12:00:00.000Z")
+  assert.equal(server.receipts[0]!.costAmount, 200000)
+  pending = true
+  id = null
+  assert.equal((await (await server.request("voice")).json()).access, "ready")
+  assert.equal((await server.request("audio/speech", { input: "Another new packet" })).status, 200)
+  assert.equal(server.calls.filter((call) => call.method === "POST").length, 2)
+  const refused = voiceServer({ recordInferenceRequest: async () => "skipped" })
+  assert.equal((await refused.request("audio/speech", { input: "No reservation capacity" })).status, 429)
+  assert.equal(refused.calls.length, 0)
+})
+
+test("speech response byte limits cancel a lengthless provider stream without losing its charge", async () => {
+  let cancelled = false
+  const server = voiceServer({ fetch: async (url) => requestUrl(url).includes("/generation?")
+    ? Response.json({ data: { id: "gen-fixture", model: VOICE_SPEECH_MODEL, api_type: "tts", total_cost: 0.002 } })
+    : new Response(new ReadableStream({ pull(controller) { controller.enqueue(new Uint8Array(1024 * 1024)) }, cancel() { cancelled = true } }),
+      { headers: { "content-type": "audio/mpeg", "x-generation-id": "gen-fixture" } }),
+  })
+  assert.equal((await server.request("audio/speech", { input: "Hello" })).status, 503)
+  assert.equal(cancelled, true)
+  assert.equal(server.receipts.at(-1)!.costAmount, 200000)
+})
+
+test("voice upload deadlines are bounded without admission or upstream work", async () => {
+  const server = voiceServer({ timeoutMs: 20 })
+  const request = new Request("http://inference.test/api/v1/audio/speech", {
+    method: "POST", headers: authHeaders("application/json"), duplex: "half", body: new ReadableStream(),
+  })
+  const response = await server.app.fetch(request)
+  assert.equal(response.status, 504)
+  assert.equal(server.receipts.length, 0)
+  assert.equal(server.calls.length, 0)
 })

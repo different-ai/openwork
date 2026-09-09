@@ -32,6 +32,9 @@ import { InteractionCard, InteractionCards, LETTERS, OptionRow, typingInField } 
 import { ActionMenu, Button, ErrorNote, PlusIcon } from "@/ui/kit";
 import { CollaborationReceipts, SendButton, SummaryLine } from "@/ui/threads";
 import { useAutoGrow } from "@/ui/use-auto-grow";
+import { appendVoiceDraft, groupVoiceReply } from "@/lib/voice";
+import { useVoice } from "@/ui/use-voice";
+import { VoicePanel, VoiceToggle } from "@/ui/voice";
 
 /** How long one coworker may take over one reply before the turn moves on. */
 export const REPLY_TIMEOUT_MS = 180_000;
@@ -225,6 +228,7 @@ export function GroupChat({
   const [live, setLive] = useState(false);
   const [liveTurn, setLiveTurn] = useState<CoworkerGroupTurn | null>(null);
   const [queue, setQueue] = useState<QueuedGroupMessage[]>([]);
+  const [voiceBaseline, setVoiceBaseline] = useState<{ clientMessageId: string; updatedAt: number; eventIds: string[] } | null>(null);
   const [receipts, setReceipts] = useState<CollaborationReceipt[]>([]);
   const [receiptsLoaded, setReceiptsLoaded] = useState(false);
   const [failedSend, setFailedSend] = useState<{ text: string; clientMessageId: string; error: string } | null>(null);
@@ -359,12 +363,16 @@ export function GroupChat({
   }
 
   async function resume(turn: CoworkerGroupTurn, only?: string): Promise<void> {
+    setVoiceBaseline({ clientMessageId: turn.clientMessageId, updatedAt: turn.updatedAt, eventIds: events.filter((event) => event.turnId === turn.id).map((event) => event.id) });
+    const voiceIntent = voice.expectReply(turn.clientMessageId);
     setError("");
     try {
       await coworkerBridge.groups.submit(group.id, { text: turn.prompt, clientMessageId: newId("resume"), turnId: turn.id, only, attempt: Date.now(), context: briefing?.context });
+      voice.rebindExpected(voiceIntent, turn.clientMessageId);
       submissionRevision.current += 1;
       setLive(true);
     } catch (cause) {
+      voice.abandonReply(voiceIntent);
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }
@@ -414,6 +422,8 @@ export function GroupChat({
 
   async function sendMessage(text: string, clientMessageId: string): Promise<void> {
     if (sendingRef.current) return;
+    setVoiceBaseline(null);
+    const voiceIntent = voice.expectReply(clientMessageId);
     sendingRef.current = true;
     setSending(true);
     setError("");
@@ -422,10 +432,12 @@ export function GroupChat({
       const focus = /^(?:\/focus\s+|focus on\s+)([\s\S]+)$/i.exec(text);
       if (focus?.[1] && onRememberFocus) await onRememberFocus(focus[1]);
       if (await startTurn(text, clientMessageId)) {
+        voice.rebindExpected(voiceIntent, clientMessageId);
         const mentions = parseMentions(text, members);
         for (const slug of mentions.everyone ? members.map((member) => member.slug) : mentions.slugs) acknowledgeCoworker(slug);
-      }
+      } else voice.abandonReply(voiceIntent);
     } catch (cause) {
+      voice.abandonReply(voiceIntent);
       setFailedSend({ text, clientMessageId, error: cause instanceof Error ? cause.message : String(cause) });
     } finally {
       sendingRef.current = false;
@@ -546,6 +558,16 @@ export function GroupChat({
   }
 
   const latestTurn = group.turns.at(-1) ?? null;
+  const voiceTurn = !live && !activityError && latestTurn && (!voiceBaseline || latestTurn.clientMessageId !== voiceBaseline.clientMessageId || latestTurn.updatedAt > voiceBaseline.updatedAt) ? latestTurn : null;
+  const spokenReply = groupVoiceReply(voiceTurn, events, nameFor, voiceBaseline?.eventIds);
+  const voice = useVoice({
+    active: active && !assignmentMode && !sharedDocument,
+    scope: `group:${group.id}`,
+    onTranscript: (text) => { setMessage((draft) => appendVoiceDraft(draft, text)); setMention(null); },
+    reply: spokenReply,
+    endedTurn: voiceTurn && (["failed", "stopped"].includes(voiceTurn.status) || (["succeeded", "partial"].includes(voiceTurn.status) && (!voiceTurn.speakers.some((speaker) => speaker.status === "succeeded") || (!spokenReply && groupVoiceReply(voiceTurn, events, nameFor))))) ? voiceTurn.clientMessageId : null,
+  });
+  function stopGroup() { voice.stop("Audio stopped. Your text conversation is kept."); void stopGroupRun(group.id); }
   const recoverable = !live && latestTurn && unfinishedSpeakers(latestTurn).length > 0 ? latestTurn : null;
   const unfinished = recoverable ? unfinishedSpeakers(recoverable) : [];
   const showContinue = recoverable && !(unfinished.length === 1 && unfinished[0]?.status === "failed");
@@ -581,7 +603,7 @@ export function GroupChat({
         </div>
         <div className="window-no-drag flex shrink-0 items-center gap-1" data-testid="conversation-header-actions">
           {documentsApi ? <Button variant="ghost" onClick={() => setSharedDocument({ groupId: group.id, id: "" })} data-testid="group-shared-documents">Shared documents</Button> : null}
-          {live ? <Button variant="ghost" onClick={() => void stopGroupRun(group.id)}>Stop all</Button> : null}
+          {live ? <Button variant="ghost" onClick={stopGroup}>Stop all</Button> : null}
           <ActionMenu
             label="Group chat options"
             items={[
@@ -745,6 +767,7 @@ export function GroupChat({
             </div>
           ))}
           <div className={`relative rounded-[24px] border bg-panel/60 p-3 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`} data-testid="coworker-input-surface">
+            {!assignmentMode ? <VoicePanel voice={voice} /> : null}
             {mention && mentionOptions.length > 0 && !assignmentMode ? (
               <ul
                 role="listbox"
@@ -774,7 +797,7 @@ export function GroupChat({
             ) : null}
             <div>
               <textarea
-                ref={composerRef}
+                ref={(element) => { composerRef.current = element; voice.fieldRef.current = element; }}
                 aria-label={assignmentMode ? "Assignment outcome" : `Message ${group.name}`}
                 data-testid="group-composer"
                 rows={1}
@@ -843,8 +866,9 @@ export function GroupChat({
                   <PlusIcon className={`size-4 transition-transform ${assignmentMode ? "rotate-45" : ""}`} />
                   <span className="sr-only">{assignmentMode ? "Back to chat" : "Create assignment"}</span>
                 </button>
+                {!assignmentMode ? <VoiceToggle voice={voice} disabled={!runtime.engineManaged} /> : null}
                 <span className="min-w-0 flex-1 text-[11px] text-mist/75">{assignmentMode ? "Create an assignment" : "@name to choose who answers"}</span>
-                {live && !assignmentMode ? <Button variant="ghost" className="mb-0.5 rounded-full px-3 py-1 text-xs" onClick={() => void stopGroupRun(group.id)}>Stop</Button> : null}
+                {live && !assignmentMode ? <Button variant="ghost" className="mb-0.5 rounded-full px-3 py-1 text-xs" onClick={stopGroup}>Stop</Button> : null}
                 {assignmentMode ? (
                   <SendButton label="Create assignment" busy={false} disabled={!assignment.trim() || !runtime.engineManaged || Boolean(pendingAssignment)} onClick={proposeAssignment} testId="group-send" />
                 ) : (

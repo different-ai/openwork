@@ -1,5 +1,5 @@
 import { and, asc, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
-import { InferenceOrgLimitPolicyTable, InferenceOrgUsageBucketTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
+import { InferenceOrgLimitPolicyTable, InferenceOrgUsageBucketTable, InferenceUsageLedgerEntryTable, InferenceUsageLedgerBucketChargeTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_TIER_LIMITS, INFERENCE_WINDOW_DURATIONS_MS } from "@openwork/types/den/inference"
 import type { InferenceTier, InferenceWindowType } from "@openwork/types/den/inference"
@@ -8,6 +8,19 @@ import { db } from "./db.js"
 export type BucketMetadata = Partial<Record<string, DenTypeId<"inferenceOrgUsageBucket">>>
 export type BucketLimitMetadata = Partial<Record<string, number>>
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
+
+// Caller holds the org policy locks. Current-bucket membership gives holds a
+// bounded lifetime without erasing unknown facts or guessing a zero settlement.
+export async function voiceReservationsForBucket(tx: Transaction, organizationId: DenTypeId<"organization">, bucketId: DenTypeId<"inferenceOrgUsageBucket">) {
+  return tx.select({ memberId: InferenceUsageLedgerEntryTable.org_membership_id, usage: InferenceUsageLedgerEntryTable.provider_usage })
+    .from(InferenceUsageLedgerEntryTable).where(and(
+      eq(InferenceUsageLedgerEntryTable.organization_id, organizationId),
+      sql`json_contains(${InferenceUsageLedgerEntryTable.provider_usage}, json_quote(${bucketId}), '$.reservation.bucketIds')`,
+      sql`not exists (select 1 from ${InferenceUsageLedgerBucketChargeTable}
+        where ${InferenceUsageLedgerBucketChargeTable.ledger_entry_id} = ${InferenceUsageLedgerEntryTable.id}
+        and ${InferenceUsageLedgerBucketChargeTable.bucket_id} = ${bucketId})`,
+    )).for("update")
+}
 
 function addWindow(start: Date, windowType: InferenceWindowType) {
   return new Date(start.getTime() + INFERENCE_WINDOW_DURATIONS_MS[windowType])
@@ -111,7 +124,8 @@ export async function ensureUsableBuckets(organizationId: string) {
       if (!bucket) {
         continue
       }
-      const remaining = effectiveLimit - bucket.used_amount
+      const holds = await voiceReservationsForBucket(tx, orgId, bucket.id)
+      const remaining = effectiveLimit - bucket.used_amount - holds.reduce((sum, hold) => sum + hold.usage!.reservation!.amount, 0)
       if (remaining <= 0) {
         return {
           ok: false as const,
