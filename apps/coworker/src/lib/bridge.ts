@@ -440,6 +440,13 @@ async function invoke<T>(command: string, payload?: unknown): Promise<T> {
 }
 
 export const coworkerBridge = {
+  voice: {
+    status: () => invoke<{ access: "ready" | "sign_in" | "membership_required" | "unavailable"; message?: string }>("voice.status"),
+    transcribe: (input: { requestId: string; data: string; format: "webm" | "wav" | "mp3" | "m4a" | "ogg" }) => invoke<{ text: string }>("voice.transcribe", input),
+    speech: (input: { requestId: string; text: string }) => invoke<{ data: string; mimeType: "audio/mpeg" }>("voice.speech", input),
+    cancel: (requestId: string) => invoke<void>("voice.cancel", { requestId }),
+    microphone: () => invoke<{ granted: boolean }>("voice.microphone"),
+  },
   browser: {
     bind: (slug: string, threadId: string, viewId: string) => invoke<BrowserSnapshot>("browser.bind", { slug, threadId, viewId }),
     detach: (viewId: string) => invoke<void>("browser.detach", { viewId }),

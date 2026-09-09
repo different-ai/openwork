@@ -17,6 +17,7 @@ import { registerOrgInvitationRoutes } from "./invitations.js"
 import { registerGoogleWorkspaceRoutes } from "./google-workspace.js"
 import { registerOrgInstallLinkRoutes } from "./install-links.js"
 import { registerOrgInferenceRoutes } from "./inference.js"
+import { registerOrgVoiceRoutes } from "./voice.js"
 import { registerModelsAnalyticsRoutes } from "./models-analytics.js"
 import { registerModelsAnalyticsExportRoutes } from "../../models-analytics-export.js"
 import { registerOrgLlmProviderRoutes } from "./llm-providers.js"
@@ -69,6 +70,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgDesktopPolicyRoutes(app)
   registerOrgEgressDiagnosticRoutes(app)
   registerOrgInferenceRoutes(app)
+  registerOrgVoiceRoutes(app)
   registerModelsAnalyticsRoutes(app)
   registerModelsAnalyticsExportRoutes(app)
   registerOrgScimRoutes(app)

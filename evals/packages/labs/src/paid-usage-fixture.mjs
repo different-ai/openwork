@@ -29,6 +29,7 @@ export async function paidUsageFixture() {
       return { migrations: await select("SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at"), ledger: await select("SELECT id, external_job_id, occurred_at, cost_amount FROM inference_usage_ledger_entries ORDER BY id") };
     }
     if (action === "exhaust") await db.execute("UPDATE inference_org_usage_buckets SET limit_amount = used_amount WHERE organization_id = ?", [orgId]);
+    if (action === "headroom") await db.execute("UPDATE inference_org_usage_buckets b JOIN inference_org_limit_policies p ON p.current_bucket_id = b.id SET b.used_amount = b.limit_amount - ? WHERE p.organization_id = ?", [input.amount, orgId]);
     if (action === "partial") {
       const [charge] = await select("SELECT c.* FROM inference_usage_ledger_bucket_charges c JOIN inference_usage_ledger_entries e ON e.id = c.ledger_entry_id WHERE e.external_job_id = ? ORDER BY c.bucket_id LIMIT 1", [input.requestId]);
       if (!charge) throw new Error("Missing repair precondition");
@@ -43,7 +44,7 @@ export async function paidUsageFixture() {
     }
     if (action === "release-provider" && held) { await lock.query("UNLOCK TABLES"); held = false; }
     if (action === "boundary") {
-      await db.execute("UPDATE inference_org_usage_buckets b JOIN inference_org_limit_policies p ON p.current_bucket_id = b.id SET b.window_end_at = ? WHERE p.organization_id = ?", [new Date(input.at), orgId]);
+      await db.execute("UPDATE inference_org_usage_buckets b JOIN inference_org_limit_policies p ON p.current_bucket_id = b.id SET b.window_end_at = ? WHERE p.organization_id = ? AND (? IS NULL OR p.window_type = ?)", [new Date(input.at), orgId, input.window ?? null, input.window ?? null]);
     }
     if (action === "ambiguous") {
       const { createDenTypeId } = await import("../../../../ee/packages/utils/dist/typeid.js");

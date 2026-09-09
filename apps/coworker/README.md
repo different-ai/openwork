@@ -415,7 +415,103 @@ sentence or current revision passed.
 | The facilitator's model | `facilitatorModels` in `lib/facilitator.ts` | The members' models, the catalog, the group's setting | The model the person set for the group, else the coworkers' models (account first, then most used), else the recommendation; the next such model is the second try; the model default effort | The scorer | Group details › Advanced | "Automatic" in the setting | `facilitator.test.ts` |
 | A Cloud assignment's model | `resolveCloudModel` in `lib/cloud-responsibilities.ts` | The coworker's model, the organization's providers | The coworker's model when the organization authorizes it, else a mapped equivalent, else the free starter | The free starter | The coworker's model | The assignment names its model | `cloud-responsibilities.test.ts` |
 
-**Workers**
+**Voice**
+
+| Choice | Where | Rule | Override / explanation | Coverage / verification |
+|---|---|---|---|---|
+| Voice access | Composer; `ui/use-voice.ts` | Off on launch; enable only after native `voice.status` confirms Models membership and availability. Never infer membership from the selected answer model | Voice toggle; signed-out and unpaid members see inline membership discovery; unavailable is not an upsell | Focused `conversation.test.ts`; native journey proof remains separate |
+| Dictation and spoken preview | `lib/voice.ts`, `ui/voice.tsx` | Audio-only recording, then editable text; only a final visible reply to a message sent while voice is enabled can speak. No history playback, reasoning, tool payloads, or new answer engine | Explicit Record / Finish / Cancel and normal Send; Stop audio never stops the coworker's work | Focused selection, draft, format and packet-limit tests; native lifecycle proof required |
+
+### Voice mode
+
+Voice lives inside private-discussion and group-chat composers, not model
+settings or read-only Worker threads. Click **Voice mode** to check access.
+It requires an active **OpenWork Models** membership. Signed-out or unpaid
+people see *Voice mode, with OpenWork Models*, with a route to the existing
+global membership screen and the normal sign-in flow. No checkout opens
+automatically. A temporarily unavailable service is named separately from
+missing membership. The coworker's answer model, tools and session stay unchanged.
+
+- Enabling does not request microphone permission. Click the microphone to
+  record and click again to finish, or hold Space while the voice panel has
+  focus and release to finish. Space in text fields, buttons, menus and dialogs
+  (or on the page body) keeps its normal behavior. Escape discards recording or
+  stops speech. A late access check focuses the panel only if the original
+  toggle still has focus; it never takes focus away from a draft being typed.
+- On the welcome composer, confirmed membership first prepares a real empty
+  discussion. Its current draft and one account-scoped activation request move
+  into that thread, where access is checked again. No microphone permission or
+  audio is retained across this handoff. Record, review and Send then all happen
+  in the same thread, so the first dictated message can receive a spoken reply.
+  Typing or changing focus during preparation is preserved; cancelling or leaving
+  the view cannot activate a late-created discussion.
+- Recordings are audio only, with echo cancellation and noise suppression.
+  A real microphone-level trace and elapsed timer show capture. The limit is
+  60 seconds / 3 MiB; reaching the time limit finishes for review, exceeding
+  the byte limit discards the recording. WebM/Opus is preferred, with supported
+  MP4/M4A recording as the fallback. Unsupported recording stays text-only.
+- This is **record-then-transcribe, not live STT**. Transcription appends to the
+  current draft without erasing typed words and returns focus to that draft.
+  Review and press the normal Send button explicitly. Recording never sends
+  a message or executes work automatically.
+- Newly completed visible replies can be read aloud. Private playback requires
+  an idle, successful turn with the exact user-message parent, excluding
+  intermediate tool messages. Group playback waits for the persisted successful
+  replies of the person's exact submitted turn; briefings and previous history
+  never start playback. Private **Next** replies remain text-only because the
+  native queue does not expose an exact queued-ID-to-message-ID handoff here.
+- Explicit **Retry / Continue** arms playback on that gesture. Native admission
+  may give a continuation a new message ID; voice follows it only when the exact
+  original ID and voice generation still match. Turning voice off, changing
+  accounts, recording again or sending another message invalidates that handoff.
+  Group Continue reads only new successful replies, not earlier replies from
+  the same turn. Automatic activity and recovered history do not opt into voice.
+- Spoken previews use OpenRouter Mini STT and Mini TTS through the native bridge,
+  with no direct OpenAI fallback or separate answer generation. Speech is
+  requested and played sequentially, one packet at a time, at most 450 characters
+  per packet and 2,400 characters / 12 packets per reply. Code blocks and URLs
+  are not read out. Longer replies show *Read the rest in the transcript*.
+- **Sentence captions** advance when each audio packet begins. Long sentences
+  may be split at the packet limit. They are not word timestamps, live captions
+  from STT, or forced alignment. The existing streamed transcript is unchanged;
+  captions and microphone levels do not create streaming screen-reader chatter.
+- Voice activation is ephemeral to the current discussion view. Other new
+  discussions start with voice off; only the explicit welcome preparation above
+  transfers the pending activation request.
+  Leaving the view, opening settings, changing accounts (including token or
+  organization), or disabling voice releases capture and playback. A hidden or
+  unfocused window cancels current media and forgets its pending spoken reply;
+  returning never replays it. Record or send again to continue.
+- A new recording or user send stops previous audio. **Stop audio** stops local
+  playback and suppresses late results, never agent work. One already-dispatched
+  bounded packet may finish server-side solely to settle usage; it is never
+  regenerated. Streams, audio contexts, sources, timers and
+  listeners are cleaned up; cancelled or late permission/transcription results
+  cannot insert text into another discussion. An exhausted voice allowance is
+  named separately from missing membership. Voice errors keep typing usable.
+
+Voice admission reserves a small estimated amount against the shared Models
+allowance while a request is outstanding. Concurrent members do not wait behind
+one organization's unfinished audio request. Actual provider receipts replace
+the reservation through the existing usage ledger; estimates are never billed
+as actual usage and are not hard provider spend ceilings.
+
+If a process or provider response is lost, the receipt stays explicitly unpriced.
+Its reservation applies only to its original allowance windows, not future ones;
+receipt reconciliation, authorized usage reset, or those windows ending can
+restore capacity without regenerating audio. Outstanding reservations are bounded
+to four per member and 32 per organization, subject to the available allowance.
+Late or duplicate receipts cannot recharge usage that was already settled or
+intentionally forgiven. Provider interoperability and acoustic quality still
+require a real-provider check; fixture-based native playback does not prove them.
+
+Privacy disclosure shown before recording: **AI-generated voice. Audio and reply
+text are processed through OpenRouter.** Recording audio is held in memory for
+transcription, not saved as an attachment by this UI. Transcribed drafts and sent
+text use the existing draft and discussion storage. This does not promise a
+provider retention policy; the existing Models service terms still apply.
+
+### Workers
 
 | Choice | Where | Inputs | Rule | Fallback | Override | Explained to the person? | Coverage / verification |
 |---|---|---|---|---|---|---|---|

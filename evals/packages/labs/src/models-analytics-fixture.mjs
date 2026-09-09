@@ -75,6 +75,9 @@ async function serveWitness() {
     let dpa = null;
     const usageFixture = process.env.MODELS_USAGE_FIXTURE === "1"
         ? await (await import("./paid-usage-fixture.mjs")).paidUsageFixture() : null;
+    let voice = { hold: false, cost: null, receipt: true, reject: false };
+    const voiceWaiters = new Set();
+    const generations = new Map();
     if (process.env.MODELS_DPA_FIXTURE === "1") {
         const url = new URL(process.env.DATABASE_URL);
         if (url.hostname !== "127.0.0.1" || !/^\/(openwork_eval_|openwork_den$)/.test(url.pathname)) throw new Error("DPA witness requires an isolated testkit database");
@@ -157,6 +160,33 @@ async function serveWitness() {
                 res.setHeader("content-type", "application/json");
                 res.end(JSON.stringify(await usageFixture(req.url.slice("/fixture/usage/".length), text ? JSON.parse(text) : {})));
             } catch (error) { res.writeHead(500).end(JSON.stringify({ error: error.message })); }
+            return;
+        }
+        if (usageFixture && req.url === "/fixture/voice") {
+            voice = { ...voice, ...JSON.parse(text) };
+            if (!voice.hold) { for (const release of voiceWaiters) release(); voiceWaiters.clear(); }
+            res.setHeader("content-type", "application/json"); res.end("{}"); return;
+        }
+        if (usageFixture && req.url?.startsWith("/generation?")) {
+            const id = new URL(req.url, "http://fixture.test").searchParams.get("id");
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify({ data: { id, model: generations.get(id), api_type: null, total_cost: voice.cost } })); return;
+        }
+        if (usageFixture && ["/audio/transcriptions", "/audio/speech"].includes(req.url)) {
+            const payload = JSON.parse(text);
+            const id = `gen-${randomUUID()}`;
+            calls.push({ model: payload.model, trace: payload.trace, generationId: id, route: req.url,
+                authenticated: req.headers.authorization === `Bearer ${fixtureUpstreamKey}` });
+            generations.set(id, payload.model);
+            if (voice.hold) await new Promise((resolve) => voiceWaiters.add(resolve));
+            if (voice.reject) { res.writeHead(400).end("{}"); return; }
+            if (voice.receipt) res.setHeader("x-generation-id", id);
+            if (req.url === "/audio/speech") {
+                const audio = Buffer.alloc(417); audio.set([255, 251, 144, 100]);
+                res.writeHead(200, { "content-type": "audio/mpeg" }).end(audio);
+            } else {
+                res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ text: "Fixture transcription", usage: { cost: voice.cost } }));
+            }
             return;
         }
         if (dpa && req.url?.startsWith("/stripe/")) {

@@ -245,3 +245,17 @@ test("rejects malformed numeric usage consistently across resource, scope and sp
     }
   }
 })
+
+test("audio webhook reconciliation uses the generation identity and shared usage conversion", async () => {
+  for (const model of ["openai/gpt-4o-mini-transcribe", "openai/gpt-4o-mini-tts-2025-12-15"]) {
+    const { app, reports, insertedEntries, usagePayload } = createWebhookTestServer()
+    const payload = usagePayload({ requestId: "audio-request", eventId: "delivery-event", generationId: "audio-generation", requestModel: model, responseModel: model })
+    const attributes = payload.resourceSpans[0]!.scopeSpans[0]!.spans[0]!.attributes
+    attributes.splice(attributes.findIndex((entry) => entry.key === "gen_ai.usage.input_cost"), 1, attribute("gen_ai.usage.input_cost", 0.001))
+    assert.equal((await app.fetch(webhookRequest(payload))).status, 200)
+    assert.equal(insertedEntries[0]!.costAmount, 100000)
+    assert.equal(insertedEntries[0]!.externalEventId, "audio-generation")
+    assert.equal(insertedEntries[0]!.openworkRequestId, "audio-request")
+    assert.equal(reports.length, 0)
+  }
+})

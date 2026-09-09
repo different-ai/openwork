@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { clickButton, coworker, evalIn, fill, needs, test, waitFor, waitForText } from "@openwork/testkit";
+import { browserScript, clickButton, coworker, evalIn, eventually, fill, needs, test, waitFor, waitForText } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
-import { buildStandardAppHtml } from "../worlds/coworker.ts";
+import { buildStandardAppHtml, clickCoworkerControl, isolatedAccountCoworker, observeCoworkerVoice, typeCoworkerSpace, voiceMp3, type CoworkerTestBridge } from "../worlds/coworker.ts";
 
 /**
  * Continue with OpenWork, end to end, without a real account: a deterministic
@@ -28,6 +28,10 @@ const PROVIDER_API_KEY = "eval-org-provider-key-0001";
 const MODEL_ID = "eval-org-model";
 const MODEL_NAME = "Eval Org Model";
 const REPLY = "ACCOUNT MODEL READY";
+const VOICE_SENTENCES = ["The next step is ready.", "Review the draft before sending."];
+const VOICE_REPLY = VOICE_SENTENCES.join(" ");
+const VOICE_REASONING = "Private reasoning must never be spoken.";
+const TRANSCRIPT = "Add the recording to my draft.";
 const MCP_TOKEN = "eval-connect-gateway-token-0001";
 const APP_HOST_TOKEN = "eval-connect-app-host-token-0001";
 const CONNECTION_ID = "conn_eval_skills";
@@ -46,7 +50,7 @@ const RELEASE_SKILL_ID = "cob_eval_release";
  * skill behind them, and one standard MCP App so the coworker's Apps & tools
  * surface has something real to render.
  */
-const skillAppHtml = await buildStandardAppHtml({
+const skillAppSource = {
   reactSource: `export default function SkillStudio({ data }) {
     return <main><p className="eyebrow">SKILL STUDIO</p><h2>{data.title}</h2><p>{data.status}</p></main>
   }`,
@@ -58,7 +62,7 @@ const skillAppHtml = await buildStandardAppHtml({
   },
   title: "Skill studio",
   description: "Deterministic OpenWork Connect App fixture.",
-});
+};
 
 type GatewayCall = { endpoint: "gateway" | "connection"; method: string; tool: string; authorization: string };
 
@@ -226,7 +230,7 @@ function gatewayResponse(message: Record<string, unknown>): Record<string, unkno
 }
 
 /** One organization connection behind the gateway: a standard MCP server with a single App. */
-function connectionResponse(message: Record<string, unknown>): Record<string, unknown> | null {
+function connectionResponse(message: Record<string, unknown>, skillAppHtml: string): Record<string, unknown> | null {
   const id = message.id;
   const params = isRecord(message.params) ? message.params : {};
   if (message.method === "initialize") {
@@ -299,12 +303,6 @@ function gatewayOrigin(): string {
 
 type Recorded = { method: string; path: string; authorization: string; org: string };
 
-function json(value: unknown): string {
-  const serialized = JSON.stringify(value);
-  if (serialized === undefined) throw new Error("Cannot serialize an undefined browser value.");
-  return serialized.replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -359,7 +357,10 @@ function lastUserText(body: unknown): string {
 }
 
 async function invokeCoworker(app: Awaited<ReturnType<typeof coworker>>, command: string, payload: unknown): Promise<unknown> {
-  return evalIn(app, `window.__COWORKER__.invoke(${json(command)}, ${json(payload)})`, { awaitPromise: true, timeoutMs: 120_000 });
+  return evalIn(app, browserScript((command, payload) => {
+    const bridge = Reflect.get(window, "__COWORKER__") as CoworkerTestBridge;
+    return bridge.invoke(command, payload);
+  }, [command, payload]), { awaitPromise: true, timeoutMs: 120_000 });
 }
 
 function resultRecord(response: unknown): Record<string, unknown> {
@@ -370,36 +371,36 @@ function resultRecord(response: unknown): Record<string, unknown> {
 }
 
 async function clickButtonContaining(app: Awaited<ReturnType<typeof coworker>>, text: string): Promise<void> {
-  await waitFor(app, `(() => {
+  await waitFor(app, browserScript((text) => {
     const button = [...document.querySelectorAll("button")]
-      .find((candidate) => (candidate.textContent ?? "").includes(${json(text)}) && !candidate.disabled);
+      .find((candidate) => (candidate.textContent ?? "").includes(text) && !candidate.disabled);
     if (!button) return false;
     button.scrollIntoView({ block: "center" });
     button.click();
     return true;
-  })()`, { timeoutMs: 120_000, label: `button containing ${json(text)}` });
+  }, [text]), { timeoutMs: 120_000, label: `button containing ${JSON.stringify(text)}` });
 }
 
 async function clickTestId(app: Awaited<ReturnType<typeof coworker>>, testId: string): Promise<void> {
-  await waitFor(app, `(() => {
-    const element = document.querySelector(${json(`[data-testid="${testId}"]`)});
+  await waitFor(app, browserScript((selector) => {
+    const element = document.querySelector(selector);
     if (!(element instanceof HTMLElement)) return false;
     if (element instanceof HTMLButtonElement && element.disabled) return false;
     element.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: `click ${testId}` });
+  }, [`[data-testid="${testId}"]`]), { timeoutMs: 30_000, label: `click ${testId}` });
 }
 
 /** Walk the panel back to the root of its view, then to Activity. */
 async function backToActivity(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const panel = document.querySelector('[data-testid="context-panel"]');
     if (!(panel instanceof HTMLElement) || panel.dataset.collapsed === "true") return false;
     if (panel.dataset.view === "overview") return true;
     const back = document.querySelector('[data-testid="panel-back"]') ?? document.querySelector('button[aria-label="Back to activity"]');
     if (back instanceof HTMLElement) back.click();
     return false;
-  })()`, { timeoutMs: 30_000, label: "back to the Activity sidebar" });
+  }, { timeoutMs: 30_000, label: "back to the Activity sidebar" });
 }
 
 /** The Apps & tools root is the first level of Coworker settings. */
@@ -410,28 +411,31 @@ const APPS_TOOLS_ROUTE = "settings/apps-tools";
  * view (Escape folds it), on the Coworker settings rows (their first row opens it), or deeper inside.
  */
 async function openAppsAndTools(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
-  await waitFor(app, `(() => {
+  await waitFor(app, browserScript((appsToolsRoute) => {
     const panel = document.querySelector('[data-testid="context-panel"]');
     if (!(panel instanceof HTMLElement)) return false;
     const route = document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") ?? "";
     if (panel.dataset.collapsed === "false" && panel.dataset.view === "settings") {
       // The view remembers its last level for the session; the journeys start each visit at the root.
-      if (route === ${json(APPS_TOOLS_ROUTE)}) return true;
-      if (panel.dataset.depth === "0") document.querySelector('[data-testid="settings-row-apps-tools"]')?.click();
-      else document.querySelector('[data-testid="panel-back"]')?.click();
+      if (route === appsToolsRoute) return true;
+      if (panel.dataset.depth === "0") document.querySelector<HTMLElement>('[data-testid="settings-row-apps-tools"]')?.click();
+      else document.querySelector<HTMLElement>('[data-testid="panel-back"]')?.click();
       return false;
     }
     if (panel.dataset.collapsed === "true") {
-      document.querySelector('[data-testid="context-rail-settings"]')?.click();
+      document.querySelector<HTMLElement>('[data-testid="context-rail-settings"]')?.click();
       return false;
     }
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     return false;
-  })()`, { timeoutMs: 60_000, label: "Apps & tools root" });
+  }, [APPS_TOOLS_ROUTE]), { timeoutMs: 60_000, label: "Apps & tools root" });
 }
 
-test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
-  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
+test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, skip }) => {
+  // These loopback witnesses cannot serve a remote desktop, and a dev-head fallback is not package proof.
+  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"], placement: "local", env: ["OPENWORK_EVAL_ELECTRON_BINARY"] });
+  const skillAppHtml = await buildStandardAppHtml(skillAppSource);
+  let capturePrerequisite: string | null = null;
   let assignedTemplates: Array<Record<string, unknown>> = [];
   let coworkerTeamsEnabled = false;
 
@@ -439,6 +443,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   const completionAuthorizations: string[] = [];
   let connectedInstructionsSeen = false;
   let gatewaySearchUnavailable = false;
+  const voiceCompletion: { finish?: () => void } = {};
   const model = createServer((request, response) => {
     const url = request.url ?? "";
     if (request.method === "GET" && url.startsWith("/v1/models")) {
@@ -460,16 +465,22 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
             && message.content.includes("person's authorization and app approvals; a connection grants neither."));
         }
         const prompt = lastUserText(body);
-        const reply = prompt.includes("SECOND") ? `SECOND ${REPLY}` : REPLY;
+        const voiceTurn = prompt.includes("voice reply check");
+        const reply = voiceTurn ? VOICE_REPLY : prompt.includes("SECOND") ? `SECOND ${REPLY}` : REPLY;
         const chunks = [
           { id: "chatcmpl-eval", object: "chat.completion.chunk", model: MODEL_ID, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
           { id: "chatcmpl-eval", object: "chat.completion.chunk", model: MODEL_ID, choices: [{ index: 0, delta: { content: reply }, finish_reason: null }] },
           { id: "chatcmpl-eval", object: "chat.completion.chunk", model: MODEL_ID, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
         ];
         response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
-        for (const chunk of chunks) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
-        response.write("data: [DONE]\n\n");
-        response.end();
+        if (voiceTurn) response.write(`data: ${JSON.stringify({ ...chunks[0], choices: [{ index: 0, delta: { reasoning_content: VOICE_REASONING }, finish_reason: null }] })}\n\n`);
+        for (const chunk of chunks.slice(0, -1)) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        const finish = () => {
+          response.write(`data: ${JSON.stringify(chunks.at(-1))}\n\n`);
+          response.end("data: [DONE]\n\n");
+        };
+        if (voiceTurn) voiceCompletion.finish = finish;
+        else finish();
       });
       return;
     }
@@ -481,6 +492,9 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // the Connect token mint, and the Connect gateway.
   const denRequests: Recorded[] = [];
   const gatewayCalls: GatewayCall[] = [];
+  const transcriptions: unknown[] = [];
+  const speeches: Array<{ body: unknown; cancelled: boolean }> = [];
+  let holdSpeech = true;
   let mintedTokens = 0;
   let denBaseUrl = "";
   const providerRecord = {
@@ -559,7 +573,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
           });
           const reply = isGateway && gatewaySearchUnavailable && candidate.method === "tools/call" && params.name === "search_capabilities"
             ? { jsonrpc: "2.0", id: candidate.id, result: { isError: true, content: [{ type: "text", text: "Catalog temporarily unavailable" }] } }
-            : isGateway ? gatewayResponse(candidate) : connectionResponse(candidate);
+            : isGateway ? gatewayResponse(candidate) : connectionResponse(candidate, skillAppHtml);
           if (reply) replies.push(reply);
         }
         if (replies.length === 0) {
@@ -574,6 +588,40 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     if (authorization !== `Bearer ${SESSION_TOKEN}`) {
       respondJson(response, 401, { error: "unauthorized", message: "Missing or invalid session token." });
       return;
+    }
+    if (path === "/v1/voice" || path.startsWith("/v1/voice/")) {
+      if (org !== ORG_ID) { respondJson(response, 403, { error: "wrong_organization" }); return; }
+      if (request.method === "GET" && path === "/v1/voice") {
+        respondJson(response, 200, { access: membershipResponse === "active" ? "ready" : "membership_required" });
+        return;
+      }
+      if (request.method === "POST" && membershipResponse !== "active") {
+        respondJson(response, 403, { error: "voice_membership_required" });
+        return;
+      }
+      if (request.method === "POST" && request.headers["content-type"] !== "application/json") {
+        respondJson(response, 400, { error: "voice_invalid_request" });
+        return;
+      }
+      if (request.method === "POST" && path === "/v1/voice/transcriptions") {
+        void readBody(request).then((raw) => {
+          transcriptions.push(JSON.parse(raw));
+          respondJson(response, 200, { text: TRANSCRIPT });
+        });
+        return;
+      }
+      if (request.method === "POST" && path === "/v1/voice/speech") {
+        void readBody(request).then((raw) => {
+          const speech: { body: unknown; cancelled: boolean } = { body: JSON.parse(raw), cancelled: false };
+          speeches.push(speech);
+          response.on("close", () => { speech.cancelled = !response.writableEnded; });
+          // Hold the real native transport open so Stop audio must abort it, not merely hide UI.
+          response.writeHead(200, { "content-type": "audio/mpeg", ...CORS_HEADERS });
+          response.flushHeaders();
+          if (!holdSpeech) response.end(voiceMp3);
+        });
+        return;
+      }
     }
     if (request.method === "POST" && path === "/v1/mcp/token") {
       mintedTokens += 1;
@@ -590,6 +638,12 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     }
     if (request.method === "GET" && path === "/v1/me/orgs") {
       respondJson(response, 200, { orgs: [{ id: ORG_ID, name: ORG_NAME }], activeOrgId: ORG_ID });
+      return;
+    }
+    if (request.method === "GET" && path === "/v1/me/desktop-config") {
+      if (org !== ORG_ID) { respondJson(response, 403, { error: "wrong_organization" }); return; }
+      // An organization with no additional restrictions; native media consent is independent.
+      respondJson(response, 200, {});
       return;
     }
     if (request.method === "GET" && path === "/v1/inference") {
@@ -627,21 +681,22 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   denBaseUrl = await listen(den);
   gatewayBaseUrl = denBaseUrl;
 
-  await using app = await coworker({ name: "openwork-account", env: { COWORKER_DEN_BASE_URL: denBaseUrl } });
+  await using app = await isolatedAccountCoworker("openwork-account", denBaseUrl, true);
+  await using capture = await observeCoworkerVoice(app);
 
   // --- First run: choose the account path and complete the handoff by pasting the link Den would show.
-  await waitFor(app, `(document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker")`, {
+  await waitFor(app, () => (document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker"), {
     timeoutMs: 120_000,
     label: "Open Coworker welcome screen",
   });
-  await waitFor(app, `(() => {
-    const choice = document.querySelector('[data-testid="onboarding-cloud-choice"]');
+  await waitFor(app, () => {
+    const choice = document.querySelector<HTMLElement>('[data-testid="onboarding-cloud-choice"]');
     if (!choice) return false;
     choice.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: "Continue with OpenWork choice" });
+  }, { timeoutMs: 30_000, label: "Continue with OpenWork choice" });
   await waitForText(app, "Continue with OpenWork", { timeoutMs: 30_000 });
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="sign-in-gate"]'))`, { timeoutMs: 30_000, label: "sign-in gate" });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="sign-in-gate"]')), { timeoutMs: 30_000, label: "sign-in gate" });
 
   await fill(
     app,
@@ -652,12 +707,12 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
 
   // The exchange happened against the mock Den and the account moved on to the team steps; this
   // journey takes the blank Add screen instead of a proposed team.
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const own = document.querySelector('[data-testid="onboarding-intents-own"]');
     if (!(own instanceof HTMLElement)) return false;
     own.click();
     return true;
-  })()`, { timeoutMs: 120_000, label: "the team step's own-coworker link" });
+  }, { timeoutMs: 120_000, label: "the team step's own-coworker link" });
   await waitForText(app, "Add a coworker", { timeoutMs: 120_000 });
   expect(denRequests.some((entry) => entry.method === "POST" && entry.path === "/v1/auth/desktop-handoff/exchange")).toBe(true);
   // The embedded server, not the renderer, read the organization's providers with the session it was handed
@@ -665,12 +720,12 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   const providerReads = denRequests.filter((entry) => entry.path === "/v1/llm-providers" || entry.path.endsWith("/connect"));
   expect(providerReads.length).toBeGreaterThanOrEqual(2);
   expect(providerReads.every((entry) => entry.authorization === `Bearer ${SESSION_TOKEN}` && entry.org === ORG_ID)).toBe(true);
-  const storedSession = await evalIn(app, `(() => {
+  const storedSession = await evalIn(app, () => {
     const raw = window.localStorage.getItem("coworker.den.session.v1");
     if (!raw) return null;
-    const parsed = JSON.parse(raw);
+    const parsed: { orgName?: string; userEmail?: string; token?: string } = JSON.parse(raw);
     return { orgName: parsed.orgName, userEmail: parsed.userEmail, hasToken: typeof parsed.token === "string" && parsed.token.length > 0 };
-  })()`);
+  });
   expect(storedSession).toEqual({ orgName: ORG_NAME, userEmail: "member@eval.example", hasToken: true });
 
   evidence.recordAssertionEvidence(
@@ -682,35 +737,38 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // Choose the account's model in Coworker settings.
   await fill(app, 'input[placeholder="Scout"]', "Scout");
   await clickButton(app, "Add coworker", { timeoutMs: 120_000 });
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 120_000, label: "Scout discussion view" });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout"), { timeoutMs: 120_000, label: "Scout discussion view" });
   // A person waits for the coworker to read Ready before asking anything of it; so does the journey.
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const status = document.querySelector('[data-testid="coworker-top-status"]');
     if (!(status instanceof HTMLElement)) return false;
     return status.textContent?.trim() === "Ready";
-  })()`, { timeoutMs: 240_000, label: "coworker AI ready" });
-  await waitFor(app, `(() => {
+  }, { timeoutMs: 240_000, label: "coworker AI ready" });
+  await waitFor(app, () => {
     const panel = document.querySelector('[data-testid="context-panel"]');
     if (!(panel instanceof HTMLElement)) return false;
     if (panel.dataset.collapsed === "false" && panel.dataset.view === "settings" && panel.dataset.depth === "0") return true;
-    if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-settings"]')?.click();
+    if (panel.dataset.collapsed === "true") document.querySelector<HTMLElement>('[data-testid="context-rail-settings"]')?.click();
     else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     return false;
-  })()`, { timeoutMs: 30_000, label: "Coworker settings from the strip" });
+  }, { timeoutMs: 30_000, label: "Coworker settings from the strip" });
   await waitForText(app, "Coworker settings", { timeoutMs: 30_000 });
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const button = document.querySelector('[data-testid="coworker-model-settings"] [data-testid="model-picker"] > button');
     if (!(button instanceof HTMLElement)) return false;
     button.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: "open the AI model picker in Coworker settings" });
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="model-provider-${PROVIDER_RECORD_ID}"]'))`, {
+  }, { timeoutMs: 30_000, label: "open the AI model picker in Coworker settings" });
+  await waitFor(app, browserScript((selector) => Boolean(document.querySelector(selector)), [`[data-testid="model-provider-${PROVIDER_RECORD_ID}"]`]), {
     timeoutMs: 180_000,
     label: "organization provider group in the model picker",
   });
   await clickButtonContaining(app, MODEL_NAME);
-  const scout = await waitFor(app, `window.__COWORKER__.invoke("coworkers.get", { slug: "scout" })
-    .then((response) => (response.ok && response.result?.model === ${json(`${PROVIDER_RECORD_ID}/${MODEL_ID}`)} ? response.result : false))`, {
+  const scout = await waitFor(app, browserScript((model) => {
+    const bridge = Reflect.get(window, "__COWORKER__") as CoworkerTestBridge;
+    return bridge.invoke("coworkers.get", { slug: "scout" })
+      .then((response) => (response.ok && response.result?.model === model ? response.result : false));
+  }, [`${PROVIDER_RECORD_ID}/${MODEL_ID}`]), {
     awaitPromise: true,
     timeoutMs: 30_000,
     label: "organization model persisted on Scout",
@@ -720,10 +778,23 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
 
   await clickButtonContaining(app, "Starting points");
   await clickButton(app, "Turn a goal into a plan");
-  const starter = await evalIn(app, `document.querySelector('textarea[aria-label="Message Scout"]')?.value ?? ""`);
+  const starter = await evalIn(app, () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message Scout"]')?.value ?? "");
   expect(String(starter)).toContain("Ask what I want to achieve");
-  expect(await evalIn(app, `document.querySelectorAll('[data-message-role="user"]').length`)).toBe(0);
+  expect(await evalIn(app, () => document.querySelectorAll('[data-message-role="user"]').length)).toBe(0);
+  await clickCoworkerControl(app, { testId: "voice-toggle" });
+  await waitFor(app, () => document.querySelector('[data-testid="voice-panel"]')?.getAttribute("data-phase") === "idle", { timeoutMs: 30_000, label: "welcome draft transferred into a voice-ready native discussion" });
+  expect(denRequests.filter((entry) => entry.path === "/v1/voice")).toEqual(Array(2).fill({ method: "GET", path: "/v1/voice", authorization: `Bearer ${SESSION_TOKEN}`, org: ORG_ID }));
+  expect(await evalIn(app, () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message Scout"]')?.value)).toBe(starter);
+  expect(await evalIn(app, () => document.activeElement?.getAttribute("data-testid"))).toBe("voice-panel");
+  await clickCoworkerControl(app, { role: "textbox", label: "Message Scout" });
+  await typeCoworkerSpace(app);
+  expect(await evalIn(app, () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message Scout"]')?.value)).toBe(`${starter} `);
+  expect(await evalIn(app, () => document.activeElement?.getAttribute("aria-label"))).toBe("Message Scout");
+  expect(await capture.read()).toMatchObject({ calls: 0, tracks: [], playback: [] });
+  expect(completionAuthorizations).toEqual([]);
+  await clickCoworkerControl(app, { testId: "voice-toggle" });
   await fill(app, 'textarea[aria-label="Message Scout"]', "");
+  evidence.recordAssertionEvidence("First-use voice creates a discussion without losing the draft or stealing typing", "From the welcome composer, Voice transferred the starting-point draft into a native discussion, rechecked member access, and focused the voice panel. Clicking the draft and typing Space inserted a space without capturing audio or sending a completion.", true);
   evidence.recordAssertionEvidence("A starting point remains an editable draft", "Choosing Turn a goal into a plan filled the composer without adding a user message.", true);
 
   evidence.recordAssertionEvidence(
@@ -735,30 +806,31 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // --- OpenWork Connect reaches the coworker: one minted gateway token, the gateway registered in Scout's
   // workspace, and the Apps & tools root row reporting it in plain words.
   await openAppsAndTools(app);
-  const rootRow = await waitFor(app, `(() => {
+  const rootRow = await waitFor(app, () => {
     const row = document.querySelector('[data-testid="apps-tools-row-connected"]');
     if (!(row instanceof HTMLElement)) return false;
     const text = row.innerText;
     if (!text.includes("Connected as")) return false;
     return text;
-  })()`, { timeoutMs: 240_000, label: "OpenWork Connect settled for Scout" });
+  }, { timeoutMs: 240_000, label: "OpenWork Connect settled for Scout" });
   expect(String(rootRow)).toContain(`Connected as ${ORG_NAME}`);
   await clickTestId(app, "apps-tools-row-connected");
-  await waitFor(app, `document.querySelector('[data-testid="coworker-connect-card"]')?.getAttribute("data-status") === "connected"`, { timeoutMs: 240_000, label: "OpenWork Connect connected for Scout" });
+  await waitFor(app, () => document.querySelector('[data-testid="coworker-connect-card"]')?.getAttribute("data-status") === "connected", { timeoutMs: 240_000, label: "OpenWork Connect connected for Scout" });
   expect(mintedTokens).toBeGreaterThanOrEqual(1);
   const gatewayToolLists = gatewayCalls.filter((call) => call.endpoint === "gateway" && call.method === "tools/list");
   expect(gatewayToolLists.length).toBeGreaterThanOrEqual(1);
   expect(gatewayToolLists.every((call) => call.authorization === `Bearer ${MCP_TOKEN}`)).toBe(true);
   expect(gatewayCalls.some((call) => call.endpoint === "gateway" && call.method === "resources/read" && call.tool === CONNECT_INDEX_URI && call.authorization === `Bearer ${APP_HOST_TOKEN}`)).toBe(true);
-  const connectHealth = await evalIn(app, `(async () => {
-    const runtime = await window.__COWORKER__.invoke("runtime.info");
-    const scout = await window.__COWORKER__.invoke("coworkers.get", { slug: "scout" });
+  const connectHealth = await evalIn(app, async () => {
+    const bridge = Reflect.get(window, "__COWORKER__") as CoworkerTestBridge;
+    const runtime = await bridge.invoke("runtime.info");
+    const scout = await bridge.invoke("coworkers.get", { slug: "scout" });
     const response = await fetch(runtime.result.serverUrl + "/workspace/" + encodeURIComponent(scout.result.workspaceId) + "/mcp/openwork-cloud/health", {
       headers: { Authorization: "Bearer " + runtime.result.ownerToken },
     });
-    const health = await response.json();
+    const health: { usable?: boolean; tools?: { present?: string[] }; desired?: { config?: { url?: string } } } = await response.json();
     return { status: response.status, usable: health.usable, present: health.tools?.present ?? [], url: health.desired?.config?.url ?? null };
-  })()`, { awaitPromise: true, timeoutMs: 60_000 });
+  }, { awaitPromise: true, timeoutMs: 60_000 });
   expect(connectHealth).toMatchObject({ status: 200, usable: true, url: `${denBaseUrl}/mcp/agent` });
   if (!isRecord(connectHealth) || !Array.isArray(connectHealth.present)) throw new Error("Connect health was unavailable.");
   expect(connectHealth.present).toEqual(expect.arrayContaining(["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"]));
@@ -768,15 +840,16 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     true,
   );
 
-  const ownToolsEndpoint = await evalIn(app, `(async () => {
-    const runtime = await window.__COWORKER__.invoke("runtime.info");
-    const scout = await window.__COWORKER__.invoke("coworkers.get", { slug: "scout" });
+  const ownToolsEndpoint = await evalIn(app, async () => {
+    const bridge = Reflect.get(window, "__COWORKER__") as CoworkerTestBridge;
+    const runtime = await bridge.invoke("runtime.info");
+    const scout = await bridge.invoke("coworkers.get", { slug: "scout" });
     const response = await fetch(runtime.result.serverUrl + "/workspace/" + encodeURIComponent(scout.result.workspaceId) + "/config", {
       headers: { Authorization: "Bearer " + runtime.result.ownerToken },
     });
-    const config = await response.json();
+    const config: { opencode?: { mcp?: { coworker?: { url?: string } } } } = await response.json();
     return { status: response.status, url: config.opencode?.mcp?.coworker?.url };
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  }, { awaitPromise: true, timeoutMs: 30_000 });
   if (!isRecord(ownToolsEndpoint) || typeof ownToolsEndpoint.url !== "string") throw new Error("Coworker tools endpoint was unavailable.");
   expect(ownToolsEndpoint.status).toBe(200);
   expect(new URL(ownToolsEndpoint.url).hostname).toBe("127.0.0.1");
@@ -785,15 +858,16 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     expect(rejected.status).toBe(401);
     expect(await rejected.json()).toMatchObject({ error: "unauthorized" });
   }
-  const ownTools = await evalIn(app, `(async () => {
-    const runtime = await window.__COWORKER__.invoke("runtime.info");
-    const scout = await window.__COWORKER__.invoke("coworkers.get", { slug: "scout" });
+  const ownTools = await evalIn(app, async () => {
+    const bridge = Reflect.get(window, "__COWORKER__") as CoworkerTestBridge;
+    const runtime = await bridge.invoke("runtime.info");
+    const scout = await bridge.invoke("coworkers.get", { slug: "scout" });
     const response = await fetch(runtime.result.serverUrl + "/workspace/" + encodeURIComponent(scout.result.workspaceId) + "/mcp/coworker/tools", {
       headers: { Authorization: "Bearer " + runtime.result.ownerToken },
     });
-    const listed = await response.json();
+    const listed: { tools?: unknown[] } = await response.json();
     return { status: response.status, count: listed.tools?.length ?? 0 };
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  }, { awaitPromise: true, timeoutMs: 30_000 });
   expect(ownTools).toMatchObject({ status: 200 });
   if (!isRecord(ownTools) || typeof ownTools.count !== "number") throw new Error("Coworker tool discovery was unavailable.");
   expect(ownTools.count).toBeGreaterThan(0);
@@ -802,7 +876,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     "Unknown, wrong-scheme, and long whitespace-bearing credentials returned 401 without tool access; authenticated tool discovery still returned the coworker's tools afterward.", true,
   );
 
-  await waitFor(app, `document.querySelector('[data-testid="apps-tools-row-connections"]')?.textContent.includes("Reading") === false`, { timeoutMs: 120_000, label: "connected discovery settled" });
+  await waitFor(app, () => document.querySelector('[data-testid="apps-tools-row-connections"]')?.textContent?.includes("Reading") === false, { timeoutMs: 120_000, label: "connected discovery settled" });
   const searchQueries = gatewayCalls.filter((call) => call.endpoint === "gateway" && call.method === "tools/call" && call.tool === "search_capabilities");
   expect(searchQueries.length).toBeGreaterThanOrEqual(2);
   expect(searchQueries.length).toBeLessThanOrEqual(4);
@@ -812,47 +886,47 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   const callsBeforeDraft = completionAuthorizations.length;
   await fill(app, '[data-testid="apps-tools-search"]', "prepare a project handover");
   await clickTestId(app, "apps-tools-ask-search");
-  expect(String(await evalIn(app, `document.querySelector('textarea[aria-label="Message Scout"]')?.value ?? ""`))).toBe("Help me with this using my connected apps: prepare a project handover\n\nFind what's available and suggest the next step before taking action.");
+  expect(String(await evalIn(app, () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message Scout"]')?.value ?? ""))).toBe("Help me with this using my connected apps: prepare a project handover\n\nFind what's available and suggest the next step before taking action.");
   expect(completionAuthorizations.length).toBe(callsBeforeDraft);
-  expect(await evalIn(app, `document.querySelectorAll('[data-message-role="user"]').length`)).toBe(0);
+  expect(await evalIn(app, () => document.querySelectorAll('[data-message-role="user"]').length)).toBe(0);
   await fill(app, 'textarea[aria-label="Message Scout"]', "");
   await openAppsAndTools(app);
   await clickTestId(app, "apps-tools-row-connected");
 
   await clickTestId(app, "apps-tools-row-connections");
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const row = [...document.querySelectorAll('[data-testid="apps-tools-connection"]')].find((candidate) => (candidate.textContent ?? "").includes("Notion"));
     if (!(row instanceof HTMLElement)) return false;
     row.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: "open Notion" });
-  const notion = await waitFor(app, `(() => {
+  }, { timeoutMs: 30_000, label: "open Notion" });
+  const notion = await waitFor(app, () => {
     const detail = document.querySelector('[data-testid="coworker-connection-detail"]');
     if (!(detail instanceof HTMLElement)) return false;
     return {
       status: document.querySelector('[data-testid="apps-tools-detail-status"]')?.textContent?.trim(),
       action: document.querySelector('[data-testid="apps-tools-human-action"]')?.textContent ?? "",
-      askEnabled: !(detail.querySelector('[data-testid="apps-tools-ask"]')?.disabled ?? true),
+      askEnabled: !(detail.querySelector<HTMLButtonElement>('[data-testid="apps-tools-ask"]')?.disabled ?? true),
     };
-  })()`, { timeoutMs: 30_000, label: "Notion connection detail" });
+  }, { timeoutMs: 30_000, label: "Notion connection detail" });
   expect(notion).toMatchObject({ status: "Needs sign-in", askEnabled: false });
   if (!isRecord(notion) || typeof notion.action !== "string") throw new Error("Notion detail facts were unavailable.");
   expect(notion.action).toContain("Connect Notion on your Connections page in OpenWork.");
   await openAppsAndTools(app);
   await clickTestId(app, "apps-tools-row-connected");
   await clickTestId(app, "apps-tools-row-plugins");
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const row = [...document.querySelectorAll('[data-testid="apps-tools-plugin"]')].find((candidate) => (candidate.textContent ?? "").includes("Release"));
     if (!(row instanceof HTMLElement) || !(row.textContent ?? "").includes("Needs setup by an admin")) return false;
     row.click();
     return true;
-  })()`, { timeoutMs: 60_000, label: "the Release plugin reads Needs setup by an admin" });
-  const release = await waitFor(app, `(() => {
+  }, { timeoutMs: 60_000, label: "the Release plugin reads Needs setup by an admin" });
+  const release = await waitFor(app, () => {
     const detail = document.querySelector('[data-testid="coworker-plugin-detail"]');
     const servers = document.querySelector('[data-testid="apps-tools-plugin-servers"]');
     if (!(detail instanceof HTMLElement) || !(servers instanceof HTMLElement)) return false;
     return servers.innerText;
-  })()`, { timeoutMs: 30_000, label: "Release plugin detail" });
+  }, { timeoutMs: 30_000, label: "Release plugin detail" });
   expect(String(release)).toContain("Needs setup by an admin");
   expect(String(release)).toContain("Ask an organization admin to set up GitHub on the organization's Connections dashboard in OpenWork.");
   evidence.recordAssertionEvidence(
@@ -866,26 +940,26 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     await openAppsAndTools(app);
     await clickTestId(app, "apps-tools-row-connected");
     await clickTestId(app, "apps-tools-row-connected-apps");
-    await waitFor(app, `(() => {
-    const row = [...document.querySelectorAll('[data-testid="coworker-mcp-app"]')].find((candidate) => (candidate.textContent ?? "").includes("Skill studio"));
-    if (!(row instanceof HTMLElement) || !(row.textContent ?? "").includes("OpenWork Connect")) return false;
-    row.click();
-    return true;
-  })()`, { timeoutMs: 120_000, label: "Skill studio App from OpenWork Connect" });
+    await waitFor(app, () => {
+      const row = [...document.querySelectorAll('[data-testid="coworker-mcp-app"]')].find((candidate) => (candidate.textContent ?? "").includes("Skill studio"));
+      if (!(row instanceof HTMLElement) || !(row.textContent ?? "").includes("OpenWork Connect")) return false;
+      row.click();
+      return true;
+    }, { timeoutMs: 120_000, label: "Skill studio App from OpenWork Connect" });
   }
   await openSkillStudio();
-  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-mcp-app-detail"] textarea') === null`)).toBe(true);
-  expect(await evalIn(app, `document.querySelector('[data-testid="apps-tools-open-app"]') === null`)).toBe(true);
+  expect(await evalIn(app, () => document.querySelector('[data-testid="coworker-mcp-app-detail"] textarea') === null)).toBe(true);
+  expect(await evalIn(app, () => document.querySelector('[data-testid="apps-tools-open-app"]') === null)).toBe(true);
   const appCallsBeforeDraft = gatewayCalls.filter((call) => call.endpoint === "connection" && call.method === "tools/call").length;
   await clickTestId(app, "apps-tools-ask");
-  expect(String(await evalIn(app, `document.querySelector('textarea[aria-label="Message Scout"]')?.value ?? ""`))).toBe("Help me use Skill studio to: ");
+  expect(String(await evalIn(app, () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message Scout"]')?.value ?? ""))).toBe("Help me use Skill studio to: ");
   expect(gatewayCalls.filter((call) => call.endpoint === "connection" && call.method === "tools/call").length).toBe(appCallsBeforeDraft);
   await fill(app, 'textarea[aria-label="Message Scout"]', "");
   await openSkillStudio();
   await clickTestId(app, "apps-tools-advanced-input");
   await fill(app, '[data-testid="coworker-mcp-app-detail"] textarea', '{"topic":"shared skills"}');
   await clickTestId(app, "apps-tools-open-app");
-  await waitFor(app, `document.querySelector(${json(`[data-mcp-app-resource="${SKILL_APP_RESOURCE}"]`)})?.getAttribute("data-mcp-app-ready") === "true"`, {
+  await waitFor(app, browserScript((selector) => document.querySelector(selector)?.getAttribute("data-mcp-app-ready") === "true", [`[data-mcp-app-resource="${SKILL_APP_RESOURCE}"]`]), {
     timeoutMs: 120_000,
     label: "Skill studio App mounted",
   });
@@ -893,15 +967,15 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(gatewayCalls.some((call) => call.endpoint === "connection" && call.method === "resources/read" && call.tool === SKILL_APP_RESOURCE)).toBe(true);
   await clickTestId(app, "panel-back");
   await clickTestId(app, "panel-back");
-  await waitFor(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") === ${json(`${APPS_TOOLS_ROUTE}/connected`)}`, { timeoutMs: 30_000, label: "back on the Connected screen" });
+  await waitFor(app, browserScript((route) => document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") === route, [`${APPS_TOOLS_ROUTE}/connected`]), { timeoutMs: 30_000, label: "back on the Connected screen" });
   await clickTestId(app, "coworker-connect-create-skill");
-  const skillDraft = String(await waitFor(app, `(() => {
+  const skillDraft = String(await waitFor(app, () => {
     const composer = document.querySelector('textarea[aria-label="Message Scout"]');
     return composer instanceof HTMLTextAreaElement && composer.value.includes("repeatable task") ? composer.value : false;
-  })()`, { timeoutMs: 30_000, label: "create-skill message prefilled" }));
+  }, { timeoutMs: 30_000, label: "create-skill message prefilled" }));
   expect(skillDraft).toBe("Help me turn a repeatable task into a skill for my team. The task is: ");
   expect(skillDraft).not.toMatch(/search_capabilities|execute_capability|MCP|conn_eval/);
-  expect(await evalIn(app, `[...document.querySelectorAll('[data-message-role="user"]')].length`)).toBe(0);
+  expect(await evalIn(app, () => [...document.querySelectorAll('[data-message-role="user"]')].length)).toBe(0);
   await fill(app, 'textarea[aria-label="Message Scout"]', "");
   evidence.recordAssertionEvidence(
     "Gateway Apps render and skill creation starts from the Connected screen",
@@ -912,13 +986,13 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // A failed discovery stays recoverable and cannot be cached as an empty account.
   await openAppsAndTools(app);
   gatewaySearchUnavailable = true;
-  await waitFor(app, `(() => { const button = document.querySelector('button[aria-label="Refresh"]'); if (!(button instanceof HTMLButtonElement) || button.disabled) return false; button.click(); return true; })()`, { timeoutMs: 30_000, label: "refresh connected apps" });
+  await waitFor(app, () => { const button = document.querySelector('button[aria-label="Refresh"]'); if (!(button instanceof HTMLButtonElement) || button.disabled) return false; button.click(); return true; }, { timeoutMs: 30_000, label: "refresh connected apps" });
   await waitForText(app, "Some connected apps and skills couldn't be loaded", { timeoutMs: 60_000 });
-  expect(String(await evalIn(app, `document.querySelector('[data-testid="coworker-capabilities"]')?.textContent ?? ""`))).not.toContain("Your organization has not connected any services");
+  expect(String(await evalIn(app, () => document.querySelector('[data-testid="coworker-capabilities"]')?.textContent ?? ""))).not.toContain("Your organization has not connected any services");
   gatewaySearchUnavailable = false;
   await new Promise((resolve) => setTimeout(resolve, 15_100));
-  await evalIn(app, `window.dispatchEvent(new Event("online")); true`);
-  await waitFor(app, `!document.querySelector('[data-testid="apps-tools-connect-problem"]') && document.querySelector('button[aria-label="Refresh"]')?.disabled === false`, { timeoutMs: 60_000, label: "catalog refreshed after the outage" });
+  await evalIn(app, () => { window.dispatchEvent(new Event("online")); return true; });
+  await waitFor(app, () => !document.querySelector('[data-testid="apps-tools-connect-problem"]') && document.querySelector<HTMLButtonElement>('button[aria-label="Refresh"]')?.disabled === false, { timeoutMs: 60_000, label: "catalog refreshed after the outage" });
   await clickTestId(app, "apps-tools-row-connected");
   await clickTestId(app, "apps-tools-row-connections");
   await waitForText(app, "Notion", { timeoutMs: 30_000 });
@@ -929,13 +1003,13 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   const prompt = `Reply with exactly ${REPLY}.`;
   await fill(app, 'textarea[aria-label="Message Scout"]', prompt);
   await clickButton(app, "Send");
-  const reply = await waitFor(app, `(() => {
+  const reply = await waitFor(app, browserScript((reply) => {
     const message = [...document.querySelectorAll('[data-message-role="assistant"]')]
-      .find((candidate) => (candidate.textContent ?? "").includes(${json(REPLY)}));
+      .find((candidate) => (candidate.textContent ?? "").includes(reply));
     return message?.textContent ?? false;
-  })()`, { timeoutMs: 300_000, label: "assistant reply from the organization model" });
+  }, [REPLY]), { timeoutMs: 300_000, label: "assistant reply from the organization model" });
   expect(String(reply)).toContain(REPLY);
-  const replyModel = await waitFor(app, `document.querySelector('[data-testid="coworker-reply-model"]')?.textContent ?? false`, {
+  const replyModel = await waitFor(app, () => document.querySelector('[data-testid="coworker-reply-model"]')?.textContent ?? false, {
     timeoutMs: 30_000,
     label: "answering model attribution",
   });
@@ -943,7 +1017,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(completionAuthorizations.length).toBeGreaterThanOrEqual(1);
   expect(completionAuthorizations.every((value) => value === `Bearer ${PROVIDER_API_KEY}`)).toBe(true);
   expect(connectedInstructionsSeen).toBe(true);
-  await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, {
+  await waitFor(app, () => document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready", {
     timeoutMs: 60_000,
     label: "coworker settles to Ready after a matched reply",
   });
@@ -954,36 +1028,197 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     true,
   );
 
+  // Voice is opt-in, member-scoped, and independent of the selected answer model.
+  const voiceAdmissionOffset = denRequests.filter((entry) => entry.path === "/v1/voice").length;
+  const voiceRequests = () => denRequests.filter((entry) => entry.path === "/v1/voice" || entry.path.startsWith("/v1/voice/")).slice(voiceAdmissionOffset);
+  expect(voiceRequests()).toEqual([]);
+  const completionsBeforeVoice = completionAuthorizations.length;
+  const usersBeforeVoice = await evalIn(app, () => document.querySelectorAll('[data-message-role="user"]').length);
+  membershipResponse = "unpaid";
+  await clickCoworkerControl(app, { testId: "voice-toggle" });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="voice-membership"]')), { timeoutMs: 15_000, label: "voice Models upsell for an unpaid member" });
+  expect(voiceRequests()).toEqual([{ method: "GET", path: "/v1/voice", authorization: `Bearer ${SESSION_TOKEN}`, org: ORG_ID }]);
+  expect(await capture.read()).toMatchObject({ calls: 0, tracks: [], rendererVoiceRequests: 0 });
+  expect(await evalIn(app, () => document.querySelector('[data-testid="voice-panel"]') === null)).toBe(true);
+  await clickCoworkerControl(app, { role: "button", label: "Explore Models membership" });
+  await waitForText(app, "No active Models membership", { timeoutMs: 30_000 });
+  expect(denRequests.some((entry) => entry.method === "POST" && /billing|checkout/.test(entry.path))).toBe(false);
+  expect(voiceRequests()).toHaveLength(1);
+  expect(completionAuthorizations).toHaveLength(completionsBeforeVoice);
+  membershipResponse = "active";
+  await clickCoworkerControl(app, { role: "button", label: /Back to coworkers/ });
+  await clickCoworkerControl(app, { testId: "voice-toggle" });
+  await waitFor(app, () => document.querySelector('[data-testid="voice-panel"]')?.getAttribute("data-phase") === "idle", { timeoutMs: 15_000, label: "paid member voice readiness" });
+  expect(voiceRequests()).toEqual(Array(2).fill({ method: "GET", path: "/v1/voice", authorization: `Bearer ${SESSION_TOKEN}`, org: ORG_ID }));
+  expect(await capture.read()).toMatchObject({ calls: 0, tracks: [], rendererVoiceRequests: 0 });
+  expect(speeches).toEqual([]); // Enabling voice must not replay the existing ACCOUNT MODEL READY reply.
+
+  // Deliberately untrusted IPC is a negative boundary probe, not a simulated user gesture.
+  await waitFor(app, () => !navigator.userActivation.isActive, { timeoutMs: 10_000, label: "the real click's transient activation expires" });
+  expect(await invokeCoworker(app, "voice.microphone", {})).toEqual({ ok: false, error: "Click the microphone control to allow audio input." });
+  evidence.recordAssertionEvidence(
+    "Voice readiness is a native member read, not checkout or microphone consent",
+    "The unpaid member saw the Models upsell and navigated to membership without checkout, capture, speech, or a completion. The paid member made only GET /v1/voice with the session and organization; no renderer voice HTTP request occurred, existing replies stayed silent, and native IPC rejected microphone access without a gesture.", true,
+  );
+
+  const voiceDraft = "Keep this unfinished request for my return.";
+  await fill(app, 'textarea[aria-label="Message Scout"]', voiceDraft);
+  if (!(await capture.read()).supported) {
+    capturePrerequisite = "native browser audio capture and a supported MediaRecorder codec";
+  } else {
+    await clickCoworkerControl(app, { testId: "voice-record" });
+    const recording = await waitFor(app, () => {
+      if (document.querySelector('[data-testid="voice-panel"]')?.getAttribute("data-phase") === "recording") return "recording";
+      const status = document.querySelector('[data-testid="voice-status"]')?.textContent ?? "";
+      return /Microphone access was not granted|No microphone was found|Voice is unavailable/.test(status) ? status : false;
+    }, { timeoutMs: 30_000, label: "real native microphone consent and browser fake-device recording" });
+    if (process.platform === "darwin" && String(recording).includes("Microphone access was not granted") && (await capture.read()).calls === 0) {
+      capturePrerequisite = "macOS microphone permission for the exact Coworker binary (not bypassed by fake media)";
+      console.warn(`Recording prerequisite: ${capturePrerequisite}. Allow Open Coworker in System Settings > Privacy & Security > Microphone, then rerun this exact binary.`);
+    } else {
+      expect(recording).toBe("recording");
+      // Wait for a real recorder timeslice rather than finishing before it has any audio.
+      await waitFor(app, () => (document.querySelector('[data-testid="voice-timer"]')?.textContent ?? "").startsWith("0:01"), { timeoutMs: 5_000, label: "one second of browser capture" });
+      await clickCoworkerControl(app, { testId: "voice-record" });
+      await waitForText(app, "Added to your draft", { timeoutMs: 15_000 });
+      expect(await evalIn(app, () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message Scout"]')?.value)).toBe(`${voiceDraft}\n${TRANSCRIPT}`);
+      expect(transcriptions).toHaveLength(1);
+      expect(transcriptions[0]).toEqual({ input_audio: { data: expect.any(String), format: expect.stringMatching(/^(webm|m4a)$/) } });
+      const transcription = transcriptions[0];
+      if (!isRecord(transcription) || !isRecord(transcription.input_audio) || typeof transcription.input_audio.data !== "string") throw new Error("Missing native transcription audio");
+      const recordedBytes = Buffer.from(transcription.input_audio.data, "base64");
+      expect(recordedBytes.length).toBeGreaterThan(0);
+      expect(recordedBytes.length).toBeLessThanOrEqual(3 * 1024 * 1024);
+      expect(recordedBytes.toString("base64")).toBe(transcription.input_audio.data);
+      expect(await evalIn(app, () => document.querySelectorAll('[data-message-role="user"]').length)).toBe(usersBeforeVoice);
+      expect(completionAuthorizations).toHaveLength(completionsBeforeVoice);
+      const stopped = await capture.read();
+      expect(stopped.calls).toBe(1);
+      expect(stopped.tracks).toEqual([{ kind: "audio", state: "ended" }]);
+      expect(stopped.clicks.filter((click) => click.control === "voice-record")).toEqual(Array(2).fill({ control: "voice-record", trusted: true, active: true }));
+      expect(stopped.rendererVoiceRequests).toBe(0);
+
+      await clickCoworkerControl(app, { testId: "voice-record" });
+      await waitFor(app, () => document.querySelector('[data-testid="voice-panel"]')?.getAttribute("data-phase") === "recording", { timeoutMs: 15_000, label: "second recording before navigation" });
+      await clickCoworkerControl(app, { role: "button", label: new RegExp(ORG_NAME) });
+      await waitForText(app, "OpenWork settings", { timeoutMs: 15_000 });
+      await eventually(async () => (await capture.read()).tracks.every((track) => track.state === "ended"), { within: 5_000, label: "navigation releases the real audio tracks" });
+      await clickCoworkerControl(app, { role: "button", label: /Back to coworkers/ });
+      expect(transcriptions).toHaveLength(1);
+      expect(await evalIn(app, () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message Scout"]')?.value)).toBe(`${voiceDraft}\n${TRANSCRIPT}`);
+      expect(await evalIn(app, () => document.querySelectorAll('[data-message-role="user"]').length)).toBe(usersBeforeVoice);
+      expect(completionAuthorizations).toHaveLength(completionsBeforeVoice);
+      await clickCoworkerControl(app, { testId: "voice-toggle" });
+      await waitForText(app, "Voice ready", { timeoutMs: 15_000 });
+      evidence.recordAssertionEvidence(
+        "Real recording appends an editable transcript and navigation discards unfinished audio",
+        "Trusted microphone clicks crossed preload/native consent and captured the browser's fake audio device. Native POST /v1/voice/transcriptions carried bounded base64 audio, appended the transcript without replacing the original draft or sending a turn, and stopped the audio track. Navigating during a second recording ended its tracks without another transcription or completion.", true,
+      );
+    }
+  }
+
+  // Only a new final reply is eligible. Hold the provider stream, then hold speech to witness native abort.
+  await fill(app, 'textarea[aria-label="Message Scout"]', "Give me the next step for our voice reply check.");
+  await clickCoworkerControl(app, { role: "button", label: /^Send$/ });
+  await waitForText(app, VOICE_REPLY, { timeoutMs: 120_000 });
+  expect(speeches).toEqual([]);
+  if (!voiceCompletion.finish) throw new Error("The model witness has no pending final reply");
+  voiceCompletion.finish();
+  await eventually(() => speeches.length, { within: 30_000, until: (count) => count === 1, label: "one native speech request for the new final reply" });
+  expect(speeches.map((speech) => speech.body)).toEqual([{ input: VOICE_SENTENCES[0] }]);
+  await waitFor(app, () => document.querySelector('[data-testid="voice-panel"]')?.getAttribute("data-phase") === "preparing", { timeoutMs: 15_000, label: "speech awaiting native response" });
+  await fill(app, 'textarea[aria-label="Message Scout"]', voiceDraft);
+  await clickCoworkerControl(app, { testId: "voice-cancel" });
+  await eventually(() => speeches[0]?.cancelled, { within: 5_000, label: "Stop audio aborts native HTTP transport" });
+  await waitFor(app, () => document.querySelector('[data-testid="voice-panel"]')?.getAttribute("data-phase") === "idle", { timeoutMs: 5_000, label: "voice idle after cancellation" });
+  expect(await evalIn(app, () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message Scout"]')?.value)).toBe(voiceDraft);
+  await clickCoworkerControl(app, { testId: "voice-toggle" });
+  await clickCoworkerControl(app, { testId: "voice-toggle" });
+  await waitForText(app, "Voice ready", { timeoutMs: 15_000 });
+  expect(speeches.map((speech) => speech.body)).toEqual([{ input: VOICE_SENTENCES[0] }]);
+  expect(voiceRequests().every((entry) => entry.authorization === `Bearer ${SESSION_TOKEN}` && entry.org === ORG_ID)).toBe(true);
+  expect(await capture.read()).toMatchObject({ rendererVoiceRequests: 0 });
+  expect(await evalIn(app, () => document.querySelectorAll('[data-message-role="user"]').length)).toBe(usersBeforeVoice + 1);
+  await waitForText(app, VOICE_REPLY, { timeoutMs: 5_000 });
+  expect(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "scout" })).model).toBe(`${PROVIDER_RECORD_ID}/${MODEL_ID}`);
+  evidence.recordAssertionEvidence(
+    "Only the new final reply requests speech, and Stop audio cancels native transport",
+    "The streaming reply and its reasoning made no speech request. Completion caused exactly one native POST /v1/voice/speech containing only the new visible final text, never history or reasoning. Stop audio closed the held HTTP response, kept the draft and text reply, and toggling voice back on did not replay it. This proves synthesis admission/cancellation, not decoded audio playback.", true,
+  );
+
+  holdSpeech = false;
+  for (const stopPlayback of [false, true]) {
+    const firstSource = (await capture.read()).playback.length;
+    const requestsBefore = speeches.length;
+    voiceCompletion.finish = undefined;
+    await fill(app, 'textarea[aria-label="Message Scout"]', `Another voice reply check, ${stopPlayback ? "stop" : "finish"} playback.`);
+    await clickCoworkerControl(app, { role: "button", label: /^Send$/ });
+    await eventually(() => Boolean(voiceCompletion.finish), { within: 60_000, label: "new model stream awaits completion" });
+    expect(speeches).toHaveLength(requestsBefore);
+    voiceCompletion.finish?.();
+    await waitFor(app, browserScript((sentence) => document.querySelector('[data-testid="voice-panel"]')?.getAttribute("data-phase") === "speaking" && document.querySelector('[data-testid="voice-caption"]')?.textContent?.includes(sentence), [VOICE_SENTENCES[0]]), { timeoutMs: 30_000, label: "first sentence decoded and captioned" });
+    await eventually(async () => (await capture.read()).playback[firstSource]?.progress ?? 0, { within: 5_000, until: (seconds) => seconds > 0.2, label: "real AudioContext clock advances during playback" });
+    const playing = (await capture.read()).playback[firstSource];
+    expect(playing).toMatchObject({ state: "running", destination: true, hasSignal: true, stopped: false, ended: null, disconnected: false });
+    expect(playing?.duration).toBeGreaterThan(2);
+    expect(playing?.progress).toBeLessThan(playing?.duration ?? 0);
+    if (stopPlayback) {
+      await fill(app, 'textarea[aria-label="Message Scout"]', voiceDraft);
+      await clickCoworkerControl(app, { testId: "voice-cancel" });
+      await eventually(async () => (await capture.read()).playback[firstSource]?.state, { within: 5_000, until: (state) => state === "closed", label: "Stop closes the playing AudioContext" });
+      expect((await capture.read()).playback[firstSource]).toMatchObject({ stopped: true, disconnected: true, state: "closed" });
+      expect(speeches).toHaveLength(requestsBefore + 1);
+      expect(await evalIn(app, () => document.querySelector('[data-testid="voice-caption"]') === null)).toBe(true);
+      expect(await evalIn(app, () => document.activeElement?.getAttribute("aria-label"))).toBe("Message Scout");
+      expect(await evalIn(app, () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message Scout"]')?.value)).toBe(voiceDraft);
+    } else {
+      await waitFor(app, browserScript((sentence) => document.querySelector('[data-testid="voice-caption"]')?.textContent?.includes(sentence), [VOICE_SENTENCES[1]]), { timeoutMs: 10_000, label: "caption advances to the next sentence" });
+      await waitForText(app, "Spoken reply finished.", { timeoutMs: 10_000 });
+      const finished = (await capture.read()).playback.slice(firstSource);
+      expect(finished).toHaveLength(2);
+      for (const source of finished) {
+        expect(source).toMatchObject({ state: "closed", destination: true, hasSignal: true, stopped: false, disconnected: true });
+        expect((source.ended ?? 0) - (source.started ?? 0)).toBeGreaterThanOrEqual(source.duration - 0.1);
+      }
+      expect(speeches.slice(requestsBefore).map((speech) => speech.body)).toEqual(VOICE_SENTENCES.map((input) => ({ input })));
+    }
+    await waitFor(app, () => document.querySelector('[data-testid="voice-panel"]')?.getAttribute("data-phase") === "idle", { timeoutMs: 5_000, label: "playback returns to idle" });
+  }
+  expect(await capture.read()).toMatchObject({ rendererVoiceRequests: 0 });
+  await waitForText(app, VOICE_REPLY, { timeoutMs: 5_000 });
+  await clickCoworkerControl(app, { testId: "voice-toggle" });
+  evidence.recordAssertionEvidence("Native MP3 playback progresses, updates sentence captions, ends, and stops cleanly", "The real native response delivered a valid deterministic MP3 tone. AudioContext decoded nonzero samples, connected them to its destination, advanced its running clock, and naturally ended both sentence buffers while the caption advanced. A later Stop stopped and disconnected its playing source, closed the context, cleared captions, restored draft focus, and suppressed the next sentence without changing the text reply. This proves playback mechanics, not acoustic or speech quality.", true);
+
   // --- Reload: unsent work, account, providers, and selection persist.
   await fill(app, 'textarea[aria-label="Message Scout"]', "Keep this unfinished request for my return.");
-  await evalIn(app, "location.reload(); true");
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 120_000, label: "Scout discussion view" });
+  await evalIn(app, () => { location.reload(); return true; });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout"), { timeoutMs: 120_000, label: "Scout discussion view" });
   await waitForText(app, REPLY, { timeoutMs: 60_000 });
-  expect(await evalIn(app, `document.querySelector('textarea[aria-label="Message Scout"]')?.value`)).toBe("Keep this unfinished request for my return.");
-  expect(String(await evalIn(app, `[...document.querySelectorAll('[data-message-role="user"]')].map((element) => element.textContent).join("\\n")`))).not.toContain("Keep this unfinished request for my return.");
+  expect(await evalIn(app, () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message Scout"]')?.value)).toBe("Keep this unfinished request for my return.");
+  expect(String(await evalIn(app, () => [...document.querySelectorAll('[data-message-role="user"]')].map((element) => element.textContent).join("\n")))).not.toContain("Keep this unfinished request for my return.");
   await fill(app, 'textarea[aria-label="Message Scout"]', "");
   await clickButtonContaining(app, ORG_NAME);
   await waitForText(app, "OpenWork settings", { timeoutMs: 30_000 });
   await clickButton(app, "Account");
-  await waitFor(app, `document.querySelector('[data-testid="account-status"]')?.textContent === "OpenWork connected"`, {
+  await waitFor(app, () => document.querySelector('[data-testid="account-status"]')?.textContent === "OpenWork connected", {
     timeoutMs: 30_000,
     label: "connected account status",
   });
-  const accountText = String(await evalIn(app, `document.querySelector('[data-testid="account-card"]')?.innerText ?? ""`));
+  const accountText = String(await evalIn(app, () => document.querySelector<HTMLElement>('[data-testid="account-card"]')?.innerText ?? ""));
   expect(accountText).toContain(ORG_NAME);
   expect(accountText).toContain("member@eval.example");
   expect(accountText).not.toContain(SESSION_TOKEN);
   await clickButton(app, "AI models");
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="cloud-providers"]'))`, { timeoutMs: 60_000, label: "OpenWork Cloud provider group" });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="cloud-providers"]')), { timeoutMs: 60_000, label: "OpenWork Cloud provider group" });
   // The group appears while the account's models are still being read; wait for the provider itself.
   await waitForText(app, "Eval Org Provider", { timeoutMs: 60_000 });
-  const modelsText = String(await evalIn(app, "document.body.innerText"));
+  const modelsText = String(await evalIn(app, () => document.body.innerText));
   expect(modelsText).toContain("Eval Org Provider");
   expect(modelsText).toContain(PROVIDER_RECORD_ID);
   expect(modelsText).not.toContain(PROVIDER_API_KEY);
 
   await waitForText(app, "Membership active", { timeoutMs: 30_000 });
-  const membershipText = String(await evalIn(app, `document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""`));
+  const membershipText = String(await evalIn(app, () => document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""));
   expect(membershipText).toContain("75% left");
   expect(membershipText).toContain("Waiting for refreshed usage");
   expect(membershipText).toContain("Manage membership");
@@ -992,20 +1227,20 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   membershipResponse = "unavailable";
   await clickButton(app, "Refresh membership & models");
   await waitForText(app, "Membership status is unavailable", { timeoutMs: 30_000 });
-  expect(String(await evalIn(app, `document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""`))).not.toContain("No active Models membership");
+  expect(String(await evalIn(app, () => document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""))).not.toContain("No active Models membership");
   membershipResponse = "admin";
   await clickButton(app, "Refresh membership & models");
   await waitForText(app, "Your workspace admin manages the membership", { timeoutMs: 30_000 });
   membershipResponse = "unpaid";
   await clickButton(app, "Refresh membership & models");
   await waitForText(app, "No active Models membership", { timeoutMs: 30_000 });
-  const unpaidText = String(await evalIn(app, `document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""`));
+  const unpaidText = String(await evalIn(app, () => document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""));
   expect(unpaidText).toContain("View models & pricing");
   expect(unpaidText).not.toMatch(/Manage membership|75% left|Membership active/);
   membershipResponse = "setup";
   await clickButton(app, "Refresh membership & models");
   await waitForText(app, "Membership active · setup needs attention", { timeoutMs: 30_000 });
-  const setupText = String(await evalIn(app, `document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""`));
+  const setupText = String(await evalIn(app, () => document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""));
   expect(setupText).toContain("Finish Models setup");
   expect(setupText).not.toMatch(/No active Models membership|View models & pricing/);
   membershipResponse = "active";
@@ -1027,50 +1262,62 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // --- Sign out: the server sweeps the account's providers, and the saved model becomes visibly unavailable.
   await clickButton(app, "Account");
   await clickButton(app, "Sign out");
-  await waitFor(app, `document.querySelector('[data-testid="account-status"]')?.textContent === "Local mode"`, {
+  await waitFor(app, () => document.querySelector('[data-testid="account-status"]')?.textContent === "Local mode", {
     timeoutMs: 60_000,
     label: "signed-out account status",
   });
-  expect(await evalIn(app, `window.localStorage.getItem("coworker.den.session.v1")`)).toBeNull();
+  expect(await evalIn(app, () => window.localStorage.getItem("coworker.den.session.v1"))).toBeNull();
   await clickButton(app, "AI models");
   // The sweep reloads the engine asynchronously; re-read the catalog until the account group is gone.
-  await waitFor(app, `document.querySelector('[data-testid="models-membership"]')?.getAttribute("data-state") === "signed-out"`, { timeoutMs: 30_000, label: "membership clears on sign-out" });
-  expect(String(await evalIn(app, `document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""`))).not.toMatch(/Membership active|75% left/);
+  await waitFor(app, () => document.querySelector('[data-testid="models-membership"]')?.getAttribute("data-state") === "signed-out", { timeoutMs: 30_000, label: "membership clears on sign-out" });
+  expect(String(await evalIn(app, () => document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""))).not.toMatch(/Membership active|75% left/);
   const sweepDeadline = Date.now() + 180_000;
   for (;;) {
-    const swept = await evalIn(app, `(() => {
+    const swept = await evalIn(app, () => {
       const body = document.body.innerText;
       return !document.querySelector('[data-testid="cloud-providers"]')
         && !body.includes("Reading OpenWork models")
         && (Boolean(document.querySelector('[data-testid="local-providers"]'))
           || body.includes("No connected provider models are available"));
-    })()`);
+    });
     if (swept === true) break;
     if (Date.now() > sweepDeadline) throw new Error("Organization providers were still listed 180s after sign-out.");
     await clickButton(app, "Refresh", { timeoutMs: 30_000 }).catch(() => undefined);
     await new Promise((resolve) => setTimeout(resolve, 3_000));
   }
   await clickButtonContaining(app, "Back to coworkers");
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 60_000, label: "Scout discussion view" });
-  const gatewayAfterSignOut = await evalIn(app, `(async () => {
-    const runtime = await window.__COWORKER__.invoke("runtime.info");
-    const scout = await window.__COWORKER__.invoke("coworkers.get", { slug: "scout" });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout"), { timeoutMs: 60_000, label: "Scout discussion view" });
+  const gatewayAfterSignOut = await evalIn(app, async () => {
+    const bridge = Reflect.get(window, "__COWORKER__") as CoworkerTestBridge;
+    const runtime = await bridge.invoke("runtime.info");
+    const scout = await bridge.invoke("coworkers.get", { slug: "scout" });
     const response = await fetch(runtime.result.serverUrl + "/workspace/" + encodeURIComponent(scout.result.workspaceId) + "/mcp/openwork-cloud/health", {
       headers: { Authorization: "Bearer " + runtime.result.ownerToken },
     });
-    const health = await response.json().catch(() => null);
+    const health: { desired?: { present?: boolean } } | null = await response.json().catch(() => null);
     return { status: response.status, present: health?.desired?.present ?? null };
-  })()`, { awaitPromise: true, timeoutMs: 60_000 });
+  }, { awaitPromise: true, timeoutMs: 60_000 });
   expect(isRecord(gatewayAfterSignOut) && (gatewayAfterSignOut.status === 404 || gatewayAfterSignOut.present === false)).toBe(true);
   await openAppsAndTools(app);
-  await waitFor(app, `(document.querySelector('[data-testid="apps-tools-row-connected"]')?.textContent ?? "").includes("Not connected")`, {
+  await waitFor(app, () => (document.querySelector('[data-testid="apps-tools-row-connected"]')?.textContent ?? "").includes("Not connected"), {
     timeoutMs: 30_000,
     label: "the Connected with OpenWork row reads Not connected",
   });
   await backToActivity(app);
+  const beforeSignedOutVoice = voiceRequests().length;
+  const completionsBeforeSignedOutVoice = completionAuthorizations.length;
+  const signedOutCapture = await capture.read();
+  await clickCoworkerControl(app, { testId: "voice-toggle" });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="voice-membership"]')), { timeoutMs: 15_000, label: "signed-out voice Models upsell" });
+  expect(voiceRequests()).toHaveLength(beforeSignedOutVoice);
+  expect(await capture.read()).toMatchObject({ calls: signedOutCapture.calls, tracks: signedOutCapture.tracks, rendererVoiceRequests: 0 });
+  expect(await evalIn(app, () => document.querySelector('[data-testid="voice-panel"]') === null)).toBe(true);
+  expect(denRequests.some((entry) => entry.method === "POST" && /billing|checkout/.test(entry.path))).toBe(false);
+  expect(completionAuthorizations).toHaveLength(completionsBeforeSignedOutVoice);
+  evidence.recordAssertionEvidence("Signed-out voice stays an upsell, not an audio operation", "Clicking Voice mode after sign-out showed Models membership without any voice HTTP request, capture, or checkout and without exposing recording controls.", true);
   await fill(app, 'textarea[aria-label="Message Scout"]', "Reply with exactly SIGNED OUT.");
   await clickButton(app, "Send");
-  const failureText = String(await waitFor(app, `document.querySelector('[data-testid="coworker-turn-failed"]')?.textContent ?? false`, {
+  const failureText = String(await waitFor(app, () => document.querySelector('[data-testid="coworker-turn-failed"]')?.textContent ?? false, {
     timeoutMs: 120_000,
     label: "visible failure for the now-unavailable organization model",
   }));
@@ -1087,6 +1334,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   );
 
   // A new teammate receives a prepared team through the same account handoff.
+  await capture[Symbol.asyncDispose]();
   await app.stop();
   const starts = completionAuthorizations.length;
   const startingTemplate = { kind: "coworker", schemaVersion: 1, description: "Ready for the marketing team", role: "Marketing", mission: "Help plan campaigns", instructions: "Ask for the audience before drafting.", provisioning: "automatic" };
@@ -1097,50 +1345,63 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     { id: "catalog", versionId: "one", assigned: false, template: { ...startingTemplate, name: "Catalog only" } },
     { id: "optional", versionId: "one", assigned: true, template: { ...startingTemplate, name: "Optional partner", provisioning: "optional" } },
   ];
-  await using teammateApp = await coworker({ name: "assigned-team", env: { COWORKER_DEN_BASE_URL: denBaseUrl } });
+  await using teammateApp = await isolatedAccountCoworker("assigned-team", denBaseUrl);
   await clickTestId(teammateApp, "onboarding-cloud-choice");
   await waitForText(teammateApp, "Continue with OpenWork", { timeoutMs: 120_000 });
   await fill(teammateApp, 'input[placeholder^="opencoworker://den-auth"]', `opencoworker://den-auth?grant=${GRANT}&denBaseUrl=${encodeURIComponent(denBaseUrl)}`);
   await clickButton(teammateApp, "Connect");
-  await waitFor(teammateApp, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && document.body.innerText.includes("Campaign partner")`, { timeoutMs: 180_000, label: "assigned coworkers ready after first sign-in" });
-  const readTeam = () => evalIn(teammateApp, `(async () => (await window.__COWORKER__.invoke("coworkers.list")).result.map(({slug, name, model, automations}) => ({slug, name, model, automations})))()`, { awaitPromise: true });
+  await waitFor(teammateApp, () => Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && document.body.innerText.includes("Campaign partner"), { timeoutMs: 180_000, label: "assigned coworkers ready after first sign-in" });
+  const readTeam = () => evalIn(teammateApp, async () => {
+    const bridge = Reflect.get(window, "__COWORKER__") as CoworkerTestBridge;
+    return (await bridge.invoke("coworkers.list")).result.map(({slug, name, model, automations}) => ({slug, name, model, automations}));
+  }, { awaitPromise: true });
   expect(await readTeam()).toEqual([
     expect.objectContaining({ name: "Campaign partner", automations: [] }),
     expect.objectContaining({ name: "Research partner", automations: [] }),
   ]);
-  const initialSoul = await evalIn(teammateApp, `(async () => (await window.__COWORKER__.invoke("coworkers.files.read", {slug:"campaign-partner", path:"soul.md"})).result.content)()`, { awaitPromise: true });
+  const initialSoul = await evalIn(teammateApp, async () => {
+    const bridge = Reflect.get(window, "__COWORKER__") as CoworkerTestBridge;
+    return (await bridge.invoke("coworkers.files.read", {slug:"campaign-partner", path:"soul.md"})).result.content;
+  }, { awaitPromise: true });
   expect(initialSoul).toContain(startingTemplate.instructions);
   expect(completionAuthorizations.length).toBe(starts);
   expect(denRequests.filter((entry) => entry.path === "/v1/me/coworkers").every((entry) => entry.authorization === `Bearer ${SESSION_TOKEN}` && entry.org === ORG_ID)).toBe(true);
   evidence.recordAssertionEvidence("An assigned team is ready on first account sign-in", "A fresh Open Coworker profile signed in through the real handoff and displayed Campaign partner and Research partner without manual creation. The reusable instructions were installed; optional and catalog-only coworkers were not created. No scheduled work was imported, and provisioning made no completion requests.", true);
 
-  await evalIn(teammateApp, `(async () => window.__COWORKER__.invoke("coworkers.files.write", {slug:"campaign-partner", path:"memory/working.md", content:"My campaign work stays here."}))()`, { awaitPromise: true });
+  await evalIn(teammateApp, async () => {
+    const bridge = Reflect.get(window, "__COWORKER__") as CoworkerTestBridge;
+    return bridge.invoke("coworkers.files.write", {slug:"campaign-partner", path:"memory/working.md", content:"My campaign work stays here."});
+  }, { awaitPromise: true });
   assignedTemplates[0] = { ...assignedTemplates[0], versionId: "two", template: { ...startingTemplate, name: "Campaign partner", instructions: "New instructions for future copies." } };
-  await evalIn(teammateApp, "location.reload(); true");
-  await waitFor(teammateApp, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]'))`, { timeoutMs: 120_000, label: "assigned team after reload" });
+  await evalIn(teammateApp, () => { location.reload(); return true; });
+  await waitFor(teammateApp, () => Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')), { timeoutMs: 120_000, label: "assigned team after reload" });
   await clickButtonContaining(teammateApp, ORG_NAME);
   await clickButton(teammateApp, "Account");
   await clickButton(teammateApp, "Refresh assigned coworkers");
   await waitForText(teammateApp, "Template updated · your working copy is preserved", { timeoutMs: 120_000 });
   expect(await readTeam()).toHaveLength(2);
-  const preserved = await evalIn(teammateApp, `(async () => {
-    const read = async (path) => (await window.__COWORKER__.invoke("coworkers.files.read", {slug:"campaign-partner", path})).result.content;
+  const preserved = await evalIn(teammateApp, async () => {
+    const bridge = Reflect.get(window, "__COWORKER__") as CoworkerTestBridge;
+    const read = async (path: string) => (await bridge.invoke("coworkers.files.read", {slug:"campaign-partner", path})).result.content;
     return { memory: await read("memory/working.md"), soul: await read("soul.md") };
-  })()`, { awaitPromise: true });
+  }, { awaitPromise: true });
   expect(preserved).toMatchObject({ memory: "My campaign work stays here.", soul: expect.stringContaining(startingTemplate.instructions) });
-  await waitFor(teammateApp, `(() => { const button = document.querySelector('[data-template-id="optional"] button'); if (!(button instanceof HTMLButtonElement) || button.disabled) return false; button.click(); return true; })()`, { timeoutMs: 30_000, label: "add an optional assigned coworker" });
-  await waitFor(teammateApp, `document.querySelector('[data-template-id="optional"]')?.textContent.includes("Already added")`, { timeoutMs: 120_000, label: "optional coworker added" });
+  await waitFor(teammateApp, () => { const button = document.querySelector('[data-template-id="optional"] button'); if (!(button instanceof HTMLButtonElement) || button.disabled) return false; button.click(); return true; }, { timeoutMs: 30_000, label: "add an optional assigned coworker" });
+  await waitFor(teammateApp, () => document.querySelector('[data-template-id="optional"]')?.textContent?.includes("Already added"), { timeoutMs: 120_000, label: "optional coworker added" });
   expect(await readTeam()).toHaveLength(3);
-  await evalIn(teammateApp, `(async () => window.__COWORKER__.invoke("coworkers.delete", {slug:"research-partner"}))()`, { awaitPromise: true });
+  await evalIn(teammateApp, async () => {
+    const bridge = Reflect.get(window, "__COWORKER__") as CoworkerTestBridge;
+    return bridge.invoke("coworkers.delete", {slug:"research-partner"});
+  }, { awaitPromise: true });
   await clickButton(teammateApp, "Refresh assigned coworkers");
-  await waitFor(teammateApp, `!document.querySelector('[data-testid="assigned-coworkers"] button')?.disabled`, { timeoutMs: 120_000, label: "assignment refresh after retirement" });
+  await waitFor(teammateApp, () => !document.querySelector<HTMLButtonElement>('[data-testid="assigned-coworkers"] button')?.disabled, { timeoutMs: 120_000, label: "assignment refresh after retirement" });
   expect(await readTeam()).toHaveLength(2);
   expect(completionAuthorizations.length).toBe(starts);
   coworkerTeamsEnabled = false;
   await clickButton(teammateApp, "Refresh assigned coworkers");
-  await waitFor(teammateApp, `document.querySelector('[data-testid="assigned-coworkers"]')?.textContent.includes("Coworker templates") && !document.querySelector('[data-template-id="optional"]')`, { timeoutMs: 30_000, label: "disabled team controls hidden" });
+  await waitFor(teammateApp, () => document.querySelector('[data-testid="assigned-coworkers"]')?.textContent?.includes("Coworker templates") && !document.querySelector('[data-template-id="optional"]'), { timeoutMs: 30_000, label: "disabled team controls hidden" });
   expect(await readTeam()).toHaveLength(2);
-  expect(await evalIn(teammateApp, `document.body.innerText.includes("Refresh assigned coworkers")`)).toBe(false);
+  expect(await evalIn(teammateApp, () => document.body.innerText.includes("Refresh assigned coworkers"))).toBe(false);
   coworkerTeamsEnabled = true;
   await clickButton(teammateApp, "General");
   await clickButton(teammateApp, "Account");
@@ -1148,4 +1409,5 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(await readTeam()).toHaveLength(2);
   evidence.recordAssertionEvidence("Turning prepared teams off hides their controls while keeping personal coworkers", "The disabled catalog deliberately still contained templates; the client failed closed on enabled=false, hid team controls, and preserved both personal coworkers. Returning to Account after re-enabling discovered the flag and restored the controls without duplicates.", true);
   evidence.recordAssertionEvidence("Refreshes preserve personal work, optional choices, and retirement", "After a version update and reload, the team still had two coworkers and Account explained the preserved working copy. Original starting instructions and edited working memory were unchanged. Explicitly adding an optional coworker created one copy; retiring another and refreshing did not recreate it. No background completion requests were made.", true);
+  if (capturePrerequisite) skip(`needs: ${capturePrerequisite}; recording assertions were not executed`);
 });
