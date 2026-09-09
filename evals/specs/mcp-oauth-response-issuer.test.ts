@@ -296,7 +296,10 @@ test("Den keeps an administrator-supplied OAuth client when the provider rejects
   needs({ commands: ["bun"] });
   await using den = await server({
     place, web: false,
-    mocks: { connector: mcpMock({ authorizationResponseIssuerSupported: false, rejectTokenClientIds: ["admin-configured-client", "@dynamic"] }) },
+    // The configured client is rejected only when its exact secret is presented:
+    // a request that lost the secret would be issued tokens instead, so the
+    // repeated rejection below observes the retained secret on the wire.
+    mocks: { connector: mcpMock({ authorizationResponseIssuerSupported: false, rejectTokenClientIds: ["admin-configured-client:admin-configured-secret", "@dynamic"] }) },
     org: { name: `OAuth Client Rejection ${Date.now()}`, members: {} },
   });
   const provider = den.mocks.connector;
@@ -353,10 +356,11 @@ test("Den keeps an administrator-supplied OAuth client when the provider rejects
 
   const second = await signIn(id);
   expect(second.clientId).toBe("admin-configured-client");
-  expect(second.status).toBe(400);
+  expect(second.status, second.html).toBe(400);
+  expect(second.html).toContain("Unsupported client authentication method");
   expect(await providerCalls("/token")).toBe(2);
   expect(await providerCalls("/register")).toBe(0);
-  evidence.recordAssertionEvidence("Retrying reuses the configured client without registering a replacement", "A second sign-in sent the same configured client id, produced exactly one more token request, and still no dynamic registration.", true);
+  evidence.recordAssertionEvidence("Retrying presents the retained client id and secret without registering a replacement", "A second sign-in sent the same configured client id; the provider rejected it again with the secret-bound rule, which it only applies when the exact configured secret is presented, so a cleared secret would have been issued tokens instead. One more token request, still no dynamic registration.", true);
 
   const dynamic = await denFetch(den.admin, "/v1/mcp-connections", {
     method: "POST", headers,

@@ -19,13 +19,28 @@ const preregisteredRedirectUris = (process.env.MOCK_REDIRECT_URIS || "")
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
-// Client ids whose token requests fail the way a provider rejects a client whose
-// configured authentication does not match its registration. The entry
-// "@dynamic" rejects every client this mock registered dynamically.
-const rejectedTokenClientIds = new Set((process.env.MOCK_REJECT_TOKEN_CLIENT_IDS || "")
+// Clients whose token requests fail the way a provider rejects a client whose
+// configured authentication does not match its registration. An entry is a
+// client id, or "id:secret" to reject only when that exact secret is presented
+// (so a request that lost the secret is observable). "@dynamic" rejects every
+// client this mock registered dynamically.
+const rejectedTokenClients = (process.env.MOCK_REJECT_TOKEN_CLIENT_IDS || "")
   .split(",")
   .map((value) => value.trim())
-  .filter(Boolean));
+  .filter(Boolean)
+  .map((entry) => {
+    const separator = entry.indexOf(":");
+    return separator === -1
+      ? { clientId: entry, clientSecret: null }
+      : { clientId: entry.slice(0, separator), clientSecret: entry.slice(separator + 1) };
+  });
+
+function rejectsTokenClient(clientId, clientSecret) {
+  return rejectedTokenClients.some((entry) => (
+    (entry.clientId === "@dynamic" && clients.has(clientId))
+    || (entry.clientId === clientId && (entry.clientSecret === null || entry.clientSecret === clientSecret))
+  ));
+}
 const advertisedScopes = ["mcp:read", "mcp:write"];
 const extraToolName = (process.env.MOCK_EXTRA_TOOL_NAME || "").trim();
 const extraToolTitle = (process.env.MOCK_EXTRA_TOOL_TITLE || extraToolName).trim();
@@ -712,8 +727,10 @@ async function issueToken(req, res, entry) {
   };
   let grantedScope = "mcp:read mcp:write";
 
-  const requestedClientId = basicClient(req)?.clientId || form.client_id || "";
-  if (rejectedTokenClientIds.has(requestedClientId) || (rejectedTokenClientIds.has("@dynamic") && clients.has(requestedClientId))) {
+  const requestedClient = basicClient(req);
+  const requestedClientId = requestedClient?.clientId || form.client_id || "";
+  const requestedClientSecret = requestedClient?.clientSecret ?? form.client_secret ?? null;
+  if (rejectsTokenClient(requestedClientId, requestedClientSecret)) {
     json(res, 400, { error: "invalid_client", error_description: "Unsupported client authentication method" });
     return;
   }

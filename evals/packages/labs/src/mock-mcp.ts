@@ -117,7 +117,7 @@ export interface StartMockMcpOptions {
   profileId?: EnterpriseMcpProfileId;
   fault?: string;
   oauthClientSecret?: string;
-  /** Token requests from these client ids fail with invalid_client (unsupported client authentication); "@dynamic" covers every dynamically registered client. */
+  /** Token requests from these clients fail with invalid_client (unsupported client authentication). Entries are a client id, "id:secret" to reject only that exact presented secret, or "@dynamic" for every dynamically registered client. */
   rejectTokenClientIds?: string[];
   allowUnauthenticatedMcp?: boolean;
   /** Serve this many additional synthetic mock_tool_<i> tools for scale specs. */

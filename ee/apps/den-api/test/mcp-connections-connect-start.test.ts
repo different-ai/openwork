@@ -850,6 +850,7 @@ test("connect start records the shared callback mode for an isolated row whose p
 test("a provider invalid_client rejection keeps the administrator-supplied client but still replaces SDK registrations", async () => {
   let origin = ""
   const tokenClientIds: string[] = []
+  const tokenClientSecrets: (string | null)[] = []
   const registeredClientIds: string[] = []
   const server = Bun.serve({
     port: 0,
@@ -879,6 +880,7 @@ test("a provider invalid_client rejection keeps the administrator-supplied clien
       if (url.pathname === "/token") {
         const form = new URLSearchParams(await incoming.text())
         tokenClientIds.push(form.get("client_id") ?? "")
+        tokenClientSecrets.push(form.get("client_secret"))
         // Every exchange is rejected the way a provider rejects a client whose
         // configured authentication does not match its registration.
         return Response.json({ error: "invalid_client", error_description: "Unsupported client authentication method" }, { status: 400 })
@@ -971,6 +973,8 @@ test("a provider invalid_client rejection keeps the administrator-supplied clien
     expect(second.clientId).toBe("admin-preregistered-client")
     expect(second.callback.status).toBe(400)
     expect(tokenClientIds).toEqual(["admin-preregistered-client", "admin-preregistered-client"])
+    // The retained secret is what the provider receives after the rejection.
+    expect(tokenClientSecrets).toEqual(["admin-preregistered-secret", "admin-preregistered-secret"])
     expect(registeredClientIds).toEqual([])
 
     // Control: an SDK-registered client is still discarded and re-registered.
