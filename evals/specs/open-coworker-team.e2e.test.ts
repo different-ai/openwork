@@ -2,7 +2,7 @@ import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { clickButton, coworker, evalIn, fill, needs, screenshot, test, waitFor, waitForText } from "@openwork/testkit";
+import { browserScript, clickButton, coworker, evalIn, fill, needs, screenshot, test, waitFor, waitForText } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 
 /**
@@ -351,8 +351,27 @@ async function startScriptedModel() {
 
 type App = Awaited<ReturnType<typeof coworker>>;
 
+async function click(app: App, selector: string): Promise<void> {
+  await evalIn(app, browserScript((selector) => {
+    const element = document.querySelector<HTMLElement>(selector);
+    if (!element) throw new Error(`Missing control: ${selector}`);
+    element.click();
+    return true;
+  }, [selector]));
+}
+
+async function select(app: App, selector: string, value: string): Promise<void> {
+  await evalIn(app, browserScript((selector, value) => {
+    const element = document.querySelector<HTMLSelectElement>(selector);
+    if (!element) throw new Error(`Missing select: ${selector}`);
+    element.value = value;
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }, [selector, value]));
+}
+
 async function invokeCoworker(app: App, command: string, payload: unknown): Promise<unknown> {
-  return evalIn(app, `window.__COWORKER__.invoke(${json(command)}, ${json(payload)})`, { awaitPromise: true, timeoutMs: 120_000 });
+  return evalIn(app, browserScript((command, payload) => window.__COWORKER__.invoke(command, payload), [command, payload]), { awaitPromise: true, timeoutMs: 120_000 });
 }
 
 function resultRecord(response: unknown): Record<string, unknown> {
@@ -375,29 +394,31 @@ function resultText(response: unknown): string {
 }
 
 async function waitForConversation(app: App, name: string, ready = true): Promise<void> {
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]') || document.querySelector('[data-testid="coworker-discussion-empty"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === ${json(name)})`, {
+  await waitFor(app, browserScript((name) => Boolean(document.querySelector('[data-testid="coworker-discussion-view"]') || document.querySelector('[data-testid="coworker-discussion-empty"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === name), [name]), {
     timeoutMs: 120_000,
     label: `${name}'s conversation`,
   });
-  if (ready) await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 240_000, label: `${name} ready` });
+  if (ready) await waitFor(app, () => document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready", { timeoutMs: 240_000, label: `${name} ready` });
 }
 
 /** The engine has connected to this coworker's own tools; the first message never races the registration. */
 async function waitForTools(app: App, slug: string): Promise<void> {
-  const connected = await waitFor(app, `(async () => {
+  const connected = await waitFor(app, browserScript(async (slug) => {
+    const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
     const runtime = (await window.__COWORKER__.invoke("runtime.info")).result;
-    const coworker = (await window.__COWORKER__.invoke("coworkers.get", { slug: ${json(slug)} })).result;
+    const coworker = (await window.__COWORKER__.invoke("coworkers.get", { slug })).result;
+    if (!record(runtime) || typeof runtime.ownerToken !== "string" || typeof runtime.serverUrl !== "string" || !record(coworker) || typeof coworker.workspaceId !== "string") throw new Error("Runtime workspace unavailable");
     const headers = { Authorization: "Bearer " + runtime.ownerToken };
     const base = runtime.serverUrl + "/workspace/" + encodeURIComponent(coworker.workspaceId);
     const registration = await fetch(base + "/mcp", { headers });
     if (!registration.ok) return false;
-    const payload = await registration.json();
-    if (!(payload.items ?? []).some((item) => item.name === "coworker")) return false;
+    const payload: unknown = await registration.json();
+    if (!record(payload) || !Array.isArray(payload.items) || !payload.items.some((item: unknown) => record(item) && item.name === "coworker")) return false;
     const engine = await fetch(base + "/opencode/mcp", { headers });
     if (!engine.ok) return false;
-    const status = await engine.json();
-    return status.coworker?.status === "connected" ? "connected" : false;
-  })()`, { timeoutMs: 180_000, label: `${slug}'s tools connected`, awaitPromise: true });
+    const status: unknown = await engine.json();
+    return record(status) && record(status.coworker) && status.coworker.status === "connected" ? "connected" : false;
+  }, [slug]), { timeoutMs: 180_000, label: `${slug}'s tools connected`, awaitPromise: true });
   expect(connected).toBe("connected");
 }
 
@@ -407,117 +428,148 @@ async function converse(app: App, name: string, prompt: string, reply: string, a
     await fill(app, `textarea[aria-label=${json(`Message ${name}`)}]`, prompt);
     await clickButton(app, "Send");
   }
-  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(reply)}))`, {
+  await waitFor(app, browserScript((reply) => [...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(reply)), [reply]), {
     timeoutMs: 300_000,
     label: `reply ${json(reply)}`,
   });
   try {
-    await waitFor(app, `document.querySelector('[data-testid="coworker-thread-status"]')?.dataset.state === "idle" && !document.querySelector('[data-testid="coworker-working"]')`, {
+    await waitFor(app, () => document.querySelector<HTMLElement>('[data-testid="coworker-thread-status"]')?.dataset.state === "idle" && !document.querySelector('[data-testid="coworker-working"]'), {
       timeoutMs: 120_000,
       label: "the turn settled",
     });
   } catch (error) {
     // Say what the engine and the view each believe, so a parked turn can be told from a hung one.
-    const diagnostics = await evalIn(app, `(async () => {
+    const diagnostics = await evalIn(app, browserScript(async (name) => {
+      const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
       const runtime = (await window.__COWORKER__.invoke("runtime.info")).result;
       const coworkers = (await window.__COWORKER__.invoke("coworkers.list")).result;
-      const current = coworkers.find((member) => member.name === ${json(name)});
+      if (!Array.isArray(coworkers)) throw new Error("Team unavailable");
+      const current: unknown = coworkers.find((member: unknown) => record(member) && member.name === name);
+      if (!record(runtime) || typeof runtime.ownerToken !== "string" || typeof runtime.serverUrl !== "string" || !record(current) || typeof current.workspaceId !== "string") throw new Error("Runtime workspace unavailable");
       const headers = { Authorization: "Bearer " + runtime.ownerToken };
-      const sessions = await fetch(runtime.serverUrl + "/workspace/" + encodeURIComponent(current.workspaceId) + "/opencode/session", { headers }).then((response) => response.json()).catch((cause) => String(cause));
-      const status = document.querySelector('[data-testid="coworker-thread-status"]');
+      const sessions: unknown = await fetch(runtime.serverUrl + "/workspace/" + encodeURIComponent(current.workspaceId) + "/opencode/session", { headers }).then((response) => response.json()).catch((cause: unknown) => String(cause));
+      const status = document.querySelector<HTMLElement>('[data-testid="coworker-thread-status"]');
       return {
         view: { state: status?.dataset.state, outcome: status?.dataset.outcome, text: status?.textContent, hidden: document.hidden, hasFocus: document.hasFocus() },
-        sessions: Array.isArray(sessions) ? sessions.map((session) => ({ id: session.id, title: session.title, status: session.status, updated: session.time?.updated })) : sessions,
+        sessions: Array.isArray(sessions) ? sessions.map((session: unknown) => { if (!record(session)) throw new Error("Native session unavailable"); return { id: session.id, title: session.title, status: session.status, updated: record(session.time) ? session.time.updated : undefined }; }) : sessions,
       };
-    })()`, { awaitPromise: true, timeoutMs: 30_000 }).catch((cause: unknown) => String(cause));
+    }, [name]), { awaitPromise: true, timeoutMs: 30_000 }).catch((cause: unknown) => String(cause));
     throw new Error(`${error instanceof Error ? error.message : String(error)}\n\nSettle diagnostics: ${JSON.stringify(diagnostics)}`, { cause: error });
   }
 }
 
 /** Recommendation identity, decision state and available actions. */
-const READ_TILES = `[...document.querySelectorAll('[data-testid="teammate-card"]')].map((tile) => {
-  const pills = tile.parentElement?.querySelector('[data-testid="teammate-choices"]');
-  return {
-    kind: tile.dataset.kind,
-    state: tile.dataset.state,
-    name: tile.querySelector('[data-testid="teammate-card-name"]')?.textContent?.trim() ?? "",
-    slug: tile.dataset.slug ?? "",
-    pills: pills ? [...pills.querySelectorAll('[data-testid="teammate-choice"]')].map((pill) => [...pill.childNodes].filter((node) => node.nodeType === 3).map((node) => node.textContent).join("").trim()) : [],
-  };
-})`;
+const READ_TILES = (match: { count?: number; index?: number; kind?: string; state?: string; pillText?: string; pillCount?: number; projection?: "tile" | "count" | "states" | "added" }) => {
+  const tiles = [...document.querySelectorAll<HTMLElement>('[data-testid="teammate-card"]')].map((tile) => {
+    const pills = tile.parentElement?.querySelector('[data-testid="teammate-choices"]');
+    return {
+      kind: tile.dataset.kind,
+      state: tile.dataset.state,
+      name: tile.querySelector('[data-testid="teammate-card-name"]')?.textContent?.trim() ?? "",
+      slug: tile.dataset.slug ?? "",
+      pills: pills ? [...pills.querySelectorAll('[data-testid="teammate-choice"]')].map((pill) => [...pill.childNodes].filter((node) => node.nodeType === 3).map((node) => node.textContent).join("").trim()) : [],
+    };
+  });
+  if (match.count !== undefined && tiles.length !== match.count) return false;
+  const tile = match.index !== undefined ? tiles[match.index] : tiles.find((tile) => tile.kind === match.kind);
+  if (match.state !== undefined && tile?.state !== match.state) return false;
+  if (match.pillText !== undefined && tile?.pills.join(",") !== match.pillText) return false;
+  if (match.pillCount !== undefined && tile?.pills.length !== match.pillCount) return false;
+  if (match.projection === "tile") return tile;
+  if (match.projection === "count") return match.kind === undefined ? tiles.length : tiles.filter((tile) => tile.kind === match.kind).length;
+  if (match.projection === "states") return tiles.map((tile) => [tile.kind, tile.state, tile.pills.join(",")]);
+  if (match.projection === "added") {
+    if (!document.querySelector('[data-testid="coworker-rail-row"][data-slug="care"]')) return false;
+    return { tile, stillNova: [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Nova"), rows: document.querySelectorAll('[data-testid="coworker-rail-row"]').length };
+  }
+  return tiles;
+};
 
 async function tapPill(app: App, choice: string): Promise<void> {
-  await waitFor(app, `(() => {
-    const pills = [...document.querySelectorAll('[data-testid="teammate-choice"][data-choice=${json(choice)}]')];
+  await waitFor(app, browserScript((selector) => {
+    const pills = [...document.querySelectorAll(selector)];
     const pill = pills[pills.length - 1];
     if (!(pill instanceof HTMLButtonElement) || pill.disabled) return false;
     pill.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: `the ${choice} pill` });
+  }, [`[data-testid="teammate-choice"][data-choice=${json(choice)}]`]), { timeoutMs: 30_000, label: `the ${choice} pill` });
 }
 
 /** Open one coworker from the rail. After a reload the app opens the first coworker by name, so the journey always says who it wants. */
 async function openCoworker(app: App, slug: string, name: string, ready = true): Promise<void> {
-  await waitFor(app, `(() => {
-    const row = document.querySelector('[data-testid="coworker-rail-row"][data-slug=${json(slug)}]') ?? document.querySelector('[data-testid="coworker-rail-avatar"][data-slug=${json(slug)}]');
+  await waitFor(app, browserScript((rowSelector, avatarSelector) => {
+    const row = document.querySelector(rowSelector) ?? document.querySelector(avatarSelector);
     if (!(row instanceof HTMLElement)) return false;
     row.click();
     return true;
-  })()`, { timeoutMs: 120_000, label: `${name}'s rail row` });
+  }, [`[data-testid="coworker-rail-row"][data-slug=${json(slug)}]`, `[data-testid="coworker-rail-avatar"][data-slug=${json(slug)}]`]), { timeoutMs: 120_000, label: `${name}'s rail row` });
   await waitForConversation(app, name, ready);
 }
 
 async function waitForReceipt(app: App, threadId: string, kind: "consultation" | "worker", state: string, except: string[] = []): Promise<Record<string, unknown>> {
-  const receipt = await waitFor(app, `(async () => {
-    const response = await window.__COWORKER__.invoke("collaboration.receipts", { slug: "nova", threadId: ${json(threadId)} });
+  const receipt = await waitFor(app, browserScript(async (threadId, kind, state, except) => {
+    const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+    const response = await window.__COWORKER__.invoke("collaboration.receipts", { slug: "nova", threadId });
     if (!response.ok) throw new Error(response.error);
-    const receipt = response.result.find((item) => !${json(except)}.includes(item.id) && item.dependencies.some((dependency) => dependency.kind === ${json(kind)}));
-    return receipt?.state === ${json(state)} ? receipt : false;
-  })()`, { awaitPromise: true, timeoutMs: 120_000, label: `${kind} receipt ${state}` });
+    if (!Array.isArray(response.result)) throw new Error("Collaboration receipts unavailable");
+    const receipt: unknown = response.result.find((item: unknown) => {
+      if (!record(item) || typeof item.id !== "string" || !Array.isArray(item.dependencies)) throw new Error("Collaboration receipt unavailable");
+      return !except.includes(item.id) && item.dependencies.some((dependency: unknown) => record(dependency) && dependency.kind === kind);
+    });
+    return record(receipt) && receipt.state === state ? receipt : false;
+  }, [threadId, kind, state, except]), { awaitPromise: true, timeoutMs: 120_000, label: `${kind} receipt ${state}` });
   if (!isRecord(receipt)) throw new Error("Missing collaboration receipt.");
   return receipt;
 }
 
 /** Native message ids and tool receipts are witnesses, not a route for sending work. */
 async function readThreadMessages(app: App, slug: string, threadId: string): Promise<Record<string, unknown>[]> {
-  const messages = await evalIn(app, `(async () => {
+  const messages = await evalIn(app, browserScript(async (slug, threadId) => {
+    const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
     const runtime = (await window.__COWORKER__.invoke("runtime.info")).result;
-    const member = (await window.__COWORKER__.invoke("coworkers.get", { slug: ${json(slug)} })).result;
-    const response = await fetch(runtime.serverUrl + "/workspace/" + encodeURIComponent(member.workspaceId) + "/opencode/session/" + encodeURIComponent(${json(threadId)}) + "/message", {
+    const member = (await window.__COWORKER__.invoke("coworkers.get", { slug })).result;
+    if (!record(runtime) || typeof runtime.ownerToken !== "string" || typeof runtime.serverUrl !== "string" || !record(member) || typeof member.workspaceId !== "string") throw new Error("Runtime workspace unavailable");
+    const response = await fetch(runtime.serverUrl + "/workspace/" + encodeURIComponent(member.workspaceId) + "/opencode/session/" + encodeURIComponent(threadId) + "/message", {
       headers: { Authorization: "Bearer " + runtime.ownerToken },
       signal: AbortSignal.timeout(15000),
     });
     if (!response.ok) throw new Error("Native messages unavailable: " + response.status);
-    return (await response.json()).map((message) => ({
-      id: message.info.id, parentId: message.info.parentID ?? "", role: message.info.role,
-      completed: typeof message.info.time?.completed === "number",
-      text: message.parts.filter((part) => part.type === "text" && !part.synthetic).map((part) => part.text ?? "").join(""),
-      tools: message.parts.filter((part) => part.type === "tool").map((part) => ({ name: part.tool, callId: part.callID, status: part.state.status, output: part.state.output ?? part.state.error ?? "" })),
-    }));
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+    const messages: unknown = await response.json();
+    if (!Array.isArray(messages)) throw new Error("Native message list unavailable");
+    return messages.map((message: unknown) => {
+      if (!record(message) || !record(message.info) || !Array.isArray(message.parts)) throw new Error("Native message unavailable");
+      const parts = message.parts.map((part: unknown) => { if (!record(part)) throw new Error("Native message part unavailable"); return part; });
+      return {
+        id: message.info.id, parentId: message.info.parentID ?? "", role: message.info.role,
+        completed: record(message.info.time) && typeof message.info.time.completed === "number",
+        text: parts.filter((part) => part.type === "text" && !part.synthetic).map((part) => part.text ?? "").join(""),
+        tools: parts.filter((part) => part.type === "tool").map((part) => { if (!record(part.state)) throw new Error("Native tool state unavailable"); return { name: part.tool, callId: part.callID, status: part.state.status, output: part.state.output ?? part.state.error ?? "" }; }),
+      };
+    });
+  }, [slug, threadId]), { awaitPromise: true, timeoutMs: 30_000 });
   if (!Array.isArray(messages) || !messages.every(isRecord)) throw new Error("Unexpected native message list.");
   return messages;
 }
 
 async function openGroup(app: App, id: string): Promise<void> {
-  await waitFor(app, `(() => {
-    const row = document.querySelector('[data-testid="group-rail-row"][data-group-id=${json(id)}]') ?? document.querySelector('[data-testid="group-rail-avatar"][data-group-id=${json(id)}]');
+  await waitFor(app, browserScript((rowSelector, avatarSelector) => {
+    const row = document.querySelector(rowSelector) ?? document.querySelector(avatarSelector);
     if (!(row instanceof HTMLElement)) return false;
     row.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: "the consultation's visible group" });
-  await waitFor(app, `document.querySelector('[data-testid="group-chat"]')?.dataset.groupId === ${json(id)}`, { label: "the selected group" });
+  }, [`[data-testid="group-rail-row"][data-group-id=${json(id)}]`, `[data-testid="group-rail-avatar"][data-group-id=${json(id)}]`]), { timeoutMs: 30_000, label: "the consultation's visible group" });
+  await waitFor(app, browserScript((id) => document.querySelector<HTMLElement>('[data-testid="group-chat"]')?.dataset.groupId === id, [id]), { label: "the selected group" });
 }
 
 async function openDiscussion(app: App, threadId: string): Promise<void> {
-  await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-switcher"]').click(); true`);
-  await waitFor(app, `(() => {
-    const choice = document.querySelector('[data-testid="coworker-discussion-menu"] [data-thread-id=${json(threadId)}]');
+  await click(app, '[data-testid="coworker-discussion-switcher"]');
+  await waitFor(app, browserScript((selector) => {
+    const choice = document.querySelector(selector);
     if (!(choice instanceof HTMLButtonElement)) return false;
     choice.click();
     return true;
-  })()`, { label: "the chosen private discussion" });
-  await waitFor(app, `(async () => (await window.__COWORKER__.invoke("coworkers.get", { slug: "nova" })).result.conversationThreadId === ${json(threadId)})()`, { awaitPromise: true, label: "private selection saved" });
+  }, [`[data-testid="coworker-discussion-menu"] [data-thread-id=${json(threadId)}]`]), { label: "the chosen private discussion" });
+  await waitFor(app, browserScript(async (threadId) => { const { result } = await window.__COWORKER__.invoke("coworkers.get", { slug: "nova" }); return typeof result === "object" && result !== null && "conversationThreadId" in result && result.conversationThreadId === threadId; }, [threadId]), { awaitPromise: true, label: "private selection saved" });
 }
 
 test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
@@ -551,21 +603,21 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   await using app = await coworker(launchOptions);
 
   // --- 1. Onboarding proposes a team: two intents, two coworkers to meet, one renamed, created in one step.
-  await waitFor(app, `(document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker")`, { timeoutMs: 120_000, label: "Open Coworker welcome screen" });
-  await evalIn(app, `document.querySelector('[data-testid="onboarding-local-choice"]').click(); true`);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="local-mode"]'))`, { timeoutMs: 60_000, label: "the Use this Mac step" });
+  await waitFor(app, () => (document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker"), { timeoutMs: 120_000, label: "Open Coworker welcome screen" });
+  await click(app, '[data-testid="onboarding-local-choice"]');
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="local-mode"]')), { timeoutMs: 60_000, label: "the Use this Mac step" });
   await clickButton(app, "Continue", { timeoutMs: 120_000 });
-  await waitFor(app, `Boolean(document.querySelector('select[aria-label="Profession"]'))`, { timeoutMs: 60_000, label: "profession selection" });
-  await evalIn(app, `(() => { const select = document.querySelector('select[aria-label="Profession"]'); select.value = "marketing"; select.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`);
-  await evalIn(app, `document.querySelector('[data-testid="onboarding-intents-continue"]').click(); true`);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="onboarding-team-cards"] [data-testid="teammate-card-name"]'))`, { timeoutMs: 60_000, label: "editable proposed team" });
+  await waitFor(app, () => Boolean(document.querySelector('select[aria-label="Profession"]')), { timeoutMs: 60_000, label: "profession selection" });
+  await select(app, 'select[aria-label="Profession"]', "marketing");
+  await click(app, '[data-testid="onboarding-intents-continue"]');
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="onboarding-team-cards"] [data-testid="teammate-card-name"]')), { timeoutMs: 60_000, label: "editable proposed team" });
   // Rename the first coworker in place: tap the name, type, Enter.
-  await evalIn(app, `document.querySelector('[data-testid="onboarding-team-cards"] [data-testid="teammate-card-name"]').click(); true`);
+  await click(app, '[data-testid="onboarding-team-cards"] [data-testid="teammate-card-name"]');
   await fill(app, '[data-testid="teammate-card-name-input"]', "Nova");
-  await evalIn(app, `document.querySelector('[data-testid="teammate-card-name-input"]').dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); true`);
-  await waitFor(app, `[...document.querySelectorAll('[data-testid="onboarding-team-cards"] [data-testid="teammate-card-name"]')].map((node) => node.textContent?.trim().replace(/✎$/, "").trim()).join("|") === "Nova|Editor"`, { timeoutMs: 30_000, label: "the renamed card" });
-  await evalIn(app, `document.querySelector('[data-testid="onboarding-team-create"]').click(); true`);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 180_000, label: "the team rail after creation" });
+  await evalIn(app, () => { const input = document.querySelector('[data-testid="teammate-card-name-input"]'); if (!input) throw new Error("Teammate name input unavailable"); input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); return true; });
+  await waitFor(app, () => [...document.querySelectorAll('[data-testid="onboarding-team-cards"] [data-testid="teammate-card-name"]')].map((node) => node.textContent?.trim().replace(/✎$/, "").trim()).join("|") === "Nova|Editor", { timeoutMs: 30_000, label: "the renamed card" });
+  await click(app, '[data-testid="onboarding-team-create"]');
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-rail"]')), { timeoutMs: 180_000, label: "the team rail after creation" });
   const team = resultList(await invokeCoworker(app, "coworkers.list", {}));
   expect(team.map((member) => [member.slug, member.name, member.roleId])).toEqual([["editor", "Editor", "writing"], ["nova", "Nova", "research"]]);
   await waitForConversation(app, "Nova");
@@ -627,7 +679,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   // each of its turns gets the effort the dial derives from the message: a draft is deep work (high), a one-line question is quick (low).
   for (let attempt = 0; attempt < 3; attempt += 1) {
     for (const member of team) await invokeCoworker(app, "coworkers.update", { slug: String(member.slug), patch: { model: scriptedId, modelVariant: member.slug === "nova" ? "high" : "" } });
-    await evalIn(app, "location.reload(); true");
+    await evalIn(app, () => { location.reload(); return true; });
     await openCoworker(app, "nova", "Nova");
     const models = resultList(await invokeCoworker(app, "coworkers.list", {})).map((member) => member.model);
     if (models.every((model) => model === scriptedId)) break;
@@ -638,7 +690,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
 
   // --- 2. A request that is Editor's job: Nova offers to pass it on, and Ask Editor hands it over with a brief.
   await converse(app, "Nova", DRAFT_PROMPT, DRAFT_REPLY);
-  const referralTiles = await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 1 && tiles[0].state === "open" ? tiles : false; })()`, { timeoutMs: 30_000, label: "the hand-over tile" });
+  const referralTiles = await waitFor(app, browserScript(READ_TILES, [{ count: 1, index: 0, state: "open" }]), { timeoutMs: 30_000, label: "the hand-over tile" });
   expect(referralTiles).toEqual([{
     kind: "referral",
     state: "open",
@@ -658,7 +710,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   );
   await tapPill(app, "ask");
   await waitForConversation(app, "Editor");
-  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(EDITOR_REPLY)}))`, { timeoutMs: 300_000, label: "Editor's reply to the passed request" });
+  await waitFor(app, browserScript((reply) => [...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(reply)), [EDITOR_REPLY]), { timeoutMs: 300_000, label: "Editor's reply to the passed request" });
   const editorPrompt = scripted.prompts.find((prompt) => prompt.includes("Passed from Nova"));
   expect(editorPrompt).toBeDefined();
   // Editor, on the dial at Balanced: the passed request is a draft — deep work — so the provider is asked for high.
@@ -666,7 +718,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   expect(editorPrompt).toContain(`${DRAFT_PROMPT}\n\nPassed from Nova (Research and synthesis): Editor writes for a living.`);
   expect(editorPrompt).toContain("Take it from here as your own request; the person is now talking to you.");
   await openCoworker(app, "nova", "Nova");
-  const afterAsk = await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 1 && tiles[0].state === "asked" ? tiles[0] : false; })()`, { timeoutMs: 30_000, label: "the hand-over tile settled" });
+  const afterAsk = await waitFor(app, browserScript(READ_TILES, [{ count: 1, index: 0, state: "asked", projection: "tile" }]), { timeoutMs: 30_000, label: "the hand-over tile settled" });
   expect(afterAsk).toMatchObject({ kind: "referral", state: "asked", pills: [] });
   evidence.recordAssertionEvidence(
     "A referral hands the request and brief to the chosen teammate",
@@ -676,12 +728,12 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
 
   // --- 2b. A request the person keeps with Nova is never offered again: the same request comes back as a check, not a tile.
   await converse(app, "Nova", PROOFREAD_PROMPT, PROOFREAD_REPLY);
-  await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 2 && tiles[1].state === "open" && tiles[1].pills.join(",") === "Ask Editor,Continue with Nova"; })()`, { timeoutMs: 30_000, label: "the second hand-over tile" });
+  await waitFor(app, browserScript(READ_TILES, [{ count: 2, index: 1, state: "open", pillText: "Ask Editor,Continue with Nova" }]), { timeoutMs: 30_000, label: "the second hand-over tile" });
   await tapPill(app, "continue");
-  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(KEPT_REPLY)}))`, { timeoutMs: 300_000, label: "Nova taking the request back" });
-  await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 2 && tiles[1].state === "continued" && tiles[1].pills.length === 0; })()`, { timeoutMs: 30_000, label: "the kept tile settled" });
+  await waitFor(app, browserScript((reply) => [...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(reply)), [KEPT_REPLY]), { timeoutMs: 300_000, label: "Nova taking the request back" });
+  await waitFor(app, browserScript(READ_TILES, [{ count: 2, index: 1, state: "continued", pillCount: 0 }]), { timeoutMs: 30_000, label: "the kept tile settled" });
   await converse(app, "Nova", PROOFREAD_AGAIN_PROMPT, PROOFREAD_AGAIN_REPLY);
-  expect(await evalIn(app, `${READ_TILES}.length`)).toBe(2);
+  expect(await evalIn(app, browserScript(READ_TILES, [{ projection: "count" }]))).toBe(2);
   evidence.recordAssertionEvidence(
     "A request the person chose to keep with the coworker is never offered to a teammate again",
     "Continue with Nova produced Nova's matched reply and settled the referral as continued. Repeating the request with different case and punctuation produced a reply without another referral.",
@@ -689,21 +741,21 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   );
 
   // --- 3. Work nobody covers: Nova proposes a teammate; Add to team creates it without leaving; Say hi opens it.
-  await evalIn(app, `document.querySelector('button[title="New coworker"], button[aria-label="New coworker"]').click(); true`);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="new-coworker-suggested"]'))`, { label: "readable suggested roles" });
-  await evalIn(app, `(() => { const select = document.querySelector('select[aria-label="Profession"]'); select.value = "support"; select.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`);
-  await waitFor(app, `document.querySelector('[data-testid="teammate-pick"]')?.getAttribute("data-role-id") === "support"`, { label: "support profession leads with the missing support role" });
-  await evalIn(app, `document.querySelector('[data-testid="coworker-team-advice"] summary').click(); true`);
-  await evalIn(app, `(() => { const select = document.querySelector('select[aria-label="Ask coworker"]'); select.value = "nova"; select.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`);
+  await click(app, 'button[title="New coworker"], button[aria-label="New coworker"]');
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="new-coworker-suggested"]')), { label: "readable suggested roles" });
+  await select(app, 'select[aria-label="Profession"]', "support");
+  await waitFor(app, () => document.querySelector('[data-testid="teammate-pick"]')?.getAttribute("data-role-id") === "support", { label: "support profession leads with the missing support role" });
+  await click(app, '[data-testid="coworker-team-advice"] summary');
+  await select(app, 'select[aria-label="Ask coworker"]', "nova");
   await fill(app, 'textarea[aria-label="Your work and goals"]', INBOX_PROMPT);
   expect(resultList(await invokeCoworker(app, "coworkers.list", {}))).toHaveLength(2);
-  await evalIn(app, `document.querySelector('[data-testid="coworker-team-advice-send"]').click(); true`);
+  await click(app, '[data-testid="coworker-team-advice-send"]');
   await waitForConversation(app, "Nova");
   await converse(app, "Nova", INBOX_PROMPT, INBOX_REPLY, true);
   expect(scripted.prompts.some((prompt) => prompt.includes(INBOX_PROMPT) && prompt.includes("Customer success & support") && prompt.includes("Prefer existing teammates"))).toBe(true);
   expect(resultList(await invokeCoworker(app, "coworkers.list", {}))).toHaveLength(2);
   evidence.recordAssertionEvidence("Team advice does not create a coworker before approval", "Customer success prioritized the missing support role. Asking Nova sent the profession and review boundaries through its conversation; the team still had two members before Add to team.", true);
-  const suggestionTiles = await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 3 && tiles[2].state === "open" ? tiles[2] : false; })()`, { timeoutMs: 30_000, label: "the suggested teammate tile" });
+  const suggestionTiles = await waitFor(app, browserScript(READ_TILES, [{ count: 3, index: 2, state: "open", projection: "tile" }]), { timeoutMs: 30_000, label: "the suggested teammate tile" });
   expect(suggestionTiles).toEqual({
     kind: "suggestion",
     state: "open",
@@ -711,16 +763,9 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     slug: "",
     pills: ["Add to team", "Not now"],
   });
-  const railBefore = await evalIn(app, `document.querySelectorAll('[data-testid="coworker-rail-row"]').length`);
+  const railBefore = await evalIn(app, () => document.querySelectorAll('[data-testid="coworker-rail-row"]').length);
   await tapPill(app, "add");
-  const added = await waitFor(app, `(() => {
-    const tiles = ${READ_TILES};
-    const tile = tiles.find((candidate) => candidate.kind === "suggestion");
-    if (!tile || tile.state !== "added") return false;
-    const rail = document.querySelector('[data-testid="coworker-rail-row"][data-slug="care"]');
-    if (!rail) return false;
-    return { tile, stillNova: [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Nova"), rows: document.querySelectorAll('[data-testid="coworker-rail-row"]').length };
-  })()`, { timeoutMs: 180_000, label: "Care added to the team" });
+  const added = await waitFor(app, browserScript(READ_TILES, [{ kind: "suggestion", state: "added", projection: "added" }]), { timeoutMs: 180_000, label: "Care added to the team" });
   expect(added).toMatchObject({ tile: { state: "added", slug: "care", pills: ["Say hi"] }, stillNova: true, rows: Number(railBefore) + 1 });
   const care = resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "care" }));
   expect(care).toMatchObject({ name: "Care", roleId: "support", suggestedBy: { slug: "nova", why: "the support inbox comes up every morning" }, model: scriptedId });
@@ -736,19 +781,19 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   // --- 4. The guards leave no tile behind: a role a teammate covers, and a role the person declined.
   await openCoworker(app, "nova", "Nova");
   await converse(app, "Nova", WRITER_PROMPT, WRITER_REPLY);
-  expect(await evalIn(app, `${READ_TILES}.length`)).toBe(3);
+  expect(await evalIn(app, browserScript(READ_TILES, [{ projection: "count" }]))).toBe(3);
   await openCoworker(app, "editor", "Editor");
   await converse(app, "Editor", SALES_PROMPT, SALES_REPLY);
   // A one-line question is a quick reply: the dial at Balanced asks the provider for low, never the dial's own value.
   expect(scripted.facts.find((facts) => facts.prompt.includes(SALES_PROMPT))?.reasoningEffort).toBe("low");
-  const salesTile = await waitFor(app, `(() => { const tiles = ${READ_TILES}; const tile = tiles.find((candidate) => candidate.kind === "suggestion"); return tile && tile.state === "open" ? tile : false; })()`, { timeoutMs: 30_000, label: "the sales suggestion" });
+  const salesTile = await waitFor(app, browserScript(READ_TILES, [{ kind: "suggestion", state: "open", projection: "tile" }]), { timeoutMs: 30_000, label: "the sales suggestion" });
   expect(salesTile).toMatchObject({ name: "Pipeline", pills: ["Add to team", "Not now"] });
   await tapPill(app, "dismiss");
-  const declined = await waitFor(app, `(() => { const tiles = ${READ_TILES}; const tile = tiles.find((candidate) => candidate.kind === "suggestion"); return tile && tile.state === "declined" ? tile : false; })()`, { timeoutMs: 30_000, label: "the declined suggestion" });
+  const declined = await waitFor(app, browserScript(READ_TILES, [{ kind: "suggestion", state: "declined", projection: "tile" }]), { timeoutMs: 30_000, label: "the declined suggestion" });
   expect(declined).toMatchObject({ state: "declined", pills: [] });
   expect(resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "editor", path: "team/roster.md" }))).toMatch(/## Recently declined[\s\S]*- a sales and relationships coworker — [A-Z][a-z]{2} \d{1,2}/);
   await converse(app, "Editor", SALES_AGAIN_PROMPT, SALES_AGAIN_REPLY);
-  expect(await evalIn(app, `${READ_TILES}.filter((tile) => tile.kind === "suggestion").length`)).toBe(1);
+  expect(await evalIn(app, browserScript(READ_TILES, [{ kind: "suggestion", projection: "count" }]))).toBe(1);
   expect(resultList(await invokeCoworker(app, "coworkers.list", {})).map((member) => member.slug)).toEqual(["care", "editor", "nova"]);
   evidence.recordAssertionEvidence(
     "A teammate who already covers a role, or a role the person declined, never becomes another tile",
@@ -757,12 +802,12 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   );
 
   // --- 5. A reload keeps every tile in the state the person left it.
-  await evalIn(app, "location.reload(); true");
+  await evalIn(app, () => { location.reload(); return true; });
   await openCoworker(app, "editor", "Editor");
-  const editorAfterReload = await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 1 ? tiles[0] : false; })()`, { timeoutMs: 60_000, label: "Editor's tile after a reload" });
+  const editorAfterReload = await waitFor(app, browserScript(READ_TILES, [{ count: 1, index: 0, projection: "tile" }]), { timeoutMs: 60_000, label: "Editor's tile after a reload" });
   expect(editorAfterReload).toMatchObject({ kind: "suggestion", state: "declined", name: "Pipeline", pills: [] });
   await openCoworker(app, "nova", "Nova");
-  const novaAfterReload = await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 3 ? tiles.map((tile) => [tile.kind, tile.state, tile.pills.join(",")]) : false; })()`, { timeoutMs: 60_000, label: "Nova's tiles after a reload" });
+  const novaAfterReload = await waitFor(app, browserScript(READ_TILES, [{ count: 3, projection: "states" }]), { timeoutMs: 60_000, label: "Nova's tiles after a reload" });
   expect(novaAfterReload).toEqual([["referral", "asked", ""], ["referral", "continued", ""], ["suggestion", "added", "Say hi"]]);
   evidence.recordAssertionEvidence(
     "Tiles and their states survive a reload",
@@ -770,12 +815,12 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     true,
   );
   // Keep a separate group as the negative isolation fixture.
-  await evalIn(app, `document.querySelector('[data-testid="new-group-chat"]').click(); true`);
+  await click(app, '[data-testid="new-group-chat"]');
   await clickButton(app, "Create group chat");
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="group-chat-empty"]'))`, { label: "unrelated empty group" });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="group-chat-empty"]')), { label: "unrelated empty group" });
 
   // --- 6. A private request consults Editor in a visible group, then returns only to its origin.
-  const unrelatedGroupId = String(await evalIn(app, `document.querySelector('[data-testid="group-chat"]').dataset.groupId`));
+  const unrelatedGroupId = String(await evalIn(app, () => { const group = document.querySelector<HTMLElement>('[data-testid="group-chat"]'); if (!group) throw new Error("Group chat unavailable"); return group.dataset.groupId; }));
   const groupsBefore = resultList(await invokeCoworker(app, "groups.list", {}));
   await openCoworker(app, "nova", "Nova");
   const origin = String(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "nova" })).conversationThreadId);

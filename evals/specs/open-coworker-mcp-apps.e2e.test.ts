@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { expect, onTestFinished } from "vitest";
-import { connect, coworker, debuggerUrlFor, evalIn, evaluate, listTargets, needs, test, waitFor, waitForText } from "@openwork/testkit";
+import { browserScript, connect, coworker, debuggerUrlFor, evalIn, evaluate, listTargets, needs, test, waitFor, waitForText } from "@openwork/testkit";
 import { buildStandardAppHtml } from "../worlds/coworker.ts";
 
 const mcpServerName = "chapter-notes";
@@ -26,24 +26,24 @@ function field(value: unknown, key: string): unknown {
 }
 
 async function clickButtonContaining(app: Awaited<ReturnType<typeof coworker>>, text: string): Promise<void> {
-  await waitFor(app, `(() => {
+  await waitFor(app, browserScript((text) => {
     const button = [...document.querySelectorAll("button")]
-      .find((candidate) => (candidate.textContent ?? "").includes(${json(text)}) && !candidate.disabled);
+      .find((candidate) => (candidate.textContent ?? "").includes(text) && !candidate.disabled);
     if (!button) return false;
     button.scrollIntoView({ block: "center" });
     button.click();
     return true;
-  })()`, { timeoutMs: 60_000, label: `button containing ${json(text)}` });
+  }, [text]), { timeoutMs: 60_000, label: `button containing ${json(text)}` });
 }
 
 async function clickTestId(app: Awaited<ReturnType<typeof coworker>>, testId: string): Promise<void> {
-  await waitFor(app, `(() => {
-    const element = document.querySelector(${json(`[data-testid="${testId}"]`)});
+  await waitFor(app, browserScript((selector) => {
+    const element = document.querySelector(selector);
     if (!(element instanceof HTMLElement)) return false;
     if (element instanceof HTMLButtonElement && element.disabled) return false;
     element.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: `click ${testId}` });
+  }, [`[data-testid="${testId}"]`]), { timeoutMs: 30_000, label: `click ${testId}` });
 }
 
 /** The Apps & tools root is the first level of Coworker settings. */
@@ -54,24 +54,24 @@ const APPS_TOOLS_ROUTE = "settings/apps-tools";
  * view (Escape folds it), on the Coworker settings rows (their first row opens it), or deeper inside.
  */
 async function openAppsAndTools(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
-  await waitFor(app, `(() => {
+  await waitFor(app, browserScript((appsToolsRoute) => {
     const panel = document.querySelector('[data-testid="context-panel"]');
     if (!(panel instanceof HTMLElement)) return false;
     const route = document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") ?? "";
     if (panel.dataset.collapsed === "false" && panel.dataset.view === "settings") {
       // The view remembers its last level for the session; the journeys start each visit at the root.
-      if (route === ${json(APPS_TOOLS_ROUTE)}) return true;
-      if (panel.dataset.depth === "0") document.querySelector('[data-testid="settings-row-apps-tools"]')?.click();
-      else document.querySelector('[data-testid="panel-back"]')?.click();
+      if (route === appsToolsRoute) return true;
+      if (panel.dataset.depth === "0") document.querySelector<HTMLElement>('[data-testid="settings-row-apps-tools"]')?.click();
+      else document.querySelector<HTMLElement>('[data-testid="panel-back"]')?.click();
       return false;
     }
     if (panel.dataset.collapsed === "true") {
-      document.querySelector('[data-testid="context-rail-settings"]')?.click();
+      document.querySelector<HTMLElement>('[data-testid="context-rail-settings"]')?.click();
       return false;
     }
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     return false;
-  })()`, { timeoutMs: 60_000, label: "Apps & tools root" });
+  }, [APPS_TOOLS_ROUTE]), { timeoutMs: 60_000, label: "Apps & tools root" });
 }
 
 function readBody(request: IncomingMessage): Promise<string> {
@@ -189,7 +189,7 @@ function rpcResponse(message: Record<string, unknown>): Record<string, unknown> 
 async function waitForMountedApp(app: Awaited<ReturnType<typeof coworker>>, timeoutMs = 60_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const initialized = await evalIn(app, `document.querySelector(${json(`[data-mcp-app-resource="${resourceUri}"]`)})?.getAttribute("data-mcp-app-ready") === "true"`);
+    const initialized = await evalIn(app, browserScript((selector) => document.querySelector(selector)?.getAttribute("data-mcp-app-ready") === "true", [`[data-mcp-app-resource="${resourceUri}"]`]));
     if (initialized === true) return true;
 
     // Depending on Electron's site-isolation mode, a cross-origin App frame
@@ -206,10 +206,10 @@ async function waitForMountedApp(app: Awaited<ReturnType<typeof coworker>>, time
     if (sandbox) {
       const client = await connect(debuggerUrlFor(app.handle.cdpUrl, sandbox));
       try {
-        const mounted = await evaluate(client, `(() => {
+        const mounted = await evaluate(client, () => {
           const text = document.querySelector("iframe")?.contentDocument?.body?.innerText ?? "";
           return text.includes("Team pulse") && text.includes("Ready for review");
-        })()`);
+        });
         if (mounted === true) return true;
       } finally {
         client.close();
@@ -273,11 +273,11 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
   const mcpUrl = `http://127.0.0.1:${address.port}/mcp`;
 
   await using app = await coworker({ name: "mcp-apps-store" });
-  await waitFor(app, `(document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker")`, {
+  await waitFor(app, () => (document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker"), {
     timeoutMs: 120_000,
     label: "Open Coworker welcome screen",
   });
-  const prepared = await evalIn(app, `(async () => {
+  const prepared = await evalIn(app, browserScript(async (mcpServerName, mcpUrl) => {
     const created = await window.__COWORKER__.invoke("coworkers.create", {
       name: "Scout",
       role: "Operations partner",
@@ -288,6 +288,8 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
     if (!created.ok) return created;
     const runtime = await window.__COWORKER__.invoke("runtime.info");
     if (!runtime.ok) return runtime;
+    if (typeof created.result !== "object" || created.result === null || !("workspaceId" in created.result) || typeof created.result.workspaceId !== "string") throw new Error("Coworker workspace unavailable");
+    if (typeof runtime.result !== "object" || runtime.result === null || !("serverUrl" in runtime.result) || typeof runtime.result.serverUrl !== "string" || !("ownerToken" in runtime.result) || typeof runtime.result.ownerToken !== "string") throw new Error("Runtime unavailable");
     const workspaceId = created.result.workspaceId;
     const response = await fetch(runtime.result.serverUrl + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
       method: "PATCH",
@@ -298,9 +300,9 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
       body: JSON.stringify({
         opencode: {
           mcp: {
-            [${json(mcpServerName)}]: {
+            [mcpServerName]: {
               type: "remote",
-              url: ${json(mcpUrl)},
+              url: mcpUrl,
               enabled: true,
               oauth: false,
             },
@@ -309,41 +311,41 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
       }),
     });
     return { ok: response.ok, status: response.status, body: await response.text(), workspaceId };
-  })()`, { awaitPromise: true, timeoutMs: 120_000 });
+  }, [mcpServerName, mcpUrl]), { awaitPromise: true, timeoutMs: 120_000 });
   expect(prepared).toMatchObject({ ok: true, workspaceId: expect.any(String) });
 
-  await evalIn(app, "location.reload(); true");
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "team rail" });
+  await evalIn(app, () => { location.reload(); return true; });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-rail"]')), { timeoutMs: 120_000, label: "team rail" });
   await openAppsAndTools(app);
 
   // Discover the local server's advertised App, then open it from the catalog.
   await clickTestId(app, "apps-tools-row-local");
-  await waitFor(app, `(() => {
-    const row = [...document.querySelectorAll('[data-testid="coworker-mcp-connection"]')].find((candidate) => (candidate.textContent ?? "").includes(${json(mcpServerName)}));
+  await waitFor(app, browserScript((mcpServerName) => {
+    const row = [...document.querySelectorAll('[data-testid="coworker-mcp-connection"]')].find((candidate) => (candidate.textContent ?? "").includes(mcpServerName));
     if (!(row instanceof HTMLElement) || !(row.textContent ?? "").includes("Connected")) return false;
     row.click();
     return true;
-  })()`, { timeoutMs: 60_000, label: "open the connected chapter-notes tool" });
-  await waitFor(app, `document.querySelector('[data-testid="apps-tools-offers"]')?.textContent.includes("Team pulse")`, { timeoutMs: 60_000, label: "advertised Team pulse App" });
+  }, [mcpServerName]), { timeoutMs: 60_000, label: "open the connected chapter-notes tool" });
+  await waitFor(app, () => document.querySelector('[data-testid="apps-tools-offers"]')?.textContent?.includes("Team pulse"), { timeoutMs: 60_000, label: "advertised Team pulse App" });
   await openAppsAndTools(app);
   await clickTestId(app, "apps-tools-row-apps");
   await clickButtonContaining(app, "Team pulse");
   await waitForText(app, "Read only", { timeoutMs: 30_000 });
   await clickTestId(app, "apps-tools-open-app");
-  await waitFor(app, `Boolean(document.querySelector(${json(`[data-testid="context-panel"] [data-mcp-app-resource="${resourceUri}"] iframe`)}))`, {
+  await waitFor(app, browserScript((selector) => Boolean(document.querySelector(selector)), [`[data-testid="context-panel"] [data-mcp-app-resource="${resourceUri}"] iframe`]), {
     timeoutMs: 60_000,
     label: "Coworker MCP App sandbox iframe",
   });
-  const hostClaim = await evalIn(app, `(() => {
-    const frame = document.querySelector(${json(`[data-mcp-app-resource="${resourceUri}"] iframe`)});
+  const hostClaim = await evalIn(app, browserScript((selector) => {
+    const frame = document.querySelector(selector);
     if (!(frame instanceof HTMLIFrameElement) || !frame.src) return false;
-    const flags = new Set((frame.getAttribute("sandbox") || "").split(/\\s+/).filter(Boolean));
+    const flags = new Set((frame.getAttribute("sandbox") || "").split(/\s+/).filter(Boolean));
     return flags.has("allow-scripts")
       && flags.has("allow-same-origin")
       && frame.getAttribute("referrerpolicy") === "no-referrer"
       && new URL(frame.src).origin !== window.location.origin
       && !frame.hasAttribute("srcdoc");
-  })()`);
+  }, [`[data-mcp-app-resource="${resourceUri}"] iframe`]));
   expect(hostClaim).toBe(true);
   const mountedApp = await waitForMountedApp(app);
   expect(mountedApp).toBe(true);
@@ -358,13 +360,13 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
   // Exercise the alternate host once, without a responsive-layout matrix.
   await app.client.send("Emulation.setDeviceMetricsOverride", { width: 1_700, height: 900, deviceScaleFactor: 1, mobile: false });
   await clickTestId(app, "apps-tools-open-beside");
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const button = document.querySelector('[data-testid="beside-column"] [data-testid="apps-tools-open-app"]');
     if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
     button.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: "Open inside the beside column" });
-  await waitFor(app, `document.querySelector(${json(`[data-testid="beside-column"] [data-mcp-app-resource="${resourceUri}"]`)})?.getAttribute("data-mcp-app-ready") === "true"`, {
+  }, { timeoutMs: 30_000, label: "Open inside the beside column" });
+  await waitFor(app, browserScript((selector) => document.querySelector(selector)?.getAttribute("data-mcp-app-ready") === "true", [`[data-testid="beside-column"] [data-mcp-app-resource="${resourceUri}"]`]), {
     timeoutMs: 60_000,
     label: "App mounted in the beside column",
   });
@@ -383,13 +385,13 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
   await clickButtonContaining(app, "Team pulse");
   const callsBeforeDraft = toolCalls;
   await clickTestId(app, "apps-tools-ask");
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const composer = document.querySelector('textarea[aria-label="Message Scout"]');
     return composer instanceof HTMLTextAreaElement
       && composer.value.includes("Team pulse");
-  })()`, { timeoutMs: 30_000, label: "App-seeded discussion draft" });
+  }, { timeoutMs: 30_000, label: "App-seeded discussion draft" });
   expect(toolCalls).toBe(callsBeforeDraft);
-  expect(await evalIn(app, `document.querySelectorAll('[data-message-role="user"]').length`)).toBe(0);
+  expect(await evalIn(app, () => document.querySelectorAll('[data-message-role="user"]').length)).toBe(0);
   evidence.recordAssertionEvidence(
     "An App prepares work without sending it",
     "Ask Scout filled the discussion composer with Team pulse. No user message appeared and the tool-call witness stayed at the two explicit App launches.",

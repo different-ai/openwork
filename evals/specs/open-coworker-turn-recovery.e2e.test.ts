@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { coworker, evalIn, fill, needs, screenshot, test, waitFor } from "@openwork/testkit";
+import { browserScript, coworker, evalIn, fill, needs, screenshot, test, waitFor } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 
 /**
@@ -227,8 +227,24 @@ async function startScriptedModel(): Promise<{ baseUrl: string; requests: Record
 
 type App = Awaited<ReturnType<typeof coworker>>;
 
+declare global {
+  interface Window {
+    __COWORKER_OUTCOME_TRACE__?: { outcomes: Set<string | null>; headers: Set<string>; rails: Set<string>; failures: Set<string>; observer: MutationObserver };
+    __savedAnimationFrame?: typeof requestAnimationFrame;
+  }
+}
+
+async function click(app: App, selector: string, index = 0): Promise<void> {
+  await evalIn(app, browserScript((selector, index) => {
+    const element = document.querySelectorAll<HTMLElement>(selector)[index];
+    if (!element) throw new Error(`Missing control: ${selector} at ${index}`);
+    element.click();
+    return true;
+  }, [selector, index]));
+}
+
 async function invokeCoworker(app: App, command: string, payload: unknown): Promise<unknown> {
-  return evalIn(app, `window.__COWORKER__.invoke(${json(command)}, ${json(payload)})`, { awaitPromise: true, timeoutMs: 120_000 });
+  return evalIn(app, browserScript((command, payload) => window.__COWORKER__.invoke(command, payload), [command, payload]), { awaitPromise: true, timeoutMs: 120_000 });
 }
 
 function resultRecord(response: unknown): Record<string, unknown> {
@@ -239,25 +255,26 @@ function resultRecord(response: unknown): Record<string, unknown> {
 }
 
 async function waitForNovaReady(app: App): Promise<void> {
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Nova")`, {
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Nova"), {
     timeoutMs: 120_000,
     label: "Nova discussion view",
   });
-  await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 240_000, label: "Nova ready" });
+  await waitFor(app, () => document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready", { timeoutMs: 240_000, label: "Nova ready" });
 }
 
 /** Send from the field the way a person does; a message typed while a reply runs goes on Next. */
 async function type(app: App, text: string): Promise<void> {
   await fill(app, 'textarea[aria-label="Message Nova"]', text);
-  await evalIn(app, `(() => {
+  await evalIn(app, () => {
     const field = document.querySelector('textarea[aria-label="Message Nova"]');
+    if (!field) throw new Error("Nova composer unavailable");
     field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     return true;
-  })()`);
+  });
 }
 
 async function waitForReply(app: App, text: string, timeoutMs = 60_000): Promise<void> {
-  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(text)}))`, {
+  await waitFor(app, browserScript((text) => [...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(text)), [text]), {
     timeoutMs,
     label: `reply ${json(text)}`,
   });
@@ -265,15 +282,15 @@ async function waitForReply(app: App, text: string, timeoutMs = 60_000): Promise
 
 /** Watch the words as they change: which outcomes the conversation named, and what the header said meanwhile. */
 async function beginOutcomeTrace(app: App): Promise<void> {
-  await evalIn(app, `(() => {
+  await evalIn(app, () => {
     window.__COWORKER_OUTCOME_TRACE__?.observer?.disconnect?.();
-    const outcomes = new Set();
-    const headers = new Set();
-    const rails = new Set();
-    const failures = new Set();
+    const outcomes = new Set<string | null>();
+    const headers = new Set<string>();
+    const rails = new Set<string>();
+    const failures = new Set<string>();
     const record = () => {
       for (const node of document.querySelectorAll('[data-outcome]')) outcomes.add(node.getAttribute("data-outcome"));
-      for (const node of document.querySelectorAll('[data-outcome="failed"]')) failures.add((node.getAttribute("data-testid") ?? node.tagName) + ": " + node.textContent.trim().slice(0, 500));
+      for (const node of document.querySelectorAll('[data-outcome="failed"]')) failures.add((node.getAttribute("data-testid") ?? node.tagName) + ": " + (node.textContent ?? "").trim().slice(0, 500));
       headers.add(document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "");
       rails.add(document.querySelector('[data-testid="coworker-rail-line"]')?.textContent?.trim() ?? "");
     };
@@ -282,24 +299,24 @@ async function beginOutcomeTrace(app: App): Promise<void> {
     window.__COWORKER_OUTCOME_TRACE__ = { outcomes, headers, rails, failures, observer };
     record();
     return true;
-  })()`);
+  });
 }
 
 async function endOutcomeTrace(app: App): Promise<{ outcomes: string[]; headers: string[]; rails: string[]; failures: string[] }> {
-  const value = await evalIn(app, `(() => {
+  const value = await evalIn(app, () => {
     const trace = window.__COWORKER_OUTCOME_TRACE__;
     trace?.observer?.disconnect?.();
     return { outcomes: [...(trace?.outcomes ?? [])], headers: [...(trace?.headers ?? [])], rails: [...(trace?.rails ?? [])], failures: [...(trace?.failures ?? [])] };
-  })()`);
+  });
   if (!isRecord(value) || !Array.isArray(value.outcomes) || !Array.isArray(value.headers) || !Array.isArray(value.rails)) throw new Error("The outcome trace was unavailable.");
   return { outcomes: value.outcomes.map(String), headers: value.headers.map(String), rails: value.rails.map(String), failures: Array.isArray(value.failures) ? value.failures.map(String) : [] };
 }
 
-const USER_BUBBLES = `[...document.querySelectorAll('[data-message-role="user"]')].map((node) => node.textContent?.trim() ?? "")`;
+const USER_BUBBLES = () => [...document.querySelectorAll('[data-message-role="user"]')].map((node) => node.textContent?.trim() ?? "");
 
 /** The turn settled: the header says Ready and the composer is not working. */
 async function waitForSettled(app: App, timeoutMs = 120_000): Promise<void> {
-  await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready" && document.querySelector('[data-testid="coworker-composer"]')?.getAttribute("data-working") !== "true"`, {
+  await waitFor(app, () => document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready" && document.querySelector('[data-testid="coworker-composer"]')?.getAttribute("data-working") !== "true", {
     timeoutMs,
     label: "the turn settled",
   });
@@ -307,14 +324,14 @@ async function waitForSettled(app: App, timeoutMs = 120_000): Promise<void> {
 
 /** The message left the field and the engine has its turn: its bubble is up, the live row is past Sending, and nothing waits as Next. */
 async function waitUntilRunning(app: App, prompt: string): Promise<void> {
-  await waitFor(app, `(() => {
-    const users = ${USER_BUBBLES};
+  await waitFor(app, browserScript((prompt) => {
+    const users = [...document.querySelectorAll('[data-message-role="user"]')].map((node) => node.textContent?.trim() ?? "");
     const row = document.querySelector('[data-testid="coworker-working"]');
-    return users.some((text) => text.includes(${json(prompt)}))
+    return users.some((text) => text.includes(prompt))
       && document.querySelector('[data-testid="coworker-composer"]')?.getAttribute("data-working") === "true"
       && row instanceof HTMLElement && row.dataset.phase !== "sending"
       && document.querySelectorAll('[data-testid="coworker-next-row"]').length === 0;
-  })()`, { timeoutMs: 60_000, label: `${json(prompt)} running` });
+  }, [prompt]), { timeoutMs: 60_000, label: `${json(prompt)} running` });
 }
 
 /** The engine's own record of the thread: user messages by text, so a retried message is provably there once. */
@@ -367,7 +384,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     env: { ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "", OPENROUTER_API_KEY: "", GEMINI_API_KEY: "", GOOGLE_API_KEY: "", XAI_API_KEY: "", GROQ_API_KEY: "", MISTRAL_API_KEY: "", DEEPSEEK_API_KEY: "" },
   });
 
-  await waitFor(app, `(document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker")`, {
+  await waitFor(app, () => (document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker"), {
     timeoutMs: 120_000,
     label: "Open Coworker welcome screen",
   });
@@ -410,7 +427,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(engineReload.status).toBe(200);
   const useFirstModel = async () => {
     await invokeCoworker(app, "coworkers.update", { slug: "nova", patch: { model: `${SCRIPTED_PROVIDER}/${FIRST_MODEL}`, modelVariant: "" } });
-    await evalIn(app, "location.reload(); true");
+    await evalIn(app, () => { location.reload(); return true; });
     await waitForNovaReady(app);
   };
   await useFirstModel();
@@ -419,9 +436,9 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // --- (a) A rate limit that clears: trying again, live, then the reply — one message, held once. -------
   await beginOutcomeTrace(app);
   await type(app, TRANSIENT_PROMPT);
-  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(TRANSIENT_REPLY)})) || Boolean(document.querySelector('[data-testid="coworker-turn-failed"]'))`, { timeoutMs: 180_000, label: "the transient rate limit's outcome" });
-  if (await evalIn(app, `Boolean(document.querySelector('[data-testid="coworker-turn-failed"]'))`)) {
-    throw new Error(`A transient rate limit became a failure after ${scripted.countFor("TRANSIENT")} provider requests. UI: ${await evalIn(app, `document.body.innerText`)} Trace: ${JSON.stringify(await endOutcomeTrace(app))}. ${await describeThread(app, serverUrl, ownerToken, workspaceId, await threadIdOf(), scripted)}`);
+  await waitFor(app, browserScript((reply) => [...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(reply)) || Boolean(document.querySelector('[data-testid="coworker-turn-failed"]')), [TRANSIENT_REPLY]), { timeoutMs: 180_000, label: "the transient rate limit's outcome" });
+  if (await evalIn(app, () => Boolean(document.querySelector('[data-testid="coworker-turn-failed"]')))) {
+    throw new Error(`A transient rate limit became a failure after ${scripted.countFor("TRANSIENT")} provider requests. UI: ${await evalIn(app, () => document.body.innerText)} Trace: ${JSON.stringify(await endOutcomeTrace(app))}. ${await describeThread(app, serverUrl, ownerToken, workspaceId, await threadIdOf(), scripted)}`);
   }
   await waitForReply(app, TRANSIENT_REPLY, 180_000);
   const transientTrace = await endOutcomeTrace(app);
@@ -436,7 +453,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   const threadId = await threadIdOf();
   const afterTransient = await engineUserMessages(serverUrl, ownerToken, workspaceId, threadId);
   expect(afterTransient.filter((text) => text.includes("TRANSIENT"))).toHaveLength(1);
-  expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-turn-failed"], [data-testid="coworker-turn-timeout"]').length`)).toBe(0);
+  expect(await evalIn(app, () => document.querySelectorAll('[data-testid="coworker-turn-failed"], [data-testid="coworker-turn-timeout"]').length)).toBe(0);
   evidence.recordAssertionEvidence(
     "A rate limit that clears is trying again in the conversation, never a failure, and the message is in the thread once",
     `The scripted model refused ${TRANSIENT_REFUSALS} times with 429 and Retry-After; the conversation showed a retrying line while the engine and then the app tried again, the header read Retrying and the rail began "Couldn't reach the AI model.", no failure appeared, the reply landed after ${scripted.countFor("TRANSIENT")} requests, and the engine holds exactly one user message for it.`,
@@ -447,8 +464,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await waitForSettled(app);
   await beginOutcomeTrace(app);
   await type(app, HARD_PROMPT);
-  const hardCard = await waitFor(app, `(() => {
-    const failure = document.querySelector('[data-testid="coworker-turn-failed"]');
+  const hardCard = await waitFor(app, () => {
+    const failure = document.querySelector<HTMLElement>('[data-testid="coworker-turn-failed"]');
     if (!failure) return false;
     const technical = failure.querySelector('[data-testid="coworker-turn-technical"]');
     return {
@@ -465,7 +482,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
       rail: document.querySelector('[data-testid="coworker-rail-line"]')?.textContent?.trim() ?? "",
       working: Boolean(document.querySelector('[data-testid="coworker-working"]')),
     };
-  })()`, { timeoutMs: 120_000, label: "the failure as a coworker-side message" });
+  }, { timeoutMs: 120_000, label: "the failure as a coworker-side message" });
   if (!isRecord(hardCard) || !Array.isArray(hardCard.choices)) throw new Error("Failure card facts were unavailable.");
   expect(hardCard.headline).toBe("Nova's AI model cannot use the tools enabled for this coworker.");
   expect(hardCard.className).not.toMatch(/rose/);
@@ -482,13 +499,13 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(hardCard.threadStatus).toBe("Reply failed");
   expect(hardCard.rail).toBe("Nova's AI model cannot use the tools enabled for this coworker.");
   expect(hardCard.working).toBe(false);
-  await evalIn(app, `document.querySelector('[data-testid="coworker-turn-choice"][data-choice="use-model"]').click(); true`);
+  await click(app, '[data-testid="coworker-turn-choice"][data-choice="use-model"]');
   await waitForReply(app, SECOND_MODEL_REPLY, 120_000);
   // The turn settles a moment after its reply shows: the bubble goes, one receipt line stays.
-  const retryReceipt = await waitFor(app, `(() => {
+  const retryReceipt = await waitFor(app, () => {
     const lines = [...document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="retried"]')].map((line) => line.textContent?.trim());
     return lines.length > 0 && document.querySelectorAll('[data-testid="coworker-turn-failed"]').length === 0 ? lines : false;
-  })()`, { timeoutMs: 30_000, label: "the Retried with line" }).catch(async (error) => {
+  }, { timeoutMs: 30_000, label: "the Retried with line" }).catch(async (error) => {
     const activity = await invokeCoworker(app, "turns.activity", { slug: "nova", threadId: await threadIdOf() });
     throw new Error(`${String(error)}\nRecorded retry activity: ${JSON.stringify(activity)}\n${await describeThread(app, serverUrl, ownerToken, workspaceId, await threadIdOf(), scripted)}`);
   });
@@ -515,7 +532,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await beginOutcomeTrace(app);
   await type(app, FREE_PROMPT);
   // While the engine retries: the quiet line names the free model, in the app's words, and offers the way out inline.
-  const freeRetryLine = await waitFor(app, `(() => {
+  const freeRetryLine = await waitFor(app, () => {
     const line = document.querySelector('[data-testid="coworker-turn-line"][data-outcome="retrying"]');
     if (!line) return false;
     return {
@@ -523,18 +540,19 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
       actions: [...line.querySelectorAll('[data-testid="coworker-turn-choice"]')].map((choice) => choice.getAttribute("data-choice")),
       header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
     };
-  })()`, { timeoutMs: 90_000, label: "the free model's retry line" });
+  }, { timeoutMs: 90_000, label: "the free model's retry line" });
   if (!isRecord(freeRetryLine) || !Array.isArray(freeRetryLine.actions)) throw new Error("The retry line facts were unavailable.");
   expect(String(freeRetryLine.text)).toMatch(/^The free model is busy\. Trying again/);
   expect(String(freeRetryLine.text)).not.toMatch(/subscribe|OpenCode Go|Couldn't reach/i);
   expect(freeRetryLine.actions).toEqual(["stop", "connect-provider"]);
   expect(freeRetryLine.header).toBe("Retrying");
   // Once the engine gives up: one coworker-side message that names the free model and offers C Connect an AI provider.
-  const freeCard = await waitFor(app, `(() => {
+  const freeCard = await waitFor(app, () => {
     const failure = document.querySelector('[data-testid="coworker-turn-failed"]');
     if (!failure || !failure.querySelector('[data-choice="use-model"]')) return false;
     const technical = failure.querySelector('[data-testid="coworker-turn-technical"]');
     const plain = failure.cloneNode(true);
+    if (!(plain instanceof Element)) throw new Error("Failure card clone unavailable");
     plain.querySelector('[data-testid="coworker-turn-technical"]')?.remove();
     return {
       headline: failure.querySelector('[data-testid="coworker-turn-headline"]')?.textContent?.trim() ?? "",
@@ -545,7 +563,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
       header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
       rail: document.querySelector('[data-testid="coworker-rail-line"]')?.textContent?.trim() ?? "",
     };
-  })()`, { timeoutMs: 240_000, label: "the free model's limit as a coworker-side message" });
+  }, { timeoutMs: 240_000, label: "the free model's limit as a coworker-side message" });
   if (!isRecord(freeCard) || !Array.isArray(freeCard.choices)) throw new Error("Free-limit card facts were unavailable.");
   const engineAttempts = scripted.countFor("FREE");
   expect(freeCard.headline).toBe("The free model is busy right now.");
@@ -571,27 +589,27 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(engineAttempts).toBeGreaterThanOrEqual(2);
   expect(engineAttempts).toBeLessThanOrEqual(4);
   // C opens OpenWork › AI models — where the person's own provider is connected — and closing it keeps the failure in place.
-  await evalIn(app, `document.querySelector('[data-testid="coworker-turn-choice"][data-choice="connect-provider"]').click(); true`);
-  const providersScreen = await waitFor(app, `(() => {
+  await click(app, '[data-testid="coworker-turn-choice"][data-choice="connect-provider"]');
+  const providersScreen = await waitFor(app, () => {
     const pane = document.querySelector('[data-testid="openwork-settings-pane"]');
     const current = pane?.querySelector('[aria-current="page"]');
     const providers = pane?.querySelector('[data-testid="local-providers"]');
     if (!pane || pane.getAttribute("data-active") !== "true" || !current || !providers) return false;
     return { section: current.textContent?.trim() ?? "" };
-  })()`, { timeoutMs: 30_000, label: "OpenWork settings open at AI models" });
+  }, { timeoutMs: 30_000, label: "OpenWork settings open at AI models" });
   expect(isRecord(providersScreen) ? String(providersScreen.section) : "").toContain("AI models");
-  await evalIn(app, `document.querySelector('button[aria-label="Close settings"]').click(); true`);
+  await click(app, 'button[aria-label="Close settings"]');
   // The settings pane stays mounted for continuity and only goes inactive; the discussion beneath still holds the failure.
-  await waitFor(app, `document.querySelector('[data-testid="openwork-settings-pane"]')?.getAttribute("data-active") === "false" && Boolean(document.querySelector('[data-testid="coworker-turn-failed"]'))`, { timeoutMs: 30_000, label: "back in the discussion with the failure still there" });
+  await waitFor(app, () => document.querySelector('[data-testid="openwork-settings-pane"]')?.getAttribute("data-active") === "false" && Boolean(document.querySelector('[data-testid="coworker-turn-failed"]')), { timeoutMs: 30_000, label: "back in the discussion with the failure still there" });
   // A hands the same message to the other connected model; the reply lands, the failure goes, one receipt line stays.
   scripted.release("FREE");
-  await evalIn(app, `document.querySelector('[data-testid="coworker-turn-choice"][data-choice="use-model"]').click(); true`);
+  await click(app, '[data-testid="coworker-turn-choice"][data-choice="use-model"]');
   await waitForReply(app, SECOND_MODEL_REPLY, 120_000);
   // The conversation keeps one resolution note, the newest: this turn's "Retried with" replaces the earlier one.
-  expect(await waitFor(app, `(() => {
+  expect(await waitFor(app, () => {
     const lines = [...document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="retried"]')].map((line) => line.textContent?.trim());
     return lines.length > 0 && document.querySelectorAll('[data-testid="coworker-turn-failed"]').length === 0 ? lines : false;
-  })()`, { timeoutMs: 30_000, label: "the free-limit failure gone and the Retried with line in place" })).toEqual([`Retried with ${SECOND_MODEL_LABEL}`]);
+  }, { timeoutMs: 30_000, label: "the free-limit failure gone and the Retried with line in place" })).toEqual([`Retried with ${SECOND_MODEL_LABEL}`]);
   const freeTrace = await endOutcomeTrace(app);
   expect(freeTrace.outcomes).toContain("retrying");
   expect(freeTrace.outcomes).toContain("failed");
@@ -616,29 +634,29 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await waitUntilRunning(app, SLOW_PROMPT);
   // The first words stream into a real bubble the moment they arrive — before the part lands in the
   // transcript — so what is streaming is visible without a tap; the typing row is gone by then.
-  const liveBubble = await waitFor(app, `(() => {
+  const liveBubble = await waitFor(app, browserScript((opening) => {
     const bubble = document.querySelector('[data-testid="coworker-live-bubble"]');
-    if (!bubble || !(bubble.textContent ?? "").includes(${json(SLOW_OPENING)})) return false;
+    if (!bubble || !(bubble.textContent ?? "").includes(opening)) return false;
     return {
       text: bubble.textContent?.trim() ?? "",
       typingRow: Boolean(document.querySelector('[data-testid="coworker-typing"]')),
       landedBubbles: document.querySelectorAll('[data-testid="coworker-reply-bubble"]').length,
       header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
     };
-  })()`, { timeoutMs: 30_000, label: "the words streaming into a live bubble" });
+  }, [SLOW_OPENING]), { timeoutMs: 30_000, label: "the words streaming into a live bubble" });
   expect(liveBubble).toMatchObject({ text: SLOW_OPENING, typingRow: false, header: "Working" });
-  const slowRow = await waitFor(app, `(() => {
+  const slowRow = await waitFor(app, browserScript((opening) => {
     if (document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() !== "Still working") return false;
     return {
       typingRow: Boolean(document.querySelector('[data-testid="coworker-typing"]')),
       stop: Boolean(document.querySelector('[data-testid="coworker-send"][data-role="stop"]')),
-      liveBubble: (document.querySelector('[data-testid="coworker-live-bubble"]')?.textContent ?? "").includes(${json(SLOW_OPENING)}),
+      liveBubble: (document.querySelector('[data-testid="coworker-live-bubble"]')?.textContent ?? "").includes(opening),
       header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
       threadStatus: document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim() ?? "",
       rail: document.querySelector('[data-testid="coworker-rail-line"]')?.textContent?.trim() ?? "",
       failed: document.querySelectorAll('[data-testid="coworker-turn-failed"], [data-testid="coworker-turn-timeout"], [data-testid="coworker-turn-line"][data-outcome="failed"]').length,
     };
-  })()`, { timeoutMs: SLOW_HOLD_MS + 30_000, label: "long streaming keeps Stop without a duplicate typing indicator" });
+  }, [SLOW_OPENING]), { timeoutMs: SLOW_HOLD_MS + 30_000, label: "long streaming keeps Stop without a duplicate typing indicator" });
   expect(slowRow).toEqual({ typingRow: false, stop: true, liveBubble: true, header: "Still working", threadStatus: "Still working", rail: "Still working on it", failed: 0 });
   await waitForReply(app, SLOW_REPLY, 60_000);
   const slowTrace = await endOutcomeTrace(app);
@@ -657,9 +675,9 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   scripted.hold("STOP");
   await type(app, STOP_PROMPT);
   await waitUntilRunning(app, STOP_PROMPT);
-  await waitFor(app, `document.querySelector('[data-testid="coworker-send"]')?.getAttribute("data-role") === "stop"`, { timeoutMs: 30_000, label: "the round control became Stop" });
-  await evalIn(app, `document.querySelector('[data-testid="coworker-send"][data-role="stop"]').click(); true`);
-  const stoppedLine = await waitFor(app, `(() => {
+  await waitFor(app, () => document.querySelector('[data-testid="coworker-send"]')?.getAttribute("data-role") === "stop", { timeoutMs: 30_000, label: "the round control became Stop" });
+  await click(app, '[data-testid="coworker-send"][data-role="stop"]');
+  const stoppedLine = await waitFor(app, () => {
     const line = document.querySelector('[data-testid="coworker-turn-line"][data-outcome="stopped-by-you"]');
     if (!line) return false;
     return {
@@ -669,10 +687,10 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
       rail: document.querySelector('[data-testid="coworker-rail-line"]')?.textContent?.trim() ?? "",
       working: Boolean(document.querySelector('[data-testid="coworker-working"]')),
     };
-  })()`, { timeoutMs: 60_000, label: "the Stopped. line" });
+  }, { timeoutMs: 60_000, label: "the Stopped. line" });
   expect(stoppedLine).toEqual({ text: "Stopped.", choices: ["retry"], header: "Stopped", rail: "Stopped.", working: false });
   scripted.release("STOP");
-  await evalIn(app, `document.querySelector('[data-testid="coworker-turn-line"][data-outcome="stopped-by-you"] [data-choice="retry"]').click(); true`);
+  await click(app, '[data-testid="coworker-turn-line"][data-outcome="stopped-by-you"] [data-choice="retry"]');
   try {
     await waitForReply(app, STOP_REPLY, 120_000);
   } catch (error) {
@@ -681,7 +699,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   const stopBubbles = await evalIn(app, USER_BUBBLES);
   expect(Array.isArray(stopBubbles) && stopBubbles.filter((text) => String(text).includes("STOP")).length).toBe(1);
   expect((await engineUserMessages(serverUrl, ownerToken, workspaceId, threadId)).filter((text) => text.includes("STOP"))).toHaveLength(1);
-  expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="stopped-by-you"]').length`)).toBe(0);
+  expect(await evalIn(app, () => document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="stopped-by-you"]').length)).toBe(0);
   evidence.recordAssertionEvidence(
     "Stop is the round control, stopping reads as one word with Retry, and Retry re-runs the same message",
     "While the scripted model held its reply the send control became a stop control; one click gave one quiet line — Stopped. · Retry — with the header saying Stopped and the rail the same word, and Retry re-ran the message under its own id: one user bubble, one user message in the engine, and the reply the second attempt produced.",
@@ -694,45 +712,48 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await waitUntilRunning(app, HOLD_PROMPT);
   await type(app, "Next one");
   await type(app, "Next two");
-  const rows = () => evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')].map((row) => row.querySelector("span.truncate")?.textContent?.trim() ?? "")`);
+  const rows = () => evalIn(app, () => [...document.querySelectorAll('[data-testid="coworker-next-row"]')].map((row) => row.querySelector("span.truncate")?.textContent?.trim() ?? ""));
   expect(await rows()).toEqual(["Next one", "Next two"]);
-  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-next-label"]')?.textContent ?? ""`)).toBe("Up next · 2 messages · sent after this reply");
-  expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-next-row"] button').length`)).toBe(2);
-  expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-next"] [role="menuitem"]').length`)).toBe(0);
+  expect(await evalIn(app, () => document.querySelector('[data-testid="coworker-next-label"]')?.textContent ?? "")).toBe("Up next · 2 messages · sent after this reply");
+  expect(await evalIn(app, () => document.querySelectorAll('[data-testid="coworker-next-row"] button').length)).toBe(2);
+  expect(await evalIn(app, () => document.querySelectorAll('[data-testid="coworker-next"] [role="menuitem"]').length)).toBe(0);
   await screenshot(app);
-  await evalIn(app, `document.querySelector('[data-testid="coworker-next-row"] [aria-haspopup="menu"]').click(); true`);
-  await waitFor(app, `document.activeElement?.getAttribute("data-testid") === "coworker-next-edit"`, { label: "queue menu focuses its first action" });
-  await evalIn(app, `document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); true`);
-  expect(await evalIn(app, `document.activeElement?.getAttribute("data-testid")`)).toBe("coworker-next-send-now");
-  await evalIn(app, `document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
-  await waitFor(app, `document.activeElement?.getAttribute("aria-haspopup") === "menu" && !document.querySelector('[data-testid="coworker-next"] [role="menu"]')`, { label: "Escape returns focus to the queue action control" });
+  await click(app, '[data-testid="coworker-next-row"] [aria-haspopup="menu"]');
+  await waitFor(app, () => document.activeElement?.getAttribute("data-testid") === "coworker-next-edit", { label: "queue menu focuses its first action" });
+  await evalIn(app, () => { if (!document.activeElement) throw new Error("Active control unavailable"); document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); return true; });
+  expect(await evalIn(app, () => document.activeElement?.getAttribute("data-testid"))).toBe("coworker-next-send-now");
+  await evalIn(app, () => { if (!document.activeElement) throw new Error("Active control unavailable"); document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); return true; });
+  await waitFor(app, () => document.activeElement?.getAttribute("aria-haspopup") === "menu" && !document.querySelector('[data-testid="coworker-next"] [role="menu"]'), { label: "Escape returns focus to the queue action control" });
   // The main-process lifecycle record owns both the admitted turn and Next;
   // turns.json is an import source, no longer a second writable authority.
-  const recorded = await waitFor(app, `window.__COWORKER__.invoke("turns.state", { slug: "nova", threadId: ${json(threadId)} })
-    .then((response) => response.ok && response.result.next.some((item) => item.text === "Next two") ? response.result : false)
-    .catch(() => false)`, { timeoutMs: 30_000, label: "the backend record carries the pending turn and Next", awaitPromise: true });
+  const recorded = await waitFor(app, browserScript((threadId) => window.__COWORKER__.invoke("turns.state", { slug: "nova", threadId })
+    .then((response) => {
+      const state = response.result;
+      return response.ok && typeof state === "object" && state !== null && "next" in state && Array.isArray(state.next) && state.next.some((item: unknown) => typeof item === "object" && item !== null && "text" in item && item.text === "Next two") ? state : false;
+    })
+    .catch(() => false), [threadId]), { timeoutMs: 30_000, label: "the backend record carries the pending turn and Next", awaitPromise: true });
   if (!isRecord(recorded)) throw new Error("The backend did not return the thread's turn record.");
   expect(isRecord(recorded.pending) ? recorded.pending.prompt : null).toBe(HOLD_PROMPT);
   expect(Array.isArray(recorded.next) ? recorded.next.map((item) => (isRecord(item) ? item.text : null)) : null).toEqual(["Next one", "Next two"]);
-  await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][1].querySelector('[aria-haspopup="menu"]').click(); true`);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-next-edit"]'))`, { label: "queue menu opens for edit" });
-  await evalIn(app, `document.querySelector('[data-testid="coworker-next-edit"]').click(); true`);
-  expect(await evalIn(app, `document.querySelector('textarea[aria-label="Message Nova"]')?.value`)).toBe("Next two");
+  await click(app, '[data-testid="coworker-next-row"] [aria-haspopup="menu"]', 1);
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-next-edit"]')), { label: "queue menu opens for edit" });
+  await click(app, '[data-testid="coworker-next-edit"]');
+  expect(await evalIn(app, () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message Nova"]')?.value)).toBe("Next two");
   expect(await rows()).toEqual(["Next one"]);
   await type(app, "Next three");
   expect(await rows()).toEqual(["Next one", "Next three"]);
-  await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][1].querySelector('[aria-haspopup="menu"]').click(); true`);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-next-remove"]'))`, { label: "queue menu opens for remove" });
-  await evalIn(app, `document.querySelector('[data-testid="coworker-next-remove"]').click(); true`);
+  await click(app, '[data-testid="coworker-next-row"] [aria-haspopup="menu"]', 1);
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-next-remove"]')), { label: "queue menu opens for remove" });
+  await click(app, '[data-testid="coworker-next-remove"]');
   expect(await rows()).toEqual(["Next one"]);
-  await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][0].querySelector('[aria-haspopup="menu"]').click(); true`);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-next-send-now"]'))`, { label: "queue menu opens for send-now" });
-  await evalIn(app, `document.querySelector('[data-testid="coworker-next-send-now"]').click(); true`);
-  await waitFor(app, `[...document.querySelectorAll('[data-message-role="user"]')].some((node) => (node.textContent ?? "").trim() === "Next one")`, { timeoutMs: 30_000, label: "Send now sent the waiting message" });
+  await click(app, '[data-testid="coworker-next-row"] [aria-haspopup="menu"]');
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-next-send-now"]')), { label: "queue menu opens for send-now" });
+  await click(app, '[data-testid="coworker-next-send-now"]');
+  await waitFor(app, () => [...document.querySelectorAll('[data-message-role="user"]')].some((node) => (node.textContent ?? "").trim() === "Next one"), { timeoutMs: 30_000, label: "Send now sent the waiting message" });
   await waitForReply(app, DEFAULT_REPLY, 60_000);
   expect(await rows()).toEqual([]);
   // The stopped turn keeps its one line in the transcript, between its bubble and the message sent now.
-  expect(await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="stopped"]')].map((line) => line.textContent?.trim())`)).toEqual(["Stopped."]);
+  expect(await evalIn(app, () => [...document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="stopped"]')].map((line) => line.textContent?.trim()))).toEqual(["Stopped."]);
   expect((await engineUserMessages(serverUrl, ownerToken, workspaceId, threadId)).filter((text) => text.includes("HOLD"))).toHaveLength(1);
 
   // Then the ordinary case: two messages wait, and drain one at a time, in order, once the reply lands.
@@ -742,11 +763,11 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await type(app, "Drain A");
   await type(app, "Drain B");
   expect(await rows()).toEqual(["Drain A", "Drain B"]);
-  await waitFor(app, `(() => {
-    const users = ${USER_BUBBLES};
+  await waitFor(app, () => {
+    const users = [...document.querySelectorAll('[data-message-role="user"]')].map((node) => node.textContent?.trim() ?? "");
     return users.at(-1) === "Drain B" && document.querySelectorAll('[data-testid="coworker-next-row"]').length === 0;
-  })()`, { timeoutMs: HOLD_MS + 120_000, label: "Next drained in order" });
-  await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 120_000, label: "the queue settled" });
+  }, { timeoutMs: HOLD_MS + 120_000, label: "Next drained in order" });
+  await waitFor(app, () => document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready", { timeoutMs: 120_000, label: "the queue settled" });
   const drained = await engineUserMessages(serverUrl, ownerToken, workspaceId, threadId);
   const drainIndex = drained.findIndex((text) => text.includes("HOLD") && text.includes("Again"));
   expect(drainIndex).toBeGreaterThan(-1);
@@ -769,14 +790,14 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await waitUntilRunning(app, CUT_PROMPT);
   await type(app, "After the cut");
   expect(await rows()).toEqual(["After the cut"]);
-  await evalIn(app, "location.reload(); true");
+  await evalIn(app, () => { location.reload(); return true; });
   const aborted = await fetch(`${serverUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode/session/${encodeURIComponent(threadId)}/abort`, {
     method: "POST",
     headers: { Authorization: `Bearer ${ownerToken}` },
   });
   expect(aborted.status).toBe(200);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Nova")`, { timeoutMs: 120_000, label: "Nova discussion view after the reload" });
-  const cutLine = await waitFor(app, `(() => {
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Nova"), { timeoutMs: 120_000, label: "Nova discussion view after the reload" });
+  const cutLine = await waitFor(app, () => {
     const line = document.querySelector('[data-testid="coworker-turn-line"][data-outcome="cut-off"]');
     if (!line) return false;
     return {
@@ -787,32 +808,32 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
       next: [...document.querySelectorAll('[data-testid="coworker-next-row"]')].map((row) => row.querySelector("span.truncate")?.textContent?.trim() ?? ""),
       failed: document.querySelectorAll('[data-testid="coworker-turn-failed"]').length,
     };
-  })()`, { timeoutMs: 120_000, label: "the cut-off line after the reload" });
+  }, { timeoutMs: 120_000, label: "the cut-off line after the reload" });
   expect(cutLine).toEqual({ text: "Stopped when the app closed before Nova replied.", choices: ["continue", "discard"], header: "Stopped", rail: "Stopped when the app closed before Nova replied.", next: ["After the cut"], failed: 0 });
   const beforeContinue = await describeThread(app, serverUrl, ownerToken, workspaceId, threadId, scripted);
   scripted.release("CUT");
   // A hidden window can suspend paint callbacks. Work settlement must not wait for a paint.
-  await evalIn(app, `window.__savedAnimationFrame = window.requestAnimationFrame; window.requestAnimationFrame = () => 0; true`);
-  await evalIn(app, `document.querySelector('[data-testid="coworker-turn-line"][data-outcome="cut-off"] [data-choice="continue"]').click(); true`);
+  await evalIn(app, () => { window.__savedAnimationFrame = window.requestAnimationFrame; window.requestAnimationFrame = () => 0; return true; });
+  await click(app, '[data-testid="coworker-turn-line"][data-outcome="cut-off"] [data-choice="continue"]');
   try {
     await waitForReply(app, CUT_REPLY, 120_000);
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\nThread at the cut-off line: ${beforeContinue}\nThread after Continue timed out: ${await describeThread(app, serverUrl, ownerToken, workspaceId, threadId, scripted)}`);
   }
   try {
-    await waitFor(app, `(() => {
-      const users = ${USER_BUBBLES};
+    await waitFor(app, () => {
+      const users = [...document.querySelectorAll('[data-message-role="user"]')].map((node) => node.textContent?.trim() ?? "");
       return users.at(-1) === "After the cut" && document.querySelectorAll('[data-testid="coworker-next-row"]').length === 0;
-    })()`, { timeoutMs: 120_000, label: "Next drained after Continue" });
+    }, { timeoutMs: 120_000, label: "Next drained after Continue" });
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\nThread after the drain wait: ${await describeThread(app, serverUrl, ownerToken, workspaceId, threadId, scripted)}`);
   }
-  await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 120_000, label: "settled after the cut" });
-  await evalIn(app, `window.requestAnimationFrame = window.__savedAnimationFrame; delete window.__savedAnimationFrame; true`);
+  await waitFor(app, () => document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready", { timeoutMs: 120_000, label: "settled after the cut" });
+  await evalIn(app, () => { if (!window.__savedAnimationFrame) throw new Error("Original animation frame callback unavailable"); window.requestAnimationFrame = window.__savedAnimationFrame; delete window.__savedAnimationFrame; return true; });
   const afterCut = await engineUserMessages(serverUrl, ownerToken, workspaceId, threadId);
   expect(afterCut.filter((text) => text.includes("CUT"))).toHaveLength(1);
   expect(afterCut.at(-1)).toBe("After the cut");
-  expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="cut-off"]').length`)).toBe(0);
+  expect(await evalIn(app, () => document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="cut-off"]').length)).toBe(0);
   evidence.recordAssertionEvidence(
     "A turn cut off before it finished reads as such after a reload, Continue finishes it under the same message id, and Next drains after",
     "With the reply held and one message waiting as Next, the window reloaded while the engine's turn was interrupted. The returning window read the record beside the coworker and showed one quiet line — Stopped when the app closed before Nova replied. · Continue · Discard — with the header saying Stopped and the rail the same line, the Next row still there, and no failure card. Continue re-ran the message under its own id and its reply landed even with animation frames suspended; the waiting message then went by itself, and the engine holds one user message for the cut turn.",
@@ -846,7 +867,7 @@ test.skipIf(!enabled)("Open Coworker background work survives cancellation and r
   });
   expect(reload.status).toBe(200);
   await invokeCoworker(app, "coworkers.update", { slug: "nova", patch: { model: `${SCRIPTED_PROVIDER}/${FIRST_MODEL}`, modelVariant: "" } });
-  await evalIn(app, "location.reload(); true");
+  await evalIn(app, () => { location.reload(); return true; });
   await waitForNovaReady(app);
   await type(app, "Ready for background work.");
   await waitForReply(app, DEFAULT_REPLY);
@@ -860,7 +881,7 @@ test.skipIf(!enabled)("Open Coworker background work survives cancellation and r
   }));
   const workerId = String(worker.id);
   scripted.controlWorker(workerId);
-  await waitFor(app, `window.__COWORKER__.invoke("workers.get", { slug: "nova", id: ${json(workerId)} }).then(r => r.result?.threadId || false)`, { awaitPromise: true, timeoutMs: 90_000, label: "background native thread" });
+  await waitFor(app, browserScript(async (id) => { const { result } = await window.__COWORKER__.invoke("workers.get", { slug: "nova", id }); return typeof result === "object" && result !== null && "threadId" in result && result.threadId || false; }, [workerId]), { awaitPromise: true, timeoutMs: 90_000, label: "background native thread" });
   await expect.poll(() => scripted.requests.filter((request) => request.prompt.startsWith("You are a Worker") && request.prompt.includes("BACKGROUND_RELIABILITY")).length, { timeout: 30_000 }).toBe(1);
   const heldWorker = resultRecord(await invokeCoworker(app, "workers.get", { slug: "nova", id: workerId }));
   expect(heldWorker.status, String(heldWorker.error)).toBe("running");
@@ -872,8 +893,8 @@ test.skipIf(!enabled)("Open Coworker background work survives cancellation and r
   await type(app, "Pause the background check for now.");
   await waitForReply(app, "The background check is paused.");
   scripted.release("BACKGROUND");
-  await waitFor(app, `window.__COWORKER__.invoke("workers.get", { slug: "nova", id: ${json(workerId)} }).then(r => r.result?.status === "paused" && r.result?.lifespan?.used === 1)`, { awaitPromise: true, timeoutMs: 120_000, label: "pause holds after the current step" });
-  await waitFor(app, `window.__COWORKER__.invoke("localResponsibilities.status", {}).then(r => r.result?.active === 0 && r.result?.queued === 0)`, { awaitPromise: true, timeoutMs: 30_000, label: "cancelled queue remains empty" });
+  await waitFor(app, browserScript(async (id) => { const { result } = await window.__COWORKER__.invoke("workers.get", { slug: "nova", id }); if (typeof result !== "object" || result === null || !("status" in result) || result.status !== "paused" || !("lifespan" in result)) return false; const lifespan = result.lifespan; return typeof lifespan === "object" && lifespan !== null && "used" in lifespan && lifespan.used === 1; }, [workerId]), { awaitPromise: true, timeoutMs: 120_000, label: "pause holds after the current step" });
+  await waitFor(app, async () => { const { result } = await window.__COWORKER__.invoke("localResponsibilities.status", {}); return typeof result === "object" && result !== null && "active" in result && result.active === 0 && "queued" in result && result.queued === 0; }, { awaitPromise: true, timeoutMs: 30_000, label: "cancelled queue remains empty" });
   expect(scripted.countFor("BACKGROUND_CANCELLED")).toBe(0);
   const workerRequest = scripted.requests.find((request) => request.prompt.startsWith("You are a Worker") && request.prompt.includes("BACKGROUND_RELIABILITY"));
   expect(workerRequest?.tools).toContain("coworker_document_create");
@@ -881,24 +902,32 @@ test.skipIf(!enabled)("Open Coworker background work survives cancellation and r
     expect(workerRequest?.tools).not.toContain(forbidden);
   }
   expect(scripted.requests.find((request) => request.prompt === "Pause the background check for now.")?.tools).toContain("coworker_worker_pause");
-  await waitFor(app, `(document.body?.innerText ?? "").includes("Paused Background check")`, { timeoutMs: 10_000, label: "the completed pause names its Worker in the receipt" });
+  await waitFor(app, () => (document.body?.innerText ?? "").includes("Paused Background check"), { timeoutMs: 10_000, label: "the completed pause names its Worker in the receipt" });
   await invokeCoworker(app, "workers.steer", { slug: "nova", id: workerId, text: "KEEP THIS STEERING: include source C.", });
   const interrupted = resultRecord(await invokeCoworker(app, "workers.spawn", {
     slug: "nova", name: "Interrupted check", goal: "BACKGROUND_INTERRUPTED: inspect the sources once.", lifespan: { kind: "turns", max: 2 },
   }));
-  await waitFor(app, `window.__COWORKER__.invoke("workers.get", { slug: "nova", id: ${json(interrupted.id)} }).then(r => r.result?.threadId || false)`, { awaitPromise: true, timeoutMs: 90_000, label: "interrupted worker admitted" });
-  await waitFor(app, `window.__COWORKER__.invoke("workers.get", { slug: "nova", id: ${json(interrupted.id)} }).then(async r => {
+  await waitFor(app, browserScript(async (id) => { const { result } = await window.__COWORKER__.invoke("workers.get", { slug: "nova", id }); return typeof result === "object" && result !== null && "threadId" in result && result.threadId || false; }, [interrupted.id]), { awaitPromise: true, timeoutMs: 90_000, label: "interrupted worker admitted" });
+  await waitFor(app, browserScript(async (id, workspaceId) => {
+    const { result } = await window.__COWORKER__.invoke("workers.get", { slug: "nova", id });
+    if (typeof result !== "object" || result === null || !("threadId" in result) || typeof result.threadId !== "string") throw new Error("Worker thread unavailable");
     const runtime = (await window.__COWORKER__.invoke("runtime.info")).result;
-    const response = await fetch(runtime.serverUrl + "/workspace/" + ${json(workspaceId)} + "/opencode/session/" + r.result.threadId + "/message", { headers: { Authorization: "Bearer " + runtime.ownerToken } });
-    const messages = await response.json();
-    return messages.some(m => m.info.role === "assistant");
-  })`, { awaitPromise: true, timeoutMs: 90_000, label: "interrupted turn reached the model" });
+    if (typeof runtime !== "object" || runtime === null || !("serverUrl" in runtime) || typeof runtime.serverUrl !== "string" || !("ownerToken" in runtime) || typeof runtime.ownerToken !== "string") throw new Error("Runtime unavailable");
+    const response = await fetch(runtime.serverUrl + "/workspace/" + workspaceId + "/opencode/session/" + result.threadId + "/message", { headers: { Authorization: "Bearer " + runtime.ownerToken } });
+    const messages: unknown = await response.json();
+    if (!Array.isArray(messages)) throw new Error("Worker messages unavailable");
+    return messages.some((message: unknown) => {
+      if (typeof message !== "object" || message === null || !("info" in message)) return false;
+      const info = message.info;
+      return typeof info === "object" && info !== null && "role" in info && info.role === "assistant";
+    });
+  }, [interrupted.id, workspaceId]), { awaitPromise: true, timeoutMs: 90_000, label: "interrupted turn reached the model" });
   await expect.poll(() => scripted.requests.filter((request) => request.prompt.startsWith("You are a Worker") && request.prompt.includes("BACKGROUND_INTERRUPTED")).length, { timeout: 30_000 }).toBe(1);
   await app.stop();
   await using restarted = await coworker({ name: "background-recovery", profileDir });
   expect(resultRecord(await invokeCoworker(restarted, "workers.get", { slug: "nova", id: workerId }))).toMatchObject({ status: "paused", steerCount: 1 });
   try {
-    await waitFor(restarted, `window.__COWORKER__.invoke("workers.get", { slug: "nova", id: ${json(interrupted.id)} }).then(r => ["failed", "finished"].includes(r.result?.status))`, { awaitPromise: true, timeoutMs: 120_000, label: "interrupted work reconciled without another run" });
+    await waitFor(restarted, browserScript(async (id) => { const { result } = await window.__COWORKER__.invoke("workers.get", { slug: "nova", id }); return typeof result === "object" && result !== null && "status" in result && typeof result.status === "string" && ["failed", "finished"].includes(result.status); }, [interrupted.id]), { awaitPromise: true, timeoutMs: 120_000, label: "interrupted work reconciled without another run" });
   } catch (error) {
     const state = resultRecord(await invokeCoworker(restarted, "workers.get", { slug: "nova", id: interrupted.id }));
     throw new Error(`${String(error)} Worker: ${JSON.stringify(state)}. Native requests: ${scripted.countFor("BACKGROUND_INTERRUPTED")}`);
@@ -906,14 +935,21 @@ test.skipIf(!enabled)("Open Coworker background work survives cancellation and r
   expect(scripted.requests.filter((request) => request.prompt.startsWith("You are a Worker") && request.prompt.includes("BACKGROUND_INTERRUPTED"))).toHaveLength(1);
   await type(restarted, "Resume the background check.");
   await waitForReply(restarted, "The background check is resumed.");
-  await waitFor(restarted, `window.__COWORKER__.invoke("workers.get", { slug: "nova", id: ${json(workerId)} }).then(r => r.result?.status === "finished" && r.result?.lifespan?.used === 2)`, { awaitPromise: true, timeoutMs: 120_000, label: "persisted steering delivered after restart" });
+  await waitFor(restarted, browserScript(async (id) => { const { result } = await window.__COWORKER__.invoke("workers.get", { slug: "nova", id }); if (typeof result !== "object" || result === null || !("status" in result) || result.status !== "finished" || !("lifespan" in result)) return false; const lifespan = result.lifespan; return typeof lifespan === "object" && lifespan !== null && "used" in lifespan && lifespan.used === 2; }, [workerId]), { awaitPromise: true, timeoutMs: 120_000, label: "persisted steering delivered after restart" });
   expect(scripted.requests.filter((request) => request.prompt.startsWith("You are a Worker") && request.prompt.includes("KEEP THIS STEERING"))).toHaveLength(1);
   expect(scripted.countFor("BACKGROUND_CANCELLED")).toBe(0);
   const scheduled = resultRecord(await invokeCoworker(restarted, "localResponsibilities.create", {
     slug: "nova", name: "Scheduled completion", instructions: "BACKGROUND_SCHEDULED: report the completed check.",
     schedule: { kind: "once", timezone: "UTC", at: Date.now() + 10_000 },
   }));
-  await waitFor(restarted, `window.__COWORKER__.invoke("localResponsibilities.list", { slug: "nova" }).then(r => r.result?.some(item => item.id === ${json(scheduled.id)} && item.latestRun?.status === "succeeded" && item.state === "paused" && item.runs.length === 1))`, { awaitPromise: true, timeoutMs: 90_000, label: "one scheduled occurrence completes once" });
+  await waitFor(restarted, browserScript(async (id) => {
+    const { result } = await window.__COWORKER__.invoke("localResponsibilities.list", { slug: "nova" });
+    return Array.isArray(result) && result.some((item: unknown) => {
+      if (typeof item !== "object" || item === null || !("id" in item) || item.id !== id || !("latestRun" in item) || !("state" in item) || item.state !== "paused" || !("runs" in item) || !Array.isArray(item.runs) || item.runs.length !== 1) return false;
+      const run = item.latestRun;
+      return typeof run === "object" && run !== null && "status" in run && run.status === "succeeded";
+    });
+  }, [scheduled.id]), { awaitPromise: true, timeoutMs: 90_000, label: "one scheduled occurrence completes once" });
   expect(scripted.countFor("BACKGROUND_SCHEDULED")).toBe(1);
   evidence.recordAssertionEvidence(
     "Background pause, queued cancellation, steering, and interrupted work survive a full app restart",
