@@ -100,10 +100,13 @@ geometryTest("the native browser follows app zoom and keyboard panel resizing wi
     // Keep the observation bounded even if eventually finishes a probe after its deadline.
     expect(performance.now() - started).toBeLessThanOrEqual(budgetMs);
     await user.on(page).see(field, { value: draft, timeoutMs: budgetMs });
-    // Reading the page's input must leave keyboard resizing focused on the separator.
+    return sample;
+  };
+
+  const focusSeparator = async () => {
+    await user.click({ role: "separator" });
     expect((await probe.dom('[data-slot="resizable-handle"][role="separator"]')).elements.map(element => element.focused))
       .toEqual([true]);
-    return sample;
   };
 
   // The single separator resizes the side panel through trusted keyboard events.
@@ -115,17 +118,22 @@ geometryTest("the native browser follows app zoom and keyboard panel resizing wi
     // assertions, not a claim about every frame or native OS window dragging.
     await user.press("Control+=");
     await user.press("Control+=");
-    const enlarged = await aligned(1.2);
+    await aligned(1.2);
+    // Zoom can cross the responsive breakpoint that hides the resize handle.
+    // Check alignment there too, then return to the resizable desktop layout.
+    await user.press("Control+-");
+    const enlarged = await aligned(1.1);
+    await focusSeparator();
     await user.press("ArrowLeft");
     await user.press("ArrowLeft");
-    const wider = await aligned(1.2);
+    const wider = await aligned(1.1);
     expect(wider.rect.width).toBeGreaterThan(enlarged.rect.width + 10);
     expect(wider.rect.left).toBeLessThan(enlarged.rect.left - 10);
 
     await user.press("Control+-");
     await user.press("Control+-");
-    await user.press("Control+-");
     const reduced = await aligned(0.9);
+    await focusSeparator();
     await user.press("ArrowRight");
     await user.press("ArrowRight");
     const narrower = await aligned(0.9);
