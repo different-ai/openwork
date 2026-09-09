@@ -6,10 +6,10 @@ import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/
 import type { McpUiStyles, McpUiStyleVariableKey } from "@modelcontextprotocol/ext-apps"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 
-import { connectorCatalogSchema } from "@openwork/types/connection-action-app"
+import { connectionActionAppResourceUri, connectorCatalogSchema } from "@openwork/types/connection-action-app"
 import { ConnectorCatalogCard } from "./connector-catalog"
 import { ConnectionCard } from "./connection-card"
-import { reconnectActionFromChatToolResult } from "@/components/tools/error-attribution"
+import { connectionCardPayloadFromChatToolResult, reconnectActionFromChatToolResult } from "@/components/tools/error-attribution"
 import { AppChatArtifact } from "@/react-app/domains/apps/app-chat-artifact"
 import { openDesktopUrl } from "@/app/lib/desktop"
 import {
@@ -83,6 +83,7 @@ function preservedResult(part: DynamicToolUIPart): PreservedMcpAppResult | null 
 
 export function hasPreservedMcpAppResult(part: DynamicToolUIPart): boolean {
   return preservedResult(part) !== null || connectorCatalogFromPart(part) !== null
+    || connectionCardPayloadFromChatToolResult(part.toolName, part.output, part.input) !== null
 }
 
 export function connectorCatalogFromPart(part: DynamicToolUIPart) {
@@ -579,9 +580,15 @@ export function McpAppSandboxView({ app, toolName, inputArguments, result, unava
 export function McpAppFrame({ part }: { part: DynamicToolUIPart }) {
   const result = preservedResult(part)
   const action = reconnectActionFromChatToolResult(part.toolName, result?.structuredContent ?? part.output, part.input)
-  if (action) return <ConnectionCard part={part} action={action} />
+  const connection = connectionCardPayloadFromChatToolResult(part.toolName, result?.structuredContent ?? part.output, part.input)
+  if (action || connection) return <ConnectionCard part={part} action={action} connection={connection} />
   const catalog = connectorCatalogFromPart(part)
   if (catalog) return <ConnectorCatalogCard catalog={catalog} />
+  // First-party connection UI is native, including historical app launches.
+  // Never route an unsupported connection response back into the old iframe.
+  const launch = gatewayMcpAppLaunch(result?._meta)
+  if (part.toolName === "openwork-cloud_connection_action"
+    || (part.toolName.startsWith("openwork-cloud_") && !launch?.connectionId && launch?.resourceUri === connectionActionAppResourceUri)) return null
   return <EmbeddedMcpAppFrame part={part} />
 }
 

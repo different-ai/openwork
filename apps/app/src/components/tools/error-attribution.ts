@@ -1,4 +1,5 @@
 import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-connection-action"
+import { connectionActionPayloadSchema, type ConnectionActionPayload } from "@openwork/types/connection-action-app"
 
 export type ToolErrorAttribution = {
   label: string
@@ -20,6 +21,7 @@ export type ChatToolReconnectResult = "connected"
 const OPENWORK_CLOUD_CAPABILITY_TOOLS = new Set([
   "openwork-cloud_search_capabilities",
   "openwork-cloud_execute_capability",
+  "openwork-cloud_connection_action",
 ])
 
 const MAX_PARSED_RESULT_LENGTH = 64 * 1_024
@@ -73,13 +75,39 @@ function confirmed(label: string, description: string): ToolErrorAttribution {
   return { label, confidence: "Confirmed", description }
 }
 
+/** Normalize the gateway's search, execution, and status-probe card payloads. */
+export function connectionCardPayloadFromChatToolResult(
+  toolName: string,
+  result: unknown,
+  input?: unknown,
+): ConnectionActionPayload | null {
+  if (!OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName)) return null
+  if (toolName === "openwork-cloud_search_capabilities" && (!isRecord(input) || input.intent !== "connect")) return null
+  const parsed = parseResultRecord(result)
+  if (!parsed) return null
+  const candidates = [parsed, parsed.connectionAction, parsed.connectionStatus,
+    ...(Array.isArray(parsed.matches) ? parsed.matches.filter(isRecord).map(match => match.connectionStatus) : []),
+  ]
+  const targets = new Map<string, ConnectionActionPayload>()
+  for (const candidate of candidates) {
+    const payload = connectionActionPayloadSchema.safeParse(
+      isRecord(candidate) && openworkCloudMcpConnectionActionSchema.safeParse(candidate).success
+        ? { ...candidate, schemaVersion: "1" }
+        : candidate,
+    )
+    if (payload.success) targets.set(payload.data.connectionId, payload.data)
+  }
+  if (targets.size !== 1) return null
+  const [payload] = targets.values()
+  return payload
+}
+
 export function reconnectActionFromChatToolResult(
   toolName: string,
   result: unknown,
   input?: unknown,
 ): ChatToolReconnectAction | null {
-  // Tool output is otherwise untrusted. Only the two canonical OpenWork Cloud
-  // capability tools may turn a structured Den response into a UI action.
+  // Only canonical OpenWork Cloud tools may produce a native connection action.
   // Discovery may offer authorization only for an explicit setup request;
   // finding an unavailable connection is not itself a reason to prompt.
   if (!OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName)) return null
@@ -97,6 +125,16 @@ export function reconnectActionFromChatToolResult(
         .filter(isRecord)
       : []),
   ]
+  if (candidates.length === 0) {
+    const payload = connectionCardPayloadFromChatToolResult(toolName, parsed, input)
+    if (!payload || payload.actor !== "member" || payload.action?.surface !== "openwork_your_connections"
+      || !((payload.state === "needs_connection" && payload.action.type === "connect")
+        || (payload.state === "reauth_required" && payload.action.type === "reconnect"))) return null
+    // The portable probe omits credential metadata. The signed-in desktop
+    // handler rechecks membership, OAuth, and per-member ownership before auth.
+    return { connectionId: payload.connectionId, connectionName: payload.connectionName,
+      label: payload.state === "needs_connection" ? "Connect" : "Reconnect" }
+  }
   const reconnectTargets = new Map<string, ChatToolReconnectAction>()
   for (const connectionStatus of candidates) {
     const parsedStatus = openworkCloudMcpConnectionActionSchema.safeParse(connectionStatus)
