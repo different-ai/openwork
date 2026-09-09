@@ -560,6 +560,20 @@ function parsedTextRecord(value: string): Record<string, unknown> | null {
   }
 }
 
+function oauthRedirectUriRejectionCode(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  const parsed = parsedTextRecord(value)
+  if (!parsed) return undefined
+  const providerCode = providerCodeFromRecord(parsed)
+  if (providerCode === "invalid_redirect_uri") return providerCode
+  const description = stringProperty(parsed, "error_description")
+  return (providerCode === "invalid_request" || providerCode === "invalid_client_metadata")
+    && description
+    && /redirect[_ ]?uri/i.test(description)
+    ? providerCode
+    : undefined
+}
+
 function providerToolContentArray(result: unknown): unknown[] | null {
   if (!isRecord(result) || !Array.isArray(result.content)) return null
   return result.content
@@ -669,6 +683,28 @@ function oauthProviderDetail(error: unknown): string | undefined {
   return undefined
 }
 
+function namedOAuthRedirectUriRejectionCode(
+  error: unknown,
+  fallbackPhase: ExternalMcpDiagnosticPhase,
+): string | undefined {
+  if (fallbackPhase !== "AUTH_CLIENT_REGISTRATION") return undefined
+  let current: unknown = error
+  const seen = new Set<unknown>()
+  for (let depth = 0; depth < 5 && current && !seen.has(current); depth += 1) {
+    seen.add(current)
+    const name = errorName(current)
+    if (name === "InvalidClientMetadataError" || name === "InvalidRequestError") {
+      const description = stringProperty(current, "error_description")
+        ?? (current instanceof Error ? current.message : stringProperty(current, "message"))
+      if (description && /redirect[_ ]?uri/i.test(description)) {
+        return name === "InvalidClientMetadataError" ? "invalid_client_metadata" : "invalid_request"
+      }
+    }
+    current = errorCause(current)
+  }
+  return undefined
+}
+
 function hasUnsupportedVersionMessage(value: unknown): boolean {
   let current: unknown = value
   const seen = new Set<unknown>()
@@ -744,6 +780,9 @@ function safeMessageFor(input: {
   providerErrorMessage?: string
   providerDetail?: string
 }): string {
+  if (input.code === "MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED") {
+    return "The provider's sign-in server has not approved OpenWork's redirect address, so it refused to register OpenWork as an OAuth client. Retrying will not help until the provider allowlists it."
+  }
   const baseMessage = safeBaseMessageFor(input)
   const message = input.providerDetail
     ? `${baseMessage} Provider detail (untrusted): "${input.providerDetail}".`
@@ -880,6 +919,18 @@ function safeBaseMessageFor(input: {
 
 type Classification = Omit<ExternalMcpDiagnostic, "referenceId" | "highestPassed" | "message">
 
+function oauthRedirectUriNotAllowedClassification(providerCode: string): Classification {
+  return {
+    phase: "AUTH_CLIENT_REGISTRATION",
+    category: "oauth_client_registration",
+    code: "MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED",
+    retryable: false,
+    actionOwner: "provider_admin",
+    operatorAction: "Ask the provider to allowlist OpenWork's OAuth redirect URI (or approve its client metadata URL) on their MCP authorization server, or configure a pre-registered OAuth client if the provider offers one.",
+    providerCode,
+  }
+}
+
 function isUninformativeClassification(input: Pick<Classification, "phase" | "category" | "code">): boolean {
   return input.code === `MCP_${input.phase}` && (
     input.category === "oauth_failure"
@@ -916,8 +967,13 @@ function httpClassification(input: {
   insufficientScope: boolean
   hasSession: boolean
   contentType: string
+  providerResponseExcerpt?: string
 }): Classification | null {
   const { phase, status } = input
+  const redirectUriRejectionCode = status === 400 && phase === "AUTH_CLIENT_REGISTRATION"
+    ? oauthRedirectUriRejectionCode(input.providerResponseExcerpt)
+    : undefined
+  if (redirectUriRejectionCode) return oauthRedirectUriNotAllowedClassification(redirectUriRejectionCode)
   if (status === 404 && input.hasSession) {
     return {
       phase: "CONTINUITY_SESSION",
@@ -1287,6 +1343,8 @@ function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase
   if (numericCode !== undefined) return providerDeclaredErrorClassification()
 
   const name = errorName(error)
+  const redirectUriRejectionCode = namedOAuthRedirectUriRejectionCode(error, fallbackPhase)
+  if (redirectUriRejectionCode) return oauthRedirectUriNotAllowedClassification(redirectUriRejectionCode)
   if (name === "InvalidClientError" || name === "UnauthorizedClientError" || name === "InvalidClientMetadataError") {
     return {
       phase: "AUTH_CLIENT_REGISTRATION",
@@ -1679,9 +1737,11 @@ export class ExternalMcpDiagnosticTracker {
     const sourceIsApplicationOwnedOAuthFailure = sourceCode?.startsWith("MCP_OAUTH_") === true
       || sourceCode === "MCP_LIFECYCLE_DEADLINE"
     const classified = this.forcedClassification
-      && !TYPED_OAUTH_ERROR_NAMES.has(errorName(source.error))
-      && !sourceIsApplicationOwnedOAuthFailure
-      && inferredClassification.phase !== "MCP_VERSION"
+      && (this.forcedClassification.code === "MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED" || (
+        !TYPED_OAUTH_ERROR_NAMES.has(errorName(source.error))
+        && !sourceIsApplicationOwnedOAuthFailure
+        && inferredClassification.phase !== "MCP_VERSION"
+      ))
       ? this.forcedClassification
       : inferredClassification
     const classification: Classification = classified.actionOwner === "member"
@@ -2065,9 +2125,11 @@ export function createExternalMcpDiagnosticFetch(input: {
       }
       input.tracker.recordHttpStatus(response.status)
       input.tracker.recordProviderRequestId(response.headers)
+      let providerResponseExcerpt: string | undefined
       if (!response.ok || (response.ok && isOAuthTokenPhase(phase) && contentType === "application/json")) {
         const excerpts = await providerResponseExcerpts(response)
         if (excerpts && (!response.ok || (excerpts.memberExcerpt && isProviderTokenErrorExcerpt(excerpts.memberExcerpt)))) {
+          providerResponseExcerpt = excerpts.memberExcerpt
           input.tracker.recordProviderResponseExcerpt({
             ...excerpts,
             phase,
@@ -2090,6 +2152,7 @@ export function createExternalMcpDiagnosticFetch(input: {
             insufficientScope: /\binsufficient_scope\b/i.test(challenge),
             hasSession: Boolean(requestHeader(init, "mcp-session-id")),
             contentType,
+            providerResponseExcerpt,
           })
       input.tracker.passed(phase, "reachable")
       if (classification) {

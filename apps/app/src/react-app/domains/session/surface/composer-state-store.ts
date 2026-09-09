@@ -36,7 +36,13 @@ export function snapshotComposerSessionState(state: ComposerSessionState): Compo
 
 export type ComposerStateStore = {
   failedDrafts: Record<string, ComposerSessionState[]>;
-  pendingMessages: Record<string, { draft: ComposerDraft & { messageId: string }; previousMessageIds: string[] }[]>;
+  pendingMessages: Record<string, {
+    draft: ComposerDraft & { messageId: string };
+    previousMessageIds: string[];
+    serverMessageId?: string;
+    preparedText?: string;
+    settled: boolean;
+  }[]>;
   pendingFocusSessionId: string | null;
   sessions: Record<string, ComposerSessionState>;
   queuedDrafts: Record<string, QueuedComposerItem[]>;

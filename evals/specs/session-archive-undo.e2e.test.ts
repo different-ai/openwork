@@ -8,15 +8,16 @@ const test = spec.world(archiveSessions);
 const archivedToast: Target = { text: "Session archived" };
 const undoButton: Target = { role: "button", label: "Undo" };
 const viewButton: Target = { role: "button", label: "View" };
-const archiveMenuItem: Target = { role: "menuitem", label: "Archive session" };
 
 test("session archive is honest about availability and can be undone when supported", async ({ world, user, agent, probe, step }) => {
   const candidateId = world.candidate.sessionId;
   const neighborId = world.neighbor.sessionId;
+  const candidateRow = { testId: `sidebar-session-${candidateId}` };
+  const archiveButton: Target = { role: "button", label: "Archive session", testId: `session-archive-${candidateId}` };
   const archiveCandidate = async () => {
-    await user.rightClick({ text: world.candidate.title });
-    await user.see(archiveMenuItem);
-    await user.click(archiveMenuItem);
+    await user.hover(candidateRow);
+    await user.see(archiveButton);
+    await user.click(archiveButton);
     await user.see(archivedToast, { timeoutMs: 30_000 });
     await probe.eventually(() => world.undoToastSettled(), {
       within: 10_000,
@@ -48,12 +49,16 @@ test("session archive is honest about availability and can be undone when suppor
 
   if (world.engine === "v2") {
     await step("v2 archive is unavailable without changing either session or claiming success", async () => {
-      await user.rightClick({ text: world.candidate.title });
-      await user.see(archiveMenuItem);
-      expect((await world.sidebar()).archiveMenuDisabled).toBe(true);
-      await user.see({ text: "Archiving and unarchiving are not available in the OpenCode v2 preview." });
-      await user.screenshot();
-      await user.press("Escape");
+      await user.hover(candidateRow);
+      await user.see(archiveButton);
+      expect(await world.sidebar()).toMatchObject({
+        archiveButtonDisabled: true,
+        archiveButtonTitle: "Archiving and unarchiving are not available in the OpenCode v2 preview.",
+      });
+      await world.hoverArchiveButton();
+      // Reference only: the button, not a native tooltip or context menu.
+      await step("v2 disabled archive button", () => user.screenshot());
+      expect(await agent.actions()).toEqual(expect.arrayContaining([expect.objectContaining({ id: "session.archive", disabled: true })]));
       for (const archived of [true, false]) {
         await expect(agent.run("session.archive", { sessionId: candidateId, archived })).rejects.toThrow("Action is disabled");
       }

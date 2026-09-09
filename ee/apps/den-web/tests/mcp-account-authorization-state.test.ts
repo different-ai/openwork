@@ -7,7 +7,7 @@ import {
 } from "../app/(den)/dashboard/_components/mcp-account-authorization-state";
 
 describe("resolveMcpAuthorizationPollOutcome", () => {
-  test("treats a confirmed connection as success even when the provider window has closed", () => {
+  test("treats a confirmed connection as success even when the provider tab has closed", () => {
     expect(resolveMcpAuthorizationPollOutcome({
       connected: true,
       authorizationWindowClosed: true,
@@ -16,7 +16,7 @@ describe("resolveMcpAuthorizationPollOutcome", () => {
     })).toBe("connected");
   });
 
-  test("reports an unconfirmed provider window closing instead of failing silently", () => {
+  test("reports an unconfirmed provider tab closing instead of failing silently", () => {
     expect(resolveMcpAuthorizationPollOutcome({
       connected: false,
       authorizationWindowClosed: true,
@@ -24,6 +24,7 @@ describe("resolveMcpAuthorizationPollOutcome", () => {
       timeoutMs: 90_000,
     })).toBe("window_closed");
     expect(MCP_AUTHORIZATION_WINDOW_CLOSED_MESSAGE).toContain("closed");
+    expect(MCP_AUTHORIZATION_WINDOW_CLOSED_MESSAGE).toContain("tab");
   });
 
   test("reports timeout and otherwise keeps polling", () => {
@@ -34,6 +35,7 @@ describe("resolveMcpAuthorizationPollOutcome", () => {
       timeoutMs: 90_000,
     })).toBe("timeout");
     expect(MCP_AUTHORIZATION_TIMEOUT_MESSAGE).toContain("provider error");
+    expect(MCP_AUTHORIZATION_TIMEOUT_MESSAGE).toContain("tab");
     expect(resolveMcpAuthorizationPollOutcome({
       connected: false,
       authorizationWindowClosed: false,

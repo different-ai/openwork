@@ -130,6 +130,7 @@ export default {
   "composer.escape_to_stop": "Hit Escape again to stop the agent",
   "composer.skill_source": "Skill",
   "composer.stop": "Stop",
+  "composer.stopping": "Stopping…",
   "composer.tools_label": "Agents, commands, skills, plugins, and connections",
   "composer.upload_to_shared_folder": "Upload to shared folder",
   "composer.uploaded_multiple_files": "Uploaded {count} files to the shared folder and inserted links.",

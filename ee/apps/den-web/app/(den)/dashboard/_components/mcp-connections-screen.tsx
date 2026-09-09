@@ -14,7 +14,7 @@ import { getPluginRoute, getToolTesterRoute } from "../../_lib/den-org";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { IntegrationIcon } from "./integration-icon";
 import { Microsoft365Dialog } from "./microsoft-365-dialog";
-import { openMcpAuthorizationWindow, safeMcpAuthorizationUrl, showMcpAuthorizationError } from "./mcp-authorization-url";
+import { openMcpAuthorizationTab, safeMcpAuthorizationUrl, showMcpAuthorizationFailure } from "./mcp-authorization-url";
 import {
   editableMcpIdentityChanged,
   marketplaceIdentityOwnerNames,
@@ -425,23 +425,25 @@ export function McpConnectionsScreen() {
     }, OAUTH_POLL_INTERVAL_MS);
   }
 
-  async function handleConnectOAuth(connectionId: string, pendingAuthorizationWindow?: Window) {
+  async function handleConnectOAuth(connectionId: string, connectionName: string, pendingAuthorizationTab?: Window) {
     setConnectionActionError(null);
-    let authorizationWindow: Window | null = pendingAuthorizationWindow ?? null;
+    let authorizationTab: Window | null = pendingAuthorizationTab ?? null;
     try {
-      authorizationWindow = authorizationWindow ?? openMcpAuthorizationWindow();
+      authorizationTab = authorizationTab ?? openMcpAuthorizationTab({ connectionId, connectionName });
       const result = await startOAuth.mutateAsync(connectionId);
       if (result.status === "connected") {
-        authorizationWindow.close();
+        authorizationTab.close();
         void refetch();
         return;
       }
       if (!result.authorizeUrl) throw new Error("The MCP provider did not return an authorization URL.");
-      authorizationWindow.location.href = safeMcpAuthorizationUrl(result.authorizeUrl);
+      authorizationTab.location.href = safeMcpAuthorizationUrl(result.authorizeUrl);
       pollUntilConnected(connectionId);
     } catch (connectError) {
       const message = connectError instanceof Error ? connectError.message : "Failed to connect the MCP server.";
-      showMcpAuthorizationError(authorizationWindow, {
+      showMcpAuthorizationFailure(authorizationTab, {
+        connectionId,
+        connectionName,
         message,
         ...(connectError instanceof McpOAuthStartError
           ? { details: connectError.details }
@@ -464,8 +466,8 @@ export function McpConnectionsScreen() {
     input: CreateMcpConnectionInput,
     options: { startOAuth: boolean },
   ): Promise<void> {
-    const authorizationWindow = options.startOAuth
-      ? openMcpAuthorizationWindow()
+    const authorizationTab = options.startOAuth
+      ? openMcpAuthorizationTab({ connectionId: "", connectionName: input.name })
       : undefined;
     try {
       const created = await createConnection.mutateAsync(input);
@@ -475,10 +477,12 @@ export function McpConnectionsScreen() {
       // right now. Per-member: nothing to authorize here — each granted person
       // connects their own account from Your Connections.
       if (options.startOAuth) {
-        await handleConnectOAuth(created.id, authorizationWindow);
+        await handleConnectOAuth(created.id, input.name, authorizationTab);
       }
     } catch (createError) {
-      showMcpAuthorizationError(authorizationWindow ?? null, {
+      showMcpAuthorizationFailure(authorizationTab ?? null, {
+        connectionId: "",
+        connectionName: input.name,
         message: createError instanceof Error ? createError.message : "Failed to create the MCP connection.",
       });
       throw createError;
@@ -836,7 +840,7 @@ export function McpConnectionsScreen() {
                 setEditingConnection(connection);
               }}
               onReviewIssuer={() => void handleOpenIssuerReview(connection)}
-              onConnect={() => void handleConnectOAuth(connection.id)}
+              onConnect={() => void handleConnectOAuth(connection.id, connection.name)}
               onDisconnect={() => void handleDisconnect(connection)}
               onRemove={() => handleRemove(connection)}
               disconnecting={disconnectConnection.isPending && disconnectConnection.variables === connection.id}

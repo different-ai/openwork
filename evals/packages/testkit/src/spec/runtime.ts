@@ -883,6 +883,19 @@ export class ProbeChannel implements Probe {
     return new ProbeChannel(this.#runtime, surface);
   }
 
+  zoom(): Promise<number> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "zoom", "zoom(Page.getLayoutMetrics)", surface, async () => {
+      const metrics = await surface.client.send("Page.getLayoutMetrics");
+      if (!isRecord(metrics) || !isRecord(metrics.cssVisualViewport)
+        || typeof metrics.cssVisualViewport.zoom !== "number"
+        || !Number.isFinite(metrics.cssVisualViewport.zoom) || metrics.cssVisualViewport.zoom <= 0) {
+        throw new Error("Chromium did not report its applied page zoom.");
+      }
+      return metrics.cssVisualViewport.zoom;
+    });
+  }
+
   dom(selector: string) {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "dom", `dom(${JSON.stringify(redacted(selector))})`, surface, () => readDom(surface, selector));

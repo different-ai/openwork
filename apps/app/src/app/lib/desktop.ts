@@ -242,7 +242,7 @@ declare global {
         use?: (id: string) => Promise<RecoveryActionResult>;
       };
       browser?: {
-        show?: (bounds: { x: number; y: number; width: number; height: number }, sessionId?: string | null) => Promise<void>;
+        show?: (bounds: { x: number; y: number; width: number; height: number }, sessionId?: string | null) => Promise<boolean | void>;
         hide?: () => Promise<void>;
         openUrl?: (
           url: string,
@@ -254,7 +254,7 @@ declare global {
         back?: () => Promise<void>;
         forward?: () => Promise<void>;
         reload?: () => Promise<void>;
-        setBounds?: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
+        setBounds?: (bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean | void>;
         getState?: () => Promise<BrowserStatePayload | null>;
         createTab?: (url?: string, sessionId?: string | null) => Promise<{ tabId: string }>;
         closeTab?: (tabId: string) => Promise<string | null>;

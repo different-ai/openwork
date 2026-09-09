@@ -426,7 +426,7 @@ const MCP_OAUTH_START_UNREADABLE_MESSAGE =
 /**
  * The browser refused to hand the page a response: a network failure, or an
  * error answer (often from a proxy) without CORS headers. Without a readable
- * status the popup would show only the browser's own text ("Failed to fetch"),
+ * status the sign-in tab would show only the browser's own text ("Failed to fetch"),
  * so wrap what is known into structured details. Den's own timeout, cancel and
  * re-authentication errors keep their existing meaning.
  */
@@ -465,6 +465,7 @@ function mcpOAuthStartDebugDetails(payload: unknown, httpStatus: number): McpAut
   return {
     httpStatus,
     ...(errorCode ? { errorCode } : {}),
+    ...(diagnostic?.code ? { diagnosticCode: diagnostic.code } : {}),
     ...(redirectUri ? { redirectUri } : {}),
     ...(clientMetadataUrl ? { clientMetadataUrl } : {}),
     ...(diagnostic?.referenceId ? { diagnosticReference: diagnostic.referenceId } : {}),

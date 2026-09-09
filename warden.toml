@@ -2,9 +2,9 @@ version = 1
 
 # Warden gates clearance on blocking findings from three skills:
 # diff-security-review and confidentiality-review (all findings block) and
-# desktop-den-sync-review (only high findings block; medium findings are
-# advisory). The clearance itself is granted by
-# .github/workflows/warden-clearance.yml.
+# desktop-den-sync-review (only high findings block). Provenance and medium/low
+# sync advisories remain in Warden check summaries but create no new threads.
+# Clearance itself is granted by .github/workflows/warden-clearance.yml.
 
 [defaults]
 reportOn = "low"
@@ -50,6 +50,7 @@ type = "local"
 
 [[skills]]
 name = "spec-provenance-review"
+reportOn = "off"
 paths = ["evals/specs/**", "evals/worlds/**"]
 
 [[skills.triggers]]
@@ -61,6 +62,7 @@ type = "local"
 
 [[skills]]
 name = "desktop-den-sync-review"
+reportOn = "high"
 paths = [
   "apps/app/**",
   "apps/desktop/**",

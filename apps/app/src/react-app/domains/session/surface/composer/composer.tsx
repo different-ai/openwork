@@ -56,6 +56,7 @@ type ComposerProps = {
   onQueue: () => void | Promise<void>;
   onStop: () => void | Promise<void>;
   busy: boolean;
+  stopping?: boolean;
   steering: boolean;
   submissionPreparing: boolean;
   queuedCount: number;
@@ -1032,6 +1033,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     const anyMenuOpen = agentMenuOpen || toolMenuOpen || Boolean(activeMenu);
     if (event.key === "Escape" && props.busy && !anyMenuOpen) {
       event.preventDefault();
+      if (props.stopping) return;
       if (escapeArmed) {
         disarmEscape();
         void props.onStop();
@@ -1793,7 +1795,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   Cmd/Ctrl+Enter still steers).
               */}
               <div data-composer-actions className="col-start-2 row-start-2 ml-auto flex shrink-0 items-center gap-1.5">
-                {props.busy && escapeArmed ? (
+                {props.busy && !props.stopping && escapeArmed ? (
                   <span className="self-center pr-1 text-[12px] font-medium text-gray-10 hidden @min-[720px]/composer:inline">
                     {t("composer.escape_to_stop")}
                   </span>
@@ -1809,31 +1811,41 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   }
                   disabled={
                     props.disabled
+                    || props.stopping
                     || (!props.busy && (!canSend || props.submissionPreparing))
                   }
                   aria-label={
-                    props.busy
-                      ? t("composer.stop")
-                      : props.submissionPreparing
-                        ? "Preparing connected service tools…"
-                        : t("composer.run_task")
+                    props.stopping
+                      ? t("composer.stopping")
+                      : props.busy
+                        ? t("composer.stop")
+                        : props.submissionPreparing
+                          ? "Preparing connected service tools…"
+                          : t("composer.run_task")
                   }
+                  aria-busy={props.stopping || undefined}
                   className={`inline-flex h-9 max-h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
-                    props.busy
-                      ? "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
-                      : !canSend || props.disabled || props.submissionPreparing
-                        ? "bg-gray-4 text-gray-10"
-                        : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
+                    props.stopping
+                      ? "cursor-wait bg-[var(--dls-accent)] text-[var(--dls-accent-fg)]"
+                      : props.busy
+                        ? "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
+                        : !canSend || props.disabled || props.submissionPreparing
+                          ? "bg-gray-4 text-gray-10"
+                          : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                   }`}
                   title={
-                    props.busy
-                      ? t("composer.stop")
-                      : props.submissionPreparing
-                        ? "Preparing connected service tools…"
-                        : t("composer.run_task")
+                    props.stopping
+                      ? t("composer.stopping")
+                      : props.busy
+                        ? t("composer.stop")
+                        : props.submissionPreparing
+                          ? "Preparing connected service tools…"
+                          : t("composer.run_task")
                   }
                 >
-                  {props.busy ? (
+                  {props.stopping ? (
+                    <LoaderCircle size={15} className="animate-spin" />
+                  ) : props.busy ? (
                     <Square size={12} fill="currentColor" />
                   ) : props.submissionPreparing ? (
                     <LoaderCircle size={15} className="animate-spin" />
@@ -1841,11 +1853,13 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     <ArrowUp size={15} />
                   )}
                   <span className="sr-only">
-                    {props.busy
-                      ? t("composer.stop")
-                      : props.submissionPreparing
-                        ? "Preparing connected service tools…"
-                        : t("composer.run_task")}
+                    {props.stopping
+                      ? t("composer.stopping")
+                      : props.busy
+                        ? t("composer.stop")
+                        : props.submissionPreparing
+                          ? "Preparing connected service tools…"
+                          : t("composer.run_task")}
                   </span>
                 </button>
               </div>

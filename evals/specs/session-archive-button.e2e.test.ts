@@ -416,8 +416,13 @@ test("archiving exits only the viewed conversation, and working sessions require
     const before = (await aborts()).length;
     const sideChatBadge = `[data-sidebar-session-workspace-id="${a2.workspaceId}"][data-sidebar-session-id="${a2.sessionId}"] [data-session-side-chat="${b1.sessionId}"]`;
     for (const target of [b1, a2]) {
-      await user.rightClick({ testId: `sidebar-session-${b1.sessionId}` });
-      await user.click({ role: "menuitem", label: "Open as side chat" });
+      await user.press(world.paletteShortcut);
+      await user.type({ placeholder: "Search actions, settings, and sessions\u2026" }, "Open as side chat", { replace: true });
+      await user.click({ role: "option", label: /^Open as side chat/ });
+      const splitSearch = { placeholder: "Search sessions and workspaces..." };
+      await user.type(splitSearch, b1.title, { replace: true });
+      await user.click({ role: "option", label: new RegExp(`^${b1.title}\\s+${world.workspaceBName}(?:\\s|$)`) });
+      await user.notSee(splitSearch);
       for (const [pane, session] of [["primary", a2], ["secondary", b1]] satisfies Array<[string, typeof a1]>) {
         await probe.eventually(() => probe.dom(`[data-workbench-pane="${pane}"][data-workbench-workspace-id="${session.workspaceId}"] [data-session-surface-id="${session.sessionId}"]`), {
           within: 15_000, label: `${pane} renders its owning workspace and session`,

@@ -1,6 +1,14 @@
-import { allocateFreePorts } from "@openwork/cdp";
+import { allocateFreePorts, connect, debuggerUrlFor, listTargets } from "@openwork/cdp";
+import type { Surface } from "@openwork/cdp";
 import { faultProxy as startFaultProxy, mcpMock } from "@openwork/env";
 import type { MockHandle, Place, Seed } from "@openwork/env";
+
+function windowId(response: unknown): number {
+  if (typeof response !== "object" || response === null || !("windowId" in response) || typeof response.windowId !== "number") {
+    throw new Error("Browser.getWindowForTarget did not return a window ID.");
+  }
+  return response.windowId;
+}
 
 /**
  * A member's browser talking to den-api through a proxy that can answer the
@@ -38,6 +46,7 @@ export async function oauthStartUnreadableWeb(seed: Seed, ctx: { place: Place })
     headless: true,
     viewport: { width: 1440, height: 1100 },
   });
+  const denWebOrigin = new URL(den.ref.webUrl).origin;
   return Object.assign({
     den,
     proxy,
@@ -51,8 +60,44 @@ export async function oauthStartUnreadableWeb(seed: Seed, ctx: { place: Place })
     async stopProvider(): Promise<void> {
       await provider.stop();
     },
-    async restartProvider(): Promise<void> {
-      provider = (await mcpMock({ port: providerPort }).boot(ctx.place)).handle;
+    /** The OpenWork sign-in tab opened by Connect, once the browser has created and navigated it (null after the wait). */
+    async signInTab({ timeoutMs = 15_000 }: { timeoutMs?: number } = {}): Promise<Surface | null> {
+      const startedAt = Date.now();
+      while (true) {
+        const target = (await listTargets(web.handle.cdpUrl)).find((entry) => (
+          entry.type === "page"
+          && entry.id !== web.client.targetId
+          && entry.url.startsWith(`${denWebOrigin}/connect/oauth`)
+        ));
+        if (target) return { handle: web.handle, client: await connect(debuggerUrlFor(web.handle.cdpUrl, target)) };
+        if (Date.now() - startedAt >= timeoutMs) return null;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    },
+    async pageTargetUrls(): Promise<string[]> {
+      return (await listTargets(web.handle.cdpUrl))
+        .filter((entry) => entry.type === "page")
+        .map((entry) => entry.url);
+    },
+    async sameWindowAsDashboard(tab: Surface): Promise<boolean> {
+      const dashboardTargetId = web.client.targetId;
+      const tabTargetId = tab.client.targetId;
+      if (!dashboardTargetId || !tabTargetId) throw new Error("Expected dashboard and sign-in tab target IDs.");
+      const [dashboardWindow, tabWindow] = await Promise.all([
+        web.client.send("Browser.getWindowForTarget", { targetId: dashboardTargetId }),
+        web.client.send("Browser.getWindowForTarget", { targetId: tabTargetId }),
+      ]);
+      return windowId(dashboardWindow) === windowId(tabWindow);
+    },
+    async closeTab(tab: Surface): Promise<void> {
+      const targetId = tab.client.targetId;
+      if (!targetId) throw new Error("Expected a sign-in tab target ID.");
+      await web.client.send("Target.closeTarget", { targetId });
+      tab.client.close();
+    },
+    async restartProvider(options: { rejectDynamicRedirectUris?: "invalid_redirect_uri" | "invalid_request" } = {}): Promise<void> {
+      await provider.stop();
+      provider = (await mcpMock({ port: providerPort, ...options }).boot(ctx.place)).handle;
     },
   }, {
     async [Symbol.asyncDispose]() {

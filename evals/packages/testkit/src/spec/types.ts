@@ -63,6 +63,8 @@ export interface Agent {
 }
 
 export interface Probe {
+  /** Applied CSS-to-DIP page zoom from Chromium, not the stored zoom preference. */
+  zoom(): Promise<number>;
   browserState(): Promise<import("@openwork/behaviors").BrowserState>;
   browserTabMetrics(targetId: string): ReturnType<typeof import("@openwork/behaviors").readBrowserTabMetrics>;
   browserFixtureState(origin: string): Promise<import("@openwork/env").BrowserFixtureState>;

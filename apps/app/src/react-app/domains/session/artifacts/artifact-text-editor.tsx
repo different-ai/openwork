@@ -4,13 +4,8 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers } from "@codemirror/view";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+import { ActionContextMenu } from "@/components/ui/action-context-menu";
+import type { MenuAction } from "@/components/ui/action-menu-model";
 import { cn } from "@/lib/utils";
 import { markdownLivePreview } from "./markdown-live-preview";
 
@@ -152,24 +147,20 @@ export function ArtifactTextEditor(props: ArtifactTextEditorProps) {
     }
   };
 
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger className="block h-full min-h-0">{editor}</ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem onClick={() => format((view) => setLinePrefix(view, "# "))}>Heading 1</ContextMenuItem>
-        <ContextMenuItem onClick={() => format((view) => setLinePrefix(view, "## "))}>Heading 2</ContextMenuItem>
-        <ContextMenuItem onClick={() => format((view) => setLinePrefix(view, "### "))}>Heading 3</ContextMenuItem>
-        <ContextMenuItem onClick={() => format((view) => setLinePrefix(view, ""))}>Paragraph</ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem onClick={() => format((view) => wrapSelection(view, "**"))}>Bold</ContextMenuItem>
-        <ContextMenuItem onClick={() => format((view) => wrapSelection(view, "*"))}>Italic</ContextMenuItem>
-        <ContextMenuItem onClick={() => format((view) => wrapSelection(view, "~~"))}>Strikethrough</ContextMenuItem>
-        <ContextMenuItem onClick={() => format((view) => wrapSelection(view, "`"))}>Inline code</ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem onClick={() => format((view) => setLinePrefix(view, "- "))}>Bullet list</ContextMenuItem>
-        <ContextMenuItem onClick={() => format((view) => setLinePrefix(view, (index) => `${index + 1}. `))}>Numbered list</ContextMenuItem>
-        <ContextMenuItem onClick={() => format((view) => setLinePrefix(view, "> "))}>Quote</ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
-  );
+  const actions: MenuAction[] = [
+    { type: "item", id: "heading-1", label: "Heading 1", onSelect: () => format((view) => setLinePrefix(view, "# ")) },
+    { type: "item", id: "heading-2", label: "Heading 2", onSelect: () => format((view) => setLinePrefix(view, "## ")) },
+    { type: "item", id: "heading-3", label: "Heading 3", onSelect: () => format((view) => setLinePrefix(view, "### ")) },
+    { type: "item", id: "paragraph", label: "Paragraph", onSelect: () => format((view) => setLinePrefix(view, "")) },
+    { type: "separator" },
+    { type: "item", id: "bold", label: "Bold", onSelect: () => format((view) => wrapSelection(view, "**")) },
+    { type: "item", id: "italic", label: "Italic", onSelect: () => format((view) => wrapSelection(view, "*")) },
+    { type: "item", id: "strikethrough", label: "Strikethrough", onSelect: () => format((view) => wrapSelection(view, "~~")) },
+    { type: "item", id: "inline-code", label: "Inline code", onSelect: () => format((view) => wrapSelection(view, "`")) },
+    { type: "separator" },
+    { type: "item", id: "bullet-list", label: "Bullet list", onSelect: () => format((view) => setLinePrefix(view, "- ")) },
+    { type: "item", id: "numbered-list", label: "Numbered list", onSelect: () => format((view) => setLinePrefix(view, (index) => `${index + 1}. `)) },
+    { type: "item", id: "quote", label: "Quote", onSelect: () => format((view) => setLinePrefix(view, "> ")) },
+  ];
+  return <ActionContextMenu actions={actions} includeEditing className="block h-full min-h-0">{editor}</ActionContextMenu>;
 }

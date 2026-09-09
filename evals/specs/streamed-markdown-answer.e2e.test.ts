@@ -178,6 +178,52 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     await user.notSee(rootSearch);
   };
   const oldTargets = [world.toolNames[0]!, world.toolNames.at(-1)!];
+  const surface = `[data-session-surface-id="${world.session.sessionId}"]`;
+  const viewportSelector = `${surface} > div > .overflow-y-auto`;
+  const userRowsSelector = `${viewportSelector} [data-message-role="user"]`;
+  const transcriptGeometry = async () => {
+    const [viewport, composer, rows, texts] = await Promise.all([
+      probe.dom(viewportSelector),
+      probe.dom(`${surface} > div:has([data-lexical-editor="true"])`),
+      probe.dom(userRowsSelector),
+      probe.dom(`${userRowsSelector} span.whitespace-pre-wrap`),
+    ]);
+    expect(viewport.elements).toHaveLength(1);
+    expect(composer.elements).toHaveLength(1);
+    expect(rows.elements.length).toBeGreaterThan(0);
+    expect(texts.elements).toHaveLength(rows.elements.length);
+    return {
+      viewport: viewport.elements[0]!.rect,
+      composer: composer.elements[0]!.rect,
+      rows: rows.elements.map((row, index) => ({ rect: row.rect, text: texts.elements[index]!.text })),
+    };
+  };
+  const browseHistory = async () => {
+    await user.click({ text: world.history[74]! });
+    const initialTop = (await probe.dom(userRowsSelector)).elements[74]!.rect.top;
+    await user.press("PageUp");
+    let previousTop = Number.NaN;
+    return probe.eventually(async () => {
+      const geometry = await transcriptGeometry();
+      const top = geometry.rows[74]!.rect.top;
+      const stable = Math.abs(top - previousTop) <= 1;
+      previousTop = top;
+      expect(top).toBeGreaterThan(initialTop + 16);
+      expect(geometry.rows.at(-1)!.rect.top).toBeGreaterThanOrEqual(geometry.viewport.bottom);
+      expect(geometry.rows.some(({ rect }) => rect.top >= geometry.viewport.top && rect.bottom <= geometry.viewport.bottom)).toBe(true);
+      return { ...geometry, stable };
+    }, { within: 5_000, label: "keyboard browsing settles above the latest turn", until: (value) => value.stable });
+  };
+  const scrollStorageKey = "openwork:session-scroll:v1";
+  const savedScroll = (sessionId: string): Promise<unknown> => probe.storage(scrollStorageKey, (value): unknown =>
+    value && typeof value === "object" ? Reflect.get(value, sessionId) ?? null : null);
+  const readingGeometry = async (messageId: string) => {
+    const { elements } = await probe.dom(`${viewportSelector}, ${surface} [data-message-id="${messageId}"]`);
+    const [viewport, message] = elements;
+    if (elements.length !== 2 || !viewport || !message) return null;
+    return { text: message.text, offset: message.rect.top - viewport.rect.top,
+      visible: message.rect.bottom > viewport.rect.top && message.rect.top < viewport.rect.bottom };
+  };
 
   await step("the live cache retains history older than the native 140-message snapshot", async () => {
     expect(await orderedHistory()).toEqual(world.history);
@@ -196,7 +242,24 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     { role: "assistant", text: world.opening },
   ]);
   await user.type("composer", world.prompt);
-  await user.click("Run task");
+  await step("sending from older history reveals the exact latest user row above the composer without Jump to latest", async () => {
+    await browseHistory();
+    await user.click("Run task");
+    // user.see() scrolls its target into view and would mask this regression.
+    await probe.eventually(async () => {
+      const { viewport, composer, rows } = await transcriptGeometry();
+      const latest = rows.at(-1)!;
+      expect(latest.text).toBe(world.prompt);
+      expect(rows.filter(({ text }) => text === world.prompt)).toHaveLength(1);
+      expect(latest.rect.width).toBeGreaterThan(0);
+      expect(latest.rect.height).toBeGreaterThan(0);
+      expect(latest.rect.left).toBeGreaterThanOrEqual(viewport.left);
+      expect(latest.rect.right).toBeLessThanOrEqual(viewport.right);
+      expect(latest.rect.top).toBeGreaterThanOrEqual(viewport.top);
+      expect(latest.rect.bottom).toBeLessThanOrEqual(Math.min(viewport.bottom, composer.top));
+      return true;
+    }, { within: 5_000, label: "submitted user row inside the transcript viewport" });
+  });
 
   await step("new tool output becomes accessible without losing old targets while text grows", async () => {
     await user.see({ text: world.opening }, { timeoutMs: 90_000 });
@@ -207,6 +270,27 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     await user.see({ text: world.middle }, { timeoutMs: 90_000 });
     await user.notSee({ text: world.closing });
     expect(await orderedHistory()).toEqual(world.history);
+  });
+
+  await step("passive streamed output does not jump away from the history being read", async () => {
+    const before = await browseHistory();
+    const anchor = before.rows.find(({ rect }) => rect.top >= before.viewport.top && rect.bottom <= before.viewport.bottom)!;
+    expect(await probe.has(world.closing)).toBe(false);
+    let maxMovement = 0;
+    const after = await probe.eventually(async () => {
+      const complete = await probe.has(world.closing);
+      const geometry = await transcriptGeometry();
+      const retained = geometry.rows.find(({ text }) => text === anchor.text)!;
+      maxMovement = Math.max(maxMovement, Math.abs(retained.rect.top - anchor.rect.top));
+      return { ...geometry, complete };
+    }, {
+      within: 120_000, label: "new output arrives while browsing history", until: (value) => value.complete,
+    });
+    const retained = after.rows.find(({ text }) => text === anchor.text)!;
+    expect(maxMovement).toBeLessThanOrEqual(2);
+    expect(retained.rect.top).toBeGreaterThanOrEqual(after.viewport.top);
+    expect(retained.rect.bottom).toBeLessThanOrEqual(after.viewport.bottom);
+    expect(after.rows.at(-1)!.rect.top).toBeGreaterThanOrEqual(after.viewport.bottom);
   });
 
   await step("settled history and the advancing answer never disappear or duplicate", async () => {
@@ -224,19 +308,50 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     expect(await transcript.finish()).toMatchObject({ seen: [true, true, true, true, true], violations: [], stopped: false });
   });
 
-  await step("switching conversations preserves the full cached history and keeps targets scoped", async () => {
+  const readingPosition = await step("choose a reading message inside the retained history tail", async () => {
+    await user.press(place.kind === "local" && process.platform === "darwin" ? "Meta+f" : "Control+f");
+    await user.type({ placeholder: "Find in conversation" }, world.history[129]!, { replace: true });
+    await user.see({ text: world.history[129]! });
+    await user.click({ role: "button", label: "Close find" });
+    return probe.eventually(async () => {
+      const saved: unknown = await savedScroll(world.session.sessionId);
+      if (!saved || typeof saved !== "object" || !("mode" in saved) || saved.mode !== "manual"
+        || !("anchor" in saved) || !saved.anchor || typeof saved.anchor !== "object"
+        || !("messageId" in saved.anchor) || typeof saved.anchor.messageId !== "string"
+        || !("offset" in saved.anchor) || typeof saved.anchor.offset !== "number") return null;
+      const geometry = await readingGeometry(saved.anchor.messageId);
+      if (!geometry?.visible || !world.history.slice(100).some(text => geometry.text.includes(text))
+        || Math.abs(geometry.offset - saved.anchor.offset) > 2) return null;
+      return { messageId: saved.anchor.messageId, text: geometry.text, offset: geometry.offset };
+    }, { within: 10_000, label: "persisted visible reading anchor", until: value => value !== null });
+  });
+  if (!readingPosition) throw new Error("No retained reading position was captured");
+  const neighborScroll = await savedScroll(world.neighbor.sessionId);
+  const expectReadingPosition = async () => {
+    const geometry = await probe.eventually(() => readingGeometry(readingPosition.messageId), {
+      within: 60_000, label: "same reading message and viewport offset",
+      until: value => Boolean(value?.visible && Math.abs(value.offset - readingPosition.offset) <= 2),
+    });
+    expect(geometry?.text).toBe(readingPosition.text);
+    expect(geometry?.visible).toBe(true);
+    expect(Math.abs(geometry!.offset - readingPosition.offset)).toBeLessThanOrEqual(2);
+    expect(await savedScroll(world.neighbor.sessionId)).toEqual(neighborScroll);
+  };
+
+  await step("switching conversations preserves the reading position, full cached history and scoped targets", async () => {
     await agent.run("session.open", { sessionId: world.neighbor.sessionId });
     await user.see("composer", { editable: true });
     await user.notSee({ text: world.opening });
     // Return before the inactive transcript's 15-second GC window. The slower
     // palette isolation checks below deliberately belong to the cold path.
     await agent.run("session.open", { sessionId: world.session.sessionId });
-    await user.see({ text: world.closing });
+    await expectReadingPosition();
     expect(await orderedHistory()).toEqual(world.history);
     await expectTargets([...oldTargets, world.latestTool]);
     await agent.run("session.open", { sessionId: world.neighbor.sessionId });
     await user.see("composer", { editable: true });
     await expectTargets([...oldTargets, world.latestTool], false);
+    expect(await savedScroll(world.neighbor.sessionId)).toEqual(neighborScroll);
   });
 
   await step("cold reload keeps the bounded history tail ordered and old and new tool links usable", async () => {
@@ -248,7 +363,7 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     expect(retainedHistory.length).toBeLessThan(world.history.length);
     await agent.run("session.open", { sessionId: world.session.sessionId });
     await user.reload();
-    await user.see({ text: world.closing }, { timeoutMs: 60_000 });
+    await expectReadingPosition();
     expect(await orderedHistory()).toEqual(retainedHistory);
     expect(occurrences((await readTranscriptMessages(probe, "user")).join("\n"), world.prompt)).toBe(1);
     expect(occurrences((await readTranscriptMessages(probe, "assistant")).join("\n"), world.closing)).toBe(1);

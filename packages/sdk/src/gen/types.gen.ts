@@ -2340,6 +2340,7 @@ export type ExternalMcpConnectStartFailedError = {
   error: "oauth_handshake_failed";
   message: string;
   diagnostic: ExternalMcpDiagnostic;
+  callbackUrl?: string;
 };
 
 export type PluginArchGithubInstallStartResponse = {
@@ -14778,9 +14779,9 @@ export type GetV1McpConnectionsByConnectionIdConnectStartErrors = {
    */
   409: ExternalMcpConnectStartConflictError;
   /**
-   * OAuth handshake failed.
+   * OAuth handshake failed with the provider; the body carries the diagnostic.
    */
-  502: ExternalMcpConnectStartFailedError;
+  424: ExternalMcpConnectStartFailedError;
 };
 
 export type GetV1McpConnectionsByConnectionIdConnectStartError =

@@ -1,4 +1,4 @@
-import { allocateFreePort, browserScript, clickAt, evaluate, hoverAt, reload, type Point, type Surface, typeText } from "@openwork/cdp";
+import { allocateFreePort, browserScript, clickAt, evaluate, hoverAt, reload, type Point, type Surface, typeText, waitForLocated } from "@openwork/cdp";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
 import { engineSessionProbe, observeSidebarExpansion, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
@@ -1723,6 +1723,7 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
     return { sessions, requests, surfaces: result.surfaces, activeRows: result.activeRows, tabs: result.tabs, memory: result.memory };
   }
 
+  const paletteShortcut = await seed.evalIn(app, () => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "Meta+K" : "Control+K");
   const lifetime = resources.move();
   return {
     app,
@@ -1735,6 +1736,7 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
     faultCandidate,
     workspaceBName,
     commandSetup,
+    paletteShortcut,
     facts,
     networkFault,
     faultObservation: () => seed.evalIn(app, browserScript(async (workspaceIds) => {
@@ -1869,27 +1871,29 @@ export async function archiveSessions(seed: Seed) {
     return stamps;
   }
 
-  /** Which rows the workspace's own session tree shows, and whether the global Archived section exists. */
+  /** Active rows, the global Archived section, and the candidate's own archive button. */
   // TODO(primitive): probe.sidebar should expose the workspace tree and the Archived section.
-  async function sidebar(): Promise<{ active: string[]; archivedSection: boolean; archiveMenuDisabled: boolean }> {
-    const value = await seed.evalIn(app, browserScript((workspaceId) => {
+  async function sidebar(): Promise<{ active: string[]; archivedSection: boolean; archiveButtonDisabled: boolean | null; archiveButtonTitle: string | null }> {
+    const value = await seed.evalIn(app, browserScript((workspaceId, candidateId) => {
       const tree = document.querySelector<HTMLElement>('[data-sidebar-workspace-id="' + workspaceId + '"]');
+      const button = tree?.querySelector<HTMLButtonElement>(`[data-sidebar-session-id="${candidateId}"] button[data-testid="session-archive-${candidateId}"]`);
       return {
         active: [...(tree?.querySelectorAll<HTMLElement>("[data-sidebar-session-id]") ?? [])]
           .map((row) => row.getAttribute("data-sidebar-session-id")),
         archivedSection: Boolean(document.querySelector<HTMLElement>("[data-global-archived-sessions]")),
-        archiveMenuDisabled: [...document.querySelectorAll<HTMLElement>('[role="menuitem"][aria-disabled="true"]')]
-          .some((item) => item.textContent?.trim() === "Archive session"),
+        archiveButtonDisabled: button?.disabled ?? null,
+        archiveButtonTitle: button?.title ?? null,
       };
-    }, [workspace.workspaceId]));
+    }, [workspace.workspaceId, candidate.sessionId]));
     if (!isRecord(value)
       || !Array.isArray(value.active)
       || !value.active.every((sessionId) => typeof sessionId === "string")
       || typeof value.archivedSection !== "boolean"
-      || typeof value.archiveMenuDisabled !== "boolean") {
+      || (value.archiveButtonDisabled !== null && typeof value.archiveButtonDisabled !== "boolean")
+      || (value.archiveButtonTitle !== null && typeof value.archiveButtonTitle !== "string")) {
       throw new Error(`Sidebar archive facts were malformed: ${JSON.stringify(value)}`);
     }
-    return { active: value.active, archivedSection: value.archivedSection, archiveMenuDisabled: value.archiveMenuDisabled };
+    return { active: value.active, archivedSection: value.archivedSection, archiveButtonDisabled: value.archiveButtonDisabled, archiveButtonTitle: value.archiveButtonTitle };
   }
 
   /** True once the undo pill is on screen and its slide-in has finished, i.e. when a person would reach for it. */
@@ -1906,6 +1910,11 @@ export async function archiveSessions(seed: Seed) {
   }
 
   return { app, engine, workspace, workspacePath, candidate, neighbor, archivedAt, sidebar, undoToastSettled,
+    hoverArchiveButton: async () => {
+      // Disabled buttons reject pointer hits; hover their visible bounds without clicking.
+      const button = await waitForLocated(app, { testId: `session-archive-${candidate.sessionId}` }, { timeoutMs: 10_000 });
+      await hoverAt(app, button.center);
+    },
     mutationRequests: () => seed.evalIn(app, () => window.__archiveAvailabilityRequests),
   };
 }

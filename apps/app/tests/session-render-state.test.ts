@@ -72,7 +72,11 @@ for (const { name, merge } of [
         const completed: UIMessage = {
           ...running, parts: [{ ...running.parts[0], ...terminal }],
         };
-        expect(merge([running], [completed])[0]?.parts).toEqual(completed.parts);
+        expect(merge([running], [completed])[0]).toBe(completed);
+        const inputAvailable: UIMessage = {
+          ...running, parts: [{ ...running.parts[0], state: "input-available" }],
+        };
+        expect(merge([inputAvailable], [completed])[0]).toBe(completed);
         expect(merge([completed], [running])[0]?.parts).toEqual(completed.parts);
         const reordered: UIMessage = {
           ...running, parts: [{
@@ -82,6 +86,9 @@ for (const { name, merge } of [
         };
         expect(merge([reordered], [completed])[0]?.parts).toEqual([
           reordered.parts[0], completed.parts[0],
+        ]);
+        expect(merge([running], [reordered])[0]?.parts).toEqual([
+          running.parts[0], reordered.parts[0],
         ]);
         const refreshed: UIMessage = { ...completed, parts: [{
           type: "dynamic-tool", toolName: "bash", toolCallId: "call-a",

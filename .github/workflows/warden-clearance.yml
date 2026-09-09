@@ -135,7 +135,7 @@ jobs:
           set -euo pipefail
           BODY="**Warden security clearance: clear.** No blocking findings (security or desktop↔den sync) in this diff (\`$HEAD_SHA\`)."
           if [[ "$ADVISORY" =~ ^[0-9]+$ ]] && [ "$ADVISORY" -gt 0 ]; then
-            BODY="$BODY $ADVISORY advisory desktop↔den sync note(s) were posted as review comments; they do not affect clearance."
+            BODY="$BODY $ADVISORY advisory desktop↔den sync note(s) are listed in Warden check summaries instead of creating new review threads."
           fi
           BODY="$BODY Automated clearance satisfies the required-review gate only — a human still reviews and merges. [Analysis run]($RUN_URL)"
           gh api "repos/$REPO/pulls/$PR/reviews" \

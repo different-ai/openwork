@@ -45,6 +45,14 @@ type PromptPart = {
   text?: unknown;
 };
 
+/** The exact native prompt body, also used to correlate text-only user acknowledgements. */
+export function v2PromptText(parts: readonly PromptPart[]): string {
+  return parts
+    .filter((part) => part.type === "text" && typeof part.text === "string")
+    .map((part) => typeof part.text === "string" ? part.text : "")
+    .join("");
+}
+
 type PromptParameters = SessionParameters & {
   model?: { providerID: string; modelID: string };
   parts?: PromptPart[];
@@ -1594,10 +1602,7 @@ export function createClientV2(
           { value: parameters.system }, options?.signal);
         if (!instructions.response.ok) return failedResult(instructions);
       }
-      const text = (parameters.parts ?? [])
-        .filter((part) => part.type === "text" && typeof part.text === "string")
-        .map((part) => typeof part.text === "string" ? part.text : "")
-        .join("");
+      const text = v2PromptText(parameters.parts ?? []);
       const promptResult = await request(
         "POST",
         `/api/session/${encodeURIComponent(parameters.sessionID)}/prompt`,

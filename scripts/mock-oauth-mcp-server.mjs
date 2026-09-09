@@ -8,6 +8,7 @@ const issuer = process.env.ISSUER || `http://${host}:${port}`;
 const extraToolCount = Number(process.env.MOCK_EXTRA_TOOL_COUNT || 0);
 const autoApprove = process.env.AUTO_APPROVE !== "0";
 const disableDcr = process.env.DISABLE_DCR === "1";
+const rejectDcrRedirectUris = process.env.MOCK_REJECT_DCR_REDIRECT_URIS || "";
 const strictOAuth = process.argv.includes("--strict") || process.env.STRICT_OAUTH === "1";
 // Strict mode rejects refresh tokens this instance did not issue (and
 // rotates on every refresh grant). Off by default: eval flows restart the
@@ -703,6 +704,29 @@ async function registerClient(req, res, entry) {
       scope: typeof body.scope === "string" ? body.scope : null,
       token_endpoint_auth_method: body.token_endpoint_auth_method ?? null,
     };
+  }
+  if (rejectDcrRedirectUris === "invalid_redirect_uri") {
+    json(res, 400, {
+      error: "invalid_redirect_uri",
+      error_description: "The provided redirect URIs are not approved for use by this authorization server.",
+    });
+    return;
+  }
+  if (rejectDcrRedirectUris === "invalid_request") {
+    const firstRedirectUri = Array.isArray(body.redirect_uris) && typeof body.redirect_uris[0] === "string"
+      ? body.redirect_uris[0]
+      : "";
+    let redirectHost = "";
+    try {
+      redirectHost = new URL(firstRedirectUri).host;
+    } catch {
+      // The mock still returns its deterministic rejection for malformed input.
+    }
+    json(res, 400, {
+      error: "invalid_request",
+      error_description: `Invalid redirect_uri: redirect_uri host '${redirectHost}' is not in the allowed list`,
+    });
+    return;
   }
   const clientId = `mock-client-${randomUUID()}`;
   const client = {

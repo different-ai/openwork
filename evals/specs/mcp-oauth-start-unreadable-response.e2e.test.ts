@@ -2,13 +2,11 @@ import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { oauthStartUnreadableWeb } from "../worlds/mcp-oauth-start-unreadable.ts";
 
-// A member clicks Connect and den-api's OAuth-start answer never reaches the
-// page: the browser withholds a cross-origin error response whose CORS headers
-// do not fit a credentialed request (an edge 502 without them, a wildcard, or
-// no response at all). The dashboard must say so in plain words instead of
-// echoing the browser's "Failed to fetch", and it must not pretend the provider
-// was involved. With the response readable again the same button starts the
-// provider sign-in.
+// A member clicks Connect and gets a real OpenWork tab in the same browser
+// window. Readable handshake failures, unreadable cross-origin answers, and a
+// provider refusing OpenWork's redirect URI each receive actionable language
+// there while the dashboard keeps its inline error. Once the provider accepts
+// the redirect URI, the same button starts provider sign-in.
 const test = spec.world(oauthStartUnreadableWeb, { timeout: 600_000, needs: { optIn: ["OPENWORK_EVAL_E2E_TESTS"], placement: "local" } });
 
 const unreadableMessage = /OpenWork could not read the answer from its API when starting the sign-in/;
@@ -22,7 +20,7 @@ test("the connections page explains an OAuth-start answer the browser could not 
 
   await step("den-api's own handshake failure is readable and explained", async () => {
     // The provider disappears after the connection was saved: den-api answers
-    // its structured 502 through the proxy, with CORS headers, so the row shows
+    // its structured 424 through the proxy, with CORS headers, so the row shows
     // the diagnostic reference. This also lets the browser cache the preflight
     // for this exact URL, so the next fault can land on the GET itself.
     await world.stopProvider();
@@ -31,13 +29,26 @@ test("the connections page explains an OAuth-start answer the browser could not 
     await user.see({ text: /Reference: / });
     await user.notSee({ text: unreadableMessage });
     await user.notSee({ text: /Failed to fetch/ });
+    const tab = await world.signInTab();
+    expect(tab).not.toBeNull();
+    if (!tab) throw new Error("Expected the OpenWork sign-in tab.");
+    const tabUser = user.on(tab);
+    await tabUser.see({ text: /Couldn't start the Synthetic calendar provider sign-in/ });
+    const targetUrls = await world.pageTargetUrls();
+    const tabUrl = targetUrls.find((url) => url.startsWith(`${new URL(world.den.ref.webUrl).origin}/connect/oauth`));
+    expect(tabUrl).toBeDefined();
+    if (!tabUrl) throw new Error("Expected the sign-in tab URL.");
+    expect(new URL(tabUrl).pathname).toBe("/connect/oauth");
+    expect(await world.sameWindowAsDashboard(tab)).toBe(true);
+    expect(targetUrls).not.toContain("about:blank");
     const readable = await proxied();
     expect(readable.some((entry) => entry.method === "OPTIONS" && !entry.faulted && entry.status === 204)).toBe(true);
-    expect(readable.some((entry) => entry.method === "GET" && !entry.faulted && entry.status === 502)).toBe(true);
-    await user.screenshot();
+    expect(readable.some((entry) => entry.method === "GET" && !entry.faulted && entry.status === 424)).toBe(true);
+    await tabUser.screenshot();
+    await world.closeTab(tab);
     evidence.recordAssertionEvidence(
-      "A readable handshake failure shows den-api's diagnostic",
-      "With the provider unreachable, the preflight passed (204) and den-api's own HTTP 502 was forwarded unchanged; the connection row shows the structured message with a diagnostic reference, not the readability or browser text.",
+      "A readable handshake failure opens a real diagnostic tab",
+      "With the provider unreachable, den-api's own HTTP 424 was forwarded unchanged; a same-window /connect/oauth tab showed the named provider failure, while no about:blank target or unreadable browser text appeared.",
       true,
     );
   });
@@ -51,13 +62,59 @@ test("the connections page explains an OAuth-start answer the browser could not 
     await user.see({ text: unreadableMessage }, { timeoutMs: 30_000 });
     await user.notSee({ text: /Failed to fetch/ });
     await user.notSee({ text: /Reference: / });
-    await user.screenshot();
+    const tab = await world.signInTab();
+    expect(tab).not.toBeNull();
+    if (!tab) throw new Error("Expected the OpenWork sign-in tab.");
+    const tabUser = user.on(tab);
+    await tabUser.see({ text: /OpenWork couldn't read its own API's answer/ });
+    await tabUser.see({ text: unreadableMessage });
+    const targetUrls = await world.pageTargetUrls();
+    const tabUrl = targetUrls.find((url) => url.startsWith(`${new URL(world.den.ref.webUrl).origin}/connect/oauth`));
+    expect(tabUrl).toBeDefined();
+    if (!tabUrl) throw new Error("Expected the sign-in tab URL.");
+    expect(new URL(tabUrl).pathname).toBe("/connect/oauth");
+    expect(await world.sameWindowAsDashboard(tab)).toBe(true);
+    expect(targetUrls).not.toContain("about:blank");
+    await tabUser.screenshot();
+    await world.closeTab(tab);
     const faulted = (await proxied()).slice(before).filter((entry) => entry.faulted);
     expect(faulted).toHaveLength(1);
     expect(faulted[0]).toMatchObject({ method: "GET", status: 502 });
     evidence.recordAssertionEvidence(
       "An unreadable OAuth-start answer is explained in plain words",
       `The proxy answered the OAuth-start GET (not its preflight) with an injected HTTP 502 the browser could not read; the connection row shows the readability message instead of "Failed to fetch" or a den-api diagnostic.`,
+      true,
+    );
+  });
+
+  await step("the provider refuses OpenWork's redirect URI", async () => {
+    await world.restartProvider({ rejectDynamicRedirectUris: "invalid_redirect_uri" });
+    const before = (await proxied()).length;
+    await user.click(connectButton);
+    const tab = await world.signInTab();
+    expect(tab).not.toBeNull();
+    if (!tab) throw new Error("Expected the OpenWork sign-in tab.");
+    const tabUser = user.on(tab);
+    await tabUser.see({ text: /Synthetic calendar provider hasn't approved OpenWork yet/ }, { timeoutMs: 30_000 });
+    await tabUser.see({ text: /\/v1\/mcp-connections\/oauth\/callback/ });
+    await tabUser.see({ text: /Reference/ });
+    await tabUser.notSee({ text: /[Tt]ry again/ });
+    await tabUser.notSee({ text: unreadableMessage });
+    const targetUrls = await world.pageTargetUrls();
+    const tabUrl = targetUrls.find((url) => url.startsWith(`${new URL(world.den.ref.webUrl).origin}/connect/oauth`));
+    expect(tabUrl).toBeDefined();
+    if (!tabUrl) throw new Error("Expected the sign-in tab URL.");
+    expect(new URL(tabUrl).pathname).toBe("/connect/oauth");
+    expect(await world.sameWindowAsDashboard(tab)).toBe(true);
+    expect(targetUrls).not.toContain("about:blank");
+    const forwarded = (await proxied()).slice(before);
+    expect(forwarded.some((entry) => entry.method === "GET" && !entry.faulted && entry.status === 424)).toBe(true);
+    expect(await world.authorizeRequests()).toBe(0);
+    await tabUser.screenshot();
+    await world.closeTab(tab);
+    evidence.recordAssertionEvidence(
+      "A rejected redirect URI identifies the provider action",
+      "The non-faulted OAuth-start GET returned HTTP 424, no provider authorization request followed, and the same-window OpenWork tab named the redirect URI and diagnostic reference without retry or unreadable-response advice.",
       true,
     );
   });

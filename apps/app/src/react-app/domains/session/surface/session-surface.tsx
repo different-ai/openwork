@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { UIMessage } from "ai";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { Check, CirclePause, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
 import { hasTerminalSessionReply, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
 import { createClient, createPromptMessageID, hasAcceptedPromptMessage, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
-import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
+import { createClientV2, isOpencodeV2BaseUrl, v2PromptText } from "@/app/lib/opencode-v2-adapter";
 import * as opencodeSessionNative from "@/app/lib/opencode-session-native";
 import type { NativeSessionSnapshotTarget } from "@/app/lib/opencode-session-native";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
@@ -121,6 +121,7 @@ import {
   getComposerRevertMessageId,
   getComposerSessionDraftScope,
   persistableComposerDraftText,
+  snapshotComposerSessionState,
   type ComposerSessionState,
   useComposerStateStore,
 } from "./composer-state-store";
@@ -605,7 +606,7 @@ export type SessionSurfaceProps = {
   onModelChange: (model: ModelRef, variant?: string | null) => void;
   archived?: boolean;
   onRestoreSession?: () => Promise<void>;
-  onSendDraft: (draft: ComposerDraft, sessionId: string, onPrepared?: () => void) => Promise<CloudMcpSubmissionResult>;
+  onSendDraft: (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void) => Promise<CloudMcpSubmissionResult>;
   cloudMcpSubmissionState: CloudMcpSubmissionGateState;
   onOpenConnect: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
@@ -956,6 +957,46 @@ function revokeAttachmentPreview(attachment: { previewUrl?: string | undefined }
   URL.revokeObjectURL(attachment.previewUrl);
 }
 
+function revokeUnownedAttachmentPreviews(attachments: ComposerAttachment[]) {
+  const state = useComposerStateStore.getState();
+  const retained = [
+    ...Object.values(state.sessions),
+    ...Object.values(state.failedDrafts).flat(),
+    ...Object.values(state.queuedDrafts).flat().map((item) => item.draft),
+    ...Object.values(state.pendingMessages).flat().map((item) => item.draft),
+  ].flatMap((item) => item.attachments);
+  for (const attachment of attachments) {
+    if (!retained.some((item) => item.previewUrl === attachment.previewUrl)) revokeAttachmentPreview(attachment);
+  }
+}
+
+function pendingMessageParts(text: string, attachments: ComposerAttachment[], serverParts: UIMessage["parts"] = []) {
+  const parts = [...serverParts];
+  if (text && !parts.some((part) => part.type === "text" && part.text)) parts.unshift({ type: "text", text });
+  const matched = new Set<number>();
+  let attachmentsReady = true;
+  for (const attachment of attachments) {
+    const filename = resolveAttachmentFileMetadata(attachment.file).filename;
+    // Compression can change an image's extension, but never its submitted bytes here.
+    const compressedFilename = attachment.kind === "image"
+      ? resolveAttachmentFileMetadata({ name: `${attachment.file.name.replace(/\.[^.]+$/, "") || "image"}.jpg`, type: "image/jpeg" }).filename
+      : filename;
+    const index = serverParts.findIndex((part, index) => !matched.has(index) && part.type === "file"
+      && (part.filename === filename || part.filename === compressedFilename));
+    if (index >= 0) matched.add(index);
+    const part = serverParts[index];
+    const usable = part?.type === "file" && (attachment.kind === "image"
+      ? part.mediaType.startsWith("image/") && /^(data:image\/|https?:\/\/)/.test(part.url)
+      : /^(data:|file:\/\/|https?:\/\/)/.test(part.url));
+    if (usable) continue;
+    attachmentsReady = false;
+    const preview = { type: "file", filename: attachment.name, mediaType: attachment.mimeType, url: attachment.previewUrl ?? "" } satisfies UIMessage["parts"][number];
+    if (part) parts[parts.indexOf(part)] = preview;
+    else parts.push(preview);
+  }
+  return { parts, attachmentsReady };
+}
+
 function draftWithEditedText(draft: ComposerDraft, text: string): ComposerDraft {
   return {
     ...draft,
@@ -1001,8 +1042,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   );
   const draft = useComposerStateStore((state) => getComposerDraft(state, props.sessionId));
   const attachments = useComposerStateStore((state) => getComposerAttachments(state, props.sessionId));
-  // True while a send with attachments is in flight (compression + inbox
-  // upload + prompt POST); drives the uploading overlay on composer chips.
+  // Preparation belongs to the submitted message, not the next composer draft.
   const [attachmentsUploading, setAttachmentsUploading] = useState(false);
   const mentions = useComposerStateStore((state) => getComposerMentions(state, props.sessionId));
   const pasteParts = useComposerStateStore((state) => getComposerPasteParts(state, props.sessionId));
@@ -1190,6 +1230,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [pendingSendSessions, setPendingSendSessions] = useState<string[]>([]);
   const pendingSendsRef = useRef(new Map<symbol, string>());
   const sending = pendingSendSessions.includes(sessionOwner);
+  const pendingStopsRef = useRef(new Set<string>());
+  const [pendingStopSessions, setPendingStopSessions] = useState<string[]>([]);
+  const stopping = pendingStopSessions.includes(sessionOwner);
+  const queryClient = useQueryClient();
   const cloudQueueBlockedRef = useRef(false);
   const evalSnapshotFailureRef = useRef(false);
   // Shared with promote-to-send so a manual send-now cannot race the idle drain.
@@ -1447,41 +1491,59 @@ export function SessionSurface(props: SessionSurfaceProps) {
     [snapshot, transcriptState],
   );
   const pendingMessages = useComposerStateStore((state) => state.pendingMessages[sessionOwner]);
+  const [submittedMessage, setSubmittedMessage] = useState<{ owner: string; id: string } | null>(null);
   const failedDraft = useComposerStateStore((state) => state.failedDrafts[sessionOwner]?.[0]);
   const autoSendPayload = getComposerAutoSendPayload(props.sessionId, sessionOwner);
   const autoSending = (Boolean(autoSendPayload)
-    || (hasComposerAutoSend(props.sessionId) && attachments.length === 0))
+    || hasComposerAutoSend(props.sessionId))
     && !sessionModelUnavailable;
-  const unmatchedPendingMessages = useMemo(() => {
+  const pendingReconciliation = useMemo(() => {
     const matchedIds = new Set<string>();
-    const remaining = (pendingMessages ?? []).filter(({ draft: pending, previousMessageIds }) => {
+    const messages = [...baseRenderedMessages];
+    const remaining = (pendingMessages ?? []).flatMap((item) => {
+      const { draft: pending, previousMessageIds } = item;
+      const text = pending.resolvedText ?? pending.text;
+      // Native v2 assigns its own ID and may never expose files in the transcript.
+      // Upload paths and filename changes must come from the prepared request, not a guess.
+      const acknowledgementText = item.preparedText ?? (pending.attachments.length ? undefined : text);
       const match = baseRenderedMessages.find((message) => message.role === "user"
         && !matchedIds.has(message.id)
-        && (message.id === pending.messageId || (isOpencodeV2BaseUrl(props.opencodeBaseUrl) && !previousMessageIds.includes(message.id)
-          && message.parts.some((part) => part.type === "text" && part.text === (pending.resolvedText ?? pending.text)))));
-      if (!match) return true;
+        && (message.id === (item.serverMessageId ?? pending.messageId) || (!item.serverMessageId && isOpencodeV2BaseUrl(props.opencodeBaseUrl) && !previousMessageIds.includes(message.id)
+          && Boolean(acknowledgementText?.trim()) && v2PromptText(message.parts) === acknowledgementText)));
+      const { parts, attachmentsReady } = pendingMessageParts(text, pending.attachments, match?.parts);
+      if (!match) {
+        messages.push({ id: pending.messageId, role: "user", parts });
+        return [item];
+      }
       matchedIds.add(match.id);
-      return false;
+      messages[messages.indexOf(match)] = { ...match, parts };
+      const textReady = !text.trim()
+        || match.parts.some((part) => part.type === "text" && part.text.trim());
+      if (attachmentsReady && textReady && item.settled) return [];
+      return [item.serverMessageId === match.id ? item : { ...item, serverMessageId: match.id }];
     });
     // A server turn can acknowledge only one pending send, even when two
     // consecutive prompts have identical text and v2 assigns its own IDs.
-    return matchedIds.size ? remaining.map((item) => ({
-      ...item,
-      previousMessageIds: [...item.previousMessageIds, ...matchedIds],
-    })) : remaining;
+    return { messages, remaining: remaining.map((item) => {
+      const claimed = [...matchedIds].filter((id) => id !== item.serverMessageId && !item.previousMessageIds.includes(id));
+      return claimed.length ? { ...item, previousMessageIds: [...item.previousMessageIds, ...claimed] } : item;
+    }) };
   }, [baseRenderedMessages, pendingMessages, props.opencodeBaseUrl]);
+  const remainingPendingMessages = pendingReconciliation.remaining;
   useEffect(() => {
-    if (!pendingMessages || pendingMessages.length === unmatchedPendingMessages.length) return;
+    if (!pendingMessages || (pendingMessages.length === remainingPendingMessages.length
+      && pendingMessages.every((item, index) => item === remainingPendingMessages[index]))) return;
+    // Another pane or a completed send may have updated the same owner since render.
+    if (useComposerStateStore.getState().pendingMessages[sessionOwner] !== pendingMessages) return;
     useComposerStateStore.setState((state) => ({
-      pendingMessages: { ...state.pendingMessages, [sessionOwner]: unmatchedPendingMessages },
+      pendingMessages: { ...state.pendingMessages, [sessionOwner]: remainingPendingMessages },
     }));
-  }, [pendingMessages, sessionOwner, unmatchedPendingMessages]);
+    revokeUnownedAttachmentPreviews(pendingMessages
+      .filter((item) => !remainingPendingMessages.some((remaining) => remaining.draft === item.draft))
+      .flatMap((item) => item.draft.attachments));
+  }, [pendingMessages, sessionOwner, remainingPendingMessages]);
   const renderedMessages = useMemo(() => {
-    const pending: UIMessage[] = unmatchedPendingMessages.map(({ draft: item }) => ({
-      id: item.messageId,
-      role: "user",
-      parts: [{ type: "text", text: item.resolvedText ?? item.text }],
-    }));
+    const pending: UIMessage[] = [];
     if (autoSending) {
       const pendingComposer = autoSendPayload?.composer;
       const pendingText = pendingComposer?.draft ?? draft;
@@ -1489,11 +1551,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (pendingText.trim() || (pendingComposer?.attachments.length ?? attachments.length)) pending.push({
         id: `${props.sessionId}:first-send`,
         role: "user",
-        parts: [{ type: "text", text: resolvePastedTextPlaceholders(pendingText, pendingPasteParts).replace(/\[attachment [^\]]+\]/g, "") }],
+        parts: pendingMessageParts(resolvePastedTextPlaceholders(pendingText, pendingPasteParts).replace(/\[attachment [^\]]+\]/g, ""), pendingComposer?.attachments ?? attachments).parts,
       });
     }
-    return [...baseRenderedMessages, ...pending, ...evalMarkdownMessages];
-  }, [attachments.length, autoSendPayload, autoSending, baseRenderedMessages, draft, evalMarkdownMessages, pasteParts, props.sessionId, unmatchedPendingMessages]);
+    return [...pendingReconciliation.messages, ...pending, ...evalMarkdownMessages];
+  }, [attachments, autoSendPayload, autoSending, draft, evalMarkdownMessages, pasteParts, pendingReconciliation.messages, props.sessionId]);
   const renderedMessagesRef = useRef(renderedMessages);
   useEffect(() => {
     renderedMessagesRef.current = renderedMessages;
@@ -1975,7 +2037,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Core sender shared by initial send and steered follow-ups. OpenCode
   // accepts follow-up user turns mid-run (steering) — the running loop picks
   // up the new message — so this is safe to call while the agent is busy.
-  const sendDraft = useCallback(async (nextDraft: ComposerDraft, itemId: string, onPrepared?: () => void): Promise<CloudMcpSubmissionResult | { outcome: "unknown" }> => {
+  const sendDraft = useCallback(async (nextDraft: ComposerDraft, itemId: string, onPrepared?: (text?: string) => void): Promise<CloudMcpSubmissionResult | { outcome: "unknown" }> => {
     const messageId = nextDraft.messageId ?? createPromptMessageID();
     const generation = getQueuedSendGeneration(props.sessionId);
     const submissionId = Symbol();
@@ -2037,47 +2099,49 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
     const generation = getQueuedSendGeneration(props.sessionId);
-    const originalDraft = sourceComposer?.draft ?? draft;
-    const sourceAttachments = sourceComposer?.attachments ?? attachments;
+    const composerCheckpoint = useComposerStateStore.getState().sessions[props.sessionId];
+    const submittedComposer = sourceComposer ?? composerCheckpoint;
+    const originalDraft = submittedComposer?.draft ?? draft;
+    const sourceAttachments = submittedComposer?.attachments ?? attachments;
     const text = originalDraft.trim();
     if (!text && sourceAttachments.length === 0) return;
+    const savedComposer = snapshotComposerSessionState(submittedComposer ?? {
+      draft: originalDraft, attachments: sourceAttachments, mentions, pasteParts, revertMessageId: null,
+    });
+    const sentAttachments = savedComposer.attachments;
     const nextDraft = {
-      ...buildDraft(text, sourceAttachments, sourceComposer),
+      ...buildDraft(text, sentAttachments, savedComposer),
       messageId: createPromptMessageID(),
     };
     // Immediate sends and queued sends share the same slot across all panes.
     dispatchQueuedDrain(props.sessionId, { type: "user_retry" });
     if (!claimQueuedSend(props.sessionId, nextDraft.messageId, true)) return;
-    const sentAttachments = sourceAttachments;
-    const composerCheckpoint = useComposerStateStore.getState().sessions[props.sessionId];
-    const savedComposer = sourceComposer ?? composerCheckpoint;
-    let clearedComposer: typeof savedComposer;
-    let composerCleared = false;
-    let pendingRegistered = false;
-    const registerPending = () => {
-      if (pendingRegistered) return;
-      pendingRegistered = true;
-      useComposerStateStore.setState((state) => ({
-        pendingMessages: {
-          ...state.pendingMessages,
-          [sessionOwner]: [...(state.pendingMessages[sessionOwner] ?? []), {
-            draft: nextDraft,
-            previousMessageIds: baseRenderedMessages.map((message) => message.id),
-          }],
-        },
-      }));
-    };
-    const markPrepared = () => {
-      // Do not erase edits made while attachments were being prepared.
-      if (!sourceComposer
-        && useComposerStateStore.getState().sessions[props.sessionId] === composerCheckpoint
-        && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey) {
-        clearComposer();
-        clearedComposer = useComposerStateStore.getState().sessions[props.sessionId];
-        composerCleared = true;
-      }
-      registerPending();
+    for (const attachment of sentAttachments) {
+      if (attachment.kind === "image" && !attachment.previewUrl) attachment.previewUrl = URL.createObjectURL(attachment.file);
+    }
+    setSubmittedMessage({ owner: sessionOwner, id: nextDraft.messageId });
+    useComposerStateStore.setState((state) => ({
+      pendingMessages: {
+        ...state.pendingMessages,
+        [sessionOwner]: [...(state.pendingMessages[sessionOwner] ?? []), {
+          draft: nextDraft,
+          previousMessageIds: baseRenderedMessages.map((message) => message.id),
+          settled: false,
+        }],
+      },
+    }));
+    // A hero handoff owns the submitted snapshot, never a newer continuation.
+    if ((!sourceComposer || sourceComposer === composerCheckpoint)
+      && useComposerStateStore.getState().sessions[props.sessionId] === composerCheckpoint
+      && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey) clearComposer();
+    const clearedComposer = useComposerStateStore.getState().sessions[props.sessionId];
+    const markPrepared = (preparedText?: string) => {
       setAttachmentsUploading(false);
+      if (preparedText === undefined) return;
+      useComposerStateStore.setState((state) => ({ pendingMessages: {
+        ...state.pendingMessages,
+        [sessionOwner]: (state.pendingMessages[sessionOwner] ?? []).map((item) => item.draft === nextDraft ? { ...item, preparedText } : item),
+      } }));
     };
     const removePending = () => useComposerStateStore.setState((state) => ({
       pendingMessages: {
@@ -2089,51 +2153,40 @@ export function SessionSurface(props: SessionSurfaceProps) {
       removePending();
       if (getQueuedSendGeneration(props.sessionId) !== generation) return;
       const state = useComposerStateStore.getState();
-      if (!composerCleared) {
-        if (!sourceComposer || !savedComposer) return;
-        if (state.sessions[props.sessionId] === composerCheckpoint
-          && !composerSessionHasContent(composerCheckpoint)
-          && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey) {
-          useComposerStateStore.setState({ sessions: { ...state.sessions, [props.sessionId]: savedComposer } });
-          props.onDraftChange(nextDraft);
-        } else {
-          useComposerStateStore.setState({ failedDrafts: {
-            ...state.failedDrafts,
-            [sessionOwner]: [...(state.failedDrafts[sessionOwner] ?? []), savedComposer],
-          } });
-        }
-        return;
-      }
       // Identity, not text equality: typing and then deleting is still a newer edit.
-      if (savedComposer && state.sessions[props.sessionId] === clearedComposer
+      if (!composerSessionHasContent(clearedComposer) && state.sessions[props.sessionId] === clearedComposer
         && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey) {
         useComposerStateStore.setState({ sessions: { ...state.sessions, [props.sessionId]: savedComposer } });
         props.onDraftChange(nextDraft);
-      } else if (savedComposer) {
+      } else {
         useComposerStateStore.setState({ failedDrafts: {
           ...state.failedDrafts,
           [sessionOwner]: [...(state.failedDrafts[sessionOwner] ?? []), savedComposer],
         } });
       }
     };
-    if (sourceComposer && sentAttachments.length) registerPending();
     if (sentAttachments.length) setAttachmentsUploading(true);
-    else markPrepared();
     try {
-      const result = await sendDraft(nextDraft, nextDraft.messageId, sentAttachments.length ? markPrepared : undefined);
+      const result = await sendDraft(nextDraft, nextDraft.messageId, markPrepared);
       if (result.outcome === "blocked" || result.outcome === "cancelled") {
         restore();
         return;
       }
-      if (result.outcome !== "unknown" && (nextDraft.command || nextDraft.mode === "shell")) removePending();
-      const retained = useComposerStateStore.getState().sessions[props.sessionId]?.attachments ?? [];
-      sentAttachments.filter((attachment) => !retained.some((item) => item.id === attachment.id)).forEach(revokeAttachmentPreview);
+      if (result.outcome !== "unknown" && (nextDraft.command || nextDraft.mode === "shell")) {
+        removePending();
+        revokeUnownedAttachmentPreviews(sentAttachments);
+      } else {
+        useComposerStateStore.setState((state) => ({ pendingMessages: {
+          ...state.pendingMessages,
+          [sessionOwner]: (state.pendingMessages[sessionOwner] ?? []).map((item) => item.draft === nextDraft ? { ...item, settled: true } : item),
+        } }));
+      }
     } catch {
       restore();
     } finally {
       setAttachmentsUploading(false);
     }
-  }, [archived, archiveStateKnown, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, persistedDraftKey, props.onDraftChange, props.opencodeBaseUrl, props.sessionId, sendDraft, sessionOwner]);
+  }, [archived, archiveStateKnown, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.opencodeBaseUrl, props.sessionId, sendDraft, sessionOwner]);
 
   // One-step run from the empty-state hero: the route keeps the continuation
   // in this session's composer and marks the submitted snapshot for auto-send.
@@ -2242,35 +2295,43 @@ export function SessionSurface(props: SessionSurfaceProps) {
   ]);
 
   const handleAbort = useCallback(async () => {
+    if (pendingStopsRef.current.has(sessionOwner)) return;
     const phase = getQueuedDrainState(props.sessionId).phase;
     if (!chatStreaming && phase.kind !== "sending" && phase.kind !== "admission_unknown") return;
-    setError(null);
-    // Stop means stop: drop queued follow-ups before aborting, otherwise the
-    // queue-drain effect below re-prompts the agent the moment the abort
-    // lands and the session reports idle (#2014).
-    getComposerQueuedDrafts(useComposerStateStore.getState(), props.sessionId)
-      .forEach((item) => item.draft.attachments.forEach(revokeAttachmentPreview));
-    clearQueuedDrafts(props.sessionId);
-    dispatchQueuedDrain(props.sessionId, { type: "queue_cleared" });
-    // The prompt was sent through a directory-scoped client (session-route
-    // passes the workspace root), so the abort must target the same scope —
-    // without it the server resolves the default project, finds no live run,
-    // and answers `200: false` while the stream keeps going (#2014).
+    pendingStopsRef.current.add(sessionOwner);
+    setPendingStopSessions([...pendingStopsRef.current]);
     try {
+      setError(null);
+      // Stop means stop: drop queued follow-ups before aborting, otherwise the
+      // queue-drain effect below re-prompts the agent the moment the abort
+      // lands and the session reports idle (#2014).
+      getComposerQueuedDrafts(useComposerStateStore.getState(), props.sessionId)
+        .forEach((item) => item.draft.attachments.forEach(revokeAttachmentPreview));
+      clearQueuedDrafts(props.sessionId);
+      dispatchQueuedDrain(props.sessionId, { type: "queue_cleared" });
+      // The prompt was sent through a directory-scoped client (session-route
+      // passes the workspace root), so the abort must target the same scope —
+      // without it the server resolves the default project, finds no live run,
+      // and answers `200: false` while the stream keeps going (#2014).
       await interruptSessionTurn(props.opencodeBaseUrl, opencodeClient, props.sessionId,
         props.workspaceRoot.trim() || undefined, {
           admissionUnknown: phase.kind === "admission_unknown",
           admissionMessageID: phase.kind === "admission_unknown" ? phase.messageID : undefined,
           onStopped: () => dispatchQueuedDrain(props.sessionId, { type: "stop_confirmed" }),
         });
+      captureAnalyticsEvent("task_run_stopped", {});
+      // The surface survives navigation; refresh the stopped conversation, not
+      // whichever query the observer is showing when cancellation finishes.
+      await queryClient.refetchQueries({ queryKey: snapshotQueryKey, exact: true });
+      return true;
     } catch (error) {
       setError({ message: error instanceof Error ? error.message : t("session.stop_failed") });
       return false;
+    } finally {
+      pendingStopsRef.current.delete(sessionOwner);
+      setPendingStopSessions([...pendingStopsRef.current]);
     }
-    captureAnalyticsEvent("task_run_stopped", {});
-    await snapshotQuery.refetch();
-    return true;
-  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.opencodeBaseUrl, props.sessionId, props.workspaceRoot, snapshotQuery.refetch, setError]);
+  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.opencodeBaseUrl, props.sessionId, props.workspaceRoot, queryClient, sessionOwner, snapshotQueryKey, setError]);
 
   const checkUnknownAdmission = useCallback(async (notify = false) => {
     const phase = getQueuedDrainState(props.sessionId).phase;
@@ -2585,10 +2646,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     label: "Stop the current run",
     description: "Stop the current streaming session run.",
     sideEffect: "mutation",
-    disabled: !chatStreaming && queuedDrainState.phase.kind !== "sending" && queuedDrainState.phase.kind !== "admission_unknown",
+    disabled: stopping || (!chatStreaming && queuedDrainState.phase.kind !== "sending" && queuedDrainState.phase.kind !== "admission_unknown"),
     targetRef: composerShellRef,
     execute: handleAbort,
-  }), [chatStreaming, handleAbort, queuedDrainState.phase.kind]);
+  }), [chatStreaming, handleAbort, queuedDrainState.phase.kind, stopping]);
   useControlAction(props.isControlTarget ? composerStopControlAction : null);
 
   const listSkills = useCallback(async (): Promise<SkillCard[]> => {
@@ -2715,6 +2776,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const sessionScroll = useSessionScrollController({
     selectedSessionId: props.sessionId,
+    submittedMessageId: submittedMessage?.owner === sessionOwner ? submittedMessage.id : null,
+    historyReady: snapshot !== null,
     renderedMessages,
     containerRef: scrollRef,
     contentRef,
@@ -2967,10 +3030,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     execute: () => {
       const container = scrollRef.current;
       if (!container) return { ok: false, error: "Session transcript is not mounted" };
+      sessionScroll.markScrollGesture(container);
       container.scrollTo({ top: 0, behavior: "smooth" });
       return { ok: true, position: "top" };
     },
-  }), []);
+  }), [sessionScroll.markScrollGesture]);
   useControlAction(props.isControlTarget ? sessionScrollTopControlAction : null);
 
   const sessionScrollBottomControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -3272,11 +3336,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
             }}>Restore unsent message</button>
           </div>
         ) : null}
-        {unmatchedPendingMessages.flatMap(({ draft: pending }) => pending.attachments.map((attachment) => (
-          <div key={attachment.id} className="mx-3 mb-2 text-xs text-muted-foreground" data-attachment-status={sending ? "uploading" : "ready"}>
-            {attachment.name}{sending ? " · Uploading…" : ""}
-          </div>
-        )))}
+        {attachmentsUploading ? <div role="status" className="mx-3 mb-2 text-xs text-muted-foreground" data-attachment-status="uploading">
+          Preparing attachments...
+        </div> : null}
         <ReactSessionComposer
           runModeControl={<WorkspaceRunModeMenu client={props.client} workspaceId={props.workspaceId} busy={chatStreaming || preparingCloudTools || Boolean(props.activePermission || props.activeQuestion)} />}
           draft={autoSendPayload ? draft : autoSending ? "" : draft}
@@ -3287,6 +3349,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onQueue={handleQueue}
         onStop={async () => { await handleAbort(); }}
         busy={chatStreaming}
+        stopping={stopping}
         steering={steering}
         submissionPreparing={preparingCloudTools || sending || autoSending}
         queuedCount={queuedItems.length}
@@ -3303,8 +3366,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onModelPickerOpenChange={handleModelPickerOpenChange}
         onModelChange={handleModelChange}
         sessionId={props.sessionId}
-        attachments={attachments}
-        attachmentsUploading={attachmentsUploading}
+        attachments={autoSending && !autoSendPayload ? [] : attachments}
         onAttachFiles={handleAttachFiles}
         onRemoveAttachment={handleRemoveAttachment}
         attachmentsEnabled={props.attachmentsEnabled}

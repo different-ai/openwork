@@ -9,6 +9,47 @@ import { readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProv
 import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
 
 const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
+// The first cold read previously had 10s; keep two reads under the 15s plugin budget and one read under the 10s session-install budget.
+const DEN_READ_DEADLINE_MS = 6_000;
+const DEN_READ_ATTEMPT_TIMEOUT_MS = 3_500;
+const DEN_READ_MAX_ATTEMPTS = 2;
+const RETRYABLE_DEN_STATUSES = new Set([502, 503, 504]);
+const RETRYABLE_TRANSPORT_CODES = new Set([
+  "ABORT_ERR",
+  "EAI_AGAIN",
+  "ECONNABORTED",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETDOWN",
+  "ENETRESET",
+  "ENETUNREACH",
+  "EPIPE",
+  "ERR_STREAM_PREMATURE_CLOSE",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+type DenRetryReason = "http_transient" | "transport_temporary" | "transport_timeout";
+
+function transientTransportReason(error: unknown): DenRetryReason | null {
+  const visited = new Set<object>();
+  let current = error;
+  for (let depth = 0; depth < 6 && isRecord(current) && !visited.has(current); depth += 1) {
+    visited.add(current);
+    if (current.name === "AbortError" || current.name === "TimeoutError" || current.code === "ABORT_ERR"
+      || current.code === "ETIMEDOUT" || current.code === "UND_ERR_CONNECT_TIMEOUT" || current.code === "UND_ERR_HEADERS_TIMEOUT") {
+      return "transport_timeout";
+    }
+    if (current.name === "NetworkError" || (typeof current.code === "string" && RETRYABLE_TRANSPORT_CODES.has(current.code))) {
+      return "transport_temporary";
+    }
+    current = current.cause;
+  }
+  return null;
+}
+
 export function managedDesktopPolicy(config: ServerConfig): ManagedDesktopPolicy {
   const existing = services.get(config);
   if (existing) return existing;
@@ -49,6 +90,48 @@ class ManagedDesktopPolicy {
     void promise.finally(() => { if (this.fetching?.promise === promise) this.fetching = undefined; }).catch(() => undefined);
     return promise;
   }
+  private identityChanged(generation: number): void {
+    if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
+  }
+  private async readDenJson(session: CloudProviderDenSession, path: string, generation: number): Promise<unknown> {
+    const deadline = performance.now() + DEN_READ_DEADLINE_MS;
+    for (let attempt = 1; attempt <= DEN_READ_MAX_ATTEMPTS; attempt += 1) {
+      this.identityChanged(generation);
+      const remainingMs = Math.floor(deadline - performance.now());
+      if (remainingMs <= 0) throw new Error("Den read deadline exceeded");
+      try {
+        const response = await externalFetch(`${session.baseUrl}${path}`, {
+          headers: { Authorization: `Bearer ${session.token}`, "x-openwork-legacy-org-id": session.orgId },
+          signal: AbortSignal.timeout(Math.min(DEN_READ_ATTEMPT_TIMEOUT_MS, remainingMs)),
+        });
+        this.identityChanged(generation);
+        if (!response.ok) {
+          if (attempt < DEN_READ_MAX_ATTEMPTS && RETRYABLE_DEN_STATUSES.has(response.status)) {
+            console.warn("[openwork:managed-policy] retrying Den verification", {
+              reason: "http_transient", status: response.status, attempt: attempt + 1,
+            });
+            void response.body?.cancel().catch(() => undefined);
+            continue;
+          }
+          throw new Error("Den request failed");
+        }
+        const payload: unknown = await response.json();
+        this.identityChanged(generation);
+        return payload;
+      } catch (error) {
+        this.identityChanged(generation);
+        const reason = transientTransportReason(error);
+        if (attempt < DEN_READ_MAX_ATTEMPTS && reason && performance.now() < deadline) {
+          console.warn("[openwork:managed-policy] retrying Den verification", {
+            reason, status: null, attempt: attempt + 1,
+          });
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw new Error("Den request failed");
+  }
   private async fetchCurrent(): Promise<DesktopConfig | null> {
     const session = this.session;
     if (!session) {
@@ -59,13 +142,9 @@ class ManagedDesktopPolicy {
     const generation = this.generation;
     let policy: DesktopConfig;
     try {
-      const response = await externalFetch(`${session.baseUrl}/v1/me/desktop-config`, {
-        headers: { Authorization: `Bearer ${session.token}`, "x-openwork-legacy-org-id": session.orgId },
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!response.ok) throw new Error("Policy request failed");
-      policy = desktopConfigSchema.parse(await response.json());
-    } catch {
+      policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "policy_identity_changed") throw error;
       throw new ApiError(403, "policy_unavailable", "Your organization's policy could not be verified. Try again when connected.");
     }
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
@@ -129,17 +208,15 @@ class ManagedDesktopPolicy {
       if (!session) throw new ApiError(403, "policy_unavailable", "Sign in to verify assigned models.");
       let assigned = false;
       try {
-        const response = await externalFetch(`${session.baseUrl}/v1/llm-providers`, {
-          headers: { Authorization: `Bearer ${session.token}`, "x-openwork-legacy-org-id": session.orgId },
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!response.ok) throw new Error("Catalog unavailable");
-        const catalog: unknown = await response.json();
+        const catalog = await this.readDenJson(session, "/v1/llm-providers", generation);
         if (!isRecord(catalog) || !Array.isArray(catalog.llmProviders)) throw new Error("Invalid catalog");
         assigned = catalog.llmProviders.filter(isRecord).some((item) =>
           (item.source === "openwork" ? "openwork" : item.id) === providerID && Array.isArray(item.models)
           && item.models.filter(isRecord).some((model) => model.id === modelID));
-      } catch { throw new ApiError(403, "policy_unavailable", "Your organization's assigned models could not be verified."); }
+      } catch (error) {
+        if (error instanceof ApiError && error.code === "policy_identity_changed") throw error;
+        throw new ApiError(403, "policy_unavailable", "Your organization's assigned models could not be verified.");
+      }
       if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
       if (!(assigned && /^(?:lpr_|openwork$)/i.test(providerID) && models && typeof models === "object" && Object.hasOwn(models, modelID))) {
         throw new ApiError(403, "organization_model_denied", "Choose an AI model assigned by your organization.");

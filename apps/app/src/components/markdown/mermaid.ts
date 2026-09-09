@@ -1,6 +1,7 @@
 import DOMPurify from "dompurify";
 import { useEffect, useSyncExternalStore, type RefObject } from "react";
 import type { MermaidConfig } from "mermaid";
+import { enhanceNearViewport } from "./near-viewport";
 
 import {
   getResolvedThemeMode,
@@ -408,10 +409,13 @@ export function useMermaidEnhancer(
     };
 
     root.addEventListener("click", handleClick);
-    for (const diagram of diagrams) void enhanceMermaidElement(diagram, theme, controller.signal);
+    const stopObserving = enhanceNearViewport(diagrams, (diagram) => {
+      void enhanceMermaidElement(diagram, theme, controller.signal);
+    });
 
     return () => {
       controller.abort();
+      stopObserving();
       root.removeEventListener("click", handleClick);
     };
   }, [content, enabled, rootRef, theme]);

@@ -43,9 +43,9 @@ import {
   getElectronBrowser,
   getNativeMenuPoint,
   hasNativeBrowserOccluder,
-  sameBounds,
 } from "./utils";
 import { LoginSyncCard } from "../../browser-logins/login-sync-card";
+import { createBrowserBoundsSync } from "./browser-bounds-sync";
 
 type SidePanelProps = {
   sessionId: string;
@@ -180,9 +180,6 @@ function BrowserPanelContent({
   const urlFocusedRef = React.useRef(false);
   const contentRef = React.useRef<HTMLDivElement>(null);
   const urlInputRef = React.useRef<HTMLInputElement>(null);
-  const shownRef = React.useRef(false);
-  const boundsFrameRef = React.useRef<number | null>(null);
-  const lastBoundsRef = React.useRef<{ x: number; y: number; width: number; height: number } | null>(null);
 
   React.useEffect(() => {
     if (!urlFocusedRef.current) {
@@ -232,37 +229,24 @@ function BrowserPanelContent({
   React.useLayoutEffect(() => {
     const browser = getElectronBrowser();
     const content = contentRef.current;
-    if (!browser || !content || !isAvailable) {
-      return;
-    }
-
-    const bounds = computeBounds(content);
-    if (bounds.width < 1 || bounds.height < 1) {
-      return;
-    }
-
-    browser.setBounds?.(bounds);
-    lastBoundsRef.current = bounds;
-  });
-
-  React.useLayoutEffect(() => {
-    const browser = getElectronBrowser();
-    const content = contentRef.current;
 
     if (!browser || !content || !isAvailable) {
       browser?.hide?.();
-      shownRef.current = false;
-      lastBoundsRef.current = null;
-
-      if (boundsFrameRef.current != null) {
-        window.cancelAnimationFrame(boundsFrameRef.current);
-        boundsFrameRef.current = null;
-      }
-
       return;
     }
 
     let disposed = false;
+    let ready = false;
+    let boundsFrame: number | null = null;
+    const boundsSync = createBrowserBoundsSync(browser, sessionId, (error) => {
+      toast.error(error instanceof Error ? error.message : String(error));
+    });
+
+    const scheduleBounds = () => {
+      if (!disposed && ready && boundsFrame === null) {
+        boundsFrame = window.requestAnimationFrame(watchBounds);
+      }
+    };
 
     const resetNativeView = async () => {
       await browser.hide?.();
@@ -271,69 +255,46 @@ function BrowserPanelContent({
         return;
       }
 
-      shownRef.current = false;
-      lastBoundsRef.current = null;
-      boundsFrameRef.current = window.requestAnimationFrame(watchBounds);
+      ready = true;
+      scheduleBounds();
     };
 
     const syncBounds = () => {
-      const bounds = computeBounds(content);
+      if (!ready || disposed) return;
+      boundsSync.sync(computeBounds(content), window.devicePixelRatio, hasNativeBrowserOccluder());
+    };
 
-      if (bounds.width < 1 || bounds.height < 1 || hasNativeBrowserOccluder()) {
-        if (shownRef.current) {
-          browser.hide?.();
-          shownRef.current = false;
-          lastBoundsRef.current = null;
-        }
-
-        return;
-      }
-
-      if (!shownRef.current) {
-        // Naming the conversation lets the native browser put that
-        // conversation's tabs on screen and keep every other conversation's
-        // tabs silently in the background.
-        void browser.show?.(bounds, sessionId).catch((error: unknown) => {
-          toast.error(error instanceof Error ? error.message : String(error));
-        });
-        shownRef.current = true;
-        lastBoundsRef.current = bounds;
-        return;
-      }
-
-      if (!sameBounds(lastBoundsRef.current, bounds)) {
-        browser.setBounds?.(bounds);
-        lastBoundsRef.current = bounds;
-      }
+    const invalidateBounds = () => {
+      boundsSync.invalidate();
+      scheduleBounds();
     };
 
     const watchBounds = () => {
+      boundsFrame = null;
       syncBounds();
-      boundsFrameRef.current = window.requestAnimationFrame(watchBounds);
+      // Position-only layout changes and dialog occlusion also need tracking.
+      scheduleBounds();
     };
 
     void resetNativeView();
 
+    // Panel constraints can settle in ResizeObserver after this frame's RAF.
     const observer = new ResizeObserver(syncBounds);
-
     observer.observe(content);
-    window.addEventListener("resize", syncBounds);
-    window.addEventListener("scroll", syncBounds, true);
+    window.addEventListener("resize", invalidateBounds);
+    window.addEventListener("openwork:browser:bounds-invalidated", invalidateBounds);
 
     return () => {
       disposed = true;
       observer.disconnect();
-      window.removeEventListener("resize", syncBounds);
-      window.removeEventListener("scroll", syncBounds, true);
+      window.removeEventListener("resize", invalidateBounds);
+      window.removeEventListener("openwork:browser:bounds-invalidated", invalidateBounds);
 
-      if (boundsFrameRef.current != null) {
-        window.cancelAnimationFrame(boundsFrameRef.current);
-        boundsFrameRef.current = null;
+      if (boundsFrame !== null) {
+        window.cancelAnimationFrame(boundsFrame);
       }
 
-      browser.hide?.();
-      shownRef.current = false;
-      lastBoundsRef.current = null;
+      boundsSync.dispose();
     };
   }, [isAvailable, sessionId]);
 
