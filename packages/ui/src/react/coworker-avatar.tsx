@@ -63,12 +63,14 @@ export type GroupAvatarsProps = {
   members: readonly { slug: string; name: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses }[];
   size?: number;
   animated?: boolean;
+  /** Navigation gently drifts in place; headers and transcript copies stay quiet. */
+  motion?: "quiet" | "navigation";
   activeSlugs?: readonly string[];
   /** Set only on a prominent group header, not its rail or transcript copies. */
   gatherKey?: string;
 };
 
-export function GroupAvatars({ members, size = 26, animated = true, activeSlugs = [], gatherKey }: GroupAvatarsProps) {
+export function GroupAvatars({ members, size = 26, animated = true, motion = "quiet", activeSlugs = [], gatherKey }: GroupAvatarsProps) {
   const owner = useRef({});
   const shown = members.slice(0, 3);
   const extra = members.length - shown.length;
@@ -80,7 +82,7 @@ export function GroupAvatars({ members, size = 26, animated = true, activeSlugs 
     <span className="coworker-avatar-group" style={{ width, height: size }} data-testid="group-avatars" data-count={members.length} data-context={gatherKey === undefined ? "rail" : "header"} role="img" aria-label={members.length ? `Group: ${members.map((member) => member.name).join(", ")}` : "Group"}>
       {shown.map((member, index) => (
         <span key={member.slug} className="coworker-avatar-group__member" aria-hidden="true" data-active={activeSlugs.includes(member.slug)} style={{ left: index * step, width: size, height: size }}>
-          <AnimatedAvatar name={member.name} identity={member.slug} color={member.avatarColor} glasses={member.avatarGlasses} size={size} animated={animated} motion="quiet" gaze={false} gather={gatherKey === undefined ? undefined : { key: gatherKey, owner: owner.current, index }} />
+          <AnimatedAvatar name={member.name} identity={member.slug} color={member.avatarColor} glasses={member.avatarGlasses} size={size} animated={animated} motion={motion} gaze={false} gather={gatherKey === undefined ? undefined : { key: gatherKey, owner: owner.current, index }} />
         </span>
       ))}
       {extra > 0 ? <span aria-hidden="true" className="coworker-avatar-group__extra" style={{ left: facesWidth + 2, width: countWidth, height: size }}>+{extra}</span> : null}

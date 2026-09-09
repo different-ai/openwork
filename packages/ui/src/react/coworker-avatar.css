@@ -44,9 +44,9 @@
   animation: avatar-float var(--avatar-float-duration, 8.8s) ease-in-out var(--avatar-float-delay, 0s) infinite;
 }
 
-/* Tiny rail motion is stepped: do not continuously recompose a native window. */
+/* Only the artwork drifts; the rail's layout and pointer target stay fixed. */
 .coworker-avatar[data-motion="navigation"][data-motion-paused="false"][data-reaction="none"]:not([data-gaze="pointer"]) .coworker-avatar__body {
-  animation: avatar-navigation-float 8.8s steps(6, jump-none) var(--avatar-float-delay, 0s) infinite;
+  animation: avatar-navigation-float var(--avatar-float-duration, 8.8s) ease-in-out var(--avatar-float-delay, 0s) infinite;
 }
 
 .coworker-avatar[data-reaction="engage"] .coworker-avatar__pointer-body {
@@ -120,8 +120,8 @@
 }
 
 @keyframes avatar-navigation-float {
-  0%, 100% { transform: translateY(0); }
-  44%, 54% { transform: translateY(-2.8px); }
+  0%, 100% { transform: translateY(0.8px) rotate(-1deg); }
+  50% { transform: translateY(-3.4px) rotate(1deg); }
 }
 
 @keyframes avatar-float {

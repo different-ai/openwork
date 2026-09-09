@@ -12,6 +12,7 @@ import { env } from "./env.js";
 import { isSentryEnabled } from "./instrumentation.js";
 import { registerProxyRoutes } from "./proxy.js";
 import { registerWebhookRoutes } from "./webhooks.js";
+import { registerVoiceRoutes } from "./voice.js";
 
 const srcDir = path.dirname(fileURLToPath(import.meta.url));
 const modelsApiJsonPath = path.resolve(srcDir, "..", "models-site", "models", "api.json");
@@ -40,7 +41,7 @@ app.use("*", async (c, next) => {
   const startedAt = Date.now();
   await next();
   if (healthPath(c.req.path)) return;
-  const route = ["/api/v1/models", "/api/v1/chat/completions", "/webhooks/openrouter"].includes(c.req.path) ? c.req.path : "other";
+  const route = ["/api/v1/models", "/api/v1/chat/completions", "/api/v1/voice", "/api/v1/audio/transcriptions", "/api/v1/audio/speech", "/webhooks/openrouter"].includes(c.req.path) ? c.req.path : "other";
   console.log("[inference-http]", { method: c.req.method, route, status: c.res.status, durationMs: Date.now() - startedAt });
 });
 
@@ -87,6 +88,7 @@ if (shouldServeLocalModelCatalog) {
   });
 }
 
+registerVoiceRoutes(app);
 registerProxyRoutes(app);
 registerWebhookRoutes(app);
 

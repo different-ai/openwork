@@ -45,6 +45,7 @@ import { emptyOnboardingDraft, loadOnboardingDraft, saveOnboardingDraft, toggleI
 import type { TeamRole } from "@/lib/bridge";
 import { AppLoader, CoworkerMark } from "@/ui/brand";
 import { OpenWorkSettings, type SettingsSection } from "@/ui/openwork-settings";
+import { VoiceContext } from "@/ui/use-voice";
 
 /** How long a freshly (re)started workspace may stay silent before it is a problem worth naming. */
 const WORKSPACE_WARMUP_MS = 45_000;
@@ -65,6 +66,7 @@ export default function App() {
   const [signInError, setSignInError] = useState("");
   const [coworkers, setBots] = useState<CoworkerSummary[]>([]);
   const [selectedSlug, setSelectedSlug] = useState("");
+  const [discussionToolsSlot, setDiscussionToolsSlot] = useState<HTMLDivElement | null>(null);
   const [creating, setCreating] = useState(false);
   /** Group chats: several coworkers in one conversation. Selecting one takes the main column. */
   const [groups, setGroups] = useState<CoworkerGroupSummary[]>([]);
@@ -825,6 +827,7 @@ export default function App() {
   }
 
   return (
+    <VoiceContext.Provider value={{ accountKey: session ? `${sessionKey(session)}\u0000${session.userEmail}` : "signed-out", openModels: () => openGlobalSettings("models"), signIn: () => setConnecting(true) }}>
     <div className="window-shell relative flex h-full overflow-hidden" data-testid="coworker-shell">
       <div
         className={globalSettings ? "hidden" : "flex min-w-0 flex-1"}
@@ -848,6 +851,7 @@ export default function App() {
         ) : (
           <div key="team" className="view-enter flex min-w-0 flex-1">
             <CoworkerRail
+              onDiscussionToolsSlot={setDiscussionToolsSlot}
               runtime={runtime}
               session={session}
               coworkers={coworkers}
@@ -902,7 +906,7 @@ export default function App() {
                   documentsApi={coworkerBridge.groups.documents}
                   coworkers={coworkers}
                   runtime={runtime}
-                  active={selectedGroupId === allHandsGroup.id && !globalSettings}
+                  active={selectedGroupId === allHandsGroup.id && !globalSettings && !groupDetailsOpen && !creatingGroup}
                   briefing={{ enabled: allHandsSettings.enabled, context: allHandsContext(allHandsSettings, coworkers, visibleActivityBySlug), request: briefingRequest }}
                   onRememberFocus={async (focus) => { setAllHandsSettings(await coworkerBridge.allHands.update({ focus })); }}
                   introduction={<AllHandsOverview settings={allHandsSettings} coworkers={coworkers.filter((coworker) => allHandsGroup.participantSlugs.includes(coworker.slug))} activity={visibleActivityBySlug} onSettings={() => openGlobalSettings("all-hands")} onRequest={(text) => setBriefingRequest({ id: `all-hands-manual:${Date.now()}`, text })} onOpenCoworker={(slug, threadId) => { setSelectedGroupId(""); setSelectedSlug(slug); if (threadId) setHomeRequest({ id: Date.now(), slug, kind: "thread", threadId }); }} />}
@@ -920,6 +924,7 @@ export default function App() {
               <GroupChat
                 key={selectedGroup.id}
                 group={selectedGroup}
+                active={!globalSettings && !groupDetailsOpen && !creatingGroup}
                 documentsApi={coworkerBridge.groups.documents}
                 coworkers={coworkers}
                 runtime={runtime}
@@ -943,8 +948,9 @@ export default function App() {
               />
             ) : (
             selectedGroupId === allHandsGroup?.id ? null : <CoworkerHome
+              discussionToolsSlot={discussionToolsSlot}
               key={selected.slug}
-              active={!globalSettings}
+              active={!globalSettings && !creatingGroup}
               runtime={runtime}
               session={session}
               coworkers={coworkers}
@@ -1000,5 +1006,6 @@ export default function App() {
         </div>
       ) : null}
     </div>
+    </VoiceContext.Provider>
   );
 }

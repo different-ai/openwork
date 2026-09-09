@@ -11,6 +11,7 @@ import {
   varchar,
 } from "drizzle-orm/mysql-core"
 import { INFERENCE_RESET_STRATEGIES, INFERENCE_WINDOW_TYPES } from "@openwork/types/den/inference"
+import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { denTypeIdColumn, encryptedTextColumn, timestamps } from "../columns"
 import { MemberTable, OrganizationTable } from "./org"
 
@@ -126,13 +127,16 @@ export const InferenceUsageLedgerEntryTable = mysqlTable(
     total_tokens: int("total_tokens"),
     event_type: varchar("event_type", { length: 64 }).notNull(),
     provider_usage: json("provider_usage").$type<{
-      source: "openrouter_otlp"
+      source: "openrouter_otlp" | "openrouter_audio"
       status: "priced" | "unpriced"
       requestModel: string | null
       responseModel: string | null
       inputCost: number | null
       outputCost: number | null
       currency: string | null
+      // Provisional admission only, never actual usage. A bucket charge (even
+      // an admin-forgiven zero) replaces the hold for that original bucket.
+      reservation?: { amount: number; bucketIds: DenTypeId<"inferenceOrgUsageBucket">[] }
     }>(),
     occurred_at: timestamp("occurred_at", { fsp: 3 }).notNull(),
     created_at: timestamps.created_at,

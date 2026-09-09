@@ -50,6 +50,8 @@ mac:
   notarize: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: Open Coworker uses the microphone when you hold the voice control to record a message.
   extraResources:
     - from: resources/helpers
       to: helpers

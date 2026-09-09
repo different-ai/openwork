@@ -159,7 +159,7 @@ export async function coworkerComputerControlWorld(seed: Seed, { place }: { plac
           return { status: get("status")?.textContent, phase: get("phase")?.textContent,
             placement: get("placement")?.textContent, target: target?.value,
             canAllow: get("allow")?.disabled === false, canStop: get("stop")?.disabled === false,
-            setupRequired: Boolean(get("setup")),
+            setupRequired: get("readiness")?.dataset.state === "setup-required",
             activeDiscussion: document.querySelector('[data-testid="coworker-discussion-menu"] [aria-checked="true"]')?.dataset.threadId,
             targets: target ? [...target.options].map(o => ({ id: o.value, disabled: o.disabled })) : [],
             idle: document.querySelector('[data-testid="coworker-thread-status"]')?.dataset.state === "idle",

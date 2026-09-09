@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { clickButton, coworker, evalIn, fill, needs, test, waitFor } from "@openwork/testkit";
+import { browserScript, clickButton, coworker, evalIn, fill, needs, test, waitFor } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 
 /**
@@ -145,7 +145,7 @@ async function startScriptedModel(): Promise<{ baseUrl: string; seenToolResults:
 }
 
 async function invokeCoworker(app: Awaited<ReturnType<typeof coworker>>, command: string, payload: unknown): Promise<unknown> {
-  return evalIn(app, `window.__COWORKER__.invoke(${json(command)}, ${json(payload)})`, { awaitPromise: true, timeoutMs: 120_000 });
+  return evalIn(app, browserScript((command, payload) => window.__COWORKER__.invoke(command, payload), [command, payload]), { awaitPromise: true, timeoutMs: 120_000 });
 }
 
 function resultRecord(response: unknown): Record<string, unknown> {
@@ -161,27 +161,27 @@ function resultText(response: unknown): string {
 }
 
 async function waitForNovaReady(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Nova")`, {
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Nova"), {
     timeoutMs: 120_000,
     label: "Nova discussion view",
   });
-  await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 240_000, label: "Nova ready" });
+  await waitFor(app, () => document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready", { timeoutMs: 240_000, label: "Nova ready" });
 }
 
 /** Send one message and wait for the coworker's reply text; returns the settled action line's collapsed words. */
 async function converse(app: Awaited<ReturnType<typeof coworker>>, prompt: string, reply: string): Promise<{ summary: string; steps: string[]; text: string; stackedBeforeOpen: number; expandedBeforeOpen: string; popover: string }> {
   await fill(app, 'textarea[aria-label="Message Nova"]', prompt);
   await clickButton(app, "Send");
-  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(reply)}))`, {
+  await waitFor(app, browserScript((reply) => [...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(reply)), [reply]), {
     timeoutMs: 300_000,
     label: `reply ${json(reply)}`,
   });
   // The line between the prompt and its reply, read before anyone opens it: the chat holds one
   // line and no steps stack beneath it.
-  const closed = await waitFor(app, `(() => {
+  const closed = await waitFor(app, browserScript((prompt, reply) => {
     const bubbles = [...document.querySelectorAll('[data-message-role]')];
-    const userIndex = bubbles.findIndex((bubble) => (bubble.textContent ?? "").includes(${json(prompt)}));
-    const replyIndex = bubbles.findIndex((bubble) => (bubble.textContent ?? "").includes(${json(reply)}));
+    const userIndex = bubbles.findIndex((bubble) => (bubble.textContent ?? "").includes(prompt));
+    const replyIndex = bubbles.findIndex((bubble) => (bubble.textContent ?? "").includes(reply));
     if (userIndex === -1 || replyIndex === -1) return false;
     const top = bubbles[userIndex].getBoundingClientRect().bottom;
     const bottom = bubbles[replyIndex].getBoundingClientRect().top;
@@ -199,15 +199,14 @@ async function converse(app: Awaited<ReturnType<typeof coworker>>, prompt: strin
       stackedBeforeOpen: line.querySelectorAll('[data-testid="coworker-work-step"]').length,
       expandedBeforeOpen: summary?.getAttribute("aria-expanded") ?? "",
     };
-  })()`, { timeoutMs: 60_000, label: `the action line between ${json(prompt)} and its reply` });
+  }, [prompt, reply]), { timeoutMs: 60_000, label: `the action line between ${json(prompt)} and its reply` });
   if (!isRecord(closed) || typeof closed.lineIndex !== "number" || typeof closed.summary !== "string" || typeof closed.stackedBeforeOpen !== "number" || typeof closed.expandedBeforeOpen !== "string") {
     throw new Error("Action line facts were unavailable.");
   }
   // Tapping the line opens its steps in a popover; React paints it on its next tick, so it is read on a later poll.
-  const lineSelector = `document.querySelectorAll('[data-testid="coworker-action-line"]')[${closed.lineIndex}]`;
-  await evalIn(app, `(() => { const summary = ${lineSelector}?.querySelector('[data-testid="coworker-work-summary"]'); if (summary instanceof HTMLElement && summary.getAttribute("aria-expanded") !== "true") summary.click(); return true; })()`);
-  const opened = await waitFor(app, `(() => {
-    const line = ${lineSelector};
+  await evalIn(app, browserScript((lineIndex) => { const summary = document.querySelectorAll('[data-testid="coworker-action-line"]')[lineIndex]?.querySelector('[data-testid="coworker-work-summary"]'); if (summary instanceof HTMLElement && summary.getAttribute("aria-expanded") !== "true") summary.click(); return true; }, [closed.lineIndex]));
+  const opened = await waitFor(app, browserScript((lineIndex) => {
+    const line = document.querySelectorAll('[data-testid="coworker-action-line"]')[lineIndex];
     const popover = line?.querySelector('[data-testid="coworker-work-steps"]');
     if (!(line instanceof HTMLElement) || !(popover instanceof HTMLElement)) return false;
     return {
@@ -215,7 +214,7 @@ async function converse(app: Awaited<ReturnType<typeof coworker>>, prompt: strin
       text: line.innerText,
       popover: popover.dataset.placement ?? "",
     };
-  })()`, { timeoutMs: 30_000, label: `the steps behind ${json(closed.summary)}` });
+  }, [closed.lineIndex]), { timeoutMs: 30_000, label: `the steps behind ${json(closed.summary)}` });
   if (!isRecord(opened) || !Array.isArray(opened.steps) || typeof opened.text !== "string" || typeof opened.popover !== "string") {
     throw new Error("Receipt popover facts were unavailable.");
   }
@@ -230,29 +229,22 @@ async function converse(app: Awaited<ReturnType<typeof coworker>>, prompt: strin
 }
 
 async function openMemoryView(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const panel = document.querySelector('[data-testid="context-panel"]');
     if (!(panel instanceof HTMLElement)) return false;
     if (panel.dataset.collapsed === "false" && panel.dataset.view === "memory") return Boolean(document.querySelector('[data-testid="memory-recent-changes"]'));
-    if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-memory"]')?.click();
+    if (panel.dataset.collapsed === "true") document.querySelector<HTMLElement>('[data-testid="context-rail-memory"]')?.click();
     else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     return false;
-  })()`, { timeoutMs: 60_000, label: "Memory view" });
+  }, { timeoutMs: 60_000, label: "Memory view" });
 }
-
-const READ_CHANGE_ROWS = `[...document.querySelectorAll('[data-testid="memory-change-row"]')].map((row) => ({
-  label: row.querySelector('[data-testid="memory-change-label"]')?.textContent?.trim() ?? "",
-  tool: row.dataset.tool,
-  undone: row.dataset.undone,
-  button: row.querySelector("button")?.textContent?.trim() ?? "",
-}))`;
 
 test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
   const scripted = await startScriptedModel();
   await using app = await coworker({ name: "self-memory" });
 
-  await waitFor(app, `(document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker")`, {
+  await waitFor(app, () => (document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker"), {
     timeoutMs: 120_000,
     label: "Open Coworker welcome screen",
   });
@@ -290,7 +282,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   });
   expect(engineReload.status).toBe(200);
   await invokeCoworker(app, "coworkers.update", { slug: "nova", patch: { model: `${SCRIPTED_PROVIDER}/${SCRIPTED_MODEL}`, modelVariant: "" } });
-  await evalIn(app, "location.reload(); true");
+  await evalIn(app, () => { location.reload(); return true; });
   await waitForNovaReady(app);
 
   // The coworker's home carries the current contract: the same turn, the self tools, the soul's four sections.
@@ -309,12 +301,12 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // The chat holds one line; its steps wait in a popover the person opens from it and closes with Escape.
   expect(remembered).toMatchObject({ stackedBeforeOpen: 0, expandedBeforeOpen: "false", popover: "below" });
   expect(remembered.steps).toEqual(["Remembered · You work in Product"]);
-  const closedLine = await waitFor(app, `(() => {
+  const closedLine = await waitFor(app, () => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     const summary = document.querySelector('[data-testid="coworker-work-summary"]');
     const closed = summary instanceof HTMLElement && summary.getAttribute("aria-expanded") === "false" && !document.querySelector('[data-testid="coworker-work-steps"]');
     return closed ? summary.textContent?.trim() ?? "" : false;
-  })()`, { timeoutMs: 15_000, label: "the steps popover closed with Escape, leaving the line" });
+  }, { timeoutMs: 15_000, label: "the steps popover closed with Escape, leaving the line" });
   expect(String(closedLine)).toContain("Remembered · You work in Product");
   const aboutYou = resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "memory/long-term/about-you.md" }));
   expect(aboutYou).toBe("# About you\n\n- You work in Product\n");
@@ -333,8 +325,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   const recalled = await converse(app, RECALL_PROMPT, RECALL_REPLY);
   expect(recalled.summary).toBe("Checked what I remember");
   expect(scripted.seenToolResults.some((result) => result.includes("memory/long-term/about-you.md") && result.includes("You work in Product"))).toBe(true);
-  expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-action-line"]').length`)).toBe(3);
-  expect(String(await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-work-summary"]')].map((button) => button.textContent?.trim()).join(" | ")`))).not.toMatch(/coworker_|\{/);
+  expect(await evalIn(app, () => document.querySelectorAll('[data-testid="coworker-action-line"]').length)).toBe(3);
+  expect(String(await evalIn(app, () => [...document.querySelectorAll('[data-testid="coworker-work-summary"]')].map((button) => button.textContent?.trim()).join(" | ")))).not.toMatch(/coworker_|\{/);
   evidence.recordAssertionEvidence(
     "The coworker records a fact, a way of working, and reads itself back in the same turns, each as one plain action line",
     `Three turns produced three action lines — "Remembered · You work in Product", "Updated how I work · Shorter replies.", "Checked what I remember" — with no tool ids or JSON in them and no steps stacked in the chat; the first line opened a popover below it listing its one step and closed again with Escape. The fact landed in memory/long-term/about-you.md and the index; the soul gained one Communication bullet with its other three sections byte for byte unchanged; the self read returned the memory files to the model.`,
@@ -343,25 +335,35 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
 
   // --- The Memory view shows the changes at once, and Undo restores the prior text.
   await openMemoryView(app);
-  const rows = await waitFor(app, `(() => {
-    const rows = ${READ_CHANGE_ROWS};
+  const rows = await waitFor(app, () => {
+    const rows = [...document.querySelectorAll<HTMLElement>('[data-testid="memory-change-row"]')].map((row) => ({
+      label: row.querySelector('[data-testid="memory-change-label"]')?.textContent?.trim() ?? "",
+      tool: row.dataset.tool,
+      undone: row.dataset.undone,
+      button: row.querySelector("button")?.textContent?.trim() ?? "",
+    }));
     return rows.length === 2 ? rows : false;
-  })()`, { timeoutMs: 30_000, label: "two recent changes" });
+  }, { timeoutMs: 30_000, label: "two recent changes" });
   expect(rows).toEqual([
     { label: "Updated how I work · Shorter replies.", tool: "soul_update", undone: "false", button: "Undo" },
     { label: "Remembered · You work in Product", tool: "memory_remember", undone: "false", button: "Undo" },
   ]);
-  expect(await evalIn(app, `document.querySelector('[data-testid="memory-count"]')?.textContent?.trim()`)).toBe("1");
-  await evalIn(app, `document.querySelector('[data-testid="memory-tab-soul"]').click(); true`);
-  await waitFor(app, `(document.querySelector('[data-testid="memory-view"]')?.textContent ?? "").includes("Shorter replies.")`, { timeoutMs: 30_000, label: "soul page showing the new line" });
-  await evalIn(app, `document.querySelector('[data-testid="memory-change-row"][data-tool="soul_update"] button').click(); true`);
-  const afterUndo = await waitFor(app, `(() => {
-    const rows = ${READ_CHANGE_ROWS};
+  expect(await evalIn(app, () => document.querySelector('[data-testid="memory-count"]')?.textContent?.trim())).toBe("1");
+  await evalIn(app, () => { const button = document.querySelector<HTMLElement>('[data-testid="memory-tab-soul"]'); if (!button) throw new Error("Soul tab unavailable"); button.click(); return true; });
+  await waitFor(app, () => (document.querySelector('[data-testid="memory-view"]')?.textContent ?? "").includes("Shorter replies."), { timeoutMs: 30_000, label: "soul page showing the new line" });
+  await evalIn(app, () => { const button = document.querySelector<HTMLButtonElement>('[data-testid="memory-change-row"][data-tool="soul_update"] button'); if (!button) throw new Error("Soul undo unavailable"); button.click(); return true; });
+  const afterUndo = await waitFor(app, () => {
+    const rows = [...document.querySelectorAll<HTMLElement>('[data-testid="memory-change-row"]')].map((row) => ({
+      label: row.querySelector('[data-testid="memory-change-label"]')?.textContent?.trim() ?? "",
+      tool: row.dataset.tool,
+      undone: row.dataset.undone,
+      button: row.querySelector("button")?.textContent?.trim() ?? "",
+    }));
     if (rows.length !== 3) return false;
     const view = document.querySelector('[data-testid="memory-view"]')?.textContent ?? "";
     if (view.includes("Shorter replies.")) return false;
     return { rows, communicationLines: (view.match(/Concise, concrete/g) ?? []).length };
-  })()`, { timeoutMs: 30_000, label: "the undo recorded and the soul page restored" });
+  }, { timeoutMs: 30_000, label: "the undo recorded and the soul page restored" });
   expect(afterUndo).toEqual({
     rows: [
       { label: "Undid · Updated how I work · Shorter replies.", tool: "undo", undone: "false", button: "Undo" },
@@ -379,19 +381,19 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(entries[1].files[0].after).toContain("Shorter replies.");
 
   // --- A reload keeps everything: the changes, the undone state, the restored soul, the memory.
-  await evalIn(app, "location.reload(); true");
+  await evalIn(app, () => { location.reload(); return true; });
   await waitForNovaReady(app);
   await openMemoryView(app);
-  const afterReload = await waitFor(app, `(() => {
-    const rows = ${READ_CHANGE_ROWS};
-    return rows.length === 3 ? rows.map((row) => [row.tool, row.undone]) : false;
-  })()`, { timeoutMs: 30_000, label: "recent changes after a reload" });
+  const afterReload = await waitFor(app, () => {
+    const rows = [...document.querySelectorAll<HTMLElement>('[data-testid="memory-change-row"]')];
+    return rows.length === 3 ? rows.map((row) => [row.dataset.tool, row.dataset.undone]) : false;
+  }, { timeoutMs: 30_000, label: "recent changes after a reload" });
   expect(afterReload).toEqual([["undo", "false"], ["soul_update", "true"], ["memory_remember", "false"]]);
-  await evalIn(app, `document.querySelector('[data-testid="memory-tab-long-term"]').click(); true`);
-  const memoryRows = await waitFor(app, `(() => {
+  await evalIn(app, () => { const button = document.querySelector<HTMLElement>('[data-testid="memory-tab-long-term"]'); if (!button) throw new Error("Long-term memory tab unavailable"); button.click(); return true; });
+  const memoryRows = await waitFor(app, () => {
     const rows = [...document.querySelectorAll('[data-testid="memory-row"]')];
     return rows.length === 1 ? rows.map((row) => row.querySelector("span")?.textContent?.trim()) : false;
-  })()`, { timeoutMs: 30_000, label: "the About you memory after a reload" });
+  }, { timeoutMs: 30_000, label: "the About you memory after a reload" });
   expect(memoryRows).toEqual(["About you"]);
   expect(resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "soul.md" }))).toBe(soulBefore);
   evidence.recordAssertionEvidence(

@@ -1,4 +1,4 @@
-import { createGroup, getGroup, listGroups, beginGroupTurn, updateGroup, updateGroupTurn, appendGroupEvent, readGroupTimeline } from "./groups.mjs";
+import { createGroup, getGroup, listGroups, beginGroupTurn, updateGroup, updateGroupTurn, appendGroupEvent, readGroupTimeline, groupEventId, groupReplyEvent } from "./groups.mjs";
 import { collaborationId, continuationPrompt, withAbort } from "./collaboration.mjs";
 import { runGroupTurn, resumeGroupTurn, fallbackPlan, parseMentions, MAX_SPEAKERS_PER_TURN } from "../src/lib/groups.ts";
 import { facilitatorPrompt, earlierSpeakerOrders, routeWithFacilitator, facilitatorModels } from "../src/lib/facilitator.ts";
@@ -13,6 +13,16 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
   let failures = 0;
   let serviceError = "";
   const threadLocks = new Map();
+  async function publishReply(entry) {
+    const event = await appendGroupEvent(directory, entry.owner.groupId, groupReplyEvent(entry));
+    const group = await getGroup(directory, entry.owner.groupId);
+    if (group.turns.some((turn) => turn.id === entry.owner.turnId)) {
+      await updateGroupTurn(directory, group.id, entry.owner.turnId, { speaker: { slug: entry.owner.slug, part: entry.owner.part ?? "reply", status: event.status === "passed" ? "passed" : "succeeded", threadId: entry.owner.threadId, error: "", endedAt: entry.endedAt } });
+    }
+    // The receipt follows both writes; a crash before it retries the same event, never inference.
+    await collaboration.change((state) => { state.executions[entry.id].groupReply.published = true; });
+    return event;
+  }
   async function participant(groupId, slug, signal = AbortSignal.timeout(setupTimeoutMs)) {
     const key = `${groupId}:${slug}`;
     const previous = threadLocks.get(key) ?? Promise.resolve();
@@ -39,7 +49,7 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
   async function execute(groupId, request) {
     if (closed || serviceError || active.has(groupId)) return;
     const controller = new AbortController();
-    active.set(groupId, controller);
+    active.set(groupId, { controller, requestId: request.id });
     const executions = new Set();
     try {
       const current = await collaboration.read((state) => state.groups[groupId]);
@@ -58,7 +68,9 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
           return begun;
         },
         record: (turnId, patch) => updateGroupTurn(directory, groupId, turnId, patch.speakers ? { ...patch, speakers: boundedSpeakers(patch.speakers) } : patch),
-        append: (event) => appendGroupEvent(directory, groupId, { ...event, id: `evt_${collaborationId(event.turnId, event.slug, event.part, event.kind, event.status, event.text).slice(5)}` }),
+        append: async (event) => event.executionId
+          ? publishReply(await collaboration.read((state) => state.executions[event.executionId]))
+          : appendGroupEvent(directory, groupId, { ...event, id: groupEventId(event) }),
         ask: async (slug, prompt, signal, step) => {
           const owner = { ...await participant(groupId, slug, AbortSignal.any([signal, AbortSignal.timeout(setupTimeoutMs)])), turnId: step.turnId, part: step.part };
           if (signal.aborted) throw new Error("Stopped.");
@@ -74,8 +86,8 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
           }
           executions.add(id);
           const words = request.attempt ? continuationPrompt({ objective: prompt, refs: ["earlier group messages in this native thread"], completedActions: [], resumeInstructions: "Finish only the missing group reply." }, [], "Continue the earlier group request from the work already present in this thread. The person explicitly requested this follow-up.") : prompt;
-          const entry = await collaboration.submit({ id, owner, groupRequestId: request.id, prompt: request.context ? `${request.context}\n\n${words}` : words, timeoutMs: replyTimeoutMs, tools: { coworker_team_refer: false } });
-          return collaboration.wait(entry.id, signal);
+          const entry = await collaboration.submit({ id, owner, groupRequestId: request.id, groupReply: { name: participants.find((member) => member.slug === slug).name }, prompt: request.context ? `${request.context}\n\n${words}` : words, timeoutMs: replyTimeoutMs, tools: { coworker_team_refer: false } });
+          return { ...await collaboration.wait(entry.id, signal), executionId: entry.id };
         },
         route: async (input) => {
           if (!input.mentions.everyone && input.mentions.slugs.length === 1) return null;
@@ -106,6 +118,7 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
       };
       const existing = group.turns.find((turn) => turn.id === request.turnId || turn.clientMessageId === request.id);
       if (existing) {
+        await collaboration.change((state) => { const current = state.groups[groupId]?.queue.find((entry) => entry.id === request.id); if (current) current.turnId = existing.id; });
         await appendGroupEvent(directory, groupId, { id: `evt_${existing.id}_user`, kind: "user", text: existing.prompt, turnId: existing.id, clientMessageId: existing.clientMessageId });
         let turn = existing;
         if (boundedSpeakers(turn.speakers).length !== turn.speakers.length) turn = await updateGroupTurn(directory, groupId, turn.id, { speakers: boundedSpeakers(turn.speakers) });
@@ -132,14 +145,25 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
   function fail() {
     serviceError = "Group collaboration paused because its local records could not be read or updated. Existing work has been kept. Restart the app before continuing.";
     clearTimeout(timer);
-    for (const controller of active.values()) controller.abort(new Error(serviceError));
+    for (const { controller } of active.values()) controller.abort(new Error(serviceError));
   }
   async function pump() {
     if (pumping || closed) return;
     pumping = true;
     try {
-      const groups = await collaboration.read((state) => state.groups);
-      for (const [id, state] of Object.entries(groups)) if (!closed && !serviceError && !active.has(id) && state.queue.length) void execute(id, state.queue[0]).catch(fail);
+      const { groups, undelivered } = await collaboration.read((state) => ({ groups: state.groups, undelivered: Object.values(state.executions).filter((entry) => entry.groupReply && entry.state === "succeeded" && entry.result && !entry.groupReply.published) }));
+      for (const [id, state] of Object.entries(groups)) {
+        if (closed || serviceError || active.has(id)) continue;
+        // A recovered queued turn still owns speaker order; only orphaned delivery is drained here.
+        const replies = undelivered.filter((entry) => entry.owner.groupId === id && !state.queue.some((request) => request.id === entry.groupRequestId));
+        if (replies.length) {
+          const group = await getGroup(directory, id);
+          const order = (entry) => group.turns.find((turn) => turn.id === entry.owner.turnId)?.speakers.find((speaker) => speaker.slug === entry.owner.slug && speaker.part === (entry.owner.part ?? "reply"))?.order ?? 0;
+          replies.sort((a, b) => a.owner.turnId === b.owner.turnId ? order(a) - order(b) : a.createdAt - b.createdAt);
+          for (const entry of replies) await publishReply(entry);
+        }
+        if (state.queue.length) void execute(id, state.queue[0]).catch(fail);
+      }
       failures = 0;
     } finally { pumping = false; }
   }
@@ -152,20 +176,26 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
     },
     async submit(groupId, input) {
       if (closed || serviceError) throw new Error(serviceError || "Group collaboration is closing.");
-      const group = await getGroup(directory, groupId);
-      if (group.archivedAt !== null) throw new Error("This group is archived.");
+      const stored = await getGroup(directory, groupId);
+      if (stored.archivedAt !== null) throw new Error("This group is archived.");
       if (typeof input.text !== "string" || !input.text.trim() || input.text.length > 20_000 || typeof input.clientMessageId !== "string" || !input.clientMessageId) throw new Error("A group request needs a message and a stable client id.");
-      if (input.turnId && !group.turns.some((turn) => turn.id === input.turnId)) throw new Error("That group turn is not on record.");
-      if (!input.turnId && group.turns.some((turn) => turn.clientMessageId === input.clientMessageId)) return { accepted: true };
       await collaboration.change((state) => {
         const group = state.groups[groupId] ??= { queue: [] };
         if (group.cancelledRequestIds?.includes(input.clientMessageId)) throw new Error("This group request was cancelled. Send a new request to continue.");
-        if (input.turnId && !group.queue.some((entry) => entry.id === input.clientMessageId)) {
+        group.recoveryRequests ??= [];
+        if (group.recoveryRequests.some((receipt) => receipt.id === input.clientMessageId)) return;
+        if (input.turnId && !stored.turns.some((turn) => turn.id === input.turnId)) throw new Error("That group turn is not on record.");
+        if (!input.turnId && stored.turns.some((turn) => turn.clientMessageId === input.clientMessageId)) return;
+        const queued = group.queue.find((entry) => entry.id === input.clientMessageId);
+        if (input.turnId && !queued) {
           group.retryCounts ??= {};
           if ((group.retryCounts[input.turnId] ?? 0) >= 2) throw new Error("This group turn reached its follow-up limit. Review the earlier work and send a new request.");
           group.retryCounts[input.turnId] = (group.retryCounts[input.turnId] ?? 0) + 1;
         }
-        if (!group.queue.some((entry) => entry.id === input.clientMessageId)) group.queue.push({ id: input.clientMessageId, text: input.text, context: input.context ?? "", turnId: input.turnId ?? "", only: input.only, attempt: input.turnId ? group.retryCounts[input.turnId] : 0 });
+        const request = queued ?? { id: input.clientMessageId, text: input.text, context: input.context ?? "", turnId: input.turnId ?? "", only: input.only, attempt: input.turnId ? group.retryCounts[input.turnId] : 0 };
+        // This acceptance survives dequeue, so an uncertain retry cannot spend another attempt.
+        if (request.attempt > 0) group.recoveryRequests.push({ id: request.id, turnId: request.turnId, attempt: request.attempt });
+        if (!queued) group.queue.push(request);
       });
       wake();
       return { accepted: true };
@@ -177,12 +207,23 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
       const interactions = group.archivedAt === null ? (await collaboration.groupInteractions(groupId)).filter((entry) => group.participantSlugs.includes(entry.slug)) : [];
       return { active: active.has(groupId) || queue.length > 0, interactions, turn: group.turns.find((turn) => turn.id === queue[0]?.turnId || turn.clientMessageId === queue[0]?.id) ?? null, queue: queue.slice(1).map((entry) => ({ clientMessageId: entry.id, text: entry.text })) };
     },
+    async activity(groupId, readActivity) {
+      const executions = await readActivity({ groupId });
+      // Publication may finish during observation. Read its receipt last and return each reply once.
+      const timeline = await readGroupTimeline(directory, groupId);
+      return { timeline, executions: executions.filter((entry) => !timeline.some((event) => event.executionId === entry.executionId || event.id === entry.timelineEventId)) };
+    },
     async replyInteraction(input) {
       const group = await getGroup(directory, input.groupId);
       if (group.archivedAt !== null || !group.participantSlugs.includes(input.slug)) throw new Error("That coworker is no longer in this active group.");
       return collaboration.replyInteraction(input);
     },
-    async remove(groupId, id) { await collaboration.change((state) => { if (state.groups[groupId]) state.groups[groupId].queue = state.groups[groupId].queue.filter((entry) => entry.id !== id); }); },
+    async remove(groupId, id) {
+      await collaboration.change((state) => {
+        if (active.get(groupId)?.requestId === id) throw new Error("This group request already started. Stop it instead of removing it from Next.");
+        if (state.groups[groupId]) state.groups[groupId].queue = state.groups[groupId].queue.filter((entry) => entry.id !== id);
+      });
+    },
     async cancel(groupId) {
       await collaboration.change((state) => {
         const group = state.groups[groupId];
@@ -190,11 +231,11 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
         if (queue?.length) group.cancelledRequestIds = [...new Set([...(group.cancelledRequestIds ?? []), queue[0].id])];
         if (queue?.length && !active.has(groupId)) queue.shift();
       });
-      active.get(groupId)?.abort(new Error("Stopped."));
+      active.get(groupId)?.controller.abort(new Error("Stopped."));
       const tasks = await collaboration.read((state) => Object.values(state.tasks).filter((task) => task.owner.groupId === groupId && !["succeeded", "failed", "cancelled"].includes(task.state)));
       await Promise.all(tasks.map((task) => collaboration.cancel(task.id)));
     },
-    stop() { closed = true; clearTimeout(timer); for (const controller of active.values()) controller.abort(new Error("The app is closing.")); },
+    stop() { closed = true; clearTimeout(timer); for (const { controller } of active.values()) controller.abort(new Error("The app is closing.")); },
     async consultation(task) {
       const signal = task.signal ?? AbortSignal.timeout(setupTimeoutMs);
       const assertLive = async () => {

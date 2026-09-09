@@ -2,21 +2,21 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { clickButton, coworker, evalIn, fill, needs, resolveHost, test, waitFor, waitForText } from "@openwork/testkit";
+import { browserScript, clickButton, coworker, evalIn, fill, needs, resolveHost, test, waitFor, waitForText } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 
 async function openAssignments(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const panel = document.querySelector('[data-testid="context-panel"]');
     if (!(panel instanceof HTMLElement)) return false;
     const route = document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") ?? "";
     if (panel.dataset.collapsed === "false" && route === "overview/assignments") return true;
-    if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-overview"]')?.click();
-    else if (panel.dataset.view !== "overview") document.querySelector('button[aria-label="Back to activity"]')?.click();
-    else if (route !== "overview") document.querySelector('[data-testid="panel-back"]')?.click();
-    else document.querySelector('[data-testid="activity-row-assignments"]')?.click();
+    if (panel.dataset.collapsed === "true") document.querySelector<HTMLElement>('[data-testid="context-rail-overview"]')?.click();
+    else if (panel.dataset.view !== "overview") document.querySelector<HTMLButtonElement>('button[aria-label="Back to activity"]')?.click();
+    else if (route !== "overview") document.querySelector<HTMLElement>('[data-testid="panel-back"]')?.click();
+    else document.querySelector<HTMLElement>('[data-testid="activity-row-assignments"]')?.click();
     return false;
-  })()`, { timeoutMs: 60_000, label: "Activity assignments" });
+  }, { timeoutMs: 60_000, label: "Activity assignments" });
 }
 
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
@@ -207,20 +207,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function clickButtonContaining(app: Awaited<ReturnType<typeof coworker>>, text: string): Promise<void> {
-  await waitFor(app, `(() => {
+  await waitFor(app, browserScript((text) => {
     const button = [...document.querySelectorAll("button")]
-      .find((candidate) => (candidate.textContent ?? "").includes(${json(text)}) && !candidate.disabled);
+      .find((candidate) => (candidate.textContent ?? "").includes(text) && !candidate.disabled);
     if (!button) return false;
     button.scrollIntoView({ block: "center" });
     button.click();
     return true;
-  })()`, { timeoutMs: 120_000, label: `button containing ${json(text)}` });
+  }, [text]), { timeoutMs: 120_000, label: `button containing ${json(text)}` });
 }
 
 async function invokeCoworker(app: Awaited<ReturnType<typeof coworker>>, command: string, payload: unknown): Promise<unknown> {
   return evalIn(
     app,
-    `window.__COWORKER__.invoke(${json(command)}, ${json(payload)})`,
+    browserScript((command, payload) => window.__COWORKER__.invoke(command, payload), [command, payload]),
     { awaitPromise: true, timeoutMs: 30_000 },
   );
 }
@@ -308,31 +308,31 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     },
   });
 
-  await waitFor(app, `(document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker")`, {
+  await waitFor(app, () => (document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker"), {
     timeoutMs: 120_000,
     label: "Open Coworker welcome screen",
   });
   await clickButtonContaining(app, "Use this Mac");
 
-  await waitFor(app, `document.querySelector('[data-testid="local-providers"]')?.dataset.loaded === "true"`, { timeoutMs: 180_000, label: "local mode screen" });
+  await waitFor(app, () => document.querySelector<HTMLElement>('[data-testid="local-providers"]')?.dataset.loaded === "true", { timeoutMs: 180_000, label: "local mode screen" });
   if (profileDir) {
-    expect(await evalIn(app, `Boolean(document.querySelector('[data-testid="found-copilot"]'))`)).toBe(false);
+    expect(await evalIn(app, () => Boolean(document.querySelector('[data-testid="found-copilot"]')))).toBe(false);
     await writeFile(path.join(profileDir, "xdg-config", "github-copilot", "hosts.json"), `${JSON.stringify({ "github.com:Iv1.fixture": { user: "fixture", oauth_token: FAKE_COPILOT_TOKEN } }, null, 2)}\n`, "utf8");
-    await evalIn(app, `document.querySelector('[data-testid="local-providers-refresh"]')?.click()`);
-    await waitFor(app, `Boolean(document.querySelector('[data-testid="found-copilot"]'))`, { timeoutMs: 60_000, label: "Copilot discovered only after an exact GitHub host sign-in is present" });
+    await evalIn(app, () => document.querySelector<HTMLElement>('[data-testid="local-providers-refresh"]')?.click());
+    await waitFor(app, () => Boolean(document.querySelector('[data-testid="found-copilot"]')), { timeoutMs: 60_000, label: "Copilot discovered only after an exact GitHub host sign-in is present" });
     evidence.recordAssertionEvidence(
       "Local sign-in discovery rejects a GitHub lookalike host and accepts GitHub's app-key format",
       "No Copilot row appeared for the lookalike host. After an exact github.com host with its app client suffix was saved, Refresh found the Copilot sign-in.", true,
     );
   }
-  const localMode = await waitFor(app, `(() => {
+  const localMode = await waitFor(app, () => {
     if (!document.querySelector('[data-testid="connected-google"]')) return false;
     return {
-      found: [...document.querySelectorAll('[data-testid="found-rows"] > li')].map((row) => row.dataset.testid).sort(),
-      connected: [...document.querySelectorAll('[data-testid="connected-rows"] > li')].map((row) => row.dataset.testid),
+      found: [...document.querySelectorAll<HTMLLIElement>('[data-testid="found-rows"] > li')].map((row) => row.dataset.testid).sort(),
+      connected: [...document.querySelectorAll<HTMLLIElement>('[data-testid="connected-rows"] > li')].map((row) => row.dataset.testid),
       text: document.body.innerText,
     };
-  })()`, { timeoutMs: 120_000, label: "local mode rows" });
+  }, { timeoutMs: 120_000, label: "local mode rows" });
   if (!isRecord(localMode) || !Array.isArray(localMode.found) || !Array.isArray(localMode.connected)) throw new Error("Local mode facts were unavailable.");
   expect(localMode.found).toEqual(
     sameMachine ? ["found-claude-code", "found-codex", "found-copilot", "found-server:ollama"] : ["found-codex"],
@@ -346,20 +346,20 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   );
 
   // Connect on the Codex row hands the sign-in to the AI service as it is: OpenAI moves under Connected with models.
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const connect = document.querySelector('[data-testid="found-codex-connect"]');
     if (!(connect instanceof HTMLElement)) return false;
     connect.click();
     return true;
-  })()`, { label: "Connect ChatGPT (signed in with Codex)" });
-  const openaiModels = await waitFor(app, `(() => {
+  }, { label: "Connect ChatGPT (signed in with Codex)" });
+  const openaiModels = await waitFor(app, () => {
     const row = document.querySelector('[data-testid="connected-openai"]');
     if (!(row instanceof HTMLElement) || document.querySelector('[data-testid="found-codex"]')) return false;
     return row.querySelector('[data-testid="connected-openai-count"]')?.textContent?.trim();
-  })()`, { timeoutMs: 180_000, label: "OpenAI connected from the Codex sign-in" });
+  }, { timeoutMs: 180_000, label: "OpenAI connected from the Codex sign-in" });
   expect(openaiModels).toMatch(/^[1-9]\d* models?$/);
   expect(await evalIn(app, () => Boolean(document.querySelector('[data-testid="chatgpt-setup"]')))).toBe(false);
-  expectNoFixtureSecret(String(await evalIn(app, "document.body.innerText")), "the screen after Connect");
+  expectNoFixtureSecret(String(await evalIn(app, () => document.body.innerText)), "the screen after Connect");
   evidence.recordAssertionEvidence(
     "A discovered sign-in makes its models available without displaying credentials",
     "Connecting Codex moved it to Connected with available models and no fixture secret on screen.",
@@ -368,42 +368,43 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
 
   if (sameMachine && stub) {
     // A local model server connects the same way.
-    await waitFor(app, `(() => {
+    await waitFor(app, () => {
       const connect = document.querySelector('[data-testid="found-server:ollama-connect"]');
       if (!(connect instanceof HTMLElement)) return false;
       connect.click();
       return true;
-    })()`, { label: "Connect Ollama" });
-    await waitFor(app, `document.querySelector('[data-testid="connected-ollama-count"]')?.textContent?.trim() === "2 models" && !document.querySelector('[data-testid="found-server:ollama"]')`, { timeoutMs: 180_000, label: "Ollama connected with its two models" });
+    }, { label: "Connect Ollama" });
+    await waitFor(app, () => document.querySelector('[data-testid="connected-ollama-count"]')?.textContent?.trim() === "2 models" && !document.querySelector('[data-testid="found-server:ollama"]'), { timeoutMs: 180_000, label: "Ollama connected with its two models" });
     // Add another → Custom: a name, an address, an optional key; the server's models are listed before anything is saved.
-    await waitFor(app, `(() => {
+    await waitFor(app, () => {
       const open = document.querySelector('[data-testid="add-another-open"]');
       if (!(open instanceof HTMLElement)) return false;
       open.click();
       return true;
-    })()`, { label: "Add another" });
-    await waitFor(app, `(() => {
+    }, { label: "Add another" });
+    await waitFor(app, () => {
       const custom = [...document.querySelectorAll('[data-testid="add-another"] [data-testid="interaction-option"]')].find((option) => (option.textContent ?? "").includes("Custom"));
       if (!(custom instanceof HTMLElement)) return false;
       custom.click();
       return true;
-    })()`, { label: "Custom (OpenAI-compatible)" });
-    await waitFor(app, `Boolean(document.querySelector('[data-testid="custom-form"]'))`, { timeoutMs: 30_000, label: "custom server form" });
+    }, { label: "Custom (OpenAI-compatible)" });
+    await waitFor(app, () => Boolean(document.querySelector('[data-testid="custom-form"]')), { timeoutMs: 30_000, label: "custom server form" });
     await fill(app, '[data-testid="custom-form"] input[aria-label="Name"]', "Stub box");
     await fill(app, '[data-testid="custom-form"] input[aria-label="Address"]', `127.0.0.1:${stub.port}`);
     await clickButton(app, "Check");
-    const listedModels = await waitFor(app, `(() => {
+    const listedModels = await waitFor(app, () => {
       const select = document.querySelector('[data-testid="custom-start-model"]');
       return select ? [...select.querySelectorAll("option")].map((option) => option.value) : false;
-    })()`, { timeoutMs: 60_000, label: "the stub server's models listed" });
+    }, { timeoutMs: 60_000, label: "the stub server's models listed" });
     expect(listedModels).toEqual(STUB_MODELS);
-    await evalIn(app, `(() => {
-      const select = document.querySelector('[data-testid="custom-start-model"]');
+    await evalIn(app, () => {
+      const select = document.querySelector<HTMLSelectElement>('[data-testid="custom-start-model"]');
+      if (!select) throw new Error("Custom model selector unavailable");
       const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
       setter?.call(select, "stub-large");
       select.dispatchEvent(new Event("change", { bubbles: true }));
       return select.value;
-    })()`);
+    });
     await clickButton(app, "Save");
     evidence.recordAssertionEvidence(
       "A custom server lists its actual models before saving",
@@ -413,64 +414,64 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   } else {
     await clickButton(app, "Continue");
   }
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const own = document.querySelector('[data-testid="onboarding-intents-own"]');
     if (!(own instanceof HTMLButtonElement) || own.disabled) return false;
     own.click();
     return true;
-  })()`, { timeoutMs: 60_000, label: "create an individual coworker" });
+  }, { timeoutMs: 60_000, label: "create an individual coworker" });
   await waitForText(app, "Add a coworker", { timeoutMs: 60_000 });
   await fill(app, 'input[placeholder="Scout"]', "Scout");
-  await waitFor(app, `(() => {
-    const button = document.querySelector('button[aria-label="Violet"]');
+  await waitFor(app, () => {
+    const button = document.querySelector<HTMLButtonElement>('button[aria-label="Violet"]');
     if (!button) return false;
     button.click();
     return true;
-  })()`, { label: "Violet avatar color" });
+  }, { label: "Violet avatar color" });
   await clickButton(app, "Soft square");
   await clickButton(app, "Add coworker", { timeoutMs: 120_000 });
 
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "team rail" });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-rail"]')), { timeoutMs: 120_000, label: "team rail" });
 
-  await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 240_000, label: "Scout ready" });
-  await evalIn(app, `document.querySelector('[data-testid="coworker-composer"] [data-testid="effort-dial-pill"]').click(); true`);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="effort-dial-range"]'))`, { timeoutMs: 10_000, label: "effort control" });
-  await evalIn(app, `document.querySelector('[data-testid="effort-dial-range"]').focus(); true`);
+  await waitFor(app, () => document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready", { timeoutMs: 240_000, label: "Scout ready" });
+  await evalIn(app, () => { const button = document.querySelector<HTMLElement>('[data-testid="coworker-composer"] [data-testid="effort-dial-pill"]'); if (!button) throw new Error("Effort dial unavailable"); button.click(); return true; });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="effort-dial-range"]')), { timeoutMs: 10_000, label: "effort control" });
+  await evalIn(app, () => { const range = document.querySelector<HTMLElement>('[data-testid="effort-dial-range"]'); if (!range) throw new Error("Effort range unavailable"); range.focus(); return true; });
   await app.client.send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
   await app.client.send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
-  await waitFor(app, `window.__COWORKER__.invoke("coworkers.get", { slug: "scout" }).then((response) => response.result?.effortPreference === "thorough")`, { awaitPromise: true, timeoutMs: 15_000, label: "the dial's stop kept on the record" });
-  await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
-  await waitFor(app, `!document.querySelector('[data-testid="effort-dial-panel"]')`, { timeoutMs: 5_000, label: "the popover closed" });
+  await waitFor(app, async () => { const { result } = await window.__COWORKER__.invoke("coworkers.get", { slug: "scout" }); return typeof result === "object" && result !== null && "effortPreference" in result && result.effortPreference === "thorough"; }, { awaitPromise: true, timeoutMs: 15_000, label: "the dial's stop kept on the record" });
+  await evalIn(app, () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); return true; });
+  await waitFor(app, () => !document.querySelector('[data-testid="effort-dial-panel"]'), { timeoutMs: 5_000, label: "the popover closed" });
 
   // Model choice lives in Coworker settings, reached from the strip's icon (the panel folds first).
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const panel = document.querySelector('[data-testid="context-panel"]');
     if (!(panel instanceof HTMLElement)) return false;
     if (panel.dataset.collapsed === "false" && panel.dataset.view === "settings") return true;
-    if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-settings"]')?.click();
+    if (panel.dataset.collapsed === "true") document.querySelector<HTMLElement>('[data-testid="context-rail-settings"]')?.click();
     else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     return false;
-  })()`, { timeoutMs: 30_000, label: "Coworker settings from the strip" });
+  }, { timeoutMs: 30_000, label: "Coworker settings from the strip" });
   await waitForText(app, "Coworker settings", { timeoutMs: 30_000 });
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-model-settings"]'))`, { timeoutMs: 30_000, label: "AI model section" });
-  await waitFor(app, `(() => {
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-model-settings"]')), { timeoutMs: 30_000, label: "AI model section" });
+  await waitFor(app, () => {
     const button = document.querySelector('[data-testid="model-picker"] > button');
     if (!(button instanceof HTMLElement)) return false;
     button.click();
     return true;
-  })()`, { label: "open the AI model picker" });
-  await waitFor(app, `Boolean(document.querySelector('input[aria-label="Search AI models"]'))`, {
+  }, { label: "open the AI model picker" });
+  await waitFor(app, () => Boolean(document.querySelector('input[aria-label="Search AI models"]')), {
     timeoutMs: 120_000,
     label: "AI model search",
   });
   await fill(app, 'input[aria-label="Search AI models"]', "big-pickle");
   await clickButtonContaining(app, "big-pickle");
-  await waitFor(app, `(document.querySelector('[data-testid="model-picker"]')?.textContent ?? "").includes("Big Pickle")`, {
+  await waitFor(app, () => (document.querySelector('[data-testid="model-picker"]')?.textContent ?? "").includes("Big Pickle"), {
     timeoutMs: 30_000,
     label: "Big Pickle selected in Coworker settings",
   });
   // Read back the person's choice before checking it survives a reload.
-  await waitFor(app, `window.__COWORKER__.invoke("coworkers.get", { slug: "scout" }).then((response) => response.result?.model === "opencode/big-pickle" && response.result?.modelChosenBy === "person")`, {
+  await waitFor(app, async () => { const { result } = await window.__COWORKER__.invoke("coworkers.get", { slug: "scout" }); return typeof result === "object" && result !== null && "model" in result && result.model === "opencode/big-pickle" && "modelChosenBy" in result && result.modelChosenBy === "person"; }, {
     awaitPromise: true,
     timeoutMs: 30_000,
     label: "Scout's record says the person chose Big Pickle",
@@ -487,8 +488,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     avatarGlasses: "round",
   });
   expect(secondCoworker).toMatchObject({ ok: true, result: { slug: "nova" } });
-  await evalIn(app, "location.reload(); true");
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "saved team restored" });
+  await evalIn(app, () => { location.reload(); return true; });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-rail"]')), { timeoutMs: 120_000, label: "saved team restored" });
   await waitForText(app, "Nova", { timeoutMs: 120_000 });
   expect(await invokeCoworker(app, "coworkers.get", { slug: "scout" })).toMatchObject({
     ok: true,
@@ -512,7 +513,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     true,
   );
   await clickButtonContaining(app, "Scout");
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 30_000, label: "Scout discussion view" });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout"), { timeoutMs: 30_000, label: "Scout discussion view" });
 
   // Memory is shown as structure. Seed what a working coworker leaves behind: two promoted memories
   // listed in the index (one whose file has since gone) and one file written without an index line.
@@ -528,28 +529,28 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     content: "# Long-term memory index\n\nOne line per durable memory in `memory/long-term/`.\n\n- `long-term/cleaning-day.md` — Street cleaning: move car every Friday\n- `long-term/gone.md` — Promoted, then lost\n",
   });
   // The panel closed when the coworker changed; the strip's Memory icon opens that view directly.
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const panel = document.querySelector('[data-testid="context-panel"]');
     if (!(panel instanceof HTMLElement)) return false;
     if (panel.dataset.collapsed === "false" && panel.dataset.view === "memory") return true;
-    if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-memory"]')?.click();
+    if (panel.dataset.collapsed === "true") document.querySelector<HTMLElement>('[data-testid="context-rail-memory"]')?.click();
     else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     return false;
-  })()`, { timeoutMs: 60_000, label: "Memory view" });
-  await waitFor(app, `(() => {
+  }, { timeoutMs: 60_000, label: "Memory view" });
+  await waitFor(app, () => {
     const tab = document.querySelector('[data-testid="memory-tab-long-term"]');
     if (!(tab instanceof HTMLElement)) return false;
     tab.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: "long-term memory" });
-  const memoryRows = await waitFor(app, `(() => {
+  }, { timeoutMs: 30_000, label: "long-term memory" });
+  const memoryRows = await waitFor(app, () => {
     const rows = [...document.querySelectorAll('[data-testid="memory-row"]')];
     if (rows.length !== 3) return false;
     return rows.map((row) => ({
       file: row.getAttribute("data-file"),
       badge: [...row.querySelectorAll("span")].map((span) => span.textContent?.trim() ?? "").find((text) => text === "File missing" || text === "Not in index") ?? "",
     }));
-  })()`, { timeoutMs: 30_000, label: "three long-term memory rows" });
+  }, { timeoutMs: 30_000, label: "three long-term memory rows" });
   expect(memoryRows).toEqual([
     { file: "cleaning-day.md", badge: "" },
     { file: "gone.md", badge: "File missing" },
@@ -557,8 +558,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   ]);
 
   // Selecting a memory renders it; Edit exposes the file, and a saved edit lands on disk.
-  await evalIn(app, `document.querySelector('[data-testid="memory-row"][data-file="cleaning-day.md"]').click()`);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="memory-detail"][data-file="cleaning-day.md"] [data-testid="memory-view"]'))`, { timeoutMs: 30_000, label: "memory detail" });
+  await evalIn(app, () => { const row = document.querySelector<HTMLElement>('[data-testid="memory-row"][data-file="cleaning-day.md"]'); if (!row) throw new Error("Cleaning-day memory unavailable"); row.click(); });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="memory-detail"][data-file="cleaning-day.md"] [data-testid="memory-view"]')), { timeoutMs: 30_000, label: "memory detail" });
   await clickButton(app, "Edit");
   await fill(
     app,
@@ -570,18 +571,18 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const editedMemory = await invokeCoworker(app, "coworkers.files.read", { slug: "scout", path: "memory/long-term/cleaning-day.md" });
   expect(editedMemory).toMatchObject({ ok: true, result: { content: expect.stringContaining("The sweeper passes around 9am.") } });
   await clickButton(app, "View");
-  await waitFor(app, `(document.querySelector('[data-testid="memory-view"]')?.textContent ?? "").includes("The sweeper passes around 9am.")`, { timeoutMs: 30_000, label: "rendered edit" });
+  await waitFor(app, () => (document.querySelector('[data-testid="memory-view"]')?.textContent ?? "").includes("The sweeper passes around 9am."), { timeoutMs: 30_000, label: "rendered edit" });
 
   // Forgetting a memory removes the file and its index line together, after an explicit confirmation.
   await clickButton(app, "Delete…");
-  await waitFor(app, `document.querySelector('[data-testid="memory-delete-confirm"]') !== null`, { timeoutMs: 30_000, label: "delete confirmation" });
+  await waitFor(app, () => document.querySelector('[data-testid="memory-delete-confirm"]') !== null, { timeoutMs: 30_000, label: "delete confirmation" });
   await clickButton(app, "Delete memory");
-  const afterDelete = await waitFor(app, `(() => {
+  const afterDelete = await waitFor(app, () => {
     if (document.querySelector('[data-testid="memory-detail"]')) return false;
     const rows = [...document.querySelectorAll('[data-testid="memory-row"]')].map((row) => row.getAttribute("data-file"));
     if (rows.length !== 2) return false;
     return rows;
-  })()`, { timeoutMs: 30_000, label: "memory list after delete" });
+  }, { timeoutMs: 30_000, label: "memory list after delete" });
   expect(afterDelete).toEqual(["gone.md", "stray.md"]);
   const indexAfterDelete = await invokeCoworker(app, "coworkers.files.read", { slug: "scout", path: "memory/index.md" });
   expect(indexAfterDelete).toEqual({
@@ -592,12 +593,12 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(deletedFile).toMatchObject({ ok: false, error: expect.stringContaining("ENOENT") });
 
   // A file the coworker wrote but never listed can be added to the index from its page.
-  await evalIn(app, `document.querySelector('[data-testid="memory-row"][data-file="stray.md"]').click()`);
+  await evalIn(app, () => { const row = document.querySelector<HTMLElement>('[data-testid="memory-row"][data-file="stray.md"]'); if (!row) throw new Error("Stray memory unavailable"); row.click(); });
   await clickButton(app, "Add to index");
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const detail = document.querySelector('[data-testid="memory-detail"][data-file="stray.md"]');
     return detail !== null && !(detail.textContent ?? "").includes("Not in index");
-  })()`, { timeoutMs: 30_000, label: "stray memory indexed" });
+  }, { timeoutMs: 30_000, label: "stray memory indexed" });
   const indexAfterAdd = await invokeCoworker(app, "coworkers.files.read", { slug: "scout", path: "memory/index.md" });
   expect(indexAfterAdd).toMatchObject({ ok: true, result: { content: expect.stringContaining("- `long-term/stray.md` — Stray") } });
   evidence.recordAssertionEvidence(
@@ -605,17 +606,17 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     "The list identified missing and unindexed files. Editing persisted to disk; confirmed deletion removed only that file and index line, preserving other entries and prose. Add to index listed the stray file.",
     true,
   );
-  await evalIn(app, `document.querySelector('button[aria-label="Back to activity"]').click()`);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 30_000, label: "back on Activity" });
+  await evalIn(app, () => { const button = document.querySelector<HTMLButtonElement>('button[aria-label="Back to activity"]'); if (!button) throw new Error("Activity navigation unavailable"); button.click(); });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-activity-summary"]')), { timeoutMs: 30_000, label: "back on Activity" });
 
   await clickButtonContaining(app, "OpenWork");
   await waitForText(app, "OpenWork settings", { timeoutMs: 30_000 });
   await clickButton(app, "AI models");
-  await waitFor(app, `document.querySelector('[data-testid="this-mac-providers"] [data-testid="local-providers"]')?.dataset.loaded === "true" && Boolean(document.querySelector('[data-testid="connected-openai"]'))`, { timeoutMs: 120_000, label: "AI models page ready" });
-  const modelsPage = String(await evalIn(app, `document.querySelector('[data-testid="openwork-settings"] main')?.innerText ?? ""`));
+  await waitFor(app, () => document.querySelector<HTMLElement>('[data-testid="this-mac-providers"] [data-testid="local-providers"]')?.dataset.loaded === "true" && Boolean(document.querySelector('[data-testid="connected-openai"]')), { timeoutMs: 120_000, label: "AI models page ready" });
+  const modelsPage = String(await evalIn(app, () => document.querySelector<HTMLElement>('[data-testid="openwork-settings"] main')?.innerText ?? ""));
   expectNoFixtureSecret(modelsPage, "the AI models page");
   await clickButtonContaining(app, "Back to coworkers");
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 30_000, label: "back on Activity" });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-activity-summary"]')), { timeoutMs: 30_000, label: "back on Activity" });
   // Model choice was verified above. Execute local scheduled work with the
   // already connected fixture so this journey does not depend on a live free model.
   if (sameMachine && stub) {
@@ -623,9 +624,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   }
   // Scheduled work is added from Activity › Assignments.
   await openAssignments(app);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-assignments"]'))`, { timeoutMs: 30_000, label: "the Assignments level" });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-assignments"]')), { timeoutMs: 30_000, label: "the Assignments level" });
   await clickButton(app, "Add assignment");
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="add-responsibility"]'))`, { timeoutMs: 30_000, label: "add assignment form" });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="add-responsibility"]')), { timeoutMs: 30_000, label: "add assignment form" });
   await fill(app, 'input[placeholder="Morning competitor report"]', "Local readiness check");
   await fill(app, 'textarea[placeholder="What should happen on every run?"]', "Reply with exactly LOCAL RESPONSIBILITY READY. Do not use tools.");
   await clickButton(app, "Schedule assignment");
@@ -642,24 +643,27 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     }],
   });
 
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const menu = document.querySelector('button[aria-label="Actions for Local readiness check"]');
     if (!(menu instanceof HTMLElement)) return false;
     menu.click();
     return true;
-  })()`, { label: "responsibility action menu" });
-  await waitFor(app, `(() => {
+  }, { label: "responsibility action menu" });
+  await waitFor(app, () => {
     const item = [...document.querySelectorAll('[role="menuitem"]')].find((candidate) => candidate.textContent?.trim() === "Run now");
-    if (!(item instanceof HTMLElement) || item.disabled) return false;
+    if (!(item instanceof HTMLElement) || (item instanceof HTMLButtonElement && item.disabled)) return false;
     item.click();
     return true;
-  })()`, { label: "Run now menu item" });
+  }, { label: "Run now menu item" });
   await waitForText(app, "Run started.", { timeoutMs: 30_000 });
-  const completedRun = await waitFor(app, `window.__COWORKER__.invoke("localResponsibilities.list", { slug: "scout" })
-    .then((response) => {
-      const run = response.ok ? response.result?.[0]?.latestRun : null;
-      return run && ["succeeded", "failed"].includes(run.status) && run.threadId ? run : false;
-    })`, {
+  const completedRun = await waitFor(app, async () => {
+    const response = await window.__COWORKER__.invoke("localResponsibilities.list", { slug: "scout" });
+    if (!response.ok) return false;
+    if (!Array.isArray(response.result)) throw new Error("Responsibilities unavailable");
+    const item: unknown = response.result[0];
+    const run = typeof item === "object" && item !== null && "latestRun" in item ? item.latestRun : null;
+    return typeof run === "object" && run !== null && "status" in run && typeof run.status === "string" && ["succeeded", "failed"].includes(run.status) && "threadId" in run && run.threadId ? run : false;
+  }, {
     awaitPromise: true,
     timeoutMs: 300_000,
     label: "local responsibility native thread succeeded",
@@ -680,30 +684,30 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   // --- Outcomes live beside the scheduled assignment: a run history with the coworker's own words,
   // and a way to ask the coworker to explain a run without leaving the discussion.
   await openAssignments(app);
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const toggle = document.querySelector('[data-testid="responsibility-history-toggle"]');
     if (!(toggle instanceof HTMLElement) || !(toggle.textContent ?? "").includes("Done")) return false;
     if (toggle.getAttribute("aria-expanded") !== "true") toggle.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: "open the responsibility's details" });
-  await waitFor(app, `(() => {
+  }, { timeoutMs: 30_000, label: "open the responsibility's details" });
+  await waitFor(app, () => {
     const runs = [...document.querySelectorAll('[data-testid="responsibility-run"]')];
     return runs.length === 1 && runs[0].getAttribute("data-outcome") === "succeeded";
-  })()`, { timeoutMs: 30_000, label: "one recorded run in the history" });
-  await waitFor(app, `(() => {
+  }, { timeoutMs: 30_000, label: "one recorded run in the history" });
+  await waitFor(app, () => {
     const explain = document.querySelector('[data-testid="responsibility-explain"]');
     if (!(explain instanceof HTMLElement)) return false;
     explain.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: "Ask Scout to explain" });
-  const explainDraft = String(await waitFor(app, `(() => {
+  }, { timeoutMs: 30_000, label: "Ask Scout to explain" });
+  const explainDraft = String(await waitFor(app, () => {
     const composer = document.querySelector('textarea[aria-label="Message Scout"]');
     return composer instanceof HTMLTextAreaElement && composer.value.includes("Local readiness check") ? composer.value : false;
-  })()`, { timeoutMs: 30_000, label: "explain message prefilled in the discussion composer" }));
+  }, { timeoutMs: 30_000, label: "explain message prefilled in the discussion composer" }));
   expect(explainDraft).toContain('run of your responsibility "Local readiness check". It succeeded.');
   expect(explainDraft).toContain("what the outcome means");
   if (sameMachine && stub) expect(explainDraft).toContain(STUB_REPLY);
-  expect(await evalIn(app, `[...document.querySelectorAll('[data-message-role="user"]')].length`)).toBe(0);
+  expect(await evalIn(app, () => [...document.querySelectorAll('[data-message-role="user"]')].length)).toBe(0);
   evidence.recordAssertionEvidence(
     "Explain fills a draft without sending it",
     "The successful run appeared in history. Explain filled Scout's composer with its outcome and left the discussion without a user message.",
@@ -714,14 +718,14 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await clickButtonContaining(app, "OpenWork");
   await waitForText(app, "OpenWork settings", { timeoutMs: 30_000 });
   await clickButton(app, "AI & local setup");
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="local-runs-card"] [role="radio"][aria-checked="true"]'))`, { timeoutMs: 30_000, label: "parallel-run limit control" });
-  await waitFor(app, `(() => {
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="local-runs-card"] [role="radio"][aria-checked="true"]')), { timeoutMs: 30_000, label: "parallel-run limit control" });
+  await waitFor(app, () => {
     const one = [...document.querySelectorAll('[data-testid="local-runs-card"] [role="radio"]')].find((radio) => radio.textContent?.trim() === "1");
-    if (!(one instanceof HTMLElement) || one.disabled) return false;
+    if (!(one instanceof HTMLElement) || (one instanceof HTMLButtonElement && one.disabled)) return false;
     one.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: "limit of one run" });
-  await waitFor(app, `[...document.querySelectorAll('[data-testid="local-runs-card"] [role="radio"]')].find((radio) => radio.textContent?.trim() === "1")?.getAttribute("aria-checked") === "true"`, {
+  }, { timeoutMs: 30_000, label: "limit of one run" });
+  await waitFor(app, () => [...document.querySelectorAll('[data-testid="local-runs-card"] [role="radio"]')].find((radio) => radio.textContent?.trim() === "1")?.getAttribute("aria-checked") === "true", {
     timeoutMs: 30_000,
     label: "limit saved",
   });
@@ -752,11 +756,23 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   // Hold the fixture's reply until the waiting row is visible, independently of
   // model speed or the Assignments list's refresh interval.
   stub?.holdReplies();
-  const admissions = await evalIn(app, `Promise.all([
-    window.__COWORKER__.invoke("localResponsibilities.runNow", { slug: "scout", id: ${json(longerId)} }),
-    window.__COWORKER__.invoke("localResponsibilities.runNow", { slug: "scout", id: ${json(secondId)} }),
-  ]).then((results) => window.__COWORKER__.invoke("localResponsibilities.list", { slug: "scout" })
-    .then((list) => ({ results, states: list.ok ? list.result.map((item) => [item.name, item.latestRun?.status ?? null, item.latestRun?.queuedAt ?? null]) : null })))`, {
+  const admissions = await evalIn(app, browserScript(async (longerId, secondId) => {
+    const results = await Promise.all([
+      window.__COWORKER__.invoke("localResponsibilities.runNow", { slug: "scout", id: longerId }),
+      window.__COWORKER__.invoke("localResponsibilities.runNow", { slug: "scout", id: secondId }),
+    ]);
+    const list = await window.__COWORKER__.invoke("localResponsibilities.list", { slug: "scout" });
+    if (!list.ok) return { results, states: null };
+    if (!Array.isArray(list.result)) throw new Error("Responsibilities unavailable");
+    const states = list.result.map((item: unknown) => {
+      if (typeof item !== "object" || item === null || !("name" in item) || !("latestRun" in item)) throw new Error("Responsibility state unavailable");
+      const run = item.latestRun;
+      if (run === null || run === undefined) return [item.name, null, null];
+      if (typeof run !== "object" || !("status" in run) || !("queuedAt" in run)) throw new Error("Run state unavailable");
+      return [item.name, run.status ?? null, run.queuedAt ?? null];
+    });
+    return { results, states };
+  }, [longerId, secondId]), {
     awaitPromise: true,
     timeoutMs: 30_000,
   });
@@ -773,17 +789,24 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     ["Longer readiness check", expect.stringMatching(/^(running|succeeded)$/), null],
     ["Second readiness check", "queued", expect.any(Number)],
   ]));
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const row = [...document.querySelectorAll('[data-testid="responsibility-row"]')].find((candidate) => candidate.getAttribute("data-state") === "Queued");
     return row instanceof HTMLElement;
-  })()`, { timeoutMs: 30_000, label: "queued responsibility row" });
+  }, { timeoutMs: 30_000, label: "queued responsibility row" });
   stub?.releaseReplies();
-  const drained = await waitFor(app, `window.__COWORKER__.invoke("localResponsibilities.list", { slug: "scout" })
-    .then((response) => {
-      const items = response.ok ? response.result : [];
-      const finished = items.every((item) => item.latestRun?.status === "succeeded");
-      return finished ? items.map((item) => ({ name: item.name, runs: item.runs.length, latest: item.latestRun.status, queuedAt: item.latestRun.queuedAt })) : false;
-    })`, { awaitPromise: true, timeoutMs: 300_000, label: "both runs succeeded one after another" });
+  const drained = await waitFor(app, async () => {
+    const response = await window.__COWORKER__.invoke("localResponsibilities.list", { slug: "scout" });
+    const items = response.ok ? response.result : [];
+    if (!Array.isArray(items)) throw new Error("Responsibilities unavailable");
+    const records = items.map((item: unknown) => {
+      if (typeof item !== "object" || item === null || !("name" in item) || !("runs" in item) || !Array.isArray(item.runs) || !("latestRun" in item)) throw new Error("Responsibility state unavailable");
+      const run = item.latestRun;
+      if (typeof run !== "object" || run === null || !("status" in run) || run.status !== "succeeded") return false;
+      if (!("queuedAt" in run)) throw new Error("Run queue time unavailable");
+      return { name: item.name, runs: item.runs.length, latest: run.status, queuedAt: run.queuedAt };
+    });
+    return records.every((item) => item !== false) ? records : false;
+  }, { awaitPromise: true, timeoutMs: 300_000, label: "both runs succeeded one after another" });
   expect(drained).toEqual(expect.arrayContaining([
     expect.objectContaining({ name: "Longer readiness check", runs: 1, latest: "succeeded", queuedAt: null }),
     expect.objectContaining({ name: "Second readiness check", runs: 1, latest: "succeeded", queuedAt: expect.any(Number) }),
@@ -799,22 +822,22 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     // --- A coworker answers with the custom server, and Disconnect takes it away again.
     await invokeCoworker(app, "coworkers.update", { slug: "scout", patch: { model: "custom-stub-box/stub-large", modelVariant: "" } });
     await clickButtonContaining(app, "Scout");
-    await waitFor(app, `Boolean(document.querySelector('textarea[aria-label="Message Scout"]'))`, { timeoutMs: 30_000, label: "Scout's discussion composer" });
+    await waitFor(app, () => Boolean(document.querySelector('textarea[aria-label="Message Scout"]')), { timeoutMs: 30_000, label: "Scout's discussion composer" });
     await fill(app, 'textarea[aria-label="Message Scout"]', "Say hello");
     await clickButton(app, "Send");
     await waitForText(app, STUB_REPLY, { timeoutMs: 180_000 });
-    await waitFor(app, `[...document.querySelectorAll('[data-testid="coworker-reply-model"]')].some((line) => (line.textContent ?? "").includes("custom-stub-box/stub-large"))`, { timeoutMs: 30_000, label: "the reply came from the custom server" });
+    await waitFor(app, () => [...document.querySelectorAll('[data-testid="coworker-reply-model"]')].some((line) => (line.textContent ?? "").includes("custom-stub-box/stub-large")), { timeoutMs: 30_000, label: "the reply came from the custom server" });
     expect(stub.chatCalls()).toBeGreaterThan(0);
     await clickButtonContaining(app, "OpenWork");
     await waitForText(app, "OpenWork settings", { timeoutMs: 30_000 });
     await clickButton(app, "AI models");
-    await waitFor(app, `(() => {
+    await waitFor(app, () => {
       const disconnect = document.querySelector('[data-testid="connected-custom-stub-box-disconnect"]');
       if (!(disconnect instanceof HTMLElement)) return false;
       disconnect.click();
       return true;
-    })()`, { timeoutMs: 120_000, label: "Disconnect the custom server" });
-    await waitFor(app, `document.querySelector('[data-testid="local-providers"]')?.dataset.loaded === "true" && !document.querySelector('[data-testid="connected-custom-stub-box"]') && Boolean(document.querySelector('[data-testid="connected-openai"]'))`, { timeoutMs: 120_000, label: "custom server removed" });
+    }, { timeoutMs: 120_000, label: "Disconnect the custom server" });
+    await waitFor(app, () => document.querySelector<HTMLElement>('[data-testid="local-providers"]')?.dataset.loaded === "true" && !document.querySelector('[data-testid="connected-custom-stub-box"]') && Boolean(document.querySelector('[data-testid="connected-openai"]')), { timeoutMs: 120_000, label: "custom server removed" });
     const readiness = await invokeCoworker(app, "localProviders.prepare", {});
     if (!isRecord(readiness) || !isRecord(readiness.result) || !Array.isArray(readiness.result.providers)) throw new Error("Provider readiness was unavailable.");
     const connectedIds = readiness.result.providers.filter(isRecord).filter((provider) => provider.connected === true).map((provider) => provider.id);
@@ -829,7 +852,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   }
 
   // Inspect both the visible screen and the local app log for credential disclosure.
-  expectNoFixtureSecret(String(await evalIn(app, "document.body.innerText")), "the final screen");
+  expectNoFixtureSecret(String(await evalIn(app, () => document.body.innerText)), "the final screen");
   const logPath = app.handle.meta?.log;
   if (sameMachine) {
     if (typeof logPath !== "string") throw new Error("The local app log path was unavailable.");
@@ -875,35 +898,35 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   });
   expect(engineReload.status).toBe(200);
   expect(await invokeCoworker(app, "coworkers.update", { slug: "scout", patch: { model: `${SCRIPTED_PROVIDER}/${SCRIPTED_MODEL}`, modelVariant: "" } })).toMatchObject({ ok: true });
-  await evalIn(app, "location.reload(); true");
+  await evalIn(app, () => { location.reload(); return true; });
   // Two coworkers exist now; the app opens on the first, so pick Scout as a person would.
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "team rail after the model change" });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-rail"]')), { timeoutMs: 120_000, label: "team rail after the model change" });
   await clickButtonContaining(app, "Scout");
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 120_000, label: "Scout discussion view after the model change" });
-  await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 240_000, label: "Scout ready on the scripted model" });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout"), { timeoutMs: 120_000, label: "Scout discussion view after the model change" });
+  await waitFor(app, () => document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready", { timeoutMs: 240_000, label: "Scout ready on the scripted model" });
   await fill(app, 'textarea[aria-label="Message Scout"]', CAR_PROMPT);
   await clickButton(app, "Send");
-  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(CAR_REPLY)}))`, {
+  await waitFor(app, browserScript((reply) => [...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(reply)), [CAR_REPLY]), {
     timeoutMs: 300_000,
     label: "the coworker's confirmation after setting up the assignment",
   });
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const line = [...document.querySelectorAll('[data-testid="coworker-action-line"]')].find((candidate) => (candidate.textContent ?? "").includes("Created assignment"));
     const summary = line?.querySelector('[data-testid="coworker-work-summary"]');
     const receipt = line?.querySelector('[data-testid="coworker-work-receipt"]');
     if (!(line instanceof HTMLElement) || !(summary instanceof HTMLElement) || !(receipt instanceof HTMLElement) || receipt.dataset.state !== "done") return false;
     return true;
-  })()`, { timeoutMs: 60_000, label: "completed assignment tool receipt" });
-  await evalIn(app, `(() => {
+  }, { timeoutMs: 60_000, label: "completed assignment tool receipt" });
+  await evalIn(app, () => {
     const summary = [...document.querySelectorAll('[data-testid="coworker-work-summary"]')].find((button) => (button.textContent ?? "").includes("Created assignment"));
     if (summary instanceof HTMLElement && summary.getAttribute("aria-expanded") !== "true") summary.click();
     return true;
-  })()`);
-  const technical = String(await waitFor(app, `(() => {
+  });
+  const technical = String(await waitFor(app, () => {
     const step = [...document.querySelectorAll('[data-testid="coworker-work-step"]')].find((candidate) => (candidate.textContent ?? "").includes("Created assignment"));
     const details = step?.querySelector('[data-testid="coworker-work-technical"]');
     return details instanceof HTMLDetailsElement ? details.textContent : false;
-  })()`, { timeoutMs: 30_000, label: "technical details of the assignment step" }));
+  }, { timeoutMs: 30_000, label: "technical details of the assignment step" }));
   expect(technical).toContain("coworker_assignment_create");
   const chatCreated = await invokeCoworker(app, "localResponsibilities.list", { slug: "scout" });
   if (!isRecord(chatCreated) || !Array.isArray(chatCreated.result)) throw new Error("Local responsibilities were unavailable after the chat.");
@@ -917,14 +940,14 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   });
   if (!isRecord(carItem) || !isRecord(carItem.schedule)) throw new Error("The chat-created assignment was not stored.");
   // No time zone was invented: the coworker's own was filled in.
-  expect(carItem.schedule.timezone).toBe(await evalIn(app, "Intl.DateTimeFormat().resolvedOptions().timeZone"));
+  expect(carItem.schedule.timezone).toBe(await evalIn(app, () => Intl.DateTimeFormat().resolvedOptions().timeZone));
   // Scheduled work lives in Activity › Assignments; open it from wherever the panel is.
   await openAssignments(app);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-assignments"]'))`, { timeoutMs: 60_000, label: "Assignments for the chat-created assignment" });
-  const carRow = String(await waitFor(app, `(() => {
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-assignments"]')), { timeoutMs: 60_000, label: "Assignments for the chat-created assignment" });
+  const carRow = String(await waitFor(app, () => {
     const row = [...document.querySelectorAll('[data-testid="responsibility-row"]')].find((candidate) => (candidate.textContent ?? "").includes("Move the car"));
-    return row instanceof HTMLElement ? row.innerText.replace(/\\s+/g, " ") : false;
-  })()`, { timeoutMs: 60_000, label: "the chat-created assignment in the panel" }));
+    return row instanceof HTMLElement ? row.innerText.replace(/\s+/g, " ") : false;
+  }, { timeoutMs: 60_000, label: "the chat-created assignment in the panel" }));
   expect(carRow).toContain("Move the car");
   expect(scripted.requests).toBeGreaterThan(0);
   evidence.recordAssertionEvidence(
@@ -935,17 +958,18 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
 
   // The interval form persists its window, weekdays, and daily cap.
   await clickButtonContaining(app, "+ Add");
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="add-responsibility"]'))`, { timeoutMs: 30_000, label: "add responsibility form for the interval" });
-  await evalIn(app, `(() => {
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="add-responsibility"]')), { timeoutMs: 30_000, label: "add responsibility form for the interval" });
+  await evalIn(app, () => {
     const cadence = document.querySelector('select[aria-label="Cadence"]');
+    if (!cadence) throw new Error("Cadence selector unavailable");
     const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
     setter?.call(cadence, "interval");
     cadence.dispatchEvent(new Event("input", { bubbles: true }));
     cadence.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
-  })()`);
-  await waitFor(app, `(() => {
-    const setNative = (element, value) => {
+  });
+  await waitFor(app, () => {
+    const setNative = (element: HTMLSelectElement | HTMLInputElement, value: string) => {
       const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), "value")?.set;
       setter?.call(element, value);
       element.dispatchEvent(new Event("input", { bubbles: true }));
@@ -961,16 +985,16 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     setNative(until, "18:00");
     setNative(perDay, "4");
     // Weekdays only: switch Saturday and Sunday off.
-    for (const day of ["Saturday", "Sunday"]) document.querySelector('[role="group"][aria-label="Days"] button[aria-label="' + day + '"]')?.click();
+    for (const day of ["Saturday", "Sunday"]) document.querySelector<HTMLButtonElement>('[role="group"][aria-label="Days"] button[aria-label="' + day + '"]')?.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: "interval schedule fields" });
+  }, { timeoutMs: 30_000, label: "interval schedule fields" });
   await fill(app, 'input[placeholder="Morning competitor report"]', "Competitor page");
   await fill(app, 'textarea[placeholder="What should happen on every run?"]', "Reply with exactly COMPETITOR PAGE CHECKED. Do not use tools.");
   await clickButton(app, "Schedule assignment");
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const row = [...document.querySelectorAll('[data-testid="responsibility-row"]')].find((candidate) => (candidate.textContent ?? "").includes("Competitor page"));
     return row instanceof HTMLElement;
-  })()`, { timeoutMs: 60_000, label: "the interval responsibility in the panel" });
+  }, { timeoutMs: 60_000, label: "the interval responsibility in the panel" });
   const intervalStored = await invokeCoworker(app, "localResponsibilities.list", { slug: "scout" });
   if (!isRecord(intervalStored) || !Array.isArray(intervalStored.result)) throw new Error("Local responsibilities were unavailable after the interval.");
   const intervalItem = intervalStored.result.filter(isRecord).find((item) => item.name === "Competitor page");

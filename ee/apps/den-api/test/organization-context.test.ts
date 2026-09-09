@@ -1,6 +1,7 @@
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { beforeAll, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
+import type { VoiceDependencies } from "../src/routes/org/voice.js"
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -73,6 +74,12 @@ mock.module("../src/orgs.js", () => ({
     stateBySessionId.get(sessionId)?.setSessionActiveOrganizationCalls.push({ sessionId, organizationId })
     return Promise.resolve()
   },
+}))
+
+// Voice uses ordinary organization membership, never the separate MCP token path.
+mock.module("../src/mcp/auth.js", () => ({
+  getMcpResourceContext: () => { throw new Error("Unexpected MCP authentication") },
+  verifyMcpRequest: async () => { throw new Error("Unexpected MCP authentication") },
 }))
 
 beforeAll(async () => {
@@ -309,4 +316,105 @@ test("an API-key scoped org wins over a conflicting request header", async () =>
     sessionActiveOrganizationId: headerOrg.id,
   })
   expect(state.resolveUserOrganizationsCalls).toHaveLength(0)
+})
+
+test("voice admits ordinary members using only their authenticated identity and never exposes the inference key", async () => {
+  const { registerOrgVoiceRoutes } = await import("../src/routes/org/voice.js")
+  const state = createTestState(createDenTypeId("user"))
+  const { org, memberId } = addVisibleOrg(state, "voice-member")
+  const context = state.contextByOrgId.get(org.id)
+  if (!context) throw new Error("Missing member fixture")
+  context.currentMember.role = "member"; context.currentMember.isOwner = false
+  const app = createOrgContextApp(state, { sessionActiveOrganizationId: org.id })
+  let subscribed = false
+  let key: string | null = null
+  let keyReads = 0
+  let response = Response.json({ access: "ready", apiKey: "must-not-cross" })
+  const forwarded: Array<{ url: string; init: RequestInit }> = []
+  const dependencies: VoiceDependencies = {
+    subscribed: async (id) => { expect(id).toBe(org.id); return subscribed },
+    memberKey: async (identity) => { keyReads++; expect(identity).toEqual({ organizationId: org.id, memberId }); return key },
+    baseUrl: "https://inference.invalid", timeoutMs: 1000,
+    fetch: async (url, init) => { forwarded.push({ url, init }); return response.clone() },
+  }
+  registerOrgVoiceRoutes(app, dependencies)
+  const status = () => app.request("http://den.local/v1/voice")
+  expect(await (await status()).json()).toMatchObject({ access: "membership_required" })
+  expect(keyReads).toBe(0)
+  const speech = (body: unknown) => app.request("http://den.local/v1/voice/speech", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+  expect((await speech({ input: "Hello" })).status).toBe(403)
+  subscribed = true
+  expect(await (await status()).json()).toMatchObject({ access: "unavailable" })
+  key = "member-inference-fixture"
+  expect(await (await status()).json()).toEqual({ access: "ready" })
+  expect(new Headers(forwarded[0]?.init.headers).get("authorization")).toBe(`Bearer ${key}`)
+  expect(forwarded[0]?.url).toBe("https://inference.invalid/api/v1/voice")
+  expect((await speech({ input: "Hello", organizationId: "someone-else", memberId: "someone-else" })).status).toBe(400)
+  expect((await speech({ input: "a".repeat(601) })).status).toBe(400)
+  response = new Response(new Uint8Array([255, 251, 144]), { headers: { "content-type": "audio/mpeg", "x-provider-secret": key } })
+  const audio = await speech({ input: "Hello" })
+  expect(audio.status).toBe(200)
+  expect(audio.headers.get("x-provider-secret")).toBeNull()
+  expect(new Uint8Array(await audio.arrayBuffer())).toEqual(new Uint8Array([255, 251, 144]))
+  expect(forwarded.at(-1)?.init.body).toBe(JSON.stringify({ input: "Hello" }))
+  response = Response.json({ error: { code: "voice_membership_required", message: key } }, { status: 403 })
+  const denied = await speech({ input: "Hello" })
+  expect(denied.status).toBe(403)
+  expect(await denied.json()).toEqual({ error: "voice_membership_required", message: "Voice requires an active OpenWork Models membership." })
+  response = Response.json({ text: "Transcribed", apiKey: key })
+  const transcribed = await app.request("http://den.local/v1/voice/transcriptions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input_audio: { data: "YQ==", format: "webm" } }) })
+  expect(await transcribed.json()).toEqual({ text: "Transcribed" })
+  expect(forwarded.at(-1)?.url).toBe("https://inference.invalid/api/v1/audio/transcriptions")
+  response = new Response(new Uint8Array(2 * 1024 * 1024 + 1), { headers: { "content-type": "audio/mpeg" } })
+  expect((await speech({ input: "Hello" })).status).toBe(413)
+  const before = forwarded.length
+  const outsider = await app.request("http://den.local/v1/voice", { headers: { "x-openwork-org-id": createDenTypeId("organization") } })
+  expect(outsider.status).toBe(404)
+  expect(forwarded.length).toBe(before)
+})
+
+test("voice client disconnect and deadline abort the inference fetch, including response-body waits", async () => {
+  const { registerOrgVoiceRoutes } = await import("../src/routes/org/voice.js")
+  const state = createTestState(createDenTypeId("user"))
+  const { org } = addVisibleOrg(state, "voice-cancellation")
+  const app = createOrgContextApp(state, { sessionActiveOrganizationId: org.id })
+  let started = Promise.withResolvers<void>()
+  let stopped = Promise.withResolvers<void>()
+  let bodyWait = false
+  const dependencies: VoiceDependencies = {
+    subscribed: async () => true, memberKey: async () => "inference-fixture",
+    baseUrl: "https://inference.invalid", timeoutMs: 2000,
+    fetch: async (_url, init) => {
+      const signal = init.signal
+      if (!signal) throw new Error("No cancellation signal")
+      const done = stopped
+      const pending = new Promise<Response>((_resolve, reject) => signal.addEventListener("abort", () => { done.resolve(); reject(signal.reason) }, { once: true }))
+      started.resolve()
+      if (!bodyWait) return pending
+      void pending.catch(() => {})
+      return new Response(new ReadableStream<Uint8Array>({ cancel: () => { done.resolve() } }), { headers: { "content-type": "audio/mpeg" } })
+    },
+  }
+  registerOrgVoiceRoutes(app, dependencies)
+  const server = Bun.serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 })
+  try {
+    const url = `http://127.0.0.1:${server.port}/v1/voice/speech`
+    for (const waitingForBody of [false, true]) {
+      bodyWait = waitingForBody; started = Promise.withResolvers<void>(); stopped = Promise.withResolvers<void>()
+      const controller = new AbortController()
+      const result = fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: "Hello" }), signal: controller.signal }).catch(() => null)
+      await started.promise
+      controller.abort()
+      await result
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try { await Promise.race([stopped.promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Inference was not aborted")), 1000) })]) }
+      finally { clearTimeout(timer) }
+    }
+    bodyWait = false; dependencies.timeoutMs = 10
+    const expired = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: "Hello" }) })
+    expect(expired.status).toBe(504)
+    expect(await expired.json()).toMatchObject({ error: "voice_timeout" })
+  } finally {
+    await server.stop(true)
+  }
 })

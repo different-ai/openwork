@@ -9,13 +9,19 @@ import { contextBridge, ipcRenderer } from "electron";
  * applied here from the OS, without exposing native window controls to the page.
  */
 if (process.isMainFrame) {
+  window.addEventListener("DOMContentLoaded", () => {
+    document.documentElement.dataset.windowPlatform = process.platform;
+  }, { once: true });
   ipcRenderer.on("coworker:appearance", (_event, appearance) => {
     if (!appearance || !["none", "vibrancy", "mica"].includes(appearance.material)) return;
     document.documentElement.dataset.windowMaterial = appearance.material;
     document.documentElement.dataset.windowFocused = String(appearance.focused === true);
   });
   contextBridge.exposeInMainWorld("__COWORKER__", {
-    invoke: (command, payload) => ipcRenderer.invoke("coworker:invoke", { command, payload }),
+    invoke: (command, payload) => ipcRenderer.invoke("coworker:invoke", {
+      command, payload,
+      userGesture: command === "voice.microphone" && navigator.userActivation.isActive,
+    }),
     onDeepLink: (listener) => {
       const handler = (_event, urls) => {
         if (Array.isArray(urls)) listener(urls.filter((url) => typeof url === "string"));

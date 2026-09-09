@@ -110,6 +110,9 @@ import { newcomerLine, teamCardsFromCalls } from "@/lib/team";
 import { TeamCardsForTurn, type TeamHooks } from "@/ui/team-cards";
 import { McpAppFrame } from "@/ui/mcp-app-frame";
 import { WorkPopover, workPopoverPlacement, type WorkPopoverPlacement } from "@/ui/work-popover";
+import { appendVoiceDraft, privateVoiceReply, type VoiceExpectation } from "@/lib/voice";
+import { useVoice, type VoiceActivation, type VoiceController, type VoicePreparation } from "@/ui/use-voice";
+import { VoicePanel, VoiceToggle } from "@/ui/voice";
 
 type TranscriptToolCall = {
   partId: string;
@@ -157,6 +160,7 @@ type QueuedTurn = {
   prompt: string;
   messageId: string;
 };
+type PreparedVoiceDiscussion = { threadId: string; draft: string; activation: VoiceActivation };
 
 /** A turn this view is driving: which message, and whether the engine has accepted it yet. */
 type ActiveTurn = {
@@ -166,7 +170,7 @@ type ActiveTurn = {
 };
 
 /** How a turn is (re)sent: a fresh message, or the same message id run again after a failure, a stop, or a cut-off. */
-type TurnSend = { mode: "send" } | { mode: "retry"; attempt: number; switchedTo?: string; byPerson?: boolean };
+type TurnSend = ({ mode: "send" } | { mode: "retry"; attempt: number; switchedTo?: string; byPerson?: boolean }) & { voice?: VoiceExpectation | null };
 
 /** One quiet line's worth of history for a reply that ended without words, kept in the transcript. */
 function endedWithoutWords(message: TranscriptMessage): "stopped" | "failed" | null {
@@ -271,8 +275,8 @@ configureTurnStore({
   updateState: (slug, threadId, previous, next) => coworkerBridge.turns.update(slug, threadId, previous, next),
 });
 
-/** Where the one conversation header lets a view place its title line and its actions. */
-export type HeaderSlots = { title: HTMLElement | null; actions: HTMLElement | null };
+/** Conversation-owned content in the header and the discussion-tools sidebar. */
+export type HeaderSlots = { title: HTMLElement | null; actions: HTMLElement | null; tools: HTMLElement | null };
 
 function HeaderContent({ slots, title, actions }: { slots: HeaderSlots; title: ReactNode; actions?: ReactNode }) {
   return (
@@ -389,6 +393,7 @@ export function ThreadsPanel({
   const [openThreadId, setOpenThreadId] = useState("");
   const [pendingAssignment, setPendingAssignment] = useState<AssignmentDraft>(assignmentDraft ?? null);
   const [queuedTurn, setQueuedTurn] = useState<QueuedTurn | null>(null);
+  const [preparedVoice, setPreparedVoice] = useState<PreparedVoiceDiscussion | null>(null);
   const [error, setError] = useState("");
   // When the workspace first stops answering; cleared by the next successful read.
   const [failingSince, setFailingSince] = useState<number | null>(null);
@@ -496,9 +501,16 @@ export function ThreadsPanel({
   }, [refresh, runtime.engineManaged]);
 
   /** Open a new native thread as this coworker's current discussion and register it. */
-  const startDiscussion = useCallback(async () => {
+  const startDiscussion = useCallback(async (prepare?: { isCurrent: () => boolean; beforeOpen: (threadId: string) => void }) => {
     if (!threads) throw new Error("This coworker needs a workspace before it can chat.");
     const discussion = await threads.client.createThread({ title: discussionTitle(coworker.name) });
+    if (prepare && !prepare.isCurrent()) {
+      // Keep a late-created empty discussion recoverable without navigating or activating voice.
+      const registered = await registerDiscussion(coworker.slug, discussion.id);
+      setRegisteredDiscussions(registered);
+      return discussion.id;
+    }
+    prepare?.beforeOpen(discussion.id);
     // The open thread already counts as a discussion through discussionThreadIds.
     // Native browser/computer controls must wait for the saved registry, not an
     // optimistic ID that can race their first binding against the file write.
@@ -636,6 +648,7 @@ export function ThreadsPanel({
   if (!discussionThreadId) {
     return (
       <DiscussionWelcome
+        active={active}
         coworker={coworker}
         headerSlots={headerSlots}
         problem={workspaceProblem}
@@ -645,6 +658,20 @@ export function ThreadsPanel({
         onStartDiscussion={async (text) => {
           const threadId = await ensureDiscussion();
           setQueuedTurn({ id: Date.now(), threadId, prompt: text, messageId: newMessageId() });
+        }}
+        onPrepareVoice={async (request, takeDraft) => {
+          await startDiscussion({
+            isCurrent: request.isCurrent,
+            beforeOpen: (threadId) => {
+              const focused = document.activeElement;
+              const focus: VoiceActivation["focus"] = request.origin && focused === request.origin
+                ? { origin: request.origin, target: "panel", start: 0, end: 0 }
+                : request.field && focused === request.field
+                  ? { origin: request.field, target: "draft", start: request.field.selectionStart, end: request.field.selectionEnd }
+                  : null;
+              setPreparedVoice({ threadId, draft: takeDraft(), activation: { accountKey: request.accountKey, scope: `${coworker.slug}:${threadId}`, focus } });
+            },
+          });
         }}
         onCreateAssignment={createAssignment}
         onAssignmentDraftHandled={() => setPendingAssignment(null)}
@@ -666,6 +693,8 @@ export function ThreadsPanel({
       coworker={coworker}
       runtime={runtime}
       kind="discussion"
+      preparedVoice={preparedVoice?.threadId === discussionThreadId ? preparedVoice : undefined}
+      onVoicePreparedHandled={() => setPreparedVoice((current) => current?.threadId === discussionThreadId ? null : current)}
       browserEligible={registeredDiscussions.includes(discussionThreadId)}
       headerSlots={headerSlots}
       assignmentDraft={pendingAssignment}
@@ -696,12 +725,14 @@ export function ThreadsPanel({
 }
 
 function DiscussionWelcome({
+  active,
   coworker,
   problem,
   warmingUp,
   onRetry,
   assignmentDraft,
   onStartDiscussion,
+  onPrepareVoice,
   onCreateAssignment,
   onAssignmentDraftHandled,
   discussionDraft,
@@ -711,6 +742,7 @@ function DiscussionWelcome({
   onCoworkerChanged,
   proposerName = "",
 }: {
+  active: boolean;
   coworker: CoworkerSummary;
   problem: WorkspaceProblem | null;
   warmingUp: boolean;
@@ -723,6 +755,7 @@ function DiscussionWelcome({
   /** The teammate who proposed this coworker, when one did: its empty conversation says so. */
   proposerName?: string;
   onStartDiscussion: (text: string) => Promise<void>;
+  onPrepareVoice: (request: VoicePreparation, takeDraft: () => string) => Promise<void>;
   onCreateAssignment: (outcome: string, messages: ReadonlyArray<DiscussionMessage>) => Promise<void>;
   onAssignmentDraftHandled: () => void;
   summary?: CoworkerSummaryLine | null;
@@ -733,6 +766,14 @@ function DiscussionWelcome({
   const [assignmentMode, setAssignmentMode] = useState(false);
   const [busy, setBusy] = useState(false);
   const [composerError, setComposerError] = useState("");
+  const latestDraft = useRef(message);
+  latestDraft.current = message;
+  const voice = useVoice({
+    active: active && !assignmentMode && !busy,
+    scope: `${coworker.slug}:new`,
+    onTranscript: (text) => setMessage((draft) => appendVoiceDraft(draft, text)),
+    onReady: (request) => onPrepareVoice(request, () => { const draft = latestDraft.current; setMessage(""); return draft; }),
+  });
 
   useEffect(() => {
     if (!assignmentDraft) return;
@@ -749,6 +790,7 @@ function DiscussionWelcome({
   async function send() {
     const text = message.trim();
     if (!text) return;
+    voice.stop("");
     setBusy(true);
     setComposerError("");
     try {
@@ -784,12 +826,14 @@ function DiscussionWelcome({
       <HeaderContent
         slots={headerSlots}
         title={<span className="whitespace-normal">New discussion</span>}
+        actions={<Button variant="ghost" disabled title="No active work to stop" data-testid="coworker-stop">Stop</Button>}
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
         {problem ? <WorkspaceProblemNote problem={problem} onRetry={onRetry} /> : null}
         {!problem ? <QuietEmptyConversation coworker={coworker} warmingUp={warmingUp} proposerName={proposerName} /> : null}
       </div>
       <DiscussionComposer
+        voice={voice}
         message={message}
         onMessageChange={setMessage}
         onSend={() => void send()}
@@ -964,6 +1008,8 @@ function ThreadView({
   summary = null,
   onOpenSummary,
   browserEligible = false,
+  preparedVoice,
+  onVoicePreparedHandled,
 }: {
   active: boolean;
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
@@ -973,6 +1019,8 @@ function ThreadView({
   /** `worker`: a Worker's own thread, shown read-only; steering and stopping live in the Workers view. */
   kind: "discussion" | "assignment" | "worker";
   browserEligible?: boolean;
+  preparedVoice?: PreparedVoiceDiscussion;
+  onVoicePreparedHandled?: () => void;
   headerSlots: HeaderSlots;
   /** How the conversation answers a coworker's offers about the team; absent in Worker and assignment threads. */
   team?: TeamHooks;
@@ -1022,7 +1070,9 @@ function ThreadView({
   /** What the engine reports for this thread: idle, busy, or retrying (with its next attempt). */
   const [engineStatus, setEngineStatus] = useState<TurnEngineStatus>({ type: "unknown" });
   const [pending, setPending] = useState<PendingInteractions>({ permissions: [], questions: [] });
-  const [reply, setReply] = useComposerDraft(`${coworker.slug}:${coworker.createdAt}:${threadId}`);
+  const [reply, setReply] = useComposerDraft(`${coworker.slug}:${coworker.createdAt}:${threadId}`, preparedVoice?.draft);
+  const transferredDraftId = useRef(preparedVoice ? discussionDraft?.id : undefined);
+  const voiceRef = useRef<VoiceController | null>(null);
   const [assignmentMode, setAssignmentMode] = useState(false);
   const [assignmentText, setAssignmentText] = useComposerDraft(`${coworker.slug}:${coworker.createdAt}:${threadId}:assignment`);
   const [error, setError] = useState("");
@@ -1174,7 +1224,7 @@ function ThreadView({
   }, [assignmentDraft, kind]);
 
   useEffect(() => {
-    if (kind !== "discussion" || !discussionDraft) return;
+    if (kind !== "discussion" || !discussionDraft || discussionDraft.id === transferredDraftId.current) return;
     setAssignmentMode(false);
     setReply(discussionDraft.text);
   }, [discussionDraft, kind]);
@@ -1294,7 +1344,9 @@ function ThreadView({
    * turn without one.
    */
   const submitTurn = useCallback(async (prompt: string, messageId: string, send: TurnSend, modelOverride?: HeadlessThreadModel, failedModels: readonly string[] = []) => {
-    if (activeTurnRef.current) return;
+    if (activeTurnRef.current) { voiceRef.current?.abandonReply(send.voice ?? null); return; }
+    let voiceIntent = send.voice ?? null;
+    let voiceFollowup = false;
     /** The model this turn actually ran on, so a failure can be attributed and, if it was the app's pick, replaced. */
     let turnModelId = modelOverride ? `${modelOverride.providerId}/${modelOverride.modelId}` : coworker.model;
     /**
@@ -1333,7 +1385,8 @@ function ThreadView({
           onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: next.id, modelVariant, modelChosenBy: "app" }));
         }
         setProviderRefreshNote(`${turnModelId} could not answer, so ${coworker.name} is trying ${next.modelLabel} instead.`);
-        window.setTimeout(() => void submitTurn(prompt, messageId, { mode: "retry", attempt, switchedTo: next.modelLabel }, { ...nextModel, ...(modelVariant ? { variant: modelVariant } : {}) }, excluded), 0);
+        voiceFollowup = true;
+        window.setTimeout(() => void submitTurn(prompt, messageId, { mode: "retry", attempt, switchedTo: next.modelLabel, voice: voiceIntent }, { ...nextModel, ...(modelVariant ? { variant: modelVariant } : {}) }, excluded), 0);
         return true;
       } catch {
         return false;
@@ -1349,13 +1402,14 @@ function ThreadView({
       const delay = retryDelayMs(attempt + 1);
       if (delay === null) return false;
       const nextAt = Date.now() + delay;
+      voiceFollowup = true;
       setAppRetry({ attempt: attempt + 1, nextAt });
       appRetryTimerRef.current = window.setTimeout(() => {
         appRetryTimerRef.current = null;
         setAppRetry(null);
         // A deferred admission keeps the selected model's receipt. It does not
         // inherit permission to undo a later person-initiated cancellation.
-        void submitTurn(prompt, messageId, { mode: "retry", attempt: attempt + 1, ...(send.mode === "retry" && send.switchedTo ? { switchedTo: send.switchedTo } : {}) }, modelOverride, failedModels);
+        void submitTurn(prompt, messageId, { mode: "retry", attempt: attempt + 1, voice: voiceIntent, ...(send.mode === "retry" && send.switchedTo ? { switchedTo: send.switchedTo } : {}) }, modelOverride, failedModels);
       }, delay);
       return true;
     };
@@ -1466,6 +1520,7 @@ function ThreadView({
       }
       // A re-send waits for the engine to let go of the earlier attempt (a stop is still settling, say).
       const acceptance = await coworkerBridge.turns.send({ slug: coworker.slug, threadId, kind, prompt, messageId, model: turnModel, retry: send.mode === "retry", retryByPerson: send.mode === "retry" && send.byPerson === true, retryLabel: send.mode === "retry" ? send.switchedTo : undefined });
+      voiceIntent = voiceRef.current?.rebindExpected(voiceIntent, acceptance.messageId || messageId) ?? null;
       if (acceptance.messageId && acceptance.messageId !== messageId) {
         continued = true;
         messageId = acceptance.messageId;
@@ -1544,6 +1599,7 @@ function ThreadView({
       const message = cause instanceof Error ? cause.message : String(cause);
       await settleFailure(message, null, false);
     } finally {
+      if (!voiceIntent?.admitted && !voiceFollowup) voiceRef.current?.abandonReply(voiceIntent);
       if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
       waitControllerRef.current = null;
       if (activeTurnRef.current?.messageId === messageId) {
@@ -1622,12 +1678,16 @@ function ThreadView({
   }), []);
 
   /** The backend retries tool-free work or creates a new continuation after tool work. */
-  const retryPending = useCallback(async (switched?: { model: HeadlessThreadModel; label: string }) => {
+  const retryPending = useCallback(async (switched?: { model: HeadlessThreadModel; label: string }, requestedVoice?: VoiceExpectation | null) => {
+    const requested = turnStateRef.current.pending;
+    if (!requested) return;
+    // Arm on the person's gesture, before waiting for a stopped attempt to release.
+    const voiceIntent = requestedVoice === undefined ? voiceRef.current?.expectReply(requested.messageId) ?? null : requestedVoice;
     // A Retry pressed the moment after Stop waits for the stopped turn to let go rather than being lost.
     await untilTurnReleased();
     const turn = turnStateRef.current.pending;
-    if (!turn) return;
-    void submitTurn(turn.prompt, turn.messageId, { mode: "retry", attempt: 0, byPerson: true, ...(switched ? { switchedTo: switched.label } : {}) }, switched?.model);
+    if (!turn || turn.messageId !== requested.messageId || (voiceIntent && voiceIntent.turnId !== turn.messageId)) { voiceRef.current?.abandonReply(voiceIntent); return; }
+    void submitTurn(turn.prompt, turn.messageId, { mode: "retry", attempt: 0, byPerson: true, voice: voiceIntent, ...(switched ? { switchedTo: switched.label } : {}) }, switched?.model);
   }, [submitTurn, untilTurnReleased]);
 
   /** Switch this coworker to the recommended model and retry the failed message. */
@@ -1638,18 +1698,21 @@ function ThreadView({
     if (!model) return;
     // The person's thinking effort stays when the new model offers it; the retry runs with it too.
     const modelVariant = carryVariant(coworker.modelVariant, pick);
+    const voiceIntent = voice.expectReply(turnStateRef.current.pending?.messageId ?? null);
     try {
       onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant, modelChosenBy: "person" }));
     } catch (cause) {
+      voice.abandonReply(voiceIntent);
       setError(cause instanceof Error ? cause.message : String(cause));
       return;
     }
-    void retryPending({ model: { ...model, ...(modelVariant ? { variant: modelVariant } : {}) }, label: pick.modelLabel });
+    void retryPending({ model: { ...model, ...(modelVariant ? { variant: modelVariant } : {}) }, label: pick.modelLabel }, voiceIntent);
   }
 
   useEffect(() => {
     if (!initialTurn || handledInitialTurnRef.current === initialTurn.id) return;
     handledInitialTurnRef.current = initialTurn.id;
+    voice.stop("");
     void submitTurn(initialTurn.prompt, initialTurn.messageId, { mode: "send" })
       .finally(() => onInitialTurnHandled(initialTurn.id));
   }, [initialTurn, onInitialTurnHandled, submitTurn]);
@@ -1687,10 +1750,13 @@ function ThreadView({
     if (!text) return;
     acknowledgeCoworker(coworker.slug);
     if (activeTurnRef.current || turnStateRef.current.pending || appRetry || engineRunning) {
+      voice.expectReply(null);
       commitTurnState((state) => enqueue(state, { id: newQueuedId(), text, queuedAt: Date.now() }));
       return;
     }
-    void submitTurn(text, newMessageId(), { mode: "send" });
+    const messageId = newMessageId();
+    const voiceIntent = voice.expectReply(messageId);
+    void submitTurn(text, messageId, { mode: "send", voice: voiceIntent });
   }
 
   /** Put a waiting message back in the field to change it. */
@@ -1706,6 +1772,7 @@ function ThreadView({
   async function sendQueuedNow(id: string) {
     const { state, message } = takeQueued(turnStateRef.current, id);
     if (!message) return;
+    voice.stop("");
     commitTurnState(() => state);
     if (activeTurnRef.current || appRetry || engineRunning) {
       await stop();
@@ -1722,28 +1789,33 @@ function ThreadView({
    * providers, then retry the same message id if the saved model came back.
    */
   async function refreshProvidersAndRetry() {
+    const voiceIntent = voice.expectReply(turnStateRef.current.pending?.messageId ?? null);
     setProviderRefreshNote("Refreshing your OpenWork providers…");
     try {
       const run = await onSyncProviders();
       if (run.status === "failed") {
+        voice.abandonReply(voiceIntent);
         setProviderRefreshNote(`OpenWork provider refresh failed: ${run.message || "unknown error"}`);
         return;
       }
       const catalog = await threads.listModelCatalog();
       const available = !coworker.model.trim() || catalog.models.some((model) => model.id === coworker.model);
       if (!available) {
+        voice.abandonReply(voiceIntent);
         setProviderRefreshNote(`Providers refreshed, but "${coworker.model}" is still unavailable. Choose another AI model in Coworker settings.`);
         return;
       }
       setProviderRefreshNote("");
-      void retryPending();
+      void retryPending(undefined, voiceIntent);
     } catch (cause) {
+      voice.abandonReply(voiceIntent);
       setProviderRefreshNote(cause instanceof Error ? cause.message : String(cause));
     }
   }
 
   /** Stop: the engine's turn, an automatic attempt still waiting, or the wait — whichever is going. Next stays. */
   async function stop() {
+    voice.stop("Audio stopped. Your text conversation is kept.");
     if (appRetryTimerRef.current !== null) {
       window.clearTimeout(appRetryTimerRef.current);
       appRetryTimerRef.current = null;
@@ -1850,6 +1922,17 @@ function ThreadView({
   const turnRunning = outcome?.kind === "working" || outcome?.kind === "slow" || outcome?.kind === "retrying";
   // The engine can be busy on a turn this view never sent (a Worker's review, a scheduled run): still working.
   const working = turnRunning || (outcome === null && !needsYou && engineRunning) || (activeTurn !== null && outcome === null);
+  const voiceSettled = engineStatus.type === "idle" && !activeTurn && !appRetry && !working && !needsYou && !error;
+  const voice = useVoice({
+    active: active && kind === "discussion" && !assignmentMode && !assignmentBusy,
+    scope: `${coworker.slug}:${threadId}`,
+    onTranscript: (text) => setReply((draft) => appendVoiceDraft(draft, text)),
+    reply: privateVoiceReply(messages, voiceSettled && !failure && (!outcome || outcome.kind === "replied")),
+    endedTurn: voiceSettled ? outcome?.messageId ?? messages.findLast((message) => message.role === "user")?.id : null,
+    activation: preparedVoice?.activation,
+    onActivationHandled: () => { setReply(reply); onVoicePreparedHandled?.(); },
+  });
+  voiceRef.current = voice;
   const timedMessages = messages.map((message) => {
     const execution = executions.find((entry) => entry.messageId === message.parentId);
     return { ...message, toolCalls: message.toolCalls.map((call) => {
@@ -1978,15 +2061,14 @@ function ThreadView({
         )}
         actions={(
           <>
-            {active && kind === "discussion" && browserEligible ? <ComputerControl key={`${coworker.slug}:${threadId}`} slug={coworker.slug} threadId={threadId} statusSlot={controlStatusSlot} /> : null}
             {kind !== "discussion" ? <Button variant="ghost" onClick={onBack}>Back</Button> : null}
             {kind !== "worker" ? (
-              // Stop keeps its place while it is not offered, so the status word beside it never slides.
-              <Button variant="ghost" className={working || needsYou ? "" : "invisible pointer-events-none"} aria-hidden={working || needsYou ? undefined : true} tabIndex={working || needsYou ? undefined : -1} onClick={() => void stop()}>Stop</Button>
+              <Button variant="ghost" disabled={!active || (!working && !needsYou)} title={working || needsYou ? "Stop work in this conversation" : "No active work to stop"} data-testid="coworker-stop" onClick={() => void stop()}>Stop</Button>
             ) : null}
           </>
         )}
       />
+      {active && kind === "discussion" && browserEligible && headerSlots.tools ? createPortal(<ComputerControl key={`${coworker.slug}:${threadId}`} slug={coworker.slug} threadId={threadId} statusSlot={controlStatusSlot} />, headerSlots.tools) : null}
       {/* Progress and problems show inline in the conversation; this keeps the turn state readable to assistive tech and tests. */}
       <div className="@container/discussion min-h-0 min-w-0 flex-1">
       <div className="flex h-full min-h-0 min-w-0 flex-col @min-[760px]/discussion:flex-row">
@@ -2109,6 +2191,7 @@ function ThreadView({
       ) : null}
       {kind === "discussion" ? (
         <DiscussionComposer
+          voice={voice}
           message={reply}
           onMessageChange={setReply}
           onSend={() => void send()}
@@ -2145,7 +2228,7 @@ function ThreadView({
         />
       )}
       </div>
-      {kind === "discussion" && browserEligible ? <DiscussionBrowser key={`${coworker.slug}:${threadId}`} active={active} slug={coworker.slug} threadId={threadId} actionsSlot={headerSlots.actions} statusSlot={controlStatusSlot} floatingSlot={floatingSlot} /> : null}
+      {kind === "discussion" && browserEligible ? <DiscussionBrowser key={`${coworker.slug}:${threadId}`} active={active} slug={coworker.slug} threadId={threadId} actionsSlot={headerSlots.tools} statusSlot={controlStatusSlot} floatingSlot={floatingSlot} /> : null}
       </div>
       </div>
     </section>
@@ -2826,6 +2909,7 @@ function ArtifactIcon({ kind }: { kind: CoworkerArtifactKind }) {
 }
 
 function DiscussionComposer({
+  voice,
   message,
   onMessageChange,
   onSend,
@@ -2847,6 +2931,7 @@ function DiscussionComposer({
   onEffortChange,
   offerStartingPoints = false,
 }: {
+  voice: VoiceController;
   offerStartingPoints?: boolean;
   message: string;
   onMessageChange: (value: string) => void;
@@ -2876,7 +2961,7 @@ function DiscussionComposer({
   const submit = assignmentMode ? onCreateAssignment : onSend;
   const held = busy || Boolean(waiting);
   const canSubmit = !held && Boolean(value.trim());
-  const fieldRef = useRef<HTMLTextAreaElement>(null);
+  const fieldRef = voice.fieldRef;
   useAutoGrow(fieldRef, value);
   const modeLabel = assignmentMode ? "Back to chat" : "Create assignment";
   const stopping = working && !assignmentMode && !value.trim() && Boolean(onStop);
@@ -2891,6 +2976,7 @@ function DiscussionComposer({
           </p>
         ) : null}
         <div className={`rounded-[24px] border bg-panel/60 p-3 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`} data-testid="coworker-input-surface">
+          {!assignmentMode ? <VoicePanel voice={voice} /> : null}
           <textarea
             ref={fieldRef}
             aria-label={assignmentMode ? "Assignment outcome" : `Message ${coworkerName}`}
@@ -2918,6 +3004,7 @@ function DiscussionComposer({
               <PlusIcon className={`size-4 transition-transform ${assignmentMode ? "rotate-45" : ""}`} />
               <span className="sr-only">{modeLabel}</span>
             </button>
+            {!assignmentMode ? <VoiceToggle voice={voice} disabled={held} /> : null}
             <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-3 gap-y-2 pb-0.5">
               {offerStartingPoints && !assignmentMode && !held && !working && !value.trim() ? (
                 <PopoverDisclosure label="Starting points" title="A useful first step" testId="coworker-starting-points" align="start" className="mr-auto text-[11px] text-mist">

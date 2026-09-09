@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Foundation
 
 setbuf(stdout, nil)
@@ -15,6 +16,22 @@ MainActor.assumeIsolated {
 switch command {
 case "--check":
     printJSON(SessionRuntime.permissions())
+case "permissions":
+    guard CommandLine.arguments.count == 3,
+          ["accessibility", "screenRecording"].contains(CommandLine.arguments[2]) else { exit(1) }
+    // Host apps own the explainer; only the signed helper requests its OS access.
+    NSApplication.shared.setActivationPolicy(.accessory)
+    let accessibility = CommandLine.arguments[2] == "accessibility"
+    if accessibility {
+        AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+    } else {
+        CGRequestScreenCaptureAccess()
+    }
+    let pane = accessibility ? "Privacy_Accessibility" : "Privacy_ScreenCapture"
+    let opened = NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")!)
+    // Opening settings is not evidence that the person granted permission.
+    printJSON(["opened": opened])
+    if !opened { exit(1) }
 case "--list-apps":
     let apps = NSWorkspace.shared.runningApplications
         .filter { $0.activationPolicy == .regular && AppIdentity.isAllowed($0) }
@@ -73,7 +90,7 @@ case "setup":
     reopen.resume()
     withExtendedLifetime((delegate, reopen)) { NSApplication.shared.run() }
 default:
-    fputs("Usage: ComputerUse [mcp|--check|--list-apps|setup]\n", stderr)
+    fputs("Usage: ComputerUse [mcp|--check|--list-apps|setup|permissions accessibility|permissions screenRecording]\n", stderr)
     exit(1)
 }
 }

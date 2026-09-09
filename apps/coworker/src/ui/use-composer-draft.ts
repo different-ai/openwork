@@ -8,8 +8,8 @@ function readDraft(key: string): string {
 }
 
 /** Unsent words belong to one coworker and conversation, including across reloads. */
-export function useComposerDraft(key: string): [string, (next: SetStateAction<string>) => void] {
-  const [entry, setEntry] = useState(() => ({ key, value: readDraft(key) }));
+export function useComposerDraft(key: string, initialValue?: string): [string, (next: SetStateAction<string>) => void] {
+  const [entry, setEntry] = useState(() => ({ key, value: initialValue ?? readDraft(key) }));
   // A reused view must not show or save the previous conversation's draft.
   const value = entry.key === key ? entry.value : readDraft(key);
   const setValue = useCallback((next: SetStateAction<string>) => {

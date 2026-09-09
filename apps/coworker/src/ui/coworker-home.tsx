@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { coworkerBridge, type CoworkerSummary, type LocalResponsibility, type ProviderSyncRun, type RuntimeInfo, type TeamStates } from "@/lib/bridge";
-import { describeHeaderStatus, describeNow, describeOutcome, describeStatusDetail, mergeRecentWork, relativeTime, type StatusTone } from "@/lib/activity-summary";
+import { describeHeaderStatus, describeNow, describeOutcome, mergeRecentWork, relativeTime } from "@/lib/activity-summary";
 import type { ConnectState } from "@/lib/connect";
 import { describeCoworkerSummary, showSummaryLine, summaryRowTitle, type CoworkerSummaryLine, type SummaryKind } from "@/lib/coworker-summary";
 import { referralPrompt } from "@/lib/conversation";
@@ -12,7 +12,7 @@ import { createCoworkerThreads, recommendModel, type CoworkerActivity, type Thre
 import { acknowledgeCoworker, AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
 import { CapabilitiesPanel } from "@/ui/capabilities";
-import { ActivityIcon, AppsIcon, Button, ErrorNote, IconButton, MemoryIcon, SlidersIcon, Tooltip } from "@/ui/kit";
+import { ActivityIcon, AppsIcon, Button, ErrorNote, IconButton, MemoryIcon, SlidersIcon } from "@/ui/kit";
 import { useResizablePanel } from "@/ui/use-resizable-panel";
 import { PanelContent, PanelHeader, PanelLevel, usePanelNavigation } from "@/ui/panel-nav";
 import { pushCrumb, routeDepth, type PanelCrumb } from "@/lib/panel-route";
@@ -63,31 +63,14 @@ const BESIDE_APPS_MIN_WIDTH = 480;
 /** Below this window width the open panel lies over the conversation instead of beside it. */
 const NARROW_WINDOW = 900;
 
-const STATUS_TEXT_TONE: Record<StatusTone, string> = { mist: "text-mist", ready: "text-ready", amber: "text-amber", rose: "text-rose" };
-
 /** Which Activity level each part of the summary line opens. */
 const SUMMARY_LEVELS: Record<SummaryKind, ActivityLevel> = { assignments: "assignments", workers: "workers", documents: "documents" };
 
-/**
- * The header's one plain word about the coworker — no dot, muted sage when
- * ready and stronger colour when it asks for the person or reports a failure. The tooltip adds the reason and the
- * time; the live row in the transcript owns the moment-to-moment phrase.
- */
+/** The rail and transcript show activity; the header reserves its right edge for Stop. */
 export function HeaderStatusWord({ activity, engineManaged }: { activity: CoworkerActivity | undefined; engineManaged: boolean }) {
   const status = describeHeaderStatus(activity, engineManaged);
-  const detail = describeStatusDetail(activity, engineManaged);
   return (
-    <Tooltip content={detail} side="bottom">
-      <span
-        data-testid="coworker-top-status"
-        data-tone={status.tone}
-        tabIndex={detail ? 0 : undefined}
-        // A fixed minimum width, right-aligned: "Ready" ↔ "Working" ↔ "Needs you" swap in place instead of sliding what sits beside them.
-        className={`window-no-drag min-w-[4.5rem] max-w-[9rem] shrink-0 whitespace-normal rounded-md text-right text-xs [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${STATUS_TEXT_TONE[status.tone]}`}
-      >
-        {status.word}
-      </span>
-    </Tooltip>
+    <span data-testid="coworker-top-status" data-tone={status.tone} className="sr-only">{status.word}</span>
   );
 }
 
@@ -157,6 +140,7 @@ export function CoworkerHome({
   onRepairConnect,
   onConnectAccount,
   railWidth,
+  discussionToolsSlot,
   request = null,
   onCoworkerAdded,
   onHandOff,
@@ -190,6 +174,7 @@ export function CoworkerHome({
   onConnectAccount: () => void;
   /** Current width of the team rail, so the thread column keeps its minimum before this panel grows. */
   railWidth: number;
+  discussionToolsSlot: HTMLElement | null;
   /** Something another view asked this one to show on arrival: a settings section, or one thread. */
   request?: CoworkerHomeRequest | null;
 }) {
@@ -464,7 +449,7 @@ export function CoworkerHome({
         ) : null}
         <main className="min-h-0 flex-1 overflow-hidden">
           <ThreadsPanel
-            active={active}
+            active={active && !overlayPanel && (contextPanel.collapsed || contextView !== "settings")}
             runtime={runtime}
             session={session}
             coworker={coworker}
@@ -475,7 +460,7 @@ export function CoworkerHome({
             discussionDraft={discussionDraft}
             openThreadRequest={openThreadRequest}
             onAssignmentsChange={onAssignmentsChange}
-            headerSlots={{ title: headerTitleSlot, actions: headerActionsSlot }}
+            headerSlots={{ title: headerTitleSlot, actions: headerActionsSlot, tools: discussionToolsSlot }}
             onOpenModelSettings={() => openSettingsSection("model", Date.now())}
             onOpenAccount={() => onOpenOpenWork("account")}
             onOpenProviders={() => onOpenOpenWork("models")}
@@ -597,6 +582,11 @@ export function CoworkerHome({
           width={contextPanel.width}
           onBack={nav.back}
           onToDepth={nav.toDepth}
+          actions={(
+            <IconButton label="Close sidebar" className="window-no-drag" data-testid="context-panel-close" onClick={contextPanel.collapse}>
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" className="size-4" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg>
+            </IconButton>
+          )}
           leading={contextView !== "overview" ? (
             <IconButton label="Back to activity" className="window-no-drag" onClick={() => nav.toRoot("overview")}>
               <span aria-hidden="true">←</span>

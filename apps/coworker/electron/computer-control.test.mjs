@@ -4,6 +4,9 @@ import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
+import { createVoice, installVoicePermissions } from "./voice.mjs";
 import { assertComputerToolContext, assertPrivateComputerDiscussion, COMPUTER_DENY, COMPUTER_TOOLS, COMPUTER_PROTOCOL, createComputerControl, trustedComputerSender } from "./computer-control.mjs";
 
 const result = (state, isError = false) => ({ isError, content: [{ type: "text", text: JSON.stringify(state) }] });
@@ -36,7 +39,7 @@ function fixture(overrides = {}) {
     async close() { closes++; await overrides.close?.(); },
   };
   const adapter = { id: "this-mac", label: "This Mac", placement: "desktop", protocol: COMPUTER_PROTOCOL,
-    readiness: async () => ({ readiness: "ready", detail: "Native service ready." }), setup: async () => { setups++; },
+    readiness: async () => ({ readiness: "ready", detail: "Native service ready.", permissions: { accessibility: true, screenRecording: true } }), setup: async () => { setups++; },
     connect: async () => { connects++; if (overrides.connect) await overrides.connect(); return transport; } };
   const broker = createComputerControl({ adapters: [adapter, ...(overrides.adapters ?? [])], cleanupMs: 20, operationMs: overrides.operationMs ?? 1000, pollMs: 2,
     discussionFor: async (slug, threadId) => {
@@ -122,18 +125,146 @@ test("computer IPC accepts only the actual main window at the expected renderer 
   for (const url of ["http://localhost:9999/", "https://example.test/", "http://localhost:5173/other", "file:///other/index.html"]) assert.equal(trustedComputerSender(event, contents, url), false);
 });
 
+test("voice microphone grants are audio-only and belong to the exact app main frame", async () => {
+  const contents = { mainFrame: { url: "file:///coworker/index.html#discussion" } };
+  let request, check;
+  const session = { setPermissionRequestHandler: (fn) => { request = fn; }, setPermissionCheckHandler: (fn) => { check = fn; } };
+  let asks = 0;
+  const access = deferred();
+  const voice = createVoice({ getSession: () => null, getBaseUrl: () => "https://den.invalid", platform: "darwin",
+    systemPreferences: { getMediaAccessStatus: () => "not-determined", askForMediaAccess: async () => { asks++; return access.promise; } } });
+  installVoicePermissions(session, () => ({ webContents: contents }), () => "file:///coworker/index.html", voice);
+  const details = { isMainFrame: true, requestingUrl: contents.mainFrame.url, mediaType: "audio" };
+  const clipboardDetails = { isMainFrame: true, requestingUrl: contents.mainFrame.url };
+  let copied;
+  assert.equal(check(contents, "clipboard-sanitized-write", "file://", clipboardDetails), true);
+  request(contents, "clipboard-sanitized-write", (value) => { copied = value; }, clipboardDetails);
+  assert.equal(copied, true);
+  for (const [sender, frame] of [
+    [contents, { ...clipboardDetails, isMainFrame: false }],
+    [contents, { ...clipboardDetails, requestingUrl: "file:///other.html" }],
+    [contents, { isMainFrame: true }],
+    [contents, { requestingUrl: clipboardDetails.requestingUrl }],
+    [contents, undefined],
+    [null, { embeddingOrigin: "file://" }],
+    [{ mainFrame: contents.mainFrame }, clipboardDetails],
+  ]) {
+    assert.equal(check(sender, "clipboard-sanitized-write", "file://", frame), false);
+    request(sender, "clipboard-sanitized-write", (value) => { copied = value; }, frame);
+    assert.equal(copied, false);
+  }
+  for (const permission of ["clipboard-read", "notifications", "fullscreen"]) {
+    assert.equal(check(contents, permission, "file://", clipboardDetails), false);
+    request(contents, permission, (value) => { copied = value; }, clipboardDetails);
+    assert.equal(copied, false);
+  }
+  assert.equal(asks, 0);
+  assert.equal(check(contents, "media", "file://", details), false);
+  const permission = voice.microphone();
+  access.resolve(true);
+  assert.deepEqual(await permission, { granted: true });
+  assert.equal(asks, 1);
+  assert.equal(check(contents, "media", "file://", details), true);
+  let granted;
+  request(contents, "media", (value) => { granted = value; }, { isMainFrame: true, requestingUrl: details.requestingUrl, mediaTypes: ["audio"] });
+  assert.equal(granted, true);
+  for (const changed of [{ isMainFrame: false }, { requestingUrl: "file:///other.html" }, { requestingUrl: "https://example.test" }, { mediaType: "video" }, { mediaType: "unknown" }, { mediaTypes: ["audio", "video"] }]) {
+    assert.equal(check(contents, "media", "file://", { ...details, ...changed }), false);
+  }
+  assert.equal(check({ mainFrame: contents.mainFrame }, "media", "file://", details), false);
+  request(contents, "media", (value) => { granted = value; }, { ...details, mediaType: undefined, mediaTypes: ["audio", "video"] });
+  assert.equal(granted, false);
+  voice.reset();
+  assert.equal(check(contents, "media", "file://", details), false);
+  assert.equal(check(contents, "clipboard-sanitized-write", "file://", clipboardDetails), true);
+  request(contents, "clipboard-sanitized-write", (value) => { copied = value; }, clipboardDetails);
+  assert.equal(copied, true);
+  const late = voice.microphone(); voice.reset();
+  assert.deepEqual(await late, { granted: false });
+});
+
+test("native voice uses the pinned account, validates bounds, and really closes cancelled HTTP requests", async (t) => {
+  const arrived = [];
+  const closed = [];
+  let entered = deferred();
+  let disconnected = deferred();
+  let mode = "ready";
+  const server = createServer((request, response) => {
+    arrived.push({ url: request.url, auth: request.headers.authorization, org: request.headers["x-openwork-org-id"] });
+    request.resume();
+    if (request.url === "/v1/voice") { response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ access: mode })); return; }
+    if (mode === "unavailable") { response.writeHead(403, { "content-type": "application/json" }); response.end(JSON.stringify({ error: "voice_membership_required", message: "private-provider-secret" })); return; }
+    if (mode === "transcribe") { response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ text: "Hello", key: "must-not-cross" })); return; }
+    if (mode === "speech") { response.setHeader("content-type", "audio/mpeg"); response.end(Buffer.from("mp3-fixture")); return; }
+    if (mode === "oversized") { response.setHeader("content-type", "audio/mpeg"); response.end(Buffer.alloc(2 * 1024 * 1024 + 1)); return; }
+    const done = disconnected;
+    response.on("close", () => { closed.push(request.url); done.resolve(); });
+    entered.resolve();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let session = { baseUrl, token: "member-session-fixture", orgId: "org-fixture" };
+  const voice = createVoice({ getSession: () => session, getBaseUrl: () => baseUrl, timeoutMs: 1000 });
+  t.after(() => voice.reset());
+  assert.deepEqual(await voice.status(), { access: "ready" });
+  mode = "membership_required";
+  assert.equal((await voice.status()).access, "membership_required");
+  mode = "transcribe";
+  assert.deepEqual(await voice.transcribe({ requestId: randomUUID(), data: "YQ==", format: "webm" }), { text: "Hello" });
+  mode = "speech";
+  assert.deepEqual(await voice.speech({ requestId: randomUUID(), text: "Hello" }), { data: Buffer.from("mp3-fixture").toString("base64"), mimeType: "audio/mpeg" });
+  assert.equal(arrived.every((entry) => entry.auth === "Bearer member-session-fixture" && entry.org === "org-fixture"), true);
+  const before = arrived.length;
+  for (const input of [{ data: "YQ=", format: "webm" }, { data: "YQ==", format: "video" }, { data: "A".repeat(4 * 1024 * 1024 + 4), format: "wav" }]) {
+    await assert.rejects(voice.transcribe({ requestId: randomUUID(), ...input }), /voice_invalid_request/);
+  }
+  await assert.rejects(voice.speech({ requestId: randomUUID(), text: "a".repeat(601) }), /voice_invalid_request/);
+  assert.equal(arrived.length, before);
+  mode = "oversized";
+  await assert.rejects(voice.speech({ requestId: randomUUID(), text: "Hello" }), /voice_payload_too_large/);
+  mode = "unavailable";
+  await assert.rejects(voice.speech({ requestId: randomUUID(), text: "Hello" }), (error) => error.message.startsWith("voice_membership_required:") && !error.message.includes("secret"));
+  mode = "hold";
+  for (const changeAccount of [false, true]) {
+    entered = deferred(); disconnected = deferred();
+    const id = randomUUID();
+    const pending = voice.speech({ requestId: id, text: "Wait" });
+    const rejected = assert.rejects(pending, /voice_request_cancelled/);
+    await entered.promise;
+    if (changeAccount) { voice.reset(); session = null; } else await voice.cancel(id);
+    await rejected;
+    let timer;
+    try { await Promise.race([disconnected.promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("HTTP request remained open")), 2000); })]); }
+    finally { clearTimeout(timer); }
+  }
+  assert.equal(closed.length, 2);
+  assert.equal((await voice.status()).access, "sign_in");
+  session = { baseUrl: `${baseUrl}/wrong`, token: "never-send", orgId: "other" };
+  assert.equal((await voice.status()).access, "unavailable");
+});
+
 test("opt-in and revisions isolate conversations and coworkers; remote never falls back to local", async () => {
   const f = fixture();
+  await assert.rejects(f.broker.setup({ permission: "mcp" }), /Choose Accessibility/);
+  await f.broker.setup({ permission: "accessibility" });
+  const setup = await f.snapshot();
+  assert.deepEqual(setup.permissions, { accessibility: true, screenRecording: true });
+  assert.equal(setup.enabled, false);
+  assert.equal(setup.session, null);
+  assert.deepEqual(f.counts(), { connects: 0, closes: 0, setups: 1 });
   await assert.rejects(f.execute("discover"), /disabled/);
   assert.equal((await f.enable("remote")).enabled, false);
   const remote = await f.snapshot();
   assert.equal(remote.targetId, "remote"); assert.equal(remote.readiness, "unavailable");
+  assert.equal(remote.permissions, undefined, "another target cannot borrow this Mac's verified permissions");
   assert.match(remote.detail, /compatible remote service/);
   await assert.rejects(f.execute("discover"), /disabled/);
   assert.equal(f.counts().connects, 0);
   const enabled = await f.enable();
   await assert.rejects(f.broker.stop({ ...f.scope, expectedRevision: enabled.revision - 1 }), /settings changed/);
   await f.execute("open", openArgs);
+  await assert.rejects(f.broker.setup({ permission: "screenRecording" }), /Stop computer control/);
   for (const other of [{ slug: "scout", threadId: "two" }, { slug: "editor", threadId: "one" }]) {
     assert.equal((await f.broker.snapshot(other)).session, null);
     await assert.rejects(f.enable("this-mac", other), /Another discussion/);
@@ -158,7 +289,7 @@ test("an injected remote target pins all calls and setup to that adapter without
   assert.equal(snapshot.targetId, cloud.adapter.id);
   assert.equal(snapshot.detail, "The remote computer is ready.");
   assert.deepEqual(snapshot.targets.map((item) => item.id), ["this-mac", cloud.adapter.id]);
-  await f.broker.setup({ targetId: cloud.adapter.id });
+  await f.broker.setup({ targetId: cloud.adapter.id, permission: "accessibility" });
   assert.equal(cloud.counts().setups, 1); assert.equal(f.counts().setups, 0);
   await f.execute("open", openArgs);
   await f.execute("observe", { include_image: false });

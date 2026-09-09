@@ -17,7 +17,8 @@ import { homedir } from "node:os";
 import { createServer as createPortProbe } from "node:net";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { BrowserWindow, Menu, app, dialog, ipcMain, nativeTheme, shell } from "electron";
+import { BrowserWindow, Menu, app, dialog, ipcMain, nativeTheme, shell, systemPreferences } from "electron";
+import { createVoice, installVoicePermissions } from "./voice.mjs";
 import { bindWindowAppearance, windowMaterial } from "./window-appearance.mjs";
 import { openworkConfigDir } from "@openwork/paths";
 import { createHeadlessThreadClient, isRunning, toTranscript } from "@openwork/headless-threads";
@@ -279,6 +280,7 @@ let deepLinkListenerReady = false;
  * @type {{ baseUrl: string, token: string, orgId: string } | null}
  */
 let denSession = null;
+const voice = createVoice({ getSession: () => denSession, getBaseUrl: configuredDenApiBase, systemPreferences });
 
 function tokenFilePath() {
   return path.join(app.getPath("userData"), "coworker-server-tokens.json");
@@ -2290,13 +2292,7 @@ const commands = {
   "groups.submit": async ({ id, ...input }) => groupExecution.submit(id, input),
   "groups.status": async ({ id }) => groupExecution.status(id),
   "groups.interactions.reply": async (input) => { await groupExecution.replyInteraction(input); return { ok: true }; },
-  "groups.activity": async ({ id }) => {
-    // Read delivered bubbles first. An execution behind any of these is already terminal,
-    // so the later running-only projection cannot return the same reply as a live bubble.
-    const timeline = await readGroupTimeline(coworkersDir, id);
-    const executions = await readCollaborationActivity({ groupId: id });
-    return { timeline, executions };
-  },
+  "groups.activity": async ({ id }) => groupExecution.activity(id, readCollaborationActivity),
   "groups.cancel": async ({ id }) => { await groupExecution.cancel(id); return { ok: true }; },
   "groups.removeQueued": async ({ id, clientMessageId }) => { await groupExecution.remove(id, clientMessageId); return { ok: true }; },
   "groups.get": async ({ id }) => getGroup(coworkersDir, id),
@@ -2309,13 +2305,11 @@ const commands = {
   // view and recovery read, so a double Send or a quit mid-turn loses nothing.
   "groups.beginTurn": async ({ id, clientMessageId, prompt }) => beginGroupTurn(coworkersDir, id, { clientMessageId, prompt }),
   "groups.updateTurn": async ({ id, turnId, patch }) => updateGroupTurn(coworkersDir, id, turnId, patch ?? {}),
-  // The window drives group turns, so a fresh window means none is live: every
-  // turn still recorded as running was cut off and is settled as partial here.
+  // Reloads do not stop native work. Check queue ownership at the recovery mutation.
   "groups.recoverInterrupted": async () => {
     const coworkers = await listCoworkers(coworkersDir).catch(() => []);
     const names = new Map(coworkers.map((coworker) => [coworker.slug, coworker.name]));
-    const activeTurnIds = await collaboration.read((state) => new Set(Object.values(state.groups).flatMap((group) => group.queue.map((entry) => entry.turnId))));
-    return reconcileInterruptedGroupTurns(coworkersDir, { activeTurnIds, nameFor: (slug) => names.get(slug) ?? slug });
+    return reconcileInterruptedGroupTurns(coworkersDir, { isActive: (turn, group) => collaboration.read((state) => state.groups[group.id]?.queue.some((entry) => entry.turnId === turn.id || entry.id === turn.clientMessageId) ?? false), nameFor: (slug) => names.get(slug) ?? slug });
   },
   // The silent facilitator's own workspace: hidden, tool-less, registered like a
   // coworker's but never listed as one.
@@ -2466,12 +2460,14 @@ const commands = {
   /** Signed-in account → embedded server → engine providers. Returns the sync outcome. */
   "den.session.set": async (payload) => {
     const session = parseDenSessionPayload(payload);
+    voice.reset();
     denSession = session;
     const handle = await ensurePlatformServer();
     const tokens = await loadOrCreateTokens();
     return applyDenSession(handle, tokens.hostToken, session);
   },
   "den.session.clear": async () => {
+    voice.reset();
     denSession = null;
     const handle = await ensurePlatformServer();
     const tokens = await loadOrCreateTokens();
@@ -2485,10 +2481,12 @@ const commands = {
     const tokens = await loadOrCreateTokens();
     return runCloudProviderSync(handle, tokens.hostToken, "manual_refresh");
   },
-  /**
-   * The renderer announces its deep-link listener and drains anything queued
-   * while it was loading; later links are pushed over the same channel.
-   */
+  "voice.status": () => voice.status(),
+  "voice.transcribe": (input) => voice.transcribe(input),
+  "voice.speech": (input) => voice.speech(input),
+  "voice.cancel": ({ requestId }) => voice.cancel(requestId),
+  "voice.microphone": () => voice.microphone(),
+  /** The renderer drains deep links queued while it was loading. */
   "deepLinks.subscribe": async () => {
     deepLinkListenerReady = true;
     return { urls: pendingDeepLinks.splice(0, pendingDeepLinks.length) };
@@ -2501,8 +2499,11 @@ function registerIpc() {
       return { ok: false, error: "Open Coworker commands are only available to the main app frame." };
     }
     const command = typeof request?.command === "string" ? request.command : "";
-    if ((command.startsWith("computer.") || command.startsWith("browser.") || command.startsWith("groups.documents.")) && !trustedComputerSender(event, mainWindow?.webContents, rendererUrl())) {
+    if ((command.startsWith("voice.") || command.startsWith("computer.") || command.startsWith("browser.") || command.startsWith("groups.documents.")) && !trustedComputerSender(event, mainWindow?.webContents, rendererUrl())) {
       return { ok: false, error: "Native controls require the trusted Open Coworker window and renderer URL." };
+    }
+    if (command === "voice.microphone" && request?.userGesture !== true) {
+      return { ok: false, error: "Click the microphone control to allow audio input." };
     }
     const handler = commands[command];
     if (!handler) {
@@ -2567,6 +2568,7 @@ async function createMainWindow() {
     },
   });
   bindWindowAppearance(window, nativeTheme);
+  installVoicePermissions(window.webContents.session, () => mainWindow, rendererUrl, voice);
   window.once("ready-to-show", () => window.show());
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) void confirmAndOpenExternal(url);
@@ -2574,11 +2576,11 @@ async function createMainWindow() {
   });
   // A reload replaces the renderer; its deep-link listener must re-announce.
   window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
-    if (isMainFrame) { deepLinkListenerReady = false; browserControl.hideWindow(); }
+    if (isMainFrame) { voice.reset(); deepLinkListenerReady = false; browserControl.hideWindow(); }
   });
-  window.on("close", () => browserControl.hideWindow());
-  window.webContents.on("render-process-gone", () => { deepLinkListenerReady = false; browserControl.hideWindow(); });
-  window.webContents.on("destroyed", () => browserControl.hideWindow());
+  window.on("close", () => { voice.reset(); browserControl.hideWindow(); });
+  window.webContents.on("render-process-gone", () => { voice.reset(); deepLinkListenerReady = false; browserControl.hideWindow(); });
+  window.webContents.on("destroyed", () => { voice.reset(); browserControl.hideWindow(); });
   window.on("unresponsive", () => browserControl.hideWindow());
   window.on("closed", () => {
     if (mainWindow === window) mainWindow = null;
@@ -2646,6 +2648,7 @@ if (!singleInstanceLock) {
   let quitting = false;
   let quitReady = false;
   app.on("before-quit", (event) => {
+    voice.reset();
     if (quitReady) return;
     event.preventDefault();
     if (quitting) return;

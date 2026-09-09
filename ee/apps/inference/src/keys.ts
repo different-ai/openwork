@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
-import { InferenceKeyTable, InferenceOrgUpstreamProviderKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
+import { InferenceKeyTable, InferenceOrgUpstreamProviderKeyTable, MemberTable, OrganizationTable, OrgSubscriptionTable } from "@openwork-ee/den-db"
 import { assertManagedModelsAllowed, ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import {
   inferenceBearerKeyLookupDigests,
@@ -34,6 +34,12 @@ export async function findActiveInferenceKey(key: InferenceBearerKey) {
   return row.inferenceKey
 }
 
+export async function findInferenceKeyById(id: string) {
+  const [key] = await db.select().from(InferenceKeyTable)
+    .where(eq(InferenceKeyTable.id, normalizeDenTypeId("inferenceKey", id))).limit(1)
+  return key ?? null
+}
+
 export async function assertOrganizationManagedModelsAllowed(organizationId: string): Promise<void> {
   try {
     const [organization] = await db.select({ metadata: OrganizationTable.metadata })
@@ -57,4 +63,17 @@ export async function getOpenRouterProviderKey(organizationId: string) {
     ))
     .limit(1)
   return rows[0] ?? null
+}
+
+export async function readVoiceMembership(organizationId: string): Promise<"ready" | "membership_required" | "unavailable"> {
+  const orgId = normalizeDenTypeId("organization", organizationId)
+  const [subscription] = await db.select({ status: OrgSubscriptionTable.status }).from(OrgSubscriptionTable)
+    .where(and(eq(OrgSubscriptionTable.organization_id, orgId), eq(OrgSubscriptionTable.type, "inference"))).limit(1)
+  if (!subscription || !["active", "trialing"].includes(subscription.status)) return "membership_required"
+  const [organization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
+    .where(eq(OrganizationTable.id, orgId)).limit(1)
+  const inference = organization?.metadata?.inference
+  if (!inference || typeof inference !== "object" || !("enabled" in inference) || inference.enabled !== true
+    || !("tier" in inference) || !["tier1", "tier2"].includes(String(inference.tier))) return "unavailable"
+  return "ready"
 }
