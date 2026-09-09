@@ -1767,15 +1767,18 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
 export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionSnapshot) {
   const queryClient = getReactQueryClient();
   const key = transcriptKey(workspaceId, snapshot.session.id);
-  const incoming = snapshotToUIMessages(snapshot);
+  const projected = snapshotToUIMessages(snapshot);
+  let incoming = projected;
   // Commit against the old text before merging a cumulative snapshot, never
   // append those same queued bytes to the snapshot afterwards.
   for (const entry of syncs.values()) {
     if (entry.input.workspaceId !== workspaceId) continue;
     flushSessionDeltas(entry, workspaceId, snapshot.session.id);
     if (entry.pendingDeltas.size === 0) continue;
-    for (const message of incoming) {
-      for (const part of message.parts) {
+    for (let messageIndex = 0; messageIndex < incoming.length; messageIndex += 1) {
+      let message = incoming[messageIndex];
+      for (let partIndex = 0; partIndex < message.parts.length; partIndex += 1) {
+        const part = message.parts[partIndex];
         if (part.type !== "text" && part.type !== "reasoning") continue;
         const partId = getPartMetadataId(part);
         if (!partId) continue;
@@ -1784,7 +1787,13 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
         if (!pending || pending.messageId !== message.id) continue;
         // Early deltas and the declaration are cumulative views, as with
         // message.part.updated. Unrepresented parts remain pending.
-        if (pending.text.length > part.text.length) part.text = pending.text;
+        if (pending.text.length > part.text.length) {
+          const parts = message.parts.slice();
+          parts[partIndex] = { ...part, text: pending.text };
+          message = { ...message, parts };
+          if (incoming === projected) incoming = incoming.slice();
+          incoming[messageIndex] = message;
+        }
         entry.pendingDeltas.delete(pendingKey);
       }
     }

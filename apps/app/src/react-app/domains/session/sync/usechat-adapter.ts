@@ -141,8 +141,19 @@ export function attachmentNoteToUIParts(part: TextPart): UIMessage["parts"] {
   });
 }
 
+type SnapshotMessages = OpenworkSessionSnapshot["messages"];
+const snapshotMessagesCache = new WeakMap<SnapshotMessages, UIMessage[]>();
+const snapshotMessageCache = new WeakMap<SnapshotMessages[number], UIMessage[]>();
+
+// Query snapshots are immutable. Share the projection between rendering and
+// hydration; a refreshed tail can also reuse unchanged historical messages.
+// Callers must copy before applying live updates to these cached messages.
 export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessage[] {
-  return snapshot.messages.flatMap((message) => {
+  const cached = snapshotMessagesCache.get(snapshot.messages);
+  if (cached) return cached;
+  const messages = snapshot.messages.flatMap((message) => {
+    const cachedMessage = snapshotMessageCache.get(message);
+    if (cachedMessage) return cachedMessage;
     const created = message.info.time?.created;
     const time = message.info.time;
     const completed = time && "completed" in time ? time.completed : undefined;
@@ -198,9 +209,14 @@ export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessa
     // error still gets its own message. An empty assistant carcass for the
     // errored turn is dropped so the error reads as that turn's outcome.
     const error = message.info.role === "assistant" && "error" in message.info ? message.info.error : undefined;
-    if (!error) return [uiMessage];
-
-    const errorMessage = createSessionErrorUIMessage(message.info.id, presentOpencodeSessionError(error), { created });
-    return uiMessage.parts.length > 0 ? [uiMessage, errorMessage] : [errorMessage];
+    let result: UIMessage[] = [uiMessage];
+    if (error) {
+      const errorMessage = createSessionErrorUIMessage(message.info.id, presentOpencodeSessionError(error), { created });
+      result = uiMessage.parts.length > 0 ? [uiMessage, errorMessage] : [errorMessage];
+    }
+    snapshotMessageCache.set(message, result);
+    return result;
   });
+  snapshotMessagesCache.set(snapshot.messages, messages);
+  return messages;
 }

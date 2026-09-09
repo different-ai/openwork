@@ -5,16 +5,6 @@ import { mergeSnapshotAndLiveMessages } from "../sync/message-merge";
 import { applyRevertCursor } from "../sync/transcript-reconcile";
 import { snapshotToUIMessages } from "../sync/usechat-adapter";
 
-const snapshotMessageCache = new WeakMap<OpenworkSessionSnapshot, UIMessage[]>();
-
-function getSnapshotMessages(snapshot: OpenworkSessionSnapshot) {
-  const cached = snapshotMessageCache.get(snapshot);
-  if (cached) return cached;
-  const messages = snapshotToUIMessages(snapshot);
-  snapshotMessageCache.set(snapshot, messages);
-  return messages;
-}
-
 export function resolveRenderedSessionSnapshot(input: {
   sessionId: string;
   currentSnapshot: OpenworkSessionSnapshot | null | undefined;
@@ -40,7 +30,7 @@ export function deriveRenderedSessionMessages(input: {
   const liveMessages = input.transcriptState ?? [];
 
   const snapshotMessages = input.snapshot && input.snapshot.messages.length > 0
-    ? getSnapshotMessages(input.snapshot)
+    ? snapshotToUIMessages(input.snapshot)
     : [];
 
   // Render the server snapshot as the history floor and layer live stream
