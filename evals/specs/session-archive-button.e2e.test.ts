@@ -15,8 +15,12 @@ test("archiving exits only the viewed conversation, and working sessions require
   const initialIds = initial.sessions.map(session => session.sessionId).sort();
   const unsentDraft = "Keep this unsent draft when I cancel archiving.";
 
-  async function open(target: typeof a1) {
-    await user.click({ testId: `sidebar-session-${target.sessionId}` });
+  async function open(target: typeof a1, via: "sidebar" | "control" = "sidebar") {
+    if (via === "control") {
+      expect(await agent.run("session.open", { sessionId: target.sessionId })).toMatchObject({ ok: true, sessionId: target.sessionId });
+    } else {
+      await user.click({ testId: `sidebar-session-${target.sessionId}` });
+    }
     await probe.eventually(() => probe.hash(), { within: 30_000, label: "owning session opens", until: hash => hash === route(target) });
     await probe.eventually(() => world.facts(), { within: 30_000, label: "owning surface mounts", until: facts => facts.surfaces.includes(target.sessionId) });
     await user.see("composer", { editable: true });
@@ -400,27 +404,59 @@ test("archiving exits only the viewed conversation, and working sessions require
     }, { within: 20_000, label: "late admission failure does not replay on restore" });
   });
 
-  await step("archived split panes and tabs disappear, and archiving the routed pane never promotes its neighbor", async () => {
+  await step("archived side chats and tabs disappear, and archiving the main conversation never promotes its side chat", async () => {
     await open(a2);
     const before = (await aborts()).length;
+    const sideChatBadge = `[data-sidebar-session-workspace-id="${a2.workspaceId}"][data-sidebar-session-id="${a2.sessionId}"] [data-session-side-chat="${b1.sessionId}"]`;
     for (const target of [b1, a2]) {
       await user.rightClick({ testId: `sidebar-session-${b1.sessionId}` });
       await user.click({ role: "menuitem", label: "Open as side chat" });
-      await probe.eventually(() => world.facts(), {
-        within: 15_000, label: "both owning split surfaces render",
-        until: facts => facts.surfaces.includes(a2.sessionId) && facts.surfaces.includes(b1.sessionId),
+      for (const [pane, session] of [["primary", a2], ["secondary", b1]] satisfies Array<[string, typeof a1]>) {
+        await probe.eventually(() => probe.dom(`[data-workbench-pane="${pane}"][data-workbench-workspace-id="${session.workspaceId}"] [data-session-surface-id="${session.sessionId}"]`), {
+          within: 15_000, label: `${pane} renders its owning workspace and session`,
+          until: value => value.elements.length === 1 && value.elements[0].rect.width > 0 && value.elements[0].rect.height > 0,
+        });
+      }
+      await probe.eventually(() => probe.dom(sideChatBadge), {
+        within: 15_000, label: "the main row retains the exact side-chat identity",
+        until: value => value.elements.length === 1 && value.elements[0].rect.width > 0,
       });
-      await archive(target);
+      expect(await probe.hash()).toBe(route(a2));
+      await user.notSee({ testId: `sidebar-session-${b1.sessionId}` });
+      const beforeMetadata = (await world.facts()).requests.filter(request => request.action === "metadata").length;
+      if (target === b1) {
+        // Paired side chats have focus/expand/close controls, not a standalone
+        // Archive button. The public action archives this exact secondary ID.
+        expect(await agent.actions()).toEqual(expect.arrayContaining([expect.objectContaining({ id: "session.archive", disabled: false })]));
+        expect(await agent.run("session.archive", { sessionId: b1.sessionId, archived: true })).toEqual({ ok: true, sessionId: b1.sessionId, archived: true });
+      } else {
+        await archive(a2);
+      }
       await user.see({ text: "Session archived" });
-      const facts = await archived(target, true);
+      await archived(target, true);
+      const facts = await probe.eventually(() => world.facts(), {
+        within: 15_000, label: "archiving removes only the intended surface without promoting the side chat",
+        until: facts => !facts.surfaces.includes(target.sessionId)
+          && (target === a2 ? !facts.surfaces.includes(b1.sessionId) : facts.surfaces.includes(a2.sessionId)),
+      });
       expect(facts.surfaces).not.toContain(target.sessionId);
       expect(facts.tabs).not.toContain(target.sessionId);
-      expect(await probe.hash()).toBe(target === a2 ? start(a2) : route(a2));
+      expect(facts.sessions.find(session => session.sessionId === (target === a2 ? b1.sessionId : a2.sessionId))?.archived).toBe(false);
+      expect(facts.requests.filter(request => request.action === "metadata").slice(beforeMetadata)).toEqual([
+        expect.objectContaining({ sessionId: target.sessionId, path: `/workspace/${target.workspaceId}/opencode/session/${target.sessionId}`, result: 200 }),
+      ]);
+      await probe.eventually(() => probe.hash(), { within: 15_000, label: "archive preserves the main route or returns it to workspace start", until: hash => hash === (target === a2 ? start(a2) : route(a2)) });
       if (target === a2) expect(facts.surfaces).not.toContain(b1.sessionId);
       else expect(facts.surfaces).toContain(a2.sessionId);
+      expect((await probe.dom('[data-workbench-pane="secondary"]')).elements).toHaveLength(0);
+      expect((await probe.dom(sideChatBadge)).elements).toHaveLength(0);
       await user.click({ role: "button", label: "Undo" });
-      await archived(target, false);
+      const restored = await archived(target, false);
       await probe.eventually(() => probe.hash(), { within: 15_000, label: "Undo leaves primary route restored", until: hash => hash === route(a2) });
+      expect(restored.activeRows).toContain(a2.sessionId);
+      expect(restored.activeRows).toContain(b1.sessionId);
+      expect((await probe.dom('[data-workbench-pane="secondary"]')).elements).toHaveLength(0);
+      expect((await probe.dom(sideChatBadge)).elements).toHaveLength(0);
     }
     expect(await aborts()).toHaveLength(before);
     expect(await world.requests()).toHaveLength(4);
@@ -456,8 +492,8 @@ test("archiving exits only the viewed conversation, and working sessions require
     const before = (await world.requests()).length;
     const beforeAborts = (await aborts()).length;
     await world.holdRun();
-    await agent.run("session.open", { sessionId: world.child.sessionId });
-    await user.see("composer", { editable: true });
+    // Engine subtasks also have no standalone sidebar row.
+    await open(world.child, "control");
     await send(world.child, "Independent child work for archive proof.", before + 1);
     await send(world.child, "Cancelled child follow-up must not replay.");
     await user.see({ text: "Cancelled child follow-up must not replay." });
@@ -479,7 +515,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     await user.click({ role: "button", label: "Undo" });
     await archived(a1, false);
     await world.releaseRun();
-    await agent.run("session.open", { sessionId: world.child.sessionId });
+    await open(world.child, "control");
     await user.notSee({ text: "Cancelled child follow-up must not replay." });
     const deadline = Date.now() + 12_000;
     await probe.eventually(async () => {
@@ -500,9 +536,13 @@ test("archiving exits only the viewed conversation, and working sessions require
       await world.networkFault("accepted_command", a2.sessionId);
       const commandCount = (await world.facts()).requests.filter(request => request.action === "command").length;
       await agent.run("composer.set_text", { text: "/archive-witness" });
+      await user.see("composer", { text: "/archive-witness" });
       if (queued) {
-        await user.press("Escape");
+        await user.click({ role: "button", text: "/archive-witness" });
+        await user.click("composer");
         await user.press("Enter");
+        await user.see("composer", { text: "" });
+        await user.see({ role: "button", text: "/archive-witness" });
         await send(a2, "The message after the accepted command must never replay.");
         await open(b1);
         await world.releaseRun();
