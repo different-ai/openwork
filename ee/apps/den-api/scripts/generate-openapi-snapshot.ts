@@ -4,32 +4,14 @@ import { dirname, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseArgs } from "node:util"
 
+import { seedSnapshotEnv } from "./openapi-snapshot-env.js"
+
 type NormalizationCounts = {
   descriptionsFilled: number
   hideKeysDropped: number
 }
 
 const operationMethods = new Set<string>(["delete", "get", "head", "options", "patch", "post", "put", "trace"])
-
-function setEnvDefault(name: string, value: string) {
-  if (!process.env[name]?.trim()) {
-    process.env[name] = value
-  }
-}
-
-function seedSnapshotEnv() {
-  setEnvDefault("DB_MODE", "mysql")
-  setEnvDefault("DATABASE_URL", "mysql://root:password@127.0.0.1:3306/openwork_den")
-  setEnvDefault("DEN_DB_ENCRYPTION_KEY", "local-dev-db-encryption-key-please-change-1234567890")
-  setEnvDefault("BETTER_AUTH_SECRET", "local-dev-secret-not-for-production-use!!")
-  setEnvDefault("BETTER_AUTH_URL", "http://localhost:8790")
-  // `servers[0].url` derives from this value. Pin the hosted API so the
-  // published document is identical on every machine and "Try it" targets
-  // production instead of whoever last regenerated the snapshot.
-  setEnvDefault("DEN_API_PUBLIC_URL", "https://api.openworklabs.com")
-  setEnvDefault("DEN_AUTOMATIONS_ENABLED", "true")
-  setEnvDefault("DEN_AUTOMATIONS_RUNTIME_ENABLED", "true")
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -96,7 +78,7 @@ function normalizeOpenApiDocument(document: Record<string, unknown>) {
 }
 
 async function main() {
-  seedSnapshotEnv()
+  seedSnapshotEnv(process.env)
 
   const app = (await import("../src/app.js")).default
   const response = await app.request("http://den-api.local/openapi.json")

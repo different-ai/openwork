@@ -5,12 +5,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@hey-api/openapi-ts";
 import { format } from "prettier";
+import { publishedDocumentPath, syncPublishedDocument } from "./published-document.mjs";
 
 const packageDir = fileURLToPath(new URL("..", import.meta.url));
 const repoDir = fileURLToPath(new URL("../../..", import.meta.url));
-// The published API reference (Mintlify reads packages/docs) is generated from
-// the same export as the SDK, so both stay current together.
-const publishedDocument = join(repoDir, "packages/docs/openapi.json");
+const publishedDocument = join(repoDir, publishedDocumentPath);
 const check = process.argv.includes("--check");
 const temporary = await mkdtemp(join(tmpdir(), "openwork-sdk-"));
 
@@ -31,15 +30,8 @@ try {
   const input = join(temporary, "openapi.json");
   execFileSync("pnpm", ["--filter", "@openwork-ee/den-api", "exec", "tsx", "--conditions=development",
     "scripts/generate-openapi-snapshot.ts", "--output", input], { cwd: repoDir, stdio: "inherit" });
-  const exported = await readFile(input);
-  if (check) {
-    if (!exported.equals(await readFile(publishedDocument))) {
-      throw new Error("packages/docs/openapi.json is stale. Run pnpm sdk:generate and commit packages/docs/openapi.json.");
-    }
-    console.log("packages/docs/openapi.json matches the Den route schemas.");
-  } else {
-    await writeFile(publishedDocument, exported);
-  }
+  await syncPublishedDocument({ exported: await readFile(input), path: publishedDocument, check });
+  if (check) console.log(`${publishedDocumentPath} matches the Den route schemas.`);
   const committed = join(packageDir, "src/gen");
   const output = check ? join(temporary, "gen") : committed;
   await createClient({

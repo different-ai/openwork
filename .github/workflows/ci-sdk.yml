@@ -52,6 +52,7 @@ jobs:
         with:
           version: 11.4.0
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm --filter @openwork/sdk test
       # Loading the live app initializes OAuth's resource registry.
       - name: Prepare the isolated schema-export database
         run: pnpm --filter @openwork-ee/den-db exec drizzle-kit push --force

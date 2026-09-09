@@ -20,6 +20,7 @@
   "scripts": {
     "generate": "node script/generate.mjs",
     "generate:check": "node script/generate.mjs --check",
+    "test": "node --test script/*.test.mjs",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
