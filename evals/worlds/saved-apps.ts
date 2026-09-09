@@ -157,7 +157,9 @@ export async function savedAppCreation(seed: Seed) {
       // link in an Electron browser tab, exercising main-process interception,
       // native IPC, preload forwarding, and the renderer's startup bridge.
       const opened = await evaluate(app.client, browserScript(async () => {
-        return window.__OPENWORK_ELECTRON__.browser.openUrl("about:blank", "builtin");
+        const browser = window.__OPENWORK_ELECTRON__.browser;
+        const result: unknown = await Reflect.apply(browser.openUrl, browser, ["about:blank", "builtin"]);
+        return result;
       }, []));
       const tabId = field(opened, "tab_id");
       const targetId = field(opened, "target_id");
@@ -169,7 +171,9 @@ export async function savedAppCreation(seed: Seed) {
       } finally {
         browser.close();
         await evaluate(app.client, browserScript(async (tabId) => {
-          await window.__OPENWORK_ELECTRON__.browser.closeTab(tabId);
+          const closeTab = window.__OPENWORK_ELECTRON__.browser.closeTab;
+          if (typeof closeTab !== "function") throw new Error("The native browser cannot close its return tab");
+          await closeTab(tabId);
         }, [tabId]));
       }
     },
