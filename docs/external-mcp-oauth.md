@@ -31,6 +31,13 @@ older per-connection callback. Reconnecting therefore uses the exact redirect
 URI that was registered with the provider and does not rewrite credentials,
 tokens, access grants, or plugin bindings.
 
+One exception keeps stored state truthful: when a row still carries a
+per-connection callback mode but its administrator-supplied client recorded the
+shared callback as its registered redirect, starting authorization records the
+shared mode on that row. The redirect sent to the provider, the client
+registration, credentials, grants, and bindings do not change; only
+transactions signed with the stale mode keep failing closed.
+
 ## Add a connection
 
 In Cloud → Connections, enter the MCP server URL. OpenWork automatically runs

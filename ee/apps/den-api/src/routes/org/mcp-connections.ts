@@ -49,6 +49,7 @@ import {
   listExternalMcpTools,
 } from "../../capability-sources/external-mcp-client-runtime.js"
 import {
+  adoptRegisteredSharedExternalMcpOAuthCallback,
   confirmExternalMcpIssuerReview,
   createExternalMcpConnection,
   deleteExternalMcpConnection,
@@ -3087,6 +3088,23 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         const member = connection.credentialMode === "per_member"
           ? { orgMembershipId: payload.currentMember.id }
           : undefined
+        if (connection.oauthConfiguration?.callbackMode !== "shared-v1") {
+          // Rows isolated in July kept their admin-registered client, whose
+          // recorded shared redirect is what the provider still receives.
+          // Sign the mode that redirect actually uses, or the shared callback
+          // route rejects the transaction after provider consent.
+          const adopted = await adoptRegisteredSharedExternalMcpOAuthCallback({
+            organizationId: payload.organization.id,
+            connectionId: externalMcpConnectionId,
+          })
+          if (adopted) {
+            connection = adopted
+            logger.info("external_mcp_oauth_registered_shared_callback_adopted", {
+              connection_id: connection.id,
+              organization_id: payload.organization.id,
+            })
+          }
+        }
         const beginAuthorization = async (target: ExternalMcpConnectionRow) => {
           const callbackMode = target.oauthConfiguration?.callbackMode ?? "legacy-v1"
           const responseIssuerRequired = authorizationResponseIssuerRequired(target)

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
+import { queryDenDatabase } from "@openwork/env";
 import { eventually, mcpMock, needs, server, test } from "@openwork/testkit";
 import { bootServer, isRecord, stopChild } from "../worlds/openwork-server-cli.ts";
 
@@ -212,3 +213,77 @@ for (const issuerSupport of [true, false, undefined]) {
     }
   });
 }
+
+// Rows isolated in July kept their admin-registered client, so the provider
+// still receives that client's shared redirect while Den signed a per-connection
+// mode the shared callback route rejects. This journey seeds that stored state
+// through the database (no supported surface produces it today) and signs in.
+test("Den member sign-in recovers an isolated connection whose pre-registered client uses the shared callback", { timeout: 300_000 }, async ({ place, evidence }) => {
+  needs({ commands: ["bun"] });
+  await using den = await server({
+    place, web: false,
+    mocks: { connector: mcpMock({ authorizationResponseIssuerSupported: false }) },
+    org: { name: `OAuth Callback Mode ${Date.now()}`, members: { teammate: {} } },
+  });
+  if (!den.database) throw new Error("Seeding the historical callback mode requires the isolated local testkit database");
+  const provider = den.mocks.connector;
+  const adminHeaders = { authorization: `Bearer ${den.admin.token}` };
+  const memberHeaders = { authorization: `Bearer ${den.members.teammate.token}` };
+  const tokenRequests = async () => (await provider.requests()).filter((entry) => entry.path === "/token").length;
+
+  const created = await denFetch(den.admin, "/v1/mcp-connections", {
+    method: "POST", headers: adminHeaders,
+    body: JSON.stringify({
+      name: "Registered shared callback", url: provider.mcpUrl, authType: "oauth", credentialMode: "per_member",
+      oauthClient: { clientId: "mock-preregistered-client", clientSecret: "mock-preregistered-secret", tokenEndpointAuthMethod: "client_secret_post" },
+      access: { orgWide: true },
+    }),
+  });
+  expect(created.response.status, created.text).toBe(200);
+  if (!isRecord(created.body) || typeof created.body.id !== "string" || typeof created.body.oauthCallbackUrl !== "string") throw new Error("Connection id or callback URL missing");
+  const id = created.body.id;
+  const sharedCallback = created.body.oauthCallbackUrl;
+  expect(new URL(sharedCallback).pathname).toBe("/v1/mcp-connections/oauth/callback");
+  expect(created.body).toMatchObject({ oauthCallbackMode: "shared-v1", oauthRegistrationSource: "pre-registered", oauthClientId: "mock-preregistered-client" });
+  await queryDenDatabase(den.database.url, "UPDATE external_mcp_connection SET oauth_configuration = JSON_SET(oauth_configuration, '$.callbackMode', 'isolated-v1') WHERE id = ?", [id]);
+
+  const detail = async () => {
+    const listed = await denFetch(den.admin, "/v1/mcp-connections?scope=manageable", { headers: adminHeaders });
+    expect(listed.response.status, listed.text).toBe(200);
+    if (!isRecord(listed.body) || !Array.isArray(listed.body.connections)) throw new Error("Connections missing");
+    const connection = listed.body.connections.find((entry) => isRecord(entry) && entry.id === id);
+    if (!isRecord(connection)) throw new Error("Seeded connection missing from the manageable list");
+    return connection;
+  };
+  expect(await detail()).toMatchObject({ oauthCallbackMode: "isolated-v1", oauthCallbackUrl: sharedCallback, connected: false });
+  evidence.recordAssertionEvidence("Stored callback mode disagrees with the registered redirect", "Admin detail reported an isolated-v1 callback mode while the effective callback URL was the shared route.", true);
+
+  const started = await denFetch(den.members.teammate, `/v1/mcp-connections/${id}/connect/start`, { headers: memberHeaders });
+  expect(started.response.status, started.text).toBe(200);
+  if (!isRecord(started.body) || typeof started.body.authorizeUrl !== "string") throw new Error("Authorization URL missing");
+  const authorize = new URL(started.body.authorizeUrl);
+  expect(authorize.searchParams.get("client_id")).toBe("mock-preregistered-client");
+  expect(authorize.searchParams.get("redirect_uri")).toBe(sharedCallback);
+  expect(authorize.searchParams.get("code_challenge_method")).toBe("S256");
+  expect(await detail()).toMatchObject({ oauthCallbackMode: "shared-v1", oauthCallbackUrl: sharedCallback, oauthClientId: "mock-preregistered-client", oauthRegistrationSource: "pre-registered", connected: false });
+  evidence.recordAssertionEvidence("Member sign-in records the shared callback mode without changing the registration", "connect/start sent the registered shared redirect with the same pre-registered client id; the stored mode now reads shared-v1 and nothing is connected yet.", true);
+
+  const redirect = await fetch(authorize, { redirect: "manual" });
+  expect(redirect.status).toBe(302);
+  const callback = new URL(redirect.headers.get("location")!);
+  expect(`${callback.origin}${callback.pathname}`).toBe(sharedCallback);
+  const before = await tokenRequests();
+  const completed = await fetch(callback, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+  const html = await completed.text();
+  expect(completed.status, html).toBe(200);
+  expect(html).toContain("connected");
+  expect(await tokenRequests()).toBe(before + 1);
+  expect(await detail()).toMatchObject({ connected: true, oauthCallbackMode: "shared-v1" });
+  const tools = await denFetch(den.members.teammate, `/v1/mcp-connections/${id}/tools`, { headers: memberHeaders });
+  expect(tools.response.status, tools.text).toBe(200);
+  expect(tools.text).toContain("\"tools\"");
+  const replay = await fetch(callback, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+  expect(replay.status).toBe(400);
+  expect(await tokenRequests()).toBe(before + 1);
+  evidence.recordAssertionEvidence("Shared callback completes sign-in and authenticated discovery after recovery", "The provider redirected to the shared route; the callback returned HTTP 200 with exactly one token exchange, the member listed tools with the new credential, and replaying the callback was rejected without another exchange.", true);
+});
