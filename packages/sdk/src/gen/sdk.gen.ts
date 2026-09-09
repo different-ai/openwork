@@ -9,6 +9,10 @@ import type {
   AppendGoogleSheetsValuesResponses,
   ArchiveAutomationErrors,
   ArchiveAutomationResponses,
+  AutomationAction,
+  AutomationExecutionTarget,
+  AutomationModel,
+  AutomationSchedule,
   CancelAutomationRunErrors,
   CancelAutomationRunResponses,
   CancelMicrosoft365CalendarEventErrors,
@@ -2185,73 +2189,15 @@ export class DenClient extends HeyApiClient {
       body:
         | {
             name: string;
-            schedule:
-              | {
-                  kind: "once";
-                  timezone: string;
-                  at: number;
-                }
-              | {
-                  kind: "daily";
-                  timezone: string;
-                  hour: number;
-                  minute: number;
-                }
-              | {
-                  kind: "weekly";
-                  timezone: string;
-                  daysOfWeek: Array<number>;
-                  hour: number;
-                  minute: number;
-                };
-            action:
-              | {
-                  kind: "agent";
-                  instructions: string;
-                  model: {
-                    providerId: string;
-                    modelId: string;
-                    variant?: string | null;
-                  };
-                }
-              | {
-                  kind: "saved_script";
-                  script: {
-                    pluginId: string;
-                    configObjectId: string;
-                    configObjectVersionId: string;
-                  };
-                  input?: unknown;
-                };
-            executionTarget: "desktop" | "cloud";
+            schedule: AutomationSchedule;
+            action: AutomationAction;
+            executionTarget: AutomationExecutionTarget;
           }
         | {
             name: string;
             instructions: string;
-            schedule:
-              | {
-                  kind: "once";
-                  timezone: string;
-                  at: number;
-                }
-              | {
-                  kind: "daily";
-                  timezone: string;
-                  hour: number;
-                  minute: number;
-                }
-              | {
-                  kind: "weekly";
-                  timezone: string;
-                  daysOfWeek: Array<number>;
-                  hour: number;
-                  minute: number;
-                };
-            model: {
-              providerId: string;
-              modelId: string;
-              variant?: string | null;
-            };
+            schedule: AutomationSchedule;
+            model: AutomationModel;
             workspaceId?: string | null;
           };
     },
@@ -2278,44 +2224,8 @@ export class DenClient extends HeyApiClient {
   public createCloudAutomation<ThrowOnError extends boolean = false>(
     parameters: {
       name: string;
-      schedule:
-        | {
-            kind: "once";
-            timezone: string;
-            at: number;
-          }
-        | {
-            kind: "daily";
-            timezone: string;
-            hour: number;
-            minute: number;
-          }
-        | {
-            kind: "weekly";
-            timezone: string;
-            daysOfWeek: Array<number>;
-            hour: number;
-            minute: number;
-          };
-      action:
-        | {
-            kind: "agent";
-            instructions: string;
-            model: {
-              providerId: string;
-              modelId: string;
-              variant?: string | null;
-            };
-          }
-        | {
-            kind: "saved_script";
-            script: {
-              pluginId: string;
-              configObjectId: string;
-              configObjectVersionId: string;
-            };
-            input?: unknown;
-          };
+      schedule: AutomationSchedule;
+      action: AutomationAction;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2395,50 +2305,10 @@ export class DenClient extends HeyApiClient {
       id: string;
       name?: string;
       instructions?: string;
-      schedule?:
-        | {
-            kind: "once";
-            timezone: string;
-            at: number;
-          }
-        | {
-            kind: "daily";
-            timezone: string;
-            hour: number;
-            minute: number;
-          }
-        | {
-            kind: "weekly";
-            timezone: string;
-            daysOfWeek: Array<number>;
-            hour: number;
-            minute: number;
-          };
-      model?: {
-        providerId: string;
-        modelId: string;
-        variant?: string | null;
-      };
-      action?:
-        | {
-            kind: "agent";
-            instructions: string;
-            model: {
-              providerId: string;
-              modelId: string;
-              variant?: string | null;
-            };
-          }
-        | {
-            kind: "saved_script";
-            script: {
-              pluginId: string;
-              configObjectId: string;
-              configObjectVersionId: string;
-            };
-            input?: unknown;
-          };
-      executionTarget?: "desktop" | "cloud";
+      schedule?: AutomationSchedule;
+      model?: AutomationModel;
+      action?: AutomationAction;
+      executionTarget?: AutomationExecutionTarget;
       workspaceId?: string | null;
     },
     options?: Options<never, ThrowOnError>,

@@ -326,9 +326,231 @@ export type CurrentUserDesktopConfigResponse = {
   onboardingPromptDescriptions?: Array<string>;
 };
 
+export type AutomationRunnerTokenResponse = {
+  token: string;
+  expiresAt: number;
+  eventsPath: "/v1/automation-runners/events";
+};
+
+export type AutomationDesktopRunnerPresence = {
+  connected: boolean;
+  lastSeenAt: number | null;
+};
+
+export type AutomationModel = {
+  providerId: string;
+  modelId: string;
+  variant?: string | null;
+};
+
+export type AutomationRunTrigger = "scheduled" | "recovery" | "manual";
+
+export type AutomationRunStatus = "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
+
+export type AutomationExecutionTarget = "desktop" | "cloud";
+
+export type AutomationExecutionThread = {
+  id: string;
+  threadKind: "automation";
+  executionLocation: "desktop" | "cloud";
+  automationId: string;
+  automationRunId: string;
+  engineKind: string;
+  nativeThreadId?: string | null;
+  workspaceId?: string | null;
+};
+
+export type AutomationError = {
+  code:
+    | "owner_membership_lost"
+    | "model_access_lost"
+    | "provider_unavailable"
+    | "connect_access_unavailable"
+    | "openwork_web_access_required"
+    | "execution_runtime_unavailable"
+    | "execution_failed"
+    | "execution_timed_out"
+    | "runner_unavailable"
+    | "cancelled"
+    | "lease_lost"
+    | "internal_error";
+  message: string;
+  retryable: boolean;
+};
+
+export type AutomationUsage = {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costMicros: number | null;
+};
+
+export type AutomationRun = {
+  id: string;
+  automationId: string;
+  revisionId: string;
+  trigger: AutomationRunTrigger;
+  scheduledFor: number | null;
+  idempotencyKey: string;
+  status: AutomationRunStatus;
+  leaseOwner: string | null;
+  leaseExpiresAt: number | null;
+  heartbeatAt: number | null;
+  attemptCount: number;
+  executionTarget: AutomationExecutionTarget;
+  executionThread: AutomationExecutionThread | null;
+  providerId: string;
+  modelId: string;
+  modelVariant?: string | null;
+  startedAt: number | null;
+  finishedAt: number | null;
+  error: AutomationError | null;
+  resultSummary: string | null;
+  codemodeReceiptId?: string | null;
+  validatedResult?: unknown;
+  usage: AutomationUsage;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type AutomationRunResponse = {
+  run: AutomationRun;
+};
+
+export type AutomationState = "active" | "inactive" | "needs_attention" | "archived";
+
+export type AutomationNeedsAttentionReason = {
+  code:
+    | "owner_membership_lost"
+    | "model_access_lost"
+    | "provider_unavailable"
+    | "connect_access_unavailable"
+    | "openwork_web_access_required"
+    | "execution_runtime_unavailable";
+  message: string;
+  occurredAt: number;
+};
+
+export type Automation = {
+  id: string;
+  organizationId: string;
+  ownerMemberId: string;
+  name: string;
+  state: AutomationState;
+  currentRevisionId: string;
+  nextDueAt: number | null;
+  latestRunAt: number | null;
+  latestSuccessfulRunId?: string | null;
+  latestSuccessfulResult?: unknown;
+  needsAttentionReason: AutomationNeedsAttentionReason | null;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt: number | null;
+};
+
+export type AutomationSchedule =
+  | {
+      kind: "once";
+      timezone: string;
+      at: number;
+    }
+  | {
+      kind: "daily";
+      timezone: string;
+      hour: number;
+      minute: number;
+    }
+  | {
+      kind: "weekly";
+      timezone: string;
+      daysOfWeek: Array<number>;
+      hour: number;
+      minute: number;
+    };
+
+export type AutomationSavedScriptReference = {
+  pluginId: string;
+  configObjectId: string;
+  configObjectVersionId: string;
+};
+
+export type AutomationAction =
+  | {
+      kind: "agent";
+      instructions: string;
+      model: AutomationModel;
+    }
+  | {
+      kind: "saved_script";
+      script: AutomationSavedScriptReference;
+      input?: unknown;
+    };
+
+export type AutomationRevision = {
+  id: string;
+  automationId: string;
+  version: number;
+  instructions: string;
+  schedule: AutomationSchedule;
+  model: AutomationModel;
+  action?: AutomationAction;
+  executionTarget?: "desktop" | "cloud";
+  workspaceId?: string | null;
+  maximumRuntimeMs: number;
+  digest: string;
+  createdAt: number;
+};
+
+export type AutomationList = {
+  items: Array<{
+    automation: Automation;
+    revision: AutomationRevision;
+    latestRun: AutomationRun | null;
+  }>;
+  nextCursor: string | null;
+};
+
+export type AutomationDetail = {
+  automation: Automation;
+  revision: AutomationRevision;
+  latestRun: AutomationRun | null;
+};
+
 export type AutomationOpenWorkWebAccessRequiredError = {
   error: "openwork_web_access_required";
   message: string;
+};
+
+export type AutomationRunList = {
+  items: Array<AutomationRun>;
+  nextCursor: string | null;
+};
+
+export type AutomationRunEventType =
+  | "user"
+  | "assistant"
+  | "capability_search"
+  | "capability_execution"
+  | "usage"
+  | "warning"
+  | "terminal";
+
+export type AutomationRunEvent = {
+  id: string;
+  runId: string;
+  attempt: number;
+  sequence: number;
+  type: AutomationRunEventType;
+  payload: {
+    [key: string]: unknown;
+  };
+  createdAt: number;
+};
+
+export type AutomationRunReceipt = {
+  run: AutomationRun;
+  automation: Automation;
+  revision: AutomationRevision;
+  events: Array<AutomationRunEvent>;
 };
 
 export type OrganizationResponse = {
@@ -6042,11 +6264,7 @@ export type MintAutomationRunnerTokenResponses = {
   /**
    * Runner credential minted.
    */
-  200: {
-    token: string;
-    expiresAt: number;
-    eventsPath: "/v1/automation-runners/events";
-  };
+  200: AutomationRunnerTokenResponse;
 };
 
 export type MintAutomationRunnerTokenResponse =
@@ -6077,10 +6295,7 @@ export type GetAutomationDesktopRunnerPresenceResponses = {
   /**
    * Desktop runner presence.
    */
-  200: {
-    connected: boolean;
-    lastSeenAt: number | null;
-  };
+  200: AutomationDesktopRunnerPresence;
 };
 
 export type GetAutomationDesktopRunnerPresenceResponse =
@@ -6109,147 +6324,7 @@ export type ListAutomationsResponses = {
   /**
    * Automations returned.
    */
-  200: {
-    items: Array<{
-      automation: {
-        id: string;
-        organizationId: string;
-        ownerMemberId: string;
-        name: string;
-        state: "active" | "inactive" | "needs_attention" | "archived";
-        currentRevisionId: string;
-        nextDueAt: number | null;
-        latestRunAt: number | null;
-        latestSuccessfulRunId?: string | null;
-        latestSuccessfulResult?: unknown;
-        needsAttentionReason: {
-          code:
-            | "owner_membership_lost"
-            | "model_access_lost"
-            | "provider_unavailable"
-            | "connect_access_unavailable"
-            | "openwork_web_access_required"
-            | "execution_runtime_unavailable";
-          message: string;
-          occurredAt: number;
-        } | null;
-        createdAt: number;
-        updatedAt: number;
-        archivedAt: number | null;
-      };
-      revision: {
-        id: string;
-        automationId: string;
-        version: number;
-        instructions: string;
-        schedule:
-          | {
-              kind: "once";
-              timezone: string;
-              at: number;
-            }
-          | {
-              kind: "daily";
-              timezone: string;
-              hour: number;
-              minute: number;
-            }
-          | {
-              kind: "weekly";
-              timezone: string;
-              daysOfWeek: Array<number>;
-              hour: number;
-              minute: number;
-            };
-        model: {
-          providerId: string;
-          modelId: string;
-          variant?: string | null;
-        };
-        action?:
-          | {
-              kind: "agent";
-              instructions: string;
-              model: {
-                providerId: string;
-                modelId: string;
-                variant?: string | null;
-              };
-            }
-          | {
-              kind: "saved_script";
-              script: {
-                pluginId: string;
-                configObjectId: string;
-                configObjectVersionId: string;
-              };
-              input?: unknown;
-            };
-        executionTarget?: "desktop" | "cloud";
-        workspaceId?: string | null;
-        maximumRuntimeMs: number;
-        digest: string;
-        createdAt: number;
-      };
-      latestRun: {
-        id: string;
-        automationId: string;
-        revisionId: string;
-        trigger: "scheduled" | "recovery" | "manual";
-        scheduledFor: number | null;
-        idempotencyKey: string;
-        status: "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
-        leaseOwner: string | null;
-        leaseExpiresAt: number | null;
-        heartbeatAt: number | null;
-        attemptCount: number;
-        executionTarget: "desktop" | "cloud";
-        executionThread: {
-          id: string;
-          threadKind: "automation";
-          executionLocation: "desktop" | "cloud";
-          automationId: string;
-          automationRunId: string;
-          engineKind: string;
-          nativeThreadId?: string | null;
-          workspaceId?: string | null;
-        } | null;
-        providerId: string;
-        modelId: string;
-        modelVariant?: string | null;
-        startedAt: number | null;
-        finishedAt: number | null;
-        error: {
-          code:
-            | "owner_membership_lost"
-            | "model_access_lost"
-            | "provider_unavailable"
-            | "connect_access_unavailable"
-            | "openwork_web_access_required"
-            | "execution_runtime_unavailable"
-            | "execution_failed"
-            | "execution_timed_out"
-            | "runner_unavailable"
-            | "cancelled"
-            | "lease_lost"
-            | "internal_error";
-          message: string;
-          retryable: boolean;
-        } | null;
-        resultSummary: string | null;
-        codemodeReceiptId?: string | null;
-        validatedResult?: unknown;
-        usage: {
-          inputTokens: number | null;
-          outputTokens: number | null;
-          costMicros: number | null;
-        };
-        createdAt: number;
-        updatedAt: number;
-      } | null;
-    }>;
-    nextCursor: string | null;
-  };
+  200: AutomationList;
 };
 
 export type ListAutomationsResponse = ListAutomationsResponses[keyof ListAutomationsResponses];
@@ -6258,73 +6333,15 @@ export type CreateAutomationData = {
   body:
     | {
         name: string;
-        schedule:
-          | {
-              kind: "once";
-              timezone: string;
-              at: number;
-            }
-          | {
-              kind: "daily";
-              timezone: string;
-              hour: number;
-              minute: number;
-            }
-          | {
-              kind: "weekly";
-              timezone: string;
-              daysOfWeek: Array<number>;
-              hour: number;
-              minute: number;
-            };
-        action:
-          | {
-              kind: "agent";
-              instructions: string;
-              model: {
-                providerId: string;
-                modelId: string;
-                variant?: string | null;
-              };
-            }
-          | {
-              kind: "saved_script";
-              script: {
-                pluginId: string;
-                configObjectId: string;
-                configObjectVersionId: string;
-              };
-              input?: unknown;
-            };
-        executionTarget: "desktop" | "cloud";
+        schedule: AutomationSchedule;
+        action: AutomationAction;
+        executionTarget: AutomationExecutionTarget;
       }
     | {
         name: string;
         instructions: string;
-        schedule:
-          | {
-              kind: "once";
-              timezone: string;
-              at: number;
-            }
-          | {
-              kind: "daily";
-              timezone: string;
-              hour: number;
-              minute: number;
-            }
-          | {
-              kind: "weekly";
-              timezone: string;
-              daysOfWeek: Array<number>;
-              hour: number;
-              minute: number;
-            };
-        model: {
-          providerId: string;
-          modelId: string;
-          variant?: string | null;
-        };
+        schedule: AutomationSchedule;
+        model: AutomationModel;
         workspaceId?: string | null;
       };
   path?: never;
@@ -6357,144 +6374,7 @@ export type CreateAutomationResponses = {
   /**
    * Active Automation created.
    */
-  201: {
-    automation: {
-      id: string;
-      organizationId: string;
-      ownerMemberId: string;
-      name: string;
-      state: "active" | "inactive" | "needs_attention" | "archived";
-      currentRevisionId: string;
-      nextDueAt: number | null;
-      latestRunAt: number | null;
-      latestSuccessfulRunId?: string | null;
-      latestSuccessfulResult?: unknown;
-      needsAttentionReason: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable";
-        message: string;
-        occurredAt: number;
-      } | null;
-      createdAt: number;
-      updatedAt: number;
-      archivedAt: number | null;
-    };
-    revision: {
-      id: string;
-      automationId: string;
-      version: number;
-      instructions: string;
-      schedule:
-        | {
-            kind: "once";
-            timezone: string;
-            at: number;
-          }
-        | {
-            kind: "daily";
-            timezone: string;
-            hour: number;
-            minute: number;
-          }
-        | {
-            kind: "weekly";
-            timezone: string;
-            daysOfWeek: Array<number>;
-            hour: number;
-            minute: number;
-          };
-      model: {
-        providerId: string;
-        modelId: string;
-        variant?: string | null;
-      };
-      action?:
-        | {
-            kind: "agent";
-            instructions: string;
-            model: {
-              providerId: string;
-              modelId: string;
-              variant?: string | null;
-            };
-          }
-        | {
-            kind: "saved_script";
-            script: {
-              pluginId: string;
-              configObjectId: string;
-              configObjectVersionId: string;
-            };
-            input?: unknown;
-          };
-      executionTarget?: "desktop" | "cloud";
-      workspaceId?: string | null;
-      maximumRuntimeMs: number;
-      digest: string;
-      createdAt: number;
-    };
-    latestRun: {
-      id: string;
-      automationId: string;
-      revisionId: string;
-      trigger: "scheduled" | "recovery" | "manual";
-      scheduledFor: number | null;
-      idempotencyKey: string;
-      status: "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
-      leaseOwner: string | null;
-      leaseExpiresAt: number | null;
-      heartbeatAt: number | null;
-      attemptCount: number;
-      executionTarget: "desktop" | "cloud";
-      executionThread: {
-        id: string;
-        threadKind: "automation";
-        executionLocation: "desktop" | "cloud";
-        automationId: string;
-        automationRunId: string;
-        engineKind: string;
-        nativeThreadId?: string | null;
-        workspaceId?: string | null;
-      } | null;
-      providerId: string;
-      modelId: string;
-      modelVariant?: string | null;
-      startedAt: number | null;
-      finishedAt: number | null;
-      error: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable"
-          | "execution_failed"
-          | "execution_timed_out"
-          | "runner_unavailable"
-          | "cancelled"
-          | "lease_lost"
-          | "internal_error";
-        message: string;
-        retryable: boolean;
-      } | null;
-      resultSummary: string | null;
-      codemodeReceiptId?: string | null;
-      validatedResult?: unknown;
-      usage: {
-        inputTokens: number | null;
-        outputTokens: number | null;
-        costMicros: number | null;
-      };
-      createdAt: number;
-      updatedAt: number;
-    } | null;
-  };
+  201: AutomationDetail;
 };
 
 export type CreateAutomationResponse = CreateAutomationResponses[keyof CreateAutomationResponses];
@@ -6502,44 +6382,8 @@ export type CreateAutomationResponse = CreateAutomationResponses[keyof CreateAut
 export type CreateCloudAutomationData = {
   body: {
     name: string;
-    schedule:
-      | {
-          kind: "once";
-          timezone: string;
-          at: number;
-        }
-      | {
-          kind: "daily";
-          timezone: string;
-          hour: number;
-          minute: number;
-        }
-      | {
-          kind: "weekly";
-          timezone: string;
-          daysOfWeek: Array<number>;
-          hour: number;
-          minute: number;
-        };
-    action:
-      | {
-          kind: "agent";
-          instructions: string;
-          model: {
-            providerId: string;
-            modelId: string;
-            variant?: string | null;
-          };
-        }
-      | {
-          kind: "saved_script";
-          script: {
-            pluginId: string;
-            configObjectId: string;
-            configObjectVersionId: string;
-          };
-          input?: unknown;
-        };
+    schedule: AutomationSchedule;
+    action: AutomationAction;
   };
   path?: never;
   query?: never;
@@ -6571,144 +6415,7 @@ export type CreateCloudAutomationResponses = {
   /**
    * Active Cloud Automation created.
    */
-  201: {
-    automation: {
-      id: string;
-      organizationId: string;
-      ownerMemberId: string;
-      name: string;
-      state: "active" | "inactive" | "needs_attention" | "archived";
-      currentRevisionId: string;
-      nextDueAt: number | null;
-      latestRunAt: number | null;
-      latestSuccessfulRunId?: string | null;
-      latestSuccessfulResult?: unknown;
-      needsAttentionReason: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable";
-        message: string;
-        occurredAt: number;
-      } | null;
-      createdAt: number;
-      updatedAt: number;
-      archivedAt: number | null;
-    };
-    revision: {
-      id: string;
-      automationId: string;
-      version: number;
-      instructions: string;
-      schedule:
-        | {
-            kind: "once";
-            timezone: string;
-            at: number;
-          }
-        | {
-            kind: "daily";
-            timezone: string;
-            hour: number;
-            minute: number;
-          }
-        | {
-            kind: "weekly";
-            timezone: string;
-            daysOfWeek: Array<number>;
-            hour: number;
-            minute: number;
-          };
-      model: {
-        providerId: string;
-        modelId: string;
-        variant?: string | null;
-      };
-      action?:
-        | {
-            kind: "agent";
-            instructions: string;
-            model: {
-              providerId: string;
-              modelId: string;
-              variant?: string | null;
-            };
-          }
-        | {
-            kind: "saved_script";
-            script: {
-              pluginId: string;
-              configObjectId: string;
-              configObjectVersionId: string;
-            };
-            input?: unknown;
-          };
-      executionTarget?: "desktop" | "cloud";
-      workspaceId?: string | null;
-      maximumRuntimeMs: number;
-      digest: string;
-      createdAt: number;
-    };
-    latestRun: {
-      id: string;
-      automationId: string;
-      revisionId: string;
-      trigger: "scheduled" | "recovery" | "manual";
-      scheduledFor: number | null;
-      idempotencyKey: string;
-      status: "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
-      leaseOwner: string | null;
-      leaseExpiresAt: number | null;
-      heartbeatAt: number | null;
-      attemptCount: number;
-      executionTarget: "desktop" | "cloud";
-      executionThread: {
-        id: string;
-        threadKind: "automation";
-        executionLocation: "desktop" | "cloud";
-        automationId: string;
-        automationRunId: string;
-        engineKind: string;
-        nativeThreadId?: string | null;
-        workspaceId?: string | null;
-      } | null;
-      providerId: string;
-      modelId: string;
-      modelVariant?: string | null;
-      startedAt: number | null;
-      finishedAt: number | null;
-      error: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable"
-          | "execution_failed"
-          | "execution_timed_out"
-          | "runner_unavailable"
-          | "cancelled"
-          | "lease_lost"
-          | "internal_error";
-        message: string;
-        retryable: boolean;
-      } | null;
-      resultSummary: string | null;
-      codemodeReceiptId?: string | null;
-      validatedResult?: unknown;
-      usage: {
-        inputTokens: number | null;
-        outputTokens: number | null;
-        costMicros: number | null;
-      };
-      createdAt: number;
-      updatedAt: number;
-    } | null;
-  };
+  201: AutomationDetail;
 };
 
 export type CreateCloudAutomationResponse = CreateCloudAutomationResponses[keyof CreateCloudAutomationResponses];
@@ -6735,144 +6442,7 @@ export type ArchiveAutomationResponses = {
   /**
    * Automation archived.
    */
-  200: {
-    automation: {
-      id: string;
-      organizationId: string;
-      ownerMemberId: string;
-      name: string;
-      state: "active" | "inactive" | "needs_attention" | "archived";
-      currentRevisionId: string;
-      nextDueAt: number | null;
-      latestRunAt: number | null;
-      latestSuccessfulRunId?: string | null;
-      latestSuccessfulResult?: unknown;
-      needsAttentionReason: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable";
-        message: string;
-        occurredAt: number;
-      } | null;
-      createdAt: number;
-      updatedAt: number;
-      archivedAt: number | null;
-    };
-    revision: {
-      id: string;
-      automationId: string;
-      version: number;
-      instructions: string;
-      schedule:
-        | {
-            kind: "once";
-            timezone: string;
-            at: number;
-          }
-        | {
-            kind: "daily";
-            timezone: string;
-            hour: number;
-            minute: number;
-          }
-        | {
-            kind: "weekly";
-            timezone: string;
-            daysOfWeek: Array<number>;
-            hour: number;
-            minute: number;
-          };
-      model: {
-        providerId: string;
-        modelId: string;
-        variant?: string | null;
-      };
-      action?:
-        | {
-            kind: "agent";
-            instructions: string;
-            model: {
-              providerId: string;
-              modelId: string;
-              variant?: string | null;
-            };
-          }
-        | {
-            kind: "saved_script";
-            script: {
-              pluginId: string;
-              configObjectId: string;
-              configObjectVersionId: string;
-            };
-            input?: unknown;
-          };
-      executionTarget?: "desktop" | "cloud";
-      workspaceId?: string | null;
-      maximumRuntimeMs: number;
-      digest: string;
-      createdAt: number;
-    };
-    latestRun: {
-      id: string;
-      automationId: string;
-      revisionId: string;
-      trigger: "scheduled" | "recovery" | "manual";
-      scheduledFor: number | null;
-      idempotencyKey: string;
-      status: "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
-      leaseOwner: string | null;
-      leaseExpiresAt: number | null;
-      heartbeatAt: number | null;
-      attemptCount: number;
-      executionTarget: "desktop" | "cloud";
-      executionThread: {
-        id: string;
-        threadKind: "automation";
-        executionLocation: "desktop" | "cloud";
-        automationId: string;
-        automationRunId: string;
-        engineKind: string;
-        nativeThreadId?: string | null;
-        workspaceId?: string | null;
-      } | null;
-      providerId: string;
-      modelId: string;
-      modelVariant?: string | null;
-      startedAt: number | null;
-      finishedAt: number | null;
-      error: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable"
-          | "execution_failed"
-          | "execution_timed_out"
-          | "runner_unavailable"
-          | "cancelled"
-          | "lease_lost"
-          | "internal_error";
-        message: string;
-        retryable: boolean;
-      } | null;
-      resultSummary: string | null;
-      codemodeReceiptId?: string | null;
-      validatedResult?: unknown;
-      usage: {
-        inputTokens: number | null;
-        outputTokens: number | null;
-        costMicros: number | null;
-      };
-      createdAt: number;
-      updatedAt: number;
-    } | null;
-  };
+  200: AutomationDetail;
 };
 
 export type ArchiveAutomationResponse = ArchiveAutomationResponses[keyof ArchiveAutomationResponses];
@@ -6899,144 +6469,7 @@ export type GetAutomationResponses = {
   /**
    * Automation returned.
    */
-  200: {
-    automation: {
-      id: string;
-      organizationId: string;
-      ownerMemberId: string;
-      name: string;
-      state: "active" | "inactive" | "needs_attention" | "archived";
-      currentRevisionId: string;
-      nextDueAt: number | null;
-      latestRunAt: number | null;
-      latestSuccessfulRunId?: string | null;
-      latestSuccessfulResult?: unknown;
-      needsAttentionReason: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable";
-        message: string;
-        occurredAt: number;
-      } | null;
-      createdAt: number;
-      updatedAt: number;
-      archivedAt: number | null;
-    };
-    revision: {
-      id: string;
-      automationId: string;
-      version: number;
-      instructions: string;
-      schedule:
-        | {
-            kind: "once";
-            timezone: string;
-            at: number;
-          }
-        | {
-            kind: "daily";
-            timezone: string;
-            hour: number;
-            minute: number;
-          }
-        | {
-            kind: "weekly";
-            timezone: string;
-            daysOfWeek: Array<number>;
-            hour: number;
-            minute: number;
-          };
-      model: {
-        providerId: string;
-        modelId: string;
-        variant?: string | null;
-      };
-      action?:
-        | {
-            kind: "agent";
-            instructions: string;
-            model: {
-              providerId: string;
-              modelId: string;
-              variant?: string | null;
-            };
-          }
-        | {
-            kind: "saved_script";
-            script: {
-              pluginId: string;
-              configObjectId: string;
-              configObjectVersionId: string;
-            };
-            input?: unknown;
-          };
-      executionTarget?: "desktop" | "cloud";
-      workspaceId?: string | null;
-      maximumRuntimeMs: number;
-      digest: string;
-      createdAt: number;
-    };
-    latestRun: {
-      id: string;
-      automationId: string;
-      revisionId: string;
-      trigger: "scheduled" | "recovery" | "manual";
-      scheduledFor: number | null;
-      idempotencyKey: string;
-      status: "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
-      leaseOwner: string | null;
-      leaseExpiresAt: number | null;
-      heartbeatAt: number | null;
-      attemptCount: number;
-      executionTarget: "desktop" | "cloud";
-      executionThread: {
-        id: string;
-        threadKind: "automation";
-        executionLocation: "desktop" | "cloud";
-        automationId: string;
-        automationRunId: string;
-        engineKind: string;
-        nativeThreadId?: string | null;
-        workspaceId?: string | null;
-      } | null;
-      providerId: string;
-      modelId: string;
-      modelVariant?: string | null;
-      startedAt: number | null;
-      finishedAt: number | null;
-      error: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable"
-          | "execution_failed"
-          | "execution_timed_out"
-          | "runner_unavailable"
-          | "cancelled"
-          | "lease_lost"
-          | "internal_error";
-        message: string;
-        retryable: boolean;
-      } | null;
-      resultSummary: string | null;
-      codemodeReceiptId?: string | null;
-      validatedResult?: unknown;
-      usage: {
-        inputTokens: number | null;
-        outputTokens: number | null;
-        costMicros: number | null;
-      };
-      createdAt: number;
-      updatedAt: number;
-    } | null;
-  };
+  200: AutomationDetail;
 };
 
 export type GetAutomationResponse = GetAutomationResponses[keyof GetAutomationResponses];
@@ -7045,50 +6478,10 @@ export type UpdateAutomationData = {
   body: {
     name?: string;
     instructions?: string;
-    schedule?:
-      | {
-          kind: "once";
-          timezone: string;
-          at: number;
-        }
-      | {
-          kind: "daily";
-          timezone: string;
-          hour: number;
-          minute: number;
-        }
-      | {
-          kind: "weekly";
-          timezone: string;
-          daysOfWeek: Array<number>;
-          hour: number;
-          minute: number;
-        };
-    model?: {
-      providerId: string;
-      modelId: string;
-      variant?: string | null;
-    };
-    action?:
-      | {
-          kind: "agent";
-          instructions: string;
-          model: {
-            providerId: string;
-            modelId: string;
-            variant?: string | null;
-          };
-        }
-      | {
-          kind: "saved_script";
-          script: {
-            pluginId: string;
-            configObjectId: string;
-            configObjectVersionId: string;
-          };
-          input?: unknown;
-        };
-    executionTarget?: "desktop" | "cloud";
+    schedule?: AutomationSchedule;
+    model?: AutomationModel;
+    action?: AutomationAction;
+    executionTarget?: AutomationExecutionTarget;
     workspaceId?: string | null;
   };
   path: {
@@ -7115,144 +6508,7 @@ export type UpdateAutomationResponses = {
   /**
    * Automation updated.
    */
-  200: {
-    automation: {
-      id: string;
-      organizationId: string;
-      ownerMemberId: string;
-      name: string;
-      state: "active" | "inactive" | "needs_attention" | "archived";
-      currentRevisionId: string;
-      nextDueAt: number | null;
-      latestRunAt: number | null;
-      latestSuccessfulRunId?: string | null;
-      latestSuccessfulResult?: unknown;
-      needsAttentionReason: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable";
-        message: string;
-        occurredAt: number;
-      } | null;
-      createdAt: number;
-      updatedAt: number;
-      archivedAt: number | null;
-    };
-    revision: {
-      id: string;
-      automationId: string;
-      version: number;
-      instructions: string;
-      schedule:
-        | {
-            kind: "once";
-            timezone: string;
-            at: number;
-          }
-        | {
-            kind: "daily";
-            timezone: string;
-            hour: number;
-            minute: number;
-          }
-        | {
-            kind: "weekly";
-            timezone: string;
-            daysOfWeek: Array<number>;
-            hour: number;
-            minute: number;
-          };
-      model: {
-        providerId: string;
-        modelId: string;
-        variant?: string | null;
-      };
-      action?:
-        | {
-            kind: "agent";
-            instructions: string;
-            model: {
-              providerId: string;
-              modelId: string;
-              variant?: string | null;
-            };
-          }
-        | {
-            kind: "saved_script";
-            script: {
-              pluginId: string;
-              configObjectId: string;
-              configObjectVersionId: string;
-            };
-            input?: unknown;
-          };
-      executionTarget?: "desktop" | "cloud";
-      workspaceId?: string | null;
-      maximumRuntimeMs: number;
-      digest: string;
-      createdAt: number;
-    };
-    latestRun: {
-      id: string;
-      automationId: string;
-      revisionId: string;
-      trigger: "scheduled" | "recovery" | "manual";
-      scheduledFor: number | null;
-      idempotencyKey: string;
-      status: "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
-      leaseOwner: string | null;
-      leaseExpiresAt: number | null;
-      heartbeatAt: number | null;
-      attemptCount: number;
-      executionTarget: "desktop" | "cloud";
-      executionThread: {
-        id: string;
-        threadKind: "automation";
-        executionLocation: "desktop" | "cloud";
-        automationId: string;
-        automationRunId: string;
-        engineKind: string;
-        nativeThreadId?: string | null;
-        workspaceId?: string | null;
-      } | null;
-      providerId: string;
-      modelId: string;
-      modelVariant?: string | null;
-      startedAt: number | null;
-      finishedAt: number | null;
-      error: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable"
-          | "execution_failed"
-          | "execution_timed_out"
-          | "runner_unavailable"
-          | "cancelled"
-          | "lease_lost"
-          | "internal_error";
-        message: string;
-        retryable: boolean;
-      } | null;
-      resultSummary: string | null;
-      codemodeReceiptId?: string | null;
-      validatedResult?: unknown;
-      usage: {
-        inputTokens: number | null;
-        outputTokens: number | null;
-        costMicros: number | null;
-      };
-      createdAt: number;
-      updatedAt: number;
-    } | null;
-  };
+  200: AutomationDetail;
 };
 
 export type UpdateAutomationResponse = UpdateAutomationResponses[keyof UpdateAutomationResponses];
@@ -7283,144 +6539,7 @@ export type ActivateAutomationResponses = {
   /**
    * Automation state returned.
    */
-  200: {
-    automation: {
-      id: string;
-      organizationId: string;
-      ownerMemberId: string;
-      name: string;
-      state: "active" | "inactive" | "needs_attention" | "archived";
-      currentRevisionId: string;
-      nextDueAt: number | null;
-      latestRunAt: number | null;
-      latestSuccessfulRunId?: string | null;
-      latestSuccessfulResult?: unknown;
-      needsAttentionReason: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable";
-        message: string;
-        occurredAt: number;
-      } | null;
-      createdAt: number;
-      updatedAt: number;
-      archivedAt: number | null;
-    };
-    revision: {
-      id: string;
-      automationId: string;
-      version: number;
-      instructions: string;
-      schedule:
-        | {
-            kind: "once";
-            timezone: string;
-            at: number;
-          }
-        | {
-            kind: "daily";
-            timezone: string;
-            hour: number;
-            minute: number;
-          }
-        | {
-            kind: "weekly";
-            timezone: string;
-            daysOfWeek: Array<number>;
-            hour: number;
-            minute: number;
-          };
-      model: {
-        providerId: string;
-        modelId: string;
-        variant?: string | null;
-      };
-      action?:
-        | {
-            kind: "agent";
-            instructions: string;
-            model: {
-              providerId: string;
-              modelId: string;
-              variant?: string | null;
-            };
-          }
-        | {
-            kind: "saved_script";
-            script: {
-              pluginId: string;
-              configObjectId: string;
-              configObjectVersionId: string;
-            };
-            input?: unknown;
-          };
-      executionTarget?: "desktop" | "cloud";
-      workspaceId?: string | null;
-      maximumRuntimeMs: number;
-      digest: string;
-      createdAt: number;
-    };
-    latestRun: {
-      id: string;
-      automationId: string;
-      revisionId: string;
-      trigger: "scheduled" | "recovery" | "manual";
-      scheduledFor: number | null;
-      idempotencyKey: string;
-      status: "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
-      leaseOwner: string | null;
-      leaseExpiresAt: number | null;
-      heartbeatAt: number | null;
-      attemptCount: number;
-      executionTarget: "desktop" | "cloud";
-      executionThread: {
-        id: string;
-        threadKind: "automation";
-        executionLocation: "desktop" | "cloud";
-        automationId: string;
-        automationRunId: string;
-        engineKind: string;
-        nativeThreadId?: string | null;
-        workspaceId?: string | null;
-      } | null;
-      providerId: string;
-      modelId: string;
-      modelVariant?: string | null;
-      startedAt: number | null;
-      finishedAt: number | null;
-      error: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable"
-          | "execution_failed"
-          | "execution_timed_out"
-          | "runner_unavailable"
-          | "cancelled"
-          | "lease_lost"
-          | "internal_error";
-        message: string;
-        retryable: boolean;
-      } | null;
-      resultSummary: string | null;
-      codemodeReceiptId?: string | null;
-      validatedResult?: unknown;
-      usage: {
-        inputTokens: number | null;
-        outputTokens: number | null;
-        costMicros: number | null;
-      };
-      createdAt: number;
-      updatedAt: number;
-    } | null;
-  };
+  200: AutomationDetail;
 };
 
 export type ActivateAutomationResponse = ActivateAutomationResponses[keyof ActivateAutomationResponses];
@@ -7447,144 +6566,7 @@ export type DeactivateAutomationResponses = {
   /**
    * Automation state returned.
    */
-  200: {
-    automation: {
-      id: string;
-      organizationId: string;
-      ownerMemberId: string;
-      name: string;
-      state: "active" | "inactive" | "needs_attention" | "archived";
-      currentRevisionId: string;
-      nextDueAt: number | null;
-      latestRunAt: number | null;
-      latestSuccessfulRunId?: string | null;
-      latestSuccessfulResult?: unknown;
-      needsAttentionReason: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable";
-        message: string;
-        occurredAt: number;
-      } | null;
-      createdAt: number;
-      updatedAt: number;
-      archivedAt: number | null;
-    };
-    revision: {
-      id: string;
-      automationId: string;
-      version: number;
-      instructions: string;
-      schedule:
-        | {
-            kind: "once";
-            timezone: string;
-            at: number;
-          }
-        | {
-            kind: "daily";
-            timezone: string;
-            hour: number;
-            minute: number;
-          }
-        | {
-            kind: "weekly";
-            timezone: string;
-            daysOfWeek: Array<number>;
-            hour: number;
-            minute: number;
-          };
-      model: {
-        providerId: string;
-        modelId: string;
-        variant?: string | null;
-      };
-      action?:
-        | {
-            kind: "agent";
-            instructions: string;
-            model: {
-              providerId: string;
-              modelId: string;
-              variant?: string | null;
-            };
-          }
-        | {
-            kind: "saved_script";
-            script: {
-              pluginId: string;
-              configObjectId: string;
-              configObjectVersionId: string;
-            };
-            input?: unknown;
-          };
-      executionTarget?: "desktop" | "cloud";
-      workspaceId?: string | null;
-      maximumRuntimeMs: number;
-      digest: string;
-      createdAt: number;
-    };
-    latestRun: {
-      id: string;
-      automationId: string;
-      revisionId: string;
-      trigger: "scheduled" | "recovery" | "manual";
-      scheduledFor: number | null;
-      idempotencyKey: string;
-      status: "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
-      leaseOwner: string | null;
-      leaseExpiresAt: number | null;
-      heartbeatAt: number | null;
-      attemptCount: number;
-      executionTarget: "desktop" | "cloud";
-      executionThread: {
-        id: string;
-        threadKind: "automation";
-        executionLocation: "desktop" | "cloud";
-        automationId: string;
-        automationRunId: string;
-        engineKind: string;
-        nativeThreadId?: string | null;
-        workspaceId?: string | null;
-      } | null;
-      providerId: string;
-      modelId: string;
-      modelVariant?: string | null;
-      startedAt: number | null;
-      finishedAt: number | null;
-      error: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable"
-          | "execution_failed"
-          | "execution_timed_out"
-          | "runner_unavailable"
-          | "cancelled"
-          | "lease_lost"
-          | "internal_error";
-        message: string;
-        retryable: boolean;
-      } | null;
-      resultSummary: string | null;
-      codemodeReceiptId?: string | null;
-      validatedResult?: unknown;
-      usage: {
-        inputTokens: number | null;
-        outputTokens: number | null;
-        costMicros: number | null;
-      };
-      createdAt: number;
-      updatedAt: number;
-    } | null;
-  };
+  200: AutomationDetail;
 };
 
 export type DeactivateAutomationResponse = DeactivateAutomationResponses[keyof DeactivateAutomationResponses];
@@ -7615,64 +6597,7 @@ export type RunAutomationNowResponses = {
   /**
    * Run queued.
    */
-  202: {
-    run: {
-      id: string;
-      automationId: string;
-      revisionId: string;
-      trigger: "scheduled" | "recovery" | "manual";
-      scheduledFor: number | null;
-      idempotencyKey: string;
-      status: "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
-      leaseOwner: string | null;
-      leaseExpiresAt: number | null;
-      heartbeatAt: number | null;
-      attemptCount: number;
-      executionTarget: "desktop" | "cloud";
-      executionThread: {
-        id: string;
-        threadKind: "automation";
-        executionLocation: "desktop" | "cloud";
-        automationId: string;
-        automationRunId: string;
-        engineKind: string;
-        nativeThreadId?: string | null;
-        workspaceId?: string | null;
-      } | null;
-      providerId: string;
-      modelId: string;
-      modelVariant?: string | null;
-      startedAt: number | null;
-      finishedAt: number | null;
-      error: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable"
-          | "execution_failed"
-          | "execution_timed_out"
-          | "runner_unavailable"
-          | "cancelled"
-          | "lease_lost"
-          | "internal_error";
-        message: string;
-        retryable: boolean;
-      } | null;
-      resultSummary: string | null;
-      codemodeReceiptId?: string | null;
-      validatedResult?: unknown;
-      usage: {
-        inputTokens: number | null;
-        outputTokens: number | null;
-        costMicros: number | null;
-      };
-      createdAt: number;
-      updatedAt: number;
-    };
-  };
+  202: AutomationRunResponse;
 };
 
 export type RunAutomationNowResponse = RunAutomationNowResponses[keyof RunAutomationNowResponses];
@@ -7710,65 +6635,7 @@ export type ListAutomationRunsResponses = {
   /**
    * Run history returned.
    */
-  200: {
-    items: Array<{
-      id: string;
-      automationId: string;
-      revisionId: string;
-      trigger: "scheduled" | "recovery" | "manual";
-      scheduledFor: number | null;
-      idempotencyKey: string;
-      status: "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
-      leaseOwner: string | null;
-      leaseExpiresAt: number | null;
-      heartbeatAt: number | null;
-      attemptCount: number;
-      executionTarget: "desktop" | "cloud";
-      executionThread: {
-        id: string;
-        threadKind: "automation";
-        executionLocation: "desktop" | "cloud";
-        automationId: string;
-        automationRunId: string;
-        engineKind: string;
-        nativeThreadId?: string | null;
-        workspaceId?: string | null;
-      } | null;
-      providerId: string;
-      modelId: string;
-      modelVariant?: string | null;
-      startedAt: number | null;
-      finishedAt: number | null;
-      error: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable"
-          | "execution_failed"
-          | "execution_timed_out"
-          | "runner_unavailable"
-          | "cancelled"
-          | "lease_lost"
-          | "internal_error";
-        message: string;
-        retryable: boolean;
-      } | null;
-      resultSummary: string | null;
-      codemodeReceiptId?: string | null;
-      validatedResult?: unknown;
-      usage: {
-        inputTokens: number | null;
-        outputTokens: number | null;
-        costMicros: number | null;
-      };
-      createdAt: number;
-      updatedAt: number;
-    }>;
-    nextCursor: string | null;
-  };
+  200: AutomationRunList;
 };
 
 export type ListAutomationRunsResponse = ListAutomationRunsResponses[keyof ListAutomationRunsResponses];
@@ -7795,155 +6662,7 @@ export type GetAutomationRunResponses = {
   /**
    * Durable run receipt returned.
    */
-  200: {
-    run: {
-      id: string;
-      automationId: string;
-      revisionId: string;
-      trigger: "scheduled" | "recovery" | "manual";
-      scheduledFor: number | null;
-      idempotencyKey: string;
-      status: "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
-      leaseOwner: string | null;
-      leaseExpiresAt: number | null;
-      heartbeatAt: number | null;
-      attemptCount: number;
-      executionTarget: "desktop" | "cloud";
-      executionThread: {
-        id: string;
-        threadKind: "automation";
-        executionLocation: "desktop" | "cloud";
-        automationId: string;
-        automationRunId: string;
-        engineKind: string;
-        nativeThreadId?: string | null;
-        workspaceId?: string | null;
-      } | null;
-      providerId: string;
-      modelId: string;
-      modelVariant?: string | null;
-      startedAt: number | null;
-      finishedAt: number | null;
-      error: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable"
-          | "execution_failed"
-          | "execution_timed_out"
-          | "runner_unavailable"
-          | "cancelled"
-          | "lease_lost"
-          | "internal_error";
-        message: string;
-        retryable: boolean;
-      } | null;
-      resultSummary: string | null;
-      codemodeReceiptId?: string | null;
-      validatedResult?: unknown;
-      usage: {
-        inputTokens: number | null;
-        outputTokens: number | null;
-        costMicros: number | null;
-      };
-      createdAt: number;
-      updatedAt: number;
-    };
-    automation: {
-      id: string;
-      organizationId: string;
-      ownerMemberId: string;
-      name: string;
-      state: "active" | "inactive" | "needs_attention" | "archived";
-      currentRevisionId: string;
-      nextDueAt: number | null;
-      latestRunAt: number | null;
-      latestSuccessfulRunId?: string | null;
-      latestSuccessfulResult?: unknown;
-      needsAttentionReason: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable";
-        message: string;
-        occurredAt: number;
-      } | null;
-      createdAt: number;
-      updatedAt: number;
-      archivedAt: number | null;
-    };
-    revision: {
-      id: string;
-      automationId: string;
-      version: number;
-      instructions: string;
-      schedule:
-        | {
-            kind: "once";
-            timezone: string;
-            at: number;
-          }
-        | {
-            kind: "daily";
-            timezone: string;
-            hour: number;
-            minute: number;
-          }
-        | {
-            kind: "weekly";
-            timezone: string;
-            daysOfWeek: Array<number>;
-            hour: number;
-            minute: number;
-          };
-      model: {
-        providerId: string;
-        modelId: string;
-        variant?: string | null;
-      };
-      action?:
-        | {
-            kind: "agent";
-            instructions: string;
-            model: {
-              providerId: string;
-              modelId: string;
-              variant?: string | null;
-            };
-          }
-        | {
-            kind: "saved_script";
-            script: {
-              pluginId: string;
-              configObjectId: string;
-              configObjectVersionId: string;
-            };
-            input?: unknown;
-          };
-      executionTarget?: "desktop" | "cloud";
-      workspaceId?: string | null;
-      maximumRuntimeMs: number;
-      digest: string;
-      createdAt: number;
-    };
-    events: Array<{
-      id: string;
-      runId: string;
-      attempt: number;
-      sequence: number;
-      type: "user" | "assistant" | "capability_search" | "capability_execution" | "usage" | "warning" | "terminal";
-      payload: {
-        [key: string]: unknown;
-      };
-      createdAt: number;
-    }>;
-  };
+  200: AutomationRunReceipt;
 };
 
 export type GetAutomationRunResponse = GetAutomationRunResponses[keyof GetAutomationRunResponses];
@@ -7970,64 +6689,7 @@ export type CancelAutomationRunResponses = {
   /**
    * Cancellation requested.
    */
-  200: {
-    run: {
-      id: string;
-      automationId: string;
-      revisionId: string;
-      trigger: "scheduled" | "recovery" | "manual";
-      scheduledFor: number | null;
-      idempotencyKey: string;
-      status: "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
-      leaseOwner: string | null;
-      leaseExpiresAt: number | null;
-      heartbeatAt: number | null;
-      attemptCount: number;
-      executionTarget: "desktop" | "cloud";
-      executionThread: {
-        id: string;
-        threadKind: "automation";
-        executionLocation: "desktop" | "cloud";
-        automationId: string;
-        automationRunId: string;
-        engineKind: string;
-        nativeThreadId?: string | null;
-        workspaceId?: string | null;
-      } | null;
-      providerId: string;
-      modelId: string;
-      modelVariant?: string | null;
-      startedAt: number | null;
-      finishedAt: number | null;
-      error: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable"
-          | "execution_failed"
-          | "execution_timed_out"
-          | "runner_unavailable"
-          | "cancelled"
-          | "lease_lost"
-          | "internal_error";
-        message: string;
-        retryable: boolean;
-      } | null;
-      resultSummary: string | null;
-      codemodeReceiptId?: string | null;
-      validatedResult?: unknown;
-      usage: {
-        inputTokens: number | null;
-        outputTokens: number | null;
-        costMicros: number | null;
-      };
-      createdAt: number;
-      updatedAt: number;
-    };
-  };
+  200: AutomationRunResponse;
 };
 
 export type CancelAutomationRunResponse = CancelAutomationRunResponses[keyof CancelAutomationRunResponses];
