@@ -22,6 +22,7 @@ import {
   saveWorkflow,
   testWorkflowDraft,
 } from "../../workflows.js"
+import { keysetCursorQuerySchema, nextCursorSchema } from "../../list-pagination.js"
 import { orgMemberRoute, jsonValidator, queryValidator } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { listTeamsForMember } from "../../orgs.js"
@@ -97,7 +98,10 @@ const detailParamsSchema = z.object({
 const detailQuerySchema = z.object({
   maxAgeMs: z.coerce.number().int().min(60_000).max(30 * 24 * 60 * 60_000).optional(),
 })
-const snapshotsQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(200).optional() })
+const snapshotsQuerySchema = z.object({
+  cursor: keysetCursorQuerySchema.optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+})
 const draftSchema = z.object({
   name: z.string().trim().min(1).max(255),
   description: z.string().trim().max(4_000).optional(),
@@ -112,7 +116,7 @@ const versionSchema = draftSchema.extend({
   receiptId: z.string().min(1).max(160).describe("Copy receiptId from the immediately preceding successful draft test. Submit the exact same name, description, code, exampleInput, inputSchema, outputSchema, and requiredCapabilities used by that test."),
 })
 const versionsResponseSchema = z.object({ items: z.array(workflowVersionSchema) })
-const snapshotsResponseSchema = z.object({ items: z.array(workflowArtifactSnapshotSchema) })
+const snapshotsResponseSchema = z.object({ items: z.array(workflowArtifactSnapshotSchema), nextCursor: nextCursorSchema })
 const workflowLibraryDetailSchema = z.object({
   workflow: z.object({
     type: z.literal("workflow"), id: z.string(), plugin: z.object({ id: z.string(), name: z.string() }).nullable(), name: z.string(), description: z.string().nullable(),
@@ -533,7 +537,8 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId/snapshots",
     describeRoute({
       tags: ["Workflows"], summary: "List Workflow artifact snapshots",
-      description: "Lists run receipts of saved versions of this Workflow, most recently finished first, including failed runs and runs whose content was deleted (value and markdown are null and contentDeletedAt is set). Draft test runs are not snapshots and never appear here. limit caps the result at 1 to 200 rows (default 100). Requires read access to the Workflow.",
+      description: "Lists run receipts of saved versions of this Workflow, most recently finished first, including failed runs and runs whose content was deleted (value and markdown are null and contentDeletedAt is set). Draft test runs are not snapshots and never appear here. limit caps the result at 1 to 200 rows (default 100). "
+        + "Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page. Requires read access to the Workflow.",
       responses: {
         200: jsonResponse("Artifact snapshots returned.", snapshotsResponseSchema),
         400: jsonResponse("Invalid Workflow id or query.", invalidRequestSchema),
@@ -547,11 +552,13 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       if (!params.success) return c.json({ error: "invalid_request", message: "Invalid Workflow id." }, 400)
       try {
         const { actorContext } = await contextFor(c)
-        return c.json({ items: await listWorkflowSnapshots({
+        const query = c.req.valid("query")
+        return c.json(await listWorkflowSnapshots({
           context: actorContext,
           configObjectId: params.data.configObjectId,
-          limit: c.req.valid("query").limit,
-        }) })
+          limit: query.limit,
+          cursor: query.cursor,
+        }))
       } catch (error) {
         const failure = routeFailure(error)
         return c.json(failure.body, failure.status)
