@@ -23,6 +23,10 @@ function seedSnapshotEnv() {
   setEnvDefault("DEN_DB_ENCRYPTION_KEY", "local-dev-db-encryption-key-please-change-1234567890")
   setEnvDefault("BETTER_AUTH_SECRET", "local-dev-secret-not-for-production-use!!")
   setEnvDefault("BETTER_AUTH_URL", "http://localhost:8790")
+  // `servers[0].url` derives from this value. Pin the hosted API so the
+  // published document is identical on every machine and "Try it" targets
+  // production instead of whoever last regenerated the snapshot.
+  setEnvDefault("DEN_API_PUBLIC_URL", "https://api.openworklabs.com")
   setEnvDefault("DEN_AUTOMATIONS_ENABLED", "true")
   setEnvDefault("DEN_AUTOMATIONS_RUNTIME_ENABLED", "true")
 }

@@ -42,8 +42,8 @@ database with the current Den schema (`DATABASE_URL` selects it). The SDK CI job
 creates its own empty database and applies the schema before generation.
 
 ```sh
-pnpm sdk:generate  # export live Den OpenAPI and regenerate src/gen
-pnpm sdk:check     # regenerate in a temporary directory, compare, typecheck
+pnpm sdk:generate  # export live Den OpenAPI, refresh packages/docs/openapi.json and src/gen
+pnpm sdk:check     # regenerate in a temporary directory, compare both, typecheck
 pnpm sdk:build     # compile JavaScript and declarations into dist
 pnpm --dir evals install
 pnpm evals:pr specs/den-sdk.test.ts
@@ -58,10 +58,12 @@ The source of truth is Den's route metadata and Zod schemas, exported by
 `ee/apps/den-api/scripts/generate-openapi-snapshot.ts`. Generation builds the MCP
 app assets required by Den's module imports. It does not start an HTTP server,
 but loading the app initializes OAuth's resource registry, which requires the
-development database. The temporary OpenAPI file is removed afterward; the docs
-snapshot is left untouched. `src/gen` is committed and must never be edited by
-hand. CI rejects drift after schema changes. Add or improve the route's OpenAPI
-metadata before regenerating to change SDK methods or types.
+development database. The same export is written to `packages/docs/openapi.json`,
+the document Mintlify publishes as the API reference, so the public docs and the
+SDK never disagree. Both `src/gen` and that snapshot are committed and must never
+be edited by hand. CI rejects drift in either after schema changes. Add or
+improve the route's OpenAPI metadata before regenerating to change SDK methods
+or types.
 
 Method names follow Den's existing operation IDs (for example `getV1MeOrgs`).
 Types are only as precise as the server schema: routes with opaque or missing
