@@ -26,6 +26,7 @@ describe("External MCP preset OAuth defaults", () => {
     const slack = EXTERNAL_MCP_PRESETS.find((preset) => preset.presetId === "slack")
     expect(slack?.authorizationServerIssuer).toBe("https://mcp.slack.com")
     expect(slack?.defaultOAuthScopes).toEqual(slackDefaultScopes)
+    expect(slack?.description).toContain("eligible internal or Slack Marketplace-published app")
   })
 
   test("applies preset defaults only when admin values are absent", () => {
@@ -50,8 +51,15 @@ describe("External MCP preset OAuth defaults", () => {
 
   test("presets response schema exposes OAuth defaults", () => {
     const result = externalMcpPresetListResponseSchema.parse({ presets: EXTERNAL_MCP_PRESETS })
+    expect(result.presets.find((preset) => preset.presetId === "github")).toMatchObject({
+      authType: "oauth",
+      supportedAuthTypes: ["oauth", "apikey"],
+      requiresOAuthClient: true,
+    })
     const slack = result.presets.find((preset) => preset.presetId === "slack")
     expect(slack?.authorizationServerIssuer).toBe("https://mcp.slack.com")
     expect(slack?.defaultOAuthScopes).toEqual(slackDefaultScopes)
+    expect(result.presets.find((preset) => preset.presetId === "context7")?.description).toContain("rate-limited anonymous access")
+    expect(result.presets.find((preset) => preset.presetId === "exa")?.description).toContain("provider usage limits and billing apply")
   })
 })

@@ -1736,11 +1736,13 @@ test("shared-callback version-two state is rejected by the legacy callback even 
   expect(await response.json()).toEqual({ error: "invalid_request", message: "Invalid or expired state." })
 })
 
-test("non-OAuth create validation returns the same structured network diagnostic", async () => {
+test.each(["none", "apikey"] as const)("failed %s creation returns the diagnostic without retaining a ready connection", async (authType) => {
+  const name = `Broken ${authType} MCP`
   const response = await staleSessionRequest("/v1/mcp-connections", "POST", {
-    name: "Broken no-auth MCP",
+    name,
     url: "http://127.0.0.1:9/mcp",
-    authType: "none",
+    authType,
+    ...(authType === "apikey" ? { apiKey: "invalid-test-api-key" } : {}),
     credentialMode: "shared",
   })
   expect(response.status).toBe(502)
@@ -1757,6 +1759,14 @@ test("non-OAuth create validation returns the same structured network diagnostic
   })
   expect(typeof body.diagnostic.referenceId).toBe("string")
   expect(response.headers.get("x-request-id")).toBeNull()
+  const retained = await db.select().from(schema.ExternalMcpConnectionTable).where(drizzle.and(
+    drizzle.eq(schema.ExternalMcpConnectionTable.organizationId, organizationId),
+    drizzle.eq(schema.ExternalMcpConnectionTable.name, name),
+  ))
+  expect(retained).toHaveLength(0)
+  expect(await db.select().from(schema.ExternalMcpConnectionTable).where(
+    drizzle.eq(schema.ExternalMcpConnectionTable.id, seededConnectionId()),
+  )).toHaveLength(1)
 })
 
 test("connection configuration rejects credentials embedded in MCP URLs", async () => {

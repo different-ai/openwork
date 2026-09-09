@@ -107,6 +107,7 @@ import { openworkYourConnectionsUrl } from "../../../mcp/connection-navigation.j
 import {
   declaredPluginMcpAuthType,
   requiredPluginMcpAuthType,
+  pluginMcpAuthTypeCompatible,
   resolveGithubPluginMcpImportAuthType,
   type PluginMcpAuthType,
 } from "../../../capability-sources/external-mcp-auth-policy.js"
@@ -5466,15 +5467,23 @@ async function ensureImportedExternalMcpConnection(input: {
     .find((connection) => connection.kind === "external_mcp" && comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(serverUrl))
 
   if (existing) {
+    const authType = resolveGithubPluginMcpImportAuthType({
+      declaredAuthType: input.server.authType,
+      // Legacy none always used shared mode, regardless of the import's OAuth
+      // mode default. A shared PAT must not replace per-member OAuth.
+      existingAuthType: existing.authType === "none" || existing.credentialMode === input.credentialMode ? existing.authType : undefined,
+      requestedAuthType: input.authType,
+      url: serverUrl,
+    })
     await requireExistingExternalMcpConnectionMatchesImport({
-      authType: input.authType,
+      authType,
       credentialMode: input.credentialMode,
       existingAuthType: existing.authType,
       existingCredentialMode: existing.credentialMode,
     })
-    if (input.authType === "none") {
+    if (authType === "none") {
       try {
-        await validateConfiguredPluginMcpConnection({ authType: input.authType, connection: existing })
+        await validateConfiguredPluginMcpConnection({ authType, connection: existing })
       } catch (error) {
         await db.update(ExternalMcpConnectionTable).set({ connectedAt: null }).where(and(
           eq(ExternalMcpConnectionTable.organizationId, organizationId),
@@ -5594,11 +5603,13 @@ export async function configureMarketplacePluginMcpRequirement(input: {
     declaredAuthType: declaredPluginMcpAuthType(server.config),
     url: server.url,
   })
-  if (declaredRequiredAuthType && declaredRequiredAuthType !== input.authType) {
+  if (!pluginMcpAuthTypeCompatible({ authType: input.authType, requiredAuthType: declaredRequiredAuthType, url: server.url })) {
     throw new PluginArchRouteFailure(
       409,
       "mcp_auth_type_mismatch",
-      `This MCP requirement must use ${declaredRequiredAuthType} authentication.`,
+      declaredRequiredAuthType
+        ? `This MCP requirement must use ${declaredRequiredAuthType} authentication.`
+        : "This authentication type is not supported by the MCP server.",
     )
   }
   const requiredAuthType = declaredRequiredAuthType ?? input.authType
@@ -5788,19 +5799,20 @@ export async function importGithubPluginMcps(input: {
   const imported: Array<{ connectionId: string; name: string; url: string }> = []
   const importedSkills: Array<{ configObjectId: ConfigObjectId; name: string; sourcePath: string }> = []
   for (const server of supportedServers) {
-    const authType = resolveGithubPluginMcpImportAuthType({
+    const defaultAuthType = resolveGithubPluginMcpImportAuthType({
       declaredAuthType: server.authType,
       requestedAuthType: input.authType,
       url: server.url ?? "",
     })
     const importedConnection = await ensureImportedExternalMcpConnection({
       access,
-      authType,
+      authType: defaultAuthType,
       context: input.context,
       credentialMode: input.credentialMode,
       server,
     })
     const connection = importedConnection.connection
+    const authType = connection.authType
     if (importedConnection.ownedByImportedPlugin) importedOwnedConnectionIds.add(connection.id)
     const payload = importedConnectionBackedMcpPayload({
       authType,

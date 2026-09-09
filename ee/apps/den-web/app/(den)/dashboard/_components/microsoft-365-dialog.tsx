@@ -22,18 +22,20 @@ async function copyText(text: string): Promise<boolean> {
 
 export function Microsoft365Dialog({
   open,
+  providerId,
   submitting,
   error,
   onClose,
   onSubmit,
 }: {
   open: boolean;
+  providerId: string;
   submitting: boolean;
   error: unknown;
   onClose: () => void;
   onSubmit: (input: { clientId?: string; clientSecret?: string; tenantId?: string; features: string[] }) => void;
 }) {
-  const clientConfig = useNativeProviderClient("microsoft-365", open);
+  const clientConfig = useNativeProviderClient(providerId, open);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [tenantId, setTenantId] = useState("");
@@ -51,13 +53,13 @@ export function Microsoft365Dialog({
     setCopiedRedirectUri(false);
     setReplacingCredentials(false);
     featuresPrefilled.current = false;
-  }, [open]);
+  }, [open, providerId]);
 
   useEffect(() => {
     if (!open || featuresPrefilled.current || !clientConfig.isSuccess || clientConfig.isFetching) return;
     setFeatures(clientConfig.data.features);
     featuresPrefilled.current = true;
-  }, [open, clientConfig.isSuccess, clientConfig.isFetching, clientConfig.data?.features]);
+  }, [open, providerId, clientConfig.isSuccess, clientConfig.isFetching, clientConfig.data?.features]);
 
   if (!open) return null;
 
