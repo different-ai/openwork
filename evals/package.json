@@ -37,10 +37,10 @@
     "@openwork/review": "link:../packages/review"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^3.2.4",
+    "@vitest/coverage-v8": "^4.1.11",
     "dependency-cruiser": "18.1.0",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
   },
   "packageManager": "pnpm@11.4.0"
 }

@@ -117,6 +117,8 @@ export interface StartMockMcpOptions {
   profileId?: EnterpriseMcpProfileId;
   fault?: string;
   oauthClientSecret?: string;
+  /** Token requests from these clients fail with invalid_client (unsupported client authentication). Entries are a client id, "id:secret" to reject only that exact presented secret, or "@dynamic" for every dynamically registered client. */
+  rejectTokenClientIds?: string[];
   allowUnauthenticatedMcp?: boolean;
   /** Serve this many additional synthetic mock_tool_<i> tools for scale specs. */
   extraToolCount?: number;
@@ -350,6 +352,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
         AUTO_APPROVE: "1",
         ...(options.authorizationResponseIssuerSupported === undefined ? {} : { MOCK_AUTHORIZATION_RESPONSE_ISSUER: options.authorizationResponseIssuerSupported ? "1" : "0" }),
         ...(options.allowUnauthenticatedMcp ? { MOCK_ALLOW_UNAUTHENTICATED_MCP: "1" } : {}),
+        ...(options.rejectTokenClientIds?.length ? { MOCK_REJECT_TOKEN_CLIENT_IDS: options.rejectTokenClientIds.join(",") } : {}),
         ...(options.extraToolCount ? { MOCK_EXTRA_TOOL_COUNT: String(options.extraToolCount) } : {}),
         ...(options.appToolName ? { MOCK_APP_TOOL_NAME: options.appToolName } : {}),
       },

@@ -14,9 +14,8 @@ const den = createDenClient({
   baseUrl: "https://api.openworklabs.com",
 });
 
-const { data, error, response } = await den.getV1MeOrgs();
-if (error) throw error;
-console.log(response.status, data?.orgs);
+const { data, response } = await den.getV1MeOrgs({ throwOnError: true });
+console.log(response.status, data.orgs);
 
 const created = await den.postV1Teams(
   { name: "Design" },
@@ -33,7 +32,8 @@ for the operation. Each factory call owns an independent HTTP client.
 Standard Fetch options, including `headers`, `signal`, and a custom `fetch`, are
 accepted. Per-call header values override the factory's authentication and
 organization defaults. Methods return `{ data, error, request, response }` by
-default; pass `{ throwOnError: true }` to an operation to reject on HTTP errors.
+default; `response` can be absent when a request fails before an HTTP response
+arrives. Pass `{ throwOnError: true }` to reject on request and HTTP errors.
 
 ## Generation
 
@@ -50,7 +50,7 @@ pnpm evals:pr specs/den-sdk.test.ts
 ```
 
 This follows [OpenCode's SDK build](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/script/build.ts):
-export the server's OpenAPI document, run pinned `@hey-api/openapi-ts` 0.90.10
+export the server's OpenAPI document, run pinned `@hey-api/openapi-ts` 0.97.3
 with TypeScript, instance SDK, flat parameters, and Fetch client plugins, format
 with pinned Prettier, then compile. A small handwritten factory wraps the generated client.
 

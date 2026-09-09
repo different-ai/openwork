@@ -14,7 +14,7 @@
   "dependencies": {
     "@hono/node-server": "2.0.12",
     "@openwork/enterprise-mcp-mock-server": "workspace:*",
-    "hono": "4.12.34",
+    "hono": "4.13.5",
     "zod": "^4.3.6"
   },
   "devDependencies": {
