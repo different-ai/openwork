@@ -9,8 +9,9 @@ import { readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProv
 import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
 
 const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
-const DEN_READ_DEADLINE_MS = 5_000;
-const DEN_READ_ATTEMPT_TIMEOUT_MS = 2_500;
+// The first cold read previously had 10s; keep two reads under the 15s plugin budget and one read under the 10s session-install budget.
+const DEN_READ_DEADLINE_MS = 6_000;
+const DEN_READ_ATTEMPT_TIMEOUT_MS = 3_500;
 const DEN_READ_MAX_ATTEMPTS = 2;
 const RETRYABLE_DEN_STATUSES = new Set([502, 503, 504]);
 const RETRYABLE_TRANSPORT_CODES = new Set([

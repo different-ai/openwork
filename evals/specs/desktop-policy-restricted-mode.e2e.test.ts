@@ -364,17 +364,28 @@ test(recoveryJourney, { timeout: 300_000 }, async ({ world: selectedWorld, step,
   };
   const latencyEvaluation = async (path: string, evaluation: Record<string, unknown>, times: number) => {
     await world.proxy.faults.clear();
-    await world.proxy.faults.latency(path, 3_000, { times });
+    const start = (await world.proxy.requestLog()).length;
+    await world.proxy.faults.latency(path, 5_000, { times });
     const startedAt = performance.now();
-    const result = await world.evaluate(evaluation);
+    let evaluationComplete = false;
+    const evaluationPromise = world.evaluate(evaluation).finally(() => { evaluationComplete = true; });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const requestsBeforeCompletion = (await world.proxy.requestLog()).slice(start).filter((request) => request.path === path);
+    const completedBeforeRequestProbe = evaluationComplete;
+    const result = await evaluationPromise;
     const elapsedMs = Math.round(performance.now() - startedAt);
+    const logAfterEvaluation = await world.proxy.requestLog();
+    const afterEvaluation = logAfterEvaluation.length;
+    const requests = logAfterEvaluation.slice(start, afterEvaluation).filter((request) => request.path === path);
+    const freshBeforeCompletion = requestsBeforeCompletion.filter((request) => request.faulted === false).length;
+    const freshWithinEvaluation = requests.filter((request) => request.faulted === false).length;
     // Aborted requests are not completed-response log entries. Give every
-    // three-second latency handler a bounded drain window, then prove that a
+    // five-second latency handler a bounded drain window, then prove that a
     // fault-free evaluation is healthy before starting the next case.
-    await new Promise((resolve) => setTimeout(resolve, 3_250));
+    await new Promise((resolve) => setTimeout(resolve, 5_250));
     await world.proxy.faults.clear();
     const healthy = await world.evaluate(evaluation);
-    return { result, healthy, elapsedMs };
+    return { result, healthy, elapsedMs, start, afterEvaluation, requests, completedBeforeRequestProbe, freshBeforeCompletion, freshWithinEvaluation };
   };
 
   await step("the assigned model is materialized and allowed while custom providers are disabled", async () => {
@@ -496,8 +507,12 @@ test(recoveryJourney, { timeout: 300_000 }, async ({ world: selectedWorld, step,
     ]) {
       expect(observed.result.status, name).toBe(200);
       expect(observed.healthy.status, `${name} healthy follow-up`).toBe(200);
-      expect(observed.elapsedMs, name).toBeGreaterThan(2_000);
+      expect(observed.elapsedMs, name).toBeGreaterThan(3_000);
       expect(observed.elapsedMs, name).toBeLessThan(8_000);
+      expect(observed.completedBeforeRequestProbe, name).toBe(false);
+      expect(observed.freshBeforeCompletion, name).toBe(0);
+      expect(observed.freshWithinEvaluation, name).toBe(1);
+      expect(observed.requests.filter((request) => request.faulted === false), name).toMatchObject([{ faulted: false, status: 200 }]);
     }
     for (const { name, observed } of [
       { name: "policy exhaustion", observed: policyExhausted },
@@ -506,16 +521,21 @@ test(recoveryJourney, { timeout: 300_000 }, async ({ world: selectedWorld, step,
       expect(observed.result.status, name).toBe(403);
       expect(code(observed.result.body), name).toBe("policy_unavailable");
       expect(observed.healthy.status, `${name} healthy follow-up`).toBe(200);
-      expect(observed.elapsedMs, name).toBeGreaterThan(4_000);
+      expect(observed.elapsedMs, name).toBeGreaterThan(5_500);
       expect(observed.elapsedMs, name).toBeLessThan(8_000);
+      expect(observed.completedBeforeRequestProbe, name).toBe(false);
+      expect(observed.freshBeforeCompletion, name).toBe(0);
+      expect(observed.freshWithinEvaluation, name).toBe(0);
     }
     evidence.recordAssertionEvidence(
-      "One policy or assigned-model catalog transport timeout recovers after two seconds, repeated timeouts fail closed after four seconds, and every response arrives before eight seconds with a healthy fault-free follow-up",
+      "One policy or assigned-model catalog transport timeout recovers after three seconds, repeated timeouts fail closed after five and a half seconds, and every response arrives before eight seconds with a healthy fault-free follow-up",
       JSON.stringify({ policyRecovered, policyExhausted, catalogRecovered, catalogExhausted }),
       policyRecovered.result.status === 200 && catalogRecovered.result.status === 200
         && code(policyExhausted.result.body) === "policy_unavailable" && code(catalogExhausted.result.body) === "policy_unavailable"
-        && policyRecovered.elapsedMs > 2_000 && catalogRecovered.elapsedMs > 2_000
-        && policyExhausted.elapsedMs > 4_000 && catalogExhausted.elapsedMs > 4_000
+        && policyRecovered.elapsedMs > 3_000 && catalogRecovered.elapsedMs > 3_000
+        && policyExhausted.elapsedMs > 5_500 && catalogExhausted.elapsedMs > 5_500
+        && [policyRecovered, catalogRecovered].every((item) => !item.completedBeforeRequestProbe && item.freshBeforeCompletion === 0 && item.freshWithinEvaluation === 1)
+        && [policyExhausted, catalogExhausted].every((item) => !item.completedBeforeRequestProbe && item.freshBeforeCompletion === 0 && item.freshWithinEvaluation === 0)
         && [policyRecovered, policyExhausted, catalogRecovered, catalogExhausted]
           .every((item) => item.elapsedMs < 8_000 && item.healthy.status === 200),
     );
