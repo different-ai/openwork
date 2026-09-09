@@ -170,7 +170,7 @@ test("GitHub plugin readiness preserves legacy ready and sign-in states but stil
   const orgMembershipId = createDenTypeId("member")
   const pluginId = createDenTypeId("plugin")
   const configObjectId = createDenTypeId("configObject")
-  const url = "https://api.githubcopilot.com/mcp/"
+  const baseUrl = "https://api.githubcopilot.com/mcp/"
   for (const input of [
     { authType: "apikey", oauth: false, client: false, state: "ready" },
     { authType: "apikey", oauth: true, client: false, state: "needs_admin_setup" },
@@ -185,7 +185,11 @@ test("GitHub plugin readiness preserves legacy ready and sign-in states but stil
     { authType: "oauth", oauth: false, client: false, state: "ready", perMember: true },
     { authType: "oauth", oauth: false, client: false, state: "needs_signin", perMember: true, disconnected: true },
     { authType: "oauth", oauth: true, client: false, state: "needs_admin_setup", perMember: true, disconnected: true },
+    { authType: "oauth", oauth: true, client: false, state: "ready", query: true },
+    { authType: "oauth", oauth: true, client: false, state: "ready", query: true, perMember: true },
+    { authType: "oauth", oauth: true, client: false, state: "needs_signin", query: true, perMember: true, disconnected: true },
   ]) {
+    const url = input.query ? `${baseUrl}?fixture=legacy` : baseUrl
     const candidate = {
       ...connection, organizationId, url, authType: input.authType, credentialMode: input.perMember ? "per_member" : "shared",
       apiKey: input.authType === "apikey" ? "fixture-pat" : null,
@@ -209,7 +213,7 @@ test("GitHub plugin readiness preserves legacy ready and sign-in states but stil
     expect(readiness.get(pluginId)?.connections[0]?.authTypeMismatch).toBe(input.oauth && input.authType !== "oauth")
     expect(readiness.get(pluginId)?.connections[0]?.connectedForMe).toBe(!input.disconnected)
     expect(readiness.get(pluginId)?.connections[0]?.oauthClientConfigured).toBe(input.oauth || input.authType === "oauth" ? input.client : undefined)
-    expect(readiness.get(pluginId)?.connections[0]?.oauthClientRequired).toBe(input.oauth ? true : input.authType === "oauth" ? false : undefined)
+    expect(readiness.get(pluginId)?.connections[0]?.oauthClientRequired).toBe(input.oauth && !input.query ? true : input.authType === "oauth" ? false : undefined)
     expect(selectResults).toHaveLength(0)
 
     const skillId = createDenTypeId("configObject")

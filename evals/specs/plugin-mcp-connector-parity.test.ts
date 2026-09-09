@@ -387,6 +387,29 @@ test("persisted GitHub bindings preserve desktop readiness without allowing new 
     true,
   );
 
+  const queryUrl = `${url}?fixture=legacy`;
+  await queryDenDatabase(databaseUrl,
+    "UPDATE external_mcp_connection SET url = ? WHERE organization_id = ? AND id = ?",
+    [queryUrl, orgId, connectionId],
+  );
+  const queryVersion = await denFetch(den.admin, `/v1/config-objects/${binding.configObjectId}/versions`, {
+    method: "POST", headers,
+    body: JSON.stringify({ input: { normalizedPayloadJson: { mcpServers: { crm: { type: "remote", url: queryUrl, oauth: true } } } } }),
+  });
+  expect(queryVersion.response.status, queryVersion.text).toBe(201);
+  expect(await desktopReadiness(den.members.reader)).toMatchObject({
+    state: "ready",
+    connections: [{ id: connectionId, connectedForMe: true, oauthClientRequired: false }],
+  });
+  const queryBlocked = await callTool("execute_capability", { name: skill.name });
+  expect(queryBlocked).toMatchObject({ status: "needs_admin_setup" });
+  expect(queryBlocked.content).toBeUndefined();
+  evidence.recordAssertionEvidence(
+    "Query-variant URLs preserve legacy desktop readiness without bypassing execution",
+    "An existing OAuth connection with a query-bearing URL remains ready under the published desktop URL comparison. The execution preset policy still requires the missing OAuth client and withholds instruction content.",
+    true,
+  );
+
   // A plaintext lookalike must not inherit the trusted HTTPS preset policy.
   const httpUrl = "http://api.githubcopilot.com/mcp/";
   await queryDenDatabase(databaseUrl,
