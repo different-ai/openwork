@@ -1275,16 +1275,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
         throw new Error("eval: forced session snapshot failure");
       }
       const startedAt = Date.now();
+      // No `limit`: OpenCode pages `limit` as the NEWEST n messages and only
+      // signals older pages through a Link header nothing here follows, so a
+      // cap silently drops the start of any longer conversation.
       const item = useDesktopLoopbackSnapshotRetry
         ? await opencodeSessionNative.composeNativeSessionSnapshotWithRetry(
           sessionOwner,
           () => snapshotTargetRef.current,
-          { limit: 140, signal },
+          { signal },
         )
         : await opencodeSessionNative.composeNativeSessionSnapshot(
           { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
           props.sessionId,
-          { limit: 140, signal },
+          { signal },
         );
       markSessionSnapshotFetchStart(item, startedAt);
       return item;

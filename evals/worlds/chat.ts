@@ -1658,6 +1658,46 @@ export async function snapshotFailure(seed: Seed) {
   return { app, workspace, session };
 }
 
+/** More stored messages than OpenCode's `limit`-paged transcript read used to fetch. */
+export const longHistoryCount = 150;
+export const longHistoryTitle = "Long conversation";
+export const longHistoryOtherTitle = "Unrelated short task";
+export const longHistoryFirst = "LONG-HISTORY-FIRST-MESSAGE 7c31";
+export const longHistoryLast = "LONG-HISTORY-LAST-MESSAGE 7c31";
+
+/** A long stored conversation opened cold, from another selected session. */
+export async function longHistory(seed: Seed) {
+  const app = await seed.desktop({ name: "session-full-history" });
+  const workspace = await seed.workspace(app, seed.tmpPath("session-full-history"));
+  const session = await seedSessionRetry(seed, app, { title: longHistoryTitle });
+  // TODO(primitive): store many engine messages without a model turn.
+  const seeded = await seed.evalIn(app, browserScript(async (workspaceId, sessionId, count, first, last) => {
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    if (!port || !token) return "missing local server credentials";
+    const base = "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId)
+      + "/opencode/session/" + encodeURIComponent(sessionId) + "/message";
+    const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
+    for (let index = 0; index < count; index += 1) {
+      const text = index === 0 ? first : index === count - 1 ? last : "Stored history message " + (index + 1) + " of " + count + ".";
+      const response = await fetch(base, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ noReply: true, parts: [{ type: "text", text }] }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok) return "seed:" + index + ":" + response.status + ":" + (await response.text()).slice(0, 200);
+    }
+    const stored = await fetch(base, { headers, signal: AbortSignal.timeout(15000) });
+    if (!stored.ok) return "stored:" + stored.status;
+    const storedMessages = await stored.json();
+    return Array.isArray(storedMessages) ? storedMessages.length : "stored:not-an-array";
+  }, [workspace.workspaceId, session.sessionId, longHistoryCount, longHistoryFirst, longHistoryLast]), { awaitPromise: true, timeoutMs: 180_000 });
+  if (seeded !== longHistoryCount) throw new Error(`Long history was not stored: ${String(seeded)}`);
+  const other = await seedSessionRetry(seed, app, { title: longHistoryOtherTitle });
+  return { app, workspace, session, other };
+}
+
 export async function taskActivity(seed: Seed) {
   const app = await seed.desktop({ name: "task-activity-shimmer" });
   const workspace = await seed.workspace(app, seed.tmpPath("task-activity-shimmer"));
