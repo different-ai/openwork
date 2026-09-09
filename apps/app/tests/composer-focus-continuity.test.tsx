@@ -377,9 +377,18 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
     expect(sentDrafts).toHaveLength(4);
 
     submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    const scopedFile = new File(["scoped image"], "scoped.png", { type: "image/png" });
+    const scopedAttachment: ComposerAttachment = {
+      id: "scoped-image",
+      name: "scoped.png",
+      mimeType: "image/png",
+      size: scopedFile.size,
+      kind: "image",
+      file: scopedFile,
+    };
     const submittedComposer = {
-      draft: "First [pasted text handoff]",
-      attachments: [],
+      draft: "First [pasted text handoff][attachment scoped-image]",
+      attachments: [scopedAttachment],
       mentions: {},
       pasteParts: [{ id: "submitted-paste", label: "handoff", text: "submitted body", lines: 1 }],
       revertMessageId: null,
@@ -409,12 +418,35 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
     expect(sentDrafts[4]?.resolvedText).toBe("First submitted body");
     expect(editor.textContent).toBe("Continuation B");
     expect(useComposerStateStore.getState().sessions[sessionId]).toBe(continuationComposer);
+    const scopedPendingRows = () => [...container.querySelectorAll('[data-message-role="user"]')]
+      .filter((row) => row.textContent === "First submitted body");
+    expect(scopedPendingRows()).toHaveLength(1);
+    expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(1);
+    await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Continuation B before preparation"));
+    expect(editor.textContent).toBe("Continuation B before preparation");
+    const continuationBeforePreparation = useComposerStateStore.getState().sessions[sessionId];
+    expect(prepareSubmission).toBeFunction();
+    await act(async () => prepareSubmission?.());
+    expect(useComposerStateStore.getState().sessions[sessionId]).toBe(continuationBeforePreparation);
+    expect(scopedPendingRows()).toHaveLength(1);
+    expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(1);
+    await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Continuation B after preparation"));
+    expect(editor.textContent).toBe("Continuation B after preparation");
+    const continuationAfterPreparation = useComposerStateStore.getState().sessions[sessionId];
     await act(async () => submission.reject(new Error("Scoped submission unavailable")));
-    expect(editor.textContent).toBe("Continuation B");
-    expect(useComposerStateStore.getState().sessions[sessionId]).toBe(continuationComposer);
+    expect(editor.textContent).toBe("Continuation B after preparation");
+    expect(useComposerStateStore.getState().sessions[sessionId]).toBe(continuationAfterPreparation);
     expect(Object.values(useComposerStateStore.getState().failedDrafts).flat().map((item) => item.draft)).toEqual([
-      "First [pasted text handoff]",
+      "First [pasted text handoff][attachment scoped-image]",
     ]);
+    expect(Object.values(useComposerStateStore.getState().failedDrafts).flat()[0]?.attachments[0]?.file).toBe(scopedFile);
+    await act(async () => useComposerStateStore.getState().setDraft(sessionId, ""));
+    await act(async () => {
+      const restore = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Restore unsent message");
+      expect(restore?.disabled).toBe(false);
+      restore?.click();
+    });
+    expect(useComposerStateStore.getState().sessions[sessionId]?.attachments[0]?.file).toBe(scopedFile);
 
     const { NewTaskComposer } = await import("../src/react-app/domains/session/chat/new-task-composer");
     let creation = Promise.withResolvers<void>();

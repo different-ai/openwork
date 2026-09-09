@@ -2035,15 +2035,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const savedComposer = sourceComposer ?? composerCheckpoint;
     let clearedComposer: typeof savedComposer;
     let composerCleared = false;
-    const markPrepared = () => {
-      // Do not erase edits made while attachments were being prepared.
-      if ((!sourceComposer || sentAttachments.length > 0)
-        && useComposerStateStore.getState().sessions[props.sessionId] === composerCheckpoint
-        && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey) {
-        clearComposer();
-        clearedComposer = useComposerStateStore.getState().sessions[props.sessionId];
-        composerCleared = true;
-      }
+    let pendingRegistered = false;
+    const registerPending = () => {
+      if (pendingRegistered) return;
+      pendingRegistered = true;
       useComposerStateStore.setState((state) => ({
         pendingMessages: {
           ...state.pendingMessages,
@@ -2053,6 +2048,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
           }],
         },
       }));
+    };
+    const markPrepared = () => {
+      // Do not erase edits made while attachments were being prepared.
+      if (!sourceComposer
+        && useComposerStateStore.getState().sessions[props.sessionId] === composerCheckpoint
+        && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey) {
+        clearComposer();
+        clearedComposer = useComposerStateStore.getState().sessions[props.sessionId];
+        composerCleared = true;
+      }
+      registerPending();
       setAttachmentsUploading(false);
     };
     const removePending = () => useComposerStateStore.setState((state) => ({
@@ -2065,7 +2071,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       removePending();
       const state = useComposerStateStore.getState();
       if (!composerCleared) {
-        if (!sourceComposer || sentAttachments.length > 0 || !savedComposer) return;
+        if (!sourceComposer || !savedComposer) return;
         if (state.sessions[props.sessionId] === composerCheckpoint
           && !composerSessionHasContent(composerCheckpoint)
           && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey) {
@@ -2091,6 +2097,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         } });
       }
     };
+    if (sourceComposer && sentAttachments.length) registerPending();
     if (sentAttachments.length) setAttachmentsUploading(true);
     else markPrepared();
     try {
@@ -2101,7 +2108,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       if (result.outcome !== "unknown" && (nextDraft.command || nextDraft.mode === "shell")) removePending();
       const retained = useComposerStateStore.getState().sessions[props.sessionId]?.attachments ?? [];
-      sentAttachments.filter((attachment) => !retained.includes(attachment)).forEach(revokeAttachmentPreview);
+      sentAttachments.filter((attachment) => !retained.some((item) => item.id === attachment.id)).forEach(revokeAttachmentPreview);
     } catch {
       restore();
     } finally {
