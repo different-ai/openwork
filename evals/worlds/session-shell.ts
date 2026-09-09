@@ -1,4 +1,4 @@
-import { allocateFreePort, browserScript, clickAt, evaluate, hoverAt, type Point, type Surface, typeText } from "@openwork/cdp";
+import { allocateFreePort, browserScript, clickAt, evaluate, hoverAt, reload, type Point, type Surface, typeText } from "@openwork/cdp";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
 import { engineSessionProbe, observeSidebarExpansion, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
@@ -655,9 +655,20 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
     marker: `INSTANT-EXISTING-${String(index + 1).padStart(2, "0")}-${nonce}`,
     reply: `Existing task ${String(index + 1).padStart(2, "0")} completed ${nonce}.`,
   }));
+  const existingHistory = `EXISTING-HISTORY-${nonce}`;
+  const existingHistoryReply = `The existing startup task finished successfully ${nonce}.`;
+  const unrelatedHistory = `UNRELATED-HISTORY-${nonce}`;
+  const unrelatedHistoryReply = `The unrelated startup task finished successfully ${nonce}.`;
   const navigation = { marker: `INSTANT-NAVIGATION-A-${nonce}`, reply: `Navigation task completed ${nonce}.` };
   const responseHold = { marker: `INSTANT-RESPONSE-HOLD-${nonce}`, reply: `Response hold completed ${nonce}.` };
-  const workloads = [...lazySamples, ...existingSamples, navigation, responseHold]
+  const workloads = [
+    { marker: existingHistory, reply: existingHistoryReply },
+    { marker: unrelatedHistory, reply: unrelatedHistoryReply },
+    ...lazySamples,
+    ...existingSamples,
+    navigation,
+    responseHold,
+  ]
     .map(({ marker, reply }) => ({ promptMarker: marker, latestUserTurn: true, finalReply: reply, steps: [] }));
   await using setup = new AsyncDisposableStack();
   const mock = setup.use(await startMockMcp({ port: await allocateFreePort(), agentWorkloads: workloads }));
@@ -667,6 +678,13 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
   await configureWorkspaceProvider(seed, app, [workspace.workspaceId], {
     providerId, modelId, modelName: "New task model", baseUrl: `${mock.url}/v1`,
   });
+  await reload(app, { timeoutMs: 60_000 });
+  await waitFor(app, () => Boolean(window.__openworkControl?.listActions()
+    .some((entry) => entry.id === "session.model_picker.open" && entry.disabled === false)), {
+    timeoutMs: 60_000,
+    label: "reloaded renderer model picker is interactive",
+  });
+  await readAvailableModels(app);
   const selectedModel = await selectModel(app, modelId);
   if (!selectedModel.selected) throw new Error("The mock task model was not selected.");
   const [unrelated, existing] = await seed.sessions(app, ["Unrelated populated task", "Existing populated task"]);
@@ -688,35 +706,89 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
     surface: app,
     workspaceId: workspace.workspaceId,
   });
-  const existingHistory = `EXISTING-HISTORY-${nonce}`;
-  const unrelatedHistory = `UNRELATED-HISTORY-${nonce}`;
-  const persistUserMessage = async (sessionId: string, text: string) => {
+  const submitNativePrompt = async (sessionId: string, text: string) => {
     const base = serverUrl.replace(/\/+$/, "");
     const response = await fetch(`${base}/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode/session/${encodeURIComponent(sessionId)}/message`, {
       method: "POST",
       headers: { Authorization: `Bearer ${serverToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        noReply: true,
         model: { providerID: providerId, modelID: modelId },
         parts: [{ type: "text", text }],
       }),
       signal: AbortSignal.timeout(30_000),
     });
-    if (!response.ok) throw new Error(`Real v1 history setup returned HTTP ${response.status}`);
+    const body = await response.text();
+    if (!response.ok) throw new Error(`Real v1 history setup returned HTTP ${response.status}: ${body.slice(0, 300)}`);
   };
-  await persistUserMessage(unrelated.sessionId, unrelatedHistory);
-  await persistUserMessage(existing.sessionId, existingHistory);
-  await waitFor(app, browserScript((marker, workspaceId, sessionId) => {
+  await Promise.all([
+    submitNativePrompt(unrelated.sessionId, unrelatedHistory),
+    submitNativePrompt(existing.sessionId, existingHistory),
+  ]);
+  const readNativeHistory = async (sessionId: string, marker: string, reply: string) => {
+    const base = serverUrl.replace(/\/+$/, "");
+    const mount = `${base}/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode`;
+    const headers = { Authorization: `Bearer ${serverToken}` };
+    const [messagesResponse, statusResponse] = await Promise.all([
+      fetch(`${mount}/session/${encodeURIComponent(sessionId)}/message?limit=20`, {
+        headers,
+        signal: AbortSignal.timeout(10_000),
+      }),
+      fetch(`${mount}/session/status`, { headers, signal: AbortSignal.timeout(10_000) }),
+    ]);
+    if (!messagesResponse.ok || !statusResponse.ok) {
+      throw new Error(`Real v1 history readiness returned messages=${messagesResponse.status}, status=${statusResponse.status}`);
+    }
+    const messagesBody: unknown = await messagesResponse.json();
+    const statusBody: unknown = await statusResponse.json();
+    const messages = Array.isArray(messagesBody)
+      ? messagesBody
+      : isRecord(messagesBody) && Array.isArray(messagesBody.data) ? messagesBody.data : [];
+    const nativeMessages = messages.flatMap((message) => {
+      if (!isRecord(message)) return [];
+      const info = isRecord(message.info) ? message.info : message;
+      const parts = Array.isArray(message.parts) ? message.parts : [];
+      return [{
+        role: typeof info.role === "string" ? info.role : "",
+        text: parts.map((part) => isRecord(part) && typeof part.text === "string" ? part.text : "").join("\n"),
+      }];
+    });
+    const statuses = isRecord(statusBody) && isRecord(statusBody.data) ? statusBody.data : statusBody;
+    const status = isRecord(statuses) ? statuses[sessionId] : undefined;
+    return {
+      userPersisted: nativeMessages.some((message) => message.role === "user" && message.text.includes(marker)),
+      assistantPersisted: nativeMessages.some((message) => message.role === "assistant" && message.text.includes(reply)),
+      idle: status === undefined || (isRecord(status) && status.type === "idle"),
+    };
+  };
+  const historyDeadline = Date.now() + 60_000;
+  let historyReadiness = await Promise.all([
+    readNativeHistory(unrelated.sessionId, unrelatedHistory, unrelatedHistoryReply),
+    readNativeHistory(existing.sessionId, existingHistory, existingHistoryReply),
+  ]);
+  while (!historyReadiness.every((state) => state.userPersisted && state.assistantPersisted && state.idle)) {
+    if (Date.now() >= historyDeadline) {
+      throw new Error(`Real v1 completed history did not become idle: ${JSON.stringify(historyReadiness)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    historyReadiness = await Promise.all([
+      readNativeHistory(unrelated.sessionId, unrelatedHistory, unrelatedHistoryReply),
+      readNativeHistory(existing.sessionId, existingHistory, existingHistoryReply),
+    ]);
+  }
+  await waitFor(app, browserScript((marker, reply, workspaceId, sessionId) => {
     if ((localStorage.getItem("openwork.react.activeWorkspace") ?? "") !== workspaceId
       || location.hash !== `#/workspace/${workspaceId}/session/${sessionId}`) return false;
     const pane = document.querySelector<HTMLElement>('[data-workbench-pane="primary"]');
     const surface = [...(pane?.querySelectorAll<HTMLElement>("[data-session-surface-id]") ?? [])]
       .find((candidate) => candidate.dataset.sessionSurfaceId === sessionId);
-    return [...(surface?.querySelectorAll<HTMLElement>('[data-message-role="user"]') ?? [])]
+    const userVisible = [...(surface?.querySelectorAll<HTMLElement>('[data-message-role="user"]') ?? [])]
       .some((row) => row.innerText.includes(marker));
-  }, [existingHistory, workspace.workspaceId, existing.sessionId]), {
+    const assistantVisible = [...(surface?.querySelectorAll<HTMLElement>('[data-message-role="assistant"]') ?? [])]
+      .some((row) => row.innerText.includes(reply));
+    return userVisible && assistantVisible;
+  }, [existingHistory, existingHistoryReply, workspace.workspaceId, existing.sessionId]), {
     timeoutMs: 30_000,
-    label: "existing populated task is visible before performance sampling",
+    label: "existing completed task is visible before performance sampling",
   });
 
   const boundary = await instantBoundaryController(app, workspace.workspaceId);

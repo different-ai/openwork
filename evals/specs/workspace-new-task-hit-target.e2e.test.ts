@@ -411,13 +411,39 @@ test("workspace New task is instantly typable and every v1 send paints before en
           const draftAfterSuccess = await visibleFacts(world.failure.pendingB);
           negatives.successDraftB = successDraftTyped && draftAfterSuccess.composerText === world.failure.pendingB;
           negatives.rapidDuplicateEnter = exact && createGate.read().held === 1 && promptGate.read().held === 1;
+          await user.see({ text: scenario.marker }, { timeoutMs: 30_000 });
+          await user.see({ text: scenario.reply }, { timeoutMs: 30_000 });
+          const beforeReloadObservedPair = await probe.eventually(async () => {
+            const [visibleUser, visibleReply] = await Promise.all([
+              world.visibleMessageFacts(createdSessionId, "user", scenario.marker),
+              world.visibleMessageFacts(createdSessionId, "assistant", scenario.reply),
+            ]);
+            return { visibleUser, visibleReply };
+          }, {
+            within: 30_000,
+            label: `normal user observation exposes the first lazy user and reply before reloading ${createdSessionId}`,
+            until: ({ visibleUser, visibleReply }) => visibleUser.rowCount > 0 && visibleUser.markerOccurrences > 0
+              && visibleReply.rowCount > 0 && visibleReply.markerOccurrences > 0,
+          });
+          const beforeReloadNativePair = await probe.eventually(async () => {
+            const [nativeUser, nativeReply] = await Promise.all([
+              world.messageFacts(createdSessionId, scenario.marker),
+              world.messageFacts(createdSessionId, scenario.reply),
+            ]);
+            return { nativeUser, nativeReply };
+          }, {
+            within: 30_000,
+            label: `the first lazy user and reply are persisted before reloading ${createdSessionId}`,
+            until: ({ nativeUser, nativeReply }) => nativeUser.markerOccurrences > 0
+              && nativeReply.markerOccurrences > 0,
+          });
           const beforeReload = {
             providerRequestCount: await world.providerRequestCount(scenario.marker),
             sessionIds: await world.sessionIds(),
-            nativeUser: await world.messageFacts(createdSessionId, scenario.marker),
-            nativeReply: await world.messageFacts(createdSessionId, scenario.reply),
-            visibleUser: await world.visibleMessageFacts(createdSessionId, "user", scenario.marker),
-            visibleReply: await world.visibleMessageFacts(createdSessionId, "assistant", scenario.reply),
+            nativeUser: beforeReloadNativePair.nativeUser,
+            nativeReply: beforeReloadNativePair.nativeReply,
+            visibleUser: beforeReloadObservedPair.visibleUser,
+            visibleReply: beforeReloadObservedPair.visibleReply,
           };
           await faults.suspend();
           await user.reload();
@@ -442,7 +468,7 @@ test("workspace New task is instantly typable and every v1 send paints before en
           });
           await user.see({ text: scenario.marker }, { timeoutMs: 30_000 });
           await user.see({ text: scenario.reply }, { timeoutMs: 30_000 });
-          const reloadedState = await probe.eventually(async () => {
+          const postReloadObservedPair = await probe.eventually(async () => {
             const [reloaded, visibleUser, visibleReply] = await Promise.all([
               visibleFacts(scenario.marker),
               world.visibleMessageFacts(createdSessionId, "user", scenario.marker),
@@ -451,13 +477,13 @@ test("workspace New task is instantly typable and every v1 send paints before en
             return { reloaded, visibleUser, visibleReply };
           }, {
             within: 30_000,
-            label: `the reloaded v1 user and reply can be viewed exactly once in ${createdSessionId}`,
-            until: ({ reloaded, visibleUser, visibleReply }) => reloaded.rowCount === 1
-              && reloaded.markerOccurrences === 1
-              && visibleUser.rowCount === 1 && visibleUser.markerOccurrences === 1
-              && visibleReply.rowCount === 1 && visibleReply.markerOccurrences === 1,
+            label: `normal user observation exposes the reloaded v1 user and reply in ${createdSessionId}`,
+            until: ({ reloaded, visibleUser, visibleReply }) => reloaded.rowCount > 0
+              && reloaded.markerOccurrences > 0
+              && visibleUser.rowCount > 0 && visibleUser.markerOccurrences > 0
+              && visibleReply.rowCount > 0 && visibleReply.markerOccurrences > 0,
           });
-          const { reloaded } = reloadedState;
+          const { reloaded } = postReloadObservedPair;
           const reloadedBackend = await probe.eventually(() => world.messageFacts(createdSessionId, scenario.marker), {
             within: 30_000,
             label: `reloaded v1 transcript ${createdSessionId} is readable with exactly one marker`,
@@ -468,8 +494,8 @@ test("workspace New task is instantly typable and every v1 send paints before en
             providerRequestCount: await world.providerRequestCount(scenario.marker),
             sessionIds: await world.sessionIds(),
             nativeReply: await world.messageFacts(createdSessionId, scenario.reply),
-            visibleUser: reloadedState.visibleUser,
-            visibleReply: reloadedState.visibleReply,
+            visibleUser: postReloadObservedPair.visibleUser,
+            visibleReply: postReloadObservedPair.visibleReply,
           };
           negatives.exactAfterReload = reloaded.rowCount === 1
             && reloaded.markerOccurrences === 1
@@ -491,6 +517,22 @@ test("workspace New task is instantly typable and every v1 send paints before en
             && afterReload.visibleReply.rowCount === 1 && afterReload.visibleReply.markerOccurrences === 1
             && afterReload.visibleReply.totalRowCount === 1;
           evidence.recordJsonArtifact("First reload proof", {
+            checks: {
+              afterReloadUserExact: reloaded.rowCount === 1 && reloaded.markerOccurrences === 1,
+              creationRequestExact: afterReloadRequests.creation - requestBeforeSend.creation === 1,
+              promptRequestExact: afterReloadRequests.prompt - requestBeforeSend.prompt === 1,
+              providerBeforeExact: beforeReload.providerRequestCount === 1,
+              providerCountStable: afterReload.providerRequestCount === beforeReload.providerRequestCount,
+              inventoryStableAcrossReload: JSON.stringify(afterReload.sessionIds) === JSON.stringify(beforeReload.sessionIds),
+              beforeNativeUserExact: beforeReload.nativeUser.markerCount === 1 && beforeReload.nativeUser.markerOccurrences === 1,
+              beforeNativeReplyExact: beforeReload.nativeReply.markerCount === 1 && beforeReload.nativeReply.markerOccurrences === 1,
+              beforeVisibleUserExact: beforeReload.visibleUser.rowCount === 1 && beforeReload.visibleUser.markerOccurrences === 1 && beforeReload.visibleUser.totalRowCount === 1,
+              beforeVisibleReplyExact: beforeReload.visibleReply.rowCount === 1 && beforeReload.visibleReply.markerOccurrences === 1 && beforeReload.visibleReply.totalRowCount === 1,
+              afterNativeUserExact: reloadedBackend.markerCount === 1 && reloadedBackend.markerOccurrences === 1,
+              afterNativeReplyExact: afterReload.nativeReply.markerCount === 1 && afterReload.nativeReply.markerOccurrences === 1,
+              afterVisibleUserExact: afterReload.visibleUser.rowCount === 1 && afterReload.visibleUser.markerOccurrences === 1 && afterReload.visibleUser.totalRowCount === 1,
+              afterVisibleReplyExact: afterReload.visibleReply.rowCount === 1 && afterReload.visibleReply.markerOccurrences === 1 && afterReload.visibleReply.totalRowCount === 1,
+            },
             claim: "The exact user message and reply can be viewed after reload without duplicates.",
             visibleUserCount: afterReload.visibleUser.rowCount,
             visibleReplyCount: afterReload.visibleReply.rowCount,
@@ -498,6 +540,26 @@ test("workspace New task is instantly typable and every v1 send paints before en
             providerCountAfter: afterReload.providerRequestCount,
             providerCountEqual: afterReload.providerRequestCount === beforeReload.providerRequestCount,
             inventoryEqual: JSON.stringify(afterReload.sessionIds) === JSON.stringify(beforeReload.sessionIds),
+            nativeBefore: {
+              user: { count: beforeReload.nativeUser.markerCount, occurrences: beforeReload.nativeUser.markerOccurrences },
+              reply: { count: beforeReload.nativeReply.markerCount, occurrences: beforeReload.nativeReply.markerOccurrences },
+            },
+            visibleBefore: {
+              user: { rows: beforeReload.visibleUser.rowCount, occurrences: beforeReload.visibleUser.markerOccurrences, totalRows: beforeReload.visibleUser.totalRowCount },
+              reply: { rows: beforeReload.visibleReply.rowCount, occurrences: beforeReload.visibleReply.markerOccurrences, totalRows: beforeReload.visibleReply.totalRowCount },
+            },
+            nativeAfter: {
+              user: { count: reloadedBackend.markerCount, occurrences: reloadedBackend.markerOccurrences },
+              reply: { count: afterReload.nativeReply.markerCount, occurrences: afterReload.nativeReply.markerOccurrences },
+            },
+            visibleAfter: {
+              user: { rows: afterReload.visibleUser.rowCount, occurrences: afterReload.visibleUser.markerOccurrences, totalRows: afterReload.visibleUser.totalRowCount },
+              reply: { rows: afterReload.visibleReply.rowCount, occurrences: afterReload.visibleReply.markerOccurrences, totalRows: afterReload.visibleReply.totalRowCount },
+            },
+            requestDelta: {
+              creation: afterReloadRequests.creation - requestBeforeSend.creation,
+              prompt: afterReloadRequests.prompt - requestBeforeSend.prompt,
+            },
           });
           await faults.resume();
         }
@@ -810,6 +872,19 @@ test("workspace New task is instantly typable and every v1 send paints before en
       const unrelatedAfter = await visibleFacts(world.navigation.marker);
       const stayedUnrelated = unrelatedAfter.sessionId === world.unrelated.sessionId && unrelatedAfter.focusedEditor;
       await openSession(world.existing);
+      await probe.eventually(async () => {
+        const [renderedUser, renderedReply] = await Promise.all([
+          world.visibleMessageFacts(world.existing.sessionId, "user", world.navigation.marker),
+          world.visibleMessageFacts(world.existing.sessionId, "assistant", world.navigation.reply),
+        ]);
+        return { renderedUser, renderedReply };
+      }, {
+        within: 30_000,
+        label: "the navigation origin renders its user and reply rows after return",
+        until: ({ renderedUser, renderedReply }) => renderedUser.totalRowCount > 0 && renderedReply.totalRowCount > 0,
+      });
+      await user.see({ text: world.navigation.marker }, { timeoutMs: 30_000 });
+      await user.see({ text: world.navigation.reply }, { timeoutMs: 30_000 });
       const originAfter = await visibleFacts(world.navigation.marker);
       const navigationBackend = await world.messageFacts(world.existing.sessionId, world.navigation.marker);
       const navigationReplyBackend = await world.messageFacts(world.existing.sessionId, world.navigation.reply);
