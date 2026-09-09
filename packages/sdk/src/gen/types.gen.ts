@@ -337,17 +337,9 @@ export type AutomationDesktopRunnerPresence = {
   lastSeenAt: number | null;
 };
 
-export type AutomationModel = {
-  providerId: string;
-  modelId: string;
-  variant?: string | null;
-};
-
 export type AutomationRunTrigger = "scheduled" | "recovery" | "manual";
 
 export type AutomationRunStatus = "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
-
-export type AutomationExecutionTarget = "desktop" | "cloud";
 
 export type AutomationExecutionThread = {
   id: string;
@@ -396,7 +388,7 @@ export type AutomationRun = {
   leaseExpiresAt: number | null;
   heartbeatAt: number | null;
   attemptCount: number;
-  executionTarget: AutomationExecutionTarget;
+  executionTarget: "desktop" | "cloud";
   executionThread: AutomationExecutionThread | null;
   providerId: string;
   modelId: string;
@@ -447,52 +439,54 @@ export type Automation = {
   archivedAt: number | null;
 };
 
-export type AutomationSchedule =
-  | {
-      kind: "once";
-      timezone: string;
-      at: number;
-    }
-  | {
-      kind: "daily";
-      timezone: string;
-      hour: number;
-      minute: number;
-    }
-  | {
-      kind: "weekly";
-      timezone: string;
-      daysOfWeek: Array<number>;
-      hour: number;
-      minute: number;
-    };
-
-export type AutomationSavedScriptReference = {
-  pluginId: string;
-  configObjectId: string;
-  configObjectVersionId: string;
-};
-
-export type AutomationAction =
-  | {
-      kind: "agent";
-      instructions: string;
-      model: AutomationModel;
-    }
-  | {
-      kind: "saved_script";
-      script: AutomationSavedScriptReference;
-      input?: unknown;
-    };
-
 export type AutomationRevision = {
   id: string;
   automationId: string;
   version: number;
   instructions: string;
-  schedule: AutomationSchedule;
-  model: AutomationModel;
-  action?: AutomationAction;
+  schedule:
+    | {
+        kind: "once";
+        timezone: string;
+        at: number;
+      }
+    | {
+        kind: "daily";
+        timezone: string;
+        hour: number;
+        minute: number;
+      }
+    | {
+        kind: "weekly";
+        timezone: string;
+        daysOfWeek: Array<number>;
+        hour: number;
+        minute: number;
+      };
+  model: {
+    providerId: string;
+    modelId: string;
+    variant?: string | null;
+  };
+  action?:
+    | {
+        kind: "agent";
+        instructions: string;
+        model: {
+          providerId: string;
+          modelId: string;
+          variant?: string | null;
+        };
+      }
+    | {
+        kind: "saved_script";
+        script: {
+          pluginId: string;
+          configObjectId: string;
+          configObjectVersionId: string;
+        };
+        input?: unknown;
+      };
   executionTarget?: "desktop" | "cloud";
   workspaceId?: string | null;
   maximumRuntimeMs: number;
@@ -6333,15 +6327,73 @@ export type CreateAutomationData = {
   body:
     | {
         name: string;
-        schedule: AutomationSchedule;
-        action: AutomationAction;
-        executionTarget: AutomationExecutionTarget;
+        schedule:
+          | {
+              kind: "once";
+              timezone: string;
+              at: number;
+            }
+          | {
+              kind: "daily";
+              timezone: string;
+              hour: number;
+              minute: number;
+            }
+          | {
+              kind: "weekly";
+              timezone: string;
+              daysOfWeek: Array<number>;
+              hour: number;
+              minute: number;
+            };
+        action:
+          | {
+              kind: "agent";
+              instructions: string;
+              model: {
+                providerId: string;
+                modelId: string;
+                variant?: string | null;
+              };
+            }
+          | {
+              kind: "saved_script";
+              script: {
+                pluginId: string;
+                configObjectId: string;
+                configObjectVersionId: string;
+              };
+              input?: unknown;
+            };
+        executionTarget: "desktop" | "cloud";
       }
     | {
         name: string;
         instructions: string;
-        schedule: AutomationSchedule;
-        model: AutomationModel;
+        schedule:
+          | {
+              kind: "once";
+              timezone: string;
+              at: number;
+            }
+          | {
+              kind: "daily";
+              timezone: string;
+              hour: number;
+              minute: number;
+            }
+          | {
+              kind: "weekly";
+              timezone: string;
+              daysOfWeek: Array<number>;
+              hour: number;
+              minute: number;
+            };
+        model: {
+          providerId: string;
+          modelId: string;
+          variant?: string | null;
+        };
         workspaceId?: string | null;
       };
   path?: never;
@@ -6382,8 +6434,44 @@ export type CreateAutomationResponse = CreateAutomationResponses[keyof CreateAut
 export type CreateCloudAutomationData = {
   body: {
     name: string;
-    schedule: AutomationSchedule;
-    action: AutomationAction;
+    schedule:
+      | {
+          kind: "once";
+          timezone: string;
+          at: number;
+        }
+      | {
+          kind: "daily";
+          timezone: string;
+          hour: number;
+          minute: number;
+        }
+      | {
+          kind: "weekly";
+          timezone: string;
+          daysOfWeek: Array<number>;
+          hour: number;
+          minute: number;
+        };
+    action:
+      | {
+          kind: "agent";
+          instructions: string;
+          model: {
+            providerId: string;
+            modelId: string;
+            variant?: string | null;
+          };
+        }
+      | {
+          kind: "saved_script";
+          script: {
+            pluginId: string;
+            configObjectId: string;
+            configObjectVersionId: string;
+          };
+          input?: unknown;
+        };
   };
   path?: never;
   query?: never;
@@ -6478,10 +6566,50 @@ export type UpdateAutomationData = {
   body: {
     name?: string;
     instructions?: string;
-    schedule?: AutomationSchedule;
-    model?: AutomationModel;
-    action?: AutomationAction;
-    executionTarget?: AutomationExecutionTarget;
+    schedule?:
+      | {
+          kind: "once";
+          timezone: string;
+          at: number;
+        }
+      | {
+          kind: "daily";
+          timezone: string;
+          hour: number;
+          minute: number;
+        }
+      | {
+          kind: "weekly";
+          timezone: string;
+          daysOfWeek: Array<number>;
+          hour: number;
+          minute: number;
+        };
+    model?: {
+      providerId: string;
+      modelId: string;
+      variant?: string | null;
+    };
+    action?:
+      | {
+          kind: "agent";
+          instructions: string;
+          model: {
+            providerId: string;
+            modelId: string;
+            variant?: string | null;
+          };
+        }
+      | {
+          kind: "saved_script";
+          script: {
+            pluginId: string;
+            configObjectId: string;
+            configObjectVersionId: string;
+          };
+          input?: unknown;
+        };
+    executionTarget?: "desktop" | "cloud";
     workspaceId?: string | null;
   };
   path: {

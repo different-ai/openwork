@@ -39,7 +39,7 @@ export const automationScheduleSchema = z.discriminatedUnion("kind", [
     hour: z.number().int().min(0).max(23),
     minute: z.number().int().min(0).max(59),
   }),
-]).meta({ ref: "AutomationSchedule" })
+])
 export type AutomationSchedule = z.infer<typeof automationScheduleSchema>
 
 /**
@@ -51,14 +51,14 @@ export const automationModelSchema = z.object({
   providerId: idSchema,
   modelId: idSchema,
   variant: z.string().trim().min(1).max(60).nullable().optional(),
-}).meta({ ref: "AutomationModel" })
+})
 export type AutomationModel = z.infer<typeof automationModelSchema>
 
 export const automationSavedScriptReferenceSchema = z.object({
   pluginId: idSchema,
   configObjectId: idSchema,
   configObjectVersionId: idSchema,
-}).strict().meta({ ref: "AutomationSavedScriptReference" })
+}).strict()
 export type AutomationSavedScriptReference = z.infer<typeof automationSavedScriptReferenceSchema>
 
 export const automationActionSchema = z.discriminatedUnion("kind", [
@@ -72,7 +72,7 @@ export const automationActionSchema = z.discriminatedUnion("kind", [
     script: automationSavedScriptReferenceSchema,
     input: z.unknown().optional(),
   }).strict(),
-]).meta({ ref: "AutomationAction" })
+])
 export type AutomationAction = z.infer<typeof automationActionSchema>
 
 /**
@@ -185,7 +185,7 @@ export const automationExecutionThreadSchema = z.object({
 export type AutomationExecutionThread = z.infer<typeof automationExecutionThreadSchema>
 
 /** Creation surface fixes execution placement: Desktop stays local; Web runs in Cloud. */
-export const automationExecutionTargetSchema = z.enum(["desktop", "cloud"]).meta({ ref: "AutomationExecutionTarget" })
+export const automationExecutionTargetSchema = z.enum(["desktop", "cloud"])
 export type AutomationExecutionTarget = z.infer<typeof automationExecutionTargetSchema>
 
 export const AUTOMATION_MODEL_ATTENTION_CAPABILITY = "model_attention_v1" as const
