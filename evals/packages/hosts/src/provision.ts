@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -69,10 +69,17 @@ export interface MockOnSandboxOptions {
   fetchImpl?: typeof fetch;
   allowUnauthenticatedMcp?: boolean;
   appToolName?: string;
+  /** Exact trusted runner-side mock source to execute instead of the checkout copy. */
+  scriptSource?: string;
+  /** SHA-256 of scriptSource, used in the remote path and provisioning receipt. */
+  sourceFingerprint?: string;
 }
 
 export interface MockOnSandbox {
   url: string;
+  loopbackUrl: string;
+  sourceFingerprint: string;
+  stop(): Promise<void>;
 }
 
 export interface FaultProxyOnSandboxOptions {
@@ -279,7 +286,7 @@ export async function provisionDesktopSandbox(options: DesktopSandboxOptions & P
     await execInSandbox(
       exec,
       sandbox,
-      "cd /workspace; pnpm install --store-dir /workspace/.openwork-daytona/pnpm-store",
+      "cd /workspace; pnpm install --frozen-lockfile --store-dir /workspace/.openwork-daytona/pnpm-store",
       { timeoutMs: INSTALL_TIMEOUT_MS, context: `install gate for ${sandbox}` },
     );
   });
@@ -708,23 +715,61 @@ export async function startMockOnSandbox(options: MockOnSandboxOptions & Provisi
   const fetchImpl = options.fetchImpl ?? fetch;
   const port = options.port ?? 3979;
   const url = await timedStep(log, "mock preview URL gate", () => previewUrl(exec, options.sandbox, port));
+  const loopbackUrl = `http://127.0.0.1:${port}`;
+  if ((options.scriptSource === undefined) !== (options.sourceFingerprint === undefined)) {
+    throw new Error("Mock scriptSource and sourceFingerprint must be provided together.");
+  }
+  if (options.sourceFingerprint !== undefined && !/^[a-f0-9]{64}$/.test(options.sourceFingerprint)) {
+    throw new Error("Mock sourceFingerprint must be a lowercase SHA-256 hex digest.");
+  }
+  if (options.scriptSource !== undefined
+    && createHash("sha256").update(options.scriptSource).digest("hex") !== options.sourceFingerprint) {
+    throw new Error("Mock sourceFingerprint does not match scriptSource.");
+  }
+  const sourceFingerprint = options.sourceFingerprint ?? "workspace-checkout";
+  const scriptPath = options.scriptSource === undefined
+    ? "/workspace/scripts/mock-oauth-mcp-server.mjs"
+    : `/tmp/openwork-mock-oauth-mcp-${sourceFingerprint.slice(0, 16)}.mjs`;
 
   await timedStep(log, "mock process cleanup", async () => {
     await execInSandbox(
       exec,
       options.sandbox,
-      "pkill -f mock-oauth-mcp-server || true",
+      "pkill -f \"[m]ock-oauth-mcp-server\" || true",
       { timeoutMs: 30_000, context: `mock process cleanup for ${options.sandbox}` },
     ).catch(() => undefined);
   });
 
+  const scriptSource = options.scriptSource;
+  if (scriptSource !== undefined) {
+    await timedStep(log, "mock source upload", async () => {
+      const encoded = Buffer.from(scriptSource, "utf8").toString("base64");
+      const encodedPath = `${scriptPath}.b64`;
+      await execInSandbox(exec, options.sandbox, `rm -f ${scriptPath} ${encodedPath}`, {
+        timeoutMs: 30_000,
+        context: `mock source reset for ${options.sandbox}`,
+      });
+      for (let offset = 0; offset < encoded.length; offset += 8 * 1024) {
+        await execInSandbox(exec, options.sandbox, `printf %s ${encoded.slice(offset, offset + 8 * 1024)} >> ${encodedPath}`, {
+          timeoutMs: 30_000,
+          context: `mock source chunk upload for ${options.sandbox}`,
+        });
+      }
+      await execInSandbox(exec, options.sandbox, `base64 -d ${encodedPath} > ${scriptPath}; rm -f ${encodedPath}`, {
+        timeoutMs: 30_000,
+        context: `mock source finalize for ${options.sandbox}`,
+      });
+    });
+  }
+
   await timedStep(log, "mock process detach", async () => {
     const unauthenticatedMcpEnv = options.allowUnauthenticatedMcp ? " MOCK_ALLOW_UNAUTHENTICATED_MCP=1" : "";
     const appToolEnv = options.appToolName ? ` MOCK_APP_TOOL_NAME=${assertSafeRef(options.appToolName)}` : "";
+    const command = `cd /workspace && env HOST=0.0.0.0 PORT=${port} ISSUER=${url} AUTO_APPROVE=1${unauthenticatedMcpEnv}${appToolEnv} node ${scriptPath}`;
     const detachScript = `cd /workspace; python3 - <<PYEOF
 import subprocess
 log = open("/tmp/mock-mcp.log", "ab", buffering=0)
-subprocess.Popen(["bash", "-lc", "cd /workspace && env HOST=0.0.0.0 PORT=${port} ISSUER=${url} AUTO_APPROVE=1${unauthenticatedMcpEnv}${appToolEnv} node scripts/mock-oauth-mcp-server.mjs"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+subprocess.Popen(["bash", "-lc", ${JSON.stringify(command)}], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
 PYEOF
 echo detached`;
     await execInSandbox(exec, options.sandbox, detachScript, { timeoutMs: 30_000, context: `mock process detach for ${options.sandbox}` });
@@ -760,7 +805,23 @@ echo detached`;
     throw new Error(`Mock health gate failed at ${url}. Last: ${last}. Log tail:\n${outputTail(mockLog)}`);
   });
 
-  return { url };
+  const processPattern = scriptPath.replace("/", "[/]");
+  let stopped = false;
+  const stop = async (): Promise<void> => {
+    if (stopped) return;
+    stopped = true;
+    await execInSandbox(exec, options.sandbox, `pkill -f ${processPattern} || true`, {
+      timeoutMs: 30_000,
+      context: `mock process stop for ${options.sandbox}`,
+    });
+    if (options.scriptSource !== undefined) {
+      await execInSandbox(exec, options.sandbox, `rm -f ${scriptPath}`, {
+        timeoutMs: 30_000,
+        context: `mock source cleanup for ${options.sandbox}`,
+      });
+    }
+  };
+  return { url, loopbackUrl, sourceFingerprint, stop };
 }
 
 export async function startFaultProxyOnSandbox(options: FaultProxyOnSandboxOptions & ProvisionExecOptions): Promise<FaultProxyOnSandbox> {

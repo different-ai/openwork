@@ -78,6 +78,8 @@ const requests = [];
 const drafts = [];
 let agentWorkloads = [];
 let agentRequiredHeader = null;
+const agentReplyGates = new Map();
+const AGENT_REPLY_GATE_TIMEOUT_MS = 60_000;
 let configuredTools = [];
 
 const gmailThreadId = "thread-q3-launch";
@@ -214,6 +216,21 @@ function validateAgentWorkloads(value) {
     if (finalReplyChunkSize !== null && (!Number.isInteger(finalReplyChunkSize) || finalReplyChunkSize < 1)) {
       throw new Error(`agent workload ${promptMarker} finalReplyChunkSize must be a positive integer`);
     }
+    const finalReplyChunks = workload.finalReplyChunks === undefined ? null : workload.finalReplyChunks;
+    if (finalReplyChunks !== null && (!Array.isArray(finalReplyChunks) || finalReplyChunks.length === 0
+      || finalReplyChunks.some((chunk) => typeof chunk !== "string") || finalReplyChunks.join("") !== finalReply)) {
+      throw new Error(`agent workload ${promptMarker} finalReplyChunks must concatenate to finalReply`);
+    }
+    if (finalReplyChunks !== null && finalReplyChunkSize !== null) {
+      throw new Error(`agent workload ${promptMarker} cannot set both finalReplyChunks and finalReplyChunkSize`);
+    }
+    const finalReplyInitiallyReleasedChunks = workload.finalReplyInitiallyReleasedChunks === undefined
+      ? null : workload.finalReplyInitiallyReleasedChunks;
+    if (finalReplyInitiallyReleasedChunks !== null && (finalReplyChunks === null
+      || !Number.isInteger(finalReplyInitiallyReleasedChunks) || finalReplyInitiallyReleasedChunks < 1
+      || finalReplyInitiallyReleasedChunks > finalReplyChunks.length || workload.finalReplyFrom !== undefined)) {
+      throw new Error(`agent workload ${promptMarker} gated replies require exact static chunks and a valid initial release count`);
+    }
     if (workload.finalReasoning !== undefined && typeof workload.finalReasoning !== "string") {
       throw new Error(`agent workload ${promptMarker} finalReasoning must be a string`);
     }
@@ -245,17 +262,116 @@ function validateAgentWorkloads(value) {
     const rateLimitAttempts = workload.rateLimitAttempts ?? 0;
     if (!Number.isInteger(rateLimitAttempts) || rateLimitAttempts < 0 || rateLimitAttempts > 3)
       throw new Error("rateLimitAttempts must be between 0 and 3");
-    return { promptMarker, finalReply, finalReplyFrom: workload.finalReplyFrom, finalReplyChunkSize, finalReplyDelayMs, finalReasoning: workload.finalReasoning, steps, latestUserTurn: workload.latestUserTurn === true, rateLimitAttempts };
+    return { promptMarker, finalReply, finalReplyFrom: workload.finalReplyFrom, finalReplyChunkSize, finalReplyChunks,
+      finalReplyInitiallyReleasedChunks, finalReplyDelayMs, finalReasoning: workload.finalReasoning, steps,
+      latestUserTurn: workload.latestUserTurn === true, rateLimitAttempts };
   });
 }
 
 function finalReplyChunks(workload) {
+  if (workload.finalReplyChunks !== null) return workload.finalReplyChunks;
   if (workload.finalReplyChunkSize === null) return [workload.finalReply];
   const chunks = [];
   for (let offset = 0; offset < workload.finalReply.length; offset += workload.finalReplyChunkSize) {
     chunks.push(workload.finalReply.slice(offset, offset + workload.finalReplyChunkSize));
   }
   return chunks;
+}
+
+function publicAgentReplyState(state) {
+  return {
+    promptMarker: state.promptMarker,
+    releasedChunks: state.releasedChunks,
+    deliveredChunks: state.deliveredChunks,
+    totalChunks: state.totalChunks,
+    prefix: state.prefix,
+    complete: state.complete,
+    waiting: state.waiters.length,
+    aborted: state.aborted,
+    timedOut: state.timedOut,
+  };
+}
+
+function createAgentReplyGate(workload, chunks) {
+  const previous = agentReplyGates.get(workload.promptMarker);
+  if (previous && !previous.complete) throw new Error(`agent reply ${workload.promptMarker} already has an active stream`);
+  const state = {
+    promptMarker: workload.promptMarker,
+    releasedChunks: workload.finalReplyInitiallyReleasedChunks,
+    deliveredChunks: 0,
+    totalChunks: chunks.length,
+    prefix: "",
+    complete: false,
+    aborted: false,
+    timedOut: false,
+    waiters: [],
+  };
+  agentReplyGates.set(workload.promptMarker, state);
+  return state;
+}
+
+function releaseAgentReplyWaiters(gate, released) {
+  for (const waiter of gate.waiters.splice(0)) waiter(released);
+}
+
+function waitForAgentReplyRelease(gate) {
+  if (gate.aborted || gate.timedOut) return Promise.resolve(false);
+  if (gate.deliveredChunks < gate.releasedChunks) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (released) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const index = gate.waiters.indexOf(finish);
+      if (index >= 0) gate.waiters.splice(index, 1);
+      resolve(released);
+    };
+    const timer = setTimeout(() => {
+      gate.timedOut = true;
+      finish(false);
+    }, AGENT_REPLY_GATE_TIMEOUT_MS);
+    gate.waiters.push(finish);
+  });
+}
+
+async function gatedAgentStream(res, model, workload, finalReply) {
+  const chunks = finalReplyChunks({ ...workload, finalReply });
+  const gate = createAgentReplyGate(workload, chunks);
+  res.writeHead(200, {
+    "access-control-allow-origin": "*",
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  const abort = () => {
+    if (gate.complete) return;
+    gate.aborted = true;
+    releaseAgentReplyWaiters(gate, false);
+  };
+  res.once("close", abort);
+  res.write(`data: ${JSON.stringify(agentChunk(model, { role: "assistant" }))}\n\n`);
+  if (workload.finalReasoning) {
+    res.write(`data: ${JSON.stringify(agentChunk(model, { reasoning_content: workload.finalReasoning }))}\n\n`);
+  }
+  for (const content of chunks) {
+    while (gate.deliveredChunks >= gate.releasedChunks) {
+      if (!await waitForAgentReplyRelease(gate)) {
+        if (!res.destroyed) res.destroy();
+        return;
+      }
+    }
+    if (gate.aborted || gate.timedOut || res.writableEnded || res.destroyed) return;
+    res.write(`data: ${JSON.stringify(agentChunk(model, { content }))}\n\n`);
+    gate.deliveredChunks += 1;
+    gate.prefix += content;
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
+  if (gate.aborted || gate.timedOut || res.writableEnded || res.destroyed) return;
+  res.write(`data: ${JSON.stringify(agentChunk(model, {}, "stop"))}\n\n`);
+  gate.complete = true;
+  res.off("close", abort);
+  res.end("data: [DONE]\n\n");
 }
 
 function offeredAgentTool(body, wanted) {
@@ -454,12 +570,16 @@ async function handleAgentCompletion(req, res, entry) {
         .filter((message) => message.role === "system" || message.role === "developer")
         .map(agentContentText).join("\n") || "No system instructions"
       : workload.finalReply;
-    agentStream(res, model, [
-      agentChunk(model, { role: "assistant" }),
-      ...(workload.finalReasoning ? [agentChunk(model, { reasoning_content: workload.finalReasoning })] : []),
-      ...finalReplyChunks({ ...workload, finalReply }).map((content) => agentChunk(model, { content })),
-      agentChunk(model, {}, "stop"),
-    ]);
+    if (workload.finalReplyInitiallyReleasedChunks !== null) {
+      await gatedAgentStream(res, model, workload, finalReply);
+    } else {
+      agentStream(res, model, [
+        agentChunk(model, { role: "assistant" }),
+        ...(workload.finalReasoning ? [agentChunk(model, { reasoning_content: workload.finalReasoning })] : []),
+        ...finalReplyChunks({ ...workload, finalReply }).map((content) => agentChunk(model, { content })),
+        agentChunk(model, {}, "stop"),
+      ]);
+    }
     return;
   }
   const step = workload.steps[completedTools];
@@ -1106,7 +1226,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/health") {
-      json(res, 200, { ok: true, issuer, autoApprove, disableDcr, requests: requests.length });
+      json(res, 200, { ok: true, host, issuer, autoApprove, disableDcr, requests: requests.length });
       return;
     }
 
@@ -1136,8 +1256,42 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       agentWorkloads = validateAgentWorkloads(body?.workloads);
+      for (const state of agentReplyGates.values()) {
+        state.aborted = true;
+        releaseAgentReplyWaiters(state, false);
+      }
+      agentReplyGates.clear();
       agentRequiredHeader = requiredHeader ?? null;
       json(res, 200, { configured: agentWorkloads.length });
+      return;
+    }
+
+    if (url.pathname === "/admin/agent-reply" && req.method === "GET") {
+      const promptMarker = url.searchParams.get("promptMarker") ?? "";
+      const state = agentReplyGates.get(promptMarker);
+      if (!state) {
+        json(res, 404, { error: "agent_reply_not_started" });
+        return;
+      }
+      json(res, 200, publicAgentReplyState(state));
+      return;
+    }
+
+    if (url.pathname === "/admin/agent-reply" && req.method === "POST") {
+      const body = await readJson(req);
+      const state = agentReplyGates.get(body?.promptMarker);
+      if (!state) {
+        json(res, 404, { error: "agent_reply_not_started" });
+        return;
+      }
+      const count = body?.count ?? 1;
+      if (!Number.isInteger(count) || count < 1) {
+        json(res, 400, { error: "count_must_be_positive" });
+        return;
+      }
+      state.releasedChunks = Math.min(state.totalChunks, state.releasedChunks + count);
+      releaseAgentReplyWaiters(state, true);
+      json(res, 200, publicAgentReplyState(state));
       return;
     }
 

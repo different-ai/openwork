@@ -36,6 +36,7 @@ import {
 import type { Located, Surface, Target } from "@openwork/cdp";
 import {
   app as startApp,
+  appWeb as startAppWeb,
   faultProxy as startFaultProxy,
   mcpMock,
   server,
@@ -65,6 +66,7 @@ import type {
   Probe,
   ProbeEvalOptions,
   Seed,
+  SeedAppWebOptions,
   SeedDesktopOptions,
   SeedWebOptions,
   SeeOptions,
@@ -467,6 +469,13 @@ export class SeedChannel implements Seed {
       }));
       if (options.workspacePath) await this.workspace(app, options.workspacePath);
       return app;
+    });
+  }
+
+  appWeb(options: SeedAppWebOptions) {
+    return this.#runtime.call("seed", "appWeb", `appWeb(${this.#runtime.place.kind})`, null, async () => {
+      const web = await startAppWeb({ ...options, place: this.#runtime.place });
+      return this.#runtime.stack.use(web);
     });
   }
 
