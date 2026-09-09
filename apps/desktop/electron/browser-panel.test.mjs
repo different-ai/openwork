@@ -16,7 +16,11 @@ export const controls = {
 export const exposed = {};
 export const contextBridge = { exposeInMainWorld(name, value) { exposed[name] = value; } };
 export const webUtils = {};
-export const webFrame = { zoomFactor: 1, getZoomFactor() { return this.zoomFactor; } };
+export const webFrame = {
+  zoomFactor: 1,
+  getZoomFactor() { return this.zoomFactor; },
+  setZoomFactor(factor) { this.zoomFactor = factor; },
+};
 export const preloadCalls = [];
 export const ipcRenderer = new EventEmitter();
 ipcRenderer.invoke = (channel, ...args) => { preloadCalls.push({ channel, args }); return controls.invoke(channel, ...args); };
@@ -250,16 +254,16 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 let preloadTestId = 0;
 async function loadPreload(t) {
-  const previousWindow = globalThis.window;
-  globalThis.window = new EventTarget();
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { value: new EventTarget(), configurable: true, writable: true });
   t.after(() => {
     if (previousWindow === undefined) delete globalThis.window;
-    else globalThis.window = previousWindow;
+    else Object.defineProperty(globalThis, "window", previousWindow);
     ipcRenderer.removeAllListeners();
   });
   ipcRenderer.removeAllListeners();
   controls.invoke = async () => true;
-  webFrame.zoomFactor = 1;
+  webFrame.setZoomFactor(1);
   preloadCalls.length = 0;
   await import(`./preload.mjs?geometry-test=${++preloadTestId}`);
   // Existing bootstrap reads are outside the geometry path under test.
@@ -322,10 +326,10 @@ test("geometry updates scale fractional edges at changing zoom without replacing
   const foreground = onScreen();
   const background = views().find(view => view !== foreground);
   const backgroundBounds = background.getBounds();
-  for (const [zoomFactor, expected] of [
-    [1, { x: 10, y: 21, width: 101, height: 81 }],
-    [1.25, { x: 13, y: 27, width: 126, height: 101 }],
-    [0.8, { x: 8, y: 17, width: 81, height: 65 }],
+  for (const { zoomFactor, expected } of [
+    { zoomFactor: 1, expected: { x: 10, y: 21, width: 101, height: 81 } },
+    { zoomFactor: 1.25, expected: { x: 13, y: 27, width: 126, height: 101 } },
+    { zoomFactor: 0.8, expected: { x: 8, y: 17, width: 81, height: 65 } },
   ]) {
     mainContents.zoomFactor = zoomFactor;
     assert.equal(invoke("openwork:browser:bounds", { ...bounds, zoomFactor }), true);
@@ -394,7 +398,7 @@ test("preload deduplicates geometry including zoom, invalidates after applied zo
   assert.equal(preloadCalls.length, 1, "show and same-geometry frames share a dedup cache");
   assert.deepEqual(preloadCalls[0].args, [{ ...PANEL_BOUNDS, zoomFactor: 1 }, "A"]);
   mainContents.zoomFactor = 1.25;
-  webFrame.zoomFactor = 1.25;
+  webFrame.setZoomFactor(1.25);
   await browser.setBounds(PANEL_BOUNDS);
   assert.equal(preloadCalls.length, 2, "equal CSS bounds at a different zoom must still be sent");
   assert.deepEqual(onScreen().getBounds(), { x: 1000, y: 50, width: 500, height: 1125 });
@@ -430,7 +434,7 @@ test("preload retries rejected zoom snapshots but a late rejection cannot invali
   controls.invoke = async () => { await pending.promise; return false; };
   const stale = browser.setBounds({ ...PANEL_BOUNDS, width: 300 });
   controls.invoke = async () => true;
-  webFrame.zoomFactor = 1.25;
+  webFrame.setZoomFactor(1.25);
   await browser.setBounds(PANEL_BOUNDS);
   pending.finish();
   assert.equal(await stale, false);
