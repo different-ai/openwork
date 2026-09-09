@@ -46,6 +46,68 @@ export interface StartMockGithubOptions {
   port?: number;
 }
 
+export interface MockWardenGithubComment {
+  id: number;
+  body: string;
+  user: { login: string; type: "Bot" | "User" };
+}
+
+export interface MockWardenGithubThread {
+  id: string;
+  isResolved: boolean;
+  body: string;
+  author: { login: string; type: "Bot" | "User" };
+}
+
+export interface MockWardenGithubRun {
+  id: string;
+  runNumber: number;
+  attempt: number;
+  headSha: string;
+  headBranch?: string;
+  repository?: string;
+  status?: string;
+  conclusion?: string;
+  workflowPath?: string;
+  pullRequest?: number;
+}
+
+export interface MockWardenGithubRequest {
+  method: string;
+  path: string;
+  url: string;
+  authorization: string | null;
+  body: string;
+}
+
+export interface StartMockWardenGithubOptions {
+  token: string;
+  repository: string;
+  pullRequest: number;
+  headSha: string;
+  baseSha: string;
+  headBranch: string;
+  baseBranch: string;
+  comments?: MockWardenGithubComment[];
+  threads?: MockWardenGithubThread[];
+  port?: number;
+}
+
+export interface MockWardenGithubHandle {
+  apiUrl: string;
+  graphqlUrl: string;
+  seedRun(run: MockWardenGithubRun): void;
+  seedComments(comments: MockWardenGithubComment[]): void;
+  seedThreads(threads: MockWardenGithubThread[]): void;
+  setPullHead(headSha: string): void;
+  changeHeadAfterGraphql(headSha: string): void;
+  setGraphqlErrors(enabled: boolean): void;
+  comments(): MockWardenGithubComment[];
+  requests(): MockWardenGithubRequest[];
+  stop(): Promise<void>;
+  [Symbol.asyncDispose](): Promise<void>;
+}
+
 interface RepositorySnapshot {
   headSha: string;
   treeSha: string;
@@ -96,6 +158,20 @@ function authorizationHeader(request: IncomingMessage): string | null {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) return value[0] ?? null;
   return null;
+}
+
+function requestBody(request: IncomingMessage): Promise<string> {
+  request.setEncoding("utf8");
+  return new Promise((resolveBody, reject) => {
+    let body = "";
+    request.on("data", (chunk: string) => { body += chunk; });
+    request.on("end", () => resolveBody(body));
+    request.on("error", reject);
+  });
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function contentDigest(files: Record<string, string>): string {
@@ -388,6 +464,281 @@ export async function startMockGithub(options: StartMockGithubOptions): Promise<
     },
     async requests() {
       return requests.map((request) => ({ ...request }));
+    },
+    stop,
+    [Symbol.asyncDispose]: stop,
+  };
+}
+
+/**
+ * A repository-scoped GitHub HTTP witness for the production Warden reporter.
+ * It intentionally implements only pull/run reads, issue-comment writes, and
+ * the read-only reviewThreads query. Review decisions and thread mutations
+ * have no successful route.
+ */
+export async function startMockWardenGithub(
+  options: StartMockWardenGithubOptions,
+): Promise<MockWardenGithubHandle> {
+  const [owner, name, extra] = options.repository.split("/");
+  if (!owner || !name || extra) throw new Error("Mock Warden repository must be owner/name.");
+
+  const recorded: MockWardenGithubRequest[] = [];
+  const runs = new Map<string, MockWardenGithubRun>();
+  let comments = (options.comments ?? []).map((comment) => ({
+    ...comment,
+    user: { ...comment.user },
+  }));
+  let threads = (options.threads ?? []).map((thread) => ({
+    ...thread,
+    author: { ...thread.author },
+  }));
+  let nextCommentId = Math.max(0, ...comments.map((comment) => comment.id)) + 1;
+  let pullHeadSha = options.headSha;
+  let headAfterGraphql: string | null = null;
+  let graphqlErrors = false;
+  let apiUrl = "http://127.0.0.1";
+  const repositoryId = 9001;
+  const root = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
+
+  const handleRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    try {
+      const url = new URL(request.url ?? "/", apiUrl);
+      const method = requestMethod(request);
+      const body = await requestBody(request);
+      recorded.push({
+        method,
+        path: url.pathname,
+        url: `${url.pathname}${url.search}`,
+        authorization: authorizationHeader(request),
+        body,
+      });
+
+      if (authorizationHeader(request) !== `Bearer ${options.token}`) {
+        sendJson(response, 401, { message: "bad credentials" });
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/graphql") {
+        const payload: unknown = JSON.parse(body);
+        if (!isObject(payload) || typeof payload.query !== "string" || !isObject(payload.variables)) {
+          sendJson(response, 400, { message: "invalid GraphQL request" });
+          return;
+        }
+        if (/\bmutation\b/.test(payload.query)) {
+          sendJson(response, 405, { message: "review mutations are not implemented" });
+          return;
+        }
+        if (
+          payload.variables.owner !== owner || payload.variables.name !== name ||
+          payload.variables.pr !== options.pullRequest
+        ) {
+          sendJson(response, 404, { message: "not found" });
+          return;
+        }
+        if (graphqlErrors) {
+          sendJson(response, 200, { errors: [{ message: "fixture GraphQL failure" }] });
+          return;
+        }
+        const after = payload.variables.after;
+        if (after !== null && typeof after !== "string") {
+          sendJson(response, 400, { message: "invalid GraphQL cursor" });
+          return;
+        }
+        let start = 0;
+        if (typeof after === "string") {
+          const match = /^warden-thread-cursor-(\d+)$/.exec(after);
+          if (!match?.[1]) {
+            sendJson(response, 400, { message: "invalid GraphQL cursor" });
+            return;
+          }
+          start = Number(match[1]);
+        }
+        const pageSize = 100;
+        const page = threads.slice(start, start + pageSize);
+        const nextStart = start + page.length;
+        const hasNextPage = nextStart < threads.length;
+        sendJson(response, 200, {
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  pageInfo: {
+                    hasNextPage,
+                    endCursor: hasNextPage ? `warden-thread-cursor-${nextStart}` : null,
+                  },
+                  nodes: page.map((thread) => ({
+                    id: thread.id,
+                    isResolved: thread.isResolved,
+                    comments: {
+                      nodes: [{
+                        body: thread.body,
+                        author: {
+                          login: thread.author.login,
+                          __typename: thread.author.type,
+                        },
+                      }],
+                    },
+                  })),
+                },
+              },
+            },
+          },
+        });
+        if (headAfterGraphql !== null) {
+          pullHeadSha = headAfterGraphql;
+          headAfterGraphql = null;
+        }
+        return;
+      }
+
+      if (!url.pathname.startsWith(`${root}/`)) {
+        sendJson(response, 404, { message: "not found" });
+        return;
+      }
+
+      if (method === "GET" && url.pathname === `${root}/pulls/${options.pullRequest}`) {
+        sendJson(response, 200, {
+          number: options.pullRequest,
+          state: "open",
+          merged: false,
+          merged_at: null,
+          head: {
+            sha: pullHeadSha,
+            ref: options.headBranch,
+            repo: { id: repositoryId, full_name: options.repository },
+          },
+          base: {
+            sha: options.baseSha,
+            ref: options.baseBranch,
+            repo: { id: repositoryId, full_name: options.repository },
+          },
+        });
+        return;
+      }
+
+      const runPrefix = `${root}/actions/runs/`;
+      if (method === "GET" && url.pathname.startsWith(runPrefix)) {
+        const runId = decodeURIComponent(url.pathname.slice(runPrefix.length));
+        const run = runs.get(runId);
+        if (!run) {
+          sendJson(response, 404, { message: "not found" });
+          return;
+        }
+        const runRepository = run.repository ?? options.repository;
+        sendJson(response, 200, {
+          id: Number(run.id),
+          run_number: run.runNumber,
+          run_attempt: run.attempt,
+          event: "pull_request",
+          head_sha: run.headSha,
+          head_branch: run.headBranch ?? options.headBranch,
+          head_repository: { full_name: runRepository },
+          repository: { full_name: options.repository },
+          status: run.status ?? "completed",
+          conclusion: run.conclusion ?? "success",
+          path: run.workflowPath ?? ".github/workflows/warden.yml",
+          pull_requests: [{
+            number: run.pullRequest ?? options.pullRequest,
+            url: `https://api.github.com/repos/${owner}/${name}/pulls/${run.pullRequest ?? options.pullRequest}`,
+            head: { sha: run.headSha, repo: { id: repositoryId, full_name: runRepository } },
+            base: { sha: options.baseSha, repo: { full_name: options.repository } },
+          }],
+        });
+        return;
+      }
+
+      if (method === "GET" && url.pathname === `${root}/issues/${options.pullRequest}/comments`) {
+        const perPage = positiveInteger(url.searchParams.get("per_page"), 30);
+        const page = positiveInteger(url.searchParams.get("page"), 1);
+        const start = (page - 1) * perPage;
+        sendJson(response, 200, comments.slice(start, start + perPage));
+        return;
+      }
+
+      if (method === "POST" && url.pathname === `${root}/issues/${options.pullRequest}/comments`) {
+        const payload: unknown = JSON.parse(body);
+        if (!isObject(payload) || typeof payload.body !== "string") {
+          sendJson(response, 422, { message: "body is required" });
+          return;
+        }
+        const comment: MockWardenGithubComment = {
+          id: nextCommentId,
+          body: payload.body,
+          user: { login: "github-actions[bot]", type: "Bot" },
+        };
+        nextCommentId += 1;
+        comments.push(comment);
+        sendJson(response, 201, comment);
+        return;
+      }
+
+      const commentPrefix = `${root}/issues/comments/`;
+      if (method === "PATCH" && url.pathname.startsWith(commentPrefix)) {
+        const id = Number(decodeURIComponent(url.pathname.slice(commentPrefix.length)));
+        const index = comments.findIndex((comment) => comment.id === id);
+        const payload: unknown = JSON.parse(body);
+        if (index < 0) {
+          sendJson(response, 404, { message: "not found" });
+          return;
+        }
+        if (!isObject(payload) || typeof payload.body !== "string") {
+          sendJson(response, 422, { message: "body is required" });
+          return;
+        }
+        const previous = comments[index];
+        if (!previous) throw new Error("Mock Warden comment disappeared during update.");
+        const updated = { ...previous, body: payload.body, user: { ...previous.user } };
+        comments[index] = updated;
+        sendJson(response, 200, updated);
+        return;
+      }
+
+      sendJson(response, 404, { message: "not found" });
+    } catch (error) {
+      console.error(`[mock-warden-github] request handler failed: ${error instanceof Error ? error.message : String(error)}`);
+      sendJson(response, 500, { message: "mock github internal error" });
+    }
+  };
+
+  const server = createServer((request, response) => {
+    void handleRequest(request, response);
+  });
+  const address = await listen(server, options.port ?? 0);
+  apiUrl = `http://127.0.0.1:${address.port}`;
+  let stopped = false;
+  const stop = async (): Promise<void> => {
+    if (stopped) return;
+    stopped = true;
+    await close(server);
+  };
+
+  return {
+    apiUrl,
+    graphqlUrl: `${apiUrl}/graphql`,
+    seedRun(run) {
+      runs.set(run.id, { ...run });
+    },
+    seedComments(nextComments) {
+      comments = nextComments.map((comment) => ({ ...comment, user: { ...comment.user } }));
+      nextCommentId = Math.max(0, ...comments.map((comment) => comment.id)) + 1;
+    },
+    seedThreads(nextThreads) {
+      threads = nextThreads.map((thread) => ({ ...thread, author: { ...thread.author } }));
+    },
+    setPullHead(headSha) {
+      pullHeadSha = headSha;
+    },
+    changeHeadAfterGraphql(headSha) {
+      headAfterGraphql = headSha;
+    },
+    setGraphqlErrors(enabled) {
+      graphqlErrors = enabled;
+    },
+    comments() {
+      return comments.map((comment) => ({ ...comment, user: { ...comment.user } }));
+    },
+    requests() {
+      return recorded.map((request) => ({ ...request }));
     },
     stop,
     [Symbol.asyncDispose]: stop,
