@@ -1,7 +1,9 @@
 import { browserScript, reattachSurface } from "@openwork/cdp";
 import { spawn } from "node:child_process";
+import { mkdtempSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
 import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
@@ -528,8 +530,12 @@ async function startManualApprovalServer(approvalTimeoutMs: number) {
     console.log("SPEC_SERVER_PORT:" + server.port);
     setInterval(() => {}, 60000);
   `;
+  // Isolate runtime state: without this the spawned server reads the host's
+  // ~/.config/openwork/runtime.sqlite, and a persisted managed policy there
+  // turns every write into an instant 403 policy_unavailable.
   const child = spawn("bun", ["--conditions=development", "-e", script], {
     cwd: join(repoRoot, "apps", "server"),
+    env: { ...process.env, OPENWORK_RUNTIME_DB: join(mkdtempSync(join(tmpdir(), "openwork-attachment-spec-runtime-")), "runtime.sqlite") },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const port = await new Promise<number>((resolvePort, reject) => {

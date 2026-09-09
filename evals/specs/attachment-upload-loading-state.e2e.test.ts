@@ -22,7 +22,7 @@ test(`sending an image in ${entryPoint} immediately moves it into the thread whi
     expect(world.writeElapsedMs).toBeGreaterThanOrEqual(world.approvalTimeoutMs - 100);
   });
 
-  if (entryPoint === "new task") await user.click({ role: "button", label: /^New task$/ });
+  if (entryPoint === "new task") await user.click({ role: "button", label: "New session" });
   await user.type("composer", "Describe the attached image.");
   // TODO(primitive): attach an in-memory file through the composer's file chooser.
   const attached = await seed.evalIn(world.app, browserScript(async (attachmentName: string) => {
