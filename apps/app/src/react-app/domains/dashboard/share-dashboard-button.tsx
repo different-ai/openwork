@@ -11,23 +11,32 @@ import { DenReauthNotice } from "../cloud/den-reauth-notice";
 export function ShareDashboardButton({ apps }: { apps: SavedAppSummary[] }) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
-  return <Dialog open={open} onOpenChange={(next) => { if (!pending) setOpen(next); }}>
+  const commitSession = useRef<(() => void) | null>(null);
+  const close = () => {
+    setOpen(false);
+    const commit = commitSession.current;
+    commitSession.current = null;
+    commit?.();
+  };
+  return <Dialog open={open} onOpenChange={(next) => { if (!pending) { if (next) setOpen(true); else close(); } }}>
     <Button variant="outline" onClick={() => setOpen(true)}><Share2 className="size-4" />Share</Button>
     {open ? <DialogContent className="max-h-[90dvh] overflow-y-auto">
       <DialogHeader>
         <DialogTitle>Share your dashboard</DialogTitle>
         <DialogDescription>Choose apps to add to a teammate’s dashboard. They must belong to your organization.</DialogDescription>
       </DialogHeader>
-      <ShareDashboardForm apps={apps.filter((app) => app.canManage)} pending={pending} setPending={setPending} onClose={() => setOpen(false)} />
+      <ShareDashboardForm apps={apps.filter((app) => app.canManage)} pending={pending} setPending={setPending} onClose={close}
+        onVerifiedSession={(commit) => { commitSession.current = commit; }} />
     </DialogContent> : null}
   </Dialog>;
 }
 
-function ShareDashboardForm({ apps, pending, setPending, onClose }: {
+function ShareDashboardForm({ apps, pending, setPending, onClose, onVerifiedSession }: {
   apps: SavedAppSummary[];
   pending: boolean;
   setPending: (pending: boolean) => void;
   onClose: () => void;
+  onVerifiedSession: (commit: () => void) => void;
 }) {
   const { client, orgId } = useAppsClient();
   const [email, setEmail] = useState("");
@@ -37,10 +46,11 @@ function ShareDashboardForm({ apps, pending, setPending, onClose }: {
   const [complete, setComplete] = useState(false);
   const [needsReauth, setNeedsReauth] = useState(false);
   const submitting = useRef(false);
+  const verifiedClient = useRef<typeof client>(null);
   const share = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!client || !orgId || submitting.current || needsReauth) return;
-    await shareApps(client);
+    await shareApps(verifiedClient.current ?? client);
   };
   const shareApps = async (sharingClient: NonNullable<typeof client>) => {
     if (!orgId) return;
@@ -97,7 +107,11 @@ function ShareDashboardForm({ apps, pending, setPending, onClose }: {
     </fieldset>
     <p className="text-xs text-muted-foreground">Sharing gives view access to each app’s underlying workflow, its saved results, and other apps built from that workflow. Existing permissions stay in place. Company-managed apps are not included.</p>
     {error ? <p role="alert" className="text-sm text-destructive">{error} Apps marked Shared are already available to your teammate. Retry to share the remaining apps.</p> : null}
-    {needsReauth ? <DenReauthNotice onVerified={shareApps} onCancel={() => setNeedsReauth(false)} /> : null}
+    {needsReauth ? <DenReauthNotice onVerified={async (nextClient, commit) => {
+      verifiedClient.current = nextClient;
+      onVerifiedSession(commit);
+      await shareApps(nextClient);
+    }} onCancel={() => setNeedsReauth(false)} /> : null}
     <div className="flex justify-end gap-2">
       <Button type="button" variant="outline" disabled={pending} onClick={onClose}>Cancel</Button>
       <Button type="submit" disabled={pending || needsReauth || !selected.size || !email.trim() || !client || !orgId}>

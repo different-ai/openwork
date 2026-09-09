@@ -8,7 +8,7 @@ import { tryOpenBrowserAuthUrl } from "./open-browser-auth";
 
 /** Verification replaces only this account's session; it cannot enroll another account or workspace. */
 export function DenReauthNotice({ onVerified, onCancel }: {
-  onVerified: (client: ReturnType<typeof createDenClient>) => Promise<void>;
+  onVerified: (client: ReturnType<typeof createDenClient>, commitSession: () => void) => Promise<void>;
   onCancel: () => void;
 }) {
   const auth = useDenAuth();
@@ -48,10 +48,13 @@ export function DenReauthNotice({ onVerified, onCancel }: {
     exchanging.current = true;
     setBusy(true);
     setError(null);
-    const ensureCurrent = () => {
+    const isCurrentSession = () => {
       const current = readDenSettings();
-      if (!active.current || current.baseUrl !== settings.baseUrl || current.apiBaseUrl !== settings.apiBaseUrl
-        || current.authToken !== settings.authToken || current.activeOrgId !== settings.activeOrgId) {
+      return current.baseUrl === settings.baseUrl && current.apiBaseUrl === settings.apiBaseUrl
+        && current.authToken === settings.authToken && current.activeOrgId === settings.activeOrgId;
+    };
+    const ensureCurrent = () => {
+      if (!active.current || !isCurrentSession()) {
         throw new Error("Your account or workspace changed. Cancel and start sharing again.");
       }
     };
@@ -66,10 +69,12 @@ export function DenReauthNotice({ onVerified, onCancel }: {
       const verifiedUser = await client.getSession();
       if (verifiedUser.id !== user.id) throw new Error(`Sign in as ${user.email} to confirm this share.`);
       ensureCurrent();
-      // The settings notification refreshes session consumers on the current screen.
-      writeDenSettings({ ...settings, authToken: exchange.token }, { persistBootstrap: false });
       // The resumed mutation still enforces freshness and resource permissions on the server.
-      await completeRef.current(client);
+      // Commit when the share dialog closes: settings changes reload deployment
+      // policy and can unmount the dashboard while its pending action is running.
+      await completeRef.current(client, () => {
+        if (isCurrentSession()) writeDenSettings({ ...settings, authToken: exchange.token }, { persistBootstrap: false });
+      });
     } catch (cause) {
       if (active.current) setError(cause instanceof Error ? cause.message : "Could not confirm your identity. Try again.");
     } finally {
