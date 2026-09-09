@@ -252,7 +252,7 @@ test.skipIf(!enabled)(previewOnly ? "Coworker Fresh start fullscreen preview wit
       && (document.body.innerText ?? "").includes("Hello from the stub server."), { timeoutMs: 90_000, label: "ordinary native conversation completed" });
   };
   const settings = async () => {
-    await clickButtonContaining(app, "OpenWork");
+    await clickCoworkerControl(app, { testId: "coworker-profile-button" });
     await clickCoworkerControl(app, { role: "button", label: "Fresh start" });
   };
   const resetPage = () => clickCoworkerControl(app, { testId: "fresh-start-factory-reset" });
@@ -291,6 +291,20 @@ test.skipIf(!enabled)(previewOnly ? "Coworker Fresh start fullscreen preview wit
    const credentialsBefore = await fixture.credentials();
   expect(JSON.stringify(credentialsBefore)).toContain("UNRELATED-ENGINE-FIXTURE-CREDENTIAL");
   await send("Remember this old conversation for the reset check.");
+  if (await evalIn(app, () => document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed") === "false")) {
+    await clickCoworkerControl(app, { testId: "context-panel-close" });
+  }
+  await waitFor(app, () => {
+    const computer = document.querySelector('[data-testid="coworker-computer-control"]');
+    const browser = document.querySelector('[data-testid="coworker-browser-toggle"]');
+    const context = document.querySelector('[data-testid="context-panel"]');
+    const leftRail = document.querySelector('[data-testid="coworker-rail"]');
+    if (!computer || !browser || !context || !leftRail) return false;
+    const bounds = context.getBoundingClientRect();
+    return context.contains(computer) && context.contains(browser) && !leftRail.contains(computer) && !leftRail.contains(browser)
+      && computer.getClientRects().length > 0 && browser.getClientRects().length > 0 && bounds.left > innerWidth / 2;
+  }, { timeoutMs: 20_000, label: "Computer and Browser are visible in the right panel, never the left footer" });
+  evidence.recordAssertionEvidence("Discussion controls belong to the right panel", "Both Computer and Browser are visible inside the right-hand context rail and absent from the left coworker rail.", true);
   fixture.seedUnrelatedHistory();
   const before = history();
   const oldIds = before.filter((row) => row.directory !== path.join(profileDir, "unrelated-project")).map((row) => row.id);
