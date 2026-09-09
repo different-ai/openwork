@@ -735,6 +735,7 @@ const connectStartFailedSchema = z.object({
   error: z.literal("oauth_handshake_failed"),
   message: z.string(),
   diagnostic: externalMcpDiagnosticSchema,
+  callbackUrl: z.string().optional(),
 }).meta({ ref: "ExternalMcpConnectStartFailedError" })
 
 const oauthConfigurationRequiredSchema = z.object({
@@ -3013,7 +3014,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
         409: jsonResponse("The OAuth connection requires provider or issuer configuration before connecting.", connectStartConflictSchema),
-        502: jsonResponse("OAuth handshake failed.", connectStartFailedSchema),
+        424: jsonResponse("OAuth handshake failed with the provider; the body carries the diagnostic.", connectStartFailedSchema),
       },
     }),
     orgMemberRoute(),
@@ -3284,11 +3285,16 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
               : "OpenWork could not safely verify the authorization server selected for this MCP connection. Ask a workspace admin to review its OAuth setup.",
           }, 409)
         }
+        // Some edges replace origin 502/504 responses with CORS-less error pages.
+        // HTTP 424 passes through so a browser on another origin can read the diagnostic.
         return c.json({
           error: "oauth_handshake_failed",
           message: `Could not connect "${connection.name}": ${diagnostic.message} Reference: ${diagnostic.referenceId}.`,
           diagnostic,
-        }, 502)
+          ...(diagnostic.code === "MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED"
+            ? { callbackUrl: await callbackRedirectUri(connection) }
+            : {}),
+        }, 424)
       }
     },
   )

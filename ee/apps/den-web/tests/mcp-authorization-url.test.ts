@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import {
-  mcpAuthorizationErrorDocument,
-  mcpAuthorizationPendingDocument,
+  describeMcpAuthorizationFailure,
+  mcpAuthorizationTabUrl,
+  parseMcpAuthorizationTabState,
   safeMcpAuthorizationUrl,
 } from "../app/(den)/dashboard/_components/mcp-authorization-url"
 
@@ -26,69 +27,110 @@ describe("safeMcpAuthorizationUrl", () => {
   )
 })
 
-describe("mcpAuthorizationPendingDocument", () => {
-  test("renders a concise accessible connection screen before provider redirect", () => {
-    const document = mcpAuthorizationPendingDocument()
+describe("MCP authorization tab state", () => {
+  test("round-trips a failed connection through readable tab parameters", () => {
+    const failure = {
+      message: "The provider rejected this redirect URI.",
+      details: {
+        httpStatus: 424,
+        errorCode: "mcp_oauth_start_failed",
+        diagnosticCode: "MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED",
+        diagnosticReference: "diag_example",
+        redirectUri: "https://api.example.test/v1/mcp-connections/oauth/callback",
+        retryable: false,
+        actionOwner: "provider_admin",
+        responseJson: "{}",
+      },
+    }
+    const url = new URL(mcpAuthorizationTabUrl({
+      connectionId: "connection_example",
+      connectionName: "Example calendar",
+      failure,
+    }), "https://app.example.test")
 
-    expect(document).toContain("Connect your account")
-    expect(document).toContain("preparing the secure provider sign-in")
-    expect(document).toContain("Keep this window open")
-    expect(document).toContain("OpenWork Connect")
-    expect(document).toContain('role="status"')
-    expect(document).toContain('aria-live="polite"')
-    expect(document).toContain("Continue to your provider")
-    expect(document).toContain("background: #f8fbff")
-    expect(document).not.toContain("loading-card")
-    expect(document).not.toContain("@keyframes")
-    expect(document).not.toContain("progress")
+    expect(url.pathname).toBe("/connect/oauth")
+    expect(url.searchParams.get("connection")).toBe("connection_example")
+    expect(url.searchParams.get("name")).toBe("Example calendar")
+    expect(url.searchParams.get("outcome")).toBe("failed")
+    expect(parseMcpAuthorizationTabState(url.searchParams)).toEqual({
+      connectionId: "connection_example",
+      connectionName: "Example calendar",
+      outcome: "failed",
+      failure,
+    })
   })
 })
 
-describe("mcpAuthorizationErrorDocument", () => {
-  test("keeps OAuth failures visible with the exact redirect URI", () => {
-    const document = mcpAuthorizationErrorDocument({
-      message: "A pre-registered OAuth client is required.",
+describe("describeMcpAuthorizationFailure", () => {
+  test("explains a provider redirect allowlist failure without retry advice", () => {
+    const description = describeMcpAuthorizationFailure({
+      connectionName: "Example calendar",
+      message: "The provider rejected OpenWork's OAuth callback.",
       details: {
-        httpStatus: 409,
-        errorCode: "mcp_oauth_configuration_required",
-        redirectUri: "https://api.openwork.example/v1/mcp-connections/oauth/callback",
-        clientMetadataUrl: "https://api.openwork.example/.well-known/oauth-client",
-        responseJson: JSON.stringify({
-          error: "mcp_oauth_configuration_required",
-          callbackUrl: "https://api.openwork.example/v1/mcp-connections/oauth/callback",
-        }, null, 2),
+        httpStatus: 424,
+        diagnosticCode: "MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED",
+        diagnosticReference: "diag_example",
+        redirectUri: "https://api.example.test/v1/mcp-connections/oauth/callback",
+        retryable: false,
+        actionOwner: "provider_admin",
+        responseJson: "{}",
       },
     })
 
-    expect(document).toContain("Connection failed")
-    expect(document).toContain("A pre-registered OAuth client is required.")
-    expect(document).toContain("Technical details")
-    expect(document).toContain("Redirect URI")
-    expect(document).toContain("https://api.openwork.example/v1/mcp-connections/oauth/callback")
-    expect(document).toContain("HTTP status")
-    expect(document).toContain("409")
-    expect(document).toContain("Error code")
-    expect(document).toContain("mcp_oauth_configuration_required")
-    expect(document).toContain("Response payload")
-    expect(document).toContain("<details>")
-    expect(document).not.toContain("<details open")
-    expect(document).toContain('role="alert"')
-    expect(document).not.toContain("window.close")
+    expect(description.title).toBe("Example calendar hasn't approved OpenWork yet")
+    expect(description.description).toContain("Retrying won't help")
+    expect(description.advice.join(" ")).toContain("https://api.example.test/v1/mcp-connections/oauth/callback")
+    expect(description.copyable).toEqual([
+      { label: "Redirect URI", value: "https://api.example.test/v1/mcp-connections/oauth/callback" },
+      { label: "Reference", value: "diag_example" },
+    ])
+    expect(description.retryable).toBe(false)
+    expect(description.advice.join(" ")).not.toMatch(/try again/i)
   })
 
-  test("escapes API error details before writing them into the popup", () => {
-    const document = mcpAuthorizationErrorDocument({
-      message: '<script>alert("message")</script>',
+  test("keeps the plain-language unreadable-response message", () => {
+    const message = "OpenWork could not read the answer from its API when starting the sign-in. The browser blocked the response or the request never completed. Try again; if it keeps happening, tell your workspace admin the time of this attempt."
+    const description = describeMcpAuthorizationFailure({
+      connectionName: "Example calendar",
+      message,
       details: {
-        httpStatus: 502,
-        redirectUri: 'https://example.com/callback?next=<script>alert("uri")</script>',
-        responseJson: '<script>alert("response")</script>',
+        httpStatus: "unavailable",
+        errorCode: "response_unreadable",
+        responseJson: "{}",
       },
     })
 
-    expect(document).not.toContain("<script>alert")
-    expect(document).toContain("&lt;script&gt;alert(&quot;message&quot;)&lt;/script&gt;")
-    expect(document).toContain("next=&lt;script&gt;alert(&quot;uri&quot;)&lt;/script&gt;")
-    expect(document).toContain("&lt;script&gt;alert(&quot;response&quot;)&lt;/script&gt;")
+    expect(description.title).toBe("OpenWork couldn't read its own API's answer")
+    expect(description.description).toBe(message)
+    expect(description.advice.join(" ")).toMatch(/Try again/)
+  })
+
+  test("allows retry advice for a generic retryable failure", () => {
+    const description = describeMcpAuthorizationFailure({
+      connectionName: "Example calendar",
+      message: "The sign-in service was temporarily unavailable.",
+      details: { httpStatus: 424, retryable: true, responseJson: "{}" },
+    })
+
+    expect(description.retryable).toBe(true)
+    expect(description.advice).toContain("Try again.")
+  })
+
+  test("does not suggest retrying a non-retryable provider-admin failure", () => {
+    const description = describeMcpAuthorizationFailure({
+      connectionName: "Example calendar",
+      message: "The provider must update its configuration.",
+      details: {
+        httpStatus: 424,
+        retryable: false,
+        actionOwner: "provider_admin",
+        diagnosticReference: "diag_example",
+        responseJson: "{}",
+      },
+    })
+
+    expect(description.retryable).toBe(false)
+    expect(description.advice.join(" ")).toContain("Example calendar has to fix this on their side")
+    expect(description.advice.join(" ")).not.toMatch(/try again/i)
   })
 })
