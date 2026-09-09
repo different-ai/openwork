@@ -18,10 +18,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export async function screenshot(app: Surface): Promise<ScreenshotArtifact> {
   const at = new Date().toISOString();
   const png = await captureScreenshot(app.client);
-  const page = await evaluate(app.client, `({
+  const page = await evaluate(app.client, () => (({
     route: window.location.hash,
     visibleText: document.body.innerText,
-  })`);
+  })));
   if (!isRecord(page) || typeof page.route !== "string" || typeof page.visibleText !== "string") {
     throw new Error("CDP did not return the current route and visible text for the screenshot.");
   }

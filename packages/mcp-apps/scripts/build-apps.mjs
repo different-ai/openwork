@@ -1,10 +1,9 @@
 import { spawnSync } from "node:child_process"
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 
 const APPS = [
   { entry: "skill-created", exportName: "skillCreatedAppHtml" },
-  { entry: "connection-action", exportName: "connectionActionAppHtml" },
   { entry: "plugin-flow", exportName: "pluginFlowAppHtml" },
 ]
 
@@ -46,6 +45,13 @@ try {
       `export default ${app.exportName}`,
       "",
     ].join("\n"))
+  }
+  // Retire removed bundles without interrupting imports of active apps.
+  const artifacts = new Set(APPS.flatMap(({ entry }) => [`${entry}.js`, `${entry}.d.ts`]))
+  for (const name of await readdir(distUrl)) {
+    if ((name.endsWith(".js") || name.endsWith(".d.ts")) && !artifacts.has(name)) {
+      await rm(new URL(name, distUrl), { force: true })
+    }
   }
 } finally {
   await rm(scratchBase, { recursive: true, force: true })

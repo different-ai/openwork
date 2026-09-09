@@ -113,25 +113,31 @@ export function useSkill(pluginId: string, skillId: string) {
 
 export function useCreateSkill(pluginId: string) {
   const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
 
   return useMutation({
     mutationFn: async (draft: SkillDraft): Promise<DenSkill> => {
-      const { response, payload } = await requestJson(
-        "/v1/config-objects",
-        {
-          method: "POST",
-          body: JSON.stringify(createSkillPayload(pluginId, draft)),
-        },
-        15000,
-      );
-      if (!response.ok) {
-        throw getRequestError(payload, response, `Failed to create skill (${response.status}).`);
-      }
-      const skill = parseSkillResponse(payload);
-      if (!skill) {
-        throw new Error("Skill create response was incomplete.");
-      }
-      return skill;
+      const result: { skill?: DenSkill } = {};
+      await runReauthableAction("create-skill", async () => {
+        const { response, payload } = await requestJson(
+          "/v1/config-objects",
+          {
+            method: "POST",
+            body: JSON.stringify(createSkillPayload(pluginId, draft)),
+          },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to create skill (${response.status}).`);
+        }
+        const skill = parseSkillResponse(payload);
+        if (!skill) {
+          throw new Error("Skill create response was incomplete.");
+        }
+        result.skill = skill;
+      });
+      if (!result.skill) throw new Error("Skill save response was incomplete.");
+      return result.skill;
     },
     onSuccess: async () => {
       await Promise.all([
@@ -144,28 +150,34 @@ export function useCreateSkill(pluginId: string) {
 
 export function useUpdateSkill(pluginId: string) {
   const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
 
   return useMutation({
     mutationFn: async (input: { skillId: string; draft: SkillDraft }): Promise<DenSkill> => {
-      const { response, payload } = await requestJson(
-        `/v1/config-objects/${encodeURIComponent(input.skillId)}/versions`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            input: { rawSourceText: skillSourceFromDraft(input.draft) },
-            reason: "Updated from Den Web",
-          }),
-        },
-        15000,
-      );
-      if (!response.ok) {
-        throw getRequestError(payload, response, `Failed to save skill (${response.status}).`);
-      }
-      const skill = parseSkillResponse(payload);
-      if (!skill) {
-        throw new Error("Skill update response was incomplete.");
-      }
-      return skill;
+      const result: { skill?: DenSkill } = {};
+      await runReauthableAction("update-skill", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/config-objects/${encodeURIComponent(input.skillId)}/versions`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              input: { rawSourceText: skillSourceFromDraft(input.draft) },
+              reason: "Updated from Den Web",
+            }),
+          },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to save skill (${response.status}).`);
+        }
+        const skill = parseSkillResponse(payload);
+        if (!skill) {
+          throw new Error("Skill update response was incomplete.");
+        }
+        result.skill = skill;
+      });
+      if (!result.skill) throw new Error("Skill save response was incomplete.");
+      return result.skill;
     },
     onSuccess: async () => {
       await Promise.all([

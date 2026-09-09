@@ -1,5 +1,5 @@
-import type { DenSession, DenFetchResult } from "@openwork/behaviors";
-import type { CdpFunctionArgument, Surface, Target } from "@openwork/cdp";
+import type { DenSession, DenFetchResult, FieldTypingOptions } from "@openwork/behaviors";
+import type { BrowserEvaluation, Surface, Target } from "@openwork/cdp";
 import type {
   MockHandle,
   Place,
@@ -22,14 +22,15 @@ export interface ClickOptions {
   hitTest?: boolean;
 }
 
-export interface TypeOptions {
+export interface TypeOptions extends FieldTypingOptions {
+  /** Optional visible character pacing for recorded journeys. */
+  intervalMs?: number;
   /** Replace existing text with a real select-all key chord before typing. Defaults to append. */
   replace?: boolean;
 }
 
 export interface ProbeEvalOptions {
-  args?: readonly CdpFunctionArgument[];
-  awaitPromise?: boolean;
+  awaitPromise?: true;
   timeoutMs?: number;
 }
 
@@ -50,6 +51,9 @@ export interface User {
 }
 
 export interface Agent {
+  browserTask(input: import("@openwork/behaviors").BrowserTaskInput): Promise<import("@openwork/behaviors").BrowserTaskReply>;
+  browserRequest(input: { url: string; method?: string; body?: string }): Promise<{ reached: boolean; error?: string }>;
+  desktopApi(path: string, input: { method: string; body?: unknown }): Promise<{ status: number; body: unknown }>;
   run(action: string, args?: unknown): Promise<unknown>;
   send(text: string): Promise<unknown>;
   createSession(title?: string): Promise<string>;
@@ -59,16 +63,23 @@ export interface Agent {
 }
 
 export interface Probe {
+  browserState(): Promise<import("@openwork/behaviors").BrowserState>;
+  browserTabMetrics(targetId: string): ReturnType<typeof import("@openwork/behaviors").readBrowserTabMetrics>;
+  browserFixtureState(origin: string): Promise<import("@openwork/env").BrowserFixtureState>;
   text(): Promise<string>;
+  /** Fixed, read-only DOM projection for layout, focus and element presence assertions. */
+  dom(selector: string): ReturnType<typeof import("@openwork/cdp").readDom>;
   has(text: string): Promise<boolean>;
   composer(): ReturnType<typeof import("@openwork/behaviors").readComposerState>;
   storage(key: string): Promise<unknown>;
   storage<T>(key: string, pick: (value: unknown) => T): Promise<T>;
   hash(): Promise<string>;
-  eval(expression: string, options?: ProbeEvalOptions): Promise<unknown>;
-  eval(surface: Surface, expression: string, options?: ProbeEvalOptions): Promise<unknown>;
+  eval<T>(expression: BrowserEvaluation<T>, options?: ProbeEvalOptions): Promise<Awaited<T>>;
+  eval<T>(surface: Surface, expression: BrowserEvaluation<T>, options?: ProbeEvalOptions): Promise<Awaited<T>>;
   connectState(app: Surface): ReturnType<typeof import("../state.ts").readConnectState>;
   api(session: DenSession, path: string, init?: RequestInit): Promise<DenFetchResult>;
+  /** GET from the bound desktop's local server; authentication stays in the renderer. */
+  desktopApi(path: string): Promise<{ status: number; body: unknown }>;
   toolCalls(mock: MockHandle, options?: Parameters<MockHandle["toolCalls"]>[0]): ReturnType<MockHandle["toolCalls"]>;
   eventually<T>(fn: () => Promise<T> | T, options: EventuallyOptions<T>): Promise<T>;
   on(surface: Surface): Probe;

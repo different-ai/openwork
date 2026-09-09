@@ -32,7 +32,8 @@ export function safeMcpAuthorizationUrl(rawUrl: string): string {
 }
 
 export type McpAuthorizationDebugDetails = {
-  httpStatus: number
+  /** "unavailable" when the browser never let the page read a response (network failure or CORS-blocked answer). */
+  httpStatus: number | "unavailable"
   errorCode?: string
   redirectUri?: string
   clientMetadataUrl?: string
@@ -108,7 +109,7 @@ function debugDetailRow(label: string, value: string | number | boolean | undefi
 function technicalDetails(details: McpAuthorizationDebugDetails | undefined): string {
   if (!details) return ""
   const rows = [
-    debugDetailRow("HTTP status", details.httpStatus),
+    debugDetailRow("HTTP status", details.httpStatus === "unavailable" ? "Unavailable — the browser could not read the response" : details.httpStatus),
     debugDetailRow("Error code", details.errorCode, true),
     debugDetailRow("Diagnostic reference", details.diagnosticReference, true),
     debugDetailRow("Redirect URI", details.redirectUri, true),

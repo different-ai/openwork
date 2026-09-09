@@ -13,6 +13,8 @@ import {
   readGlobalRuntimeOpencodeConfig,
   readRuntimeOpencodeConfig,
   writeGlobalRuntimeOpencodeConfig,
+  writeManagedDesktopPolicy,
+  readEffectiveRuntimeOpencodeConfig,
   writeRuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 import { startServer } from "./server.js";
@@ -72,6 +74,22 @@ async function expectMissing(path: string): Promise<void> {
 }
 
 describe("runtime OpenCode config store", () => {
+  test("ordinary concurrent config writes preserve the verified policy in every workspace", async () => {
+    await withWorkspace(async ({ config }) => {
+      const policy: import("@openwork/types/den/desktop-policies").DesktopConfig = { allowManageExtensions: false, execution: { commands: "deny", blockedCommands: [], blockBrowserUploads: true } };
+      await writeManagedDesktopPolicy(config, policy);
+      await Promise.all(Array.from({ length: 12 }, (_, index) => writeGlobalRuntimeOpencodeConfig(config, (current) => ({
+        ...current, provider: { ...current.provider, [`provider-${index}`]: { name: `Provider ${index}` } },
+        managedPolicy: { allowManageExtensions: true },
+      }))));
+      await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, () => ({ managedPolicy: { allowManageExtensions: true }, plugin: [] }));
+      const global = await readGlobalRuntimeOpencodeConfig(config);
+      expect(Object.keys(global.provider ?? {})).toHaveLength(12);
+      expect(global.managedPolicy).toEqual(policy);
+      expect((await readEffectiveRuntimeOpencodeConfig(config, WORKSPACE_ID)).managedPolicy).toEqual(policy);
+    });
+  });
+
   test("reports no-op writes without notifying listeners", async () => {
     await withWorkspace(async ({ config }) => {
       let writes = 0;

@@ -4,7 +4,7 @@ import type { TokenService } from "../tokens.js";
 import type { Actor, ServerConfig } from "../types.js";
 import type { UiControlMailbox } from "../ui-control.js";
 
-export type AuthMode = "none" | "client" | "host" | "host-token";
+export type AuthMode = "none" | "client" | "host" | "host-token" | "policy";
 
 export interface RequestContext {
   request: Request;

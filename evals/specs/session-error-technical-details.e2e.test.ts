@@ -1,8 +1,11 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { sessionErrorCard } from "../worlds/chat.ts";
+import { sessionErrorCard, sessionSubmitErrorIsolation } from "../worlds/chat.ts";
 
 const test = spec.world(sessionErrorCard);
+const submitTest = spec.world(sessionSubmitErrorIsolation, { timeout: 600_000 });
+const STORAGE_TITLE = "Storage error reported";
+const STORAGE_DESCRIPTION = "A storage limit was reported by the task runtime or a connected service. This does not necessarily mean your computer is full. Check the affected service or workspace before freeing local disk space.";
 
 // Values from the seeded payload (eval.session_error.seed): an Anthropic 429
 // with a JSON response body. None of these appear in the plain card text.
@@ -72,13 +75,14 @@ test("session error cards expose provider diagnostics only in Developer mode", a
   for (const kind of storageErrors) {
     await step(`${kind} shows recovery guidance and keeps the stack trace in Developer mode`, async () => {
       await world.seedStorageError(kind);
-      const title = kind === "disk-full" ? "Not enough disk space" : "OpenWork couldn’t access its saved data";
+      const title = kind === "disk-full" ? STORAGE_TITLE : "OpenWork couldn’t access its saved data";
       await user.see({ text: title });
-      await user.see({ text: kind === "disk-full" ? /Free up some disk space/ : /check the available disk space/ });
+      await user.see({ text: kind === "disk-full" ? STORAGE_DESCRIPTION : /check the available disk space/ });
       await user.notSee({ text: /effect\/sql\/SqlError/ });
       await user.notSee({ text: /at runLoop/ });
       await user.notSee(detailsToggle);
-      if (kind === "database-error") await user.notSee({ text: "Not enough disk space" });
+      await user.notSee({ text: "Not enough disk space" });
+      if (kind === "database-error") await user.notSee({ text: STORAGE_TITLE });
       await toggleDeveloperMode("on");
       await user.click(detailsToggle);
       await user.see({ text: /effect\/sql\/SqlError/ });
@@ -91,7 +95,7 @@ test("session error cards expose provider diagnostics only in Developer mode", a
     });
     await step(`${kind} banner hides the stack trace outside Developer mode`, async () => {
       await world.seedStorageError(kind, "banner");
-      const title = kind === "disk-full" ? "Not enough disk space" : "OpenWork couldn’t access its saved data";
+      const title = kind === "disk-full" ? STORAGE_TITLE : "OpenWork couldn’t access its saved data";
       await user.see({ testId: "session-error-card" });
       await user.see({ text: title });
       await user.notSee({ text: /at runLoop/ });
@@ -104,4 +108,73 @@ test("session error cards expose provider diagnostics only in Developer mode", a
     });
   }
 
+});
+
+submitTest("a delayed submit error stays with its owner while another retained task remains sendable", async ({ user, probe, step, world }) => {
+  const a = world.sessionA.sessionId;
+  const b = world.sessionB.sessionId;
+  const banner = { testId: "session-error-card" };
+  const select = async (title: string, sessionId: string) => {
+    await user.click({ text: title });
+    await probe.eventually(() => world.selectedSurface(), {
+      within: 15_000, label: "the selected task owns the visible surface", until: value => value.sessionId === sessionId,
+    });
+  };
+  const readyToSend = (sessionId: string) => probe.eventually(() => world.selectedSurface(), {
+    within: 15_000, label: "the selected task can send", until: value => value.sessionId === sessionId && value.runEnabled,
+  });
+  const releaseFailure = async (count: number) => {
+    await world.failHeldSubmissions();
+    await probe.eventually(() => world.readSubmissions(), {
+      within: 15_000, label: "the held SDK error response finishes", until: value => value.finished === count,
+    });
+    await world.settleResponse();
+  };
+
+  await step("A's real submit stays pending while B is selected and editable", async () => {
+    await user.type("composer", "Save the first task output.", { verify: true });
+    await readyToSend(a);
+    await user.click({ role: "button", label: "Run task" });
+    await probe.eventually(() => world.readSubmissions(), {
+      within: 30_000, label: "A's actual submit is intercepted before its response", until: value => value.held === 1,
+    });
+    await select(world.sessionB.title, b);
+    await user.type("composer", world.promptB, { verify: true });
+    await readyToSend(b);
+    expect(world.readSubmissions().finished).toBe(0);
+  });
+
+  await step("A's late upstream storage failure neither shows a B banner nor blocks B's one send", async () => {
+    await releaseFailure(1);
+    await user.notSee(banner);
+    await user.notSee({ text: STORAGE_TITLE });
+    await user.see("composer", { editable: true, text: world.promptB });
+    // Do not poll past an incorrect disabled state after the response settled.
+    expect(await world.selectedSurface()).toEqual({ sessionId: b, runEnabled: true });
+    await user.click({ role: "button", label: "Run task" });
+    await user.see({ text: world.replyB }, { timeoutMs: 60_000 });
+    expect(world.readSubmissions().requests.filter(request => request.sessionId === b)).toHaveLength(1);
+    expect(world.readSubmissions().requests.find(request => request.sessionId === b)?.body).toContain(world.promptB);
+    await user.notSee(banner);
+  });
+
+  await step("a failure delivered while A owns the surface remains visible with neutral storage guidance", async () => {
+    await select(world.sessionA.title, a);
+    await user.type("composer", "Save the first task output again.", { replace: true, verify: true });
+    await readyToSend(a);
+    await user.click({ role: "button", label: "Run task" });
+    await probe.eventually(() => world.readSubmissions(), {
+      within: 30_000, label: "A's own second submit reaches the same HTTP boundary", until: value => value.held === 2,
+    });
+    await releaseFailure(2);
+    await user.see(banner);
+    await user.see({ text: STORAGE_TITLE });
+    await user.see({ text: STORAGE_DESCRIPTION });
+    await user.notSee({ text: /EDQUOT/ });
+    expect(await world.selectedSurface()).toEqual({ sessionId: a, runEnabled: false });
+    await select(world.sessionB.title, b);
+    await user.see({ text: world.replyB });
+    await user.notSee(banner);
+    expect(world.readSubmissions().requests.filter(request => request.sessionId === b)).toHaveLength(1);
+  });
 });

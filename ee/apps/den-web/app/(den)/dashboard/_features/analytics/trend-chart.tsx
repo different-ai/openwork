@@ -1,6 +1,6 @@
 "use client";
 
-import type { TelemetryAnalyticsWeek } from "@openwork-ee/telemetry-contracts";
+import { analyticsSurfaceClass } from "./analytics-layout";
 
 export function formatWeekLabel(weekStart: string): string {
   const date = new Date(`${weekStart}T00:00:00Z`);
@@ -14,17 +14,19 @@ export type BarSeries = {
   values: number[];
 };
 
-export function TrendChart({ title, subtitle, weeks, series }: {
+export function TrendChart({ title, subtitle, weeks, series, intervalLabel = "Week of", isLoading = false }: {
   title: string;
   subtitle: string;
-  weeks: TelemetryAnalyticsWeek[];
+  weeks: { weekStart: string }[];
   series: BarSeries[];
+  intervalLabel?: string;
+  isLoading?: boolean;
 }) {
   const max = Math.max(1, ...series.flatMap((s) => s.values));
   const hasData = series.some((s) => s.values.some((v) => v > 0));
 
   return (
-    <div className="rounded-[16px] border border-[#e3e7ee] bg-white/90 p-4">
+    <figure className={`${analyticsSurfaceClass} p-5`} aria-label={title}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h3 className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C]">{title}</h3>
@@ -42,18 +44,21 @@ export function TrendChart({ title, subtitle, weeks, series }: {
         ) : null}
       </div>
 
-      <div className="relative mt-4">
-        <div className="flex h-[120px] items-end gap-1.5">
-          {weeks.map((week, i) => (
+      <div className="relative mt-6">
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex flex-col justify-between pb-px">
+          {[0, 1, 2, 3].map((line) => <div key={line} className="border-t border-dashed border-[#edf0f5]" />)}
+        </div>
+        <div className="relative flex h-[168px] items-end gap-1.5" aria-hidden="true">
+          {hasData ? weeks.map((week, i) => (
             <div key={week.weekStart || i} className="flex h-full flex-1 items-end justify-center gap-px">
               {series.map((s) => {
                 const value = s.values[i] ?? 0;
-                const height = value > 0 ? Math.max(4, (value / max) * 100) : 2;
+                const height = value > 0 ? Math.max(2, (value / max) * 94) : 0;
                 return (
                   <div
                     key={s.label}
-                    title={`Week of ${formatWeekLabel(week.weekStart)} — ${s.label}: ${value}`}
-                    className="w-full max-w-[18px] rounded-t-[3px] transition-[height]"
+                    title={`${intervalLabel} ${formatWeekLabel(week.weekStart)} — ${s.label}: ${value}`}
+                    className="w-full max-w-[24px] rounded-t-[4px] transition-[height]"
                     style={{
                       height: `${height}%`,
                       backgroundColor: value > 0 ? s.color : "#EBEEF4",
@@ -62,19 +67,22 @@ export function TrendChart({ title, subtitle, weeks, series }: {
                 );
               })}
             </div>
-          ))}
+          )) : null}
         </div>
         {!hasData ? (
           <div className="absolute inset-0 flex items-center justify-center">
-            <span className="rounded-full bg-white/90 px-3 py-1 text-[12px] text-[#637291]">No usage events yet</span>
+            <span role="status" className="rounded-full bg-white/90 px-3 py-1 text-[12px] text-[#637291]">{isLoading ? "Loading activity…" : "No usage events yet"}</span>
           </div>
         ) : null}
       </div>
 
-      <div className="mt-2 flex justify-between text-[11px] text-[#9AA5BA]">
+      <div className="mt-3 flex justify-between text-[11px] text-[#637291]">
         <span>{weeks.length > 0 ? formatWeekLabel(weeks[0].weekStart) : ""}</span>
         <span>{weeks.length > 0 ? formatWeekLabel(weeks[weeks.length - 1].weekStart) : ""}</span>
       </div>
-    </div>
+      <table className="sr-only"><caption>{title}</caption><thead><tr><th>Date</th>{series.map((s) => <th key={s.label}>{s.label}</th>)}</tr></thead>
+        <tbody>{weeks.map((week, i) => <tr key={week.weekStart}><th>{formatWeekLabel(week.weekStart)}</th>{series.map((s) => <td key={s.label}>{s.values[i] ?? 0}</td>)}</tr>)}</tbody>
+      </table>
+    </figure>
   );
 }

@@ -169,9 +169,9 @@ world. Mid-flow seeding after an act is explicit and allowed; probes do not
 change the ordering state.
 
 `seed.evalIn()` (`[seed:raw]`) and `probe.eval()` (`[probe:raw]`) are migration
-escape hatches. Both accept `{ awaitPromise?: boolean, timeoutMs?: number }`;
-`probe.eval` accepts the options after either `(expression)` or
-`(surface, expression)`. New specs must not use them. The channel ratchet
+escape hatches. Both take type-checked browser callbacks and await promises automatically.
+`probe.eval` accepts `{ timeoutMs?: number }` after either `(callback)` or
+`(surface, callback)`. Raw JavaScript strings are rejected. New specs must not use them. The channel ratchet
 records current legacy usage per E2E file and fails on increases or stale
 baseline entries.
 
@@ -206,6 +206,11 @@ current value. `user.see(target, { text })` compares contenteditable inner text
 and accepts a string or regular expression. Clicks require center-point hit
 testing; `{ hitTest: false }` is a last resort for an intentionally covered
 target and still performs a trusted CDP click at that element's center.
+
+`probe.dom(selector)` reads a fixed DOM snapshot: matching elements in document
+order with text, focus and rectangles, plus viewport/document widths. It never
+returns input values or accepts executable callbacks. Use it for geometry and
+focus assertions after trusted `user.press("Tab")` actions, rather than raw eval.
 
 Worlds can arrange a shaped Den connection with `seed.denLink(den, options)`;
 the returned link is fixture-owned. `probe.connectState(app)` reads the
@@ -421,6 +426,12 @@ Without a placement flag, the CLI uses Daytona when `daytona snapshot list`
 succeeds and local otherwise, then prints the placement and reason. `--daytona`
 requires Daytona; `--local` forces local.
 
+Set `OPENWORK_EVAL_ENGINE=v2` to run any named spec with the app's chat routed
+through the OpenCode v2 sidecar, locally or on Daytona; unset it (or use `v1`)
+for the unchanged default. For example,
+`OPENWORK_EVAL_ENGINE=v2 pnpm evals:e2e <slug> [--daytona]`. The test-evidence
+header records the selected engine.
+
 Use direct CDP tools only to explore or debug. Convert repeatable coverage into
 a testkit test.
 
@@ -510,3 +521,37 @@ bash .devcontainer/test-on-daytona.sh <ref> \
   --den-base-url <DEN_WEB_URL> \
   --den-api-base-url <DEN_API_URL>
 ```
+
+
+### Type-checked browser code
+
+Use the existing user/locator helpers for ordinary interaction. When an existing
+probe needs browser-only logic, author a self-contained TypeScript callback:
+
+```ts
+const fits: boolean = await probe.eval(
+  () => document.documentElement.scrollWidth <= window.innerWidth,
+);
+const count: number = await probe.eval(browserScript(
+  (selector) => document.querySelectorAll(selector).length,
+  ["[data-message-role=assistant]"],
+));
+```
+
+Import `browserScript` from `@openwork/testkit` in specs and `@openwork/cdp` in
+worlds and lower layers. It binds explicit serializable arguments; browser code
+cannot capture test variables or imported runtime helpers. Return plain data,
+not elements or functions. API JSON remains `unknown` where the contract is
+unknown; validate it before relying on a shape.
+
+For code that must run before navigation, worlds use
+`addInitScript(client, browserScript(callback, [args]))`. Its `dispose()` and
+`Symbol.asyncDispose` remove the registration for future documents; an observer
+already running in the current page still needs its own cleanup.
+
+`pnpm evals:check-browser` checks browser callback bodies, argument/result types,
+closure captures (including imported aliases), and raw CDP execution bypasses.
+It runs in the test-framework CI command. Unlike running a TypeScript test,
+this invokes the TypeScript checker. The full `evals:typecheck` also includes
+legacy server imports; the browser check does not suppress their diagnostics or
+claim that those unrelated projects compile.

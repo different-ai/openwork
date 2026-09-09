@@ -1,0 +1,41 @@
+{
+  "name": "@openwork-ee/cloud-runtime",
+  "private": true,
+  "type": "module",
+  "description": "Provider-neutral contract, bootstrap, and conformance suite for OpenWork Cloud sandbox hosts.",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "source": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./contract": {
+      "types": "./src/contract/index.ts",
+      "development": "./src/contract/index.ts",
+      "default": "./dist/contract/index.js"
+    },
+    "./bootstrap": {
+      "types": "./src/bootstrap/index.ts",
+      "development": "./src/bootstrap/index.ts",
+      "default": "./dist/bootstrap/index.js"
+    },
+    "./testing": {
+      "types": "./src/testing/index.ts",
+      "development": "./src/testing/index.ts",
+      "default": "./dist/testing/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
+    "test": "bun test src"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsup": "^8.5.0",
+    "typescript": "^5.5.4"
+  }
+}

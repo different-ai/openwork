@@ -47,6 +47,8 @@ export interface DesktopOptions {
     baseUrl: string;
     apiBaseUrl?: string;
     requireSignin?: boolean;
+    /** Seed an installation already activated against its private Den. */
+    enterpriseActivation?: { activatedAt: string; denBaseUrl: string };
   };
   env?: Record<string, string>;
   /** Root package script used for a source Electron launch. */

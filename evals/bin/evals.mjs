@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { journeyFiles, testName } from "./test-files.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
@@ -6,7 +7,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const evalsDir = fileURLToPath(new URL("..", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
-const testsDir = join(evalsDir, "specs");
 const worldsDir = join(evalsDir, "results/.worlds");
 
 const usage = `Usage: node evals/bin/evals.mjs [test-names...] [flags]
@@ -19,14 +19,20 @@ Run E2E tests:
 
 Without a placement flag, Daytona is used when the daytona CLI is authenticated, otherwise local.
 
-Judge then publish evidence:
-  --publish         Enter judge-then-publish mode
+Publish recorded evidence (no test reruns or model calls):
+  --publish         Publish completed evidence
   --pr <n>          Publish to pull request n
   --test-run <value> Select a test run path, directory ID, name, or latest (default: latest)
+  --all             Combine all runs matching the current PR head
+  --docshot <path>  Include a DocShot .review.json receipt (repeatable)
+  --title <text>    Report title (defaults to Change verification)
+  --gap <text>      Declare a coverage gap (repeatable)
+  --review-url <url> Override OPENWORK_REVIEW_URL
   --dry-run         Render publication output without posting
   --force           Forward force to the publisher
 
 Other:
+  --list            List discoverable tests without booting resources
   --help, -h        Show this help
 
 Publish mode cannot be combined with test names, --with-llm-vision, --daytona,
@@ -39,9 +45,9 @@ Run exit codes:
   2  A named test skipped and its result is incomplete
 
 Publish exit codes:
-  0  Judge and publisher succeeded
-  1  Failed claims were published, or publishing failed
-  2  Pending claims require judging before publication
+  0  Publisher succeeded
+  1  Publication failed
+  Visual judgments retain their recorded passed, failed, or pending state.
 `;
 
 export function consentVarsFromSource(text) {
@@ -81,15 +87,22 @@ export function parseArgs(args) {
     const arg = args[index];
     if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--with-llm-vision") options.withLlmVision = true;
+    else if (arg === "--list") options.list = true;
     else if (arg === "--local") options.local = true;
     else if (arg === "--daytona") options.daytona = true;
     else if (arg === "--publish") options.publish = true;
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--force") options.force = true;
+    else if (arg === "--all") (options.reviewArgs ??= []).push(arg);
+    else if (["--docshot", "--title", "--gap", "--review-url"].includes(arg)) {
+      (options.reviewArgs ??= []).push(arg, valueAfter(args, index, arg));
+      index += 1;
+    }
     else if (arg === "--den" || arg === "--pr" || arg === "--test-run") {
       const value = valueAfter(args, index, arg);
       if (arg === "--den") options.den = value;
       else if (arg === "--pr") options.pr = value;
+      else if (options.testRun !== undefined) (options.reviewArgs ??= []).push("--test-run", value);
       else options.testRun = value;
       index += 1;
     } else if (arg.startsWith("-")) {
@@ -108,6 +121,7 @@ export function parseArgs(args) {
 
   if (options.publish) {
     const conflicts = [];
+    if (options.list) conflicts.push("--list");
     if (options.testNames.length > 0) conflicts.push("test names");
     if (options.withLlmVision) conflicts.push("--with-llm-vision");
     if (options.local) conflicts.push("--local");
@@ -125,6 +139,7 @@ export function parseArgs(args) {
     if (options.testRun !== undefined) publishFlags.push("--test-run");
     if (options.dryRun) publishFlags.push("--dry-run");
     if (options.force) publishFlags.push("--force");
+    if (options.reviewArgs) publishFlags.push("review options");
     if (publishFlags.length > 0) {
       throw new Error(`${publishFlags.join(", ")} require --publish.`);
     }
@@ -133,6 +148,8 @@ export function parseArgs(args) {
   return options;
 }
 
+// The complete caller environment, including OPENWORK_EVAL_ENGINE, is passed
+// through below. Only these remote-placement inputs are removed by --local.
 const REMOTE_PLACEMENT_ENV = [
   "OPENWORK_EVAL_DAYTONA",
   "OPENWORK_EVAL_DAYTONA_SANDBOX",
@@ -179,24 +196,20 @@ export function resolveRunEnvironment(options, env = process.env, probe = dayton
   return { env: childEnv, placement: "local", reason: "daytona CLI missing or not authenticated" };
 }
 
-function testFiles(directory = testsDir) {
-  return readdirSync(directory, { recursive: true, withFileTypes: true })
-    .filter((entry) => entry.isFile() && /\.e2e\.test\.ts$/.test(entry.name))
-    .map((entry) => join(entry.parentPath, entry.name))
-    .sort();
-}
-
-export function resolveTestNames(names, files = testFiles()) {
+export function resolveTestNames(names, files = journeyFiles()) {
   const entries = files.map((file) => ({
     file,
     base: basename(file),
-    relative: relative(testsDir, file).split(sep).join("/"),
+    relative: testName(file),
   }));
   const resolved = [];
 
   for (const name of names) {
     const normalized = name.replace(/^\.\//, "").replace(/^specs\//, "");
     let matches = entries.filter((entry) => entry.relative === normalized);
+    if (matches.length === 0) {
+      matches = entries.filter((entry) => entry.relative === `scenarios/${normalized}/e2e.test.ts`);
+    }
     if (matches.length === 0) {
       matches = entries.filter((entry) =>
         entry.base === `${normalized}.e2e.test.ts`
@@ -286,32 +299,19 @@ function childStatus(result) {
 }
 
 function publish(options) {
-  const testRun = options.testRun ?? "latest";
-  const judge = spawnSync(process.execPath, [
-    join(evalsDir, "packages/test-evidence/bin/test-evidence-judge.mjs"),
-    "--test-run",
-    testRun,
-  ], { cwd: repoRoot, env: process.env, stdio: "inherit" });
-  const judgeStatus = childStatus(judge);
-
-  if (judgeStatus === 2 && !options.dryRun) {
-    process.stderr.write("Pending claims need OPENAI_API_KEY or ANTHROPIC_API_KEY for judging; rerun after providing one, or use --dry-run.\n");
-    return 2;
-  }
-  if (![0, 1, 2].includes(judgeStatus)) return judgeStatus;
-
   const publishArgs = [join(evalsDir, "packages/test-artifacts/bin/publish-pr.mjs")];
   if (options.pr) publishArgs.push("--pr", options.pr);
   if (options.testRun) publishArgs.push("--test-run", options.testRun);
   if (options.dryRun) publishArgs.push("--dry-run");
   if (options.force) publishArgs.push("--force");
+  if (options.reviewArgs) publishArgs.push(...options.reviewArgs);
   const published = spawnSync(process.execPath, publishArgs, {
     cwd: repoRoot,
     env: process.env,
     stdio: "inherit",
   });
   const publishStatus = childStatus(published);
-  return judgeStatus === 1 && publishStatus === 0 ? 1 : publishStatus;
+  return publishStatus;
 }
 
 function run(options) {
@@ -384,6 +384,10 @@ export function main(argv = process.argv.slice(2)) {
     options = parseArgs(argv);
     if (options.help) {
       process.stdout.write(usage);
+      return 0;
+    }
+    if (options.list) {
+      process.stdout.write(journeyFiles().map(testName).join("\n") + "\n");
       return 0;
     }
     return options.publish ? publish(options) : run(options);

@@ -14,12 +14,13 @@ const EnvSchema = z
     DEN_DB_ENCRYPTION_KEY: z.string().trim().min(32),
     INFERENCE_PROXY_BASE_URL: z.string().optional(),
     OPENROUTER_UPSTREAM_URL: z.string().optional(),
+    INFERENCE_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1000).max(900000).default(120000),
+    INFERENCE_STREAM_IDLE_MS: z.coerce.number().int().min(1000).max(900000).default(120000),
     OPENAI_REALTIME_API_KEY: z.string().optional(),
     OPENAI_API_KEY: z.string().optional(),
     INFERENCE_ADMIN_TOKEN: z.string().optional(),
     INFERENCE_WEBHOOK_SECRET: z.string().optional(),
     INFERENCE_CREDITS_PER_DOLLAR: z.string().optional(),
-    VOICE_SESSION_COST_UNITS: z.string().optional(),
   })
   .superRefine((value, ctx) => {
     const mode =
@@ -100,14 +101,6 @@ function parseCreditsPerDollar(value: string | undefined) {
   return credits;
 }
 
-function parseVoiceSessionCostUnits(value: string | undefined) {
-  const units = Number(value ?? "50000000");
-  if (!Number.isFinite(units) || units <= 0) {
-    throw new Error("VOICE_SESSION_COST_UNITS must be a positive number");
-  }
-  return units;
-}
-
 const planetscale: PlanetScaleCredentials | null =
   parsed.DATABASE_HOST &&
   parsed.DATABASE_USERNAME &&
@@ -121,6 +114,8 @@ const planetscale: PlanetScaleCredentials | null =
 
 export const env = {
   port: parsePort(parsed.PORT),
+  upstreamTimeoutMs: parsed.INFERENCE_UPSTREAM_TIMEOUT_MS,
+  streamIdleMs: parsed.INFERENCE_STREAM_IDLE_MS,
   corsOrigins: splitCsv(parsed.CORS_ORIGINS),
   databaseUrl: parsed.DATABASE_URL,
   dbMode: (parsed.DB_MODE ??
@@ -135,5 +130,4 @@ export const env = {
   adminToken: optionalString(parsed.INFERENCE_ADMIN_TOKEN),
   webhookSecret: optionalString(parsed.INFERENCE_WEBHOOK_SECRET),
   creditsPerDollar: parseCreditsPerDollar(parsed.INFERENCE_CREDITS_PER_DOLLAR),
-  voiceSessionCostUnits: parseVoiceSessionCostUnits(parsed.VOICE_SESSION_COST_UNITS),
 };

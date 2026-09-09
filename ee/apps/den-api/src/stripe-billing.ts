@@ -8,10 +8,12 @@ import {
   OrganizationTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import type { DenOrgMode } from "./env.js"
 import { setInferenceEnabled } from "./inference.js"
+import { assertOrganizationManagedModelsAllowed } from "./organization-metadata.js"
 import { appLogger } from "./observability/logger.js"
 import { isOpenWorkWebAvailable } from "./openwork-web-availability.js"
 import { hasOpenWorkWebComplimentaryAccess, resolveOpenWorkWebAccess } from "./openwork-web-access.js"
@@ -799,6 +801,9 @@ export async function createOrgSubscriptionCheckoutSession(input: {
   successUrl: string
   cancelUrl: string
 }) {
+  if (input.subscriptionType === INFERENCE_SUBSCRIPTION_TYPE) {
+    await assertOrganizationManagedModelsAllowed(input.organizationId)
+  }
   const priceId = requirePriceIdForSubscriptionType(input.subscriptionType)
   const openworkProduct = input.subscriptionType === SEAT_SUBSCRIPTION_TYPE
     ? "openwork_seats"
@@ -849,6 +854,7 @@ export async function createOrgSubscriptionCheckoutSession(input: {
   }
 
   const quantity = Math.max(1, await activeMemberCount(input.organizationId))
+  await assertOrganizationManagedModelsAllowed(input.organizationId)
   return stripe().checkout.sessions.create({
     mode: "subscription",
     customer,
@@ -1172,9 +1178,20 @@ export async function syncStripeCheckoutSession(input: { organizationId: OrgId; 
     })
   }
   if (row?.type === INFERENCE_SUBSCRIPTION_TYPE && ACTIVE_STATUSES.has(subscriptionStatus(subscription.status))) {
-    await setInferenceEnabled({ organizationId: row.organization_id, enabled: true })
+    await activatePurchasedInference(row.organization_id)
   }
   return row
+}
+
+async function activatePurchasedInference(organizationId: OrgId) {
+  try {
+    await setInferenceEnabled({ organizationId, enabled: true })
+  } catch (error) {
+    // Keep the purchase history, but acknowledge a deliberate policy denial.
+    // Unavailable policy must still fail safely so a later delivery can retry.
+    if (error instanceof ManagedModelsPolicyError && error.code === "managed_models_disabled_for_dpa") return
+    throw error
+  }
 }
 
 async function syncCurrentStripeSubscription(stripeSubscriptionId: string, eventId: string) {
@@ -1352,7 +1369,7 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
           })
         }
         if (row?.type === INFERENCE_SUBSCRIPTION_TYPE && ACTIVE_STATUSES.has(subscriptionStatus(subscription.status))) {
-          await setInferenceEnabled({ organizationId: row.organization_id, enabled: true })
+          await activatePurchasedInference(row.organization_id)
         }
         if (row?.type === WEB_SUBSCRIPTION_TYPE && isEligibleOpenWorkWebSubscriptionStatus(subscription.status)) {
           await syncWebSubscriptionQuantityAfterMemberChange({

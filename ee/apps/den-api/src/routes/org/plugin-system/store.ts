@@ -30,6 +30,7 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
 import { isPluginArchOrgAdmin, PluginArchAuthorizationError, pluginArchResourceHasExpandedAudience, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchResourceRole } from "./access.js"
+import { CONTENT_EDIT_SESSION_MAX_AGE_MS } from "../shared.js"
 import { clampCodePoints, clampUtf8Bytes, PROJECTION_TEXT_MAX_BYTES, PROJECTION_TITLE_MAX_CHARS } from "./projection-text.js"
 import {
   AGENT_PLUGIN_V1_VERSION,
@@ -71,6 +72,7 @@ import {
   type DefaultMarketplacePluginEntry,
 } from "./default-marketplaces.js"
 import { db } from "../../../db.js"
+import { resolveOrganizationMemberAuthority } from "../../../organization-team-roles.js"
 import { env } from "../../../env.js"
 import { appLogger } from "../../../observability/logger.js"
 import { roleIncludesOwner } from "../../../orgs.js"
@@ -1305,6 +1307,7 @@ async function ensureEditablePlugin(
   context: PluginArchActorContext,
   pluginId: PluginId,
   requireFreshSession?: boolean,
+  sessionMaxAgeMs?: number,
 ) {
   const row = await getPluginRow(context.organizationContext.organization.id, pluginId)
   if (!row) {
@@ -1313,6 +1316,7 @@ async function ensureEditablePlugin(
   await requirePluginArchResourceRole({
     context,
     requireFreshSession,
+    sessionMaxAgeMs,
     resourceId: row.id,
     resourceKind: "plugin",
     role: "editor",
@@ -1671,7 +1675,8 @@ export async function createConfigObject(input: {
     pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: pluginId, resourceKind: "plugin" })))
   const requireFreshSession = input.requireFreshSession ?? targetExposure.some(Boolean)
   for (const pluginId of input.pluginIds ?? []) {
-    await ensureEditablePlugin(input.context, pluginId, requireFreshSession)
+    await ensureEditablePlugin(input.context, pluginId, requireFreshSession,
+      input.objectType === "skill" ? CONTENT_EDIT_SESSION_MAX_AGE_MS : undefined)
   }
 
   const now = new Date()
@@ -1803,7 +1808,10 @@ export async function createConfigObjectVersion(input: { context: PluginArchActo
     throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
   }
   const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
-  await requirePluginArchResourceRole({ context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "config_object", role: "editor" })
+  await requirePluginArchResourceRole({
+    context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "config_object", role: "editor",
+    sessionMaxAgeMs: row.objectType === "skill" ? CONTENT_EDIT_SESSION_MAX_AGE_MS : undefined,
+  })
 
   const now = new Date()
   const projection = deriveProjection({ objectType: row.objectType, value: input.value })
@@ -2889,7 +2897,7 @@ export async function createPluginBundle(input: {
 
 export async function updatePlugin(input: { context: PluginArchActorContext; description?: string | null; name?: string; pluginId: PluginId }) {
   const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: input.pluginId, resourceKind: "plugin" })
-  const row = await ensureEditablePlugin(input.context, input.pluginId, requireFreshSession)
+  const row = await ensureEditablePlugin(input.context, input.pluginId, requireFreshSession, CONTENT_EDIT_SESSION_MAX_AGE_MS)
   const updatedAt = new Date()
   await db.update(PluginTable).set({
     description: input.description === undefined ? row.description : normalizeOptionalString(input.description ?? undefined),
@@ -6019,16 +6027,10 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
     throw new PluginArchRouteFailure(404, "organization_not_found", "Organization not found for connector instance.")
   }
 
-  const memberRows = await db
-    .select()
-    .from(MemberTable)
-    .where(and(
-      eq(MemberTable.organizationId, input.connectorInstance.organizationId),
-      eq(MemberTable.id, input.connectorInstance.createdByOrgMembershipId),
-      isNull(MemberTable.removedAt),
-    ))
-    .limit(1)
-  const member = memberRows[0] as MemberRow | undefined
+  const member = await resolveOrganizationMemberAuthority({
+    organizationId: input.connectorInstance.organizationId,
+    memberId: input.connectorInstance.createdByOrgMembershipId,
+  })
   if (!member) {
     throw new PluginArchRouteFailure(404, "member_not_found", "Connector creator member not found.")
   }
@@ -6048,6 +6050,8 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
         isOwner: roleIncludesOwner(member.role),
         joinedAt: member.joinedAt,
         role: member.role,
+        directRole: member.directRole,
+        adminTeams: member.adminTeams,
         userId: member.userId,
       },
       invitations: [],

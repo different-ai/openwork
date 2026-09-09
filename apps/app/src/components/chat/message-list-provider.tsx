@@ -214,3 +214,7 @@ export function useSessionErrorMessage() {
 
   return useSessionActivityStore(state => state.getSessionError(workspaceId, sessionId));
 }
+
+export function useOptionalMessageList() {
+  return React.useContext(MessageListContext)
+}

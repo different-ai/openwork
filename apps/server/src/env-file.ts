@@ -159,6 +159,12 @@ export class EnvService {
   private loadPromise: Promise<void> | null = null;
   private mutationQueue: Promise<void> = Promise.resolve();
   private variables: EnvRecord[] = [];
+  private readonly changeListeners = new Set<() => void>();
+
+  onChange(listener: () => void): () => void {
+    this.changeListeners.add(listener);
+    return () => { this.changeListeners.delete(listener); };
+  }
 
   constructor(options?: { path?: string }) {
     this.path = options?.path ? resolve(options.path) : resolveDefaultEnvStorePath();
@@ -210,6 +216,7 @@ export class EnvService {
       const nextVariables = Array.from(next.values()).sort((a, b) => a.key.localeCompare(b.key));
       await writeStore(this.path, nextVariables);
       this.variables = nextVariables;
+      for (const listener of this.changeListeners) listener();
     });
   }
 
@@ -221,6 +228,7 @@ export class EnvService {
       if (nextVariables.length === before) return false;
       await writeStore(this.path, nextVariables);
       this.variables = nextVariables;
+      for (const listener of this.changeListeners) listener();
       return true;
     });
   }

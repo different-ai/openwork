@@ -25,7 +25,7 @@ function present(env: NodeJS.ProcessEnv, name: string): boolean {
 
 function commandProbeArgs(command: string): string[] {
   if (command === "kubectl") return ["version", "--client"];
-  if (command === "helm" || command === "kind" || command === "docker") return ["version"];
+  if (command === "helm" || command === "kind" || command === "docker" || command === "openssl") return ["version"];
   return ["--version"];
 }
 

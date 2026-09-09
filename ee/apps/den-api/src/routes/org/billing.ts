@@ -1,6 +1,7 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { getCloudWorkerBillingStatus } from "../../billing/polar.js"
 import { createInferenceCheckoutSession, createInferencePortalSession, createOpenWorkWebCheckout, createSeatCheckoutSession, getOpenWorkWebBillingSummary, getOrgBillingSummary, syncStripeCheckoutSession } from "../../stripe-billing.js"
 import { orgRoleRoute } from "../../middleware/index.js"
@@ -18,6 +19,10 @@ const stripeCheckoutResponseSchema = z.object({ url: z.string() }).meta({ ref: "
 const stripeCheckoutSyncRequestSchema = z.object({ sessionId: z.string().trim().min(1) })
 const stripeCheckoutSyncResponseSchema = z.object({ synced: z.boolean() }).meta({ ref: "OrgStripeCheckoutSyncResponse" })
 const stripePortalResponseSchema = z.object({ url: z.string() }).meta({ ref: "OrgStripePortalResponse" })
+const managedModelsPolicyErrorSchema = z.object({
+  error: z.enum(["managed_models_disabled_for_dpa", "managed_models_policy_unavailable"]),
+  message: z.string(),
+})
 const openWorkWebUnavailableSchema = z.object({
   error: z.literal("openwork_web_not_available"),
   message: z.string(),
@@ -192,7 +197,8 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       responses: {
         200: jsonResponse("Stripe Checkout session created successfully.", stripeCheckoutResponseSchema),
         401: jsonResponse("The caller must be signed in to start billing.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can start billing.", forbiddenSchema),
+        403: jsonResponse("Billing access is denied.", z.union([forbiddenSchema, managedModelsPolicyErrorSchema])),
+        503: jsonResponse("Managed Models policy is unavailable.", managedModelsPolicyErrorSchema),
         404: jsonResponse("OpenWork Web is not available for this organization.", openWorkWebUnavailableSchema),
       },
     }),
@@ -243,11 +249,15 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
             : checkoutSuccessUrl(c),
         cancelUrl: subscriptionType === "web" ? openWorkWebCheckoutCancelUrl(c) : checkoutCancelUrl(c),
       }).catch((error) => {
+        if (error instanceof ManagedModelsPolicyError) return error
         if (error instanceof Error && error.message === "stripe_openwork_web_subscription_exists") {
           return "subscription_exists" as const
         }
         throw error
       })
+      if (session instanceof ManagedModelsPolicyError) {
+        return c.json({ error: session.code, message: session.message }, session.status)
+      }
       if (session === "subscription_exists") {
         return c.json({
           error: "stripe_subscription_exists",
@@ -295,6 +305,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         200: jsonResponse("Stripe Checkout session synced successfully.", stripeCheckoutSyncResponseSchema),
         401: jsonResponse("The caller must be signed in to sync billing.", unauthorizedSchema),
         403: jsonResponse("Only workspace owners and admins can sync billing.", forbiddenSchema),
+        503: jsonResponse("Managed Models policy is unavailable.", managedModelsPolicyErrorSchema),
       },
     }),
     orgRoleRoute(["admin"]),
@@ -313,11 +324,15 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         organizationId: payload.organization.id,
         sessionId: parsed.data.sessionId,
       }).catch((error) => {
+        if (error instanceof ManagedModelsPolicyError) return error
         if (error instanceof Error && (error.message === "stripe_checkout_session_org_mismatch" || error.message.includes("No such checkout.session"))) {
           return "org_mismatch"
         }
         throw error
       })
+      if (row instanceof ManagedModelsPolicyError) {
+        return c.json({ error: row.code, message: row.message }, row.status)
+      }
       if (row === "org_mismatch") {
         return c.json({ error: "stripe_checkout_session_not_found" }, 404)
       }

@@ -23,6 +23,8 @@ import { db } from "../src/db.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "../src/desktop-policies.js"
 import { env } from "../src/env.js"
 import { seedDefaultOrganizationRoles } from "../src/orgs.js"
+import { updateOrganizationMetadata } from "../src/organization-metadata.js"
+import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
 import { calculateOrganizationSeatBillingCounts } from "../src/stripe-billing.js"
 
 const RESET_MODE = process.argv.includes("--reset")
@@ -334,11 +336,15 @@ async function ensureOrganization(ownerUserId: UserId): Promise<OrganizationId> 
   }
 
   if (existing[0]) {
+    await updateOrganizationMetadata(existing[0].id, (current) => ({
+      ...current,
+      demoSeed: { ...readOrganizationMetadata(current.demoSeed), ...metadata.demoSeed },
+      limits: { ...readOrganizationMetadata(current.limits), ...metadata.limits },
+    }))
     await db
       .update(OrganizationTable)
       .set({
         allowedEmailDomains: [DEMO_EMAIL_DOMAIN],
-        metadata,
         name: DEMO_ORG_NAME,
         updatedAt: new Date(),
       })

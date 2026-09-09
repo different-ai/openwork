@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
 import type { DenSession } from "./den.ts";
 import { denFetch } from "./den.ts";
@@ -59,15 +60,15 @@ function stringField(value: unknown): string {
 }
 
 async function openModelPicker(app: Surface): Promise<void> {
-  const open = await evalIn(app, `Boolean(document.querySelector(${JSON.stringify(MODEL_SEARCH_INPUT)}))`).catch(() => false);
+  const open = await evalIn(app, browserScript((MODEL_SEARCH_INPUT) => (Boolean(document.querySelector<HTMLElement>(MODEL_SEARCH_INPUT))), [MODEL_SEARCH_INPUT])).catch(() => false);
   if (open !== true) {
-    await waitFor(app, `window.__openworkControl?.listActions().some((entry) => entry.id === "session.model_picker.open" && entry.disabled === false)`, {
+    await waitFor(app, () => (window.__openworkControl?.listActions().some((entry) => entry.id === "session.model_picker.open" && entry.disabled === false)), {
       timeoutMs: 30_000,
       label: "session.model_picker.open enabled",
     });
     await control(app, "session.model_picker.open");
   }
-  await waitFor(app, `Boolean(document.querySelector(${JSON.stringify(MODEL_SEARCH_INPUT)}))`, {
+  await waitFor(app, browserScript((MODEL_SEARCH_INPUT) => (Boolean(document.querySelector<HTMLElement>(MODEL_SEARCH_INPUT))), [MODEL_SEARCH_INPUT]), {
     timeoutMs: 30_000,
     label: "Models dialog search input",
   });
@@ -90,36 +91,36 @@ function parseModels(value: unknown): ModelFacts[] {
 
 export async function readAvailableModels(app: Surface): Promise<ModelFacts[]> {
   await openModelPicker(app);
-  await evalIn(app, `(() => {
-    const dialog = document.querySelector(${JSON.stringify(MODEL_DIALOG)});
+  await evalIn(app, browserScript((MODEL_DIALOG) => {
+    const dialog = document.querySelector<HTMLElement>(MODEL_DIALOG);
     if (!dialog) return false;
     const headers = [...dialog.querySelectorAll("button")].filter((button) => {
-      const text = (button.textContent ?? "").replace(/\\s+/g, " ").trim();
-      return /\\d+ models?$/.test(text);
+      const text = (button.textContent ?? "").replace(/\s+/g, " ").trim();
+      return /\d+ models?$/.test(text);
     });
     for (const header of headers) {
       const group = header.parentElement?.parentElement;
-      if (group && !group.querySelector("span.font-mono")) header.click();
+      if (group && !group.querySelector<HTMLElement>("span.font-mono")) header.click();
     }
     return true;
-  })()`);
-  await waitFor(app, `(() => {
-    const dialog = document.querySelector(${JSON.stringify(MODEL_DIALOG)});
-    return Boolean(dialog && (dialog.querySelector("span.font-mono") || dialog.innerText.includes("No models")));
-  })()`, { timeoutMs: 30_000, label: "model rows or empty state" });
-  const value = await evalIn(app, `(() => {
-    const dialog = document.querySelector(${JSON.stringify(MODEL_DIALOG)});
+  }, [MODEL_DIALOG]));
+  await waitFor(app, browserScript((MODEL_DIALOG) => {
+    const dialog = document.querySelector<HTMLElement>(MODEL_DIALOG);
+    return Boolean(dialog && (dialog.querySelector<HTMLElement>("span.font-mono") || dialog.innerText.includes("No models")));
+  }, [MODEL_DIALOG]), { timeoutMs: 30_000, label: "model rows or empty state" });
+  const value = await evalIn(app, browserScript((MODEL_DIALOG) => {
+    const dialog = document.querySelector<HTMLElement>(MODEL_DIALOG);
     if (!dialog) return [];
     return [...dialog.querySelectorAll("button")].flatMap((button) => {
-      const id = button.querySelector("span.font-mono")?.textContent?.trim();
+      const id = button.querySelector<HTMLElement>("span.font-mono")?.textContent?.trim();
       if (!id) return [];
       const spans = [...button.querySelectorAll("span")];
       const name = spans.find((span) => !span.classList.contains("font-mono"))?.textContent?.trim() ?? id;
       let group = button.parentElement;
-      while (group && !group.querySelector(':scope > div > button')) group = group.parentElement;
-      const providerHeader = group?.querySelector(':scope > div > button');
-      const providerName = providerHeader?.querySelector("span.text-dls-text")?.textContent?.trim()
-        ?? providerHeader?.textContent?.replace(/\\d+ models?.*$/, "").trim()
+      while (group && !group.querySelector<HTMLElement>(':scope > div > button')) group = group.parentElement;
+      const providerHeader = group?.querySelector<HTMLElement>(':scope > div > button');
+      const providerName = providerHeader?.querySelector<HTMLElement>("span.text-dls-text")?.textContent?.trim()
+        ?? providerHeader?.textContent?.replace(/\d+ models?.*$/, "").trim()
         ?? "";
       return [{
         id,
@@ -129,72 +130,72 @@ export async function readAvailableModels(app: Surface): Promise<ModelFacts[]> {
         selectable: !button.disabled,
       }];
     });
-  })()`);
+  }, [MODEL_DIALOG]));
   return parseModels(value);
 }
 
 export async function selectModel(app: Surface, name: string, options?: { provider?: string }): Promise<ModelFacts> {
   await openModelPicker(app);
   await fill(app, MODEL_SEARCH_INPUT, name);
-  await waitFor(app, `(() => {
-    const dialog = document.querySelector(${JSON.stringify(MODEL_DIALOG)});
-    const expectedProvider = ${JSON.stringify(options?.provider?.trim())};
+  await waitFor(app, browserScript((MODEL_DIALOG, value, name, inputName) => {
+    const dialog = document.querySelector<HTMLElement>(MODEL_DIALOG);
+    const expectedProvider = value;
     return [...(dialog?.querySelectorAll("button") ?? [])].some((button) => {
-      const id = button.querySelector("span.font-mono")?.textContent?.trim() ?? "";
+      const id = button.querySelector<HTMLElement>("span.font-mono")?.textContent?.trim() ?? "";
       let group = button.parentElement;
-      while (group && !group.querySelector(':scope > div > button')) group = group.parentElement;
-      const providerHeader = group?.querySelector(':scope > div > button');
-      const providerName = providerHeader?.querySelector("span.text-dls-text")?.textContent?.trim()
-        ?? providerHeader?.textContent?.replace(/\\d+ models?.*$/, "").trim()
+      while (group && !group.querySelector<HTMLElement>(':scope > div > button')) group = group.parentElement;
+      const providerHeader = group?.querySelector<HTMLElement>(':scope > div > button');
+      const providerName = providerHeader?.querySelector<HTMLElement>("span.text-dls-text")?.textContent?.trim()
+        ?? providerHeader?.textContent?.replace(/\d+ models?.*$/, "").trim()
         ?? "";
       return !button.disabled
-        && (id === ${JSON.stringify(name)} || (button.textContent ?? "").includes(${JSON.stringify(name)}))
+        && (id === name || (button.textContent ?? "").includes(inputName))
         && (expectedProvider === undefined || providerName === expectedProvider);
     });
-  })()`, { timeoutMs: 30_000, label: `selectable model ${name}` });
-  const selected = await evalIn(app, `(() => {
-    const dialog = document.querySelector(${JSON.stringify(MODEL_DIALOG)});
-    const expectedProvider = ${JSON.stringify(options?.provider?.trim())};
+  }, [MODEL_DIALOG, options?.provider?.trim(), name, name]), { timeoutMs: 30_000, label: `selectable model ${name}` });
+  const selected = await evalIn(app, browserScript((MODEL_DIALOG, value, inputName, inputName2) => {
+    const dialog = document.querySelector<HTMLElement>(MODEL_DIALOG);
+    const expectedProvider = value;
     const button = [...(dialog?.querySelectorAll("button") ?? [])].find((candidate) => {
-      const id = candidate.querySelector("span.font-mono")?.textContent?.trim() ?? "";
+      const id = candidate.querySelector<HTMLElement>("span.font-mono")?.textContent?.trim() ?? "";
       let group = candidate.parentElement;
-      while (group && !group.querySelector(':scope > div > button')) group = group.parentElement;
-      const providerHeader = group?.querySelector(':scope > div > button');
-      const providerName = providerHeader?.querySelector("span.text-dls-text")?.textContent?.trim()
-        ?? providerHeader?.textContent?.replace(/\\d+ models?.*$/, "").trim()
+      while (group && !group.querySelector<HTMLElement>(':scope > div > button')) group = group.parentElement;
+      const providerHeader = group?.querySelector<HTMLElement>(':scope > div > button');
+      const providerName = providerHeader?.querySelector<HTMLElement>("span.text-dls-text")?.textContent?.trim()
+        ?? providerHeader?.textContent?.replace(/\d+ models?.*$/, "").trim()
         ?? "";
       return !candidate.disabled
-        && (id === ${JSON.stringify(name)} || (candidate.textContent ?? "").includes(${JSON.stringify(name)}))
+        && (id === inputName || (candidate.textContent ?? "").includes(inputName2))
         && (expectedProvider === undefined || providerName === expectedProvider);
     });
     if (!button) return null;
-    const id = button.querySelector("span.font-mono")?.textContent?.trim() ?? "";
+    const id = button.querySelector<HTMLElement>("span.font-mono")?.textContent?.trim() ?? "";
     const spans = [...button.querySelectorAll("span")];
     const title = spans.find((span) => !span.classList.contains("font-mono"))?.textContent?.trim() ?? id;
     let group = button.parentElement;
-    while (group && !group.querySelector(':scope > div > button')) group = group.parentElement;
-    const providerHeader = group?.querySelector(':scope > div > button');
-    const providerName = providerHeader?.querySelector("span.text-dls-text")?.textContent?.trim()
-      ?? providerHeader?.textContent?.replace(/\\d+ models?.*$/, "").trim()
+    while (group && !group.querySelector<HTMLElement>(':scope > div > button')) group = group.parentElement;
+    const providerHeader = group?.querySelector<HTMLElement>(':scope > div > button');
+    const providerName = providerHeader?.querySelector<HTMLElement>("span.text-dls-text")?.textContent?.trim()
+      ?? providerHeader?.textContent?.replace(/\d+ models?.*$/, "").trim()
       ?? "";
     button.click();
     return { id, name: title, providerName, selected: true, selectable: true };
-  })()`);
+  }, [MODEL_DIALOG, options?.provider?.trim(), name, name]));
   const models = parseModels(selected ? [selected] : []);
   const model = models[0];
   if (!model) throw new Error(`Could not select model ${name}.`);
-  await waitFor(app, `!Boolean(document.querySelector(${JSON.stringify(MODEL_SEARCH_INPUT)}))`, {
+  await waitFor(app, browserScript((MODEL_SEARCH_INPUT) => (!Boolean(document.querySelector<HTMLElement>(MODEL_SEARCH_INPUT))), [MODEL_SEARCH_INPUT]), {
     timeoutMs: 30_000,
     label: "Models dialog closed after selection",
   });
-  const persisted = await evalIn(app, `(() => {
+  const persisted = await evalIn(app, browserScript((id) => {
     try {
       const preferences = JSON.parse(localStorage.getItem("openwork.preferences") || "{}");
-      return preferences?.defaultModel?.modelID === ${JSON.stringify(model.id)};
+      return preferences?.defaultModel?.modelID === id;
     } catch {
       return false;
     }
-  })()`);
+  }, [model.id]));
   return {
     ...model,
     selected: persisted === true,
@@ -210,37 +211,37 @@ export async function recoverInvalidModelSelection(
     ?? models.find((candidate) => candidate.selectable);
   if (model) {
     const selected = await selectModel(app, model.id);
-    await waitFor(app, `(() => {
+    await waitFor(app, () => {
       const text = document.body.innerText;
       return !text.includes("Model no longer available")
         && !text.includes("The selected provider/model was not found in OpenCode provider catalog");
-    })()`, { timeoutMs: 30_000, label: "invalid selected model cleared" });
+    }, { timeoutMs: 30_000, label: "invalid selected model cleared" });
     return selected;
   }
 
-  await evalIn(app, `(() => {
-    let preferences = {};
+  await evalIn(app, () => {
+    let preferences: Record<string, unknown> = {};
     try { preferences = JSON.parse(localStorage.getItem("openwork.preferences") || "{}"); } catch {}
     delete preferences.defaultModel;
     delete preferences.modelVariant;
     localStorage.setItem("openwork.preferences", JSON.stringify(preferences));
     setTimeout(() => location.reload(), 0);
     return true;
-  })()`);
-  await waitFor(app, "Boolean(window.__openworkControl)", {
+  });
+  await waitFor(app, () => (Boolean(window.__openworkControl)), {
     timeoutMs: 60_000,
     label: "control API after clearing invalid selected model",
   });
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const text = document.body.innerText;
     return !text.includes("Model no longer available")
       && !text.includes("The selected provider/model was not found in OpenCode provider catalog");
-  })()`, { timeoutMs: 30_000, label: "invalid selected model absent after reset" });
+  }, { timeoutMs: 30_000, label: "invalid selected model absent after reset" });
   return null;
 }
 
 export async function readModelRecoveryState(app: Surface): Promise<ModelRecoveryFacts> {
-  const value = await evalIn(app, `(() => {
+  const value = await evalIn(app, browserScript((MODEL_DIALOG) => {
     const text = document.body.innerText;
     const emptyMessage = "Your organization hasn't published any models for you yet.";
     const notice = [...document.querySelectorAll("button")].find((button) =>
@@ -256,12 +257,12 @@ export async function readModelRecoveryState(app: Surface): Promise<ModelRecover
       connectProviderVisible: text.includes("Connect a provider"),
       warningVisible: text.includes("Model no longer available"),
       guidanceVisible: text.includes("The model you were using is no longer available, please select a different model for this session."),
-      pickerOpen: Boolean(document.querySelector(${JSON.stringify(MODEL_DIALOG)})),
+      pickerOpen: Boolean(document.querySelector<HTMLElement>(MODEL_DIALOG)),
       runTaskEnabled: Boolean(run && !run.disabled),
       noticeHeight: notice ? Math.round(notice.getBoundingClientRect().height) : null,
       noticeWhiteSpace: message ? getComputedStyle(message).whiteSpace : null,
     };
-  })()`);
+  }, [MODEL_DIALOG]));
   if (!isRecord(value)) throw new Error("Model recovery state was not an object.");
   return {
     emptyMessageVisible: value.emptyMessageVisible === true,
@@ -278,7 +279,7 @@ export async function readModelRecoveryState(app: Surface): Promise<ModelRecover
 }
 
 export async function retryOrganizationModels(app: Surface): Promise<void> {
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const button = [...document.querySelectorAll("button")].find((entry) => {
       const text = entry.textContent ?? "";
       return text.includes("Your organization hasn't published any models for you yet.") && text.includes("Retry") && !entry.disabled;
@@ -286,11 +287,11 @@ export async function retryOrganizationModels(app: Surface): Promise<void> {
     if (!button) return false;
     button.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: "organization model Retry" });
+  }, { timeoutMs: 30_000, label: "organization model Retry" });
 }
 
 export async function seedUnavailableModel(app: Surface): Promise<UnavailableModelSeed> {
-  await waitFor(app, `window.__openworkControl?.listActions().some((entry) => entry.id === "eval.model_not_available.seed" && entry.disabled === false)`, {
+  await waitFor(app, () => (window.__openworkControl?.listActions().some((entry) => entry.id === "eval.model_not_available.seed" && entry.disabled === false)), {
     timeoutMs: 45_000,
     label: "eval.model_not_available.seed enabled",
   });

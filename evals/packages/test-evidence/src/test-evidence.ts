@@ -2,6 +2,8 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveEvalEngine } from "@openwork/env/eval-engine";
+import type { EvalEngine } from "@openwork/env/eval-engine";
 import type { ScreenshotArtifact } from "./screenshot.ts";
 import { judgeVision } from "./validate.ts";
 import type { ValidateOptions, VisualEvidenceResult, VisualExpectationResult } from "./validate.ts";
@@ -63,6 +65,7 @@ export interface TraceEntry {
   ok: boolean;
   ms?: number;
   error?: string;
+  target?: { x: number; y: number; width: number; height: number };
 }
 
 export type TraceEntryInput = Omit<TraceEntry, "seq" | "at"> & Partial<Pick<TraceEntry, "at">>;
@@ -84,6 +87,7 @@ export interface TestRunRecord {
   createdAt: string;
   closedAt: string;
   gitSha?: string;
+  engine: EvalEngine;
   branch?: string;
   summary: TestRunSummary;
   artifacts: (TestArtifact | JsonArtifact)[];
@@ -260,7 +264,7 @@ function renderIndex(record: TestRunRecord): string {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${html(record.name)} test evidence</title><style>
 body{font:15px/1.5 system-ui,sans-serif;max-width:1100px;margin:40px auto;padding:0 20px;background:#f6f7f9;color:#17191d}header,.artifact,details,.trace{background:white;border:1px solid #dfe2e8;border-radius:12px;padding:20px;margin:0 0 24px}.artifact.passed{border-left:6px solid #238636}.artifact.failed{border-left:6px solid #cf222e}.artifact.pending,.artifact.unvalidated,details.unvalidated{border-left:6px solid #9a6700}details .artifact{margin-top:20px}summary{cursor:pointer;font-weight:700}img{display:block;width:100%;height:auto;border:1px solid #dfe2e8;border-radius:8px}.meta{color:#636c76}.passed strong{color:#1a7f37}.failed strong{color:#cf222e}.pending strong{color:#9a6700}li{margin:8px 0}.trace div{margin:5px 0}
-</style></head><body><header><h1>${html(record.name)}</h1><p>${summary.passedArtifacts}/${summary.totalArtifacts} artifacts passed; ${summary.failedArtifacts} failed; ${summary.pendingArtifacts} pending; ${summary.unvalidatedArtifacts - summary.pendingArtifacts} unvalidated. ${summary.passedExpectations} expectations passed, ${summary.failedExpectations} failed, and ${summary.pendingJudgments} pending.</p></header>${traceMarkup}${validatedArtifacts}${unvalidatedMarkup}${jsonMarkup}</body></html>
+</style></head><body><header><h1>${html(record.name)}</h1><p class="meta">SHA ${html(record.gitSha ?? "unknown")} · engine ${record.engine}</p><p>${summary.passedArtifacts}/${summary.totalArtifacts} artifacts passed; ${summary.failedArtifacts} failed; ${summary.pendingArtifacts} pending; ${summary.unvalidatedArtifacts - summary.pendingArtifacts} unvalidated. ${summary.passedExpectations} expectations passed, ${summary.failedExpectations} failed, and ${summary.pendingJudgments} pending.</p></header>${traceMarkup}${validatedArtifacts}${unvalidatedMarkup}${jsonMarkup}</body></html>
 `;
 }
 
@@ -369,6 +373,9 @@ function parseTraceEntry(value: unknown): TraceEntry | null {
     ok: value.ok,
     ms: value.ms,
     error: value.error,
+    target: isRecord(value.target) && typeof value.target.x === "number" && typeof value.target.y === "number" && typeof value.target.width === "number" && typeof value.target.height === "number"
+      ? { x: value.target.x, y: value.target.y, width: value.target.width, height: value.target.height }
+      : undefined,
   };
 }
 
@@ -425,6 +432,12 @@ function parseTestRun(value: unknown): TestRunRecord | null {
     artifacts.push(parsed);
   }
   const gitSha = typeof value.gitSha === "string" ? value.gitSha : undefined;
+  const engine: EvalEngine | null = value.engine === undefined || value.engine === "v1"
+    ? "v1"
+    : value.engine === "v2"
+      ? "v2"
+      : null;
+  if (engine === null) return null;
   const branch = typeof value.branch === "string" ? value.branch : undefined;
   const trace: TraceEntry[] = [];
   if (value.trace !== undefined) {
@@ -457,6 +470,7 @@ function parseTestRun(value: unknown): TestRunRecord | null {
     createdAt: value.createdAt,
     closedAt: value.closedAt,
     gitSha,
+    engine,
     branch,
     summary,
     artifacts,
@@ -558,6 +572,7 @@ export function createTestEvidence(meta: { name: string; outDir?: string }): Tes
   const stepRecords: StepRecord[] = [];
   const createdAt = new Date().toISOString();
   const gitSha = gitValue(["HEAD"]);
+  const engine = resolveEvalEngine();
   const branch = gitValue(["--abbrev-ref", "HEAD"]);
   let nextSequence = 1;
   let nextTraceSequence = 1;
@@ -592,6 +607,7 @@ export function createTestEvidence(meta: { name: string; outDir?: string }): Tes
         createdAt,
         closedAt: new Date().toISOString(),
         gitSha,
+        engine,
         branch,
         summary,
         artifacts: [...orderedArtifacts, ...jsonArtifacts.map(({ kind, label, fileName: artifactFileName }) => ({

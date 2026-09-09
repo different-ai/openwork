@@ -38,6 +38,7 @@ import {
   getOrgDashboardRoute,
   getOrgSettingsRoute,
   getMarketplacesRoute,
+  getMarketplaceOnboardingRoute,
   getPluginsRoute,
   getSsoRoute,
   getScimRoute,
@@ -296,7 +297,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
 
 export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { user, signOut, updateUserProfile, runtimeConfig, runtimeConfigLoaded } = useDenFlow();
+  const onboardingRoute = getMarketplaceOnboardingRoute();
+  const isOnboarding = pathname === onboardingRoute || pathname.startsWith(`${onboardingRoute}/`);
+  const { user, signOut, updateUserProfile, runtimeConfig, runtimeConfigLoaded, setupPending, setupOrganizationId } = useDenFlow();
   const {
     activeOrg,
     orgDirectory,
@@ -332,6 +335,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      if (isOnboarding) return;
       if (
         event.key.toLowerCase() !== "k"
         || (!event.metaKey && !event.ctrlKey)
@@ -346,7 +350,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [isOnboarding]);
 
   useEffect(() => {
     if (commandPaletteWasOpenRef.current && !commandPaletteOpen) {
@@ -391,6 +395,16 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         onPick={switchOrganization}
         onSignOut={() => void signOut()}
       />
+    );
+  }
+
+  // Setup owns the full page until the user leaves for their dashboard.
+  if (isOnboarding) {
+    return (
+      <>
+        <WorkspaceFavicon metadata={orgContext?.organization.metadata} />
+        <main data-testid="den-onboarding-shell">{children}</main>
+      </>
     );
   }
 
@@ -506,7 +520,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                 value={switcherQuery}
                 onChange={(event) => setSwitcherQuery(event.target.value)}
                 placeholder="Search workspaces"
-                className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[12px] text-gray-900 outline-none transition focus:border-gray-400"
+                className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[12px] text-gray-900 outline-hidden transition focus:border-gray-400"
               />
             </div>
           ) : null}
@@ -779,7 +793,14 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto bg-[#fafafa]">{children}</main>
+        <main className="flex-1 overflow-y-auto bg-[#fafafa]">
+          {setupPending && setupOrganizationId === activeOrg?.id ? (
+            <div className="border-b border-gray-100 px-4 py-3 text-sm md:px-6">
+              <Link href={onboardingRoute} className="font-medium text-gray-900 underline underline-offset-4">Back to setup</Link>
+            </div>
+          ) : null}
+          {children}
+        </main>
       </div>
 
       <DenCommandPalette

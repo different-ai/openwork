@@ -1,174 +1,104 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, KeyRound } from "lucide-react";
-import { DownloadOpenWorkCard, type DownloadCardInstallers } from "@openwork/ui/react";
+import { Check, KeyRound, ArrowUpRight, ArrowRight } from "lucide-react";
 import { DenBadge } from "../../_components/ui/badge";
-import { DenChoiceCard } from "../../_components/ui/choice-card";
-import { DenSectionHeader } from "../../_components/ui/section-header";
-import {
-  getCustomLlmProvidersRoute,
-  getInferenceRoute,
-  getOrgDashboardRoute,
-} from "../../_lib/den-org";
-import { requestJson } from "../../_lib/den-flow";
+import { DesktopHandoffAction } from "../../_components/auth-panel";
+import { SetupFrame } from "../../_components/setup-frame";
+import { getCustomLlmProvidersRoute, getInferenceRoute, getOrgDashboardRoute } from "../../_lib/den-org";
+import { getErrorMessage, normalizeAuthIntentParam, PENDING_AUTH_INTENT_STORAGE_KEY, requestJson } from "../../_lib/den-flow";
+import { getDesktopGrant } from "../../_lib/desktop-handoff";
+import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { LlmProviderLogos } from "./llm-provider-logos";
 
-const APP_INSTALLED_KEY = "openwork:onboarding:app-installed";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function useLocalStorageFlag(key: string) {
-  const [value, setValue] = useState(false);
-
+export function MarketplaceOnboardingScreen() {
+  const router = useRouter();
+  const { orgId, orgSlug, activeOrg } = useOrgDashboard();
+  const { desktopAuthRequested, desktopRedirectUrl, authError, completeSetup } = useDenFlow();
+  const [completing, setCompleting] = useState(false);
+  const modelsHeading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
-    try {
-      setValue(localStorage.getItem(key) === "1");
-    } catch {
-      // localStorage unavailable
+    if (desktopAuthRequested && normalizeAuthIntentParam(window.sessionStorage.getItem(PENDING_AUTH_INTENT_STORAGE_KEY)) === "models") {
+      modelsHeading.current?.focus();
     }
-  }, [key]);
+  }, [desktopAuthRequested]);
+  const { data: modelsEnabled, isPending: modelsLoading, error: modelsError } = useQuery({
+    queryKey: ["onboarding", "inference", orgId],
+    enabled: Boolean(orgId),
+    queryFn: async () => {
+      if (!orgId) throw new Error("Choose a workspace to check OpenWork Models.");
+      const { response, payload } = await requestJson("/v1/inference", { method: "GET", headers: { "x-openwork-org-id": orgId } }, 12000);
+      if (!response.ok) throw new Error(getErrorMessage(payload, "Could not check OpenWork Models."));
+      return typeof payload === "object" && payload !== null && "inference" in payload
+        && typeof payload.inference === "object" && payload.inference !== null
+        && "enabled" in payload.inference && payload.inference.enabled === true;
+    },
+    staleTime: 0,
+  });
 
-  function toggle(next: boolean) {
-    setValue(next);
+  async function finish() {
+    if (!orgId || completing) return;
+    setCompleting(true);
     try {
-      if (next) localStorage.setItem(key, "1");
-      else localStorage.removeItem(key);
-    } catch {
-      // localStorage unavailable
+      if (await completeSetup(orgId) && !desktopAuthRequested) router.push(getOrgDashboardRoute(orgSlug));
+    } finally {
+      setCompleting(false);
     }
   }
 
-  return [value, toggle] as const;
-}
-
-function useInferenceEnabled() {
-  return useQuery({
-    queryKey: ["onboarding", "inference"] as const,
-    queryFn: async (): Promise<boolean> => {
-      const { response, payload } = await requestJson("/v1/inference", { method: "GET" }, 12000);
-      if (!response.ok) return false;
-      const inference = isRecord(payload) && isRecord(payload.inference) ? payload.inference : null;
-      return inference?.enabled === true;
-    },
-    staleTime: 30_000,
-  });
-}
-
-function OpenWorkMark({ className = "h-5 w-5" }: { className?: string }) {
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src="/openwork-mark.svg" alt="" aria-hidden className={className} />
-  );
-}
-
-export function MarketplaceOnboardingScreen({
-  installers,
-  releaseTag,
-}: {
-  installers?: DownloadCardInstallers | null;
-  releaseTag?: string;
-}) {
-  const { activeOrg, orgSlug } = useOrgDashboard();
-  const { data: modelsEnabled = false, isLoading: modelsLoading } = useInferenceEnabled();
-  const [appInstalled, setAppInstalled] = useLocalStorageFlag(APP_INSTALLED_KEY);
-
-  const orgName = activeOrg?.name ?? "your team";
-  const requiredDone = appInstalled && modelsEnabled;
-
-  return (
-    <div className="mx-auto max-w-4xl px-4 pb-16 pt-12 sm:px-6" data-testid="marketplace-onboarding">
-      <header className="mx-auto max-w-xl text-center">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-500">Get started</p>
-        <h1 className="mt-3 text-[30px] font-semibold leading-[1.15] tracking-[-0.04em] text-gray-950 sm:text-[34px]">
-          {requiredDone ? `${orgName} is ready.` : `Get the OpenWork app`}
-        </h1>
-        <p className="mx-auto mt-3 max-w-lg text-[15px] leading-6 text-gray-500">
-          {requiredDone
-            ? "The desktop app is installed and models are available. Jump into your dashboard whenever you're ready."
-            : "OpenWork runs on the desktop app. Install it, sign in, and this workspace syncs automatically."}
-        </p>
-      </header>
-
-      <section className="mt-8 grid gap-4">
-        <DownloadOpenWorkCard installers={installers} releaseTag={releaseTag} />
-        <div className="flex justify-center">
-          {appInstalled ? (
-            <DenBadge tone="success" icon={Check}>
-              Installed
-            </DenBadge>
-          ) : (
-            <button
-              type="button"
-              data-testid="onboarding-app-installed"
-              onClick={() => setAppInstalled(true)}
-              className="text-[13px] font-medium text-gray-500 transition hover:text-gray-950"
-            >
-              I&apos;ve already installed it →
+    <SetupFrame step="ready" title="Choose what powers your work." description="Use OpenWork Models or bring your own provider. You can decide now or set this up later.">
+      <div className="grid gap-6" data-testid="marketplace-onboarding">
+        <section aria-labelledby="setup-models-heading" className="grid gap-4">
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-neutral-400">Optional · Models</p>
+            <h2 id="setup-models-heading" ref={modelsHeading} tabIndex={-1} className="mt-2 text-xl font-semibold tracking-[-0.03em]">Your choice of model.</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--dls-text-secondary)]" role="status">
+              {modelsLoading ? "Checking OpenWork Models..." : modelsError ? "Model status is unavailable. You can still complete setup." : modelsEnabled ? "OpenWork Models are on for this workspace." : "Signing in does not enable models. Keep your existing provider, or choose one when you are ready."}
+            </p>
+            {modelsEnabled ? <DenBadge icon={Check}>Models on</DenBadge> : null}
+          </div>
+          <div className="divide-y divide-[var(--dls-border)] overflow-hidden rounded-2xl border border-[var(--dls-border)]">
+            <div className="flex items-start gap-3 p-4 sm:p-5" data-testid="onboarding-choice-openwork-models">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--dls-hover)]">
+                <img src="/openwork-mark.svg" alt="" aria-hidden className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-semibold">OpenWork Models</h3>
+                <p className="mt-1 text-[13px] leading-5 text-[var(--dls-text-secondary)]">Managed models, billed per member. No API keys to look after.</p>
+                <Link href={getInferenceRoute(orgSlug)} className="mt-3 inline-flex items-center gap-1.5 rounded-sm text-sm font-medium underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-neutral-950">
+                  {modelsEnabled ? "Manage models" : "Explore models"}<ArrowUpRight className="size-3.5" aria-hidden />
+                </Link>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 p-4 sm:p-5" data-testid="onboarding-choice-byok">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--dls-hover)]"><KeyRound className="size-[18px] text-[var(--dls-text-secondary)]" aria-hidden /></div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-semibold">Bring your Own Keys</h3>
+                <p className="mt-1 text-[13px] leading-5 text-[var(--dls-text-secondary)]">Connect your provider or gateway. Keep your own billing and model choices.</p>
+                <Link href={getCustomLlmProvidersRoute(orgSlug)} className="mt-3 inline-flex items-center gap-1.5 rounded-sm text-sm font-medium underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-neutral-950">
+                  Add a provider<ArrowUpRight className="size-3.5" aria-hidden />
+                </Link>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section aria-labelledby="setup-finish-heading" className="grid gap-4 border-t border-[var(--dls-border)] pt-6" data-testid="onboarding-finish">
+          <div>
+            <h2 id="setup-finish-heading" className="text-base font-semibold tracking-tight">Your workspace is ready</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--dls-text-secondary)]">No model selection is required to complete setup.</p>
+          </div>
+          {authError ? <p role="alert" className="text-sm text-rose-600">{authError}</p> : null}
+          {desktopRedirectUrl ? <DesktopHandoffAction openworkUrl={desktopRedirectUrl} grant={getDesktopGrant(desktopRedirectUrl)} organizationName={activeOrg?.name ?? null} showCopyLinkByDefault /> : (
+            <button type="button" onClick={() => void finish()} disabled={!orgId || completing} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-neutral-800 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-neutral-950 focus-visible:ring-offset-2">
+              {completing ? "Completing..." : desktopAuthRequested ? "Complete and open the app" : "Complete setup"}<ArrowRight className="size-4" aria-hidden />
             </button>
           )}
-        </div>
-      </section>
-
-      <section className="mt-12 grid gap-5">
-        <DenSectionHeader
-          align="center"
-          title="Then bring your own keys, or use OpenWork Models"
-          description={
-            modelsLoading
-              ? "Checking whether OpenWork Models are already on…"
-              : modelsEnabled
-                ? "OpenWork Models are on for this workspace."
-                : "Pick one now, change it whenever — both live under Models."
-          }
-          action={
-            modelsEnabled ? (
-              <DenBadge tone="success" icon={Check}>
-                Models on
-              </DenBadge>
-            ) : null
-          }
-        />
-        <div className="grid gap-4 lg:grid-cols-2">
-          <DenChoiceCard
-            testId="onboarding-choice-openwork-models"
-            icon={<OpenWorkMark />}
-            title="OpenWork Models"
-            subtitle="No API keys, nothing to configure"
-            badge={<DenBadge tone="info">Recommended</DenBadge>}
-            description="Hand-picked frontier and open models, billed per member. Turn it on and everyone has models in the app immediately."
-            href={getInferenceRoute(orgSlug)}
-            ctaLabel={modelsEnabled ? "Manage models" : "Turn on models"}
-            ctaVariant="primary"
-          />
-          <DenChoiceCard
-            testId="onboarding-choice-byok"
-            icon={<KeyRound className="h-[18px] w-[18px] text-gray-700" aria-hidden />}
-            title="Bring your Own Keys"
-            subtitle="Your providers, your billing"
-            description="Connect Anthropic, OpenAI, Azure, Mistral or your own gateway, and choose exactly which models the team sees."
-            href={getCustomLlmProvidersRoute(orgSlug)}
-            ctaLabel="Add a provider"
-            ctaVariant="secondary"
-          >
-            <LlmProviderLogos />
-          </DenChoiceCard>
-        </div>
-      </section>
-
-      <footer className="mt-12 border-t border-gray-100 pt-5 text-center">
-        <p className="text-[13px] text-gray-500">
-          Already set up?{" "}
-          <Link href={getOrgDashboardRoute(orgSlug)} className="font-medium text-gray-900 underline-offset-2 hover:underline">
-            Go to dashboard →
-          </Link>
-        </p>
-      </footer>
-    </div>
+        </section>
+      </div>
+    </SetupFrame>
   );
 }

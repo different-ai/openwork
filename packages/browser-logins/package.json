@@ -1,0 +1,33 @@
+{
+  "name": "@openwork/browser-logins",
+  "private": true,
+  "type": "module",
+  "description": "Sync selected logins from a browser profile into OpenWork's built-in browser: source discovery, readers, decryption, site grouping, and sensitivity defaults.",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.mjs"
+    },
+    "./node": {
+      "types": "./node.d.ts",
+      "default": "./node.mjs"
+    }
+  },
+  "files": [
+    "index.d.ts",
+    "index.mjs",
+    "node.d.ts",
+    "node.mjs"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "tldts": "^7.4.10"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.6.3"
+  }
+}

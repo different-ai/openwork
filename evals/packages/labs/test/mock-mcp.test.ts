@@ -94,46 +94,145 @@ test("scripts and records deterministic OpenAI-compatible agent tool rounds", as
   assert.deepEqual(requests.map((request) => request.matchedMarkers), [[marker], [marker], [marker]]);
 });
 
-test("a declared quiet completion opens the stream, never ends it, and yields to the next request", async () => {
-  const marker = "agent-workload-quiet-marker";
+test("unadvertised calls require an explicit adversarial workload", async () => {
   await using mock = await startMockMcp({
     port: await allocateFreePort(),
-    agentWorkloads: [{
-      promptMarker: marker,
-      finalReply: "quiet workload complete",
-      steps: [{ tool: "read", arguments: { filePath: "/tmp/quiet.txt" } }],
-      quietCompletions: 1,
-    }],
+    agentWorkloads: [false, true].map((allowUnadvertisedTool) => ({
+      promptMarker: `unadvertised-${allowUnadvertisedTool}`,
+      finalReply: "attempt complete",
+      steps: [{ tool: "unadvertised-shell", allowUnadvertisedTool, arguments: { command: "true" } }],
+    })),
   });
-  const startedAt = new Date().toISOString();
+  for (const enabled of [false, true]) {
+    const marker = `unadvertised-${enabled}`;
+    const response = await fetch(`${mock.url}/v1/chat/completions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(completionBody(marker, 0)),
+    });
+    assert.equal(response.status, enabled ? 200 : 400);
+    const body = await response.text();
+    assert.match(body, enabled ? /"name":"unadvertised-shell"/ : /was not offered/);
+    const requests = await mock.agentRequests({ promptMarker: marker, atLeast: 1 });
+    assert.deepEqual(requests.map((request) => request.kind), [enabled ? "tool" : "error"]);
+  }
+});
 
-  const controller = new AbortController();
-  const quiet = await fetch(`${mock.url}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(completionBody(marker, 0)),
-    signal: controller.signal,
+test("turn-scoped workloads isolate revisions from earlier markers and tool rounds", async () => {
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    agentWorkloads: ["first sketch", "revise sketch"].map((promptMarker) => ({
+      latestUserTurn: true,
+      promptMarker,
+      finalReply: `${promptMarker} complete`,
+      steps: [{ tool: "write", arguments: { content: promptMarker } }],
+    })),
   });
-  assert.equal(quiet.status, 200);
-  assert.equal(quiet.headers.get("content-type"), "text/event-stream");
-  const reader = quiet.body?.getReader();
+  const history = [
+    { role: "user", content: "first sketch" },
+    { role: "tool", tool_call_id: "old", content: "old result" },
+    { role: "assistant", content: "first sketch complete" },
+    { role: "user", content: "revise sketch" },
+  ];
+  for (const completed of [false, true]) {
+    const response = await fetch(`${mock.url}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...completionBody("unused", 0),
+        messages: [...history, ...(completed ? [{ role: "tool", tool_call_id: "new", content: "new result" }] : [])],
+      }),
+    });
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    assert.match(text, completed ? /revise sketch complete/ : /"name":"write"/);
+    assert.doesNotMatch(text, /first sketch complete/);
+  }
+  const requests = await mock.agentRequests({ promptMarker: "revise sketch" });
+  assert.deepEqual(requests.map((request) => request.kind), ["tool", "final"]);
+  assert.deepEqual(requests.map((request) => request.completedTools), [0, 1]);
+  assert.deepEqual(requests.map((request) => request.matchedMarkers), [["revise sketch"], ["revise sketch"]]);
+});
+
+
+test("native Responses preserve the configured provider header", async () => {
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    agentWorkloads: [{ promptMarker: "native-header-proof", finalReply: "The header reached the provider", steps: [] }],
+    agentRequiredHeader: { name: "x-private-model-setting", value: "fixture-only-value" },
+  });
+  const request = (header?: string) => fetch(`${mock.url}/v1/responses`, {
+    method: "POST", headers: { "content-type": "application/json", ...(header ? { "x-private-model-setting": header } : {}) },
+    body: JSON.stringify({ model: "native-fixture", input: "native-header-proof", stream: true }),
+  });
+  for (const header of [undefined, "wrong-value"]) {
+    const denied = await request(header);
+    assert.equal(denied.status, 401);
+    await denied.text();
+  }
+  const accepted = await request("fixture-only-value");
+  assert.equal(accepted.status, 200);
+  const events = (await accepted.text()).split("\n").filter(line => line.startsWith("data: ")).map(line => JSON.parse(line.slice(6)));
+  assert.ok(events.some(event => event.type === "response.completed"));
+  assert.equal(events.filter(event => event.type === "response.output_text.delta").map(event => event.delta).join(""), "The header reached the provider");
+});
+
+test("archive match-all workloads hold only main replies, release their remaining chunks, and discard disconnected replies", async () => {
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    agentWorkloads: [{ promptMarker: "archive-only", matchAll: true, latestUserTurn: true, finalReply: "Archive held reply.", finalReplyChunkSize: 5, steps: [] }],
+  });
+  const hold = async (held: boolean): Promise<{ held: boolean; pending: number }> => {
+    const response = await fetch(`${mock.url}/admin/agent-hold`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ held }),
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  await hold(true);
+  const request = (body: Record<string, unknown>, signal = AbortSignal.timeout(10_000)) => fetch(`${mock.url}/v1/chat/completions`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal,
+  });
+  const held = await request(completionBody("ordinary user task without a fixture marker", 0));
+  assert.equal(held.status, 200);
+  const reader = held.body?.getReader();
   assert.ok(reader);
-  const opening = await reader.read();
-  assert.match(new TextDecoder().decode(opening.value), /"role":"assistant"/);
-  const next = await Promise.race([
-    reader.read().then(() => "ended"),
-    new Promise<string>((resolve) => setTimeout(() => resolve("still quiet"), 1_500)),
-  ]);
-  assert.equal(next, "still quiet");
+  const first = await reader.read();
+  const prefix = new TextDecoder().decode(first.value);
+  assert.match(prefix, /"role":"assistant"/);
+  assert.doesNotMatch(prefix, /Archive held reply|\[DONE\]/);
+  assert.deepEqual(await hold(true), { held: true, pending: 1 });
+
+  const utility = await request({ ...completionBody("title generation", 0), tools: [] });
+  assert.match(await utility.text(), /Active session workload/);
+  assert.deepEqual(await hold(true), { held: true, pending: 1 });
+  assert.deepEqual(await hold(false), { held: false, pending: 0 });
+  let stream = prefix;
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    stream += new TextDecoder().decode(chunk.value);
+  }
+  const events = stream.split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+  assert.equal(events.filter(event => event.choices[0].delta.role === "assistant").length, 1);
+  assert.equal(events.map(event => event.choices[0].delta.content ?? "").join(""), "Archive held reply.");
+  assert.match(stream, /\[DONE\]/);
+
+  await hold(true);
+  const controller = new AbortController();
+  const cancelled = await request(completionBody("cancel this held task", 0), controller.signal);
+  const cancelledReader = cancelled.body?.getReader();
+  assert.ok(cancelledReader);
+  await cancelledReader.read();
+  assert.equal((await hold(true)).pending, 1);
   controller.abort();
-
-  const second = await fetch(`${mock.url}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(completionBody(marker, 0)),
-  });
-  assert.match(await second.text(), /"name":"read"/);
-
-  const requests = await mock.agentRequests({ promptMarker: marker, sinceIso: startedAt, atLeast: 2, timeoutMs: 5_000 });
-  assert.deepEqual(requests.map((request) => request.kind), ["quiet", "tool"]);
+  await assert.rejects(cancelledReader.read());
+  const deadline = Date.now() + 5_000;
+  let pending = 1;
+  while (pending && Date.now() < deadline) {
+    pending = (await hold(true)).pending;
+    if (pending) await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.equal(pending, 0);
+  assert.deepEqual(await hold(false), { held: false, pending: 0 });
+  assert.deepEqual((await mock.agentRequests()).map(request => request.kind), ["final", "utility", "final"]);
 });

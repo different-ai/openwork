@@ -55,11 +55,10 @@ export async function abortSession(
   sessionID: string,
   directory?: string,
   logContext?: AbortSessionLogContext,
-  options?: { signal?: AbortSignal },
 ): Promise<boolean> {
   logAbortSession("start", sessionID, directory, logContext);
   try {
-    const aborted = unwrap(await client.session.abort({ sessionID, directory }, options)) === true;
+    const aborted = unwrap(await client.session.abort({ sessionID, directory })) === true;
     logAbortSession("done", sessionID, directory, logContext, { aborted });
     return aborted;
   } catch (error) {
@@ -196,9 +195,9 @@ export async function shellInSession(
   client: Client,
   sessionID: string,
   command: string,
-  options?: { model?: { providerID: string; modelID: string }; agent?: string; variant?: string },
+  options?: { model?: { providerID: string; modelID: string }; agent?: string; variant?: string; messageID?: string },
 ): Promise<void> {
-  const result = await client.session.shell({ sessionID, command });
+  const result = await client.session.shell({ sessionID, command, messageID: options?.messageID });
   assertNoClientError(result);
 }
 

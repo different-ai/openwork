@@ -137,7 +137,7 @@ function DesktopHandoffCopyLink({
   );
 }
 
-function DesktopHandoffAction({
+export function DesktopHandoffAction({
   openworkUrl,
   grant,
   organizationName,
@@ -275,8 +275,10 @@ export function AuthPanel({
     signupPasswordFeedback,
     user,
     desktopAuthRequested,
+    setupPending,
     desktopRedirectUrl,
     desktopRedirectBusy,
+    retryDesktopAuthHandoff,
     showAuthFeedback,
     submitAuth,
     submitVerificationCode,
@@ -410,6 +412,7 @@ export function AuthPanel({
       ? resolvedSignInContent
       : resolvedSignUpContent;
   const showLockedEmailSummary = Boolean(prefilledEmail && lockEmail && hideEmailField && !hideLockedEmailSummary);
+  const titleClass = bare ? "text-[24px] font-semibold leading-tight tracking-[-0.03em] text-[var(--dls-text-primary)]" : "den-title-lg";
   const shellClass = (gap: string, padding: string) =>
     bare ? `grid ${gap}` : `den-frame grid ${gap} ${padding}`;
   // The segmented tabs are the primary sign-in/sign-up switch. Hide them for the
@@ -620,7 +623,7 @@ export function AuthPanel({
   // Gate on the session user (not authInfo feedback). Otherwise a hydrated
   // desktop session still renders the email-first form underneath the Open
   // OpenWork button.
-  const isSignedInWithDesktopHandoff = Boolean(desktopAuthRequested && user && !authError);
+  const isSignedInWithDesktopHandoff = Boolean(desktopAuthRequested && user && !setupPending);
   const signedInEmail = user?.email?.trim() || "";
   const emailFirstPanelActive = emailFirstFlow && !isSingleOrgSsoMode && !verificationRequired && !isPasswordResetRequest;
   const emailFirstFormBusy = loginOptionBusy || authBusy || desktopRedirectBusy;
@@ -632,7 +635,7 @@ export function AuthPanel({
         <div className="grid gap-3">
           <p className="den-eyebrow">{eyebrow}</p>
           <div className="grid gap-2">
-            <h2 className="den-title-lg">You&apos;re signed in.</h2>
+            <h2 className={titleClass}>You&apos;re signed in.</h2>
             <p className="den-copy">
               {signedInEmail ? (
                 <>
@@ -652,9 +655,14 @@ export function AuthPanel({
             organizationName={isSingleOrgMode ? singleOrgName : null}
             showCopyLinkByDefault
           />
+        ) : authError ? (
+          <div className="grid gap-3">
+            <p role="alert" className="text-sm text-rose-600">{authError}</p>
+            <button type="button" className="den-button-primary w-full" disabled={desktopRedirectBusy} onClick={retryDesktopAuthHandoff}>Retry opening OpenWork</button>
+          </div>
         ) : (
           <div className="den-frame-inset rounded-[1.5rem] px-4 py-3 text-center text-sm text-[var(--dls-text-secondary)]" aria-live="polite">
-            Preparing your OpenWork sign-in link...
+            Checking your workspace...
           </div>
         )}
 
@@ -681,7 +689,7 @@ export function AuthPanel({
           <div className="grid gap-3">
             <p className="den-eyebrow">{eyebrow}</p>
             <div className="grid gap-2">
-              <h2 className="den-title-lg">{activeContent.title}</h2>
+              <h2 className={titleClass}>{activeContent.title}</h2>
               <p className="den-copy">{activeContent.copy}</p>
             </div>
           </div>
@@ -800,12 +808,24 @@ export function AuthPanel({
 
         {!waitingForPrefilledLoginOption && emailFirstStep === "new_account" ? (
           <form
+            data-testid="signup-new-account"
             className="grid gap-4"
             onSubmit={async (event) => {
               const next = await submitAuth(event);
               await handleAuthNavigation(next);
             }}
           >
+            <label className="grid gap-2">
+              <span className="den-label">Name</span>
+              <input
+                className="den-input"
+                type="text"
+                value={authName}
+                onChange={(event) => setAuthName(event.target.value)}
+                autoComplete="name"
+                required
+              />
+            </label>
             {!hideEmailField ? (
               <label className="grid gap-2">
                 <span className="den-label">Email</span>
@@ -820,31 +840,6 @@ export function AuthPanel({
                   required
                 />
               </label>
-            ) : null}
-            <label className="grid gap-2">
-              <span className="den-label">Name</span>
-              <input
-                className="den-input"
-                type="text"
-                value={authName}
-                onChange={(event) => setAuthName(event.target.value)}
-                autoComplete="name"
-                required
-              />
-            </label>
-            {!hideSocialAuth ? (
-              <>
-                <div className="den-divider" aria-hidden="true">
-                  <span>or</span>
-                </div>
-                <SocialButton
-                  onClick={() => void beginSocialAuth("google")}
-                  disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
-                >
-                  <GoogleLogo />
-                  <span>Sign up with Google</span>
-                </SocialButton>
-              </>
             ) : null}
             <label className="grid gap-2">
               <span className="den-label">Password</span>
@@ -863,6 +858,20 @@ export function AuthPanel({
               {formBusy ? "Working..." : activeContent.submitLabel}
               {!formBusy ? <ArrowRight className="h-4 w-4" /> : null}
             </button>
+            {!hideSocialAuth ? (
+              <>
+                <div className="den-divider" aria-hidden="true">
+                  <span>or</span>
+                </div>
+                <SocialButton
+                  onClick={() => void beginSocialAuth("google")}
+                  disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+                >
+                  <GoogleLogo />
+                  <span>Sign up with Google</span>
+                </SocialButton>
+              </>
+            ) : null}
           </form>
         ) : null}
 
@@ -890,7 +899,7 @@ export function AuthPanel({
         <div className="grid gap-3">
           <p className="den-eyebrow">{eyebrow}</p>
           <div className="grid gap-2">
-            <h2 className="den-title-lg">{activeContent.title}</h2>
+            <h2 className={titleClass}>{activeContent.title}</h2>
             <p className="den-copy">{activeContent.copy}</p>
           </div>
         </div>

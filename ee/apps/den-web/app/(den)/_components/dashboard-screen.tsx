@@ -104,7 +104,7 @@ function CredentialRow({
         <input
           readOnly
           value={value ?? placeholder}
-          className="min-w-0 flex-1 border-none bg-transparent px-2 py-1.5 font-mono text-xs text-[var(--dls-text-primary)] outline-none"
+          className="min-w-0 flex-1 border-none bg-transparent px-2 py-1.5 font-mono text-xs text-[var(--dls-text-primary)] outline-hidden"
           onClick={(event) => event.currentTarget.select()}
         />
         <button
@@ -310,7 +310,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
               <div className={`rounded-[28px] border border-[var(--dls-border)] transition-all ${isReady ? "bg-[var(--dls-surface)]" : "bg-[var(--dls-sidebar)] opacity-80"}`}>
                 <details className="group" open>
-                  <summary className="flex cursor-pointer list-none items-center justify-between p-8 outline-none [&::-webkit-details-marker]:hidden">
+                  <summary className="flex cursor-pointer list-none items-center justify-between p-8 outline-hidden [&::-webkit-details-marker]:hidden">
                     <div>
                       <div className="mb-4 flex items-center gap-3">
                         <div className="rounded-xl border border-[var(--dls-border)] bg-[var(--dls-sidebar)] p-2.5 text-[var(--dls-text-secondary)]">
@@ -392,7 +392,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
               <div className="flex flex-col gap-6">
                 <div className={`rounded-[28px] border border-[var(--dls-border)] transition-all ${isReady ? "bg-[var(--dls-surface)]" : "bg-[var(--dls-sidebar)] opacity-80"}`}>
                   <details className="group">
-                    <summary className="flex cursor-pointer list-none items-center justify-between p-8 outline-none [&::-webkit-details-marker]:hidden">
+                    <summary className="flex cursor-pointer list-none items-center justify-between p-8 outline-hidden [&::-webkit-details-marker]:hidden">
                       <div>
                         <div className="mb-4 flex items-center gap-3">
                           <div className="rounded-xl border border-[var(--dls-border)] bg-[var(--dls-sidebar)] p-2.5 text-[var(--dls-text-secondary)]">
@@ -458,7 +458,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
 
                 <div className={`rounded-[28px] border border-[var(--dls-border)] transition-all ${isReady ? "bg-[var(--dls-surface)]" : "bg-[var(--dls-sidebar)] opacity-80"}`}>
                   <details className="group">
-                    <summary className="flex cursor-pointer list-none items-center justify-between p-8 outline-none [&::-webkit-details-marker]:hidden">
+                    <summary className="flex cursor-pointer list-none items-center justify-between p-8 outline-hidden [&::-webkit-details-marker]:hidden">
                       <div>
                         <div className="mb-4 flex items-center gap-3">
                           <div className="rounded-xl border border-[var(--dls-border)] bg-[var(--dls-sidebar)] p-2.5 text-[var(--dls-text-secondary)]">

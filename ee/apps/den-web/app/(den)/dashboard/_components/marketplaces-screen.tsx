@@ -195,7 +195,7 @@ function CreateMarketplaceDialog({
             onChange={(event) => setDescription(event.target.value)}
             placeholder="What belongs in this collection?"
             rows={2}
-            className="w-full resize-none rounded-xl border border-gray-200 px-3 py-2 text-[13px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
+            className="w-full resize-none rounded-xl border border-gray-200 px-3 py-2 text-[13px] text-gray-900 outline-hidden transition placeholder:text-gray-300 focus:border-gray-400"
           />
         </label>
 

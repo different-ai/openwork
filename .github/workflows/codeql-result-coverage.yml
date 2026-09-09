@@ -1,0 +1,35 @@
+name: CodeQL Result Coverage
+
+on:
+  schedule:
+    - cron: "43 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+  security-events: read
+
+concurrency:
+  group: codeql-result-coverage
+  cancel-in-progress: false
+
+jobs:
+  coverage:
+    if: github.repository == 'different-ai/openwork'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Test coverage classification
+        run: node --test scripts/ci/check-codeql-results.test.mjs
+      - name: Verify uploaded results for open pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/check-codeql-results.mjs

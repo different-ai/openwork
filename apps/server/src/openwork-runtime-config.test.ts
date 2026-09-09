@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
   buildOpenworkRuntimeConfig,
+  buildOpenworkRuntimeConfigObjectFromSnapshot,
   keepOpenworkRuntimeConfigFileFresh,
   openworkRuntimeConfigFilePath,
   writeOpenworkRuntimeConfigFile,
@@ -55,6 +56,22 @@ async function readConfigFile(config: ServerConfig): Promise<Record<string, unkn
 }
 
 describe("openwork runtime config file", () => {
+  test("managed browser restrictions use scalar actions in global and agent permissions", () => {
+    const parsed = buildOpenworkRuntimeConfigObjectFromSnapshot({
+      managedPolicy: {
+        execution: {
+          commands: "deny", blockedCommands: ["curl *"],
+          browserOrigins: ["https://approved.example"], blockBrowserUploads: true,
+        },
+      },
+    });
+    const permission = { bash: { "*": "deny", "curl *": "deny" }, webfetch: "deny", websearch: "deny" };
+    expect(parsed.permission).toEqual(permission);
+    expect(parsed.agent).toMatchObject({ openwork: { permission } });
+    expect(parsed.managedPolicy).toBeUndefined();
+    expect(buildOpenworkRuntimeConfigObjectFromSnapshot({}).permission).toEqual({});
+  });
+
   test("writes global-row MCPs and openwork defaults into the file", async () => {
     const { config } = await setup();
     await writeGlobalRuntimeOpencodeConfig(config, (current) => ({

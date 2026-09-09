@@ -23,6 +23,44 @@ The server logs the client token and host token on boot when they are auto-gener
 
 Add `--verbose` to print resolved config details on startup. Use `--version` to print the server version and exit.
 
+## Desktop task recovery
+
+The desktop enables `resumeInterruptedTasks` when embedding a server that owns
+its local engines. Standalone servers, attached engines, remote workspaces, and
+read-only servers do not opt in. Recovery works with both OpenCode v1 and v2 and
+does not depend on an open conversation tab.
+
+The `desktop_task_recovery` table in the existing runtime SQLite database stores
+up to 1,000 task identities, their workspace path, original engine, last observed
+user turn, and recovery phase. It stores no prompts, transcripts, or credentials.
+Only tasks admitted after this feature is enabled are tracked; old unfinished
+conversations are not swept or resumed retroactively.
+
+On quit or update, a final checkpoint runs before engine teardown with two task
+snapshots in flight and a 10-second budget. On restart, the coordinator checks two task
+snapshots every two seconds and admits at most one continuation every two seconds,
+with at most two recovered tasks active. Already-active native runs are observed,
+not re-prompted, and native active work also limits new recovery admissions.
+
+Completed, archived, manually stopped, approval/question-blocked, and active
+delegated work are excluded. New manual work invalidates the old recovery intent.
+Missing workspaces, changed directories, unavailable policy, and unverified
+snapshots never authorize a send. V1 requires the original user turn and model
+in its recent 100-message snapshot; v2 keeps the session's native model. A
+continuation asks to inspect completed effects first, not rerun the original prompt.
+
+A send is claimed durably before admission. Lost acknowledgements are never
+blindly retried, even after another restart. Crash recovery requires an observed
+running task and a still-unfinished matching turn; unexplained aborts stay stopped.
+Tasks whose admission or shutdown checkpoint cannot be confirmed remain manual.
+This prevents duplicate recovery admissions, not exactly-once execution of external
+tools; uncertain earlier effects must be inspected or clarified before continuing.
+
+Desktop Automation and remote-command requests opt out with
+`x-openwork-task-recovery: off`; their existing execution ownership is unchanged.
+Runtime journey verification for actual Electron restarts on both engines remains
+separate from the focused coordinator and mocked-proxy tests.
+
 ## Config file
 
 Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CONFIG` or `--config`).
@@ -148,3 +186,24 @@ Approvals endpoints:
 - `POST /approvals/:id` with `{ "reply": "allow" | "deny" }`
 
 Set `OPENWORK_APPROVAL_MODE=auto` to auto-approve during local development.
+
+## Automatic title recovery
+
+The managed v1 engine ships a title-only compatibility plugin. If a provider
+returns HTTP 400 with `unsupported_value` or `unsupported_parameter` for
+`reasoning.effort`, `reasoning_effort`, `temperature`, or `top_p`, it makes at
+most one corrected request. It uses a reported supported effort or omits the
+rejected optional parameter so the same model can use its default. Provider,
+model, credentials, conversation content, and normal chat options stay intact.
+Access, quota, transport, and unrelated request errors do not trigger an added
+recovery request. The engine's own transport retry policy still applies.
+
+Engine log records with service `openwork.title` / message `Automatic title
+generation` contain only session/provider/model IDs, outcome, recovery attempt,
+HTTP status, and the rejected parameter name. `accepted_after_recovery` means
+the provider accepted the retry; `title_available` separately confirms a real
+title was observed in a session update. An accepted request with no title update
+within 60 seconds is `title_unconfirmed`, which can mean empty output, a stream
+failure, or missing persistence; it is not reported as success. The app's
+existing bounded placeholder probes and warning remain the user-facing safety
+net. Existing untitled conversations are not bulk-regenerated.

@@ -1156,6 +1156,7 @@ export async function completeLocalManagedMcpAuthorization(
   config: ServerConfig,
   state: string,
   code: string,
+  responseIssuer?: string,
 ): Promise<{ connection: LocalManagedMcpPublicConnection; workspaceId: string }> {
   const payload = await verifyAuthorizationState(config, state);
   const diagnostics: EnterpriseMcpDiagnosticEvent[] = [];
@@ -1166,6 +1167,7 @@ export async function completeLocalManagedMcpAuthorization(
       redirectUri: payload.redirectUri,
       code,
       authorizationId: state,
+      responseIssuer,
     });
     await verifyTools(config, payload.workspaceId, payload.name, payload.redirectUri, diagnostics);
     await writeManagedRuntimeEntry(config, payload.workspaceId, payload.name, true);

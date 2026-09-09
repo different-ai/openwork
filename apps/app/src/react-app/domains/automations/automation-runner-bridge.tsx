@@ -110,6 +110,7 @@ export function AutomationRunnerBridge() {
           })
         } catch (error) {
           if (isCurrent()) console.warn("[automation-runner] registration failed", error)
+          throw error
         }
       },
     })

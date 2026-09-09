@@ -122,3 +122,27 @@ test("expectation matcher fails with actionable detail when the named error is m
   assert.deepEqual(match.actualCodes, []);
   assert.match(match.detail, /Expected sso_domain_mismatch/);
 });
+
+test("interactive IdP approval and denial preserve OIDC state without issuing a code before approval", async () => {
+  await using idp = await startMockIdpLab({ knobs: { interactive: true } });
+  const authorize = new URL(idp.authorizationEndpoint);
+  authorize.searchParams.set("client_id", idp.config.clientId);
+  authorize.searchParams.set("redirect_uri", "https://app.example.test/callback");
+  authorize.searchParams.set("state", "test-state");
+  const pending = await fetch(authorize, { redirect: "manual" });
+  assert.equal(pending.status, 200);
+  assert.equal(pending.headers.get("location"), null);
+  assert.match(await pending.text(), /Approve sign-in/);
+  authorize.searchParams.set("decision", "deny");
+  const denied = await fetch(authorize, { redirect: "manual" });
+  const deniedUrl = new URL(denied.headers.get("location") ?? "");
+  assert.equal(deniedUrl.searchParams.get("error"), "access_denied");
+  assert.equal(deniedUrl.searchParams.get("state"), "test-state");
+  assert.equal(deniedUrl.searchParams.has("code"), false);
+  authorize.searchParams.set("decision", "approve");
+  const approved = await fetch(authorize, { redirect: "manual" });
+  const approvedUrl = new URL(approved.headers.get("location") ?? "");
+  assert.equal(approvedUrl.searchParams.get("state"), "test-state");
+  assert.equal(approvedUrl.searchParams.has("code"), true);
+  assert.equal(approvedUrl.searchParams.has("error"), false);
+});

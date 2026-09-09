@@ -84,7 +84,7 @@ export function UserProfileDialog({
                 type="text"
                 value={firstName}
                 onChange={(event) => setFirstName(event.target.value)}
-                className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
+                className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm text-gray-900 outline-hidden transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
                 autoComplete="given-name"
                 autoFocus
               />
@@ -96,7 +96,7 @@ export function UserProfileDialog({
                 type="text"
                 value={lastName}
                 onChange={(event) => setLastName(event.target.value)}
-                className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
+                className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm text-gray-900 outline-hidden transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
                 autoComplete="family-name"
               />
             </label>

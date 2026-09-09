@@ -102,4 +102,13 @@ describe("SubagentRunLine", () => {
       failed: false,
     })).toBe("reconnecting");
   });
+
+  test("silence is not completion and cannot replace waiting, retrying, or disconnected status", () => {
+    const input = { permissionPending: false, inFlight: true, failed: false, noNewActivity: true };
+    expect(subagentRunActivity(input)).toBe("no-new-activity");
+    expect(subagentRunActivity({ ...input, questionPending: true })).toBe("waiting-question");
+    expect(subagentRunActivity({ ...input, retrying: true })).toBe("retrying");
+    expect(subagentRunActivity({ ...input, syncDegraded: true })).toBe("reconnecting");
+    expect(subagentRunActivity({ ...input, inFlight: false })).toBe("completed");
+  });
 });

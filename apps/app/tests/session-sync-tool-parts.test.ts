@@ -1,11 +1,13 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 import type { UIMessage } from "ai";
 
+import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
 import {
   __applySessionSyncEventForTest,
   __createWorkspaceSessionSyncForTest,
+  snapshotKey,
   trackWorkspaceSessionSync,
   transcriptKey,
 } from "../src/react-app/domains/session/sync/session-sync";
@@ -14,6 +16,8 @@ import {
   parseStructuredOutputUIPart,
 } from "../src/react-app/domains/session/sync/parse-tool-parts";
 import { parseOpenWorkSessionCreateResult } from "../src/components/tools/openwork-session-create";
+import { codeModeToolCalls } from "../src/lib/code-mode-tools";
+import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
 
 afterEach(() => {
   getReactQueryClient().clear();
@@ -86,6 +90,52 @@ function writeToolPart(
 }
 
 describe("tool part mapper", () => {
+  test("v1 execute tools keep their existing representation even with code or toolCalls metadata", () => {
+    const part = writeToolPart("completed", { code: 'tools["openwork-cloud"].search_capabilities({})' }, { tool: "execute" });
+    if (part.state.status !== "completed") throw new Error("Expected completed fixture");
+    part.state.metadata = { toolCalls: [{ tool: "openwork-cloud.search_capabilities", status: "completed" }] };
+    const mapped = parseDynamicToolUIPart(part);
+    if (!mapped) throw new Error("Missing v1 tool");
+    expect(codeModeToolCalls(mapped)).toBeNull();
+    expect(mapped).toMatchObject({ toolName: "execute", state: "output-available", output: "ok" });
+  });
+
+  test("Code Mode uses recorded invocation positions for repeated calls and preserves partial failures", () => {
+    const part = writeToolPart("completed", { code: "recorded code" }, { tool: "execute" });
+    if (part.state.status !== "completed") throw new Error("Expected completed fixture");
+    part.metadata = { openworkV2CodeMode: true };
+    part.state.metadata = { toolCalls: [
+      { tool: "openwork-cloud.search_capabilities", status: "completed", input: { query: "Slack" } },
+      null,
+      { tool: "openwork-cloud.search_capabilities", status: "running", input: { query: "Calendar" } },
+      { tool: "openwork-cloud.execute_capability", status: "error", input: { name: "mcp:connection:list_channels" } },
+      { tool: "unexpected", status: "unrecognized" },
+    ] };
+    const mapped = parseDynamicToolUIPart(part);
+    if (!mapped) throw new Error("Missing Code Mode tool");
+    const calls = codeModeToolCalls(mapped);
+    expect(calls?.map(call => [call.toolCallId, call.toolName, call.state])).toEqual([
+      ["call-write:call:0", "openwork-cloud_search_capabilities", "output-available"],
+      ["call-write:call:2", "openwork-cloud_search_capabilities", "input-streaming"],
+      ["call-write:call:3", "openwork-cloud_execute_capability", "output-error"],
+    ]);
+    expect(calls?.[0]?.input).toEqual({ query: "Slack" });
+    expect(calls?.[0]).toHaveProperty("output", undefined);
+    expect(codeModeToolCalls({ ...mapped, toolCallId: "other-parent" })?.[0]?.toolCallId).toBe("other-parent:call:0");
+    expect(mapped).toMatchObject({ state: "output-available", output: "ok" });
+  });
+
+  test("a v2 completed wrapper with an error retains the actual execution error", () => {
+    const part = writeToolPart("completed", { code: "throw new Error()" }, { tool: "execute" });
+    if (part.state.status !== "completed") throw new Error("Expected completed fixture");
+    part.metadata = { openworkV2CodeMode: true };
+    part.state.metadata = { error: true, toolCalls: [] };
+    part.state.output = "History lookup failed.";
+    const mapped = parseDynamicToolUIPart(part);
+    expect(mapped).toMatchObject({ state: "output-error", errorText: "History lookup failed." });
+    if (!mapped) throw new Error("Missing Code Mode tool");
+    expect(codeModeToolCalls(mapped)).toEqual([]);
+  });
   test("defers in-progress tools with empty input", () => {
     // shouldDeferInProgressTool left with the legacy message list (#2016);
     // the deferral behavior itself is still pinned here via the parser and
@@ -174,7 +224,7 @@ describe("tool part mapper", () => {
     });
   });
 
-  test("recovers a connection-action MCP App from an errored capability result", () => {
+  test("recovers native connection status without an app launch from an errored capability result", () => {
     const error = JSON.stringify({
       error: "needs_connection",
       message: "Connect Acme Tracker.",
@@ -193,7 +243,9 @@ describe("tool part mapper", () => {
       },
     });
 
-    expect(parseDynamicToolUIPart(writeToolPart("error", {}, {}, error))).toMatchObject({
+    const parsed = parseDynamicToolUIPart(writeToolPart("error", {}, {}, error));
+    expect(parsed?.callProviderMetadata?.openwork?.mcpResult).not.toHaveProperty("_meta");
+    expect(parsed).toMatchObject({
       state: "output-error",
       callProviderMetadata: {
         openwork: {
@@ -202,13 +254,6 @@ describe("tool part mapper", () => {
               schemaVersion: "1",
               connectionId: "emc_acme",
               state: "needs_connection",
-            },
-            _meta: {
-              "openwork/mcpApp": {
-                toolName: "connection_action",
-                resourceUri: "ui://openwork/connection-action/v1/view.html",
-                arguments: { connectionId: "emc_acme" },
-              },
             },
           },
         },
@@ -281,6 +326,8 @@ describe("tool part mapper", () => {
     const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
     const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
     const release = trackWorkspaceSessionSync(syncInput, "session-a");
+    const clock = spyOn(Date, "now").mockReturnValue(1_000);
+    useSessionActivityStore.getState().removeSession("workspace-a", "session-a");
 
     try {
       __applySessionSyncEventForTest(syncInput, {
@@ -309,7 +356,24 @@ describe("tool part mapper", () => {
         state: "input-streaming",
         input: { content: "hello", filePath: "src/main.ts" },
       });
+      const activity = () => useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]?.["session-a"];
+      expect(activity()?.lastProgressAt).toBe(1_000);
+      clock.mockReturnValue(2_000);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: { part: writeToolPart("running", { content: "hello", filePath: "src/main.ts" }) },
+      });
+      expect(activity()?.lastProgressAt).toBe(1_000);
+      clock.mockReturnValue(3_000);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: { part: writeToolPart("completed", { content: "hello", filePath: "src/main.ts" }) },
+      });
+      expect(activity()?.lastProgressAt).toBe(3_000);
+      expect(activity()?.latestActivity).toBe("Tool result received");
+      expect(activity()?.progressParts).not.toHaveProperty("hello");
     } finally {
+      clock.mockRestore();
       release();
       cleanup();
     }
@@ -326,12 +390,14 @@ describe("tool part mapper", () => {
       time: { created: 1, updated: 1 },
     };
     const createdIds: string[] = [];
+    const updates: { sessionId: string; info: Record<string, unknown> }[] = [];
     const deletedIds: string[] = [];
     const syncInput = {
       workspaceId: "workspace-a",
       baseUrl: "http://127.0.0.1:1234",
       openworkToken: "token",
       onSessionCreated: (session: Session) => createdIds.push(session.id),
+      onSessionUpdated: (update: { sessionId: string; info: Record<string, unknown> }) => updates.push(update),
       onSessionDeleted: (sessionId: string) => deletedIds.push(sessionId),
     };
     const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
@@ -341,6 +407,34 @@ describe("tool part mapper", () => {
         type: "session.created",
         properties: { sessionID: created.id, info: created },
       });
+
+      const queryClient = getReactQueryClient();
+      const snapshot: OpenworkSessionSnapshot = {
+        session: created,
+        messages: [],
+        todos: [],
+        status: { type: "idle" },
+      };
+      const otherSnapshot = { ...snapshot, session: { ...created, id: "session-other", title: "Other session" } };
+      queryClient.setQueryData(snapshotKey(syncInput.workspaceId, created.id), snapshot);
+      queryClient.setQueryData(snapshotKey(syncInput.workspaceId, "session-other"), otherSnapshot);
+      const cachedQueries = queryClient.getQueriesData({});
+      const renamed = { ...created, title: "Renamed in the background" };
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.updated",
+        properties: { sessionID: created.id, info: renamed },
+      });
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id: "msg-background", role: "assistant", sessionID: created.id } },
+      });
+
+      expect(updates).toEqual([{ sessionId: created.id, info: renamed }]);
+      expect(queryClient.getQueriesData({})).toEqual(cachedQueries);
+      expect(queryClient.getQueryData(snapshotKey(syncInput.workspaceId, created.id))).toBe(snapshot);
+      expect(queryClient.getQueryData(snapshotKey(syncInput.workspaceId, "session-other"))).toBe(otherSnapshot);
+      expect(queryClient.getQueryData(transcriptKey(syncInput.workspaceId, created.id))).toBeUndefined();
+
       __applySessionSyncEventForTest(syncInput, {
         type: "session.deleted",
         properties: { sessionID: created.id, info: created },
@@ -352,4 +446,38 @@ describe("tool part mapper", () => {
       cleanup();
     }
   });
+});
+
+test("live attachment notes render once across repeated updates", () => {
+  const syncInput = { workspaceId: "workspace-video", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+  const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+  const release = trackWorkspaceSessionSync(syncInput, "session-video");
+  try {
+    __applySessionSyncEventForTest(syncInput, {
+      type: "message.updated",
+      properties: { info: { id: "msg-video", role: "user", sessionID: "session-video" } },
+    });
+    const event = {
+      type: "message.part.updated",
+      properties: { part: {
+        id: "note-video", type: "text", synthetic: true,
+        messageID: "msg-video", sessionID: "session-video", text: "Hidden workspace paths",
+        metadata: { openworkAttachments: [
+          { filename: "recording.mp4", mime: "video/mp4", url: "file:///workspace/recording.mp4" },
+          { filename: "recording.mov", mime: "video/quicktime", url: "file:///workspace/recording.mov" },
+        ] },
+      } },
+    };
+    __applySessionSyncEventForTest(syncInput, event);
+    __applySessionSyncEventForTest(syncInput, event);
+    const transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-video", "session-video"));
+    expect(transcript?.[0]?.parts).toMatchObject([
+      { type: "file", filename: "recording.mp4", mediaType: "video/mp4" },
+      { type: "file", filename: "recording.mov", mediaType: "video/quicktime" },
+    ]);
+    expect(transcript?.[0]?.parts).toHaveLength(2);
+  } finally {
+    release();
+    cleanup();
+  }
 });

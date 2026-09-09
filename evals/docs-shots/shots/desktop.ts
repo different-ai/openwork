@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import { clickButton, denFetch, waitFor } from "@openwork/behaviors";
 import { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
 import { provider } from "../ctx.ts";
@@ -116,14 +117,12 @@ async function openEmptyTeamPromptSession(surface: DesktopShotSurface): Promise<
     || JSON.stringify(actualTitles) !== JSON.stringify(expectedTitles)) {
     throw new Error(`The docs member did not receive the seeded prompt policy: HTTP ${config.response.status} ${config.text.slice(0, 600)}`);
   }
-  const titlesVisible = expectedTitles
-    .map((title) => `document.body.innerText.includes(${JSON.stringify(title)})`)
-    .join(" && ");
+  const titlesVisible = browserScript((titles) => titles.every(title => document.body.innerText.includes(title)), [expectedTitles]);
   await waitFor(surface, titlesVisible, {
     timeoutMs: 60_000,
     label: "organization prompt config settled",
   });
-  const task = await inPage(surface, `async () => {
+  const task = await inPage(surface, async () => {
     const deadline = Date.now() + 60000;
     let last = null;
     while (Date.now() < deadline) {
@@ -132,25 +131,25 @@ async function openEmptyTeamPromptSession(surface: DesktopShotSurface): Promise<
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
     return last;
-  }`, {}, { awaitPromise: true, timeoutMs: 70_000 });
+  }, {}, { awaitPromise: true, timeoutMs: 70_000 });
   if (!isRecord(task) || task.ok !== true) throw new Error(`Creating an empty prompt-card session failed: ${JSON.stringify(task)}`);
-  await waitFor(surface, `document.body.innerText.includes(${JSON.stringify(ORGANIZATION_PROMPT_INTRO)}) && ${titlesVisible}`, {
+  await waitFor(surface, browserScript((intro, titles) => document.body.innerText.includes(intro) && titles.every(title => document.body.innerText.includes(title)), [ORGANIZATION_PROMPT_INTRO, expectedTitles]), {
     timeoutMs: 60_000,
     label: "member-facing organization prompt cards",
   });
-  await inPage(surface, `() => {
+  await inPage(surface, () => {
     const label = [...document.querySelectorAll("span")]
       .find((element) => (element.textContent ?? "").trim() === "Notifications");
     const item = label?.closest("a, button");
     const badge = item && [...item.querySelectorAll("span")]
       .find((element) => (element.textContent ?? "").trim() === "1");
     if (badge instanceof HTMLElement) badge.style.display = "none";
-    const account = document.querySelector('[data-testid="account-status-menu"]');
+    const account = document.querySelector<HTMLElement>('[data-testid="account-status-menu"]');
     const status = account && [...account.children]
       .find((element) => element instanceof HTMLElement && element.classList.contains("size-4"));
     if (status instanceof HTMLElement) status.style.display = "none";
     return true;
-  }`, {});
+  }, {});
 }
 
 export const desktopTeamPromptCards = shot("desktop-team-prompt-cards", {
@@ -174,13 +173,13 @@ const skillForm = fillForm({
 const showAdvancedSettings = keepExpanded("Advanced settings", "Add workspace MCP");
 
 async function scrollAdvancedSettingsIntoView(surface: DesktopShotSurface): Promise<void> {
-  await inPage(surface, `() => {
-    document.querySelector("[data-inventory-group]")?.scrollIntoView({ block: "start" });
+  await inPage(surface, () => {
+    document.querySelector<HTMLElement>("[data-inventory-group]")?.scrollIntoView({ block: "start" });
     const toggle = [...document.querySelectorAll("button")]
       .find((button) => (button.textContent ?? "").includes("Advanced settings"));
     toggle?.scrollIntoView({ block: "center" });
     return true;
-  }`, {});
+  }, {});
 }
 
 export const librarySkills = shot("library-skills", {
@@ -231,7 +230,7 @@ async function waitForMountedSkillCard(surface: DesktopShotSurface, timeoutMs: n
     if (sandbox) {
       const client = await connect(debuggerUrlFor(surface.handle.cdpUrl, sandbox));
       try {
-        const text = await evaluate(client, `document.querySelector("iframe")?.contentDocument?.body?.innerText ?? ""`);
+        const text = await evaluate(client, () => (document.querySelector("iframe")?.contentDocument?.body?.innerText ?? ""));
         if (typeof text === "string") {
           lastText = text;
           const normalized = text.toLocaleLowerCase();
@@ -247,7 +246,7 @@ async function waitForMountedSkillCard(surface: DesktopShotSurface, timeoutMs: n
 }
 
 async function createSkillFromChat(surface: DesktopShotSurface): Promise<void> {
-  const reconciled = await inPage(surface, `async (args) => {
+  const reconciled = await inPage(surface, async (args) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return "missing local server credentials";
@@ -272,7 +271,7 @@ async function createSkillFromChat(surface: DesktopShotSurface): Promise<void> {
     const health = JSON.parse(text);
     if (health?.phase !== "ready") return "Cloud MCP reconcile was not ready: " + JSON.stringify(health).slice(0, 1000);
     return "ok";
-  }`, {
+  }, {
     workspaceId: surface.workspaceId,
     mcpUrl: `${surface.organization.den.ref.apiUrl}/mcp/agent`,
     mcpToken: surface.organization.mcpToken,
@@ -281,7 +280,7 @@ async function createSkillFromChat(surface: DesktopShotSurface): Promise<void> {
   }, { awaitPromise: true, timeoutMs: 90_000 });
   if (reconciled !== "ok") throw new Error(`Connecting the Cloud MCP failed: ${String(reconciled)}`);
 
-  const task = await inPage(surface, `async () => {
+  const task = await inPage(surface, async () => {
     const deadline = Date.now() + 60000;
     let last = null;
     while (Date.now() < deadline) {
@@ -290,38 +289,38 @@ async function createSkillFromChat(surface: DesktopShotSurface): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
     return last;
-  }`, {}, { awaitPromise: true, timeoutMs: 70_000 });
+  }, {}, { awaitPromise: true, timeoutMs: 70_000 });
   if (!isRecord(task) || task.ok !== true) throw new Error(`Creating a task failed: ${JSON.stringify(task)}`);
-  await waitFor(surface, `Boolean(document.querySelector('[contenteditable="true"][data-lexical-editor="true"]'))`, {
+  await waitFor(surface, () => (Boolean(document.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]'))), {
     timeoutMs: 30_000,
     label: "composer ready",
   });
-  const focused = await inPage(surface, `() => {
-    const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]');
+  const focused = await inPage(surface, () => {
+    const editor = document.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]');
     if (!(editor instanceof HTMLElement)) return false;
     editor.focus();
     return true;
-  }`, {});
+  }, {});
   if (focused !== true) throw new Error("Focusing the composer failed.");
   await surface.client.send("Input.insertText", { text: composerMessage });
   await clickButton(surface, "Run task", { timeoutMs: 30_000 });
-  await waitFor(surface, `document.body.innerText.includes(${JSON.stringify(CHAT_CLOSING_REPLY)})`, {
+  await waitFor(surface, browserScript((CHAT_CLOSING_REPLY) => (document.body.innerText.includes(CHAT_CLOSING_REPLY)), [CHAT_CLOSING_REPLY]), {
     timeoutMs: 180_000,
     label: "closing reply",
   });
-  await waitFor(surface, `Boolean(document.querySelector(${JSON.stringify(`[data-mcp-app-resource="${resourceUri}"] iframe`)}))`, {
+  await waitFor(surface, browserScript((value) => (Boolean(document.querySelector<HTMLElement>(value))), [`[data-mcp-app-resource="${resourceUri}"] iframe`]), {
     timeoutMs: 60_000,
     label: "skill-created MCP App frame",
   });
   await waitForMountedSkillCard(surface, 60_000);
-  await waitFor(surface, `!document.body.innerText.includes("Pulling in the latest messages")`, {
+  await waitFor(surface, () => (!document.body.innerText.includes("Pulling in the latest messages")), {
     timeoutMs: 60_000,
     label: "session sync settled",
   });
-  await inPage(surface, `(args) => {
-    document.querySelector('[data-mcp-app-resource="' + args.resourceUri + '"]')?.scrollIntoView({ block: "center" });
+  await inPage(surface, (args) => {
+    document.querySelector<HTMLElement>('[data-mcp-app-resource="' + args.resourceUri + '"]')?.scrollIntoView({ block: "center" });
     return true;
-  }`, { resourceUri });
+  }, { resourceUri });
 }
 
 export const skillCreatedCard = shot("skill-created-card", {

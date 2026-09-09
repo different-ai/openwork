@@ -30,7 +30,7 @@ export function DenSelectableRow({
       disabled={disabled}
       aria-pressed={selected}
       className={[
-        "group relative flex w-full items-center gap-3 px-4 py-3 text-left outline-none transition-colors duration-150",
+        "group relative flex w-full items-center gap-3 px-4 py-3 text-left outline-hidden transition-colors duration-150",
         "focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-gray-900/5",
         selected
           ? "bg-gray-100"

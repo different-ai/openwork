@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
 import { evalIn, waitFor } from "./desktop.ts";
 
@@ -48,29 +49,29 @@ async function openPlugMenu(app: Surface): Promise<void> {
   // workspace engine boots, so a bare click evaluation can eat a 20s CDP
   // timeout and fail the spec. Clicking only while the menu is closed keeps
   // retries from toggling it back shut.
-  await waitFor(app, `(() => {
+  await waitFor(app, browserScript((PLUG_BUTTON) => {
     const labels = [...document.querySelectorAll("button")].map((button) => (button.textContent ?? "").trim());
     if (labels.includes("Skills") && labels.includes("Extensions")) return true;
-    const plug = document.querySelector(${JSON.stringify(PLUG_BUTTON)});
+    const plug = document.querySelector<HTMLElement>(PLUG_BUTTON);
     if (!plug) return false;
     document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     plug.click();
     return false;
-  })()`, { timeoutMs: 60_000, label: "plug menu sections" });
+  }, [PLUG_BUTTON]), { timeoutMs: 60_000, label: "plug menu sections" });
 }
 
 export async function readComposerCapabilities(app: Surface): Promise<ComposerCapabilitiesFacts> {
   await openPlugMenu(app);
-  const value = await evalIn(app, `(() => {
+  const value = await evalIn(app, () => {
     const labels = [...document.querySelectorAll("button")].map((button) => (button.textContent ?? "").trim());
     return ["Agents", "Commands", "Skills", "Extensions"].filter((section) => labels.includes(section));
-  })()`);
+  });
   return { sections: Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [] };
 }
 
 export async function measureLoadedSkills(app: Surface): Promise<SkillsLoadFacts> {
   await openPlugMenu(app);
-  const value = await evalIn(app, `new Promise((resolve) => {
+  const value = await evalIn(app, browserScript((SKILL_MARKERS) => (new Promise((resolve) => {
     const skillsButton = [...document.querySelectorAll("button")]
       .find((button) => (button.textContent ?? "").trim() === "Skills");
     if (!skillsButton) { resolve({ error: "skills section button not found" }); return; }
@@ -78,16 +79,16 @@ export async function measureLoadedSkills(app: Surface): Promise<SkillsLoadFacts
     skillsButton.click();
     const poll = () => {
       const rows = [...document.querySelectorAll("button")]
-        .filter((button) => /^\\/[a-z0-9-]+/i.test((button.textContent ?? "").trim()));
-      const hit = rows.some((button) => ${JSON.stringify(SKILL_MARKERS)}
+        .filter((button) => /^\/[a-z0-9-]+/i.test((button.textContent ?? "").trim()));
+      const hit = rows.some((button) => SKILL_MARKERS
         .some((marker) => (button.textContent ?? "").includes(marker)));
       if (hit) {
         resolve({
           elapsedMs: Math.round(performance.now() - startedAt),
           rowCount: rows.length,
           skills: rows.map((button) => {
-            const label = (button.textContent ?? "").replace(/\\s+/g, " ").trim();
-            return { name: (label.match(/^\\/[a-z0-9-]+/) ?? [label])[0], label, local: label.includes("Local") };
+            const label = (button.textContent ?? "").replace(/\s+/g, " ").trim();
+            return { name: (label.match(/^\/[a-z0-9-]+/) ?? [label])[0], label, local: label.includes("Local") };
           }),
           loadingCommandsVisible: document.body.innerText.includes("Loading commands"),
         });
@@ -100,7 +101,7 @@ export async function measureLoadedSkills(app: Surface): Promise<SkillsLoadFacts
       setTimeout(poll, 20);
     };
     poll();
-  })`, { awaitPromise: true, timeoutMs: 30_000 });
+  })), [SKILL_MARKERS]), { awaitPromise: true, timeoutMs: 30_000 });
   // The in-page poll gives up at 20s; the CDP call must outlive it or the two
   // deadlines race and the spec dies with a raw CDP timeout instead of facts.
   if (isRecord(value) && typeof value.error === "string") throw new Error(`Skills did not render: ${JSON.stringify(value)}`);
@@ -117,30 +118,30 @@ export async function readLoadedSkills(app: Surface): Promise<SkillFacts[]> {
  * cannot show it; reveal it first when a visual claim names it.
  */
 export async function revealMenuRow(app: Surface, marker: string): Promise<void> {
-  await waitFor(app, `(() => {
+  await waitFor(app, browserScript((marker) => {
     const row = [...document.querySelectorAll("button")]
-      .find((button) => (button.textContent ?? "").includes(${JSON.stringify(marker)}));
+      .find((button) => (button.textContent ?? "").includes(marker));
     if (!row) return false;
     row.scrollIntoView({ block: "center" });
     return true;
-  })()`, { timeoutMs: 10_000, label: `menu row ${marker} in view` });
+  }, [marker]), { timeoutMs: 10_000, label: `menu row ${marker} in view` });
 }
 
 export async function readLoadedExtensions(app: Surface): Promise<string[]> {
   await openPlugMenu(app);
-  await waitFor(app, `(() => {
+  await waitFor(app, () => {
     const button = [...document.querySelectorAll("button")]
       .find((candidate) => (candidate.textContent ?? "").trim() === "Extensions");
     if (!button) return false;
     button.click();
     return true;
-  })()`, { label: "Extensions section" });
-  await waitFor(app, 'document.body.innerText.includes("OpenWork Browser")', {
+  }, { label: "Extensions section" });
+  await waitFor(app, () => (document.body.innerText.includes("OpenWork Browser")), {
     timeoutMs: 10_000,
     label: "OpenWork Browser extension",
   });
-  const value = await waitFor(app, `([...document.querySelectorAll("button")]
-    .map((button) => (button.textContent ?? "").replace(/\\s+/g, " ").trim())
-    .filter((label) => label.includes("OpenWork Browser")))`, { timeoutMs: 60_000, label: "OpenWork Browser extension rows" });
+  const value = await waitFor(app, () => (([...document.querySelectorAll("button")]
+    .map((button) => (button.textContent ?? "").replace(/\s+/g, " ").trim())
+    .filter((label) => label.includes("OpenWork Browser")))), { timeoutMs: 60_000, label: "OpenWork Browser extension rows" });
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }

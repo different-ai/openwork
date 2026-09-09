@@ -30,7 +30,7 @@ export function IntegrationIcon({
   const src = candidates[failedCount];
 
   return (
-    <div className={`flex shrink-0 items-center justify-center border border-gray-100 bg-white shadow-sm ${className}`}>
+    <div className={`flex shrink-0 items-center justify-center border border-gray-100 bg-white shadow-xs ${className}`}>
       {src ? (
         <img
           key={src}

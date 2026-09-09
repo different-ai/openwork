@@ -7,23 +7,26 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, shell } from "electron";
+import { app } from "electron";
+import { createComputerUseHost } from "./computer-use-host.mjs";
+
+let hostPromise;
+async function computerUseHost() {
+  if (!hostPromise) {
+    const executable = resolveComputerUseExecutable();
+    if (!executable) throw new Error("Computer Use helper unavailable.");
+    hostPromise = createComputerUseHost({ profile: app.getPath("userData"), executable }).catch((error) => { hostPromise = null; throw error; });
+  }
+  return hostPromise;
+}
+async function getComputerUseState() { return hostPromise ? (await hostPromise).state() : []; }
+async function computerUseAction(value) { (await computerUseHost()).action(value); }
+app.on("before-quit", () => { hostPromise?.then((host) => host.close()).catch(() => {}); });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const COMPUTER_USE_HELPER_APP_NAME = "OpenWork Computer Use.app";
 const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
-
-function computerUseHelperExecutablePath() {
-  const appPath = computerUseHelperAppPath();
-  const explicitBinary = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
-  const candidates = [
-    explicitBinary,
-    appPath ? path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_EXECUTABLE) : null,
-  ].filter(Boolean);
-
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
-}
 
 function computerUseHelperAppPath() {
   const explicitApp = process.env.OPENWORK_COMPUTER_USE_APP?.trim();
@@ -36,23 +39,24 @@ function computerUseHelperAppPath() {
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
-function getComputerUseMcpCommand() {
-  const helperExecutable = computerUseHelperExecutablePath();
-  if (helperExecutable) return [helperExecutable, "mcp"];
+async function getComputerUseMcpCommand() {
+  if (process.platform !== "darwin") {
+    throw new Error("Desktop Computer Use requires macOS 14 or later. Use the built-in browser for website tasks.");
+  }
+  const helperExecutable = resolveComputerUseExecutable();
+  if (helperExecutable) return [helperExecutable, "relay", (await computerUseHost()).socketPath];
 
   if (app.isPackaged) {
     throw new Error("OpenWork Computer Use is missing from this OpenWork build.");
   }
 
-  if (process.env.OPENWORK_DEV_MODE === "1") {
-    return ["node", path.resolve(__dirname, "../../..", "packages/handsfree/bin/openwork-handsfree-computer-use.mjs"), "mcp"];
-  }
-  return ["npx", "-y", "@openwork/handsfree", "mcp"];
+  throw new Error("The Computer Use helper is unavailable. Rebuild or reinstall OpenWork.");
 }
 
 // ---------------------------------------------------------------------------
 // Permission checks — spawn the binary with --check, read stdout, done.
-// Fresh process = fresh TCC read = always accurate. No HTTP server needed.
+// Check in the same launch context as setup. TCC can attribute a child process
+// differently from a helper opened separately through LaunchServices.
 // ---------------------------------------------------------------------------
 
 function resolveComputerUseExecutable() {
@@ -69,12 +73,12 @@ function resolveComputerUseExecutable() {
 
   // 3. Dev fallback — raw Swift build output.
   if (!app.isPackaged) {
-    const swiftPkg = path.resolve(__dirname, "../../..", "packages/handsfree/native/HandsFree");
+    const swiftPkg = path.resolve(__dirname, "../../..", "packages/computer-use/native");
     const devCandidates = [
-      path.join(swiftPkg, ".build", "release", "HandsFreeComputerUse"),
-      path.join(swiftPkg, ".build", "arm64-apple-macosx", "release", "HandsFreeComputerUse"),
-      path.join(swiftPkg, ".build", "debug", "HandsFreeComputerUse"),
-      path.join(swiftPkg, ".build", "arm64-apple-macosx", "debug", "HandsFreeComputerUse"),
+      path.join(swiftPkg, ".build", "release", "ComputerUse"),
+      path.join(swiftPkg, ".build", "arm64-apple-macosx", "release", "ComputerUse"),
+      path.join(swiftPkg, ".build", "debug", "ComputerUse"),
+      path.join(swiftPkg, ".build", "arm64-apple-macosx", "debug", "ComputerUse"),
     ];
     for (const c of devCandidates) {
       if (existsSync(c)) return c;
@@ -85,6 +89,9 @@ function resolveComputerUseExecutable() {
 }
 
 async function checkComputerUsePermissions() {
+  if (process.platform !== "darwin") {
+    return { ok: false, accessibility: false, screenRecording: false, supported: false, error: "Desktop Computer Use is available on macOS 14 or later. Use the built-in browser for website tasks." };
+  }
   // Spawn binary --check → read JSON from stdout → exit. Always fresh.
   const bin = resolveComputerUseExecutable();
   if (!bin) {
@@ -104,9 +111,12 @@ function spawnCheckPermissions(bin) {
       try {
         const parsed = JSON.parse(stdout.trim());
         resolve({
-          ok: parsed?.ok === true,
-          accessibility: parsed?.accessibility === true,
-          screenRecording: parsed?.screenRecording === true,
+          ok: parsed?.ok === true && parsed?.protocolVersion === "openwork.computer-use/1",
+          accessibility: parsed?.accessibility === true && parsed?.protocolVersion === "openwork.computer-use/1",
+          screenRecording: parsed?.screenRecording === true && parsed?.protocolVersion === "openwork.computer-use/1",
+          supported: parsed?.supported === true,
+          protocolVersion: parsed?.protocolVersion,
+          ...(parsed?.protocolVersion !== "openwork.computer-use/1" ? { error: "This helper uses the previous Computer Use implementation. Rebuild or reinstall OpenWork, then reconnect Computer Use." } : {}),
         });
       } catch {
         resolve({ ok: false, accessibility: false, screenRecording: false, error: "Permission check returned invalid output." });
@@ -139,24 +149,34 @@ async function listRunningApps() {
   });
 }
 
+let setupProcess = null;
+
 async function openComputerUseSetupApp() {
-  // Open the GUI. Use the .app bundle if available so macOS shows it as
-  // a real app with its own dock icon and permission identity.
-  const appPath = computerUseHelperAppPath();
-  if (appPath) {
-    const result = await shell.openPath(appPath);
-    if (result) console.error("[ComputerUse] shell.openPath error:", result);
+  if (process.platform !== "darwin") throw new Error("Desktop Computer Use requires macOS 14 or later.");
+  const bin = resolveComputerUseExecutable();
+  if (!bin) throw new Error("The Computer Use helper is unavailable. Rebuild or reinstall OpenWork.");
+  // Keep the responsible application consistent with --check and the MCP
+  // child. LaunchServices gives the GUI its own TCC identity instead.
+  if (setupProcess && setupProcess.exitCode === null && !setupProcess.killed) {
+    setupProcess.kill("SIGUSR1");
     return;
   }
-
-  // Fallback: spawn the raw binary (opens the same GUI).
-  const bin = resolveComputerUseExecutable();
-  if (!bin) throw new Error("Helper binary not found. Run pnpm dev to build it.");
-  const child = spawn(bin, [], { detached: true, stdio: "ignore" });
+  const child = spawn(bin, ["setup"], { stdio: "ignore" });
+  setupProcess = child;
+  child.once("exit", () => { if (setupProcess === child) setupProcess = null; });
+  await new Promise((resolve, reject) => {
+    child.once("spawn", resolve);
+    child.once("error", (error) => {
+      if (setupProcess === child) setupProcess = null;
+      reject(error);
+    });
+  });
   child.unref();
 }
 
 export {
+  getComputerUseState,
+  computerUseAction,
   checkComputerUsePermissions,
   getComputerUseMcpCommand,
   listRunningApps,

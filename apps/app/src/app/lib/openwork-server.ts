@@ -1,3 +1,4 @@
+import type { McpStatusMap } from "../types";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
 import {
   agentContextDiagnosticsReportSchema,
@@ -65,6 +66,46 @@ export type OpenworkCloudProviderSyncStatus = {
   /** Den-granted providers the server sync skipped, each with a reason. */
   skippedProviders: OpenworkCloudProviderSyncSkippedProvider[];
 };
+
+export interface EngineV2PreviewStatus {
+  enabled: boolean;
+  running: boolean;
+  chatRouting: boolean;
+  version?: string;
+  pid?: number;
+  binSource?: string;
+  mirroredProviderIds: string[];
+  skippedProviderIds: string[];
+  catalogModelIds: string[];
+  lastMirroredAt?: string;
+  lastError?: string;
+}
+
+function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
+  if (
+    !value || typeof value !== "object" ||
+    !("enabled" in value) || typeof value.enabled !== "boolean" ||
+    !("running" in value) || typeof value.running !== "boolean" ||
+    !("mirroredProviderIds" in value) || !Array.isArray(value.mirroredProviderIds) || !value.mirroredProviderIds.every((item) => typeof item === "string") ||
+    !("skippedProviderIds" in value) || !Array.isArray(value.skippedProviderIds) || !value.skippedProviderIds.every((item) => typeof item === "string") ||
+    !("catalogModelIds" in value) || !Array.isArray(value.catalogModelIds) || !value.catalogModelIds.every((item) => typeof item === "string")
+  ) {
+    throw new Error("Invalid OpenCode v2 engine preview status response.");
+  }
+  return {
+    enabled: value.enabled,
+    running: value.running,
+    chatRouting: "chatRouting" in value && typeof value.chatRouting === "boolean" ? value.chatRouting : false,
+    version: "version" in value && typeof value.version === "string" ? value.version : undefined,
+    pid: "pid" in value && typeof value.pid === "number" ? value.pid : undefined,
+    binSource: "binSource" in value && typeof value.binSource === "string" ? value.binSource : undefined,
+    mirroredProviderIds: value.mirroredProviderIds,
+    skippedProviderIds: value.skippedProviderIds,
+    catalogModelIds: value.catalogModelIds,
+    lastMirroredAt: "lastMirroredAt" in value && typeof value.lastMirroredAt === "string" ? value.lastMirroredAt : undefined,
+    lastError: "lastError" in value && typeof value.lastError === "string" ? value.lastError : undefined,
+  };
+}
 
 function parseCloudProviderSyncRun(value: unknown): OpenworkCloudProviderSyncRun {
   if (!value || typeof value !== "object" || !("status" in value)) throw new Error("Invalid cloud provider sync response.");
@@ -269,6 +310,8 @@ export type OpenworkWorkspaceCatalogEntry = {
 };
 
 export type OpenworkWorkspaceCatalog = {
+  incomplete?: boolean;
+  skippedDirectories?: string[];
   items: OpenworkWorkspaceCatalogEntry[];
   total: number;
   truncated: boolean;
@@ -1501,6 +1544,20 @@ async function requestBinary(
   return { data, contentType, filename };
 }
 
+export type WorkspaceRunMode = "default" | "approve" | "run-everything";
+export type WorkspaceRunModeResponse = {
+  mode: WorkspaceRunMode | null;
+  catchAll: "ask" | "allow" | "deny" | null;
+  path: string;
+  supported: boolean;
+  reason?: string;
+  refreshPending: boolean;
+};
+export type WorkspaceRunModeUpdate = WorkspaceRunModeResponse & {
+  changed: boolean;
+  refresh: "reloaded" | "deferred" | "skipped";
+};
+
 export function createOpenworkServerClient(options: { baseUrl: string; token?: string; hostToken?: string }) {
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
   const token = options.token;
@@ -1554,6 +1611,25 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     getCloudProviderSyncStatus: async () =>
       parseCloudProviderSyncStatus(await requestJson<unknown>(baseUrl, "/cloud-provider-sync/status", {
         token,
+        timeoutMs: timeouts.config,
+      })),
+    getEngineV2PreviewStatus: async (): Promise<EngineV2PreviewStatus> =>
+      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/status", {
+        token,
+        timeoutMs: timeouts.config,
+      })),
+    setEngineV2PreviewEnabled: async (enabled: boolean): Promise<EngineV2PreviewStatus> =>
+      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {
+        token,
+        method: "PUT",
+        body: { enabled },
+        timeoutMs: timeouts.config,
+      })),
+    setEngineV2PreviewChatRouting: async (chatRouting: boolean): Promise<EngineV2PreviewStatus> =>
+      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {
+        token,
+        method: "PUT",
+        body: { chatRouting },
         timeoutMs: timeouts.config,
       })),
     setConnectState: (connectEnabled: boolean) => requestJson<OpenworkConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),
@@ -1687,6 +1763,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${workspaceId}/config`,
         { token, hostToken, timeoutMs: timeouts.config },
       ),
+    getWorkspaceRunMode: (workspaceId: string) =>
+      requestJson<WorkspaceRunModeResponse>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/permissions/mode`, {
+        token, hostToken, timeoutMs: timeouts.config,
+      }),
+    setWorkspaceRunMode: (workspaceId: string, mode: WorkspaceRunMode) =>
+      requestJson<WorkspaceRunModeUpdate>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/permissions/mode`, {
+        token, hostToken, method: "PUT", body: { mode }, timeoutMs: 60_000,
+      }),
     getEffectivePermissions: (workspaceId: string) =>
       requestJson<OpenworkEffectivePermissionsResponse>(
         baseUrl,
@@ -1892,6 +1976,8 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${workspaceId}/mcp`,
         { token, hostToken },
       ),
+    getMcpStatus: (workspaceId: string) =>
+      requestJson<McpStatusMap>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode/mcp`, { token, hostToken }),
     listMcpApps: (workspaceId: string) =>
       requestJson<{ servers: OpenworkMcpAppCatalogServer[] }>(
         baseUrl,
@@ -2396,22 +2482,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         timeoutMs: timeouts.config,
       }),
 
-    createVoiceRealtimeSession: (payload?: { model?: string; sessionContext?: string }) =>
-      requestJson<{
-        ok: true;
-        clientSecret: string;
-        expiresAt: number | null;
-        model: string;
-        transcriptionModel: string;
-        tools: string[];
-        source?: string;
-      }>(baseUrl, "/voice/realtime/session", {
-        token,
-        hostToken,
-        method: "POST",
-        body: payload ?? {},
-        timeoutMs: timeouts.config,
-      }),
   };
 }
 

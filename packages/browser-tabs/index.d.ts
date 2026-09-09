@@ -24,11 +24,31 @@ export type BrowserPanelTab = {
   label: string;
   url: string;
   favicon: string | null;
-  status: "loading" | "ready";
+  status: "loading" | "ready" | "suspending" | "suspended" | "restoring";
+  automationProtected?: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
   /** Conversation (session) that opened the tab; null for shared/legacy tabs. */
   ownerSessionId: string | null;
+  browserApproval?: { id: string; title: string; message: string; detail: string; approveLabel?: string } | null;
+  browserTask?: { status: "idle" | "running" | "paused" | "needs_attention"; operation: string | null };
+  siteToolCount: number;
+  siteTools: Array<{
+    toolId?: string;
+    name: string;
+    title: string;
+    origin: string;
+    readOnly: boolean;
+  }>;
+  siteToolActivity: Array<{
+    at: string;
+    name: string;
+    origin: string;
+    readOnly: boolean;
+    status: "completed" | "failed";
+    code?: string;
+  }>;
+
 };
 
 export type BrowserStatePayload = {
@@ -39,10 +59,14 @@ export type BrowserStatePayload = {
   /** The conversation whose tabs may take the screen. */
   visibleSessionId?: string | null;
   tabs?: BrowserPanelTab[];
+  /** Actual native hierarchy and bounds, included by getState (not state events). */
+  nativeViews?: Array<{ tabId: string; attached: boolean; aboveApp: boolean; bounds: Bounds }>;
 };
 
 export type BrowserPanelOwnerPayload = {
   ownerSessionId: string | null;
+  /** The page to select on a panel-opened event; absent on panel-closed. */
+  tab?: BrowserPanelTab;
 };
 
 export type OpenBrowserUrlResult = {

@@ -9,7 +9,7 @@ import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/exte
 import { jsonValidator, publicRoute, userSessionRoute } from "../../middleware/index.js"
 import { db } from "../../db.js"
 import { env, type DenOrgMode } from "../../env.js"
-import { resolveUserOrganizations } from "../../orgs.js"
+import { ensurePersonalOrganizationForUser, resolveUserOrganizations } from "../../orgs.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import { enforceRateLimit } from "../../utils/rate-limit.js"
@@ -17,7 +17,7 @@ import { CLOUD_INSTANCE_BACKEND } from "../../workers/cloud-constants.js"
 
 const createGrantSchema = z.object({
   next: z.string().trim().max(128).optional().describe("Optional continuation hint for handoff clients."),
-  desktopScheme: z.string().trim().max(32).optional().describe("Optional desktop URL scheme to use when building the OpenWork deep link."),
+  desktopScheme: z.literal("openwork").optional().describe("The registered OpenWork desktop URL scheme."),
   returnUrl: z.string().trim().max(2048).optional().describe("Optional HTTPS OpenWork Cloud web return URL. Accepted only for multi-organization Cloud instances after server-side origin validation."),
 }).meta({ ref: "DesktopHandoffGrantCreateBody" })
 
@@ -186,15 +186,10 @@ export function resolveDesktopDenBaseUrl(request: Request) {
 }
 
 function buildOpenworkDeepLink(input: {
-  scheme?: string | null
   grant: string
   denBaseUrl: string
 }) {
-  const requestedScheme = input.scheme?.trim() || "openwork"
-  const scheme = /^[a-z][a-z0-9+.-]*$/i.test(requestedScheme)
-    ? requestedScheme
-    : "openwork"
-  const url = new URL(`${scheme}://den-auth`)
+  const url = new URL("openwork://den-auth")
   url.searchParams.set("grant", input.grant)
   url.searchParams.set("denBaseUrl", input.denBaseUrl)
   return url.toString()
@@ -449,7 +444,6 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       grant,
       expiresAt: expiresAt.toISOString(),
       openworkUrl: buildOpenworkDeepLink({
-        scheme: input.desktopScheme || "openwork",
         grant,
         denBaseUrl,
       }),
@@ -594,10 +588,20 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     let organization: { id: string; slug: string; name: string } | null = null
     let organizationMetadata: string | null = null
     try {
-      const resolved = await resolveUserOrganizations({
-        userId: normalizeDenTypeId("user", exchange.user.id),
+      const userId = normalizeDenTypeId("user", exchange.user.id)
+      let resolved = await resolveUserOrganizations({
+        userId,
         activeOrganizationId: exchange.activeOrganizationId,
       })
+      // Bootstrap only an authenticated desktop handoff, not browser onboarding
+      // or membership in a managed single-org deployment.
+      if (env.orgMode === "multi_org" && resolved.orgs.length === 0) {
+        const organizationId = await ensurePersonalOrganizationForUser(userId)
+        resolved = await resolveUserOrganizations({
+          userId,
+          activeOrganizationId: organizationId,
+        })
+      }
       const activeOrg = resolved.orgs.find((org) => org.id === resolved.activeOrgId) ?? null
       organization = activeOrg ? { id: activeOrg.id, slug: activeOrg.slug, name: activeOrg.name } : null
       organizationMetadata = activeOrg?.metadata ?? null

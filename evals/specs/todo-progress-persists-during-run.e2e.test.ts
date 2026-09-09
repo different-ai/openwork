@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import {
   control,
@@ -92,27 +93,27 @@ function parseSessionFacts(value: unknown): SessionFacts {
 }
 
 async function configureWorkspace(appSurface: App, workspaceId: string, baseUrl: string): Promise<void> {
-  const result = await evalIn(appSurface, `(async () => {
+  const result = await evalIn(appSurface, browserScript(async (workspaceId, providerId, modelName, value, modelId, inputModelName, inputWorkspaceId, inputProviderId, inputModelId, inputValue) => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return "local_server_unavailable";
-    const root = String(info.baseUrl).replace(/\\/+$/, "");
+    const root = String(info.baseUrl).replace(/\/+$/, "");
     const headers = {
       Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
       "Content-Type": "application/json",
     };
-    const configured = await fetch(root + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)}) + "/config", {
+    const configured = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
       method: "PATCH",
       headers,
       body: JSON.stringify({
         opencode: {
           permission: { bash: "allow", todowrite: "allow" },
           provider: {
-            [${JSON.stringify(providerId)}]: {
+            [providerId]: {
               npm: "@ai-sdk/openai-compatible",
-              name: ${JSON.stringify(modelName)},
-              options: { baseURL: ${JSON.stringify(`${baseUrl}/v1`)}, apiKey: "sk-todo-progress" },
+              name: modelName,
+              options: { baseURL: value, apiKey: "sk-todo-progress" },
               models: {
-                [${JSON.stringify(modelId)}]: { name: ${JSON.stringify(modelName)}, tool_call: true },
+                [modelId]: { name: inputModelName, tool_call: true },
               },
             },
           },
@@ -121,29 +122,29 @@ async function configureWorkspace(appSurface: App, workspaceId: string, baseUrl:
       signal: AbortSignal.timeout(30000),
     });
     if (!configured.ok) return "config:" + configured.status + ":" + (await configured.text()).slice(0, 300);
-    const reloaded = await fetch(root + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)}) + "/engine/reload", {
+    const reloaded = await fetch(root + "/workspace/" + encodeURIComponent(inputWorkspaceId) + "/engine/reload", {
       method: "POST",
       headers,
       signal: AbortSignal.timeout(60000),
     });
     if (!reloaded.ok) return "reload:" + reloaded.status + ":" + (await reloaded.text()).slice(0, 300);
     const raw = localStorage.getItem("openwork.preferences");
-    let preferences = {};
+    let preferences: Record<string, unknown> = {};
     try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
     if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
     localStorage.setItem("openwork.preferences", JSON.stringify({
       ...preferences,
-      defaultModel: { providerID: ${JSON.stringify(providerId)}, modelID: ${JSON.stringify(modelId)} },
+      defaultModel: { providerID: inputProviderId, modelID: inputModelId },
       modelVariant: null,
       providerStepCompleted: true,
     }));
-    localStorage.setItem("openwork.defaultModel", ${JSON.stringify(`${providerId}/${modelId}`)});
+    localStorage.setItem("openwork.defaultModel", inputValue);
     return "ok";
-  })()`, { awaitPromise: true, timeoutMs: 120_000 });
+  }, [workspaceId, providerId, modelName, `${baseUrl}/v1`, modelId, modelName, workspaceId, providerId, modelId, `${providerId}/${modelId}`]), { awaitPromise: true, timeoutMs: 120_000 });
   expect(result).toBe("ok");
 
-  await evalIn(appSurface, "location.reload(); true");
-  await waitFor(appSurface, "Boolean(window.__openworkControl)", {
+  await evalIn(appSurface, () => { location.reload(); return true; });
+  await waitFor(appSurface, () => (Boolean(window.__openworkControl)), {
     timeoutMs: 60_000,
     label: "desktop restored after mock provider configuration",
   });
@@ -166,16 +167,16 @@ async function createSession(appSurface: App): Promise<string> {
 }
 
 async function approvePendingPermission(appSurface: App, workspaceId: string, sessionId: string): Promise<number> {
-  const value = await evalIn(appSurface, `(async () => {
+  const value = await evalIn(appSurface, browserScript(async (workspaceId, inputSessionId) => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return [];
-    const root = String(info.baseUrl).replace(/\\/+$/, "")
-      + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)}) + "/opencode";
+    const root = String(info.baseUrl).replace(/\/+$/, "")
+      + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode";
     const headers = {
       Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
       "Content-Type": "application/json",
     };
-    const sessionId = ${JSON.stringify(sessionId)};
+    const sessionId = inputSessionId;
     const pending = await fetch(root + "/api/session/" + encodeURIComponent(sessionId) + "/permission", {
       headers,
       signal: AbortSignal.timeout(10000),
@@ -192,7 +193,7 @@ async function approvePendingPermission(appSurface: App, workspaceId: string, se
       statuses.push(response.status);
     }
     return statuses;
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  }, [workspaceId, sessionId]), { awaitPromise: true, timeoutMs: 30_000 });
   if (!Array.isArray(value) || value.some((status) => typeof status !== "number" || status < 200 || status >= 300)) {
     throw new Error(`Permission approval failed: ${JSON.stringify(value)}`);
   }
@@ -206,13 +207,13 @@ async function readSessionFacts(
   command: string,
   completionMarker: string,
 ): Promise<SessionFacts> {
-  const value = await evalIn(appSurface, `(async () => {
+  const value = await evalIn(appSurface, browserScript(async (workspaceId, inputSessionId, inputCommand, completionMarker, inputSessionId2, inputSessionId3) => {
     const empty = { sessionId: "", runningBash: false, todoCount: 0, finalReplyVisible: false, idle: false };
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return empty;
-    const root = String(info.baseUrl).replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)})
+    const root = String(info.baseUrl).replace(/\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId)
       + "/opencode/session";
-    const base = root + "/" + encodeURIComponent(${JSON.stringify(sessionId)});
+    const base = root + "/" + encodeURIComponent(inputSessionId);
     const options = {
       headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
       signal: AbortSignal.timeout(15000),
@@ -228,44 +229,44 @@ async function readSessionFacts(
     const parts = list.flatMap((message) => Array.isArray(message?.parts) ? message.parts : []);
     const runningBash = parts.some((part) => part?.tool === "bash"
       && part?.state?.status === "running"
-      && part?.state?.input?.command === ${JSON.stringify(command)});
+      && part?.state?.input?.command === inputCommand);
     const finalReplyVisible = list.some((message) => message?.info?.role === "assistant"
-      && (Array.isArray(message.parts) ? message.parts : []).some((part) => part?.type === "text"
-        && typeof part.text === "string" && part.text.includes(${JSON.stringify(completionMarker)})));
-    const status = statuses?.[${JSON.stringify(sessionId)}];
+      && (Array.isArray(message.parts) ? message.parts : []).some((part: { type?: string; text?: string }) => part?.type === "text"
+        && typeof part.text === "string" && part.text.includes(completionMarker)));
+    const status = statuses?.[inputSessionId2];
     return {
-      sessionId: ${JSON.stringify(sessionId)},
+      sessionId: inputSessionId3,
       runningBash,
       todoCount: Array.isArray(todos) ? todos.length : 0,
       finalReplyVisible,
       idle: !status || status.type === "idle",
     };
-  })()`, { awaitPromise: true, timeoutMs: 20_000 });
+  }, [workspaceId, sessionId, command, completionMarker, sessionId, sessionId]), { awaitPromise: true, timeoutMs: 20_000 });
   return parseSessionFacts(value);
 }
 
 async function expandTodoPanel(appSurface: App, sessionId: string, expectedItems: string[]): Promise<void> {
-  const clicked = await evalIn(appSurface, `(() => {
-    const surface = document.querySelector(${JSON.stringify(`[data-session-surface-id="${sessionId}"]`)});
-    const button = surface?.querySelector("[data-todo-progress-panel] button");
+  const clicked = await evalIn(appSurface, browserScript((value) => {
+    const surface = document.querySelector<HTMLElement>(value);
+    const button = surface?.querySelector<HTMLElement>("[data-todo-progress-panel] button");
     if (!(button instanceof HTMLElement)) return false;
     button.click();
     return true;
-  })()`);
+  }, [`[data-session-surface-id="${sessionId}"]`]));
   expect(clicked, "todo panel toggle button present").toBe(true);
-  await waitFor(appSurface, `(() => {
-    const panel = document.querySelector(${JSON.stringify(`[data-session-surface-id="${sessionId}"] [data-todo-progress-panel]`)});
+  await waitFor(appSurface, browserScript((value, expectedItems) => {
+    const panel = document.querySelector<HTMLElement>(value);
     const text = panel instanceof HTMLElement ? panel.innerText : "";
-    return ${JSON.stringify(expectedItems)}.every((item) => text.includes(item));
-  })()`, { timeoutMs: 10_000, label: "todo panel expanded with every item listed" });
+    return expectedItems.every((item) => text.includes(item));
+  }, [`[data-session-surface-id="${sessionId}"] [data-todo-progress-panel]`, expectedItems]), { timeoutMs: 10_000, label: "todo panel expanded with every item listed" });
 }
 
 async function readTodoPanel(appSurface: App, sessionId: string): Promise<PanelFact> {
-  const value = await evalIn(appSurface, `(() => {
-    const currentSessionId = document.querySelector("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? "";
-    const surface = document.querySelector(${JSON.stringify(`[data-session-surface-id="${sessionId}"]`)});
+  const value = await evalIn(appSurface, browserScript((value) => {
+    const currentSessionId = document.querySelector<HTMLElement>("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? "";
+    const surface = document.querySelector<HTMLElement>(value);
     if (!(surface instanceof HTMLElement)) return { currentSessionId, found: false, visible: false, completed: -1, total: -1, label: "" };
-    const panel = surface.querySelector("[data-todo-progress-panel]");
+    const panel = surface.querySelector<HTMLElement>("[data-todo-progress-panel]");
     if (!(panel instanceof HTMLElement)) return { currentSessionId, found: false, visible: false, completed: -1, total: -1, label: "" };
     const style = getComputedStyle(panel);
     const rect = panel.getBoundingClientRect();
@@ -283,7 +284,7 @@ async function readTodoPanel(appSurface: App, sessionId: string): Promise<PanelF
       total: Number(panel.getAttribute("data-todo-progress-total")),
       label: panel.querySelector("button")?.innerText ?? "",
     };
-  })()`);
+  }, [`[data-session-surface-id="${sessionId}"]`]));
   return parsePanelFact(value);
 }
 
@@ -407,10 +408,10 @@ test.skipIf(!runnable)(
     expect(completed.panel.found, "todo panel remains after the run finishes").toBe(true);
     expect(completed.panel.visible).toBe(true);
     expect(completed.panel.total).toBe(todos.length);
-    await waitFor(desktopApp, `(() => {
-      const surface = document.querySelector(${JSON.stringify(`[data-session-surface-id="${chat}"]`)});
+    await waitFor(desktopApp, browserScript((value) => {
+      const surface = document.querySelector<HTMLElement>(value);
       return surface instanceof HTMLElement && !surface.innerText.includes("Running command");
-    })()`, { timeoutMs: 30_000, label: "no tool still rendered as running after the final reply" });
+    }, [`[data-session-surface-id="${chat}"]`]), { timeoutMs: 30_000, label: "no tool still rendered as running after the final reply" });
     const afterRunShot = await screenshot(desktopApp);
     const afterRunValidation = await validate(afterRunShot, [
       "A Progress panel above the composer still lists three todo items after the agent finished",

@@ -1,4 +1,5 @@
 import { Client } from "@planetscale/database"
+import { createRetryingPlanetScaleFetch } from "./transient-retry"
 import { drizzle } from "drizzle-orm/mysql2"
 import { drizzle as drizzlePlanetScale } from "drizzle-orm/planetscale-serverless"
 import type { FieldPacket, QueryOptions, QueryResult } from "mysql2"
@@ -121,7 +122,7 @@ export function createDenDb(input: {
       throw new Error("PlanetScale mode requires DATABASE_HOST, DATABASE_USERNAME, and DATABASE_PASSWORD")
     }
 
-    const client = new Client(credentials)
+    const client = new Client({ ...credentials, fetch: createRetryingPlanetScaleFetch() })
     return {
       client,
       db: drizzlePlanetScale(client, { schema }) as unknown as DenDb,

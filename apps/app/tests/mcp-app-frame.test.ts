@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import type { DynamicToolUIPart } from "ai"
+import { ConnectionCard } from "../src/components/chat/connection-card"
 
 import {
   createOpenworkServerClient,
@@ -9,8 +11,11 @@ import {
 import { formatMcpAppDiagnostic, safeMcpAppDiagnosticMessage } from "../src/components/chat/mcp-app-diagnostics"
 import {
   buildMcpAppCsp,
+  connectorCatalogFromPart,
+  hasPreservedMcpAppResult,
   gatewayMcpAppLaunch,
   isActionableMcpAppResolutionError,
+  McpAppFrame,
   secureMcpAppHtml,
 } from "../src/components/chat/mcp-app-frame"
 
@@ -32,6 +37,31 @@ function fixture(overrides: Partial<OpenworkMcpAppResource> = {}): OpenworkMcpAp
 }
 
 describe("MCP App iframe policy", () => {
+  test("connection status execution renders the native card even without preserved app metadata", () => {
+    const part: DynamicToolUIPart = {
+      type: "dynamic-tool", toolName: "openwork-cloud_execute_capability", toolCallId: "status-probe",
+      state: "output-available", input: { name: "mcp:emc_notes:*" },
+      output: { schemaVersion: "1", connectionId: "emc_notes", connectionName: "Notes", state: "needs_connection",
+        actor: "member", message: "Connect Notes to continue.",
+        action: { type: "connect", label: "Connect Notes", surface: "openwork_your_connections" } },
+    }
+    expect(hasPreservedMcpAppResult(part)).toBe(true)
+    expect(McpAppFrame({ part })?.type).toBe(ConnectionCard)
+    expect(McpAppFrame({ part: { ...part, output: { ...part.output, state: "connected", actor: null, action: null } } })?.type).toBe(ConnectionCard)
+  })
+
+  test("an unsupported first-party connection launch cannot fall back to the legacy iframe", () => {
+    const part: DynamicToolUIPart = {
+      type: "dynamic-tool", toolName: "openwork-cloud_execute_capability", toolCallId: "old-status-probe",
+      state: "output-available", input: {}, output: {},
+      callProviderMetadata: { openwork: { mcpResult: { content: [], _meta: { "openwork/mcpApp": {
+        toolName: "connection_action", resourceUri: "ui://openwork/connection-action/v1/view.html", arguments: { connectionId: "emc_notes" },
+      } } } } },
+    }
+    expect(McpAppFrame({ part })).toBeNull()
+    expect(McpAppFrame({ part: { ...part, toolName: "other_execute_capability" } })).not.toBeNull()
+  })
+
   test("accepts a namespaced gateway launch reference without exposing credentials", () => {
     expect(gatewayMcpAppLaunch({
       source: "provider",
@@ -164,3 +194,15 @@ describe("MCP App iframe policy", () => {
     expect(csp).toContain("frame-src https://embed.example.com")
   })
 })
+
+
+test("only canonical completed gateway search results render connector setup suggestions", () => {
+  const catalog = { version: 1, selectedIds: ["slack"], entries: [{ id: "slack", name: "Slack", description: "Work chat", setup: "oauth_client", setupUrl: "https://example.com/dashboard/mcp-connections?quickAdd=slack" }] };
+  const part = { type: "dynamic-tool", toolName: "openwork-cloud_search_capabilities", toolCallId: "catalog", state: "output-available", input: { query: "Slack", intent: "connect" }, output: JSON.stringify({ connectorCatalog: catalog }) } satisfies import("ai").DynamicToolUIPart;
+  expect(connectorCatalogFromPart(part)).toEqual(catalog);
+  expect(hasPreservedMcpAppResult(part)).toBe(true);
+  expect(hasPreservedMcpAppResult({ ...part, input: { query: "Slack" } })).toBe(false);
+  expect(connectorCatalogFromPart({ ...part, toolName: "other_search_capabilities" })).toBeNull();
+  expect(connectorCatalogFromPart({ ...part, output: "invalid json" })).toBeNull();
+  expect(connectorCatalogFromPart({ ...part, output: { connectorCatalog: { ...catalog, version: 2 } } })).toBeNull();
+});

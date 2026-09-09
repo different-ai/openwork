@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 
 import {
   attributeChatToolError,
+  connectionCardPayloadFromChatToolResult,
   reconnectActionFromChatToolResult,
 } from "../src/components/tools/error-attribution"
 import { normalizeErrorText } from "../src/lib/error-text"
@@ -26,7 +27,54 @@ function reconnectStatus(connectionId = "emc_knowledge", connectionName = "Knowl
   }
 }
 
+const connectionPayload = {
+  schemaVersion: "1",
+  connectionId: "emc_knowledge",
+  connectionName: "Knowledge Hub",
+  state: "needs_connection",
+  actor: "member",
+  message: "Connect your account to continue.",
+  action: { type: "connect", label: "Connect Knowledge Hub", surface: "openwork_your_connections" },
+}
+
 describe("chat tool error attribution", () => {
+  test("uses the same native action for search attachments and standalone status results", () => {
+    for (const { toolName, payload } of [
+      { toolName: "openwork-cloud_search_capabilities", payload: { connectionAction: connectionPayload } },
+      { toolName: "openwork-cloud_execute_capability", payload: connectionPayload },
+      { toolName: "openwork-cloud_connection_action", payload: connectionPayload },
+    ]) {
+      for (const result of [payload, JSON.stringify(payload)]) {
+        expect(connectionCardPayloadFromChatToolResult(toolName, result, { intent: "connect" })).toEqual(connectionPayload)
+        expect(reconnectActionFromChatToolResult(toolName, result, { intent: "connect" })).toEqual({
+          connectionId: "emc_knowledge", connectionName: "Knowledge Hub", label: "Connect",
+        })
+      }
+    }
+  })
+
+  test("keeps connected and admin states native without offering member authorization", () => {
+    const connected = { ...connectionPayload, state: "connected", actor: null, action: null }
+    const admin = { ...connectionPayload, actor: "organization_admin", action: {
+      type: "update_credentials", label: "Ask an admin", surface: "openwork_organization_connections",
+    } }
+    for (const payload of [connected, admin]) {
+      expect(connectionCardPayloadFromChatToolResult("openwork-cloud_execute_capability", payload)).toEqual(payload)
+      expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", payload)).toBeNull()
+    }
+  })
+
+  test("rejects foreign, malformed, ambiguous, and unsolicited portable connection cards", () => {
+    for (const tool of ["malicious_execute_capability", "other_connection_action", "connection_action"]) {
+      expect(connectionCardPayloadFromChatToolResult(tool, connectionPayload)).toBeNull()
+      expect(reconnectActionFromChatToolResult(tool, connectionPayload)).toBeNull()
+    }
+    expect(connectionCardPayloadFromChatToolResult("openwork-cloud_execute_capability", { ...connectionPayload, schemaVersion: "2" })).toBeNull()
+    expect(connectionCardPayloadFromChatToolResult("openwork-cloud_search_capabilities", { connectionAction: connectionPayload })).toBeNull()
+    const matches = [connectionPayload, { ...connectionPayload, connectionId: "emc_second" }].map(connectionStatus => ({ connectionStatus }))
+    expect(connectionCardPayloadFromChatToolResult("openwork-cloud_search_capabilities", { matches }, { intent: "connect" })).toBeNull()
+  })
+
   test("identifies an OpenWork-created capability deadline", () => {
     expect(attributeChatToolError("The capability call exceeded 180s. Retry once.")).toEqual({
       label: "OpenWork timeout",
@@ -139,7 +187,8 @@ describe("chat tool error attribution", () => {
       }],
     })
 
-    expect(reconnectActionFromChatToolResult("openwork-cloud_search_capabilities", output)).toEqual({
+    expect(reconnectActionFromChatToolResult("openwork-cloud_search_capabilities", output)).toBeNull()
+    expect(reconnectActionFromChatToolResult("openwork-cloud_search_capabilities", output, { intent: "connect" })).toEqual({
       connectionId: "emc_knowledge",
       connectionName: "Knowledge Hub",
       label: "Reconnect",
@@ -182,6 +231,16 @@ describe("chat tool error attribution", () => {
     expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", providerPayload)).toBeNull()
   })
 
+  test("supports first-time member OAuth but rejects mismatched states and credentials", () => {
+    const status = { ...reconnectStatus(), state: "needs_connection", action: { type: "connect", surface: "openwork_your_connections", retry: "search_capabilities" } }
+    const action = (value: unknown) => reconnectActionFromChatToolResult("openwork-cloud_search_capabilities", { matches: [{ connectionStatus: value }] }, { intent: "connect" })
+    expect(action(status)).toEqual({ connectionId: "emc_knowledge", connectionName: "Knowledge Hub", label: "Connect" })
+    expect(action({ ...status, authType: "apikey" })).toBeNull()
+    expect(action({ ...status, credentialMode: "shared" })).toBeNull()
+    expect(action({ ...status, actor: "organization_admin" })).toBeNull()
+    expect(action({ ...status, state: "reauth_required" })).toBeNull()
+  })
+
   test("does not guess between multiple reconnect targets in one discovery result", () => {
     const output = {
       matches: ["first", "second"].map((suffix) => ({
@@ -190,7 +249,7 @@ describe("chat tool error attribution", () => {
       })),
     }
 
-    expect(reconnectActionFromChatToolResult("openwork-cloud_search_capabilities", output)).toBeNull()
+    expect(reconnectActionFromChatToolResult("openwork-cloud_search_capabilities", output, { intent: "connect" })).toBeNull()
   })
 
   test("rejects unversioned, shared, and admin-owned action shapes", () => {

@@ -119,7 +119,7 @@ test("agent MCP server exposes steering instructions during initialize", async (
   expect(client.getInstructions()).toContain("Use create_skill")
   expect(client.getInstructions()).toContain("do not route these flows through execute_capability, postPlugins, or postConfigObjectsVersions")
   expect(client.getInstructions()).toContain("update_skill to publish a new immutable version")
-  expect(client.getInstructions()).toContain("execute that exact match once: it returns the live status and renders an actionable connection card")
+  expect(client.getInstructions()).toContain("Do not execute the same status again when the search response includes connectionAction")
   expect(client.getInstructions()).toContain("create-skill")
   expect(client.getInstructions()).toContain("share-plugin")
   expect(client.getInstructions()).toContain("add-to-marketplace")
@@ -296,6 +296,24 @@ test("capability search results include structured output alongside text compati
 
   expect(result.structuredContent).toEqual({ matches })
   expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual({ matches })
+  const connectionStatus = {
+    version: 1, kind: "connection_action", source: "openwork-cloud",
+    layer: "mcp_connection", errorCode: "not_connected", authType: "oauth", credentialMode: "per_member",
+    connectionId: "emc_notes", connectionName: "Notes", state: "needs_connection",
+    actor: "member", message: "Connect your notes account.",
+    action: { type: "connect", label: "Connect Notes", surface: "openwork_your_connections", retry: "search_capabilities" },
+  }
+  const blocked = [{ ...matches[0], kind: "connection_status", connectionStatus }]
+  const quiet = agentModule.capabilitySearchToolResult(blocked)
+  expect(quiet.structuredContent.matches).toEqual(blocked)
+  expect(quiet.structuredContent.connectionAction).toBeUndefined()
+  expect(quiet).not.toHaveProperty("_meta")
+  const actionable = agentModule.capabilitySearchToolResult(blocked, undefined, null, true)
+  expect(actionable.structuredContent.matches).toEqual(blocked)
+  expect(actionable.structuredContent.connectionAction?.connectionId).toBe("emc_notes")
+  expect(actionable).not.toHaveProperty("_meta")
+  expect(agentModule.SEARCH_CAPABILITIES_OUTPUT_SCHEMA.safeParse(actionable.structuredContent).success).toBe(true)
+  expect(result).not.toHaveProperty("_meta")
 })
 
 test("capability search preserves the bounded-fanout coverage warning", () => {
@@ -363,6 +381,13 @@ test("external capability failures preserve the slim agent-facing MCP error enve
   expect("actionOwner" in payload).toBe(false)
   expect("operatorAction" in payload).toBe(false)
   expect("diagnostic" in payload.connectionStatus).toBe(false)
+  expect(result.structuredContent).toMatchObject({
+    schemaVersion: "1",
+    connectionId: "emc_test",
+    state: "reauth_required",
+    action: { type: "reconnect" },
+  })
+  expect(result).not.toHaveProperty("_meta")
 })
 
 test("invalid capability arguments preserve corrective retry instructions", () => {
@@ -498,3 +523,21 @@ test("connection status only outranks equally relevant callable tools", () => {
   expect(matches[0]?.kind).toBe("connection_status")
   expect(matches[0]?.score).toBe(20)
 })
+
+
+test("connector discovery includes every preset and separates setup suggestions from tools", async () => {
+  const { connectorCatalogForQuery } = await import("../src/mcp/connector-catalog.js");
+  const { EXTERNAL_MCP_PRESETS } = await import("../src/capability-sources/external-mcp-presets.js");
+  const catalog = connectorCatalogForQuery("Please connect Slack");
+  expect(catalog?.selectedIds).toEqual(["slack"]);
+  expect(catalog?.entries.map(entry => entry.id)).toEqual(["google-workspace", "microsoft-365", ...EXTERNAL_MCP_PRESETS.map(preset => preset.presetId)]);
+  expect(catalog?.entries.find(entry => entry.id === "slack")?.setup).toBe("oauth_client");
+  expect(connectorCatalogForQuery("slacker")).toBeNull();
+  expect(connectorCatalogForQuery("write a report")).toBeNull();
+  expect(connectorCatalogForQuery("all quick adds")?.selectedIds).toEqual([]);
+  expect(connectorCatalogForQuery("Slack", true)?.selectedIds).toEqual([]);
+  const result = agentModule.capabilitySearchToolResult([], undefined, catalog);
+  expect(result.structuredContent.connectorCatalog).toEqual(catalog);
+  expect(result.structuredContent.hint).toContain("not connected tools");
+  for (const entry of catalog?.entries ?? []) expect(new URL(entry.setupUrl).searchParams.get("quickAdd")).toBe(entry.id);
+});

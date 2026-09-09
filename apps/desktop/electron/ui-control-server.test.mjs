@@ -11,6 +11,11 @@ test("UI control commands never activate the desktop window implicitly", async (
 
   assert.match(source, /webContents\.executeJavaScript/);
   assert.doesNotMatch(source, /\bwin\.(?:show|restore|focus)\(/);
+  assert.match(source, /\/webmcp\/tools/);
+  assert.match(source, /\/webmcp\/execute/);
+  assert.ok(source.includes(
+    "await executeWebMcpTool(await readJsonRequestBody(request), { signal: controller.signal })",
+  ));
 });
 
 test("UI control failures are logged locally without exposing exception details", async () => {
@@ -24,6 +29,9 @@ test("UI control failures are logged locally without exposing exception details"
     appName: "OpenWork",
     appIdentifier: "com.differentai.openwork",
     getWindow: async () => { throw failure; },
+    browserTask: async () => { throw new Error("private website content"); },
+    listWebMcpTools: () => ({ ok: false, error: "The built-in browser is not ready." }),
+    executeWebMcpTool: () => ({ ok: false, error: "The built-in browser is not ready." }),
   });
 
   try {
@@ -39,6 +47,12 @@ test("UI control failures are logged locally without exposing exception details"
     assert.equal(logged[0]?.[0], "[ui-control] request failed");
     assert.equal(logged[0]?.[1], failure);
     assert.doesNotMatch(JSON.stringify(payload), /private renderer failure/);
+    const browserResponse = await fetch(`${discovery.baseUrl}/browser/task`, {
+      method: "POST", headers: { Authorization: `Bearer ${discovery.token}`, "Content-Type": "application/json" }, body: "{}",
+    });
+    assert.equal(browserResponse.status, 500);
+    assert.doesNotMatch(JSON.stringify(await browserResponse.json()), /private website content/);
+    assert.deepEqual(logged[1], ["[ui-control] request failed"]);
   } finally {
     await server.stop();
     console.error = originalConsoleError;

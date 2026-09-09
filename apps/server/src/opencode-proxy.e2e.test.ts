@@ -35,7 +35,7 @@ function auth(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
 
-function startMockOpencode(input?: { holdCommand?: Promise<void>; foreignSessionDirectory?: string }) {
+function startMockOpencode(input?: { holdCommand?: Promise<void>; foreignSessionDirectory?: string; recovery?: { active: boolean; turn: number } }) {
   const requests: Array<{ pathname: string; search: string; directory: string | null; method: string; body?: unknown }> = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -48,8 +48,26 @@ function startMockOpencode(input?: { holdCommand?: Promise<void>; foreignSession
         directory: request.headers.get("x-opencode-directory"),
         method: request.method,
       };
-      if (request.method === "POST") record.body = await request.json();
+      if (request.method === "POST") {
+        const text = await request.text();
+        if (text) record.body = JSON.parse(text);
+      }
       requests.push(record);
+
+      if (input?.recovery) {
+        if (url.pathname === "/session/ses_1/prompt_async") {
+          input.recovery.active = true;
+          input.recovery.turn++;
+          return new Response(null, { status: 204 });
+        }
+        if (url.pathname === "/session/status") return Response.json(input.recovery.active ? { ses_1: { type: "busy" } } : {});
+        if (["/permission", "/question"].includes(url.pathname)) return Response.json([]);
+        if (url.pathname === "/api/session/ses_1/permission") return Response.json({ data: [] });
+        if (url.pathname === "/session/ses_1/message") return Response.json([
+          { info: { id: `user-${input.recovery.turn}`, role: "user", sessionID: "ses_1", model: { providerID: "test", modelID: "test" } }, parts: [] },
+          { info: { id: `assistant-${input.recovery.turn}`, role: "assistant", sessionID: "ses_1", time: {} }, parts: [] },
+        ]);
+      }
 
       if (url.pathname === "/session") {
         if (request.method === "POST") {
@@ -160,6 +178,7 @@ async function startOpenworkServer(input: {
   secondWorkspaceRoot?: string;
   opencodeBaseUrl?: string;
   readOnly?: boolean;
+  resumeInterruptedTasks?: boolean;
 }) {
   const workspaces: WorkspaceInfo[] = [{
     id: "ws_1",
@@ -184,6 +203,8 @@ async function startOpenworkServer(input: {
     port: 0,
     token: "owt_test_token",
     hostToken: "owt_host_token",
+    configPath: join(input.workspaceRoot, "server.json"),
+    resumeInterruptedTasks: input.resumeInterruptedTasks,
     approval: { mode: "auto", timeoutMs: 1000 },
     corsOrigins: ["*"],
     workspaces,
@@ -197,7 +218,7 @@ async function startOpenworkServer(input: {
   };
   const server = await startServer(config) as Served;
   stops.push(() => server.stop(true));
-  return { server, token: config.token };
+  return { server, token: config.token, config };
 }
 
 function deferred() {
@@ -217,6 +238,46 @@ async function waitUntil(predicate: () => boolean) {
 }
 
 describe("workspace OpenCode proxy", () => {
+  test("desktop-owned recovery survives a server restart and admits one continuation through the authenticated proxy", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const recovery = { active: false, turn: 0 };
+    const mock = startMockOpencode({ recovery });
+    const openwork = await startOpenworkServer({ workspaceRoot, opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`, readOnly: false, resumeInterruptedTasks: true });
+    const response = await fetch(`http://127.0.0.1:${openwork.server.port}/workspace/ws_1/opencode/session/ses_1/prompt_async`, {
+      method: "POST", headers: { ...auth(openwork.token), "content-type": "application/json" }, body: JSON.stringify({ parts: [{ type: "text", text: "Finish the task" }] }),
+    });
+    expect(response.status).toBe(204);
+    await openwork.server.stop();
+    recovery.active = false;
+    const restarted = await startServer({ ...openwork.config, port: 0 });
+    stops.push(() => restarted.stop());
+    const resumed = () => mock.requests.filter((request) => request.method === "POST" && JSON.stringify(request.body).includes("Continue the interrupted task"));
+    const deadline = Date.now() + 5_000;
+    while (resumed().length === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(resumed()).toHaveLength(1);
+    expect(resumed()[0].directory).toBe(workspaceRoot);
+    expect(resumed()[0].body).toMatchObject({ model: { providerID: "test", modelID: "test" } });
+    await new Promise((resolve) => setTimeout(resolve, 2_100));
+    expect(resumed()).toHaveLength(1);
+  });
+
+  test("accepts empty engine request bodies and rejects malformed JSON before forwarding", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const mock = startMockOpencode();
+    const openwork = await startOpenworkServer({ workspaceRoot, opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`, readOnly: false });
+    const url = `http://127.0.0.1:${openwork.server.port}/workspace/ws_1/opencode/session`;
+    for (const body of [undefined, ""]) {
+      const response = await fetch(url, { method: "POST", headers: auth(openwork.token), body });
+      expect(response.status).toBe(200);
+      expect((await response.json()).id).toBe("ses_created");
+    }
+    const sessionPosts = () => mock.requests.filter((request) => request.method === "POST" && request.pathname === "/session");
+    expect(sessionPosts()).toHaveLength(2);
+    const malformed = await fetch(url, { method: "POST", headers: auth(openwork.token), body: "{" });
+    expect(malformed.status).toBe(400);
+    expect(sessionPosts()).toHaveLength(2);
+  });
+
   test("accepts guest-side rem_ workspace aliases", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const mock = startMockOpencode();

@@ -1,0 +1,17 @@
+{
+  "name": "@openwork/presentation",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./recording": "./src/recording.ts"
+  },
+  "dependencies": {
+    "remotion": "4.0.520",
+    "react": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.13"
+  }
+}

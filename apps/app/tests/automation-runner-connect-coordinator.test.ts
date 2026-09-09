@@ -52,7 +52,7 @@ describe("Automation runner connect lifecycle", () => {
     expect(timers.activeCount()).toBe(0)
   })
 
-  test("a failed immediate remint leaves one periodic retry", async () => {
+  test("a failed immediate remint retries promptly then resumes the normal refresh", async () => {
     const timers = scheduler()
     const configured: number[] = []
     let connects = 0
@@ -71,11 +71,13 @@ describe("Automation runner connect lifecycle", () => {
     await Promise.resolve()
     expect(configured).toEqual([1])
     expect(timers.activeCount()).toBe(1)
+    expect(timers.entries.find((entry) => entry.active)?.delayMs).toBe(1_000)
 
     timers.fireActive()
     await Promise.resolve()
     await Promise.resolve()
     expect(configured).toEqual([1, 3])
+    expect(timers.entries.find((entry) => entry.active)?.delayMs).toBe(300_000)
     expect(timers.activeCount()).toBe(1)
     coordinator.dispose()
   })
@@ -171,4 +173,50 @@ describe("Automation runner connect lifecycle", () => {
     expect(timers.entries.filter((entry) => entry.active).map((entry) => entry.delayMs)).toEqual([500])
     coordinator.dispose()
   })
+})
+
+
+test("registration outages back off to thirty seconds and disposal cancels recovery", async () => {
+  const timers = scheduler()
+  const coordinator = createAutomationRunnerConnectCoordinator({
+    refreshMs: 1_800_000,
+    schedule: timers.schedule,
+    connect: async () => { throw new Error("temporarily unavailable") },
+  })
+  await expect(coordinator.request()).rejects.toThrow("temporarily unavailable")
+  for (const delayMs of [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]) {
+    expect(timers.activeCount()).toBe(1)
+    expect(timers.entries.find((entry) => entry.active)?.delayMs).toBe(delayMs)
+    timers.fireActive()
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+  }
+  coordinator.dispose()
+  expect(timers.activeCount()).toBe(0)
+})
+
+test("a failed stale registration immediately drains newer settings", async () => {
+  const timers = scheduler()
+  const first = deferred()
+  let attempts = 0
+  const coordinator = createAutomationRunnerConnectCoordinator({
+    refreshMs: 1_800_000,
+    schedule: timers.schedule,
+    connect: async () => {
+      attempts += 1
+      if (attempts === 1) {
+        await first.promise
+        throw new Error("old account unavailable")
+      }
+    },
+  })
+  const pending = coordinator.request()
+  void coordinator.request()
+  first.resolve()
+  await pending
+  expect(attempts).toBe(2)
+  expect(timers.activeCount()).toBe(1)
+  expect(timers.entries.find((entry) => entry.active)?.delayMs).toBe(1_800_000)
+  coordinator.dispose()
 })

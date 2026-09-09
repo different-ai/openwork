@@ -1,5 +1,6 @@
-import { WorkflowRunsScreen } from "../../_components/workflow-runs-screen";
+import { redirect } from "next/navigation";
+import { getWorkflowRunsRoute } from "../../../_lib/den-org";
 
-export default function WorkflowRunsPage() {
-  return <WorkflowRunsScreen />;
+export default function LegacyWorkflowRunsPage() {
+  redirect(getWorkflowRunsRoute());
 }

@@ -3,11 +3,18 @@ import { expect, mock, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createRequire } from "node:module";
-import { act } from "react";
+import { act, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
+import { MemoryRouter } from "react-router";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
+import type { ComposerAttachment, ComposerDraft } from "../src/app/types";
+import type { CloudMcpSubmissionResult } from "../src/react-app/domains/connections/cloud-mcp-submit-readiness";
+import type {
+  NewTaskComposerContext,
+  NewTaskComposerHandoff,
+} from "../src/react-app/domains/session/chat/new-task-composer";
 
 const workspaceId = "workspace-focus-continuity";
 const sessionId = "session-focus-continuity";
@@ -23,9 +30,38 @@ function createSnapshot(status: SessionStatus, updated: number): OpenworkSession
       version: "1",
       time: { created: 1, updated },
     },
-    messages: [],
+    messages: [{
+      info: {
+        id: "existing-user-message", sessionID: sessionId, role: "user", time: { created: 1 },
+        agent: "build", model: { providerID: "test", modelID: "test-model" },
+      },
+      parts: [{ id: "existing-user-part", sessionID: sessionId, messageID: "existing-user-message", type: "text", text: "Keep this session mounted." }],
+    }],
     todos: [],
     status,
+  };
+}
+
+function newTaskComposerContext(draftOwnerKey: string): NewTaskComposerContext {
+  return {
+    client: null,
+    workspaceId: null,
+    draftOwnerKey,
+    selectedModel: { providerID: "test", modelID: "test-model" },
+    modelPickerOpen: false,
+    onModelPickerOpenChange: () => {},
+    onModelChange: () => {},
+    modelVariantLabel: "Default",
+    modelVariant: null,
+    onModelVariantChange: () => {},
+    agentLabel: "OpenWork",
+    selectedAgent: null,
+    listAgents: async () => [],
+    onSelectAgent: () => {},
+    listCommands: async () => [],
+    searchFiles: async () => [],
+    isRemoteWorkspace: false,
+    isSandboxWorkspace: false,
   };
 }
 
@@ -40,7 +76,7 @@ async function waitFor(predicate: () => boolean, label: string) {
   throw new Error(`Timed out waiting for ${label}`);
 }
 
-test("a same-session snapshot swap preserves Lexical focus and draft text", async () => {
+test("composer focus and shared Restore preserve drafts through snapshots and first-message handoff", async () => {
   const require = createRequire(import.meta.url);
   // Bun's isolated test loader cycles Lexical's ESM entries; use their real CJS entries before the app imports the editor.
   for (const moduleId of [
@@ -81,17 +117,34 @@ test("a same-session snapshot swap preserves Lexical focus and draft text", asyn
   document.write("<!doctype html><html><body></body></html>");
   document.close();
   Object.defineProperty(document, "compatMode", { configurable: true, value: "CSS1Compat" });
-  const fetchStub = async () => new Response("{}", { headers: { "content-type": "application/json" } });
+  let acceptedMessageId: string | null = null;
+  const acceptanceRequests: Request[] = [];
+  const restoreRequests: Request[] = [];
+  const fetchStub = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    if (request.method === "PATCH" && new URL(request.url).pathname.endsWith(`/session/${sessionId}`)) restoreRequests.push(request);
+    if (new URL(request.url).pathname.includes(`/session/${sessionId}/message/`)) {
+      acceptanceRequests.push(request);
+      return acceptedMessageId
+        ? Response.json({ info: { id: acceptedMessageId, sessionID: sessionId, role: "user" }, parts: [] })
+        : new Response(null, { status: 404 });
+    }
+    return Response.json({});
+  };
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchStub });
   Object.defineProperty(window, "fetch", { configurable: true, value: fetchStub });
   window.localStorage.setItem("openwork.shell-config", JSON.stringify({ starterCards: false }));
   let fetchedSnapshot = createSnapshot({ type: "busy" }, 1);
+  let snapshotRead: Promise<OpenworkSessionSnapshot> | null = null;
   mock.module("@/components/model-select", () => ({ ModelSelect: () => null }));
+  mock.module("@/react-app/domains/session/surface/composer/workspace-run-mode-menu", () => ({ WorkspaceRunModeMenu: () => null }));
   mock.module("@/app/lib/opencode-session-native", () => ({
-    composeNativeSessionSnapshot: async () => fetchedSnapshot,
+    composeNativeSessionSnapshot: async () => snapshotRead ?? fetchedSnapshot,
   }));
   const { SessionSurface } = await import("../src/react-app/domains/session/surface/session-surface");
   const { snapshotKey, transcriptKey } = await import("../src/react-app/domains/session/sync/session-sync");
+  const { useSessionArchive } = await import("../src/react-app/domains/session/sidebar/use-session-archive");
+  const { getQueuedDrainState, resetQueuedDrainForTests } = await import("../src/react-app/domains/session/surface/queued-drain-machine");
   const queryClient = getReactQueryClient();
   queryClient.clear();
   queryClient.setQueryData(snapshotKey(workspaceId, sessionId), createSnapshot({ type: "busy" }, 1));
@@ -105,14 +158,48 @@ test("a same-session snapshot swap preserves Lexical focus and draft text", asyn
   document.body.append(container);
   const root = createRoot(container);
   const draft = "Keep this draft while the task finishes";
+  let submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+  const sentDrafts: ComposerDraft[] = [];
+  let prepareSubmission: (() => void) | undefined;
+  const routeWorkspaceId = `rem_${workspaceId}`;
+  let restoreShared = async () => false;
+  let updateRouteArchived = (_archived: boolean) => {};
+  function ArchiveOwner({ children }: { children: (archived: boolean) => ReactNode }) {
+    const [archived, setArchived] = useState(false);
+    updateRouteArchived = setArchived;
+    const { archiveSession } = useSessionArchive({
+      workspaces: [{
+        id: routeWorkspaceId, name: "Focus continuity", displayNameResolved: "Focus continuity",
+        path: "/tmp/project-focus-continuity", preset: "starter", workspaceType: "remote",
+      }],
+      sessionsByWorkspaceId: { [routeWorkspaceId]: [fetchedSnapshot.session] },
+      endpointForWorkspace: () => ({
+        workspaceId, baseUrl: "http://127.0.0.1:1", token: "test-token", isRemote: true,
+        client, mountedBaseUrl: "http://127.0.0.1:1", opencodeBaseUrl: "http://127.0.0.1:1/opencode",
+      }),
+      selectedWorkspaceId: routeWorkspaceId, selectedSessionId: sessionId, draftScope: "local",
+      navigateToWorkspaceSession: () => { throw new Error("Shared Restore must not navigate"); },
+      reloadWorkspaceSessions: async () => {},
+      onArchivedChange: (workspace, id, value) => {
+        expect(workspace).toBe(routeWorkspaceId);
+        expect(id).toBe(sessionId);
+        setArchived(value);
+      },
+    });
+    restoreShared = () => archiveSession(sessionId, false);
+    return children(archived);
+  }
 
   try {
     await act(async () => {
       root.render(
+        <MemoryRouter>
         <QueryClientProvider client={queryClient}>
           <LocalProvider>
             <ShellConfigProvider>
+              <ArchiveOwner>{archived => (
               <SessionSurface
+                archived={archived}
                 client={client}
                 workspaceId={workspaceId}
                 workspaceRoot="/tmp/project-focus-continuity"
@@ -128,7 +215,11 @@ test("a same-session snapshot swap preserves Lexical focus and draft text", asyn
                 selectedModel={{ providerID: "test", modelID: "test-model" }}
                 onModelPickerOpenChange={() => {}}
                 onModelChange={() => {}}
-                onSendDraft={async () => ({ outcome: "accepted" })}
+                onSendDraft={(value, _sessionId, onPrepared) => {
+                  sentDrafts.push(value);
+                  prepareSubmission = onPrepared;
+                  return submission.promise;
+                }}
                 cloudMcpSubmissionState={IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE}
                 onOpenConnect={() => {}}
                 onDraftChange={() => {}}
@@ -148,9 +239,11 @@ test("a same-session snapshot swap preserves Lexical focus and draft text", asyn
                 isSandboxWorkspace={false}
                 providerConnectedCount={1}
               />
+              )}</ArchiveOwner>
             </ShellConfigProvider>
           </LocalProvider>
-        </QueryClientProvider>,
+        </QueryClientProvider>
+        </MemoryRouter>,
       );
     });
     await waitFor(
@@ -164,7 +257,7 @@ test("a same-session snapshot swap preserves Lexical focus and draft text", asyn
       () => container.querySelector('[data-lexical-editor="true"]')?.textContent === draft,
       "the draft to reach Lexical",
     );
-    const editor = container.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]');
+    let editor = container.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]');
     if (!editor) throw new Error("Expected the Lexical editor");
     editor.focus();
     expect(document.activeElement).toBe(editor);
@@ -178,9 +271,347 @@ test("a same-session snapshot swap preserves Lexical focus and draft text", asyn
     expect(container.querySelector('[data-lexical-editor="true"]')).toBe(editor);
     expect(document.activeElement).toBe(editor);
     expect(editor.textContent).toBe(draft);
+
+    const key = snapshotKey(workspaceId, sessionId);
+    const routeKey = snapshotKey(routeWorkspaceId, sessionId);
+    const unrelatedKey = snapshotKey("unrelated-runtime", sessionId);
+    const archivedSnapshot = createSnapshot({ type: "idle" }, 3);
+    archivedSnapshot.session.time.archived = 3;
+    await act(async () => {
+      fetchedSnapshot = archivedSnapshot;
+      queryClient.setQueryData(key, archivedSnapshot);
+      queryClient.setQueryData(routeKey, archivedSnapshot);
+      queryClient.setQueryData(unrelatedKey, archivedSnapshot);
+    });
+    // A fresh external archive must still lock a surface whose route metadata
+    // says false; replacing the OR with props precedence would break this.
+    await waitFor(() => container.querySelector('[data-testid="archived-session"]') !== null, "the externally archived transcript");
+    expect(container.querySelector('[contenteditable="true"][data-lexical-editor="true"]')).toBeNull();
+    const retainedMessages = queryClient.getQueryData<OpenworkSessionSnapshot>(key)?.messages;
+    await act(async () => updateRouteArchived(true));
+
+    const staleRead = Promise.withResolvers<OpenworkSessionSnapshot>();
+    snapshotRead = staleRead.promise;
+    let staleRefresh: Promise<void> = Promise.resolve();
+    await act(async () => { staleRefresh = queryClient.refetchQueries({ queryKey: key, exact: true }); });
+    expect(queryClient.getQueryState(key)?.fetchStatus).toBe("fetching");
+    const freshRead = Promise.withResolvers<OpenworkSessionSnapshot>();
+    snapshotRead = freshRead.promise;
+    fetchedSnapshot = createSnapshot({ type: "idle" }, 4);
+    await act(async () => { expect(await restoreShared()).toBe(true); });
+    await waitFor(() => container.querySelector('[contenteditable="true"][data-lexical-editor="true"]') !== null, "shared Restore to enable the composer before refetch completes");
+    expect(queryClient.getQueryState(key)?.fetchStatus).toBe("fetching");
+    expect(container.querySelector('[data-testid="archived-session"]')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]')?.disabled).toBe(false);
+    expect(queryClient.getQueryData<OpenworkSessionSnapshot>(key)?.session.time.archived).toBe(0);
+    expect(queryClient.getQueryData<OpenworkSessionSnapshot>(routeKey)?.session.time.archived).toBe(0);
+    expect(queryClient.getQueryData(unrelatedKey)).toBe(archivedSnapshot);
+    expect(queryClient.getQueryData<OpenworkSessionSnapshot>(key)?.messages).toBe(retainedMessages);
+    expect(restoreRequests).toHaveLength(1);
+    expect(await restoreRequests[0]?.json()).toMatchObject({ time: { archived: 0 } });
+    expect(sentDrafts).toHaveLength(0);
+    await act(async () => {
+      staleRead.resolve(archivedSnapshot);
+      await staleRefresh;
+    });
+    expect(queryClient.getQueryData<OpenworkSessionSnapshot>(key)?.session.time.archived).toBe(0);
+    expect(container.querySelector('[data-testid="archived-session"]')).toBeNull();
+    await act(async () => { freshRead.resolve(fetchedSnapshot); snapshotRead = null; });
+    await waitFor(() => queryClient.getQueryState(key)?.fetchStatus === "idle", "the restored authoritative snapshot");
+    editor = container.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]');
+    if (!editor) throw new Error("Shared Restore did not recreate the editor");
+    expect(editor.textContent).toBe(draft);
+
+    const send = () => {
+      const button = container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]');
+      if (!button || button.disabled) throw new Error(`Expected an enabled send button: ${container.textContent}`);
+      button.click();
+      button.click();
+    };
+    const attachment: ComposerAttachment = { id: "image-ready", name: "photo.png", mimeType: "image/png", size: 3, kind: "image",
+      file: new File(["png"], "photo.png", { type: "image/png" }) };
+    await act(async () => {
+      useComposerStateStore.getState().setAttachments(sessionId, [attachment]);
+      useComposerStateStore.getState().setDraft(sessionId, `${draft}[attachment image-ready]`);
+    });
+    await act(async () => send());
+    expect(sentDrafts).toHaveLength(1);
+    expect(editor.textContent).toContain(draft);
+    expect(container.querySelector('[data-attachment-status="uploading"]')).not.toBeNull();
+    expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(0);
+    await act(async () => {
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }));
+    });
+    expect(sentDrafts).toHaveLength(1);
+    expect(useComposerStateStore.getState().queuedDrafts[sessionId]).toBeUndefined();
+    await act(async () => submission.reject(new Error("Image preparation failed")));
+    expect(editor.textContent).toContain(draft);
+    expect(useComposerStateStore.getState().sessions[sessionId]?.attachments).toEqual([attachment]);
+    expect(Object.values(useComposerStateStore.getState().failedDrafts).flat()).toHaveLength(0);
+
+    submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss error"]')?.click());
+    await act(async () => send());
+    expect(prepareSubmission).toBeFunction();
+    await act(async () => prepareSubmission?.());
+    expect(editor.textContent).toBe("");
+    expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(1);
+    await act(async () => submission.resolve({ outcome: "cancelled", reason: "context_changed" }));
+    expect(editor.textContent).toContain(draft);
+    await act(async () => {
+      useComposerStateStore.getState().setAttachments(sessionId, []);
+      useComposerStateStore.getState().setDraft(sessionId, draft);
+    });
+    sentDrafts.length = 0;
+    submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    await act(async () => send());
+    expect(sentDrafts).toHaveLength(1);
+    expect(editor.textContent).toBe("");
+    expect(container.textContent).toContain(draft);
+    expect(useComposerStateStore.getState().sessions[sessionId]).toBeUndefined();
+
+    await act(async () => useComposerStateStore.getState().setDraft(sessionId, "A newer draft"));
+    await act(async () => submission.reject(new Error("Submission unavailable")));
+    expect(editor.textContent).toBe("A newer draft");
+    expect(container.textContent).not.toContain(draft);
+    expect(Object.values(useComposerStateStore.getState().failedDrafts).flat().map((item) => item.draft)).toEqual([draft]);
+    expect(useComposerStateStore.getState().queuedDrafts[sessionId]).toBeUndefined();
+
+    await act(async () => useComposerStateStore.getState().setDraft(sessionId, ""));
+    await act(async () => {
+      const restore = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Restore unsent message");
+      expect(restore?.disabled).toBe(false);
+      restore?.click();
+    });
+    expect(editor.textContent).toBe(draft);
+    const restoredRun = container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]');
+    expect(container.textContent).toContain("Submission unavailable");
+    expect(restoredRun?.disabled).toBe(false);
+    expect(sentDrafts).toHaveLength(1);
+    expect(editor.textContent).toBe(draft);
+
+    submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss error"]')?.click());
+    await act(async () => send());
+    await act(async () => submission.resolve({ outcome: "cancelled", reason: "context_changed" }));
+    expect(editor.textContent).toBe(draft);
+
+    submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    const { composerAutoSendScopeKey, markComposerAutoSend } = await import("../src/react-app/domains/session/surface/composer-auto-send");
+    await act(async () => {
+      markComposerAutoSend(sessionId);
+      useComposerStateStore.getState().setDraft(sessionId, "First message auto-send");
+    });
+    await waitFor(() => sentDrafts.length === 3, "first-message auto-send");
+    expect(editor.textContent).toBe("");
+    expect(container.textContent).toContain("First message auto-send");
+    const messageId = sentDrafts[2]?.messageId;
+    expect(messageId).toStartWith("msg_");
+    await act(async () => {
+      queryClient.setQueryData(transcriptKey(workspaceId, sessionId), [{
+        id: messageId,
+        role: "user",
+        parts: [{ type: "text", text: "First message auto-send" }],
+      }]);
+      submission.resolve({ outcome: "accepted" });
+    });
+    expect(editor.textContent).toBe("");
+    expect(container.textContent?.split("First message auto-send").length).toBe(2);
+    expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(0);
+
+    const { PromptAdmissionUnknownError } = await import("../src/app/lib/opencode");
+    submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Uncertain send"));
+    await act(async () => send());
+    const uncertainId = sentDrafts[3]?.messageId;
+    if (!uncertainId) throw new Error("Expected the canonical draft identity");
+    expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()[0]?.draft.messageId).toBe(uncertainId);
+    expect(sentDrafts[3]).not.toHaveProperty("messageID");
+    expect(editor.textContent).toBe("");
+    await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Newer uncertain draft"));
+    await act(async () => submission.reject(new PromptAdmissionUnknownError({ messageID: uncertainId })));
+    expect(editor.textContent).toBe("Newer uncertain draft");
+    expect(getQueuedDrainState(sessionId).phase).toMatchObject({ kind: "admission_unknown", messageID: uncertainId });
+    expect(Object.values(useComposerStateStore.getState().failedDrafts).flat()).toHaveLength(0);
+    expect(useComposerStateStore.getState().queuedDrafts[sessionId]).toBeUndefined();
+    await act(async () => queryClient.setQueryData(transcriptKey(workspaceId, sessionId), [{
+      id: "other-identical-prompt", role: "user", parts: [{ type: "text", text: "Uncertain send" }],
+    }]));
+    await waitFor(() => container.textContent?.split("Uncertain send").length === 3, "the unrelated same-text turn beside the pending bubble");
+    expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(1);
+    const checkAcceptance = () => {
+      const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "Check acceptance");
+      if (!button) throw new Error("Expected the read-only acceptance check");
+      button.click();
+    };
+    await act(async () => checkAcceptance());
+    expect(getQueuedDrainState(sessionId).phase.kind).toBe("admission_unknown");
+    expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(1);
+    acceptedMessageId = uncertainId;
+    await act(async () => checkAcceptance());
+    expect(getQueuedDrainState(sessionId).phase.kind).toBe("awaiting_observation");
+    for (const request of acceptanceRequests) {
+      expect(request.method).toBe("GET");
+      expect(new URL(request.url).pathname).toBe(`/opencode/session/${sessionId}/message/${uncertainId}`);
+      expect(new URL(request.url).searchParams.get("directory")).toBe("/tmp/project-focus-continuity");
+    }
+    expect(acceptanceRequests).toHaveLength(2);
+    await act(async () => queryClient.setQueryData(transcriptKey(workspaceId, sessionId), [{
+      id: uncertainId, role: "user", parts: [{ type: "text", text: "Uncertain send" }],
+    }]));
+    await waitFor(() => Object.values(useComposerStateStore.getState().pendingMessages).flat().length === 0, "the exact observed turn to replace the pending bubble");
+    expect(editor.textContent).toBe("Newer uncertain draft");
+    expect(sentDrafts).toHaveLength(4);
+
+    submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    const scopedFile = new File(["scoped image"], "scoped.png", { type: "image/png" });
+    const scopedAttachment: ComposerAttachment = {
+      id: "scoped-image",
+      name: "scoped.png",
+      mimeType: "image/png",
+      size: scopedFile.size,
+      kind: "image",
+      file: scopedFile,
+    };
+    const submittedComposer = {
+      draft: "First [pasted text handoff][attachment scoped-image]",
+      attachments: [scopedAttachment],
+      mentions: {},
+      pasteParts: [{ id: "submitted-paste", label: "handoff", text: "submitted body", lines: 1 }],
+      revertMessageId: null,
+    };
+    const continuationComposer = {
+      draft: "Continuation B",
+      attachments: [],
+      mentions: {},
+      pasteParts: [{ id: "continuation-paste", label: "handoff", text: "wrong continuation metadata", lines: 1 }],
+      revertMessageId: null,
+    };
+    await act(async () => {
+      markComposerAutoSend(sessionId, {
+        scopeKey: composerAutoSendScopeKey({
+          draftScope: "local",
+          opencodeBaseUrl: "http://127.0.0.1:1/opencode",
+          workspaceId,
+          sessionId,
+        }),
+        composer: submittedComposer,
+      });
+      useComposerStateStore.setState((state) => ({
+        sessions: { ...state.sessions, [sessionId]: continuationComposer },
+      }));
+    });
+    await waitFor(() => sentDrafts.length === 5, "scoped first-message auto-send");
+    expect(sentDrafts[4]?.resolvedText).toBe("First submitted body");
+    expect(editor.textContent).toBe("Continuation B");
+    expect(useComposerStateStore.getState().sessions[sessionId]).toBe(continuationComposer);
+    const scopedPendingRows = () => [...container.querySelectorAll('[data-message-role="user"]')]
+      .filter((row) => row.textContent === "First submitted body");
+    expect(scopedPendingRows()).toHaveLength(1);
+    expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(1);
+    await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Continuation B before preparation"));
+    expect(editor.textContent).toBe("Continuation B before preparation");
+    const continuationBeforePreparation = useComposerStateStore.getState().sessions[sessionId];
+    expect(prepareSubmission).toBeFunction();
+    await act(async () => prepareSubmission?.());
+    expect(useComposerStateStore.getState().sessions[sessionId]).toBe(continuationBeforePreparation);
+    expect(scopedPendingRows()).toHaveLength(1);
+    expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(1);
+    await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Continuation B after preparation"));
+    expect(editor.textContent).toBe("Continuation B after preparation");
+    const continuationAfterPreparation = useComposerStateStore.getState().sessions[sessionId];
+    await act(async () => submission.reject(new Error("Scoped submission unavailable")));
+    expect(editor.textContent).toBe("Continuation B after preparation");
+    expect(useComposerStateStore.getState().sessions[sessionId]).toBe(continuationAfterPreparation);
+    expect(Object.values(useComposerStateStore.getState().failedDrafts).flat().map((item) => item.draft)).toEqual([
+      "First [pasted text handoff][attachment scoped-image]",
+    ]);
+    expect(Object.values(useComposerStateStore.getState().failedDrafts).flat()[0]?.attachments[0]?.file).toBe(scopedFile);
+    await act(async () => useComposerStateStore.getState().setDraft(sessionId, ""));
+    await act(async () => {
+      const restore = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Restore unsent message");
+      expect(restore?.disabled).toBe(false);
+      restore?.click();
+    });
+    expect(useComposerStateStore.getState().sessions[sessionId]?.attachments[0]?.file).toBe(scopedFile);
+
+    const { NewTaskComposer } = await import("../src/react-app/domains/session/chat/new-task-composer");
+    let creation = Promise.withResolvers<void>();
+    let creations = 0;
+    let capturedHandoff: NewTaskComposerHandoff | null = null;
+    let updateHeroDraft = (_text: string) => {};
+    let updateDraftOwner = (_owner: string) => {};
+    function Hero() {
+      const [text, setText] = useState("First hero message");
+      const [draftOwner, setDraftOwner] = useState("owner-a");
+      updateHeroDraft = setText;
+      updateDraftOwner = setDraftOwner;
+      return <NewTaskComposer draft={text} onDraftChange={setText} busy={false} context={newTaskComposerContext(draftOwner)} onRunTask={(_resolved, _attachments, handoff) => {
+        creations++;
+        capturedHandoff = handoff ?? null;
+        return creation.promise;
+      }} />;
+    }
+    await act(async () => root.render(<LocalProvider><ShellConfigProvider><Hero /></ShellConfigProvider></LocalProvider>));
+    await act(async () => send());
+    expect(creations).toBe(1);
+    expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("");
+    expect(container.querySelector('[data-message-role="user"]')?.textContent).toBe("First hero message");
+    await act(async () => updateHeroDraft("Newer hero draft"));
+    expect(capturedHandoff?.getContinuation().draft).toBe("Newer hero draft");
+    await act(async () => creation.reject(new Error("Session creation failed")));
+    expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Newer hero draft");
+    expect(container.textContent).toContain("Session creation failed");
+    await act(async () => updateHeroDraft(""));
+    await act(async () => {
+      [...container.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent === "Clear the current draft to restore the unsent message")?.click();
+    });
+    expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("First hero message");
+    expect(creations).toBe(1);
+    creation = Promise.withResolvers<void>();
+    await act(async () => {
+      const input = container.querySelector<HTMLInputElement>('input[type="file"][multiple]');
+      if (!input) throw new Error("Expected the attachment input");
+      Object.defineProperty(input, "files", { configurable: true, value: [attachment.file] });
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => send());
+    expect(creations).toBe(2);
+    expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toContain("First hero message");
+    expect(container.querySelector('[data-message-role="user"]')).toBeNull();
+    expect(container.querySelector('[data-attachment-status="uploading"]')).not.toBeNull();
+    await act(async () => creation.reject(new Error("Image session creation failed")));
+    expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toContain("First hero message");
+    expect(container.querySelector('[data-attachment-id]')).not.toBeNull();
+
+    await act(async () => updateDraftOwner("owner-b"));
+    await waitFor(
+      () => container.querySelector('[data-lexical-editor="true"]')?.textContent === "",
+      "the next draft owner to start empty after attachment recovery",
+    );
+    creation = Promise.withResolvers<void>();
+    await act(async () => updateHeroDraft("Owner B submission"));
+    await act(async () => send());
+    expect(creations).toBe(3);
+    const ownerBHandoff = capturedHandoff;
+    if (!ownerBHandoff) throw new Error("Expected the owner B handoff");
+    await act(async () => updateHeroDraft("Owner B continuation"));
+    expect(ownerBHandoff.getContinuation().draft).toBe("Owner B continuation");
+    await act(async () => updateDraftOwner("owner-c"));
+    await waitFor(
+      () => container.querySelector('[data-lexical-editor="true"]')?.textContent === "",
+      "the new draft owner to start empty",
+    );
+    await act(async () => updateHeroDraft("Foreign owner draft"));
+    expect(ownerBHandoff.getContinuation().draft).toBe("Owner B continuation");
+    await act(async () => creation.resolve());
+    expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Foreign owner draft");
   } finally {
     await act(async () => root.unmount());
-    useComposerStateStore.setState({ sessions: {}, queuedDrafts: {}, history: {} });
+    resetQueuedDrainForTests();
+    useComposerStateStore.setState({ sessions: {}, queuedDrafts: {}, history: {}, pendingMessages: {}, failedDrafts: {} });
     queryClient.clear();
     container.remove();
     mock.restore();

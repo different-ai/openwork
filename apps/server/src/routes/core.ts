@@ -43,7 +43,6 @@ interface RegisterCoreRoutesOptions {
   refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
   serializeWorkspace: (workspace: ServerConfig["workspaces"][number]) => unknown;
   resolveDevLogPath: () => string | null;
-  createOpenAiRealtimeVoiceSession: (env: EnvService, input: unknown) => Promise<unknown>;
   onManagedProviderAuthChanged?: (result: ManagedProviderAuthResult) => Promise<void>;
   managedProviderAuthLogger?: {
     warn: (message: string, attributes?: Record<string, unknown>) => void;
@@ -105,7 +104,6 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     refreshRegistrationFromLiveStatus,
     serializeWorkspace,
     resolveDevLogPath,
-    createOpenAiRealtimeVoiceSession,
     onManagedProviderAuthChanged,
     managedProviderAuthLogger,
   } = options;
@@ -494,8 +492,4 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     return jsonResponse({ ok: true });
   });
 
-  addRoute(routes, "POST", "/voice/realtime/session", "host", async (ctx) => {
-    const body = await readJsonBody(ctx.request);
-    return jsonResponse(await createOpenAiRealtimeVoiceSession(env, body));
-  });
 }

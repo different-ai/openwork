@@ -74,6 +74,11 @@
       "development": "./src/den/egress-diagnostics.ts",
       "default": "./src/den/egress-diagnostics.ts"
     },
+    "./den/managed-models-policy": {
+      "types": "./src/den/managed-models-policy.ts",
+      "development": "./src/den/managed-models-policy.ts",
+      "default": "./src/den/managed-models-policy.ts"
+    },
     "./den/inference": {
       "types": "./src/den/inference.ts",
       "development": "./src/den/inference.ts",
@@ -108,6 +113,17 @@
       "types": "./src/url.ts",
       "development": "./src/url.ts",
       "default": "./src/url.ts"
+    },
+    "./visualization": {
+      "types": "./src/visualization.ts",
+      "development": "./src/visualization.ts",
+      "default": "./src/visualization.ts"
+    },
+    "./den/desktop-policies-runtime": {
+      "types": "./src/den/desktop-policies.ts",
+      "development": "./src/den/desktop-policies.ts",
+      "bun": "./src/den/desktop-policies.ts",
+      "default": "./dist/den/desktop-policies.js"
     }
   },
   "files": [

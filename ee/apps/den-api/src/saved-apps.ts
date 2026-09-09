@@ -2,9 +2,11 @@ import type { SavedAppDetail, SavedAppSummary } from "@openwork/types/workflows"
 import { getArtifactView, getGeneratedArtifactViewRevision, listArtifactViews, loadArtifactViewRevision } from "./artifact-views.js"
 import { getWorkflowDetail, getWorkflowSnapshot } from "./workflows.js"
 import type { PluginArchActorContext } from "./routes/org/plugin-system/access.js"
-import { and, eq } from "@openwork-ee/den-db/drizzle"
-import { DashboardAppTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { AuthUserTable, DashboardAppTable, MemberTable } from "@openwork-ee/den-db/schema"
+import { requirePluginArchResourceRole } from "./routes/org/plugin-system/access.js"
+import { createResourceAccessGrant, listResourceAccess } from "./routes/org/plugin-system/store.js"
+import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 
 function dashboardScope(context: PluginArchActorContext) {
@@ -12,6 +14,30 @@ function dashboardScope(context: PluginArchActorContext) {
     eq(DashboardAppTable.organization_id, context.organizationContext.organization.id),
     eq(DashboardAppTable.member_id, context.organizationContext.currentMember.id),
   )
+}
+
+/** Share through the workflow's existing access model; never copy result data. */
+export async function shareSavedApp(context: PluginArchActorContext, appId: string, email: string) {
+  const view = await getArtifactView({ context, artifactViewId: appId })
+  if (view.status !== "active" || !view.activeRevisionId) throw new Error("artifact_view_not_found")
+  const resource: { context: PluginArchActorContext; resourceId: DenTypeId<"configObject">; resourceKind: "config_object" } = {
+    context, resourceId: normalizeDenTypeId("configObject", view.configObjectId), resourceKind: "config_object",
+  }
+  await requirePluginArchResourceRole({ ...resource, role: "manager" })
+  const organizationId = context.organizationContext.organization.id
+  const [member] = await db.select({ id: MemberTable.id }).from(MemberTable)
+    .innerJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
+    .where(and(eq(MemberTable.organizationId, organizationId), eq(AuthUserTable.email, email.trim().toLowerCase()), isNull(MemberTable.removedAt)))
+    .limit(1)
+  if (!member) throw new Error("teammate_not_found")
+  const grants = await listResourceAccess(resource)
+  // Repeated shares must not downgrade an existing editor or manager grant.
+  if (!grants.items.some((grant) => grant.orgMembershipId === member.id && !grant.removedAt)) {
+    await createResourceAccessGrant({ ...resource, value: { orgMembershipId: member.id, orgWide: false, role: "viewer" } })
+  }
+  const id = normalizeDenTypeId("artifactView", view.id)
+  await db.insert(DashboardAppTable).values({ organization_id: organizationId, member_id: member.id, artifact_view_id: id })
+    .onDuplicateKeyUpdate({ set: { artifact_view_id: id } })
 }
 
 export async function setAppOnDashboard(context: PluginArchActorContext, appId: string, added: boolean) {

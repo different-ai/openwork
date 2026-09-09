@@ -38,7 +38,7 @@ test("waitFor has a finite default timeout", async (context) => {
     return false;
   });
 
-  await assert.rejects(waitFor(surface, "false"), /Timed out after 30000ms waiting for false/);
+  await assert.rejects(waitFor(surface, () => (false)), /Timed out after 30000ms waiting for browser callback/);
 });
 
 test("waitFor appends a bounded on-screen dump to timeout failures", async () => {
@@ -53,7 +53,7 @@ test("waitFor appends a bounded on-screen dump to timeout failures", async () =>
     : false);
 
   await assert.rejects(
-    waitFor(surface, "false", { timeoutMs: 1, label: "extensions route" }),
+    waitFor(surface, () => (false), { timeoutMs: 1, label: "extensions route" }),
     /On screen: \{"hash":"#\/workspace\/demo\/extensions","route":"\/workspace\/demo\/extensions","title":"OpenWork","buttons":\["Back","Add extension"\],"body":"Extensions Add an extension to this workspace"\}/,
   );
 });
@@ -65,7 +65,7 @@ test("waitFor still reports timeout context when the on-screen dump fails", asyn
   });
 
   await assert.rejects(
-    waitFor(surface, "false", { timeoutMs: 1, label: "extensions route" }),
+    waitFor(surface, () => (false), { timeoutMs: 1, label: "extensions route" }),
     /Timed out after 1ms waiting for extensions route.*On screen: unavailable/,
   );
 });

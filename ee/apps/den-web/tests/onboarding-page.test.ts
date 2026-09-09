@@ -10,30 +10,39 @@ function read(...segments: string[]) {
 
 const screen = read("dashboard", "_components", "marketplace-onboarding-screen.tsx");
 const page = read("dashboard", "(admin)", "onboarding", "page.tsx");
-const publicInstallers = read("_lib", "public-installers.ts");
 
 describe("Marketplace onboarding page", () => {
-  test("reuses the landing download card and den choice cards", () => {
-    expect(screen).toContain("DownloadOpenWorkCard");
-    expect(screen).toContain("DenChoiceCard");
-    expect(screen).toContain("DenSectionHeader");
+  test("finishes setup without downloads or an installation checklist", () => {
+    expect(screen).not.toContain("DownloadOpenWorkCard");
+    expect(screen).not.toContain("send-download-link");
+    expect(screen).not.toContain("app-installed");
     expect(screen).toContain("DenBadge");
-    expect(page).toContain("getPublicInstallers");
-    expect(publicInstallers).toContain('name.startsWith("openwork-cloud-")');
-    expect(publicInstallers).toContain('name.startsWith("openwork-enterprise-")');
+    expect(page).not.toContain("getPublicInstallers");
+    expect(screen).toContain("Complete and open the app");
+    expect(screen).toContain("completeSetup(orgId)");
   });
 
   test("offers OpenWork Models and Bring your Own Keys as the model path", () => {
     expect(screen).toContain("onboarding-choice-openwork-models");
     expect(screen).toContain("onboarding-choice-byok");
-    expect(screen).toContain("Turn on models");
+    expect(screen).toContain("Explore models");
     expect(screen).toContain("Bring your Own Keys");
     expect(screen).toContain("/openwork-mark.svg");
   });
 
-  test("keeps the installed flag and inference check", () => {
-    expect(screen).toContain("openwork:onboarding:app-installed");
+  test("checks model status without enabling models", () => {
     expect(screen).toContain("/v1/inference");
-    expect(screen).toContain("onboarding-app-installed");
+    expect(screen).toContain('headers: { "x-openwork-org-id": orgId }');
+    expect(screen).not.toContain('method: "POST"');
+    expect(screen).toContain("Signing in does not enable models.");
+    expect(screen).toContain("No model selection is required");
+  });
+
+  test("retains the web Models route and focuses Models before desktop completion", () => {
+    const tools = read("dashboard", "_components", "onboarding-tools-screen.tsx");
+    expect(tools).toContain('intent === "models" && !desktopAuthRequested');
+    expect(tools).toContain("router.push(getInferenceRoute(orgSlug))");
+    expect(screen).toContain("modelsHeading.current?.focus()");
+    expect(screen).not.toContain("removeItem(PENDING_AUTH_INTENT_STORAGE_KEY)");
   });
 });

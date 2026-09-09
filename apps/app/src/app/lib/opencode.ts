@@ -44,7 +44,36 @@ export type OpencodeAuth = {
 const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 10_000;
 const OAUTH_OPENCODE_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const MCP_AUTH_OPENCODE_REQUEST_TIMEOUT_MS = 90_000;
-const SESSION_LONG_RUNNING_URL_RE = /\/session\/[^/?#]+\/(?:command|prompt_async|summarize)(?:[?#]|$)/;
+// Bound the acceptance handshake, not the task. A timeout leaves admission
+// unknown, so the transport must never automatically resend the prompt.
+const PROMPT_ASYNC_REQUEST_TIMEOUT_MS = 30_000;
+const SESSION_LONG_RUNNING_URL_RE = /\/session\/[^/?#]+\/(?:command|summarize)(?:[?#]|$)/;
+const SESSION_PROMPT_ASYNC_URL_RE = /\/session\/[^/?#]+\/prompt_async(?:[?#]|$)/;
+
+export class PromptAdmissionUnknownError extends Error {
+  readonly admission = "unknown";
+
+  constructor(options?: { cause?: unknown; messageID?: string }) {
+    super("Message acceptance is unknown. It may already be running; do not resend it while checking the conversation.", { cause: options?.cause });
+    this.name = "PromptAdmissionUnknownError";
+    this.messageID = options?.messageID;
+  }
+
+  readonly messageID?: string;
+}
+
+export function isPromptAdmissionUnknown(error: unknown): error is PromptAdmissionUnknownError {
+  return error instanceof PromptAdmissionUnknownError;
+}
+
+let lastMessageStamp = 0;
+
+/** Native sortable msg_ format. This identifies a submission, NOT an idempotency key. */
+export function createPromptMessageID(): string {
+  lastMessageStamp = Math.max(Date.now() * 0x1000, lastMessageStamp + 1);
+  // Native stores the low six bytes of the timestamp/counter, then 14 random characters.
+  return `msg_${lastMessageStamp.toString(16).padStart(12, "0").slice(-12)}${crypto.randomUUID().replaceAll("-", "").slice(0, 14)}`;
+}
 
 function getRequestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
@@ -57,6 +86,9 @@ function resolveRequestTimeoutMs(input: RequestInfo | URL, fallbackMs: number): 
   const url = getRequestUrl(input);
   if (SESSION_LONG_RUNNING_URL_RE.test(url)) {
     return 0;
+  }
+  if (SESSION_PROMPT_ASYNC_URL_RE.test(url)) {
+    return Math.max(fallbackMs, PROMPT_ASYNC_REQUEST_TIMEOUT_MS);
   }
   if (/\/provider\/oauth\//.test(url) || /\/mcp\/auth\/callback\b/.test(url)) {
     return Math.max(fallbackMs, OAUTH_OPENCODE_REQUEST_TIMEOUT_MS);
@@ -79,7 +111,7 @@ async function postSessionRequest<T>(
   baseUrl: string,
   path: string,
   body: Record<string, unknown>,
-  options?: { headers?: Record<string, string>; directory?: string; throwOnError?: boolean },
+  options?: { headers?: Record<string, string>; directory?: string; throwOnError?: boolean; signal?: AbortSignal },
 ): Promise<FieldsResult<T>> {
   const headers = new Headers(options?.headers);
   headers.set("Content-Type", "application/json");
@@ -92,6 +124,7 @@ async function postSessionRequest<T>(
     method: "POST",
     headers,
     body: JSON.stringify(body),
+    signal: options?.signal,
   });
 
   const request = new Request(`${baseUrl}${path}`, {
@@ -101,7 +134,13 @@ async function postSessionRequest<T>(
   });
 
   if (response.ok) {
-    const data = response.status === 204 ? ({} as T) : ((await response.json()) as T);
+    let data: T;
+    try {
+      data = response.status === 204 ? ({} as T) : ((await response.json()) as T);
+    } catch (cause) {
+      if (SESSION_PROMPT_ASYNC_URL_RE.test(path)) throw new PromptAdmissionUnknownError({ cause });
+      throw cause;
+    }
     return { data, request, response };
   }
 
@@ -162,8 +201,17 @@ async function fetchWithTimeout(
   });
 
   try {
-    return await Promise.race([fetchImpl(input, initWithSignal), timeoutPromise]);
+    const response = await Promise.race([fetchImpl(input, initWithSignal), timeoutPromise]);
+    // A proxy/server failure can happen after native admission. Only an
+    // explicit client rejection establishes that the prompt was not accepted.
+    if (SESSION_PROMPT_ASYNC_URL_RE.test(getRequestUrl(input)) && (response.status >= 500 || response.status === 408)) {
+      throw new PromptAdmissionUnknownError();
+    }
+    return response;
   } catch (error) {
+    if (SESSION_PROMPT_ASYNC_URL_RE.test(getRequestUrl(input))) {
+      throw isPromptAdmissionUnknown(error) ? error : new PromptAdmissionUnknownError({ cause: error });
+    }
     const name = (error && typeof error === "object" && "name" in error ? (error as any).name : "") as string;
     if (name === "AbortError") {
       throw new Error("Request timed out.");
@@ -217,7 +265,7 @@ function nativeFetchRef(): typeof globalThis.fetch {
   return globalThis.fetch as typeof globalThis.fetch;
 }
 
-const createDesktopFetch = (auth?: OpencodeAuth) => {
+export const createDesktopFetch = (auth?: OpencodeAuth) => {
   const authHeader = resolveAuthHeader(auth);
   const addAuth = (headers: Headers) => {
     if (!authHeader || headers.has("Authorization")) return;
@@ -260,6 +308,7 @@ export function unwrap<T>(result: FieldsResult<T>): NonNullable<T> {
   if (result.data !== undefined) {
     return result.data as NonNullable<T>;
   }
+  if (isPromptAdmissionUnknown(result.error)) throw result.error;
   const message =
     result.error instanceof Error
       ? result.error.message
@@ -298,17 +347,23 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     command: (parameters: CommandParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
   };
 
-  const promptAsyncOriginal = sessionOverrides.promptAsync.bind(session);
-  sessionOverrides.promptAsync = (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => {
-    if (!openworkMount && !("reasoning_effort" in parameters)) {
-      return promptAsyncOriginal(parameters, options);
-    }
+  sessionOverrides.promptAsync = async (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => {
     const { sessionID, directory: requestDirectory, ...body } = parameters;
-    return postSessionRequest(fetchImpl, baseUrl, `/session/${encodeURIComponent(sessionID)}/prompt_async`, body, {
-      headers: Object.keys(headers).length ? headers : undefined,
-      directory: requestDirectory ?? directory,
-      throwOnError: options?.throwOnError,
-    });
+    try {
+      // Keep the tagged transport failure intact instead of serializing it
+      // through the SDK's error result. Native still receives prompt_async.
+      return await withAdmissionDeadline(PROMPT_ASYNC_REQUEST_TIMEOUT_MS, (signal) => postSessionRequest(fetchImpl, baseUrl, `/session/${encodeURIComponent(sessionID)}/prompt_async`, body, {
+        headers: Object.keys(headers).length ? headers : undefined,
+        directory: requestDirectory ?? directory,
+        throwOnError: options?.throwOnError,
+        signal,
+      }), () => new PromptAdmissionUnknownError({ messageID: parameters.messageID }));
+    } catch (error) {
+      if (isPromptAdmissionUnknown(error)) {
+        throw new PromptAdmissionUnknownError({ cause: error, messageID: parameters.messageID });
+      }
+      throw error;
+    }
   };
 
   const commandOriginal = sessionOverrides.command.bind(session);
@@ -325,6 +380,32 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   };
 
   return client;
+}
+
+/** Includes body consumption: receiving headers alone cannot release a send lock. */
+async function withAdmissionDeadline<T>(timeoutMs: number, operation: (signal: AbortSignal) => Promise<T>, timeoutError: () => Error): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(timeoutError());
+      controller.abort();
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([operation(controller.signal), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function hasAcceptedPromptMessage(client: ReturnType<typeof createClient>, sessionID: string, messageID: string): Promise<boolean> {
+  const result = await withAdmissionDeadline(DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS,
+    (signal) => client.session.message({ sessionID, messageID }, { signal }),
+    () => new Error("Acceptance check timed out. The message is still held."));
+  const message = result.data?.info;
+  // Absence (including a transient 404) is not proof of rejection.
+  return message?.id === messageID && message.sessionID === sessionID && message.role === "user";
 }
 
 export async function waitForHealthy(

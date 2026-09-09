@@ -18,6 +18,26 @@ export type DenApiReadinessResponse = {
   };
 };
 
+export type InvalidRequestError = {
+  error: "invalid_request";
+  details: Array<{
+    message: string;
+    path?: Array<string | number>;
+    [key: string]: unknown;
+  }>;
+  capability?: string;
+};
+
+export type UnauthorizedError = {
+  error: "unauthorized";
+};
+
+export type ForbiddenError = {
+  error: "forbidden" | "reauth";
+  reason?: string;
+  message?: string;
+};
+
 export type AdminPageInfo = {
   total: number;
   limit: number;
@@ -40,26 +60,6 @@ export type AdminUsersPageResponse = {
     billingUnavailableUsers: number | null;
   };
   generatedAt: string;
-};
-
-export type InvalidRequestError = {
-  error: "invalid_request";
-  details: Array<{
-    message: string;
-    path?: Array<string | number>;
-    [key: string]: unknown | string | Array<string | number> | undefined;
-  }>;
-  capability?: string;
-};
-
-export type UnauthorizedError = {
-  error: "unauthorized";
-};
-
-export type ForbiddenError = {
-  error: "forbidden" | "reauth";
-  reason?: string;
-  message?: string;
 };
 
 export type AdminOrganizationsPageResponse = {
@@ -191,9 +191,9 @@ export type DesktopHandoffGrantCreateBody = {
    */
   next?: string;
   /**
-   * Optional desktop URL scheme to use when building the OpenWork deep link.
+   * The registered OpenWork desktop URL scheme.
    */
-  desktopScheme?: string;
+  desktopScheme?: "openwork";
   /**
    * Optional HTTPS OpenWork Cloud web return URL. Accepted only for multi-organization Cloud instances after server-side origin validation.
    */
@@ -325,7 +325,7 @@ export type CurrentUserOrganizationsResponse = {
      */
     id: string;
     isActive: boolean;
-    [key: string]: unknown | string | boolean;
+    [key: string]: unknown;
   }>;
   activeOrgId: string | null;
   activeOrgSlug: string | null;
@@ -369,6 +369,12 @@ export type CurrentUserDesktopConfigResponse = {
   allowBuiltInExtensions?: boolean;
   allowAlphaUpdates?: boolean;
   showWelcomePage?: boolean;
+  execution?: {
+    commands?: "allow" | "deny";
+    blockedCommands?: Array<string>;
+    browserOrigins?: Array<string>;
+    blockBrowserUploads?: boolean;
+  };
   allowedDesktopVersions?: Array<string>;
   brandAppName?: string;
   brandLogoUrl?: string;
@@ -544,7 +550,7 @@ export type OrganizationOwner = {
 export type OrganizationContextResponse = {
   organization: {
     owner?: OrganizationOwner | null;
-    [key: string]: unknown | OrganizationOwner | null | undefined;
+    [key: string]: unknown;
   };
   currentMember: {
     [key: string]: unknown;
@@ -552,18 +558,7 @@ export type OrganizationContextResponse = {
   currentMemberTeams: Array<{
     [key: string]: unknown;
   }>;
-  [key: string]:
-    | unknown
-    | {
-        owner?: OrganizationOwner | null;
-        [key: string]: unknown | OrganizationOwner | null | undefined;
-      }
-    | {
-        [key: string]: unknown;
-      }
-    | Array<{
-        [key: string]: unknown;
-      }>;
+  [key: string]: unknown;
 };
 
 export type DeleteOrganizationResponse = {
@@ -725,6 +720,57 @@ export type WorkflowRunListResponse = {
     finishedAt: string;
     createdAt: string;
     orgMembershipId: string | null;
+    workflow: {
+      configObjectId: string;
+      title: string;
+      graph: {
+        nodes: Array<
+          | {
+              id: string;
+              kind: "input";
+              label: string;
+              fields: Array<string>;
+            }
+          | {
+              id: string;
+              kind: "tool";
+              label: string;
+              namespace: string;
+              tool: string;
+              scriptPath: string;
+              assignsTo: string | null;
+              parallelGroup: string | null;
+            }
+          | {
+              id: string;
+              kind: "search";
+              label: string;
+            }
+          | {
+              id: string;
+              kind: "branch";
+              label: string;
+            }
+          | {
+              id: string;
+              kind: "loop";
+              label: string;
+            }
+          | {
+              id: string;
+              kind: "return";
+              label: string;
+            }
+        >;
+        edges: Array<{
+          from: string;
+          to: string;
+          label: string | null;
+          kind: "flow" | "data";
+        }>;
+        parseError: string | null;
+      } | null;
+    } | null;
   }>;
 };
 
@@ -821,6 +867,12 @@ export type DenDesktopPolicyDocumentWrite = {
     mode: "custom" | "locked";
     capabilities: DenDesktopPolicyValue;
   };
+  execution?: {
+    commands?: "allow" | "deny";
+    blockedCommands?: Array<string>;
+    browserOrigins?: Array<string>;
+    blockBrowserUploads?: boolean;
+  };
   onboardingPrompts?: Array<string> | null;
   onboardingPromptDescriptions?: Array<string> | null;
 };
@@ -889,7 +941,7 @@ export type ScimInvalidRequestError = {
   details: Array<{
     message: string;
     path?: Array<string | number>;
-    [key: string]: unknown | string | Array<string | number> | undefined;
+    [key: string]: unknown;
   }>;
 };
 
@@ -978,7 +1030,7 @@ export type SsoInvalidRequestError = {
   details: Array<{
     message: string;
     path?: Array<string | number>;
-    [key: string]: unknown | string | Array<string | number> | undefined;
+    [key: string]: unknown;
   }>;
 };
 
@@ -1069,7 +1121,7 @@ export type CreateInstallLinkResponse = {
 
 export type CapabilityDisabledError = {
   error: "capability_disabled";
-  capability: "installLinks" | "mcpConnections";
+  capability: "installLinks" | "mcpConnections" | "modelsAnalytics";
 };
 
 export type CreateInstallLinkRequest = {
@@ -1149,12 +1201,7 @@ export type LlmProviderResponse = {
     memberCredential?: {
       state: "missing" | "active" | "blocked" | "stale" | "error";
     };
-    [key: string]:
-      | unknown
-      | {
-          state: "missing" | "active" | "blocked" | "stale" | "error";
-        }
-      | undefined;
+    [key: string]: unknown;
   };
 };
 
@@ -2517,37 +2564,7 @@ export type OpenWorkExtensionManifest = {
   lifecycle?: {
     [key: string]: unknown;
   };
-  [key: string]:
-    | unknown
-    | 1
-    | string
-    | string
-    | {
-        format:
-          | "agent-plugin"
-          | "openwork-builtin"
-          | "openwork-extension-manifest"
-          | "claude-plugin"
-          | "opencode-plugin"
-          | "mcp-directory"
-          | "manual";
-        trusted: boolean;
-        origin?: "builtin" | "den" | "workspace" | "local";
-        reference?: string;
-      }
-    | Array<{
-        [key: string]: unknown;
-      }>
-    | Array<{
-        [key: string]: unknown;
-      }>
-    | {
-        [key: string]: unknown;
-      }
-    | {
-        [key: string]: unknown;
-      }
-    | undefined;
+  [key: string]: unknown;
 };
 
 export type PluginArchExtensionProjection = {
@@ -3603,13 +3620,7 @@ export type PluginArchConnectorSyncSummary = {
   failures?: Array<{
     [key: string]: unknown;
   }>;
-  [key: string]:
-    | unknown
-    | number
-    | Array<{
-        [key: string]: unknown;
-      }>
-    | undefined;
+  [key: string]: unknown;
 };
 
 export type PluginArchConnectorSyncEvent = {
@@ -3716,6 +3727,7 @@ export type TeamResponse = {
     updatedAt: string;
     memberIds: Array<string>;
     managedByScim: boolean;
+    grantsOrganizationAdmin: boolean;
   };
 };
 
@@ -3984,7 +3996,7 @@ export type OpenApiDocument = {
   info: {
     title: string;
     version: string;
-    [key: string]: unknown | string;
+    [key: string]: unknown;
   };
   paths: {
     [key: string]: unknown;
@@ -3992,21 +4004,7 @@ export type OpenApiDocument = {
   components?: {
     [key: string]: unknown;
   };
-  [key: string]:
-    | unknown
-    | string
-    | {
-        title: string;
-        version: string;
-        [key: string]: unknown | string;
-      }
-    | {
-        [key: string]: unknown;
-      }
-    | {
-        [key: string]: unknown;
-      }
-    | undefined;
+  [key: string]: unknown;
 };
 
 export type GetHealthData = {
@@ -4159,6 +4157,74 @@ export type PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses = {
    */
   200: unknown;
 };
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaData = {
+  body: {
+    dpaSigned: boolean;
+    reason: string;
+  };
+  path: {
+    organizationId: string;
+  };
+  query?: never;
+  url: "/v1/admin/organizations/{organizationId}/dpa";
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaErrors = {
+  /**
+   * Invalid DPA decision or organization identifier.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: "invalid_request";
+        message: string;
+      };
+  /**
+   * Authentication is required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Platform administrator access is required.
+   */
+  403: ForbiddenError;
+  /**
+   * Organization not found.
+   */
+  404: {
+    error: "not_found";
+    message: string;
+  };
+  /**
+   * Organization metadata could not be read.
+   */
+  503: {
+    error: "managed_models_policy_unavailable";
+    message: string;
+  };
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaError =
+  PatchV1AdminOrganizationsByOrganizationIdDpaErrors[keyof PatchV1AdminOrganizationsByOrganizationIdDpaErrors];
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaResponses = {
+  /**
+   * DPA decision recorded.
+   */
+  200: {
+    ok: true;
+    organization: {
+      /**
+       * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      dpaSigned: boolean;
+    };
+  };
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaResponse =
+  PatchV1AdminOrganizationsByOrganizationIdDpaResponses[keyof PatchV1AdminOrganizationsByOrganizationIdDpaResponses];
 
 export type PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessData = {
   body?: never;
@@ -7928,6 +7994,10 @@ export type GetV1WorkflowRunsErrors = {
    * The caller must be signed in to list Workflow runs.
    */
   401: UnauthorizedError;
+  /**
+   * Workflow run analytics requires an Enterprise plan.
+   */
+  402: EnterprisePlanRequiredError;
 };
 
 export type GetV1WorkflowRunsError = GetV1WorkflowRunsErrors[keyof GetV1WorkflowRunsErrors];
@@ -8398,6 +8468,7 @@ export type GetV1AppsResponses = {
    */
   200: {
     enabled: boolean;
+    sharingEnabled: boolean;
     items: Array<{
       view: {
         id: string;
@@ -8445,6 +8516,41 @@ export type GetV1AppsResponses = {
 };
 
 export type GetV1AppsResponse = GetV1AppsResponses[keyof GetV1AppsResponses];
+
+export type PostV1AppsByAppIdShareData = {
+  body: {
+    email: string;
+  };
+  path: {
+    appId: string;
+  };
+  query?: never;
+  url: "/v1/apps/{appId}/share";
+};
+
+export type PostV1AppsByAppIdShareErrors = {
+  /**
+   * Only app managers can share.
+   */
+  403: ForbiddenError;
+  /**
+   * App or teammate not found.
+   */
+  404: NotFoundError;
+};
+
+export type PostV1AppsByAppIdShareError = PostV1AppsByAppIdShareErrors[keyof PostV1AppsByAppIdShareErrors];
+
+export type PostV1AppsByAppIdShareResponses = {
+  /**
+   * App shared to the teammate's dashboard.
+   */
+  200: {
+    ok: true;
+  };
+};
+
+export type PostV1AppsByAppIdShareResponse = PostV1AppsByAppIdShareResponses[keyof PostV1AppsByAppIdShareResponses];
 
 export type GetV1AppsByAppIdData = {
   body?: never;
@@ -10351,9 +10457,21 @@ export type PatchV1InferenceErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can update inference settings.
+   * Inference settings access is denied.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "managed_models_disabled_for_dpa" | "managed_models_policy_unavailable";
+        message: string;
+      };
+  /**
+   * Managed Models policy is unavailable.
+   */
+  503: {
+    error: "managed_models_disabled_for_dpa" | "managed_models_policy_unavailable";
+    message: string;
+  };
 };
 
 export type PatchV1InferenceError = PatchV1InferenceErrors[keyof PatchV1InferenceErrors];
@@ -10366,6 +10484,261 @@ export type PatchV1InferenceResponses = {
 };
 
 export type PatchV1InferenceResponse = PatchV1InferenceResponses[keyof PatchV1InferenceResponses];
+
+export type GetV1InferenceAnalyticsSettingsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/settings";
+};
+
+export type GetV1InferenceAnalyticsSettingsResponses = {
+  /**
+   * Task analytics settings
+   */
+  200: {
+    available: boolean;
+    subscribed: boolean;
+    modelsEnabled: boolean;
+    enabled: boolean;
+    consentedAt: string | null;
+    consentVersion: number | null;
+    exportEnabled: boolean;
+    langfuseHost: string | null;
+    langfuseConfigured: boolean;
+  };
+};
+
+export type GetV1InferenceAnalyticsSettingsResponse =
+  GetV1InferenceAnalyticsSettingsResponses[keyof GetV1InferenceAnalyticsSettingsResponses];
+
+export type PatchV1InferenceAnalyticsSettingsData = {
+  body: {
+    enabled: boolean;
+    consentVersion?: 1;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/settings";
+};
+
+export type PatchV1InferenceAnalyticsSettingsResponses = {
+  /**
+   * Updated task analytics choice
+   */
+  200: {
+    available: boolean;
+    subscribed: boolean;
+    modelsEnabled: boolean;
+    enabled: boolean;
+    consentedAt: string | null;
+    consentVersion: number | null;
+    exportEnabled: boolean;
+    langfuseHost: string | null;
+    langfuseConfigured: boolean;
+  };
+};
+
+export type PatchV1InferenceAnalyticsSettingsResponse =
+  PatchV1InferenceAnalyticsSettingsResponses[keyof PatchV1InferenceAnalyticsSettingsResponses];
+
+export type PostV1InferenceAnalyticsEventsData = {
+  body: {
+    events: Array<{
+      id: string;
+      type:
+        | "task.started"
+        | "task.completed"
+        | "task.failed"
+        | "task.cancelled"
+        | "tool.executed"
+        | "skill.loaded"
+        | "model.call";
+      timestamp: string;
+      sessionId: string;
+      taskId: string;
+      callId?: string;
+      durationMs?: number;
+      status?: "completed" | "failed" | "cancelled";
+      model?: string;
+      provider?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      costUsd?: number;
+      usageComplete?: boolean;
+      tool?: string;
+      skill?: string;
+      skillVersion?: string;
+      mcp?: string;
+      metadata?: {
+        [key: string]: string | number | boolean;
+      };
+    }>;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/events";
+};
+
+export type PostV1InferenceAnalyticsEventsResponses = {
+  /**
+   * OK
+   */
+  200: unknown;
+};
+
+export type GetV1InferenceAnalyticsActivityData = {
+  body?: never;
+  path?: never;
+  query?: {
+    days?: number;
+    memberId?: string;
+    taskId?: string;
+    sessionId?: string;
+    before?: string;
+    beforeId?: string;
+  };
+  url: "/v1/inference/analytics/activity";
+};
+
+export type GetV1InferenceAnalyticsActivityResponses = {
+  /**
+   * Task activity
+   */
+  200: {
+    events: Array<{
+      id: string;
+      type:
+        | "task.started"
+        | "task.completed"
+        | "task.failed"
+        | "task.cancelled"
+        | "tool.executed"
+        | "skill.loaded"
+        | "model.call";
+      timestamp: string;
+      sessionId: string;
+      taskId: string;
+      callId?: string;
+      durationMs?: number;
+      status?: "completed" | "failed" | "cancelled";
+      model?: string;
+      provider?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      costUsd?: number;
+      usageComplete?: boolean;
+      tool?: string;
+      skill?: string;
+      skillVersion?: string;
+      mcp?: string;
+      metadata?: {
+        [key: string]: string | number | boolean;
+      };
+      memberId: string;
+      source: "app" | "inference";
+    }>;
+    next: {
+      before: string;
+      beforeId: string;
+    } | null;
+  };
+};
+
+export type GetV1InferenceAnalyticsActivityResponse =
+  GetV1InferenceAnalyticsActivityResponses[keyof GetV1InferenceAnalyticsActivityResponses];
+
+export type GetV1InferenceAnalyticsConsumptionData = {
+  body?: never;
+  path?: never;
+  query?: {
+    days?: number;
+    memberId?: string;
+    taskId?: string;
+    sessionId?: string;
+    before?: string;
+    beforeId?: string;
+  };
+  url: "/v1/inference/analytics/consumption";
+};
+
+export type GetV1InferenceAnalyticsConsumptionResponses = {
+  /**
+   * Model consumption
+   */
+  200: {
+    groups: Array<{
+      model: string | null;
+      provider: string | null;
+      memberId: string;
+      day: string;
+      calls: number;
+      failedCalls: number;
+      incompleteCalls: number;
+      inputTokens: number | null;
+      outputTokens: number | null;
+      cacheReadTokens: number | null;
+      costUsd: number | null;
+    }>;
+  };
+};
+
+export type GetV1InferenceAnalyticsConsumptionResponse =
+  GetV1InferenceAnalyticsConsumptionResponses[keyof GetV1InferenceAnalyticsConsumptionResponses];
+
+export type PostV1InferenceAnalyticsLangfuseTestData = {
+  body: {
+    host: string;
+    publicKey: string;
+    secretKey: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/langfuse/test";
+};
+
+export type PostV1InferenceAnalyticsLangfuseTestResponses = {
+  /**
+   * OK
+   */
+  200: unknown;
+};
+
+export type PostV1InferenceAnalyticsLangfuseConnectData = {
+  body: {
+    host: string;
+    publicKey: string;
+    secretKey: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/langfuse/connect";
+};
+
+export type PostV1InferenceAnalyticsLangfuseConnectResponses = {
+  /**
+   * OK
+   */
+  200: unknown;
+};
+
+export type DeleteV1InferenceAnalyticsLangfuseData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/langfuse";
+};
+
+export type DeleteV1InferenceAnalyticsLangfuseResponses = {
+  /**
+   * OK
+   */
+  200: unknown;
+};
 
 export type DeleteV1ScimData = {
   body?: never;
@@ -18848,6 +19221,7 @@ export type PutV1TeamsByKeyByExternalKeyData = {
   body: {
     name: string;
     memberIds?: Array<string>;
+    grantsOrganizationAdmin?: boolean;
   };
   path: {
     externalKey: string;
@@ -18975,6 +19349,7 @@ export type PatchV1TeamsByTeamIdData = {
   body: {
     name?: string;
     memberIds?: Array<string>;
+    grantsOrganizationAdmin?: boolean;
   };
   path: {
     /**
@@ -19020,6 +19395,7 @@ export type PostV1TeamsData = {
   body: {
     name: string;
     memberIds?: Array<string>;
+    grantsOrganizationAdmin?: boolean;
   };
   path?: never;
   query?: never;

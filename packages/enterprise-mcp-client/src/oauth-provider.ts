@@ -524,13 +524,22 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): Promise<void> {
+    // Persistence may refuse to discard an administrator-supplied client. The
+    // rejected credentials are still cleared, then the refusal is surfaced so
+    // the SDK neither retries the exchange nor registers a replacement client.
+    let retainedClient: EnterpriseMcpOAuthContractError | undefined
     if (scope === "all" || scope === "client") {
-      await this.persistence.clientRegistrations.invalidate({
-        context: this.context(),
-        reason: "provider-rejected",
-      })
+      try {
+        await this.persistence.clientRegistrations.invalidate({
+          context: this.context(),
+          reason: "provider-rejected",
+        })
+      } catch (error) {
+        if (!(error instanceof EnterpriseMcpOAuthContractError) || error.code !== "MCP_OAUTH_CLIENT_REJECTED") throw error
+        retainedClient = error
+      }
     }
-    if (scope === "all" || scope === "tokens") {
+    if (scope === "all" || scope === "tokens" || retainedClient) {
       await this.persistence.credentials.invalidate({
         context: this.context(),
         reason: "provider-rejected",
@@ -552,5 +561,6 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
         reason: "provider-rejected",
       })
     }
+    if (retainedClient) throw retainedClient
   }
 }

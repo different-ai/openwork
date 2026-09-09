@@ -74,6 +74,13 @@ export const workflowGraphSchema = z.object({
 })
 export type WorkflowGraph = z.infer<typeof workflowGraphSchema>
 
+export const workflowRunPreviewSchema = z.object({
+  configObjectId: idSchema,
+  title: z.string(),
+  graph: workflowGraphSchema.nullable(),
+})
+export type WorkflowRunPreview = z.infer<typeof workflowRunPreviewSchema>
+
 export const workflowVersionSchema = z.object({
   id: idSchema,
   // Authoring source and example input are OpenWork management data, not MCP

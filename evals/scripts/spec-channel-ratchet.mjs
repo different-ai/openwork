@@ -1,5 +1,6 @@
+import { journeyFiles, filesUnder, testName } from "../bin/test-files.mjs";
 import { readdirSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const evalsRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -43,11 +44,12 @@ export function compareBaseline(current, baseline, existingFiles, newLayerFiles)
 }
 
 export function scanSpecs(directory = specsDirectory) {
-  const files = readdirSync(directory).filter((file) => file.endsWith(".e2e.test.ts")).sort();
+  const paths = directory === specsDirectory ? journeyFiles() : filesUnder(directory, /(?:^|\.)e2e\.test\.ts$/);
+  const files = paths.map((path) => directory === specsDirectory ? testName(path) : relative(directory, path));
   const current = {};
   const newLayerFiles = new Set();
-  for (const file of files) {
-    const source = readFileSync(resolve(directory, file), "utf8");
+  for (const [index, file] of files.entries()) {
+    const source = readFileSync(paths[index], "utf8");
     const count = countRawEscapes(source);
     if (count > 0) current[file] = count;
     if (source.includes("spec.world(")) newLayerFiles.add(file);

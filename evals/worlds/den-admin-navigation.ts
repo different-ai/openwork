@@ -21,19 +21,19 @@ export async function adminDashboardWeb(seed: Seed) {
     /** The current web location's pathname and search. */
     // TODO(primitive): probe.location should expose pathname+search on web surfaces; probe.hash only covers the hash.
     async location(): Promise<string> {
-      const value = await seed.evalIn(web, "window.location.pathname + window.location.search");
+      const value = await seed.evalIn(web, () => (window.location.pathname + window.location.search));
       if (typeof value !== "string") throw new Error("Expected the web location to be a string.");
       return value;
     },
     /** The accessible link names in the organization sidebar. */
     // TODO(primitive): probe should list accessible link names inside a container by testId.
     async sidebarLinks(): Promise<string[]> {
-      return strings(await seed.evalIn(web, "Array.from(document.querySelectorAll('[data-testid=\"den-org-sidebar\"] a')).map((a) => (a.textContent ?? '').trim())"));
+      return strings(await seed.evalIn(web, () => (Array.from(document.querySelectorAll<HTMLElement>('[data-testid="den-org-sidebar"] a')).map((a) => (a.textContent ?? '').trim()))));
     },
     /** The direct text labels of selected tabs. */
     // TODO(primitive): user.see({ role: "tab" }) cannot assert aria-selected today.
     async selectedTabs(): Promise<string[]> {
-      return strings(await seed.evalIn(web, "Array.from(document.querySelectorAll('[role=\"tab\"][aria-selected=\"true\"]')).map((tab) => Array.from(tab.childNodes).filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent ?? '').join('').trim())"));
+      return strings(await seed.evalIn(web, () => (Array.from(document.querySelectorAll<HTMLElement>('[role="tab"][aria-selected="true"]')).map((tab) => Array.from(tab.childNodes).filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent ?? '').join('').trim()))));
     },
   };
 }

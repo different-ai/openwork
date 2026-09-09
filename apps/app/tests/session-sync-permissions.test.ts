@@ -1,7 +1,13 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import type { UIMessage } from "ai";
 import type { PermissionRequest, PermissionV2Request, QuestionRequest } from "@opencode-ai/sdk/v2/client";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 
+import { createClient } from "../src/app/lib/opencode";
+import { createClientV2 } from "../src/app/lib/opencode-v2-adapter";
+import { useSessionInteractions, type UseSessionInteractionsInput } from "../src/react-app/domains/session/sync/use-session-interactions";
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
@@ -12,13 +18,20 @@ import {
   __hasWorkspaceSessionSyncForTest,
   __queueSessionSyncDeltaForTest,
   __setSessionSyncDeltaFlushSchedulerForTest,
+  __setWorkspaceSessionSyncPermissionFetcherForTest,
+  __setWorkspaceSessionSyncStatusFetcherForTest,
+  __revalidateWorkspaceSyncsForTest,
   applyPendingDeltasToTranscript,
   coalescePendingDeltas,
   ensureWorkspaceSessionSync,
   permissionKey,
+  markSessionSnapshotFetchStart,
+  todoKey,
   questionKey,
   seedPermissionState,
   seedQuestionState,
+  settleQuestionState,
+  settlePermissionState,
   seedSessionState,
   trackWorkspaceSessionSync,
   transcriptKey,
@@ -105,6 +118,9 @@ function snapshotWithMessages(
 }
 
 afterEach(() => {
+  __setWorkspaceSessionSyncPermissionFetcherForTest(null);
+  __setWorkspaceSessionSyncStatusFetcherForTest(null);
+  setSystemTime();
   getReactQueryClient().clear();
   for (const sessionId of ["session-a", "session-b", "session-child"]) {
     useSessionActivityStore.getState().removeSession("workspace-a", sessionId);
@@ -112,6 +128,150 @@ afterEach(() => {
 });
 
 describe("session permission sync", () => {
+  for (const engine of ["v1", "v2"]) {
+    test(`${engine} hydration reads only its required protocols and cancels obsolete reads`, async () => {
+      GlobalRegistrator.register({ url: "http://localhost/" });
+      Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+      const originalFetch = globalThis.fetch;
+      const calls: Request[] = [];
+      const delayed = Promise.withResolvers<Response>();
+      const delayedQuestion = Promise.withResolvers<Response>();
+      const v2 = engine === "v2";
+      let hold = false;
+      const fetchStub = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        calls.push(request);
+        const path = new URL(request.url).pathname;
+        if (path.endsWith("/api/session")) throw new Error("Unrelated session sweep must not run");
+        if (path.endsWith("/api/session/session-a/permission") && hold) return delayed.promise;
+        if ((path.endsWith("/form/request") || path.endsWith("/question")) && hold) return delayedQuestion.promise;
+        if (path.endsWith("/api/session/session-child/permission")) {
+          return Response.json({ data: [v2Permission("perm-child", "session-child")] });
+        }
+        if (path.endsWith("/api/session/session-a/permission")) return Response.json({ data: [] });
+        if (!v2 && path.endsWith("/permission")) {
+          return Response.json([permission("perm-legacy", "session-a"), permission("perm-other", "session-b")]);
+        }
+        return Response.json(v2 ? { data: [] } : []);
+      };
+      Object.defineProperty(globalThis, "fetch", { configurable: true, writable: true, value: fetchStub });
+      const client = v2 ? createClientV2("http://localhost/opencode2", "/project", {}) : createClient("http://localhost/opencode", "/project");
+      function Interactions(props: UseSessionInteractionsInput) {
+        const interactions = useSessionInteractions(props);
+        return createElement("div", null, interactions.activePermission?.id);
+      }
+      const container = document.createElement("div");
+      const root = createRoot(container);
+      const render = (sessionId: string, interactionSessionIds: string[] = []) => root.render(createElement(Interactions, {
+        client, workspaceId: "workspace-a", workspaceRoot: "/project", sessionId, interactionSessionIds,
+      }));
+      const cached = (id: string) => getReactQueryClient().getQueryData(permissionKey("workspace-a", id));
+      try {
+        await act(async () => render("session-a", ["session-child", "session-a", "session-child"]));
+        expect(calls.filter((request) => new URL(request.url).pathname.endsWith("/permission")).map((request) => new URL(request.url).pathname))
+          .toEqual([
+            ...(!v2 ? ["/opencode/permission"] : []),
+            `/${v2 ? "opencode2" : "opencode"}/api/session/session-a/permission`,
+            `/${v2 ? "opencode2" : "opencode"}/api/session/session-child/permission`,
+          ]);
+        expect(cached("session-child")).toMatchObject([{ id: "perm-child", sessionID: "session-child", protocol: "v2" }]);
+        expect(cached("session-a")).toEqual(v2 ? [] : expect.arrayContaining([expect.objectContaining({ id: "perm-legacy" })]));
+        expect(cached("session-b")).toBeUndefined();
+
+        // A request finishing after navigation must not overwrite newer live state,
+        // even when its transport ignores cancellation and returns a stale body.
+        hold = true;
+        await act(async () => render("session-a"));
+        const oldPermission = calls.findLast((request) => new URL(request.url).pathname.endsWith("/session-a/permission"));
+        const oldQuestion = calls.findLast((request) => /\/(question|form\/request)$/.test(new URL(request.url).pathname));
+        expect(oldPermission?.signal.aborted).toBe(false);
+        expect(oldQuestion?.signal.aborted).toBe(false);
+        await act(async () => render("session-b"));
+        // V1's shared timeout transport replaces Request signals. The hook still
+        // suppresses its late result; v2's native web transport also aborts I/O.
+        if (v2) {
+          expect(oldPermission?.signal.aborted).toBe(true);
+          expect(oldQuestion?.signal.aborted).toBe(true);
+        }
+        await act(async () => {
+          seedPermissionState("workspace-a", "session-a", [v2Permission("perm-live", "session-a")]);
+          delayed.resolve(Response.json({ data: [] }));
+          delayedQuestion.resolve(Response.json(v2 ? { data: [] } : []));
+        });
+        expect(cached("session-a")).toMatchObject([{ id: "perm-live" }]);
+      } finally {
+        await act(async () => root.unmount());
+        Object.defineProperty(globalThis, "fetch", { configurable: true, writable: true, value: originalFetch });
+        await GlobalRegistrator.unregister();
+      }
+    });
+  }
+
+  test("terminal cancellation and reconnect reconcile native permissions without reply events", async () => {
+    const input = { workspaceId: "workspace-a", baseUrl: "http://permissions.test/opencode2", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const reads: string[] = [];
+    __setWorkspaceSessionSyncPermissionFetcherForTest(async (_url, _token, sessionID) => {
+      reads.push(sessionID);
+      return sessionID === "session-b" ? [v2Permission("other", "session-b")] : [];
+    });
+    __setWorkspaceSessionSyncStatusFetcherForTest(async () => ({}));
+    try {
+      setSystemTime(100);
+      seedPermissionState("workspace-a", "session-a", [v2Permission("cancelled", "session-a")]);
+      seedPermissionState("workspace-a", "session-b", [v2Permission("other", "session-b")]);
+      // An unchanged cache revision also settles requests from the same clock tick.
+      __applySessionSyncEventForTest(input, { type: "session.execution.interrupted", properties: {
+        sessionID: "session-a", reason: "user", sequence: 2,
+      } });
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(reads).toEqual(["session-a"]);
+      expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a"))).toEqual([]);
+      expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-a")).toBe("idle");
+      expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-b"))).toMatchObject([{ id: "other" }]);
+      seedPermissionState("workspace-a", "session-child", [v2Permission("missed", "session-child")]);
+      setSystemTime(300);
+      __revalidateWorkspaceSyncsForTest();
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      expect(reads).toContain("session-child");
+      expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-child"))).toEqual([]);
+      expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-b"))).toMatchObject([{ id: "other" }]);
+    } finally { cleanup(); }
+  });
+
+  test("late reads cannot clear a same-clock new approval, resurrect a reply, or undo a newer cancellation snapshot", async () => {
+    const input = { workspaceId: "workspace-a", baseUrl: "http://permissions.test/opencode2", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    let resolve: (items: PermissionV2Request[]) => void = () => {};
+    __setWorkspaceSessionSyncPermissionFetcherForTest(() => new Promise((done) => { resolve = done; }));
+    try {
+      setSystemTime(100);
+      seedPermissionState("workspace-a", "session-a", [v2Permission("cancelled", "session-a"), v2Permission("replied", "session-a")]);
+      setSystemTime(200);
+      __applySessionSyncEventForTest(input, { type: "session.execution.interrupted", properties: { sessionID: "session-a", reason: "user" } });
+      __applySessionSyncEventForTest(input, { type: "session.execution.started", properties: { sessionID: "session-a" } });
+      __applySessionSyncEventForTest(input, { type: "permission.v2.asked", properties: v2Permission("new", "session-a") });
+      settlePermissionState("workspace-a", "session-a", "replied");
+      resolve([v2Permission("replied", "session-a")]);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      seedPermissionState("workspace-a", "session-a", [v2Permission("cancelled", "session-a")], { snapshotStartedAt: 150 });
+      __applySessionSyncEventForTest(input, { type: "permission.v2.asked", properties: v2Permission("replied", "session-a") });
+      expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a"))).toMatchObject([{ id: "new" }]);
+      expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-a")).toBe("waiting");
+    } finally { cleanup(); }
+  });
+
+  test("failed permission reconciliation preserves the pending request", async () => {
+    const input = { workspaceId: "workspace-a", baseUrl: "http://permissions.test/opencode2", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    __setWorkspaceSessionSyncPermissionFetcherForTest(async () => { throw new Error("offline"); });
+    try {
+      seedPermissionState("workspace-a", "session-a", [v2Permission("pending", "session-a")]);
+      __applySessionSyncEventForTest(input, { type: "session.execution.interrupted", properties: { sessionID: "session-a", reason: "shutdown" } });
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a"))).toMatchObject([{ id: "pending" }]);
+    } finally { cleanup(); }
+  });
   test("seeds only permissions for the selected session", () => {
     seedPermissionState("workspace-a", "session-a", [
       permission("perm-a", "session-a"),
@@ -237,6 +397,73 @@ describe("session permission sync", () => {
 });
 
 describe("session question sync", () => {
+  test("a late snapshot cannot resurrect a settled child request or clear another request", () => {
+    const answered = question("question-answered", "session-child");
+    const pending = question("question-pending", "session-child");
+    seedQuestionState("workspace-a", "session-child", [answered, pending]);
+    settleQuestionState("workspace-a", "session-child", answered.id);
+    seedQuestionState("workspace-a", "session-child", [answered, pending], { snapshotStartedAt: 100 });
+    expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-child"))).toMatchObject([
+      { id: pending.id, sessionID: "session-child" },
+    ]);
+    expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-child")).toBe("waiting");
+
+    settleQuestionState("workspace-a", "session-child", pending.id);
+    seedQuestionState("workspace-a", "session-child", [answered, pending], { snapshotStartedAt: 100 });
+    expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-child"))).toEqual([]);
+    expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-child")).not.toBe("waiting");
+  });
+
+  test("retains a child question before its transcript is tracked and settles only that request", () => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    try {
+      for (const request of [question("question-child", "session-child"), question("question-other", "session-b")]) {
+        __applySessionSyncEventForTest(syncInput, { type: "question.asked", properties: request });
+      }
+      expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-child"))).toMatchObject([
+        { id: "question-child", sessionID: "session-child" },
+      ]);
+      expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-child")).toBe("waiting");
+      expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-a"))).toBeUndefined();
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "question.replied",
+        properties: { sessionID: "session-child", requestID: "question-child", answers: [["Yes"]] },
+      });
+      expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-child"))).toEqual([]);
+      expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-child")).not.toBe("waiting");
+      expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-b"))).toMatchObject([
+        { id: "question-other", sessionID: "session-b" },
+      ]);
+      expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-b")).toBe("waiting");
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "question.rejected",
+        properties: { sessionID: "session-b", requestID: "question-other" },
+      });
+      expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-b"))).toEqual([]);
+      expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-b")).not.toBe("waiting");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("retains the waiting marker for a live question newer than the snapshot", () => {
+    getReactQueryClient().setQueryData(questionKey("workspace-a", "session-child"), [
+      { ...question("question-live", "session-child"), receivedAt: 200 },
+    ]);
+    seedQuestionState("workspace-a", "session-child", [], { snapshotStartedAt: 100 });
+    expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-child"))).toMatchObject([
+      { id: "question-live", sessionID: "session-child", receivedAt: 200 },
+    ]);
+    expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-child")).toBe("waiting");
+
+    seedQuestionState("workspace-a", "session-child", [], { snapshotStartedAt: 300 });
+    expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-child"))).toEqual([]);
+    expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-child")).not.toBe("waiting");
+  });
+
   test("seeds only questions for the selected session", () => {
     seedQuestionState("workspace-a", "session-a", [
       question("question-a", "session-a"),
@@ -467,6 +694,87 @@ describe("session transcript sync", () => {
     const transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
     expect(transcript?.map((message) => message.id)).toEqual(["msg-user", "msg-assistant"]);
   });
+
+  test("todo hydration rejects old reads and cached reapplication but accepts newer snapshots", () => {
+    const input = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const release = trackWorkspaceSessionSync(input, "session-a");
+    const old = snapshotWithMessages([]);
+    old.todos = [{ id: "todo-a", content: "Check output", status: "pending", priority: "high" }];
+    const completed = old.todos.map((todo) => ({ ...todo, status: "completed" }));
+    const queryClient = getReactQueryClient();
+    try {
+      setSystemTime(100);
+      markSessionSnapshotFetchStart(old, 100);
+      seedSessionState("workspace-a", old);
+      const unmarked = snapshotWithMessages([]);
+      unmarked.todos = old.todos;
+      seedSessionState("workspace-a", unmarked);
+      seedSessionState("workspace-a", snapshotWithMessages([], "session-b"));
+      setSystemTime(200);
+      __applySessionSyncEventForTest(input, {
+        type: "todo.updated", properties: { sessionID: "session-a", todos: completed },
+      });
+      setSystemTime(300);
+      seedSessionState("workspace-a", old);
+      seedSessionState("workspace-a", unmarked);
+      const late = snapshotWithMessages([]);
+      markSessionSnapshotFetchStart(late, 150);
+      seedSessionState("workspace-a", late);
+      expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toEqual(completed);
+      expect(queryClient.getQueryData(todoKey("workspace-a", "session-b"))).toEqual([]);
+      const fresh = snapshotWithMessages([]);
+      markSessionSnapshotFetchStart(fresh, 250);
+      seedSessionState("workspace-a", fresh);
+      expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toEqual([]);
+      seedSessionState("workspace-a", old);
+      expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toEqual([]);
+    } finally { release(); cleanup(); }
+  });
+
+  for (const declared of [true, false]) {
+    test(`snapshot reconciles buffered deltas exactly once (declared=${declared})`, () => {
+      const scheduled: Array<() => void> = [];
+      __setSessionSyncDeltaFlushSchedulerForTest((_lane, run) => {
+        scheduled.push(run);
+        return () => {};
+      });
+      const input = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+      const cleanup = __createWorkspaceSessionSyncForTest(input);
+      const release = trackWorkspaceSessionSync(input, "session-a");
+      const queryClient = getReactQueryClient();
+      const key = transcriptKey("workspace-a", "session-a");
+      try {
+        if (declared) seedSessionState("workspace-a", snapshotWithMessages([
+          { id: "answer", role: "assistant", text: "hello" },
+        ]));
+        const delta = (messageId: string, text: string) => __applySessionSyncEventForTest(input, {
+          type: "message.part.delta", properties: {
+            sessionID: "session-a", messageID: messageId, partID: `part_${messageId}`, delta: text,
+          },
+        });
+        delta("answer", declared ? " world" : "hello world");
+        delta("unknown", "retained");
+        seedSessionState("workspace-a", snapshotWithMessages([
+          { id: "answer", role: "assistant", text: "hello world" },
+        ]));
+        for (const run of scheduled.splice(0)) run();
+        expect(queryClient.getQueryData<UIMessage[]>(key)?.find((m) => m.id === "answer")?.parts[0])
+          .toMatchObject({ text: "hello world" });
+        delta("answer", "!");
+        for (const run of scheduled.splice(0)) run();
+        expect(queryClient.getQueryData<UIMessage[]>(key)?.find((m) => m.id === "answer")?.parts[0])
+          .toMatchObject({ text: "hello world!" });
+        __applySessionSyncEventForTest(input, {
+          type: "message.part.updated", properties: { part: {
+            id: "part_unknown", sessionID: "session-a", messageID: "unknown", type: "text", text: "",
+          } },
+        });
+        expect(queryClient.getQueryData<UIMessage[]>(key)?.find((m) => m.id === "unknown")?.parts[0])
+          .toMatchObject({ text: "retained" });
+      } finally { release(); cleanup(); __setSessionSyncDeltaFlushSchedulerForTest(null); }
+    });
+  }
 
   test("keeps longer live text when an idle snapshot lags the event stream", () => {
     getReactQueryClient().setQueryData(transcriptKey("workspace-a", "session-a"), [

@@ -49,6 +49,7 @@ import {
   listExternalMcpTools,
 } from "../../capability-sources/external-mcp-client-runtime.js"
 import {
+  adoptRegisteredSharedExternalMcpOAuthCallback,
   confirmExternalMcpIssuerReview,
   createExternalMcpConnection,
   deleteExternalMcpConnection,
@@ -1379,6 +1380,7 @@ async function handleExternalMcpOAuthCallback(input: {
   const completeAuthorization = statePayload.version === 2
     ? completeExternalMcpAuth
     : completeLegacyExternalMcpAuth
+  let validatedResponseIssuer: string | undefined
   if (statePayload.version === 2) {
     const responseIssuer = url.searchParams.has("iss")
       ? (url.searchParams.get("iss") ?? "")
@@ -1398,6 +1400,9 @@ async function handleExternalMcpOAuthCallback(input: {
               ? "pinned-transaction"
               : "response-issuer",
       })
+      // Preserve the isolated-callback defense for providers whose unadvertised
+      // issuer was explicitly ignored; otherwise pass the validated value to the SDK.
+      validatedResponseIssuer = validation.ignoredResponseIssuer === undefined ? responseIssuer : undefined
       if (validation.ignoredResponseIssuer !== undefined) {
         logger.warn("external_mcp_connect_callback_untrusted_issuer_ignored", {
           connection_id: connection.id,
@@ -1475,6 +1480,7 @@ async function handleExternalMcpOAuthCallback(input: {
       member,
       input.requestId,
       state,
+      validatedResponseIssuer,
     )
   } catch (error) {
     try {
@@ -3082,6 +3088,23 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         const member = connection.credentialMode === "per_member"
           ? { orgMembershipId: payload.currentMember.id }
           : undefined
+        if (connection.oauthConfiguration?.callbackMode !== "shared-v1") {
+          // Rows isolated in July kept their admin-registered client, whose
+          // recorded shared redirect is what the provider still receives.
+          // Sign the mode that redirect actually uses, or the shared callback
+          // route rejects the transaction after provider consent.
+          const adopted = await adoptRegisteredSharedExternalMcpOAuthCallback({
+            organizationId: payload.organization.id,
+            connectionId: externalMcpConnectionId,
+          })
+          if (adopted) {
+            connection = adopted
+            logger.info("external_mcp_oauth_registered_shared_callback_adopted", {
+              connection_id: connection.id,
+              organization_id: payload.organization.id,
+            })
+          }
+        }
         const beginAuthorization = async (target: ExternalMcpConnectionRow) => {
           const callbackMode = target.oauthConfiguration?.callbackMode ?? "legacy-v1"
           const responseIssuerRequired = authorizationResponseIssuerRequired(target)

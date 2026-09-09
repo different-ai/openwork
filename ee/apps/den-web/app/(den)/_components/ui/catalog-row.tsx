@@ -143,7 +143,7 @@ export function DenCatalogRow({
         id={id}
         data-testid="catalog-row"
         href={href}
-        className={`${rowClassName} group scroll-mt-6 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-accent)]`}
+        className={`${rowClassName} group scroll-mt-6 transition focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--dls-accent)]`}
       >
         {body}
       </Link>

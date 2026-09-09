@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@openwork/cdp": "workspace:*",
+    "@openwork/env": "workspace:*",
     "@openwork/timeline": "workspace:*"
   }
 }

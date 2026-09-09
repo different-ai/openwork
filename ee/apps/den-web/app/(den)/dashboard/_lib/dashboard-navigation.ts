@@ -7,7 +7,6 @@ import {
   LayoutDashboard,
   LibraryBig,
   Plug,
-  ScrollText,
   Settings2,
   SlidersHorizontal,
   Sparkles,
@@ -39,7 +38,6 @@ import {
   getSsoRoute,
   getToolTesterRoute,
   getWebRoute,
-  getWorkflowRunsRoute,
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
 
@@ -159,14 +157,6 @@ export function buildDashboardNavSections({
     : [];
   const observabilityItems: DashboardNavItem[] = access.isAdmin && orgSlug
     ? [
-        ...(workflowsEnabled
-          ? [{
-              href: getWorkflowRunsRoute(orgSlug),
-              label: "Workflow Runs",
-              icon: ScrollText,
-              testId: "nav-workflow-runs",
-            }]
-          : []),
         { href: getAnalyticsRoute(orgSlug), label: "Analytics", icon: BarChart3 },
       ]
     : [];
@@ -210,7 +200,7 @@ export function buildDashboardNavSections({
 // Alias order is ranking priority in the command palette.
 const PAGE_KEYWORDS: Record<string, string[]> = {
   Advanced: ["policy", "desktop policies", "mdm", "lock", "marketplace", "branding"],
-  Analytics: ["usage", "stats"],
+  Analytics: ["usage", "stats", "consumption", "workflow runs", "history", "langfuse"],
   "API Keys": ["token", "secret"],
   Billing: ["plan", "invoice", "payment"],
   "Bring your Own Keys": ["llm", "provider", "byok", "api key"],
@@ -230,7 +220,6 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Settings: ["organization", "workspace"],
   SSO: ["single sign on", "saml", "oidc"],
   "Tool Tester": ["tools", "test", "mcp"],
-  "Workflow Runs": ["workflows", "logs", "history"],
 };
 
 function keywordsFor(...labels: string[]): string[] {

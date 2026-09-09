@@ -190,7 +190,7 @@ const LIBRARY_ITEM_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export function libraryAddKindsForFilter(filter: string): LibraryAddKind[] {
   switch (filter) {
     case "all":
-      return [...LIBRARY_ADD_KINDS];
+      return ["skill", "command", "agent", "workspace-mcp", "connection"];
     case "skill":
       return ["skill"];
     case "command":
@@ -198,9 +198,9 @@ export function libraryAddKindsForFilter(filter: string): LibraryAddKind[] {
     case "agent":
       return ["agent"];
     case "mcp":
-      return ["mcp", "workspace-mcp"];
+      return ["workspace-mcp"];
     case "plugin":
-      return ["plugin"];
+      return [];
     case "connection":
       return ["connection"];
     default:

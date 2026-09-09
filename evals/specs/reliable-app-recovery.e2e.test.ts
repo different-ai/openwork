@@ -19,7 +19,7 @@ test("a fatal desktop bootstrap failure offers one-click verified recovery witho
     .toEqual(["1.8.2"]);
 
   // TODO(primitive): negatively exercise an unverified recovery candidate.
-  await seed.evalIn(world.app, `window.__openworkRecoveryControl.select("1.8.1")`, { awaitPromise: true });
+  await seed.evalIn(world.app, () => (window.__openworkRecoveryControl.select("1.8.1")), { awaitPromise: true });
   const afterInvalid = await world.snapshot();
   expect(typeof afterInvalid === "object" && afterInvalid !== null ? Reflect.get(afterInvalid, "installRequests") : null).toEqual([]);
   expect(typeof afterInvalid === "object" && afterInvalid !== null ? Reflect.get(afterInvalid, "quitRequested") : null).toBe(false);

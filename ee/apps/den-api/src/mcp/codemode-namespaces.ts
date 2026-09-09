@@ -71,8 +71,6 @@ export function isCodemodeEligibleConnection(
   return !connection.toolPolicy?.allDisabled && !connection.oauthIssuerReviewRequiredAt
 }
 
-export const CODEMODE_EXTERNAL_MCP_CONNECTION_LIMIT = 16
-
 export type CodemodeConnectionNamespaceContext = {
   nativeProviderEntries: NativeProviderConnectionEntry[]
   externalMcpConnections: ExternalMcpConnectionRow[]
@@ -117,9 +115,10 @@ export async function resolveCodemodeConnectionNamespaceContext(input: {
       }),
   ])
   const codemodeNativeProviderEntries = nativeProviderEntries.filter((entry) => entry.connectedForMe === true)
-  const codemodeExternalMcpConnections = externalMcpConnections
-    .filter(isCodemodeEligibleConnection)
-    .slice(0, CODEMODE_EXTERNAL_MCP_CONNECTION_LIMIT)
+  // Search chooses a bounded, query-ranked set to probe. Workflow namespaces
+  // must include every eligible connection, including those found beyond that
+  // search batch. Tool discovery already has a shared deadline and worker pool.
+  const codemodeExternalMcpConnections = externalMcpConnections.filter(isCodemodeEligibleConnection)
 
   return {
     nativeProviderEntries,

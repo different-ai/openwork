@@ -46,7 +46,7 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    NSMicrophoneUsageDescription: OpenWork uses the microphone when you start Voice Mode so you can speak commands to your agent.
+    NSMicrophoneUsageDescription: OpenWork uses the microphone when you allow a page to access audio input.
   extraResources:
     - from: resources/sidecars
       to: sidecars

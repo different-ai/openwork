@@ -20,7 +20,7 @@ export async function dismissOverlays(surface: Surface): Promise<void> {
 async function waitForText(surface: Surface, text: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const found = await inPage(surface, `(args) => document.body.innerText.includes(args.text)`, { text }, { timeoutMs: 8_000 })
+    const found = await inPage(surface, (args) => document.body.innerText.includes(args.text), { text }, { timeoutMs: 8_000 })
       .catch(() => false);
     if (found === true) return;
     await delay(250);
@@ -35,13 +35,13 @@ export function keepExpanded(label: string, proofText: string): Step {
     const deadline = Date.now() + 60_000;
     let stableChecks = 0;
     while (Date.now() < deadline) {
-      const expanded = await inPage(surface, `(args) => {
+      const expanded = await inPage(surface, (args) => {
         if (document.body.innerText.includes(args.proofText)) return true;
         const toggle = [...document.querySelectorAll("button")]
           .find((button) => (button.textContent ?? "").includes(args.label));
         if (toggle) toggle.click();
         return document.body.innerText.includes(args.proofText);
-      }`, { label, proofText }, { timeoutMs: 8_000 }).catch(() => false);
+      }, { label, proofText }, { timeoutMs: 8_000 }).catch(() => false);
       if (expanded === true) {
         stableChecks += 1;
         if (stableChecks >= 2) return;

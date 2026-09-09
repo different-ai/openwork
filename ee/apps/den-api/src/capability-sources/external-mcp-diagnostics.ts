@@ -823,6 +823,9 @@ function safeBaseMessageFor(input: {
   if (input.phase === "AUTH_CLIENT_REGISTRATION") {
     return "OpenWork could not register or identify its OAuth client with the authorization server."
   }
+  if (input.code === "MCP_OAUTH_CLIENT_REJECTED") {
+    return "The authorization server rejected the OAuth client configured for this connection; the saved client was kept for an administrator to review."
+  }
   if (input.phase === "AUTH_TOKEN_ACQUISITION" || input.phase === "CONTINUITY_REFRESH") {
     return "The authorization server rejected the code or token refresh exchange."
   }
@@ -1065,6 +1068,16 @@ function classifyByCode(code: string): Classification | null {
       retryable: true,
       actionOwner: "organization_admin",
       operatorAction: "Renew the provider client secret or client registration, then start Connect again.",
+    }
+  }
+  if (code === "MCP_OAUTH_CLIENT_REJECTED") {
+    return {
+      phase: "AUTH_TOKEN_ACQUISITION",
+      category: "oauth_client_rejected",
+      code,
+      retryable: false,
+      actionOwner: "organization_admin",
+      operatorAction: "Compare the saved OAuth client ID, secret, and token endpoint authentication method with the provider application, then start Connect again.",
     }
   }
   if (code === "MCP_OAUTH_CREDENTIAL_EXPIRED") {

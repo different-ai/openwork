@@ -15,9 +15,8 @@ import {
   joinWorkspaceRelativePath,
   toFileUrl,
 } from "./prompt-file-parts";
-import { computerMentionInstruction } from "../surface/composer/computer-mentions";
-import { appMentionInstruction } from "../surface/composer/app-mentions";
-import { connectSkillPrompt, parseConnectSkillToken } from "../surface/composer/connect-skill-token";
+import { mentionPromptParts } from "./mention-parts";
+import { parseConnectSkillToken } from "../surface/composer/connect-skill-token";
 import { decodeComposerMentionValue } from "../surface/composer/mention-encoding";
 
 // All workspace-scoped server URLs/clients/tokens come from
@@ -96,12 +95,12 @@ export async function draftToParts(
       }
       const connectSkill = parseConnectSkillToken(segment);
       if (connectSkill) {
-        parts.push({ type: "text", text: connectSkillPrompt(connectSkill) });
+        parts.push(...mentionPromptParts({ type: "connect-skill", ...connectSkill }));
         continue;
       }
       const skillMatch = segment.match(/^\[skill (.+)\]$/);
       if (skillMatch?.[1]) {
-        parts.push({ type: "text", text: `Load [skill ${skillMatch[1]}] and follow its instructions.` });
+        parts.push(...mentionPromptParts({ type: "skill", name: skillMatch[1] }));
         continue;
       }
       if (segment.startsWith("@")) {
@@ -117,13 +116,8 @@ export async function draftToParts(
           parts.push({ type: "agent", name: mentionPart.name });
           continue;
         }
-        if (mentionPart?.type === "computer") {
-          parts.push({ type: "text", text: `@${mentionPart.target}` });
-          parts.push({ type: "text", text: computerMentionInstruction(mentionPart.target), synthetic: true });
-          continue;
-        }
-        if (mentionPart?.type === "app") {
-          parts.push({ type: "text", text: appMentionInstruction(mentionPart.name) });
+        if (mentionPart?.type === "computer" || mentionPart?.type === "app") {
+          parts.push(...mentionPromptParts(mentionPart));
           continue;
         }
         if (mentionPart?.type === "file") {
@@ -161,17 +155,8 @@ export async function draftToParts(
         parts.push({ type: "agent", name: part.name });
         continue;
       }
-      if (part.type === "skill") {
-        parts.push({ type: "text", text: `Load [skill ${part.name}] and follow its instructions.` });
-        continue;
-      }
-      if (part.type === "computer") {
-        parts.push({ type: "text", text: `@${part.target}` });
-        parts.push({ type: "text", text: computerMentionInstruction(part.target), synthetic: true });
-        continue;
-      }
-      if (part.type === "app") {
-        parts.push({ type: "text", text: appMentionInstruction(part.name) });
+      if (part.type === "skill" || part.type === "connect-skill" || part.type === "computer" || part.type === "app") {
+        parts.push(...mentionPromptParts(part));
         continue;
       }
       if (part.type === "file") {

@@ -1,3 +1,4 @@
+import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import { denFetch, evalIn, go, waitFor } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
@@ -17,9 +18,7 @@ const expectedChoices = [
   "Skill",
   "Command",
   "Agent",
-  "Plugin",
-  "Organization MCP",
-  "Workspace MCP",
+  "Local MCP",
   "Connection",
 ];
 const expectedConnectorCues = [
@@ -74,18 +73,27 @@ test(title, async ({ evidence, place }) => {
     mobile: false,
   });
   await go(desktop, `/workspace/${desktop.workspaceId}/extensions`);
-  await waitFor(desktop, `[...document.querySelectorAll("button")]
-    .some((button) => (button.textContent ?? "").trim() === "Add")`, {
+  await waitFor(desktop, () => ([...document.querySelectorAll("button")]
+    .some((button) => (button.textContent ?? "").trim() === "Add")), {
     timeoutMs: 90_000,
     label: "signed-in Library Add control",
   });
+  const voiceModeVisible = await evalIn(desktop, () => (
+    [...document.querySelectorAll("button, [role=menuitem], h1, h2, h3")]
+      .some((element) => /voice mode/i.test(element.textContent ?? "")
+        || /voice mode/i.test(element.getAttribute("aria-label") ?? ""))
+  ));
+  expect(voiceModeVisible).toBe(false);
+  const libraryText = await evalIn(desktop, () => document.body.innerText);
+  expect(libraryText).not.toContain("Voice Mode");
+
   const bootstrap = await evalIn(
     desktop,
-    `window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig")
+    () => (window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig")
       .then((config) => ({
         baseUrl: config.baseUrl,
         activeOrgId: localStorage.getItem("openwork.den.activeOrgId"),
-      }))`,
+      }))),
     { awaitPromise: true },
   );
   expect(bootstrap).toMatchObject({
@@ -93,32 +101,32 @@ test(title, async ({ evidence, place }) => {
     activeOrgId: orgId,
   });
 
-  const addOpened = await evalIn(desktop, `(() => {
+  const addOpened = await evalIn(desktop, () => {
     const button = [...document.querySelectorAll("button")]
       .find((entry) => (entry.textContent ?? "").trim() === "Add");
     if (!(button instanceof HTMLButtonElement)) return false;
     button.click();
     return true;
-  })()`);
+  });
   expect(addOpened).toBe(true);
-  await waitFor(desktop, `(() => {
-    const dialog = document.querySelector('[role="dialog"]');
-    return dialog?.querySelectorAll('[data-testid="connection-logo-cues"] [data-connector-cue]').length === 5;
-  })()`, {
+  await waitFor(desktop, () => {
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    return dialog?.querySelectorAll<HTMLElement>('[data-testid="connection-logo-cues"] [data-connector-cue]').length === 5;
+  }, {
     timeoutMs: 30_000,
     label: "unified Library picker with representative connector logos",
   });
 
-  const picker = await evalIn(desktop, `(() => {
-    const dialog = document.querySelector('[role="dialog"]');
+  const picker = await evalIn(desktop, () => {
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
     const dialogRect = dialog?.getBoundingClientRect();
     const continueButton = dialog
       ? [...dialog.querySelectorAll('button')]
           .find((button) => (button.textContent ?? '').trim() === 'Continue')
       : null;
     const continueRect = continueButton?.getBoundingClientRect();
-    const cueStrip = dialog?.querySelector('[data-testid="connection-logo-cues"]');
-    const cueTiles = dialog ? [...dialog.querySelectorAll('[data-connector-cue]')] : [];
+    const cueStrip = dialog?.querySelector<HTMLElement>('[data-testid="connection-logo-cues"]');
+    const cueTiles = dialog ? [...dialog.querySelectorAll<HTMLElement>('[data-connector-cue]')] : [];
     const lightTileBackgrounds = cueTiles.map((tile) => getComputedStyle(tile).backgroundColor);
     const previousTheme = document.documentElement.dataset.theme;
     document.documentElement.dataset.theme = 'dark';
@@ -130,16 +138,16 @@ test(title, async ({ evidence, place }) => {
     }
     return {
       choices: dialog
-        ? [...dialog.querySelectorAll('[data-kind-title]')]
+        ? [...dialog.querySelectorAll<HTMLElement>('[data-kind-title]')]
             .map((item) => (item.textContent ?? '').trim())
         : [],
-      radioGroups: dialog?.querySelectorAll('[role="radiogroup"]').length ?? 0,
+      radioGroups: dialog?.querySelectorAll<HTMLElement>('[role="radiogroup"]').length ?? 0,
       oldMakeSection: dialog?.textContent?.includes('WHAT ARE YOU MAKING') ?? false,
       oldConnectSection: dialog?.textContent?.includes('OR CONNECT SOMETHING') ?? false,
       opensDenCopy: dialog?.textContent?.includes('manage setup for this organization in OpenWork Den') ?? false,
       cues: cueTiles.map((item) => item.getAttribute('title')),
       logoLabels: dialog
-        ? [...dialog.querySelectorAll('[data-connector-cue] img, [data-connector-cue] [aria-label]')]
+        ? [...dialog.querySelectorAll<HTMLElement>('[data-connector-cue] img, [data-connector-cue] [aria-label]')]
             .map((item) => item.getAttribute('alt') || item.getAttribute('aria-label'))
         : [],
       cueStripWraps: cueStrip?.classList.contains('flex-wrap') ?? false,
@@ -161,7 +169,7 @@ test(title, async ({ evidence, place }) => {
       ),
       horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
     };
-  })()`);
+  });
   expect(picker).toMatchObject({
     choices: expectedChoices,
     radioGroups: 1,
@@ -181,7 +189,7 @@ test(title, async ({ evidence, place }) => {
   expect(picker.lightTileBackgrounds).toEqual(expectedConnectorCues.map(() => "rgb(255, 255, 255)"));
   expect(picker.darkTileBackgrounds).toEqual(expectedConnectorCues.map(() => "rgb(255, 255, 255)"));
   evidence.recordAssertionEvidence(
-    "Add to your Library is one responsive seven-choice surface with recognizable hosted-service cues",
+    "Add to your Library is one responsive five-choice surface with recognizable hosted-service cues",
     `At 820×760 the picker rendered ${JSON.stringify(picker)}.`,
     JSON.stringify(picker.choices) === JSON.stringify(expectedChoices)
       && picker.radioGroups === 1
@@ -193,22 +201,22 @@ test(title, async ({ evidence, place }) => {
       && picker.horizontalOverflow === false,
   );
 
-  await waitFor(desktop, `(() => {
-    const cues = [...document.querySelectorAll('[data-connector-cue]')];
+  await waitFor(desktop, () => {
+    const cues = [...document.querySelectorAll<HTMLElement>('[data-connector-cue]')];
     return cues.length === 5 && cues.every((cue) => {
       const image = cue.querySelector('img');
       return image instanceof HTMLImageElement
         && image.complete
         && image.naturalWidth > 0;
     });
-  })()`, {
+  }, {
     timeoutMs: 30_000,
     label: "all five recognizable connector logos loaded",
   });
   {
     const shot = await screenshot(desktop);
     const seen = await validate(shot, [
-      "The Add to your Library dialog presents Skill, Command, Agent, Plugin, Organization MCP, Workspace MCP, and Connection as one continuous selection surface",
+      "The Add to your Library dialog presents Skill, Command, Agent, Local MCP, and Connection as one continuous selection surface",
       "The Connection choice visibly includes a compact row of recognizable service marks for Notion, Slack, Google Workspace, Microsoft 365, and Linear",
       "The dialog has no separate WHAT ARE YOU MAKING or OR CONNECT SOMETHING sections",
       "The dialog, descriptions, connector marks, Cancel button, and Continue button fit within the desktop viewport without clipping",
@@ -216,35 +224,35 @@ test(title, async ({ evidence, place }) => {
     expect(seen.ok, seen.why).toBe(true);
   }
 
-  const connectionSelected = await evalIn(desktop, `(() => {
-    const connection = document.querySelector('[role="radio"][data-kind="connection"]');
+  const connectionSelected = await evalIn(desktop, () => {
+    const connection = document.querySelector<HTMLElement>('[role="radio"][data-kind="connection"]');
     if (!(connection instanceof HTMLElement)) return false;
     connection.click();
     return true;
-  })()`);
+  });
   expect(connectionSelected).toBe(true);
-  await waitFor(desktop, `document.querySelector('[role="radio"][data-kind="connection"]')
-    ?.getAttribute('aria-checked') === 'true'`, {
+  await waitFor(desktop, () => (document.querySelector<HTMLElement>('[role="radio"][data-kind="connection"]')
+    ?.getAttribute('aria-checked') === 'true'), {
     timeoutMs: 10_000,
     label: "Connection selected in the unified picker",
   });
-  const previousTheme = await evalIn(desktop, `document.documentElement.dataset.theme ?? ''`);
-  await evalIn(desktop, `document.documentElement.dataset.theme = 'dark'`);
+  const previousTheme = await evalIn(desktop, () => (document.documentElement.dataset.theme ?? ''));
+  await evalIn(desktop, () => (document.documentElement.dataset.theme = 'dark'));
   try {
-    await waitFor(desktop, `document.documentElement.dataset.theme === 'dark'`, {
+    await waitFor(desktop, () => (document.documentElement.dataset.theme === 'dark'), {
       timeoutMs: 10_000,
       label: "dark theme applied through the app theme attribute",
     });
-    await evalIn(desktop, `(() => {
-      for (const toast of document.querySelectorAll('[data-sonner-toast]')) {
-        const closeButton = toast.querySelector(
+    await evalIn(desktop, () => {
+      for (const toast of document.querySelectorAll<HTMLElement>('[data-sonner-toast]')) {
+        const closeButton = toast.querySelector<HTMLElement>(
           '[data-close-button], button[aria-label*="close" i]',
         );
         if (closeButton instanceof HTMLButtonElement) closeButton.click();
       }
       return true;
-    })()`);
-    await waitFor(desktop, `document.querySelectorAll('[data-sonner-toast]').length === 0`, {
+    });
+    await waitFor(desktop, () => (document.querySelectorAll<HTMLElement>('[data-sonner-toast]').length === 0), {
       timeoutMs: 10_000,
       label: "unrelated test-world notifications dismissed before dark-theme evidence",
     });
@@ -253,47 +261,48 @@ test(title, async ({ evidence, place }) => {
       "The Add to your Library dialog is visibly rendered in a dark theme",
       "Connection is the selected choice and remains in the same continuous list as the OpenWork creation and MCP choices",
       "The Connection choice visibly includes recognizable marks for Notion, Slack, Google Workspace, Microsoft 365, and Linear",
-      "The dark-theme dialog, all seven choices, descriptions, connector marks, Cancel button, and Continue button fit within the desktop viewport without clipping",
+      "The dark-theme dialog, all five choices, descriptions, connector marks, Cancel button, and Continue button fit within the desktop viewport without clipping",
     ]);
     expect(seen.ok, seen.why).toBe(true);
   } finally {
     await evalIn(
       desktop,
-      previousTheme
-        ? `document.documentElement.dataset.theme = ${JSON.stringify(previousTheme)}`
-        : `delete document.documentElement.dataset.theme`,
+      browserScript((theme) => {
+        if (theme) document.documentElement.dataset.theme = theme;
+        else delete document.documentElement.dataset.theme;
+      }, [previousTheme]),
     );
   }
-  const connectionContinued = await evalIn(desktop, `(() => {
-    const continueButton = [...document.querySelectorAll('[role="dialog"] button')]
+  const connectionContinued = await evalIn(desktop, () => {
+    const continueButton = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')]
       .find((button) => (button.textContent ?? '').trim() === 'Continue');
     if (!(continueButton instanceof HTMLButtonElement) || continueButton.disabled) return false;
     continueButton.click();
     return true;
-  })()`);
+  });
   expect(connectionContinued).toBe(true);
-  await waitFor(desktop, `!document.querySelector('[role="dialog"]')
+  await waitFor(desktop, () => (!document.querySelector<HTMLElement>('[role="dialog"]')
     && decodeURIComponent(location.hash).endsWith('/extensions')
     && [...document.querySelectorAll('button')]
-      .some((button) => (button.textContent ?? '').trim() === 'Add')`, {
+      .some((button) => (button.textContent ?? '').trim() === 'Add')), {
     timeoutMs: 20_000,
     label: "Connection handoff closes cleanly without entering a native creation flow",
   });
 
-  const reopenedCleanly = await evalIn(desktop, `(() => {
+  const reopenedCleanly = await evalIn(desktop, () => {
     const addButton = [...document.querySelectorAll('button')]
       .find((button) => (button.textContent ?? '').trim() === 'Add');
     if (!(addButton instanceof HTMLButtonElement)) return false;
     addButton.click();
     return true;
-  })()`);
+  });
   expect(reopenedCleanly).toBe(true);
-  await waitFor(desktop, `document.querySelectorAll('[role="dialog"]').length === 1
-    && document.querySelectorAll('[data-testid="library-add-choices"]').length === 1`, {
+  await waitFor(desktop, () => (document.querySelectorAll<HTMLElement>('[role="dialog"]').length === 1
+    && document.querySelectorAll<HTMLElement>('[data-testid="library-add-choices"]').length === 1), {
     timeoutMs: 20_000,
     label: "clean Library picker state after returning from Den handoff",
   });
-  const modalCount = await evalIn(desktop, `document.querySelectorAll('[role="dialog"]').length`);
+  const modalCount = await evalIn(desktop, () => (document.querySelectorAll<HTMLElement>('[role="dialog"]').length));
   expect(modalCount).toBe(1);
   evidence.recordAssertionEvidence(
     "Connection keeps organization context and returns without duplicate modal state",

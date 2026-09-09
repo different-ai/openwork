@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { locate, mapKey, parseTarget, waitForLocated } from "../src/input.ts";
+import { runInNewContext } from "node:vm";
+import { assertAbsent, locate, TargetNotFoundError, mapKey, parseTarget, readDom, waitForLocated } from "../src/input.ts";
 import type { Surface } from "../src/surface.ts";
 
 function surfaceReturning(value: unknown): Surface {
@@ -87,4 +88,55 @@ test("waitForLocated identifies the element covering a visible target", async ()
     waitForLocated(surface, "Run task", { mustHitTest: true, timeoutMs: 10 }),
     /visible=true, hitTestOk=false\. Covered by div role="dialog" text="Blocking overlay"/,
   );
+});
+
+
+test("only a successful browser inspection can report a missing target", async () => {
+  await assert.rejects(locate(surfaceReturning({ notFound: true }), "Missing"), TargetNotFoundError);
+  await assert.rejects(locate(surfaceReturning(null), "Missing"), error =>
+    error instanceof Error && !(error instanceof TargetNotFoundError));
+  const disconnected = surfaceReturning(null);
+  disconnected.client.send = async () => { throw new Error("CDP disconnected"); };
+  await assert.rejects(locate(disconnected, "Missing"), /CDP disconnected/);
+});
+
+
+test("absence never turns disconnection or malformed browser results into a pass", async () => {
+  await assertAbsent(surfaceReturning({ notFound: true }), "Missing", 10);
+  await assert.rejects(assertAbsent(surfaceReturning(null), "Missing", 10), /Could not locate/);
+  await assert.rejects(assertAbsent(surfaceReturning({ center: {}, rect: {} }), "Missing", 10), /invalid located-element geometry/);
+  const disconnected = surfaceReturning(null);
+  disconnected.client.send = async () => { throw new Error("CDP disconnected"); };
+  await assert.rejects(assertAbsent(disconnected, "Missing", 10), /CDP disconnected/);
+  await assert.rejects(assertAbsent(surfaceReturning(null), "Missing", 0), /positive duration/);
+});
+
+test("absence distinguishes a hidden target from a visible target", async () => {
+  const target = { center: { x: 1, y: 1 }, rect: { x: 0, y: 0, width: 2, height: 2 }, tag: "div", name: "Error", visible: false, hitTestOk: false, editable: false, value: "", text: "Error", covering: null };
+  await assertAbsent(surfaceReturning(target), "Error", 10);
+  await assert.rejects(assertAbsent(surfaceReturning({ ...target, visible: true }), "Error", 10), /remained visible/);
+});
+
+test("DOM inspection projects geometry and focus without exposing input values", async () => {
+  const input = { tagName: "INPUT", textContent: "", value: "private-password", getBoundingClientRect: () => ({ left: 1, right: 101, top: 2, bottom: 22, width: 100, height: 20 }) };
+  const surface = surfaceReturning(null);
+  surface.client.send = async (method, params) => {
+    if (method === "Runtime.evaluate") return { result: { objectId: "global" } };
+    assert.equal(method, "Runtime.callFunctionOn");
+    assert.ok(params && typeof params.functionDeclaration === "string");
+    assert.deepEqual(params.arguments, [{ value: "input" }]);
+    const value = runInNewContext(`(${params.functionDeclaration})("input")`, {
+      document: { documentElement: { clientWidth: 390, scrollWidth: 400 }, activeElement: input,
+        querySelectorAll(selector: string) { assert.equal(selector, "input"); return [input]; } },
+    });
+    return { result: { value } };
+  };
+  const result = await readDom(surface, "input");
+  assert.equal(result.elements[0]?.focused, true);
+  assert.equal(result.elements[0]?.rect.width, 100);
+  assert.equal(result.documentWidth > result.viewportWidth, true);
+  assert.equal(JSON.stringify(result).includes("private-password"), false);
+  assert.equal(input.value, "private-password");
+  await assert.rejects(readDom(surfaceReturning(null), "input"), /invalid snapshot/);
+  await assert.rejects(readDom(surfaceReturning({ viewportWidth: 390, documentWidth: 390, elements: [{}] }), "input"), /invalid snapshot/);
 });

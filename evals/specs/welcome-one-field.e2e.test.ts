@@ -5,13 +5,25 @@ import { bareFirstRunWorld } from "../worlds/first-run.ts";
 const test = spec.world(bareFirstRunWorld);
 const inviteUrl = "http://localhost:59991/join-org?invite=inv_demo123";
 
-test("the welcome join field takes a server URL or web invite and points the app at that organization", async ({ world, user, probe, step }) => {
-  // TODO(primitive): read the persisted desktop bootstrap configuration.
-  const readBootstrapBaseUrl = () => probe.eval(
-    `window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig").then((config) => config.baseUrl)`,
-    { awaitPromise: true },
+test("desktop opens directly while the non-desktop welcome join field accepts a server URL or web invite", async ({ world, user: desktopUser, probe, step }) => {
+  await step("Desktop starts without welcome or setup gates", async () => {
+    await desktopUser.see("composer", { editable: true, text: "" });
+    await desktopUser.see("Run task");
+    expect(await probe.hash()).toMatch(/^#\/workspace\/[^/]+\/session$/);
+    await desktopUser.notSee({ text: "Welcome to OpenWork" });
+    await desktopUser.notSee("Use Without Cloud");
+    await desktopUser.notSee({ text: "Power your first task" });
+    await desktopUser.notSee({ text: "How did you hear about OpenWork?" });
+    await desktopUser.click({ testId: "account-status-menu" });
+    await desktopUser.see("Sign in to OpenWork Cloud");
+    await desktopUser.press("Escape");
+  });
+
+  const user = desktopUser.on(world.web);
+  const readBootstrapBaseUrl = () => probe.on(world.web).eval(
+    () => localStorage.getItem("openwork.den.baseUrl"),
   );
-  await step("Welcome offers three doors", async () => {
+  await step("Non-desktop welcome keeps its optional entry paths", async () => {
     await user.see({ text: "Welcome to OpenWork" });
     await user.see("Sign in to OpenWork Cloud");
     await user.see("Use Without Cloud");
@@ -45,10 +57,17 @@ test("the welcome join field takes a server URL or web invite and points the app
     await user.click("Connect");
     await user.see({ text: /Trust this organization server\?/ }, { timeoutMs: 20_000 });
     expect(await readBootstrapBaseUrl()).toBe("https://openwork.acme.test");
+    expect(await world.openedUrls()).not.toContain(inviteUrl);
     await user.click("Trust and open invite");
     await user.see({ text: /Your invite opened in the browser/ }, { timeoutMs: 20_000 });
     expect(await readBootstrapBaseUrl()).toBe("http://localhost:59991");
-    if (world.capture) expect(await world.capture.waitForUrl((url) => url === inviteUrl, { timeoutMs: 20_000 })).toBe(inviteUrl);
+    await probe.eventually(() => world.openedUrls(), {
+      within: 20_000,
+      label: "confirmed invite opens a browser tab",
+      until: (urls) => urls.includes(inviteUrl),
+    });
     await user.looks(["The dialog says the invite opened in the browser and to finish joining there"]);
+    expect(await probe.hash()).toMatch(/^#\/workspace\/[^/]+\/session$/);
+    expect(await probe.storage("openwork.den.baseUrl")).not.toBe("http://localhost:59991");
   });
 });

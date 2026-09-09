@@ -147,3 +147,17 @@ describe("streaming markdown blocks", () => {
     expect(second).not.toBe(first);
   });
 });
+
+
+test("video references render native players without autoplay or unsafe sources", () => {
+  for (const markdown of ["[Video](clip.mp4)", "![Video](clip.webm)", "`clip.mp4`", "[Video](https://example.com/clip.MP4?download=1)"]) {
+    const html = renderMarkdownHtml(markdown);
+    expect(html).toContain("<video");
+    expect(html).toContain("controls playsinline");
+    expect(html).not.toContain("autoplay");
+    expect(html).not.toContain("data-openwork-image-preview");
+    expect(joined(streamThrough(markdown, 3).frames.at(-1)!)).toBe(html);
+  }
+  expect(renderMarkdownHtml("[Bad](javascript:evil.mp4)")).not.toContain("<video");
+  expect(renderMarkdownHtml("[Document](notes.md)")).not.toContain("<video");
+});

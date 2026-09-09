@@ -443,7 +443,7 @@ function ConnectionAppRow({
           {app.requiredInputKeys.length > 0 ? (
             <span className="mb-1 block text-[11.5px] text-gray-500" data-testid="required-input-keys">
               Required {app.requiredInputKeys.length === 1 ? "key" : "keys"}: {app.requiredInputKeys.map((key) => (
-                <code key={key} className="mr-1 rounded bg-gray-100 px-1 font-mono text-[11px] text-gray-800">{key}</code>
+                <code key={key} className="mr-1 rounded-sm bg-gray-100 px-1 font-mono text-[11px] text-gray-800">{key}</code>
               ))}
             </span>
           ) : null}
@@ -454,7 +454,7 @@ function ConnectionAppRow({
               ? `{ ${app.requiredInputKeys.map((key) => `"${key}": "…"`).join(", ")} }`
               : '{ "example": "value" }'}
             rows={2}
-            className="w-full resize-none rounded-xl border border-gray-200 px-3 py-2 font-mono text-[12px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
+            className="w-full resize-none rounded-xl border border-gray-200 px-3 py-2 font-mono text-[12px] text-gray-900 outline-hidden transition placeholder:text-gray-300 focus:border-gray-400"
           />
         </label>
       ) : null}

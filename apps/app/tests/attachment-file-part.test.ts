@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { attachmentNoteToUIParts } from "../src/react-app/domains/session/sync/usechat-adapter";
 import type { ComposerAttachment } from "../src/app/types";
 import {
   buildChatAttachmentInboxPath,
@@ -502,4 +503,28 @@ describe("composer attachment file parts", () => {
       createId: () => "nonce-a",
     })).rejects.toThrow("Failed to copy attachment \"scan.pdf\" into this worker workspace: upload was rejected");
   });
+});
+
+test("video upload preserves a display card without a model-facing binary part", async () => {
+  const { endpoint } = uploadRecorder("workspace-a");
+  const parts = await composerAttachmentsToWorkspaceFileParts({
+    attachments: [attachmentFor(new File([new Uint8Array([0, 1, 2, 3])], "recording.MOV"))],
+    endpoint,
+    sessionId: "ses_video",
+    workspaceRoot: "/workspace",
+    createId: () => "video",
+  });
+  if (!parts) throw new Error("Expected uploaded attachment");
+  expect(parts.files).toEqual([null]);
+  const note = { ...parts.note, id: "note", sessionID: "ses_video", messageID: "msg_video" };
+  expect(attachmentNoteToUIParts(note)).toEqual([{
+    type: "file",
+    filename: "recording.MOV",
+    mediaType: "video/quicktime",
+    url: "file:///workspace/.opencode/openwork/inbox/chat-attachments/ses_video/video-recording.MOV",
+    providerMetadata: { opencode: { partId: "note:attachment:0" } },
+  }]);
+  expect(attachmentNoteToUIParts({ ...note, ignored: true })).toEqual([]);
+  expect(attachmentNoteToUIParts({ ...note, synthetic: false })).toEqual([]);
+  expect(attachmentNoteToUIParts({ ...note, metadata: { openworkAttachments: [{ url: "javascript:alert(1)" }] } })).toEqual([]);
 });

@@ -26,12 +26,15 @@ import { registerUpdaterIpc } from "./updater.mjs";
 import {
   checkComputerUsePermissions,
   getComputerUseMcpCommand,
+  getComputerUseState,
+  computerUseAction,
   listRunningApps,
   openComputerUseSetupApp,
 } from "./computer-use.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
+import { createBrowserLoginSync } from "./browser-login-sync.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import {
@@ -163,11 +166,22 @@ const applicationMenu = createApplicationMenu({
   getWindow: () => createMainWindow(),
 });
 
+let browserPanel = null;
+
 const uiControlServer = createUiControlServer({
   app,
   appName: APP_NAME,
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
+  browserTask: (args, options) => browserPanel?.browserTask(args, options) ?? { ok: false, code: "browser_unavailable" },
+  listWebMcpTools: (args, options) => browserPanel?.listWebMcpTools(args, options) ?? {
+    ok: false,
+    error: "The built-in browser is not ready.",
+  },
+  executeWebMcpTool: (args, options) => browserPanel?.executeWebMcpTool(args, options) ?? {
+    ok: false,
+    error: "The built-in browser is not ready.",
+  },
 });
 
 const terminalProcesses = new Map();
@@ -1058,10 +1072,21 @@ const IDLE_ROUTER_INFO = Object.freeze({
 let mainWindow = null;
 const pendingDeepLinks = [];
 
-const browserPanel = createBrowserPanel({
+browserPanel = createBrowserPanel({
   remoteDebugPort,
   getWindow: () => mainWindow,
   onDeepLink: (urls) => queueDeepLinks(urls),
+  checkPolicy: async (input) => {
+    const server = await runtimeManager.openworkServerInfo();
+    if (!server.baseUrl || !(server.clientToken ?? server.ownerToken)) throw new Error("OpenWork policy service is unavailable.");
+    // loopback-fetch: the policy service is the locally managed OpenWork server.
+    const response = await fetch(`${server.baseUrl}/managed-policy/evaluate`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: input.external ? "browser_external" : "browser", input }), signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error("Your organization's policy blocked this browser request.");
+  },
 });
 
 const workspaceStore = createWorkspaceStore({
@@ -1881,11 +1906,16 @@ const desktopCommandHandlers = {
       }
       return ["npx", "-y", "openwork-ui-mcp"];
   },
+  "getComputerUseState": async () => getComputerUseState(),
+  "computerUseAction": async (event, value) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("Computer Use controls require the main OpenWork window.");
+    return computerUseAction(value);
+  },
   "getComputerUseMcpCommand": async (event, ...args) => {
       return getComputerUseMcpCommand();
   },
   "checkComputerUsePermissions": async (event, ...args) => {
-      // Spawn --check → fresh TCC read → always accurate.
+      // Read permissions in the same child-process context as setup.
       return checkComputerUsePermissions();
   },
   "listRunningApps": async (event, ...args) => {
@@ -2558,14 +2588,15 @@ async function createMainWindow() {
       return { action: "deny" };
     }
 
-    const local =
-      url.startsWith("http://127.0.0.1") ||
-      url.startsWith("http://localhost");
-    if (!local) {
+    if (/^https?:\/\//i.test(url)) {
+      // Transcript links and local previews belong in the thread's browser,
+      // never an unmanaged BrowserWindow. Explicit external/auth actions use
+      // the shell bridge and do not pass through this popup handler.
+      browserPanel.routeBlockedMainWindowNavigation(url);
+    } else {
       runDetachedTask("open external URL", () => openExternalUrl(url));
-      return { action: "deny" };
     }
-    return { action: "allow" };
+    return { action: "deny" };
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
@@ -2685,6 +2716,40 @@ ipcMain.handle("openwork:terminal:kill", (event, terminalId) => {
 });
 
 browserPanel.registerIpc(ipcMain);
+const browserLoginEvalSeam = !app.isPackaged && process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC === "1";
+const browserLoginSync = createBrowserLoginSync({
+  statePath: path.join(app.getPath("userData"), "browser-login-sync.json"),
+  initialPolicyAllowed:
+    DESKTOP_DISTRIBUTION.flavor === "public"
+    && initialRunnerBootstrap.requireSignin !== true,
+  confirmUserAction: browserLoginEvalSeam
+    ? async () => true
+    : async ({ action, source, sites = [] }) => {
+      const sourceLabel = source ? `${source.label} · ${source.profile}` : "Supported browser profiles on this computer";
+      /** @type {import("electron").MessageBoxOptions} */
+      const options = {
+        type: "warning",
+        buttons: [action === "resume" ? "Resume sync" : action === "configure" ? "Enable sync" : action === "discover" ? "Look for browsers" : "Read sites", "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+        title: action === "resume" ? "Resume browser login sync?" : action === "configure" ? "Enable browser login sync?" : action === "discover" ? "Look for browser profiles?" : "Read logins from this browser?",
+        message: sourceLabel,
+        detail: action === "resume"
+          ? "OpenWork will resume reading the sites you selected from this profile. It never changes the source browser."
+          : action === "configure"
+            ? `OpenWork will keep reading login cookies for these sites until you pause or disconnect: ${sites.join(", ")}. It never changes the source browser.`
+            : action === "discover"
+              ? "OpenWork will look only for supported browser profile locations. It will not read cookie databases until you choose a profile and confirm again."
+              : "OpenWork will read login metadata from this profile so you can choose sites. Nothing syncs until you confirm those sites, and the source browser is never changed.",
+        noLink: true,
+      };
+      const result = mainWindow
+        ? await dialog.showMessageBox(mainWindow, options)
+        : await dialog.showMessageBox(options);
+      return result.response === 0;
+    },
+});
+browserLoginSync.registerIpc(ipcMain, { evalSeam: browserLoginEvalSeam });
 
 registerMigrationIpc({ app, ipcMain });
 const { ensureAutoUpdater } = registerUpdaterIpc({
@@ -2723,6 +2788,7 @@ or use: pnpm dev:worktree`);
     if (runtimeDisposeInProgress) return;
     showShutdownScreen();
     desktopAutomationRunner.stop();
+    browserLoginSync.shutdown();
     runDetachedTask("stop services before quit", async () => {
       try {
         await Promise.all([
@@ -2798,6 +2864,14 @@ or use: pnpm dev:worktree`);
     // Electron see the same workspace list. Import the short-lived
     // Electron-only filename only when the shared file is missing.
     await workspaceStore.migrateLegacyElectronWorkspaceStateIfNeeded();
+    // Public first launch uses the same folder as the chat-first composer.
+    // Provision it before the renderer and runtime read the workspace list.
+    const firstLaunchWorkspaceFailure = DESKTOP_DISTRIBUTION.flavor === "public" && !bootstrapConfig.fromFile && !bootstrapConfig.requireSignin
+      ? await workspaceStore.bootstrapFirstLaunchWorkspace()
+      : null;
+    if (firstLaunchWorkspaceFailure) {
+      console.warn("[workspace] default folder unavailable; continuing without a workspace", firstLaunchWorkspaceFailure);
+    }
     // The UI-control bridge evaluates arbitrary JavaScript in the renderer, so
     // it stays down until the installation is activated. Otherwise it is a
     // local bypass of the pre-activation restriction.
@@ -2815,6 +2889,14 @@ or use: pnpm dev:worktree`);
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const win = await createMainWindow();
+    if (firstLaunchWorkspaceFailure) {
+      runDetachedTask("show default workspace warning", () => dialog.showMessageBox(win, {
+        type: "warning",
+        message: "OpenWork could not prepare its default folder",
+        detail: `OpenWork is open without a workspace. Use Add workspace in the sidebar to choose another folder.\n\n${firstLaunchWorkspaceFailure.error}`,
+        buttons: ["Continue"],
+      }));
+    }
     if (process.platform === "linux" && !BLANK_SLATE_LAUNCH.enabled) {
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
     }

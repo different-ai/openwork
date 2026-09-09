@@ -16,9 +16,11 @@ import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
-import { createClient, unwrap } from "@/app/lib/opencode";
+import { createClient, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
+import { createClientV2, isOpencodeV2BaseUrl, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe, forkSession, listCommands, revertSession, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
-import { deleteNativeSession, getNativeSessionMessages } from "@/app/lib/opencode-session-native";
+import { getNativeSessionMessages } from "@/app/lib/opencode-session-native";
+import { sendSessionCommand, sessionWorkHeld } from "@/app/lib/opencode-interruption";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
 import {
@@ -77,6 +79,8 @@ import {
   describeTaskCreateFailure,
   describeTaskCreateRetry,
   describeWorkspaceCreateError,
+  createRouteSession,
+  deleteRouteSession,
   downloadWorkspaceJson,
   folderNameFromPath,
   getSessionStatus,
@@ -105,7 +109,10 @@ import { DashboardPage } from "@/react-app/domains/dashboard/dashboard-page";
 import { useDashboardDeploymentAvailability } from "@/react-app/domains/dashboard/dashboard-availability";
 import { useAutomationDeploymentEnabled } from "@/react-app/domains/automations/automation-availability";
 import { automationsStateChangedEvent } from "@/react-app/domains/automations/automation-events";
-import type { NewTaskComposerContext } from "@/react-app/domains/session/chat/new-task-composer";
+import type {
+  NewTaskComposerContext,
+  NewTaskComposerHandoff,
+} from "@/react-app/domains/session/chat/new-task-composer";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
@@ -132,8 +139,12 @@ import {
   useModelCollectionsStore,
 } from "@/react-app/domains/session/models/model-collections-store";
 import { openModelPickerEvent, openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
-import { markComposerAutoSend } from "@/react-app/domains/session/surface/composer-auto-send";
+import {
+  composerAutoSendScopeKey,
+  markComposerAutoSend,
+} from "@/react-app/domains/session/surface/composer-auto-send";
 import { sendWithRevertRollback } from "@/react-app/domains/session/surface/safe-edit-resend";
+import { assertQueuedSendCurrent, getQueuedSendGeneration } from "@/react-app/domains/session/surface/queued-drain-machine";
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
 import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types";
@@ -203,6 +214,8 @@ import {
 } from "@/react-app/domains/session/sync/draft-store";
 import {
   claimComposerSessionDraftScope,
+  persistableComposerDraftText,
+  snapshotComposerSessionState,
   useComposerStateStore,
 } from "@/react-app/domains/session/surface/composer-state-store";
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
@@ -236,7 +249,6 @@ import {
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
 import { useSessionArchive } from "@/react-app/domains/session/sidebar/use-session-archive";
-import { sendTrackedSessionCommand, sessionSendIsCurrent } from "@/react-app/domains/session/surface/session-work-guard";
 import { openComposerConfigure, isLibraryAgent, type ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import {
   globalExtensionsRoute,
@@ -350,6 +362,14 @@ function singlePickedDirectory(selection: string | string[] | null) {
     : Array.isArray(selection)
       ? selection[0] ?? null
       : null;
+}
+
+function focusedWorkbenchPaneOwner() {
+  const workbench = useWorkbenchStore.getState();
+  const focused = workbench.focusedPane === "secondary" ? workbench.secondary : workbench.primary;
+  return focused
+    ? JSON.stringify([workbench.focusedPane, focused.workspaceId, focused.sessionId])
+    : null;
 }
 
 export function SessionRoute() {
@@ -494,6 +514,30 @@ export function SessionRoute() {
     onServerSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
     onHostInfo: setOpenworkServerHostInfoState,
   });
+  const routeNavigationRef = useRef({ locationKey: location.key, generation: 0 });
+  if (routeNavigationRef.current.locationKey !== location.key) {
+    routeNavigationRef.current = {
+      locationKey: location.key,
+      generation: routeNavigationRef.current.generation + 1,
+    };
+  }
+  const selectedConversationRef = useRef({
+    workspaceId: selectedWorkspaceId,
+    sessionId: selectedSessionId,
+    draftScope: sessionDraftScope,
+    location: `${location.pathname}${location.search}`,
+    locationKey: location.key,
+    navigationGeneration: routeNavigationRef.current.generation,
+  });
+  selectedConversationRef.current = {
+    workspaceId: selectedWorkspaceId,
+    sessionId: selectedSessionId,
+    draftScope: sessionDraftScope,
+    location: `${location.pathname}${location.search}`,
+    locationKey: location.key,
+    navigationGeneration: routeNavigationRef.current.generation,
+  };
+  const archiveDisabledReason = isOpencodeV2BaseUrl(opencodeBaseUrl) ? V2_SESSION_ARCHIVE_UNAVAILABLE : undefined;
   // The dashboard is user-scoped while MCP servers are workspace-scoped: the
   // selected workspace's runtime is primary, and every other available one is
   // a per-tile fallback so tiles keep working when the selected workspace does
@@ -623,7 +667,7 @@ export function SessionRoute() {
         }),
     [sessionsByWorkspaceId],
   );
-  const selectedPermissionSessionIds = useMemo(() => {
+  const selectedInteractionSessionIds = useMemo(() => {
     const selected = selectedSessionId?.trim();
     if (!selected) return [];
     const sessions = sessionsByWorkspaceId[selectedWorkspaceId] ?? [];
@@ -631,14 +675,14 @@ export function SessionRoute() {
   }, [selectedSessionId, selectedWorkspaceId, sessionsByWorkspaceId]);
   const activeSelectedWorkspaceSessionIds = useMemo(
     () => Array.from(new Set([
-      ...selectedPermissionSessionIds,
+      ...selectedInteractionSessionIds,
       ...(sessionsByWorkspaceId[selectedWorkspaceId] ?? []).flatMap((session) => {
         if (!isActiveSessionStatus(getSessionStatus(session))) return [];
         const id = String(session?.id ?? "").trim();
         return id ? [id] : [];
       }),
     ])),
-    [selectedPermissionSessionIds, selectedWorkspaceId, sessionsByWorkspaceId],
+    [selectedInteractionSessionIds, selectedWorkspaceId, sessionsByWorkspaceId],
   );
   const remoteAccessRestart = useRemoteAccessRestart({
     isEnabled: () => openworkServerSettings.remoteAccessEnabled === true,
@@ -1088,7 +1132,7 @@ export function SessionRoute() {
     // a client-only prefix, while interaction caches use the server workspace.
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId,
     sessionId: selectedSessionId,
-    permissionSessionIds: selectedPermissionSessionIds,
+    interactionSessionIds: selectedInteractionSessionIds,
     workspaceRoot: selectedWorkspaceRoot,
   });
   const activePermissionSourceTitle = useMemo(() => {
@@ -1296,12 +1340,13 @@ export function SessionRoute() {
           openSettings: handleOpenSettings,
         });
       },
-      onSendDraft: async (draft: ComposerDraft, sessionId: string, messageID?: string): Promise<CloudMcpSubmissionResult> => {
+      onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: () => void): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
-        const isCurrent = sessionSendIsCurrent(opencodeBaseUrl, targetSessionId);
-        const checkCurrent = () => {
-          if (!isCurrent()) throw new Error("Session send cancelled by archive.");
+        const generation = getQueuedSendGeneration(targetSessionId);
+        const assertCurrent = () => {
+          assertQueuedSendCurrent(targetSessionId, generation);
+          if (sessionWorkHeld(opencodeBaseUrl, targetSessionId)) throw new Error("This conversation is being archived.");
         };
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!text && draft.attachments.length === 0) {
@@ -1323,12 +1368,13 @@ export function SessionRoute() {
           // message, including tasks that do not use connected services.
           skipGate: true,
           send: async () => {
-            checkCurrent();
+            assertCurrent();
             if (unwrap(await opencodeClient.session.get({ sessionID: targetSessionId })).time.archived) {
               throw new Error("This session is archived. Restore it before sending.");
             }
-            checkCurrent();
+            assertCurrent();
             await sendWithRevertRollback({
+              assertCurrent,
               revertMessageId: draft.revertMessageId,
               abort: () => abortSessionSafe(opencodeClient, targetSessionId, selectedWorkspaceRoot || undefined, {
                 source: "session.edit_resend.before_revert",
@@ -1340,7 +1386,7 @@ export function SessionRoute() {
                 applySessionRevert(selectedWorkspaceId, reverted);
               },
               prompt: async () => {
-                checkCurrent();
+                assertCurrent();
                 captureAnalyticsEvent("task_message_sent", {
                   mode: draft.mode ?? "prompt",
                   is_command: Boolean(draft.command),
@@ -1376,14 +1422,16 @@ export function SessionRoute() {
                 trackTaskStarted(targetSessionId, telemetryDimensions);
 
                 if (draft.mode === "shell") {
-                  await shellInSession(opencodeClient, targetSessionId, text);
+                  onPrepared?.();
+                  await shellInSession(opencodeClient, targetSessionId, text, { messageID: draft.messageId });
                   return;
                 }
 
                 if (draft.command) {
-                  const result = await sendTrackedSessionCommand(opencodeBaseUrl, opencodeClient, {
+                  onPrepared?.();
+                  const result = await sendSessionCommand(opencodeBaseUrl, opencodeClient, {
                     sessionID: targetSessionId,
-                    messageID,
+                    messageID: draft.messageId,
                     command: draft.command.name,
                     arguments: draft.command.arguments,
                   });
@@ -1394,14 +1442,17 @@ export function SessionRoute() {
                 }
 
                 const parts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
+                assertCurrent();
                 const system = await buildOpenworkSessionSystemContext(client, {
+                  workspaceId: selectedWorkspaceId,
                   cacheKey: targetSessionId,
                   runtimeKey: environmentRuntimeKey,
                 });
-                checkCurrent();
+                assertCurrent();
+                onPrepared?.();
                 const result = await opencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
-                  messageID,
+                  messageID: draft.messageId,
                   parts,
                   model: sendModel ?? undefined,
                   agent: selectedAgent ?? undefined,
@@ -1409,11 +1460,12 @@ export function SessionRoute() {
                   system,
                 });
                 if (result.error) {
+                  if (isPromptAdmissionUnknown(result.error)) throw result.error;
                   throw new Error(serializeSDKError(result.error));
                 }
                 // Remember what this conversation used last so returning to it
                 // (or splitting it beside another session) keeps its own model.
-                if (sendModel) {
+                if (sendModel && getQueuedSendGeneration(targetSessionId) === generation) {
                   useSessionModelStore.getState().setModel(targetSessionId, sendModel, sendVariant ?? null);
                 }
               },
@@ -1613,7 +1665,8 @@ export function SessionRoute() {
     }
 
     const workspaceRoot = paneEndpoint.workspaceRoot;
-    const workspaceOpencodeClient = createClient(
+    const createEngineClient = isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl) ? createClientV2 : createClient;
+    const workspaceOpencodeClient = createEngineClient(
       endpoint.opencodeBaseUrl,
       workspaceRoot || undefined,
       { token: endpoint.token, mode: "openwork" },
@@ -1654,11 +1707,12 @@ export function SessionRoute() {
       isSandboxWorkspace: isSandboxWorkspace(workspace),
       environmentRuntimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
       onApplyEnvironmentChanges: undefined,
-      onSendDraft: async (draft: ComposerDraft, sessionId: string, messageID?: string): Promise<CloudMcpSubmissionResult> => {
+      onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: () => void): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || session.sessionId;
-        const isCurrent = sessionSendIsCurrent(endpoint.opencodeBaseUrl, targetSessionId);
-        const checkCurrent = () => {
-          if (!isCurrent()) throw new Error("Session send cancelled by archive.");
+        const generation = getQueuedSendGeneration(targetSessionId);
+        const assertCurrent = () => {
+          assertQueuedSendCurrent(targetSessionId, generation);
+          if (sessionWorkHeld(endpoint.opencodeBaseUrl, targetSessionId)) throw new Error("This conversation is being archived.");
         };
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!targetSessionId || (!text && draft.attachments.length === 0)) {
@@ -1670,12 +1724,13 @@ export function SessionRoute() {
         return submitWithCloudMcpReadiness({
           skipGate: true,
           send: async () => {
-            checkCurrent();
+            assertCurrent();
             if (unwrap(await workspaceOpencodeClient.session.get({ sessionID: targetSessionId })).time.archived) {
               throw new Error("This session is archived. Restore it before sending.");
             }
-            checkCurrent();
+            assertCurrent();
             await sendWithRevertRollback({
+              assertCurrent,
               revertMessageId: draft.revertMessageId,
               abort: () => abortSessionSafe(workspaceOpencodeClient, targetSessionId, workspaceRoot || undefined, {
                 source: "session.edit_resend.before_revert",
@@ -1687,7 +1742,7 @@ export function SessionRoute() {
                 applySessionRevert(endpoint.workspaceId, reverted);
               },
               prompt: async () => {
-                checkCurrent();
+                assertCurrent();
                 captureAnalyticsEvent("task_message_sent", {
                   mode: draft.mode ?? "prompt",
                   is_command: Boolean(draft.command),
@@ -1712,13 +1767,15 @@ export function SessionRoute() {
                 trackSessionActive(targetSessionId, telemetryDimensions);
                 trackTaskStarted(targetSessionId, telemetryDimensions);
                 if (draft.mode === "shell") {
-                  await shellInSession(workspaceOpencodeClient, targetSessionId, text);
+                  onPrepared?.();
+                  await shellInSession(workspaceOpencodeClient, targetSessionId, text, { messageID: draft.messageId });
                   return;
                 }
                 if (draft.command) {
-                  const result = await sendTrackedSessionCommand(endpoint.opencodeBaseUrl, workspaceOpencodeClient, {
+                  onPrepared?.();
+                  const result = await sendSessionCommand(endpoint.opencodeBaseUrl, workspaceOpencodeClient, {
                     sessionID: targetSessionId,
-                    messageID,
+                    messageID: draft.messageId,
                     command: draft.command.name,
                     arguments: draft.command.arguments,
                   });
@@ -1726,22 +1783,28 @@ export function SessionRoute() {
                   return;
                 }
                 const parts = await draftToParts(draft, workspaceRoot, targetSessionId, endpoint);
+                assertCurrent();
                 const system = await buildOpenworkSessionSystemContext(endpoint.client, {
+                  workspaceId: workspace.id,
                   cacheKey: targetSessionId,
                   runtimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
                 });
-                checkCurrent();
+                assertCurrent();
+                onPrepared?.();
                 const result = await workspaceOpencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
-                  messageID,
+                  messageID: draft.messageId,
                   parts,
                   model: sendModel ?? undefined,
                   agent: selectedAgent ?? undefined,
                   ...(sendVariant ? { variant: sendVariant } : {}),
                   system,
                 });
-                if (result.error) throw new Error(serializeSDKError(result.error));
-                if (sendModel) {
+                if (result.error) {
+                  if (isPromptAdmissionUnknown(result.error)) throw result.error;
+                  throw new Error(serializeSDKError(result.error));
+                }
+                if (sendModel && getQueuedSendGeneration(targetSessionId) === generation) {
                   useSessionModelStore.getState().setModel(targetSessionId, sendModel, sendVariant ?? null);
                 }
               },
@@ -1864,6 +1927,11 @@ export function SessionRoute() {
     return {
       client,
       workspaceId: selectedWorkspaceId || null,
+      draftOwnerKey: JSON.stringify([
+        sessionDraftScope,
+        selectedWorkspaceEndpoint?.opencodeBaseUrl ?? null,
+        selectedWorkspaceId || null,
+      ]),
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
       modelOptions: organizationAssignedModelOptions,
       modelUnavailable: selectedModelUnavailable,
@@ -1947,8 +2015,10 @@ export function SessionRoute() {
     selectedAgent,
     selectedModelUnavailable,
     selectedWorkspace,
+    selectedWorkspaceEndpoint,
     selectedWorkspaceId,
     selectedWorkspaceRoot,
+    sessionDraftScope,
     sessionProviderAuthStore,
     setSelectedAgent,
   ]);
@@ -2099,6 +2169,8 @@ export function SessionRoute() {
     openAs: "primary" | "split",
     source: "new_task" | "new_split" = openAs === "split" ? "new_split" : "new_task",
   ): Promise<string | null> => {
+    const sideChatOwner = openAs === "split" ? useWorkbenchStore.getState().primary : null;
+    if (openAs === "split" && !sideChatOwner) return null;
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (
       !workspace ||
@@ -2111,11 +2183,6 @@ export function SessionRoute() {
     if (!endpoint || !endpoint.token) {
       return null;
     }
-    const workspaceClient = createClient(
-      endpoint.opencodeBaseUrl,
-      workspace.path?.trim() || undefined,
-      { token: endpoint.token, mode: "openwork" },
-    );
     const toastId = taskCreateUnavailableToastId(workspaceId);
     const attempts = TASK_CREATE_RETRY_DELAYS_MS.length + 1;
     try {
@@ -2125,9 +2192,7 @@ export function SessionRoute() {
       // and used to surface as a dead-end "unavailable" toast that only Cmd+R
       // seemed to fix. Retry transient failures with a visible countdown first.
       const session = await withTransientEngineRetry({
-        load: async () => unwrap(
-          await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
-        ),
+        load: () => createRouteSession(endpoint, workspace.path?.trim() || undefined),
         retryDelaysMs: TASK_CREATE_RETRY_DELAYS_MS,
         onRetry: (attempt) => {
           const notice = describeTaskCreateRetry({ developerMode, attempt, attempts });
@@ -2174,10 +2239,10 @@ export function SessionRoute() {
         };
         const workbench = useWorkbenchStore.getState();
         workbench.openTab(tab);
-        workbench.setSplit(tab);
-        workbench.focusPane("secondary");
+        if (sideChatOwner) {
+          workbench.setSideChat(sideChatOwner, tab);
+        }
       }
-      void refreshRouteState();
       return session.id;
     } catch (error) {
       const message = describeTaskCreateError(error);
@@ -2390,6 +2455,16 @@ export function SessionRoute() {
     selectedSessionId,
     navigateToWorkspaceSession,
     reloadWorkspaceSessions,
+    draftScope: sessionDraftScope,
+    onArchivedChange: (workspaceId, sessionId, archived) => {
+      setSessionsByWorkspaceId(current => {
+        const sessions = current[workspaceId];
+        if (!sessions) return current;
+        return { ...current, [workspaceId]: sessions.map(session => session.id === sessionId
+          ? { ...session, time: { ...session.time, archived: archived ? Date.now() : 0 } }
+          : session) };
+      });
+    },
   });
   const handleArchiveSession = async (sessionId: string, archived: boolean) => {
     await archiveSession(sessionId, archived);
@@ -2404,6 +2479,7 @@ export function SessionRoute() {
     canCreateTask,
     openworkClient: client,
     opencodeClient,
+    archiveDisabledReason,
     endpointForWorkspace,
     navigateToSession: navigateToSessionForControl,
     navigateToSessionRoot: navigateToSessionRootForControl,
@@ -2519,6 +2595,9 @@ export function SessionRoute() {
         if (!parent) return { ok: false, error: "The selected session is unavailable." };
 
         const childSessionId = `${selectedSessionId}:eval-child`;
+        // Match a real session.created event: a concurrent list snapshot must
+        // not remove this newly seeded child before its approval is answered.
+        rememberPendingCreatedSession(selectedWorkspaceId, childSessionId);
         const request: PendingPermission = {
           id: `${selectedSessionId}:eval-child-permission`,
           sessionID: childSessionId,
@@ -2563,7 +2642,7 @@ export function SessionRoute() {
         return { childSessionId };
       },
     };
-  }, [selectedSessionId, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceId, sessionsByWorkspaceId, setSessionsByWorkspaceId]);
+  }, [rememberPendingCreatedSession, selectedSessionId, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceId, sessionsByWorkspaceId, setSessionsByWorkspaceId]);
   useControlAction(seedChildPermissionControlAction);
 
   const commandPaletteControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -2994,7 +3073,6 @@ export function SessionRoute() {
               { token: sessionToken, mode: "openwork" },
             ).session.create({ directory: workspacePath || undefined })
               .then((result) => unwrap(result))
-              .catch(() => null)
           : null;
         setLegacySelectedWorkspaceId(targetWorkspaceId);
         writeActiveWorkspaceId(targetWorkspaceId);
@@ -3006,7 +3084,7 @@ export function SessionRoute() {
         captureAnalyticsEvent("workspace_created", { workspace_type: "local" });
         if (session?.id) {
           captureAnalyticsEvent("task_created", { source: "workspace_created", workspace_type: "local" });
-          if (firstTaskPrompt) {
+          if (firstTaskPrompt || firstTaskAttachments.length) {
             // Attachment chips only survive in-memory (File objects), so the
             // persisted fallback draft drops their tokens.
             saveSessionDraft(sessionDraftScope, targetWorkspaceId, session.id, { text: firstTaskPrompt.replace(/\[attachment [^\]]+\]/g, "").trim(), mode: "prompt" });
@@ -3039,6 +3117,7 @@ export function SessionRoute() {
       }
     } catch (error) {
       setCreateWorkspaceError(describeWorkspaceCreateError(error));
+      if (options?.firstTaskPrompt || options?.firstTaskAttachments?.length) throw error;
     } finally {
       setCreateWorkspaceBusy(false);
     }
@@ -3049,26 +3128,24 @@ export function SessionRoute() {
    * workspace under the user's home folder instead of asking where to put
    * it. Falls back to the create-workspace modal off desktop.
    */
-  const handleChatFirstTask = useCallback((prompt: string, attachments?: ComposerAttachment[]) => {
-    void (async () => {
-      if (!isDesktopRuntime()) {
-        // The cloud workspace is provisioned by Den; boot takeover covers the pre-attach state.
-        if (!canCreateWorkspaces()) return;
-        handleOpenCreateWorkspace();
-        return;
-      }
-      const home = await getDesktopHomeDir().catch(() => "");
-      if (!home) {
-        handleOpenCreateWorkspace();
-        return;
-      }
-      const folder = await joinDesktopPath(home, "OpenWork Chat").catch(() => "");
-      if (!folder) {
-        handleOpenCreateWorkspace();
-        return;
-      }
-      await handleCreateWorkspace("starter", folder, { firstTaskPrompt: prompt, firstTaskAttachments: attachments ?? [] });
-    })();
+  const handleChatFirstTask = useCallback(async (prompt: string, attachments?: ComposerAttachment[]) => {
+    if (!isDesktopRuntime()) {
+      // The cloud workspace is provisioned by Den; boot takeover covers the pre-attach state.
+      if (!canCreateWorkspaces()) throw new Error("Workspace creation is unavailable.");
+      handleOpenCreateWorkspace();
+      throw new Error("Choose a workspace before sending this message.");
+    }
+    const home = await getDesktopHomeDir().catch(() => "");
+    if (!home) {
+      handleOpenCreateWorkspace();
+      throw new Error("Choose a workspace before sending this message.");
+    }
+    const folder = await joinDesktopPath(home, "OpenWork Chat").catch(() => "");
+    if (!folder) {
+      handleOpenCreateWorkspace();
+      throw new Error("Choose a workspace before sending this message.");
+    }
+    await handleCreateWorkspace("starter", folder, { firstTaskPrompt: prompt, firstTaskAttachments: attachments ?? [] });
   }, [handleCreateWorkspace, handleOpenCreateWorkspace]);
 
   const createWorkspaceControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -3340,7 +3417,7 @@ export function SessionRoute() {
           const remembered = readLastSessionFor(workspaceId);
           if (remembered && remembered !== selectedSessionId) {
             const known = sessionsByWorkspaceId[workspaceId];
-            if (known?.some((session) => session?.id === remembered)) {
+            if (known?.some((session) => session?.id === remembered && !session.time.archived)) {
               navigateToWorkspaceSession(workspaceId, remembered);
             } else {
               navigateToWorkspaceSession(workspaceId);
@@ -3358,6 +3435,18 @@ export function SessionRoute() {
         },
         onPrefetchSession: () => {},
         onCreateTaskInWorkspace: (workspaceId, groupId) => {
+          const { focusedPane, secondary } = useWorkbenchStore.getState();
+          const hasWorkspaceError = Boolean(errorsByWorkspaceId[workspaceId]?.trim())
+            || workspaceConnectionStateById[workspaceId]?.status === "error";
+          if (!groupId && !hasWorkspaceError && !(focusedPane === "secondary" && secondary)) {
+            // The empty composer creates its session on submit. Opening it must
+            // not wait for an engine request, especially on a cold v2 runtime.
+            setLegacySelectedWorkspaceId(workspaceId);
+            writeActiveWorkspaceId(workspaceId);
+            navigateToWorkspaceSession(workspaceId);
+            focusPromptSoon();
+            return;
+          }
           void handleCreateTaskInWorkspace(workspaceId).then((sessionId) => {
             if (sessionId && groupId) {
               sessionManagementStore.getState().assignGroup(workspaceId, sessionId, groupId);
@@ -3367,58 +3456,90 @@ export function SessionRoute() {
         onCreateSplitTaskInWorkspace: (workspaceId) => {
           void handleCreateSplitTaskInWorkspace(workspaceId);
         },
-        onCreateTaskWithPrompt: (workspaceId, prompt, attachments) => {
-          void (async () => {
-            const workspace = workspaces.find((item) => item.id === workspaceId);
-            if (!workspace) return;
-            const endpoint = endpointForWorkspace(workspace);
-            if (!endpoint?.token) return;
-            const workspaceClient = createClient(
-              endpoint.opencodeBaseUrl,
-              workspace.path?.trim() || undefined,
-              { token: endpoint.token, mode: "openwork" },
-            );
-            try {
-              const session = unwrap(
-                await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
-              );
-              if (workspaceId === selectedWorkspaceId) {
-                void refreshCloudProviderSync("new_chat");
-              }
-              const firstTaskPrompt = prompt.trim();
-              if (firstTaskPrompt) {
-                const firstTaskAttachments = attachments ?? [];
-                // Attachment chips only survive in-memory (File objects), so the
-                // persisted fallback draft drops their tokens.
-                saveSessionDraft(sessionDraftScope, workspaceId, session.id, { text: firstTaskPrompt.replace(/\[attachment [^\]]+\]/g, "").trim(), mode: "prompt" });
-                claimComposerSessionDraftScope(
-                  session.id,
-                  sessionDraftScopeKey(sessionDraftScope, workspaceId, session.id),
-                );
-                // The composer reads its draft from the composer state store,
-                // not the persisted draft store — seed both.
-                useComposerStateStore.getState().setDraft(session.id, firstTaskPrompt);
-                if (firstTaskAttachments.length) {
-                  useComposerStateStore.getState().setAttachments(session.id, firstTaskAttachments);
-                }
-                // One-step run: the session surface sends the seeded draft itself.
-                markComposerAutoSend(session.id);
-              }
-              writeActiveWorkspaceId(workspaceId || null);
-              writeLastSessionFor(workspaceId, session.id);
-              rememberPendingCreatedSession(workspaceId, session.id);
-              applyLastUsedModelToSession(session.id);
-              setSessionsByWorkspaceId((current) => ({
-                ...current,
-                [workspaceId]: mergeWorkspaceRouteSession(current[workspaceId] ?? [], session),
+        onCreateTaskWithPrompt: async (
+          workspaceId,
+          prompt,
+          attachments,
+          handoff?: NewTaskComposerHandoff,
+        ) => {
+          const navigationOwner = {
+            ...selectedConversationRef.current,
+            paneOwner: focusedWorkbenchPaneOwner(),
+          };
+          const workspace = workspaces.find((item) => item.id === workspaceId);
+          if (!workspace) throw new Error("Workspace is unavailable. Try again.");
+          const endpoint = endpointForWorkspace(workspace);
+          if (!endpoint?.token) throw new Error("Workspace is disconnected. Reconnect and try again.");
+          const session = await createRouteSession(endpoint, workspace.path?.trim() || undefined);
+          const continuation = handoff
+            ? snapshotComposerSessionState(handoff.getContinuation())
+            : null;
+          if (workspaceId === selectedWorkspaceId) {
+            void refreshCloudProviderSync("new_chat");
+          }
+          const firstTaskPrompt = prompt.trim();
+          if (firstTaskPrompt || attachments?.length) {
+            const firstTaskAttachments = attachments ?? [];
+            const destinationScopeKey = sessionDraftScopeKey(sessionDraftScope, workspaceId, session.id);
+            if (handoff && continuation) {
+              // The source composer remains live while session creation is in
+              // flight. Seed its latest continuation in the destination, but
+              // send the immutable submitted snapshot through the scoped mark.
+              saveSessionDraft(sessionDraftScope, workspaceId, session.id, {
+                text: persistableComposerDraftText(continuation.draft),
+                mode: "prompt",
+              });
+              claimComposerSessionDraftScope(session.id, destinationScopeKey);
+              useComposerStateStore.setState((state) => ({
+                sessions: {
+                  ...state.sessions,
+                  [session.id]: continuation,
+                },
               }));
-              navigateToWorkspaceSession(workspaceId, session.id);
-              focusPromptSoon();
-            } catch {
-              // Fall back to normal task creation without prompt
-              void handleCreateTaskInWorkspace(workspaceId);
+              markComposerAutoSend(session.id, {
+                scopeKey: composerAutoSendScopeKey({
+                  draftScope: sessionDraftScope,
+                  opencodeBaseUrl: endpoint.opencodeBaseUrl,
+                  workspaceId,
+                  sessionId: session.id,
+                }),
+                composer: handoff.submitted,
+              });
+            } else {
+              // Attachment chips only survive in-memory (File objects), so the
+              // persisted fallback draft drops their tokens.
+              saveSessionDraft(sessionDraftScope, workspaceId, session.id, { text: firstTaskPrompt.replace(/\[attachment [^\]]+\]/g, "").trim(), mode: "prompt" });
+              claimComposerSessionDraftScope(session.id, destinationScopeKey);
+              // The composer reads its draft from the composer state store,
+              // not the persisted draft store — seed both.
+              useComposerStateStore.getState().setDraft(session.id, firstTaskPrompt);
+              if (firstTaskAttachments.length) {
+                useComposerStateStore.getState().setAttachments(session.id, firstTaskAttachments);
+              }
+              // Legacy callers still seed the submitted draft directly.
+              markComposerAutoSend(session.id);
             }
-          })();
+          }
+          rememberPendingCreatedSession(workspaceId, session.id);
+          applyLastUsedModelToSession(session.id);
+          setSessionsByWorkspaceId((current) => ({
+            ...current,
+            [workspaceId]: mergeWorkspaceRouteSession(current[workspaceId] ?? [], session),
+          }));
+          const stillOwnsNavigation = navigationOwner.workspaceId === workspaceId
+            && selectedConversationRef.current.workspaceId === navigationOwner.workspaceId
+            && selectedConversationRef.current.sessionId === navigationOwner.sessionId
+            && selectedConversationRef.current.draftScope === navigationOwner.draftScope
+            && selectedConversationRef.current.location === navigationOwner.location
+            && selectedConversationRef.current.locationKey === navigationOwner.locationKey
+            && selectedConversationRef.current.navigationGeneration === navigationOwner.navigationGeneration
+            && focusedWorkbenchPaneOwner() === navigationOwner.paneOwner;
+          if (stillOwnsNavigation) {
+            writeActiveWorkspaceId(workspaceId || null);
+            writeLastSessionFor(workspaceId, session.id);
+            navigateToWorkspaceSession(workspaceId, session.id);
+            focusPromptSoon();
+          }
         },
         onOpenRenameWorkspace: handleOpenRenameWorkspace,
         onShareWorkspace: handleShareWorkspace,
@@ -3500,7 +3621,7 @@ export function SessionRoute() {
           ? async (sessionId) => {
               const endpoint = endpointForWorkspace(selectedWorkspace);
               if (!endpoint) return;
-              await deleteNativeSession(endpoint, sessionId);
+              await deleteRouteSession(endpoint, sessionId);
               if (selectedSessionId === sessionId) {
                 navigateToWorkspaceSession(selectedWorkspaceId);
               }
@@ -3508,7 +3629,8 @@ export function SessionRoute() {
             }
           : undefined
       }
-      onArchiveSession={handleArchiveSession}
+      onArchiveSession={opencodeClient ? handleArchiveSession : undefined}
+      archiveDisabledReason={archiveDisabledReason}
       statusBar={{
         // No per-session loading state here: the account row renders only
         // app-scoped facts. Session loading lives in the pane; an unresolved

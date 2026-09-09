@@ -540,7 +540,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
           let exchangedTokens = false
           let operationFailed = false
           try {
-            await session.transport.finishAuth(code)
+            await session.transport.finishAuth(code, input.responseIssuer)
             exchangedTokens = true
             await connectWithProtocolNegotiation({
               session,

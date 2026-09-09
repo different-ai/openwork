@@ -1,0 +1,23 @@
+{
+  "name": "@openwork/review-app",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port ${REVIEW_PORT:-3011}",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1 --port ${REVIEW_PORT:-3011}",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openwork/review": "workspace:*",
+    "next": "16.3.3",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "typescript": "^5.9.3"
+  }
+}

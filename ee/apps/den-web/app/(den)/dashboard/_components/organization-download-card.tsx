@@ -52,7 +52,7 @@ export function OrganizationDownloadCard({
       className="overflow-hidden rounded-[18px] border border-[#E3E7EE] bg-white shadow-[0_24px_60px_-32px_rgba(7,25,44,0.22)]"
       data-testid="workspace-install-card"
     >
-      <div className="grid gap-5 bg-gradient-to-b from-[#FAFBFE] to-white px-6 py-5 sm:grid-cols-[1fr_auto] sm:items-center">
+      <div className="grid gap-5 bg-linear-to-b/srgb from-[#FAFBFE] to-white px-6 py-5 sm:grid-cols-[1fr_auto] sm:items-center">
         <div>
           <div className="flex items-center gap-2.5">
             <ExternalLink className="h-5 w-5 text-[#07192C]/70" aria-hidden="true" />

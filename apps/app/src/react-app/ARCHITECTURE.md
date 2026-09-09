@@ -29,7 +29,7 @@ src/
     ├── design-system/         Reusable presentational primitives
     └── domains/               Feature-scoped code, one folder per product domain
         ├── session/           chat/ surface/ sync/ composer, sidebar/, panel/, terminal/,
-        │                      voice/, artifacts/, modals/, …
+        │                      artifacts/, modals/, …
         ├── workspace/         Create/rename/share workspace flows
         ├── settings/          state/ + pages/ + modals/ (settings shell)
         ├── connections/       MCP + provider auth UI

@@ -19,8 +19,9 @@
     "@sentry/node": "^10.65.0",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.45.2",
-    "hono": "4.12.34",
-    "zod": "^4.3.6"
+    "hono": "4.13.5",
+    "zod": "^4.3.6",
+    "@openwork-ee/telemetry": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

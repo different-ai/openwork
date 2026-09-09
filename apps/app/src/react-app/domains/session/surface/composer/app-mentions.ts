@@ -23,7 +23,7 @@ export function isAppMentionAvailable(): boolean {
  * app instead of assuming the app is frontmost.
  */
 export function appMentionInstruction(appName: string) {
-  return `[The user mentioned the macOS app "${appName}". Use the computer-use tools to see and operate it: start with snapshot {"app": "${appName}"} — do not assume it is the frontmost app. Prefer semantic refs from the snapshot over coordinates.]`;
+  return `[The user mentioned the macOS app ${JSON.stringify(appName)}. Prefer a dedicated app integration when available. For Computer Use, start with computer_discover to resolve its exact app_id, then computer_open_session with the least powerful mode needed (observe, assist, or control). The person approves the app and chooses a window. Use computer_observe before acting and after each computer_act. Use observed element refs before visual coordinates. A mention is a target, not a permission grant; respect denial, pause and human takeover.]`;
 }
 
 type ListRunningAppsResult = { ok?: boolean; apps?: unknown };

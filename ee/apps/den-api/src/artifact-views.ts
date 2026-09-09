@@ -290,9 +290,15 @@ export async function retireArtifactView(input: {
   artifactViewId: string
 }): Promise<GeneratedArtifactView> {
   const view = await accessibleView({ context: input.context, artifactViewId: input.artifactViewId, role: "manager" })
-  await db.update(ArtifactViewTable).set({ status: "retired", active_revision_id: null })
-    .where(eq(ArtifactViewTable.id, view.id))
-  const updated = { ...view, status: "retired" as const, active_revision_id: null, updated_at: new Date() }
+  await db.transaction(async (tx) => {
+    await tx.update(ArtifactViewTable).set({ status: "retired", active_revision_id: null, use_in_workflow: false })
+      .where(eq(ArtifactViewTable.id, view.id))
+    await tx.delete(DashboardAppTable).where(and(
+      eq(DashboardAppTable.organization_id, view.organization_id),
+      eq(DashboardAppTable.artifact_view_id, view.id),
+    ))
+  })
+  const updated = { ...view, status: "retired" as const, active_revision_id: null, use_in_workflow: false, updated_at: new Date() }
   return serializeView(updated, await revisionRows(view.id))
 }
 

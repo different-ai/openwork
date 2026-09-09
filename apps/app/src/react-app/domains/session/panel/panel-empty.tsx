@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import * as React from "react";
-import { ArrowLeft, ArrowRight, FileText, Globe, Mic2, Puzzle } from "lucide-react";
+import { ArrowLeft, ArrowRight, FileText, Globe, Puzzle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -8,7 +8,6 @@ import { cn } from "@/lib/utils";
 export type PanelEmptyActions = {
   onOpenBrowser?: () => void;
   onOpenExtensions?: () => void;
-  onOpenVoice?: () => void;
 };
 
 export function handlePanelEscape(key: string, onClose: () => void) {
@@ -18,7 +17,7 @@ export function handlePanelEscape(key: string, onClose: () => void) {
 }
 
 type PanelDestination = {
-  id: "browser" | "files" | "extensions" | "voice";
+  id: "browser" | "files" | "extensions";
   label: string;
   description: string;
   icon: React.ReactNode;
@@ -59,20 +58,10 @@ export function getPanelDestinations(
     });
   }
 
-  if (actions.onOpenVoice) {
-    destinations.push({
-      id: "voice",
-      label: "Voice Mode",
-      description: "Talk to OpenWork with real-time voice.",
-      icon: <Mic2 aria-hidden="true" />,
-      activate: actions.onOpenVoice,
-    });
-  }
-
   return destinations;
 }
 
-export function PanelEmpty({ onOpenBrowser, onOpenExtensions, onOpenVoice }: PanelEmptyActions) {
+export function PanelEmpty({ onOpenBrowser, onOpenExtensions }: PanelEmptyActions) {
   const [destination, setDestination] = React.useState<"chooser" | "files">("chooser");
 
   if (destination === "files") {
@@ -101,7 +90,7 @@ export function PanelEmpty({ onOpenBrowser, onOpenExtensions, onOpenVoice }: Pan
   }
 
   const destinations = getPanelDestinations(
-    { onOpenBrowser, onOpenExtensions, onOpenVoice },
+    { onOpenBrowser, onOpenExtensions },
     () => setDestination("files"),
   );
 

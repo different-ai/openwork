@@ -26,6 +26,7 @@ export type MockGroupClaims =
     };
 
 export interface MockIdpKnobs {
+  interactive?: boolean;
   certTrailingNewline?: boolean;
   wrongDomain?: boolean;
   blockedUser?: string;
@@ -47,6 +48,8 @@ export interface MockIdpSubject {
 }
 
 export interface MockIdpConfig {
+  publicIssuer?: string;
+  listen?: { host: string; port: number };
   issuer?: string;
   domain?: string;
   clientId?: string;
@@ -56,6 +59,7 @@ export interface MockIdpConfig {
 }
 
 export interface NormalizedMockIdpKnobs {
+  interactive: boolean;
   certTrailingNewline: boolean;
   wrongDomain: boolean;
   blockedUser: string | null;
@@ -274,6 +278,7 @@ function normalizeSubject(input: MockIdpSubjectInput | undefined, domain: string
 
 function normalizeKnobs(knobs: MockIdpKnobs | undefined): NormalizedMockIdpKnobs {
   return {
+    interactive: knobs?.interactive === true,
     certTrailingNewline: knobs?.certTrailingNewline === true,
     wrongDomain: knobs?.wrongDomain === true,
     blockedUser: knobs?.blockedUser?.trim() || null,
@@ -713,7 +718,22 @@ function authorize(state: MockIdpState, url: URL, response: ServerResponse): voi
     return;
   }
 
-  const loginHint = url.searchParams.get("login_hint") ?? undefined;
+  if (state.config.knobs.interactive && !url.searchParams.has("decision")) {
+    const fields = [...url.searchParams].map(([name, value]) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`).join("");
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+    response.end(`<!doctype html><html><head><title>Test organization sign-in</title></head><body style="font:16px system-ui;max-width:420px;margin:60px auto;padding:24px"><h1>Test organization sign-in</h1><p>Confirm your identity to return to OpenWork.</p><form>${fields}<label>Email <input name="mock_email" type="email" value="${escapeHtml(url.searchParams.get("login_hint") ?? state.config.defaultSubject.email)}"></label><p></p><button name="decision" value="approve">Approve sign-in</button> <button name="decision" value="deny">Deny sign-in</button></form></body></html>`);
+    return;
+  }
+  if (url.searchParams.get("decision") === "deny") {
+    const callback = new URL(redirectUri);
+    callback.searchParams.set("error", "access_denied");
+    const relayState = url.searchParams.get("state");
+    if (relayState) callback.searchParams.set("state", relayState);
+    sendRedirect(response, callback.toString());
+    return;
+  }
+
+  const loginHint = (state.config.knobs.interactive ? url.searchParams.get("mock_email") : null) ?? url.searchParams.get("login_hint") ?? undefined;
   const requestedSubject = loginHint ? { email: loginHint } : undefined;
   const subject = subjectWithKnobs(state.config, requestedSubject);
   if (matchesBlockedUser(subject, state.config.knobs.blockedUser)) {
@@ -865,10 +885,10 @@ export async function startMockIdpLab(input: MockIdpConfig = {}): Promise<Starte
     });
   });
   const fixedPort = fixedIssuer?.port ? Number.parseInt(fixedIssuer.port, 10) : 0;
-  const address = await listen(server, fixedIssuer?.hostname ?? "127.0.0.1", fixedPort);
+  const address = await listen(server, input.listen?.host ?? fixedIssuer?.hostname ?? "127.0.0.1", input.listen?.port ?? fixedPort);
   state.config = normalizeMockIdpConfig({
     ...input,
-    issuer: fixedIssuer ? fixedIssuer.origin : `http://127.0.0.1:${address.port}`,
+    issuer: input.publicIssuer ?? (fixedIssuer ? fixedIssuer.origin : `http://127.0.0.1:${address.port}`),
   });
 
   const stop = () => close(server);

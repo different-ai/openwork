@@ -98,6 +98,7 @@ export type ComposerPart =
   | { type: "text"; text: string }
   | { type: "agent"; name: string }
   | { type: "skill"; name: string }
+  | { type: "connect-skill"; slug: string; name: string; marketplace: string; capability: string }
   | { type: "file"; path: string; label?: string }
   /** A macOS app targeted via Computer Use (composer "@App" mention). */
   | { type: "app"; name: string }
@@ -122,6 +123,8 @@ export type SlashCommandOption = {
 };
 
 export type ComposerDraft = {
+  /** Client identity for reconciling the pending user turn with server events. */
+  messageId?: string;
   mode: PromptMode;
   parts: ComposerPart[];
   attachments: ComposerAttachment[];
