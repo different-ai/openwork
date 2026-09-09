@@ -77,7 +77,7 @@ test("opening a long conversation shows it from its first message", async ({ use
     await user.see({ text: longHistoryFirst }, { timeoutMs: 30_000 });
     await user.looks([
       `The conversation transcript visibly starts with a user message reading "${longHistoryFirst}"`,
-      "No loading, error, or sign-in state is visible in the conversation",
+      "The transcript shows no loading indicator, error card, or empty-conversation placeholder",
     ]);
   });
 });
