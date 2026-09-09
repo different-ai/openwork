@@ -151,6 +151,10 @@ export async function savedAppCreation(seed: Seed) {
       });
       if (!result.response.ok) throw new Error(`Fixture admin login failed: ${result.response.status}`);
       den.admin.token = field(result.body, "token");
+      const selected = await seed.api(den.admin, "/v1/me/active-organization", {
+        method: "POST", body: JSON.stringify({ organizationId: orgId }),
+      });
+      if (!selected.response.ok) throw new Error(`Fixture workspace selection failed: ${selected.response.status}`);
     },
     async returnVerification(link: string) {
       // Containers have no OS protocol registration. Navigate the real returned
