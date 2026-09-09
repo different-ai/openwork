@@ -498,6 +498,7 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
     describeRoute({
       tags: ["Desktop Policies"],
       summary: "List desktop policies",
+      description: "Returns the organization's desktop policies, default policy first and then by name, each with its member, team, and role assignments, alongside the definitions catalog describing every setting a policy document can control. Workspace owners and admins can read; writes require super-admin.",
       responses: {
         200: jsonResponse("Desktop policies returned successfully.", desktopPolicyListResponseSchema),
         401: jsonResponse("The caller must be signed in to list desktop policies.", unauthorizedSchema),
@@ -517,6 +518,7 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
     describeRoute({
       tags: ["Desktop Policies"],
       summary: "Create desktop policy",
+      description: "Creates a desktop policy from a policy document plus optional priority, enabled flag, and assignments to members, teams, or roles (owner, admin, member). Requires the Enterprise plan; referenced members and teams must belong to the organization.",
       responses: {
         201: jsonResponse("Desktop policy created successfully.", desktopPolicyResponseSchema),
         400: jsonResponse("The desktop policy request was invalid.", invalidRequestSchema),
@@ -536,6 +538,7 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
     describeRoute({
       tags: ["Desktop Policies"],
       summary: "Update desktop policy",
+      description: "Rewrites one desktop policy. The full write body is required: the policy document is replaced (access, execution, and onboarding prompts omitted from it are carried over from the stored document) and the member, team, and role assignments are replaced with the ones sent. The default policy keeps its name, priority, and assignments and cannot be disabled (400 default_policy_required).",
       responses: {
         200: jsonResponse("Desktop policy updated successfully.", desktopPolicyResponseSchema),
         400: jsonResponse("The desktop policy request was invalid.", invalidRequestSchema),
@@ -556,6 +559,7 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
     describeRoute({
       tags: ["Desktop Policies"],
       summary: "Delete desktop policy",
+      description: "Soft-deletes a custom desktop policy, disables it, and releases its stable externalKey for reuse. The default policy cannot be deleted (400 default_policy_required).",
       responses: {
         204: emptyResponse("Desktop policy deleted successfully."),
         401: jsonResponse("The caller must be signed in to delete desktop policies.", unauthorizedSchema),
