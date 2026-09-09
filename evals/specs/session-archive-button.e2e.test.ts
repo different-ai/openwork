@@ -405,7 +405,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     const before = (await aborts()).length;
     for (const target of [b1, a2]) {
       await user.rightClick({ testId: `sidebar-session-${b1.sessionId}` });
-      await user.click({ role: "menuitem", label: "Open in split view" });
+      await user.click({ role: "menuitem", label: "Open as side chat" });
       await probe.eventually(() => world.facts(), {
         within: 15_000, label: "both owning split surfaces render",
         until: facts => facts.surfaces.includes(a2.sessionId) && facts.surfaces.includes(b1.sessionId),
