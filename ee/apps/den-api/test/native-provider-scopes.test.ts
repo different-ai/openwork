@@ -82,6 +82,47 @@ describe("google-workspace native provider scopes", () => {
     ])
   })
 
+  test.each([
+    ["gmailManage", "gmail.modify"],
+    ["gmailLabels", "gmail.labels"],
+    ["sheetsRead", "spreadsheets.readonly"],
+    ["sheetsWrite", "spreadsheets"],
+  ])("%s requests only its selected scope beyond identity", (feature, scope) => {
+    const provider = googleWorkspaceProvider()
+    const features = registry.clientSelectedFeatures(provider, { features: [feature, feature] })
+    expect(features).toEqual([feature])
+    expect(registry.resolveProviderScopes(provider, features)).toEqual([
+      ...GOOGLE_WORKSPACE_IDENTITY_SCOPES,
+      `https://www.googleapis.com/auth/${scope}`,
+    ])
+  })
+
+  test("Google scope implications accept broader grants without escalating narrower ones", () => {
+    const provider = googleWorkspaceProvider()
+    const scope = (name: string) => `https://www.googleapis.com/auth/${name}`
+    for (const required of ["gmail.readonly", "gmail.compose", "gmail.labels"]) {
+      expect(registry.providerScopesSatisfy(provider, [scope("gmail.modify")], scope(required))).toBe(true)
+      expect(registry.providerScopesSatisfy(provider, [scope(required)], scope("gmail.modify"))).toBe(false)
+    }
+    expect(registry.providerScopesSatisfy(provider, [scope("spreadsheets")], scope("spreadsheets.readonly"))).toBe(true)
+    expect(registry.providerScopesSatisfy(provider, [scope("spreadsheets.readonly")], scope("spreadsheets"))).toBe(false)
+    for (const required of ["drive.readonly", "drive.file", "spreadsheets", "spreadsheets.readonly"]) {
+      expect(registry.providerScopesSatisfy(provider, [scope("drive")], scope(required))).toBe(true)
+    }
+    expect(registry.providerScopesSatisfy(provider, [scope("gmail.modify.lookalike")], scope("gmail.readonly"))).toBe(false)
+    expect(registry.providerScopesSatisfy(provider, [scope("spreadsheets.lookalike")], scope("spreadsheets.readonly"))).toBe(false)
+  })
+
+  test("unknown grants do not satisfy the new feature scopes", () => {
+    const provider = googleWorkspaceProvider()
+    const grants: (string[] | null)[] = [null, [], GOOGLE_WORKSPACE_IDENTITY_SCOPES]
+    for (const granted of grants) {
+      for (const scope of ["gmail.modify", "gmail.labels", "spreadsheets.readonly", "spreadsheets"]) {
+        expect(registry.providerScopesSatisfy(provider, granted, `https://www.googleapis.com/auth/${scope}`)).toBe(false)
+      }
+    }
+  })
+
   test("clientSelectedFeatures ignores unknown keys and non-strings", () => {
     const provider = googleWorkspaceProvider()
 

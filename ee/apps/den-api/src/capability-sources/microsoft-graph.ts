@@ -24,6 +24,10 @@ export type Microsoft365MailMessageSummary = {
 }
 
 export type Microsoft365MailMessage = Microsoft365MailMessageSummary & {
+  isDraft: boolean
+  isRead: boolean
+  categories: string[]
+  parentFolderId: string
   cc: Microsoft365EmailAddress[]
   body: string
   bodyContentType: string
@@ -89,6 +93,7 @@ type MicrosoftGraphClientOptions = {
   maxDownloadBytes?: number
   maxJsonResponseBytes?: number
   maxContentCharacters?: number
+  signal?: AbortSignal
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -186,6 +191,10 @@ function extractMailMessage(value: unknown): Microsoft365MailMessage {
     body: content.text,
     bodyContentType: readString(body, "contentType"),
     bodyTruncated: content.truncated,
+    isDraft: readBoolean(message, "isDraft"),
+    isRead: readBoolean(message, "isRead"),
+    categories: readArray(message, "categories").filter((value): value is string => typeof value === "string"),
+    parentFolderId: readString(message, "parentFolderId"),
   }
 }
 
@@ -359,6 +368,13 @@ export class MicrosoftGraphRequestError extends Error {
   }
 }
 
+export class MicrosoftGraphMutationOutcomeUnknownError extends MicrosoftGraphRequestError {
+  constructor(operation: string) {
+    super(operation, 502, "The mutation outcome is unknown. Verify the current state before trying again; do not automatically retry.")
+    this.name = "MicrosoftGraphMutationOutcomeUnknownError"
+  }
+}
+
 export class MicrosoftGraphClient {
   private readonly accessToken: string
   private readonly baseUrl: string
@@ -367,6 +383,7 @@ export class MicrosoftGraphClient {
   private readonly maxDownloadBytes: number
   private readonly maxJsonResponseBytes: number
   private readonly maxContentCharacters: number
+  private readonly signal?: AbortSignal
 
   constructor(options: MicrosoftGraphClientOptions) {
     this.accessToken = options.accessToken
@@ -376,6 +393,7 @@ export class MicrosoftGraphClient {
     this.maxDownloadBytes = options.maxDownloadBytes ?? DEFAULT_MAX_DOWNLOAD_BYTES
     this.maxJsonResponseBytes = options.maxJsonResponseBytes ?? DEFAULT_MAX_JSON_RESPONSE_BYTES
     this.maxContentCharacters = options.maxContentCharacters ?? DEFAULT_MAX_CONTENT_CHARACTERS
+    this.signal = options.signal
   }
 
   private url(path: string): URL {
@@ -388,7 +406,11 @@ export class MicrosoftGraphClient {
     const response = await this.fetchImpl(url, {
       ...init,
       headers,
-      signal: init?.signal ?? AbortSignal.timeout(this.timeoutMs),
+      signal: AbortSignal.any([
+        AbortSignal.timeout(this.timeoutMs),
+        ...(this.signal ? [this.signal] : []),
+        ...(init?.signal ? [init.signal] : []),
+      ]),
     })
     if (!response.ok) {
       const responseBody = await readBytesWithByteLimit(response, this.maxJsonResponseBytes)
@@ -412,6 +434,41 @@ export class MicrosoftGraphClient {
     }
   }
 
+  private async requestMutation(
+    operation: string,
+    path: string,
+    method: "POST" | "PATCH" | "DELETE",
+    expectedStatus: 200 | 201 | 202 | 204,
+    body?: unknown,
+  ): Promise<unknown> {
+    // A lost response may follow a successful write. Never replay a mutation,
+    // including redirects, and require Graph's operation-specific receipt.
+    try {
+      const response = await this.request(operation, this.url(path), {
+        method,
+        redirect: "error",
+        headers: body === undefined ? undefined : { "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      })
+      if (response.status !== expectedStatus) {
+        await response.body?.cancel()
+        throw new MicrosoftGraphMutationOutcomeUnknownError(operation)
+      }
+      if (expectedStatus === 202 || expectedStatus === 204) {
+        await response.body?.cancel()
+        return null
+      }
+      const responseBody = await readBytesWithByteLimit(response, this.maxJsonResponseBytes)
+      if (responseBody.limitExceeded) throw new MicrosoftGraphMutationOutcomeUnknownError(operation)
+      const value: unknown = JSON.parse(new TextDecoder().decode(responseBody.bytes))
+      if (!isRecord(value) || !readString(value, "id")) throw new MicrosoftGraphMutationOutcomeUnknownError(operation)
+      return value
+    } catch (error) {
+      if (error instanceof MicrosoftGraphRequestError && error.status >= 400 && error.status < 500) throw error
+      throw new MicrosoftGraphMutationOutcomeUnknownError(operation)
+    }
+  }
+
   async listMailMessages(input: { search?: string; maxResults: number }): Promise<Microsoft365MailMessageSummary[]> {
     const url = this.url("me/messages")
     url.searchParams.set("$top", String(input.maxResults))
@@ -427,7 +484,7 @@ export class MicrosoftGraphClient {
 
   async getMailMessage(messageId: string): Promise<Microsoft365MailMessage> {
     const url = this.url(`me/messages/${encodeURIComponent(messageId)}`)
-    url.searchParams.set("$select", "id,conversationId,subject,receivedDateTime,bodyPreview,body,from,toRecipients,ccRecipients,webLink,hasAttachments")
+    url.searchParams.set("$select", "id,conversationId,subject,receivedDateTime,bodyPreview,body,from,toRecipients,ccRecipients,webLink,hasAttachments,isDraft,isRead,categories,parentFolderId")
     const headers = { Prefer: 'outlook.body-content-type="text"' }
     const message = extractMicrosoftMailMessage(await this.requestJson("Microsoft 365 mail read", url, { headers }))
     const body = truncateText(message.body, this.maxContentCharacters)
@@ -464,6 +521,60 @@ export class MicrosoftGraphClient {
     url.searchParams.set("$orderby", "start/dateTime")
     url.searchParams.set("$select", "id,subject,bodyPreview,start,end,isAllDay,location,organizer,attendees,webLink,onlineMeeting,onlineMeetingUrl")
     return extractMicrosoftCalendarEvents(await this.requestJson("Microsoft 365 calendar list", url))
+  }
+
+  async sendMailDraft(messageId: string): Promise<{ draftId: string; status: "accepted" }> {
+    await this.requestMutation("Microsoft 365 mail draft send", `me/messages/${encodeURIComponent(messageId)}/send`, "POST", 202)
+    return { draftId: messageId, status: "accepted" }
+  }
+
+  async createMailReplyDraft(messageId: string, comment: string): Promise<Microsoft365MailMessage> {
+    const draft = extractMicrosoftMailMessage(await this.requestMutation(
+      "Microsoft 365 mail reply draft create", `me/messages/${encodeURIComponent(messageId)}/createReply`, "POST", 201, { comment },
+    ))
+    if (!draft.isDraft) throw new MicrosoftGraphMutationOutcomeUnknownError("Microsoft 365 mail reply draft create")
+    return draft
+  }
+
+  async updateMailMessage(messageId: string, input: { isRead?: boolean; categories?: string[] }): Promise<Microsoft365MailMessage> {
+    return extractMicrosoftMailMessage(await this.requestMutation(
+      "Microsoft 365 mail message update", `me/messages/${encodeURIComponent(messageId)}`, "PATCH", 200,
+      { isRead: input.isRead, categories: input.categories },
+    ))
+  }
+
+  async moveMailMessage(messageId: string, destinationId: "archive" | "deleteditems" | "inbox"): Promise<Microsoft365MailMessage> {
+    return extractMicrosoftMailMessage(await this.requestMutation(
+      "Microsoft 365 mail message move", `me/messages/${encodeURIComponent(messageId)}/move`, "POST", 201, { destinationId },
+    ))
+  }
+
+  async updateCalendarEvent(eventId: string, input: {
+    subject?: string
+    body?: string
+    start?: string
+    end?: string
+    location?: string
+  }): Promise<Microsoft365CalendarEvent> {
+    return extractMicrosoftCalendarEvent(await this.requestMutation(
+      "Microsoft 365 calendar event update", `me/events/${encodeURIComponent(eventId)}`, "PATCH", 200, {
+        subject: input.subject,
+        body: input.body === undefined ? undefined : { contentType: "Text", content: input.body },
+        start: input.start === undefined ? undefined : { dateTime: input.start, timeZone: "UTC" },
+        end: input.end === undefined ? undefined : { dateTime: input.end, timeZone: "UTC" },
+        location: input.location === undefined ? undefined : { displayName: input.location },
+      },
+    ))
+  }
+
+  async cancelCalendarEvent(eventId: string, comment?: string): Promise<{ eventId: string; status: "accepted" }> {
+    await this.requestMutation("Microsoft 365 calendar event cancel", `me/events/${encodeURIComponent(eventId)}/cancel`, "POST", 202, { comment })
+    return { eventId, status: "accepted" }
+  }
+
+  async deleteCalendarEvent(eventId: string): Promise<{ eventId: string; status: "deleted" }> {
+    await this.requestMutation("Microsoft 365 calendar event delete", `me/events/${encodeURIComponent(eventId)}`, "DELETE", 204)
+    return { eventId, status: "deleted" }
   }
 
   async createCalendarEvent(input: {
@@ -565,6 +676,22 @@ export class MicrosoftGraphClient {
       headers: { "content-type": "text/plain; charset=utf-8" },
       body: input.content,
     }))
+  }
+
+  async updateDriveItem(itemId: string, input: { name?: string; parentId?: string }): Promise<Microsoft365DriveItem> {
+    return extractMicrosoftDriveItem(await this.requestMutation(
+      "Microsoft 365 OneDrive item rename or move", `me/drive/items/${encodeURIComponent(itemId)}`, "PATCH", 200, {
+        name: input.name,
+        parentReference: input.parentId === undefined ? undefined : { id: input.parentId },
+      },
+    ))
+  }
+
+  async createDriveFolder(input: { parentId: string; name: string }): Promise<Microsoft365DriveItem> {
+    return extractMicrosoftDriveItem(await this.requestMutation(
+      "Microsoft 365 OneDrive folder create", `me/drive/items/${encodeURIComponent(input.parentId)}/children`, "POST", 201,
+      { name: input.name, folder: {}, "@microsoft.graph.conflictBehavior": "fail" },
+    ))
   }
 
   async listTeamsChats(maxResults: number): Promise<Microsoft365TeamsChat[]> {

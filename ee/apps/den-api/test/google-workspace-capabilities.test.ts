@@ -77,6 +77,7 @@ function decodeDraftTextBody(): string {
 }
 
 const GMAIL_READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+const GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
 const CALENDAR_READ_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 const CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
@@ -105,6 +106,9 @@ let forceDriveAuthorizationError = false
 let forceDriveShareForbidden = false
 let largeDriveContentHitCount = 0
 let gmailListMessageIds = ["msg_1"]
+let gmailNextPageToken: unknown = undefined
+let driveNextPageToken: unknown = undefined
+let driveIncompleteSearch: unknown = undefined
 let gmailMetadataDelayMs = 0
 let gmailMetadataFailureId: string | null = null
 let activeGmailMetadataRequests = 0
@@ -135,6 +139,9 @@ function resetFakeGoogle() {
   forceDriveShareForbidden = false
   largeDriveContentHitCount = 0
   gmailListMessageIds = ["msg_1"]
+  gmailNextPageToken = undefined
+  driveNextPageToken = undefined
+  driveIncompleteSearch = undefined
   gmailMetadataDelayMs = 0
   gmailMetadataFailureId = null
   activeGmailMetadataRequests = 0
@@ -191,7 +198,7 @@ const fakeGoogleServer = Bun.serve({
     }
 
     if (url.pathname === "/gmail/v1/users/me/messages") {
-      return json({ messages: gmailListMessageIds.map((id) => ({ id, threadId: `thread_${id.replace(/^msg_/, "")}` })) })
+      return json({ messages: gmailListMessageIds.map((id) => ({ id, threadId: `thread_${id.replace(/^msg_/, "")}` })), nextPageToken: gmailNextPageToken })
     }
     const gmailMessageMatch = url.pathname.match(/^\/gmail\/v1\/users\/me\/messages\/([^/]+)$/)
     if (gmailMessageMatch?.[1]) {
@@ -317,6 +324,8 @@ const fakeGoogleServer = Bun.serve({
         }, 403)
       }
       return json({
+        nextPageToken: driveNextPageToken,
+        incompleteSearch: driveIncompleteSearch,
         files: [
           {
             id: "file_1",
@@ -449,6 +458,18 @@ const fakeGoogleServer = Bun.serve({
     }
     if (url.pathname === "/drive/v3/files/doc_1/export") {
       return new Response(driveDocumentText, { headers: { "content-type": "text/plain" } })
+    }
+    if (url.pathname === "/drive/v3/files/sheet_1") {
+      return json({
+        id: "sheet_1",
+        name: "Planning workbook",
+        mimeType: "application/vnd.google-apps.spreadsheet",
+        webViewLink: "https://docs.google.com/spreadsheets/d/sheet_1/edit",
+      })
+    }
+    if (url.pathname === "/drive/v3/files/sheet_1/export") {
+      if (url.searchParams.get("mimeType") !== "text/csv") return new Response("Unsupported export type", { status: 400 })
+      return new Response("Task,Status\r\nPlanning,Ready\r\n", { headers: { "content-type": "text/csv" } })
     }
 
     return new Response(`Unhandled fake Google route: ${url.pathname}`, { status: 404 })
@@ -923,6 +944,60 @@ test("gmail list overlaps metadata requests with bounded concurrency and preserv
   expect(messages.map((message) => message.id)).toEqual(gmailListMessageIds)
   expect(maxActiveGmailMetadataRequests).toBeGreaterThan(1)
   expect(maxActiveGmailMetadataRequests).toBeLessThanOrEqual(4)
+})
+
+test("gmail list forwards opaque page tokens and preserves the provider's next page", async () => {
+  gmailNextPageToken = "next+/= page"
+  const query = new URLSearchParams({ q: "from:ada", maxResults: "5", pageToken: "current+/= page" })
+  const response = await request(`/v1/capabilities/google-workspace/gmail-messages?${query}`)
+  expect(response.status).toBe(200)
+  const url = new URL(expectString(googleCallUrls[0], "Gmail list URL"))
+  expect(url.pathname).toBe("/gmail/v1/users/me/messages")
+  expect(url.searchParams.get("q")).toBe("from:ada")
+  expect(url.searchParams.get("maxResults")).toBe("5")
+  expect(url.searchParams.get("pageToken")).toBe("current+/= page")
+  const body = expectRecord(await response.json(), "paginated Gmail response")
+  expect(body.nextPageToken).toBe(gmailNextPageToken)
+  expect(body.messages).toHaveLength(1)
+  expect(googleCallCount).toBe(2)
+})
+
+test("gmail empty pages retain continuation without requesting message metadata", async () => {
+  gmailListMessageIds = []
+  gmailNextPageToken = "next-empty-page"
+  const response = await request("/v1/capabilities/google-workspace/gmail-messages")
+  expect(response.status).toBe(200)
+  expect(await response.json()).toEqual({ ok: true, messages: [], nextPageToken: "next-empty-page" })
+  expect(googleCallCount).toBe(1)
+  expect(new URL(expectString(googleCallUrls[0], "Gmail list URL")).searchParams.get("pageToken")).toBeNull()
+})
+
+test.each(["", "x".repeat(2049)])("gmail rejects invalid page token (case %#) before calling Google", async (pageToken) => {
+  const response = await request(`/v1/capabilities/google-workspace/gmail-messages?${new URLSearchParams({ pageToken })}`)
+  expect(response.status).toBe(400)
+  expect(expectRecord(await response.json(), "invalid Gmail pagination").error).toBe("invalid_request")
+  expect(googleCallCount).toBe(0)
+})
+
+test.each([
+  "/v1/capabilities/google-workspace/gmail-messages",
+  "/v1/capabilities/google-workspace/gmail-message/msg_1",
+  "/v1/capabilities/google-workspace/gmail-attachment/msg_1/att_1",
+])("gmail.modify authorizes existing read route %s", async (path) => {
+  await seedConnectedAccount([GMAIL_MODIFY_SCOPE])
+  const response = await request(path)
+  expect(response.status).toBe(200)
+  expect(expectRecord(await response.json(), "Gmail modify-scope read").ok).toBe(true)
+  expect(lastAuthorization).toBe("Bearer gws-token")
+  expect(googleCallCount).toBe(path.endsWith("gmail-messages") ? 2 : 1)
+})
+
+test("gmail scope implications reject lookalike grants before calling Google", async () => {
+  await seedConnectedAccount([`${GMAIL_MODIFY_SCOPE}.lookalike`, `prefix.${GMAIL_READ_SCOPE}`])
+  const response = await request("/v1/capabilities/google-workspace/gmail-messages")
+  expect(response.status).toBe(409)
+  expect(expectRecord(await response.json(), "Gmail lookalike grant response").error).toBe("needs_connection")
+  expect(googleCallCount).toBe(0)
 })
 
 test("gmail metadata failure stops new work and returns the existing upstream error shape", async () => {
@@ -1400,7 +1475,71 @@ test("drive search returns mapped files", async () => {
   expect(url.searchParams.get("supportsAllDrives")).toBe("true")
   expect(url.searchParams.get("includeItemsFromAllDrives")).toBe("true")
   expect(url.searchParams.get("orderBy")).toBeNull()
-  expect(url.searchParams.get("fields")).toBe("files(id,name,mimeType,modifiedTime,webViewLink,size)")
+  expect(url.searchParams.get("fields")).toBe("files(id,name,mimeType,modifiedTime,webViewLink,size),nextPageToken,incompleteSearch")
+  expect(url.searchParams.get("pageToken")).toBeNull()
+})
+
+test("Drive lists files without search text and retains continuation and incomplete coverage", async () => {
+  driveNextPageToken = "drive-next+/= page"
+  driveIncompleteSearch = true
+  const response = await request("/v1/capabilities/google-workspace/drive-files")
+  expect(response.status).toBe(200)
+  expect(lastDriveQuery).toBe("trashed = false")
+  const url = new URL(expectString(googleCallUrls[0], "Drive list URL"))
+  expect(url.searchParams.get("pageSize")).toBe("10")
+  expect(url.searchParams.get("pageToken")).toBeNull()
+  const body = expectRecord(await response.json(), "Drive list response")
+  expect(body.ok).toBe(true)
+  expect(body.files).toHaveLength(1)
+  expect(body.nextPageToken).toBe(driveNextPageToken)
+  expect(body.incompleteSearch).toBe(true)
+  expect(googleCallCount).toBe(1)
+})
+
+test.each([undefined, "quarterly"])("Drive combines date and folder filters with optional search (case %#)", async (query) => {
+  driveIncompleteSearch = false
+  const params = new URLSearchParams({
+    modifiedAfter: "2026-09-03T17:00:00+02:00", folderId: "folder_1-a", pageToken: "drive-current+/= page", maxResults: "3",
+  })
+  if (query) params.set("query", query)
+  const response = await request(`/v1/capabilities/google-workspace/drive-files?${params}`)
+  expect(response.status).toBe(200)
+  expect(lastDriveQuery).toBe(`${query ? "trashed = false and (name contains 'quarterly' or fullText contains 'quarterly')" : "trashed = false"} and modifiedTime > '2026-09-03T17:00:00+02:00' and 'folder_1-a' in parents`)
+  const url = new URL(expectString(googleCallUrls[0], "filtered Drive URL"))
+  expect(url.searchParams.get("pageToken")).toBe("drive-current+/= page")
+  expect(url.searchParams.get("pageSize")).toBe("3")
+  const body = expectRecord(await response.json(), "filtered Drive response")
+  expect(body.incompleteSearch).toBe(false)
+  expect(body).not.toHaveProperty("nextPageToken")
+  expect(googleCallCount).toBe(1)
+})
+
+test.each([
+  ["modifiedAfter", "2026-09-03"],
+  ["modifiedAfter", "2026-09-03T17:00:00"],
+  ["modifiedAfter", "2026-09-03T17:00:00Z' or trashed = true"],
+  ["folderId", "folder_1' or 'x' in parents"],
+  ["folderId", "folder/child"],
+  ["pageToken", ""],
+  ["pageToken", "x".repeat(2049)],
+])("Drive rejects invalid %s (case %#) before calling Google", async (key, value) => {
+  const response = await request(`/v1/capabilities/google-workspace/drive-files?${new URLSearchParams({ [key]: value })}`)
+  expect(response.status).toBe(400)
+  expect(expectRecord(await response.json(), "invalid Drive filter response").error).toBe("invalid_request")
+  expect(googleCallCount).toBe(0)
+})
+
+test("listing responses omit malformed provider pagination fields", async () => {
+  gmailNextPageToken = 123
+  driveNextPageToken = 123
+  driveIncompleteSearch = "false"
+  for (const path of ["gmail-messages", "drive-files"]) {
+    const response = await request(`/v1/capabilities/google-workspace/${path}`)
+    expect(response.status).toBe(200)
+    const body = expectRecord(await response.json(), "malformed provider pagination response")
+    expect(body).not.toHaveProperty("nextPageToken")
+    expect(body).not.toHaveProperty("incompleteSearch")
+  }
 })
 
 test("Google Drive authorization failures become an actionable connector response", async () => {
@@ -1565,6 +1704,27 @@ test("drive file read keeps the Google Apps text export branch", async () => {
   const file = expectRecord(expectRecord(body, "Google Apps response").file, "Google Apps file")
   expect(file.encoding).toBe("text")
   expect(file.content).toBe("Exported doc text")
+  const url = new URL(expectString(googleCallUrls[1], "Google Docs export URL"))
+  expect(url.pathname).toBe("/drive/v3/files/doc_1/export")
+  expect(url.searchParams.get("mimeType")).toBe("text/plain")
+})
+
+test("generic Drive spreadsheet read exports first-tab CSV rather than plain text", async () => {
+  const response = await request("/v1/capabilities/google-workspace/drive-file/sheet_1")
+  expect(response.status).toBe(200)
+  expect(lastAuthorization).toBe("Bearer gws-token")
+  expect(googleCallCount).toBe(2)
+  const file = expectRecord(expectRecord(await response.json(), "spreadsheet export response").file, "spreadsheet file")
+  expect(file.id).toBe("sheet_1")
+  expect(file.mimeType).toBe("application/vnd.google-apps.spreadsheet")
+  expect(file.encoding).toBe("text")
+  expect(file.content).toBe("Task,Status\r\nPlanning,Ready\r\n")
+  expect(file.contentBase64).toBeNull()
+  expect(file.truncated).toBe(false)
+  const url = new URL(expectString(googleCallUrls[1], "spreadsheet export URL"))
+  expect(url.pathname).toBe("/drive/v3/files/sheet_1/export")
+  expect(url.searchParams.get("mimeType")).toBe("text/csv")
+  expect(googleCallUrls.some((value) => new URL(value).pathname.startsWith("/v4/spreadsheets"))).toBe(false)
 })
 
 test("drive text retains the existing retrieval limit before MCP serialization", async () => {
@@ -1797,6 +1957,31 @@ test("legacy accounts without recorded scopes retain existing non-Drive behavior
   expect(googleCallCount).toBe(1)
 })
 
+test("new Google actions fail closed on unknown grants independently of legacy routes", async () => {
+  const grants: (string[] | null)[] = [null, [], ["openid"]]
+  const actions = [
+    { path: "gmail-labels" },
+    { path: "gmail-labels", method: "POST", body: { name: "Planning" } },
+    { path: "gmail-message/msg_1/modify", method: "POST", body: { removeLabelIds: ["UNREAD"] } },
+    { path: "spreadsheets/sheet_1" },
+    { path: "spreadsheets/sheet_1/values?range=A1:B2" },
+    { path: "spreadsheets/sheet_1/values", method: "PUT", body: { range: "A1", values: [["Planning"]] } },
+    { path: "drive-files/file_1" },
+    { path: "drive-folders", method: "POST", body: { name: "Planning" } },
+    { path: "calendar-events/event_1" },
+  ]
+  for (const scopes of grants) {
+    await seedConnectedAccount(scopes)
+    for (const action of actions) {
+      resetFakeGoogle()
+      const response = await request(`/v1/capabilities/google-workspace/${action.path}`, action)
+      expect(response.status).toBe(409)
+      expect(expectRecord(await response.json(), "unknown-grant action response").error).toBe("needs_connection")
+      expect(googleCallCount).toBe(0)
+    }
+  }
+})
+
 test("no connected account returns needs_connection", async () => {
   await db.delete(schema.ConnectedAccountTable).where(drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId))
   const response = await request("/v1/capabilities/google-workspace/calendar-events?timeMin=2026-07-08T00%3A00%3A00Z&timeMax=2026-07-11T00%3A00%3A00Z")
@@ -1845,13 +2030,13 @@ test("Google Workspace capability tools are discoverable and keep readable names
   expect(searchCapabilities(catalog, "add meet link existing event", 10)[0]?.name).toBe("patchCapabilitiesGoogleWorkspaceCalendarEvent")
   const driveMatch = searchCapabilities(catalog, "drive files", 10)[0]
   expect(driveMatch?.name).toBe("getCapabilitiesGoogleWorkspaceDriveFiles")
-  expect(driveMatch?.queryParams).toEqual(["query", "maxResults"])
+  expect(driveMatch?.queryParams).toEqual(["query", "maxResults", "pageToken", "modifiedAfter", "folderId"])
   expect(catalog.some((tool) => tool.name === "postCapabilitiesGoogleWorkspaceDriveFiles")).toBe(false)
   expect(catalog.some((tool) => tool.name.includes("DirectUploads"))).toBe(false)
   expect(searchCapabilities(catalog, "share drive file", 10)[0]?.name).toBe("postCapabilitiesGoogleWorkspaceDriveFileShare")
   const gmailMatch = searchCapabilities(catalog, "gmail search read messages", 10)[0]
   expect(gmailMatch?.name).toBe("getCapabilitiesGoogleWorkspaceGmailMessages")
-  expect(gmailMatch?.queryParams).toEqual(["q", "maxResults"])
+  expect(gmailMatch?.queryParams).toEqual(["q", "maxResults", "pageToken"])
   expect(searchCapabilities(catalog, "outlook mail messages", 20).find((match) => match.name === "getCapabilitiesMicrosoft365MailMessages")?.queryParams).toEqual(["search", "maxResults"])
   const draftMatch = searchCapabilities(catalog, "gmail draft attachments", 10)[0]
   expect(draftMatch?.name).toBe("postCapabilitiesGoogleWorkspaceGmailDrafts")
