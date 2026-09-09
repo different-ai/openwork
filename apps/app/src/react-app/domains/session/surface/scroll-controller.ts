@@ -1,38 +1,21 @@
-import { useCallback, useEffect, useRef, type RefObject, type UIEventHandler } from "react";
+import { useCallback, useLayoutEffect, useRef, type RefObject, type UIEventHandler } from "react";
 
-import { getSessionScrollState, useSessionScrollStore, type SessionScrollState } from "./scroll-store";
-
-function readScrollState(sessionId: string | null): SessionScrollState {
-  return getSessionScrollState(useSessionScrollStore.getState().sessions, sessionId);
-}
-
-function isStickyBottom(sessionId: string | null) {
-  return readScrollState(sessionId).mode === "stickyBottom";
-}
+import { flushSessionScrollState, getSessionScrollState, useSessionScrollStore, type SessionScrollAnchor } from "./scroll-store";
 
 const EXACT_BOTTOM_GAP_PX = 1;
-// Widened from 250ms so a single wheel or trackpad flick isn't missed between
-// two rapid programmatic scroll-to-bottom frames during streaming.
 const SCROLL_GESTURE_WINDOW_MS = 600;
-// Threshold (px) that counts as a meaningful "scroll upward" gesture. Anything
-// smaller is treated as anchoring jitter and ignored so we don't trip out of
-// sticky bottom mode for pixel-level content growth.
-const MANUAL_BROWSE_UPWARD_THRESHOLD_PX = 16;
 
 type SessionScrollControllerOptions = {
   selectedSessionId: string | null;
   submittedMessageId: string | null;
+  historyReady: boolean;
   renderedMessages: unknown;
   containerRef: RefObject<HTMLDivElement | null>;
   contentRef: RefObject<HTMLDivElement | null>;
 };
 
-function scrollBottomGap(container: HTMLElement) {
-  return container.scrollHeight - (container.scrollTop + container.clientHeight);
-}
-
 function isExactlyAtBottom(container: HTMLElement) {
-  return scrollBottomGap(container) <= EXACT_BOTTOM_GAP_PX;
+  return container.scrollHeight - (container.scrollTop + container.clientHeight) <= EXACT_BOTTOM_GAP_PX;
 }
 
 function messageIdForElement(element: HTMLElement) {
@@ -40,345 +23,324 @@ function messageIdForElement(element: HTMLElement) {
   return id && id.length > 0 ? id : null;
 }
 
-function latestMessageElement(container: HTMLElement) {
-  const messageEls = container.querySelectorAll("[data-message-id]");
-  for (let index = messageEls.length - 1; index >= 0; index -= 1) {
-    const element = messageEls.item(index);
-    if (element instanceof HTMLElement) return element;
-  }
-  return null;
-}
-
 function messageElementById(container: HTMLElement, messageId: string) {
-  const messageEls = container.querySelectorAll("[data-message-id]");
-  for (const element of messageEls) {
-    if (!(element instanceof HTMLElement)) continue;
+  for (const element of container.querySelectorAll<HTMLElement>("[data-message-id]")) {
     if (messageIdForElement(element) === messageId) return element;
   }
   return null;
 }
 
-function latestMessageTopClippedId(container: HTMLElement) {
-  const latestMessage = latestMessageElement(container);
-  if (!latestMessage) return null;
+function readingAnchor(container: HTMLElement): SessionScrollAnchor | undefined {
+  const viewport = container.getBoundingClientRect();
+  for (const element of container.querySelectorAll<HTMLElement>("[data-message-id]")) {
+    const rect = element.getBoundingClientRect();
+    const messageId = messageIdForElement(element);
+    if (messageId && rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom) {
+      return { messageId, offset: rect.top - viewport.top };
+    }
+  }
+  return undefined;
+}
 
-  const messageId = messageIdForElement(latestMessage);
-  if (!messageId) return null;
+function latestMessageTopClippedId(container: HTMLElement) {
+  const messages = container.querySelectorAll<HTMLElement>("[data-message-id]");
+  const latestMessage = messages.item(messages.length - 1);
+  if (!latestMessage) return null;
 
   const containerRect = container.getBoundingClientRect();
   const latestRect = latestMessage.getBoundingClientRect();
   const lastMessageDoesNotFit = latestRect.height > containerRect.height + 1;
   const startVisible = latestRect.top >= containerRect.top - 1 && latestRect.top <= containerRect.bottom + 1;
-
-  return lastMessageDoesNotFit && !startVisible ? messageId : null;
+  return lastMessageDoesNotFit && !startVisible ? messageIdForElement(latestMessage) : null;
 }
 
-export function useSessionScrollController(
-  options: SessionScrollControllerOptions,
-) {
-  const selectedSessionId = options.selectedSessionId;
-  const setStickyBottom = useSessionScrollStore((state) => state.setStickyBottom);
-  const setManualScroll = useSessionScrollStore((state) => state.setManualScroll);
-  const setTopClippedMessageId = useSessionScrollStore((state) => state.setTopClippedMessageId);
+type ScrollController = {
+  sessionId: string | null;
+  update: (historyReady: boolean, submittedMessageId: string | null) => void;
+  handleScroll: UIEventHandler<HTMLDivElement>;
+  markScrollGesture: (target?: EventTarget | null) => void;
+  scrollToBottom: (behavior?: ScrollBehavior) => void;
+  jumpToStartOfMessage: (behavior?: ScrollBehavior) => void;
+};
 
-  const lastKnownScrollTopRef = useRef(0);
-  const programmaticScrollRef = useRef(false);
-  const positioningRafRef = useRef<number | undefined>(undefined);
-  const programmaticScrollResetRafARef = useRef<number | undefined>(undefined);
-  const programmaticScrollResetRafBRef = useRef<number | undefined>(undefined);
-  const observedContentHeightRef = useRef(0);
-  const lastGestureAtRef = useRef(0);
-  const previousSessionIdRef = useRef<string | null>(null);
-  const revealedMessageIdRef = useRef<string | null>(null);
+export function useSessionScrollController(options: SessionScrollControllerOptions) {
+  const { selectedSessionId, containerRef, contentRef } = options;
+  const controllerRef = useRef<ScrollController | null>(null);
+  // Consumed (including cancelled) submissions survive session effect recreation.
+  const submittedMessagesRef = useRef(new Set<string>());
 
-  const hasScrollGesture = useCallback(
-    () => Date.now() - lastGestureAtRef.current < SCROLL_GESTURE_WINDOW_MS,
-    [],
-  );
+  // Every observer, frame and DOM reference belongs to this committed session.
+  // Cleanup never saves from the DOM: React may already have replaced its history.
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const content = contentRef.current;
+    if (!container || !content) return;
 
-  const updateOverflowAnchor = useCallback(() => {
-    const container = options.containerRef.current;
-    if (!container) return;
-    container.style.overflowAnchor = isStickyBottom(selectedSessionId) ? "none" : "auto";
-  }, [options.containerRef, selectedSessionId]);
-
-  const markScrollGesture = useCallback(
-    (target?: EventTarget | null) => {
-      const container = options.containerRef.current;
-      if (!container) return;
-
-      const el = target instanceof Element ? target : undefined;
-      const nested = el?.closest("[data-scrollable]");
-      if (nested && nested !== container) return;
-
-      lastGestureAtRef.current = Date.now();
-    },
-    [options.containerRef],
-  );
-
-  const clearProgrammaticScrollReset = useCallback(() => {
-    if (programmaticScrollResetRafARef.current !== undefined) {
-      window.cancelAnimationFrame(programmaticScrollResetRafARef.current);
-      programmaticScrollResetRafARef.current = undefined;
-    }
-    if (programmaticScrollResetRafBRef.current !== undefined) {
-      window.cancelAnimationFrame(programmaticScrollResetRafBRef.current);
-      programmaticScrollResetRafBRef.current = undefined;
-    }
-  }, []);
-
-  const clearPendingPosition = useCallback(() => {
-    if (positioningRafRef.current === undefined) return;
-    window.cancelAnimationFrame(positioningRafRef.current);
-    positioningRafRef.current = undefined;
-  }, []);
-
-  const releaseProgrammaticScrollSoon = useCallback(() => {
-    clearProgrammaticScrollReset();
-    programmaticScrollResetRafARef.current = window.requestAnimationFrame(() => {
-      programmaticScrollResetRafARef.current = undefined;
-      programmaticScrollResetRafBRef.current = window.requestAnimationFrame(() => {
-        programmaticScrollResetRafBRef.current = undefined;
-        programmaticScrollRef.current = false;
+    const store = useSessionScrollStore.getState();
+    const readState = () => getSessionScrollState(useSessionScrollStore.getState().sessions, selectedSessionId);
+    let active = true;
+    let historyReady = false;
+    let pendingRestore = true;
+    let pendingSubmittedMessageId: string | null = null;
+    let cancelledWhileLoading = false;
+    let smoothJump = false;
+    let activePointerId: number | null = null;
+    let pointerScrolled = false;
+    let gestureBeforePointer = -Infinity;
+    let lastGestureAt = -Infinity;
+    let lastKnownScrollTop = container.scrollTop;
+    const frames = new Set<number>();
+    const hasScrollGesture = () => activePointerId !== null || Date.now() - lastGestureAt < SCROLL_GESTURE_WINDOW_MS;
+    const scheduleFrame = (callback: () => void) => {
+      const id = window.requestAnimationFrame(() => {
+        if (!frames.delete(id) || !active) return;
+        callback();
       });
-    });
-  }, [clearProgrammaticScrollReset]);
-
-  const refreshTopClippedMessage = useCallback(() => {
-    const container = options.containerRef.current;
-    const nextId = container ? latestMessageTopClippedId(container) : null;
-    setTopClippedMessageId(selectedSessionId, nextId);
-    return nextId;
-  }, [options.containerRef, selectedSessionId, setTopClippedMessageId]);
-
-  const scrollToBottom = useCallback(
-    (behavior: ScrollBehavior = "auto") => {
-      const container = options.containerRef.current;
-      if (!container) return;
-
-      setStickyBottom(selectedSessionId, null);
-      programmaticScrollRef.current = true;
-      clearPendingPosition();
-
-      if (behavior === "smooth") {
-        container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
-        releaseProgrammaticScrollSoon();
+      frames.add(id);
+    };
+    const cancelFrames = () => {
+      for (const id of frames) window.cancelAnimationFrame(id);
+      frames.clear();
+    };
+    const refreshTopClippedMessage = () => {
+      if (active && historyReady) store.setTopClippedMessageId(selectedSessionId, latestMessageTopClippedId(container));
+    };
+    const scrollToBottom = (behavior: ScrollBehavior = "auto") => {
+      if (!active) return;
+      cancelFrames();
+      pendingRestore = false;
+      pendingSubmittedMessageId = null;
+      cancelledWhileLoading = false;
+      lastGestureAt = -Infinity;
+      store.setStickyBottom(selectedSessionId, null);
+      smoothJump = behavior === "smooth";
+      container.scrollTo({ top: container.scrollHeight, behavior });
+      lastKnownScrollTop = container.scrollTop;
+      if (behavior === "auto") scheduleFrame(() => {
+        container.scrollTop = container.scrollHeight;
+        lastKnownScrollTop = container.scrollTop;
+        refreshTopClippedMessage();
+      });
+    };
+    const anchorTop = (anchor: SessionScrollAnchor) => {
+      const message = messageElementById(container, anchor.messageId);
+      return message ? container.scrollTop + message.getBoundingClientRect().top
+        - container.getBoundingClientRect().top - anchor.offset : null;
+    };
+    const reconcile = () => {
+      if (!active || container.clientHeight === 0) return;
+      if (activePointerId !== null) {
+        refreshTopClippedMessage();
         return;
       }
-
-      container.scrollTop = container.scrollHeight;
-      lastKnownScrollTopRef.current = container.scrollTop;
-      positioningRafRef.current = window.requestAnimationFrame(() => {
-        positioningRafRef.current = undefined;
-        const next = options.containerRef.current;
-        if (!next) {
-          programmaticScrollRef.current = false;
+      if (pendingSubmittedMessageId) {
+        const top = anchorTop({ messageId: pendingSubmittedMessageId, offset: 0 });
+        if (top === null) return;
+        // Sending is explicit navigation, even while history loads. Align an
+        // oversized prompt's start; a short prompt clamps to the bottom.
+        pendingSubmittedMessageId = null;
+        pendingRestore = false;
+        cancelledWhileLoading = false;
+        cancelFrames();
+        if (smoothJump) container.scrollTo({ top: container.scrollTop, behavior: "instant" });
+        smoothJump = false;
+        lastGestureAt = -Infinity;
+        container.scrollTop = top;
+        lastKnownScrollTop = container.scrollTop;
+        const clipped = latestMessageTopClippedId(container);
+        if (isExactlyAtBottom(container)) store.setStickyBottom(selectedSessionId, clipped);
+        else store.setManualScroll(selectedSessionId, container.scrollTop, clipped, readingAnchor(container));
+        return;
+      }
+      if (!historyReady) return;
+      const saved = readState();
+      if (pendingRestore) {
+        pendingRestore = false;
+        if (saved.mode === "manual") {
+          // A bounded snapshot may not contain the old message. Fall back once,
+          // without persisting a clamped position or silently becoming sticky.
+          const top = saved.anchor ? anchorTop(saved.anchor) : null;
+          container.scrollTop = top ?? saved.scrollTop;
+          lastKnownScrollTop = container.scrollTop;
+        } else {
+          scrollToBottom();
+        }
+      } else if (!cancelledWhileLoading) {
+        if (saved.mode === "stickyBottom") {
+          if (!hasScrollGesture() && !isExactlyAtBottom(container)) scrollToBottom();
+        }
+      }
+      refreshTopClippedMessage();
+    };
+    const markScrollGesture = (target?: EventTarget | null) => {
+      if (!active) return;
+      const nested = target instanceof Element ? target.closest("[data-scrollable]") : null;
+      if (nested && nested !== container) return;
+      // Pointer presses may just be clicks. Defer cancelling restoration until
+      // they actually scroll; release without scrolling resumes pending follow.
+      if (activePointerId === null) {
+        cancelledWhileLoading ||= pendingRestore;
+        pendingRestore = false;
+        pendingSubmittedMessageId = null;
+      }
+      cancelFrames();
+      // Stop an in-flight smooth jump too, before the wheel/key moves the view.
+      if (smoothJump) container.scrollTo({ top: container.scrollTop, behavior: "instant" });
+      smoothJump = false;
+      lastGestureAt = Date.now();
+    };
+    const handleScroll: UIEventHandler<HTMLDivElement> = () => {
+      if (!active) return;
+      // Layout clamping and our own anchoring also dispatch scroll events. Only
+      // actual input may replace the saved reading position or change its mode.
+      if (hasScrollGesture() && container.scrollTop !== lastKnownScrollTop) {
+        // Trackpad momentum can outlast the original wheel/touch event.
+        lastGestureAt = Date.now();
+        if (activePointerId !== null) pointerScrolled = true;
+        pendingRestore = false;
+        pendingSubmittedMessageId = null;
+        if (!historyReady) {
+          cancelledWhileLoading = true;
+          lastKnownScrollTop = container.scrollTop;
           return;
         }
-        next.scrollTop = next.scrollHeight;
-        lastKnownScrollTopRef.current = next.scrollTop;
-        refreshTopClippedMessage();
-        releaseProgrammaticScrollSoon();
-      });
-    },
-    [clearPendingPosition, options.containerRef, refreshTopClippedMessage, releaseProgrammaticScrollSoon, selectedSessionId, setStickyBottom],
-  );
-
-  const saveScrollPosition = useCallback(
-    (container: HTMLDivElement) => {
-      const nextTopClippedMessageId = latestMessageTopClippedId(container);
-      if (isExactlyAtBottom(container)) {
-        setStickyBottom(selectedSessionId, nextTopClippedMessageId);
-      } else {
-        setManualScroll(selectedSessionId, container.scrollTop, nextTopClippedMessageId);
-      }
-      return nextTopClippedMessageId;
-    },
-    [selectedSessionId, setManualScroll, setStickyBottom],
-  );
-
-  const handleScroll = useCallback<UIEventHandler<HTMLDivElement>>(
-    (event) => {
-      const container = event.currentTarget;
-      const currentTop = container.scrollTop;
-      const previousTop = lastKnownScrollTopRef.current;
-      const delta = currentTop - previousTop;
-      const scrolledUp = delta <= -MANUAL_BROWSE_UPWARD_THRESHOLD_PX;
-      const userGestured = hasScrollGesture();
-
-      // If the user scrolls up meaningfully while a programmatic scroll is
-      // in flight, abandon the programmatic state and switch to manual browse
-      // immediately. Without this the ResizeObserver's auto-scroll during
-      // streaming keeps re-anchoring us to the bottom and the user can never
-      // actually get away from the tail of the transcript.
-      if (programmaticScrollRef.current && (userGestured || scrolledUp)) {
-        programmaticScrollRef.current = false;
-        clearPendingPosition();
-        clearProgrammaticScrollReset();
-        saveScrollPosition(container);
-        lastKnownScrollTopRef.current = currentTop;
-        return;
-      }
-
-      if (programmaticScrollRef.current) {
-        lastKnownScrollTopRef.current = currentTop;
-        refreshTopClippedMessage();
-        return;
-      }
-
-      if (!userGestured && !scrolledUp) {
+        cancelledWhileLoading = false;
+        const clipped = latestMessageTopClippedId(container);
         if (isExactlyAtBottom(container)) {
-          setStickyBottom(selectedSessionId, latestMessageTopClippedId(container));
+          store.setStickyBottom(selectedSessionId, clipped);
         } else {
-          refreshTopClippedMessage();
+          store.setManualScroll(selectedSessionId, container.scrollTop, clipped, readingAnchor(container));
         }
-        lastKnownScrollTopRef.current = currentTop;
-        return;
+      } else {
+        const saved = readState();
+        // Native anchoring can move scrollTop when a diagram/image expands
+        // inside the reading message. Remember that adjustment for the next
+        // visit, but never persist the initial restore's clamp or missing anchor.
+        if (!pendingRestore && historyReady && container.scrollTop !== lastKnownScrollTop
+          && saved.mode === "manual" && saved.anchor && messageElementById(container, saved.anchor.messageId)) {
+          store.setManualScroll(selectedSessionId, container.scrollTop, latestMessageTopClippedId(container), readingAnchor(container));
+        }
+        refreshTopClippedMessage();
       }
-
-      saveScrollPosition(container);
-      lastKnownScrollTopRef.current = currentTop;
-    },
-    [clearPendingPosition, clearProgrammaticScrollReset, hasScrollGesture, refreshTopClippedMessage, saveScrollPosition, selectedSessionId, setStickyBottom],
-  );
-
-  const jumpToLatest = useCallback(
-    (behavior: ScrollBehavior = "smooth") => {
-      scrollToBottom(behavior);
-    },
-    [scrollToBottom],
-  );
-
-  const jumpToStartOfMessage = useCallback(
-    (behavior: ScrollBehavior = "smooth") => {
-      const messageId = readScrollState(selectedSessionId).topClippedMessageId;
-      const container = options.containerRef.current;
-      if (!messageId || !container) return;
-
-      const target = messageElementById(container, messageId);
-      if (!target) return;
-
-      setManualScroll(selectedSessionId, container.scrollTop, messageId);
-      target.scrollIntoView({ behavior, block: "start" });
-    },
-    [options.containerRef, selectedSessionId, setManualScroll],
-  );
-
-  useEffect(() => {
-    updateOverflowAnchor();
-    return useSessionScrollStore.subscribe(updateOverflowAnchor);
-  }, [updateOverflowAnchor]);
-
-  useEffect(() => {
-    const content = options.contentRef.current;
-    if (!content) return;
-
-    observedContentHeightRef.current = content.offsetHeight;
-    const observer = new ResizeObserver(() => {
-      const nextContent = options.contentRef.current;
-      if (!nextContent) return;
-
-      const nextHeight = nextContent.offsetHeight;
-      const previousContentHeight = observedContentHeightRef.current;
-      const grew = nextHeight > previousContentHeight + 1;
-      observedContentHeightRef.current = nextHeight;
-
-      // Only re-anchor to the bottom when we're already in sticky bottom mode
-      // AND the user isn't actively scrolling. If they've touched the wheel,
-      // touchpad, or scrollbar in the last SCROLL_GESTURE_WINDOW_MS, treat
-      // that as intent to break out of autoscroll and leave their position
-      // alone until the next handleScroll tick reclassifies the mode.
-      if (grew && isStickyBottom(selectedSessionId) && !hasScrollGesture()) {
-        scrollToBottom("auto");
-        return;
-      }
-
-      refreshTopClippedMessage();
-    });
-
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, [hasScrollGesture, options.contentRef, refreshTopClippedMessage, scrollToBottom, selectedSessionId]);
-
-  useEffect(() => {
-    if (selectedSessionId === previousSessionIdRef.current) return;
-    previousSessionIdRef.current = selectedSessionId;
-    clearPendingPosition();
-    if (!selectedSessionId) return;
-
-    observedContentHeightRef.current = 0;
-    lastKnownScrollTopRef.current = 0;
-    queueMicrotask(() => {
-      const container = options.containerRef.current;
-      if (!container) return;
-
-      const savedState = getSessionScrollState(useSessionScrollStore.getState().sessions, selectedSessionId);
-      if (savedState.mode === "manual") {
-        programmaticScrollRef.current = true;
-        container.scrollTop = Math.min(savedState.scrollTop, Math.max(0, container.scrollHeight - container.clientHeight));
-        lastKnownScrollTopRef.current = container.scrollTop;
-        positioningRafRef.current = window.requestAnimationFrame(() => {
-          positioningRafRef.current = undefined;
-          const next = options.containerRef.current;
-          if (!next) {
-            programmaticScrollRef.current = false;
-            return;
-          }
-          next.scrollTop = Math.min(savedState.scrollTop, Math.max(0, next.scrollHeight - next.clientHeight));
-          lastKnownScrollTopRef.current = next.scrollTop;
-          saveScrollPosition(next);
-          releaseProgrammaticScrollSoon();
-        });
-        return;
-      }
-
-      scrollToBottom("auto");
-    });
-  }, [clearPendingPosition, options.containerRef, releaseProgrammaticScrollSoon, saveScrollPosition, scrollToBottom, selectedSessionId]);
-
-  useEffect(() => {
-    void options.renderedMessages;
-    queueMicrotask(refreshTopClippedMessage);
-  }, [options.renderedMessages, refreshTopClippedMessage]);
-
-  useEffect(() => {
-    const messageId = options.submittedMessageId;
-    if (!messageId || messageId === revealedMessageIdRef.current) return;
-    let cancelled = false;
-    // Wait for the submitted row and any session restoration to commit. Sending
-    // is explicit navigation; passive output must still respect manual browsing.
-    queueMicrotask(() => {
-      if (cancelled) return;
-      const container = options.containerRef.current;
-      const target = container && messageElementById(container, messageId);
-      if (!container || !target) return;
-      revealedMessageIdRef.current = messageId;
-      clearPendingPosition();
-      lastGestureAtRef.current = 0;
-      programmaticScrollRef.current = true;
-      const containerRect = container.getBoundingClientRect();
-      const targetRect = target.getBoundingClientRect();
-      // Align the start of an oversized prompt; short prompts clamp to the tail.
-      container.scrollTop += targetRect.top - containerRect.top;
-      lastKnownScrollTopRef.current = container.scrollTop;
-      saveScrollPosition(container);
-      releaseProgrammaticScrollSoon();
-    });
-    return () => { cancelled = true; };
-  }, [clearPendingPosition, options.submittedMessageId, options.renderedMessages, options.containerRef, selectedSessionId, saveScrollPosition, releaseProgrammaticScrollSoon]);
-
-  useEffect(() => {
-    return () => {
-      clearPendingPosition();
-      clearProgrammaticScrollReset();
+      lastKnownScrollTop = container.scrollTop;
     };
-  }, [clearPendingPosition, clearProgrammaticScrollReset]);
+    const jumpToStartOfMessage = (behavior: ScrollBehavior = "smooth") => {
+      if (!active) return;
+      const messageId = readState().topClippedMessageId;
+      if (!messageId) return;
+      const anchor = { messageId, offset: 0 };
+      const top = anchorTop(anchor);
+      if (top === null) return;
+      cancelFrames();
+      pendingRestore = false;
+      pendingSubmittedMessageId = null;
+      cancelledWhileLoading = false;
+      lastGestureAt = -Infinity;
+      store.setManualScroll(selectedSessionId, top, messageId, anchor);
+      smoothJump = behavior === "smooth";
+      container.scrollTo({ top, behavior });
+      lastKnownScrollTop = container.scrollTop;
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable=true]")) return;
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markScrollGesture(event.target);
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!event.isPrimary || event.button !== 0 || activePointerId !== null) return;
+      const nested = event.target instanceof Element ? event.target.closest("[data-scrollable], input, textarea, select, [contenteditable=true]") : null;
+      if (nested && nested !== container) return;
+      activePointerId = event.pointerId;
+      pointerScrolled = false;
+      gestureBeforePointer = lastGestureAt;
+      cancelFrames();
+      if (smoothJump) container.scrollTo({ top: container.scrollTop, behavior: "instant" });
+      smoothJump = false;
+    };
+    const handlePointerUp = (event: PointerEvent) => {
+      if (event.pointerId !== activePointerId) return;
+      activePointerId = null;
+      lastGestureAt = pointerScrolled ? Date.now() : gestureBeforePointer;
+      if (!pointerScrolled) reconcile();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") flushSessionScrollState();
+    };
 
-  return {
-    handleScroll,
-    markScrollGesture,
-    scrollToBottom,
-    jumpToLatest,
-    jumpToStartOfMessage,
-  };
+    // The browser owns manual reflow, including changes inside a long message.
+    // Message-root offsets are only used when restoring a session.
+    const previousOverflowAnchor = container.style.overflowAnchor;
+    const updateOverflowAnchor = () => {
+      const next = readState().mode === "manual" ? "auto" : "none";
+      if (container.style.overflowAnchor !== next) container.style.overflowAnchor = next;
+    };
+    updateOverflowAnchor();
+    const unsubscribeScrollState = useSessionScrollStore.subscribe(updateOverflowAnchor);
+    const observer = new ResizeObserver(reconcile);
+    observer.observe(content);
+    observer.observe(container);
+    container.addEventListener("keydown", handleKeyDown);
+    container.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+    window.addEventListener("pagehide", flushSessionScrollState);
+    document.addEventListener("visibilitychange", handleVisibility);
+    controllerRef.current = {
+      sessionId: selectedSessionId,
+      update: (ready, messageId) => {
+        historyReady = ready;
+        if (!messageId) pendingSubmittedMessageId = null;
+        else {
+          const key = JSON.stringify([selectedSessionId, messageId]);
+          if (!submittedMessagesRef.current.has(key)) {
+            submittedMessagesRef.current.add(key);
+            pendingSubmittedMessageId = messageId;
+            cancelFrames();
+          }
+        }
+        reconcile();
+      },
+      handleScroll,
+      markScrollGesture,
+      scrollToBottom,
+      jumpToStartOfMessage,
+    };
+
+    return () => {
+      active = false;
+      cancelFrames();
+      if (smoothJump) container.scrollTo({ top: container.scrollTop, behavior: "instant" });
+      observer.disconnect();
+      unsubscribeScrollState();
+      container.removeEventListener("keydown", handleKeyDown);
+      container.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+      window.removeEventListener("pagehide", flushSessionScrollState);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      container.style.overflowAnchor = previousOverflowAnchor;
+      controllerRef.current = null;
+      flushSessionScrollState();
+    };
+  }, [selectedSessionId, containerRef, contentRef]);
+
+  useLayoutEffect(() => {
+    controllerRef.current?.update(options.historyReady, options.submittedMessageId);
+  }, [selectedSessionId, containerRef, contentRef, options.historyReady, options.submittedMessageId, options.renderedMessages]);
+
+  const handleScroll = useCallback<UIEventHandler<HTMLDivElement>>((event) => {
+    if (controllerRef.current?.sessionId === selectedSessionId) controllerRef.current.handleScroll(event);
+  }, [selectedSessionId]);
+  const markScrollGesture = useCallback((target?: EventTarget | null) => {
+    if (controllerRef.current?.sessionId === selectedSessionId) controllerRef.current.markScrollGesture(target);
+  }, [selectedSessionId]);
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    if (controllerRef.current?.sessionId === selectedSessionId) controllerRef.current.scrollToBottom(behavior);
+  }, [selectedSessionId]);
+  const jumpToLatest = useCallback((behavior: ScrollBehavior = "smooth") => scrollToBottom(behavior), [scrollToBottom]);
+  const jumpToStartOfMessage = useCallback((behavior: ScrollBehavior = "smooth") => {
+    if (controllerRef.current?.sessionId === selectedSessionId) controllerRef.current.jumpToStartOfMessage(behavior);
+  }, [selectedSessionId]);
+
+  return { handleScroll, markScrollGesture, scrollToBottom, jumpToLatest, jumpToStartOfMessage };
 }

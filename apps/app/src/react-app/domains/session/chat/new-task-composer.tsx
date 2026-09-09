@@ -9,6 +9,7 @@ import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelOption, Mod
 import { t } from "@/i18n";
 import type { ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import { ReactSessionComposer } from "@/react-app/domains/session/surface/composer/composer";
+import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge";
 import { WorkspaceRunModeMenu } from "@/react-app/domains/session/surface/composer/workspace-run-mode-menu";
 import {
   snapshotComposerSessionState,
@@ -126,8 +127,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   const [pastedText, setPastedText] = useState<PastedTextChip[]>([]);
   const submittingRef = useRef(false);
   const draftRevisionRef = useRef(0);
-  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
-  const [preparingAttachments, setPreparingAttachments] = useState(false);
+  const [pendingSubmission, setPendingSubmission] = useState<ComposerSessionState | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [failedSubmission, setFailedSubmission] = useState<ComposerSessionState | null>(null);
   const draftRef = useRef(props.draft);
@@ -167,8 +167,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       setAttachments([]);
       setMentions({});
       setPastedText([]);
-      setPendingPrompt(null);
-      setPreparingAttachments(false);
+      setPendingSubmission(null);
       setSubmissionError(null);
       setFailedSubmission(null);
     }
@@ -189,6 +188,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   const updateAttachments = (next: ComposerAttachment[]) => {
     const holder = continuationHolderRef.current;
     if (holder.frozen) return;
+    draftRevisionRef.current += 1;
     holder.state = { ...holder.state, attachments: next };
     setAttachments(next);
   };
@@ -196,6 +196,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   const updateMentions = (next: Record<string, ComposerMentionKind>) => {
     const holder = continuationHolderRef.current;
     if (holder.frozen) return;
+    draftRevisionRef.current += 1;
     holder.state = { ...holder.state, mentions: next };
     setMentions(next);
   };
@@ -203,6 +204,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   const updatePasteParts = (next: PastedTextChip[]) => {
     const holder = continuationHolderRef.current;
     if (holder.frozen) return;
+    draftRevisionRef.current += 1;
     holder.state = { ...holder.state, pasteParts: next };
     setPastedText(next);
   };
@@ -370,19 +372,15 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     const revision = draftRevisionRef.current;
     const submitted = snapshotComposerSessionState({ ...submissionHolder.state, draft: originalDraft });
     const resolved = resolvePastedTextPlaceholders(originalDraft, submitted.pasteParts);
-    if (!submitted.attachments.length) setPendingPrompt(resolved.replace(/\[attachment [^\]]+\]/g, ""));
-    setPreparingAttachments(submitted.attachments.length > 0);
+    setPendingSubmission(submitted);
     setSubmissionError(null);
-    // Attachment drafts stay visible through session creation and are handed
-    // to the session composer, which clears them only after preparation.
-    if (!submitted.attachments.length) {
-      props.onDraftChange("");
-      draftRef.current = "";
-      submissionHolder.state = emptyNewTaskComposerState();
-      setAttachments([]);
-      setMentions({});
-      setPastedText([]);
-    }
+    // Transfer the files and preview URLs to the pending turn before clearing input.
+    props.onDraftChange("");
+    draftRef.current = "";
+    submissionHolder.state = emptyNewTaskComposerState();
+    setAttachments([]);
+    setMentions({});
+    setPastedText([]);
     try {
       await props.onRunTask(resolved, submitted.attachments, {
         submitted,
@@ -390,16 +388,13 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       });
     } catch (error) {
       if (continuationHolderRef.current !== submissionHolder || submissionHolder.frozen) return;
-      if (!submitted.attachments.length) {
-        if (draftRevisionRef.current === revision && !draftRef.current) {
-          restoreComposer(submitted);
-        } else {
-          setFailedSubmission(submitted);
-        }
+      if (draftRevisionRef.current === revision && !draftRef.current) {
+        restoreComposer(submitted);
+      } else {
+        setFailedSubmission(submitted);
       }
       setSubmissionError(error instanceof Error ? error.message : "Could not create the conversation. Try again.");
-      setPendingPrompt(null);
-      setPreparingAttachments(false);
+      setPendingSubmission(null);
       submittingRef.current = false;
     }
   };
@@ -412,9 +407,15 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
 
   return (
     <>
-    {pendingPrompt !== null ? <div className="mb-4 whitespace-pre-wrap rounded-xl bg-muted px-4 py-3 text-sm" data-message-role="user">
-      {pendingPrompt}
+    {pendingSubmission ? <div className="mb-4 whitespace-pre-wrap rounded-xl bg-muted px-4 py-3 text-sm" data-message-role="user">
+      {resolvePastedTextPlaceholders(pendingSubmission.draft, pendingSubmission.pasteParts).replace(/\[attachment [^\]]+\]/g, "")}
+      {pendingSubmission.attachments.map((attachment) => <span key={attachment.id} className="mx-1 inline-flex align-middle">
+        {attachment.kind === "image" && attachment.previewUrl
+          ? <ImageAttachmentBadge src={attachment.previewUrl} alt={attachment.name} />
+          : attachment.name}
+      </span>)}
     </div> : null}
+    {pendingSubmission?.attachments.length ? <div role="status" className="mb-2 text-xs text-muted-foreground">Creating conversation...</div> : null}
     {submissionError ? <div role="alert" className="mb-2 text-sm text-red-11">{submissionError}</div> : null}
     {failedSubmission ? <button type="button" disabled={Boolean(props.draft || attachments.length)} className="mb-2 text-sm disabled:opacity-50" onClick={() => {
       restoreComposer(failedSubmission);
@@ -431,7 +432,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       onStop={noop}
       busy={false}
       steering={false}
-      submissionPreparing={props.busy || pendingPrompt !== null || preparingAttachments || failedSubmission !== null}
+      submissionPreparing={props.busy || pendingSubmission !== null || failedSubmission !== null}
       queuedCount={0}
       disabled={Boolean(context?.modelUnavailable)}
       modelUnavailable={context?.modelUnavailable}
@@ -447,7 +448,6 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       onModelPickerOpenChange={context?.onModelPickerOpenChange ?? noop}
       onModelChange={context?.onModelChange ?? noop}
       attachments={attachments}
-      attachmentsUploading={preparingAttachments}
       onAttachFiles={handleAttachFiles}
       onRemoveAttachment={handleRemoveAttachment}
       attachmentsEnabled

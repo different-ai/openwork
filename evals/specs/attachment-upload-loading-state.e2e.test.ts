@@ -14,7 +14,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 for (const entryPoint of ["existing chat", "new task"]) {
-test(`attaching an image in ${entryPoint} retains the draft until the upload is ready`, async ({ world, user, seed, probe, step }) => {
+test(`sending an image in ${entryPoint} immediately moves it into the thread while upload is pending`, async ({ world, user, seed, probe, step }) => {
   await step("manual approval exempts only chat-attachment inbox uploads", async () => {
     expect(world.uploadStatus).toBe(200);
     expect(world.uploadElapsedMs).toBeLessThan(world.approvalTimeoutMs);
@@ -94,25 +94,34 @@ test(`attaching an image in ${entryPoint} retains the draft until the upload is 
   await user.click("Run task");
 
   // TODO(primitive): await a transient attachment-status witness.
-  expect(await probe.eventually(() => probe.eval(() => (globalThis.__attachmentUploadingSeen === true && window.__openworkSubmissionFault?.attempts === 1)), {
+  expect(await probe.eventually(() => probe.eval(() => {
+    const rows = document.querySelectorAll('[data-message-role="user"]');
+    const image = rows[0]?.querySelector<HTMLImageElement>("img");
+    return globalThis.__attachmentUploadingSeen === true && window.__openworkSubmissionFault?.attempts === 1
+      && rows.length === 1 && Boolean(image?.complete && image.naturalWidth > 0)
+      && !document.querySelector("[data-attachment-id]")
+      && document.querySelector('[contenteditable="true"]')?.textContent === "";
+  }), {
     within: 30_000,
     intervalMs: 50,
-    label: "attachment uploading state observed",
+    label: "one decoded thread preview and cleared composer while upload is held",
     until: (value) => value === true,
   })).toBe(true);
-  await step("the draft is not sent while its image is preparing", async () => {
-    await user.see("composer", { text: /Describe the attached image\./ });
-    expect((await probe.dom('[data-message-role="user"]')).elements).toHaveLength(0);
-    await user.click("composer");
+  await step("Send moves the attachments immediately and preserves the next draft", async () => {
+    await user.see("composer", { text: "" });
+    expect((await probe.dom('[data-message-role="user"]')).elements).toHaveLength(1);
+    expect((await probe.dom('[data-message-role="user"] img')).elements).toHaveLength(1);
+    await user.see({ text: "pasted-recording.mp4" });
+    await user.type("composer", "Continue after upload.");
     await user.press("Enter");
     await user.press("Meta+Enter");
-    await user.see("composer", { text: /Describe the attached image\./ });
-    expect((await probe.dom('[data-message-role="user"]')).elements).toHaveLength(0);
+    await user.see("composer", { text: "Continue after upload." });
+    expect((await probe.dom('[data-message-role="user"]')).elements).toHaveLength(1);
     await user.notSee({ text: /1 queued/ });
   });
   await world.releaseUploads();
   await user.see({ text: "attachment upload loading proof" });
-  await user.see("composer", { text: "" });
+  await user.see("composer", { text: "Continue after upload." });
   expect((await probe.dom('[data-message-role="user"]')).elements).toHaveLength(1);
   await user.notSee({ text: /1 queued/ });
   expect((await probe.hash()).includes("/session/ses_")).toBe(true);

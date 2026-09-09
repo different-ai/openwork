@@ -38,7 +38,7 @@ describe("submitted message reveal", () => {
   let container: HTMLDivElement;
   let contentHeight: number;
   let resize: () => void;
-  let render: (sessionId: string, submittedMessageId: string | null, rows: Row[]) => Promise<void>;
+  let render: (sessionId: string, submittedMessageId: string | null, rows: Row[], historyReady?: boolean) => Promise<void>;
   let flushFrames: () => Promise<void>;
   let originalResizeObserver: typeof ResizeObserver;
 
@@ -81,10 +81,11 @@ describe("submitted message reveal", () => {
     const containerRef = createRef<HTMLDivElement>();
     const contentRef = createRef<HTMLDivElement>();
     let scrollTop = 0;
-    function Harness(props: { sessionId: string; submittedMessageId: string | null; rows: Row[] }) {
+    function Harness(props: { sessionId: string; submittedMessageId: string | null; rows: Row[]; historyReady: boolean }) {
       const controller = useSessionScrollController({
         selectedSessionId: props.sessionId,
         submittedMessageId: props.submittedMessageId,
+        historyReady: props.historyReady,
         renderedMessages: props.rows,
         containerRef,
         contentRef,
@@ -103,6 +104,7 @@ describe("submitted message reveal", () => {
               get: () => scrollTop,
               set: (value: number) => { scrollTop = Math.max(0, Math.min(value, contentHeight - 500)); },
             },
+            scrollTo: { configurable: true, value: (options: ScrollToOptions) => { node.scrollTop = options.top ?? scrollTop; } },
           });
           node.getBoundingClientRect = () => new DOMRect(0, 100, 800, 500);
         },
@@ -122,8 +124,8 @@ describe("submitted message reveal", () => {
       }, row.id))));
     }
     root = createRoot(document.createElement("div"));
-    render = async (sessionId, submittedMessageId, rows) => {
-      await act(async () => { root.render(createElement(Harness, { sessionId, submittedMessageId, rows })); });
+    render = async (sessionId, submittedMessageId, rows, historyReady = true) => {
+      await act(async () => { root.render(createElement(Harness, { sessionId, submittedMessageId, rows, historyReady })); });
     };
   });
 
@@ -189,6 +191,10 @@ describe("submitted message reveal", () => {
     expect(container.scrollTop).toBe(400);
     expect(useSessionScrollStore.getState().sessions["session-a"]).toMatchObject({ mode: "manual", scrollTop: 200 });
     expect(useSessionScrollStore.getState().sessions["session-b"]).toMatchObject({ mode: "manual", scrollTop: 400 });
+    await render("session-a", "submitted-a", [...history, { id: "submitted-a", top: 2000, height: 100 }]);
+    await flushFrames();
+    expect(container.scrollTop).toBe(200);
+    expect(useSessionScrollStore.getState().sessions["session-b"]).toMatchObject({ mode: "manual", scrollTop: 400 });
   });
 
   test("reveals the start rather than the tail of an oversized submitted prompt", async () => {
@@ -203,7 +209,7 @@ describe("submitted message reveal", () => {
     expect(container.querySelector('[data-message-id="submitted"]')?.getBoundingClientRect().top)
       .toBe(container.getBoundingClientRect().top);
     expect(useSessionScrollStore.getState().sessions["session-a"])
-      .toEqual({ mode: "manual", scrollTop: 2000, topClippedMessageId: null });
+      .toEqual({ mode: "manual", scrollTop: 2000, topClippedMessageId: null, anchor: { messageId: "submitted", offset: 0 } });
     contentHeight = 2900;
     await render("session-a", "submitted", [...rows]);
     await act(async () => resize());
@@ -214,13 +220,64 @@ describe("submitted message reveal", () => {
   test("session restoration does not overwrite a newly revealed prompt on the next frame", async () => {
     useSessionScrollStore.getState().setManualScroll("session-a", 200, null);
     await render("session-a", null, history);
-    // Send before restoration's second (animation-frame) pass has executed.
+    // Send before queued positioning callbacks have drained.
     contentHeight = 2800;
     await render("session-a", "submitted", [...history, { id: "submitted", top: 2000, height: 800 }]);
     expect(container.scrollTop).toBe(2000);
     await flushFrames();
     expect(container.scrollTop).toBe(2000);
     expect(useSessionScrollStore.getState().sessions["session-a"])
-      .toEqual({ mode: "manual", scrollTop: 2000, topClippedMessageId: null });
+      .toEqual({ mode: "manual", scrollTop: 2000, topClippedMessageId: null, anchor: { messageId: "submitted", offset: 0 } });
+  });
+
+  test("newer user scrolling cancels a reveal while its row is missing", async () => {
+    await render("session-a", null, history);
+    await flushFrames();
+    await browse(200);
+    await render("session-a", "submitted", history);
+    await browse(350);
+    contentHeight = 2100;
+    const rows = [...history, { id: "submitted", top: 2000, height: 100 }];
+    await render("session-a", "submitted", rows);
+    await act(async () => resize());
+    await flushFrames();
+    expect(container.scrollTop).toBe(350);
+    expect(useSessionScrollStore.getState().sessions["session-a"]).toMatchObject({ mode: "manual", scrollTop: 350 });
+    await render("session-b", null, history);
+    await flushFrames();
+    await render("session-a", "submitted", rows);
+    await flushFrames();
+    expect(container.scrollTop).toBe(350);
+  });
+
+  test("revealed submissions stay consumed after visiting and sending in another session", async () => {
+    contentHeight = 2100;
+    const rows = [...history, { id: "submitted", top: 2000, height: 100 }];
+    for (const sessionId of ["session-a", "session-b"]) {
+      await render(sessionId, "submitted", rows);
+      expect(container.scrollTop).toBe(1600);
+      await browse(sessionId === "session-a" ? 300 : 400);
+    }
+    await render("session-a", "submitted", rows);
+    await flushFrames();
+    expect(container.scrollTop).toBe(300);
+    await render("session-b", "submitted", rows);
+    await flushFrames();
+    expect(container.scrollTop).toBe(400);
+  });
+
+  test("an optimistic submitted row reveals before history readiness and is not reset by the snapshot", async () => {
+    useSessionScrollStore.getState().setManualScroll("session-a", 200, null);
+    await render("session-a", null, history, false);
+    contentHeight = 2800;
+    const rows = [...history, { id: "submitted", top: 2000, height: 800 }];
+    await render("session-a", "submitted", rows, false);
+    expect(container.scrollTop).toBe(2000);
+    await render("session-a", "submitted", rows, true);
+    await act(async () => resize());
+    await flushFrames();
+    expect(container.scrollTop).toBe(2000);
+    expect(useSessionScrollStore.getState().sessions["session-a"])
+      .toEqual({ mode: "manual", scrollTop: 2000, topClippedMessageId: null, anchor: { messageId: "submitted", offset: 0 } });
   });
 });
