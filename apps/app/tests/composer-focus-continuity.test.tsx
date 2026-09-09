@@ -18,11 +18,11 @@ import type {
 const workspaceId = "workspace-focus-continuity";
 const sessionId = "session-focus-continuity";
 
-function createSnapshot(status: SessionStatus, updated: number): OpenworkSessionSnapshot {
+function createSnapshot(status: SessionStatus, updated: number, id = sessionId): OpenworkSessionSnapshot {
   return {
     session: {
-      id: sessionId,
-      slug: sessionId,
+      id,
+      slug: id,
       projectID: "project-focus-continuity",
       directory: "/tmp/project-focus-continuity",
       title: "Focus continuity",
@@ -31,10 +31,10 @@ function createSnapshot(status: SessionStatus, updated: number): OpenworkSession
     },
     messages: [{
       info: {
-        id: "existing-user-message", sessionID: sessionId, role: "user", time: { created: 1 },
+        id: "existing-user-message", sessionID: id, role: "user", time: { created: 1 },
         agent: "build", model: { providerID: "test", modelID: "test-model" },
       },
-      parts: [{ id: "existing-user-part", sessionID: sessionId, messageID: "existing-user-message", type: "text", text: "Keep this session mounted." }],
+      parts: [{ id: "existing-user-part", sessionID: id, messageID: "existing-user-message", type: "text", text: "Keep this session mounted." }],
     }],
     todos: [],
     status,
@@ -75,7 +75,7 @@ async function waitFor(predicate: () => boolean, label: string) {
   throw new Error(`Timed out waiting for ${label}`);
 }
 
-test("composer focus and optimistic sends preserve drafts through snapshots and first-message handoff", async () => {
+test("composer focus, pending stops, and optimistic sends preserve drafts through snapshots and first-message handoff", async () => {
   const require = createRequire(import.meta.url);
   // Bun's isolated test loader cycles Lexical's ESM entries; use their real CJS entries before the app imports the editor.
   for (const moduleId of [
@@ -142,10 +142,19 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
   Object.defineProperty(window, "fetch", { configurable: true, value: fetchStub });
   window.localStorage.setItem("openwork.shell-config", JSON.stringify({ starterCards: false }));
   let fetchedSnapshot = createSnapshot({ type: "busy" }, 1);
+  const otherSessionId = `${sessionId}-other`;
+  const otherSnapshot = createSnapshot({ type: "busy" }, 1, otherSessionId);
+  const interruptionModule = await import("../src/app/lib/opencode-interruption");
+  let interruption = Promise.withResolvers<void>();
+  const interrupt = mock((..._args: Parameters<typeof interruptionModule.interruptSessionTurn>) => interruption.promise);
+  mock.module("@/app/lib/opencode-interruption", () => ({
+    ...interruptionModule,
+    interruptSessionTurn: interrupt,
+  }));
   mock.module("@/components/model-select", () => ({ ModelSelect: () => null }));
   mock.module("@/react-app/domains/session/surface/composer/workspace-run-mode-menu", () => ({ WorkspaceRunModeMenu: () => null }));
   mock.module("@/app/lib/opencode-session-native", () => ({
-    composeNativeSessionSnapshot: async () => fetchedSnapshot,
+    composeNativeSessionSnapshot: async (_target: unknown, id: string) => id === otherSessionId ? otherSnapshot : fetchedSnapshot,
   }));
   const { SessionSurface } = await import("../src/react-app/domains/session/surface/session-surface");
   const { snapshotKey, transcriptKey } = await import("../src/react-app/domains/session/sync/session-sync");
@@ -168,7 +177,7 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
   let prepareSubmission: ((text?: string) => void) | undefined;
   const revokePreview = spyOn(URL, "revokeObjectURL");
 
-  const renderSurface = (opencodeBaseUrl = "http://127.0.0.1:1/opencode") => root.render(
+  const renderSurface = (opencodeBaseUrl = "http://127.0.0.1:1/opencode", activeSessionId = sessionId) => root.render(
         <QueryClientProvider client={queryClient}>
           <LocalProvider>
             <ShellConfigProvider>
@@ -176,7 +185,7 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
                 client={client}
                 workspaceId={workspaceId}
                 workspaceRoot="/tmp/project-focus-continuity"
-                sessionId={sessionId}
+                sessionId={activeSessionId}
                 draftScope="local"
                 isControlTarget={false}
                 opencodeBaseUrl={opencodeBaseUrl}
@@ -216,6 +225,7 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
           </LocalProvider>
         </QueryClientProvider>,
       );
+  const renderSession = (activeSessionId = sessionId) => renderSurface(undefined, activeSessionId);
   try {
     await act(async () => renderSurface());
     await waitFor(
@@ -233,6 +243,118 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
     if (!editor) throw new Error("Expected the Lexical editor");
     editor.focus();
     expect(document.activeElement).toBe(editor);
+
+    // Hold both async boundaries: idle alone must not release Stop's feedback.
+    let snapshotRefresh = Promise.withResolvers<void>();
+    const refetch = spyOn(queryClient, "refetchQueries").mockImplementation(() => snapshotRefresh.promise);
+    const stop = () => {
+      const button = container.querySelector<HTMLButtonElement>('button[aria-label="Stop"]');
+      if (!button || button.disabled) throw new Error("Expected an enabled Stop button");
+      button.click();
+      button.click();
+    };
+    const expectStopping = () => {
+      const button = container.querySelector<HTMLButtonElement>('button[aria-label="Stopping…"]');
+      expect(button?.disabled).toBe(true);
+      expect(button?.getAttribute("aria-busy")).toBe("true");
+      expect(button?.querySelector("svg.lucide-loader-circle.animate-spin")).not.toBeNull();
+      expect(container.querySelector('button[aria-label="Run task"]')).toBeNull();
+      expect(container.querySelector('[data-lexical-editor="true"]')?.getAttribute("contenteditable")).toBe("true");
+    };
+    const escape = () => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await act(async () => stop());
+    expect(interrupt).toHaveBeenCalledTimes(1);
+    expect(interrupt.mock.calls[0]).toEqual([
+      "http://127.0.0.1:1/opencode", expect.anything(), sessionId, "/tmp/project-focus-continuity",
+      { admissionUnknown: false, onStopped: expect.any(Function) },
+    ]);
+    expectStopping();
+    await act(async () => { escape(); });
+    await act(async () => { escape(); });
+    expect(interrupt).toHaveBeenCalledTimes(1);
+    expect(refetch).not.toHaveBeenCalled();
+    await act(async () => {
+      fetchedSnapshot = createSnapshot({ type: "idle" }, 2);
+      queryClient.setQueryData(snapshotKey(workspaceId, sessionId), fetchedSnapshot);
+    });
+    await waitFor(() => container.textContent?.includes("status: idle") === true, "idle while Stop is pending");
+    expectStopping();
+    await act(async () => interruption.resolve());
+    expect(refetch).toHaveBeenCalledTimes(1);
+    expect(refetch).toHaveBeenLastCalledWith({ queryKey: snapshotKey(workspaceId, sessionId), exact: true });
+    expectStopping();
+    expect(container.querySelector('[data-lexical-editor="true"]')).toBe(editor);
+    expect(editor.textContent).toBe(draft);
+    await act(async () => snapshotRefresh.resolve());
+    expect(container.querySelector('button[aria-label="Stopping…"]')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]')?.disabled).toBe(false);
+    expect(container.querySelector('button[aria-busy="true"]')).toBeNull();
+
+    await act(async () => {
+      fetchedSnapshot = createSnapshot({ type: "busy" }, 3);
+      queryClient.setQueryData(snapshotKey(workspaceId, sessionId), fetchedSnapshot);
+    });
+    await waitFor(() => container.querySelector('button[aria-label="Stop"]') !== null, "Stop on the next busy turn");
+    interruption = Promise.withResolvers<void>();
+    await act(async () => stop());
+    expect(interrupt).toHaveBeenCalledTimes(2);
+    await act(async () => { escape(); });
+    await act(async () => interruption.reject(new Error("Stop unavailable")));
+    expect(container.textContent).toContain("Stop unavailable");
+    expect(container.textContent).not.toContain("Hit Escape again to stop the agent");
+    expect(container.querySelector('button[aria-label="Stopping…"]')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Stop"]')?.disabled).toBe(false);
+    expect(refetch).toHaveBeenCalledTimes(1);
+    interruption = Promise.withResolvers<void>();
+    await act(async () => { escape(); });
+    expect(interrupt).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("Hit Escape again to stop the agent");
+    await act(async () => { escape(); });
+    expect(interrupt).toHaveBeenCalledTimes(3);
+    expect(container.textContent).not.toContain("Stop unavailable");
+    expectStopping();
+
+    // Re-render without a key so pending owners share the same mounted surface.
+    const originalInterruption = interruption;
+    snapshotRefresh = Promise.withResolvers<void>();
+    await act(async () => {
+      queryClient.setQueryData(snapshotKey(workspaceId, otherSessionId), otherSnapshot);
+      renderSession(otherSessionId);
+    });
+    // Seed after first-render hydration, just as for the original session.
+    await act(async () => useComposerStateStore.getState().setDraft(otherSessionId, "Other session draft"));
+    await waitFor(
+      () => container.querySelector('[data-lexical-editor="true"]')?.textContent === "Other session draft",
+      "the other session draft to reach Lexical",
+    );
+    expect(container.querySelector('button[aria-label="Stopping…"]')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Stop"]')?.disabled).toBe(false);
+    interruption = Promise.withResolvers<void>();
+    await act(async () => stop());
+    expect(interrupt).toHaveBeenCalledTimes(4);
+    expect(interrupt.mock.calls[3]?.[2]).toBe(otherSessionId);
+    expectStopping();
+    await act(async () => originalInterruption.resolve());
+    expect(refetch).toHaveBeenCalledTimes(2);
+    expect(refetch).toHaveBeenLastCalledWith({ queryKey: snapshotKey(workspaceId, sessionId), exact: true });
+    expectStopping();
+    await act(async () => renderSession());
+    expectStopping();
+    await act(async () => snapshotRefresh.resolve());
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Stop"]')?.disabled).toBe(false);
+    await act(async () => renderSession(otherSessionId));
+    expectStopping();
+    expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Other session draft");
+    await act(async () => interruption.reject(new Error("Other session Stop unavailable")));
+    expect(container.textContent).toContain("Other session Stop unavailable");
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Stop"]')?.disabled).toBe(false);
+    await act(async () => renderSession());
+    expect(container.textContent).not.toContain("Other session Stop unavailable");
+    expect(container.querySelector('[data-lexical-editor="true"]')).toBe(editor);
+    expect(editor.textContent).toBe(draft);
+    expect(refetch).toHaveBeenCalledTimes(2);
+    refetch.mockRestore();
+    editor.focus();
 
     await act(async () => {
       fetchedSnapshot = createSnapshot({ type: "idle" }, 2);
