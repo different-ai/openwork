@@ -641,6 +641,16 @@ export async function builtinBrowserWorld(seed: Seed, options: { workspacePath?:
   return { app, workspace, session, origin: info.baseUrl.replace(/\/+$/, "") };
 }
 
+/** Real native tab and deterministic document, with no viewport emulation. */
+export async function browserGeometryWorld(seed: Seed) {
+  const world = await createBuiltinBrowserWorld(seed);
+  const tab = await world.openTab("geometry", world.session.sessionId);
+  await world.loadInputProbe(tab);
+  const page = await attachBuiltinTab(world.app, tab.targetId);
+  return { app: world.app, session: world.session, tab, page,
+    async [Symbol.asyncDispose]() { await page.stop(); } };
+}
+
 /** Leave the emulation fault behind before the body; recovery is a real user act. */
 export async function browserViewportWorld(seed: Seed) {
   const base = await builtinBrowserWorld(seed);

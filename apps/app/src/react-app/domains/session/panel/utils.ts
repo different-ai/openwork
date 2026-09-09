@@ -8,10 +8,8 @@ export function getElectronBrowser() {
   return window.__OPENWORK_ELECTRON__?.browser ?? null;
 }
 
-// Bounds and points are sent in renderer CSS pixels. The Electron main process
-// converts them to window device-independent pixels using the authoritative
-// webContents zoom factor at apply time, so the renderer never needs to track
-// (and can never disagree with) the real zoom state.
+// Bounds and menu points use CSS pixels. Preload stamps the browser bounds with
+// measurement zoom; native menus handle their own coordinate conversion.
 export function getNativeMenuPoint(
   el: HTMLElement | null,
   point?: { clientX: number; clientY: number },
@@ -41,19 +39,6 @@ export function computeBounds(el: HTMLElement) {
     width: rect.width,
     height: rect.height,
   };
-}
-
-export function sameBounds(
-  left: { x: number; y: number; width: number; height: number } | null,
-  right: { x: number; y: number; width: number; height: number },
-) {
-  return Boolean(
-    left &&
-      left.x === right.x &&
-      left.y === right.y &&
-      left.width === right.width &&
-      left.height === right.height,
-  );
 }
 
 export function hasNativeBrowserOccluder() {

@@ -104,8 +104,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   const registry = createBrowserTabRegistry();
   let browserViewVisible = false;
   let backgroundWindow = null;
-  // Last browser panel bounds reported by the renderer, in renderer CSS pixels.
-  // Converted to window device-independent pixels at every setBounds call.
+  // Last accepted geometry in window DIPs. Reattaching must not scale an old
+  // CSS rectangle with a newer zoom while the renderer is still catching up.
   let lastBrowserBounds = null;
   let browserTabCounter = 0;
   // Active proxy for the built-in browser session: { rules, username, password }.
@@ -923,30 +923,32 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return next;
   }
 
-  // The renderer reports bounds in CSS pixels, which Electron scales by the main
-  // window's zoom factor. Read the factor from the webContents at apply time so
-  // the conversion is always correct, no matter how the zoom was changed
-  // (shortcuts, native menu, or Chromium's persisted per-origin zoom).
   function mainWindowZoomFactor() {
     try {
       const factor = window()?.webContents.getZoomFactor();
-      return typeof factor === "number" && factor > 0 ? factor : 1;
+      return Number.isFinite(factor) && factor > 0 ? factor : 1;
     } catch {
       return 1;
     }
   }
 
-  function scaleRendererBounds(bounds) {
-    const zoom = mainWindowZoomFactor();
+  function acceptBrowserBounds(bounds) {
+    if (!bounds || ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)
+      || bounds.width <= 0 || bounds.height <= 0) return false;
+    const currentZoom = mainWindowZoomFactor();
+    // Unstamped callers retain the existing CSS-pixel IPC contract.
+    const zoom = bounds.zoomFactor === undefined ? currentZoom : bounds.zoomFactor;
+    if (!Number.isFinite(zoom) || zoom <= 0 || Math.abs(zoom - currentZoom) > 1e-6) return false;
     // Round edges (not width/height) so the far edge has no sub-pixel seam.
     const x = Math.round(bounds.x * zoom);
     const y = Math.round(bounds.y * zoom);
-    return {
+    lastBrowserBounds = {
       x,
       y,
       width: Math.round((bounds.x + bounds.width) * zoom) - x,
       height: Math.round((bounds.y + bounds.height) * zoom) - y,
     };
+    return true;
   }
 
   // Automation clients (docs shots, screenshot skills, Playwright) attach to a
@@ -999,7 +1001,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     tab.view.setVisible(!approvals.has(tab.tabId));
     detachIdleBrowserViews(tab.view);
     // Size before attaching so a restored view never flashes at stale bounds.
-    tab.view.setBounds(scaleRendererBounds(lastBrowserBounds));
+    tab.view.setBounds(lastBrowserBounds);
     if (!mainWindow.contentView.children.includes(tab.view)) {
       mainWindow.contentView.addChildView(tab.view);
     }
@@ -1204,8 +1206,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
    * @param {string | null} [opts.sessionId] - the conversation whose panel is showing
    */
   function attachBrowserView(bounds, { preloadDefault = false, ensureTab = false, sessionId } = {}) {
-    if (!window()) return;
-    lastBrowserBounds = bounds;
+    if (!window() || !acceptBrowserBounds(bounds)) return false;
     browserViewVisible = true;
     if (sessionId !== undefined) {
       const previous = registry.visibleSessionId();
@@ -1219,15 +1220,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
     const view = getActiveBrowserView();
     attachActiveBrowserView();
-    if (bounds.width > 0 && bounds.height > 0) {
-      view?.setBounds(scaleRendererBounds(bounds));
-    }
     resetViewportEmulation(view);
     const url = view?.webContents.getURL();
     if (preloadDefault && (!url || url === "about:blank")) {
       runDetachedTask("load browser default page", () => view?.webContents.loadURL(BROWSER_DEFAULT_URL));
     }
     sendBrowserState();
+    return true;
   }
 
   function hideBrowserView() {
@@ -1294,11 +1293,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       getActiveWebContents()?.reload();
     });
     ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
-      lastBrowserBounds = bounds;
+      if (!acceptBrowserBounds(bounds)) return false;
       const view = getActiveBrowserView();
-      if (view && browserViewVisible && bounds.width > 0 && bounds.height > 0) {
-        view.setBounds(scaleRendererBounds(bounds));
+      if (view && browserViewVisible) {
+        view.setBounds(lastBrowserBounds);
       }
+      return true;
     });
     ipcMain.handle("openwork:browser:state", () => ({
       ...browserStatePayload(),

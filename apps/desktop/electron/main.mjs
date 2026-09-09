@@ -2383,6 +2383,7 @@ const desktopCommandHandlers = {
         return false;
       }
       window.webContents.setZoomFactor(factor);
+      window.webContents.send("openwork:browser:bounds-invalidated");
       return true;
   },
   "__setNativeTheme": async (event, ...args) => {

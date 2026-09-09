@@ -11,7 +11,17 @@ export const effects = [];
 export const controls = {
   ready: true,
   confirm: async () => 0, beforeLoad: async () => {}, beforeCommand: async () => {}, beforeDiscovery: async () => {},
+  invoke: async () => true,
 };
+export const exposed = {};
+export const contextBridge = { exposeInMainWorld(name, value) { exposed[name] = value; } };
+export const webUtils = {};
+export const webFrame = { zoomFactor: 1, getZoomFactor() { return this.zoomFactor; } };
+export const preloadCalls = [];
+export const ipcRenderer = new EventEmitter();
+ipcRenderer.invoke = (channel, ...args) => { preloadCalls.push({ channel, args }); return controls.invoke(channel, ...args); };
+ipcRenderer.send = (channel, ...args) => { preloadCalls.push({ channel, args }); };
+ipcRenderer.sendSync = () => null;
 export const app = { on() {} };
 export const clipboard = { writeText(url) { effects.push({ type: "copy", url }); } };
 export const dialog = { async showMessageBox(_window, options) { effects.push({ type: "dialog" }); return { response: await controls.confirm(options) }; } };
@@ -144,7 +154,7 @@ export function load(url, context, next) {
 register(`data:text/javascript,${encodeURIComponent(hooks)}`);
 const { createBrowserPanel } = await import("./browser-panel.mjs");
 // @ts-expect-error The registered test-only Electron stub exports its witnesses.
-const { createdViews, effects, controls, browserSession, navigation, requestHooks } = await import("electron");
+const { createdViews, effects, controls, browserSession, navigation, requestHooks, exposed, webFrame, preloadCalls, ipcRenderer } = await import("electron");
 
 const PANEL_BOUNDS = { x: 800, y: 40, width: 400, height: 900 };
 const LINK = { url: "https://example.com/a%2Fb?x=one%20two&x=%2F#section", point: { x: 20, y: 30 }, sessionId: "A" };
@@ -179,8 +189,8 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
     webContents: Object.assign(new EventEmitter(), {
       mainFrame: {},
       getURL: () => "http://localhost/index.html",
-      /** @returns {number} */
-      getZoomFactor: () => 1,
+      zoomFactor: 1,
+      getZoomFactor() { return this.zoomFactor; },
       destroyed: false,
       isDestroyed() { return this.destroyed; },
       send(channel, payload) { sent.push({ channel, payload }); },
@@ -238,6 +248,25 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
+let preloadTestId = 0;
+async function loadPreload(t) {
+  const previousWindow = globalThis.window;
+  globalThis.window = new EventTarget();
+  t.after(() => {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+    ipcRenderer.removeAllListeners();
+  });
+  ipcRenderer.removeAllListeners();
+  controls.invoke = async () => true;
+  webFrame.zoomFactor = 1;
+  preloadCalls.length = 0;
+  await import(`./preload.mjs?geometry-test=${++preloadTestId}`);
+  // Existing bootstrap reads are outside the geometry path under test.
+  t.mock.method(ipcRenderer, "sendSync", () => { throw new Error("Geometry must not use synchronous IPC"); });
+  return exposed.__OPENWORK_ELECTRON__.browser;
+}
+
 test("browser manager construction before app readiness defers session hooks until the first tab", async (t) => {
   controls.ready = false;
   t.after(() => { controls.ready = true; });
@@ -281,6 +310,134 @@ test("showing the panel sizes the active tab and resets viewport emulation left 
   assert.deepEqual(view.getBounds(), PANEL_BOUNDS);
   assert.deepEqual(commands(view), RESET_SEQUENCE);
   assert.equal(view.webContents.debugger.isAttached(), false, "the temporary debugger session is released");
+});
+
+test("geometry updates scale fractional edges at changing zoom without replacing or resizing background tabs", async () => {
+  const { invoke, mainContents, onScreen, views } = createPanel();
+  const bounds = { x: 10.4, y: 21.2, width: 100.8, height: 80.8 };
+  invoke("openwork:browser:createTab", "about:blank", "A");
+  invoke("openwork:browser:createTab", "about:blank", "B");
+  await flush();
+  invoke("openwork:browser:show", { ...bounds, zoomFactor: 1 }, "A");
+  const foreground = onScreen();
+  const background = views().find(view => view !== foreground);
+  const backgroundBounds = background.getBounds();
+  for (const [zoomFactor, expected] of [
+    [1, { x: 10, y: 21, width: 101, height: 81 }],
+    [1.25, { x: 13, y: 27, width: 126, height: 101 }],
+    [0.8, { x: 8, y: 17, width: 81, height: 65 }],
+  ]) {
+    mainContents.zoomFactor = zoomFactor;
+    assert.equal(invoke("openwork:browser:bounds", { ...bounds, zoomFactor }), true);
+    assert.equal(onScreen(), foreground);
+    assert.deepEqual(foreground.getBounds(), expected);
+    assert.deepEqual(background.getBounds(), backgroundBounds);
+  }
+  assert.equal(views().length, 2, "geometry never allocates a new page");
+});
+
+test("stale zoom snapshots cannot move a view, replace cached bounds, change ownership, or reopen a hidden panel", async () => {
+  const { invoke, mainContents, onScreen } = createPanel();
+  const a = invoke("openwork:browser:createTab", "about:blank", "A");
+  invoke("openwork:browser:createTab", "about:blank", "B");
+  const stale = { ...PANEL_BOUNDS, zoomFactor: 1 };
+  assert.equal(invoke("openwork:browser:show", stale, "A"), true);
+  const view = onScreen();
+  mainContents.zoomFactor = 1.25;
+  assert.equal(invoke("openwork:browser:show", stale, "B"), false);
+  assert.equal(invoke("openwork:browser:bounds", stale), false);
+  assert.equal(invoke("openwork:browser:state").visibleSessionId, "A");
+  assert.equal(onScreen(), view);
+  assert.deepEqual(view.getBounds(), PANEL_BOUNDS);
+
+  const latest = { x: 640, y: 48, width: 320, height: 600, zoomFactor: 1.25 };
+  assert.equal(invoke("openwork:browser:bounds", latest), true);
+  const nativeBounds = { x: 800, y: 60, width: 400, height: 750 };
+  assert.deepEqual(view.getBounds(), nativeBounds);
+  assert.equal(invoke("openwork:browser:bounds", stale), false);
+  mainContents.zoomFactor = 0.8;
+  await invoke("openwork:browser:selectTab", a.tabId);
+  assert.deepEqual(view.getBounds(), nativeBounds, "reattachment never rescales cached CSS with a new zoom");
+
+  invoke("openwork:browser:hide");
+  assert.equal(invoke("openwork:browser:show", latest, "B"), false);
+  assert.equal(onScreen(), null);
+  assert.equal(invoke("openwork:browser:state").visibleSessionId, "A");
+  assert.equal(invoke("openwork:browser:show", { ...latest, zoomFactor: 0.8 }, "B"), true);
+  assert.notEqual(onScreen(), view);
+  assert.equal(invoke("openwork:browser:state").visibleSessionId, "B");
+});
+
+test("unstamped geometry keeps the legacy CSS contract and malformed snapshots leave placement intact", () => {
+  const { invoke, mainContents, onScreen } = createPanel();
+  mainContents.zoomFactor = 1.25;
+  invoke("openwork:browser:createTab", "about:blank");
+  assert.equal(invoke("openwork:browser:show", PANEL_BOUNDS), true);
+  assert.deepEqual(onScreen().getBounds(), { x: 1000, y: 50, width: 500, height: 1125 });
+  const latest = { x: 80, y: 40, width: 240, height: 400 };
+  assert.equal(invoke("openwork:browser:bounds", latest), true);
+  const expected = { x: 100, y: 50, width: 300, height: 500 };
+  for (const invalid of [null, { ...latest, x: NaN }, { ...latest, width: 0 },
+    { ...latest, zoomFactor: Infinity }, { ...latest, zoomFactor: 0 }, { ...latest, zoomFactor: null }]) {
+    assert.equal(invoke("openwork:browser:bounds", invalid), false);
+    assert.deepEqual(onScreen().getBounds(), expected);
+  }
+});
+
+test("preload deduplicates geometry including zoom, invalidates after applied zoom, and preserves show/hide intent", async (t) => {
+  const { invoke, mainContents, onScreen } = createPanel();
+  invoke("openwork:browser:createTab", "about:blank", "A");
+  const browser = await loadPreload(t);
+  controls.invoke = async (channel, ...args) => invoke(channel, ...args);
+  assert.equal(await browser.show(PANEL_BOUNDS, "A"), true);
+  await browser.setBounds({ ...PANEL_BOUNDS });
+  assert.equal(preloadCalls.length, 1, "show and same-geometry frames share a dedup cache");
+  assert.deepEqual(preloadCalls[0].args, [{ ...PANEL_BOUNDS, zoomFactor: 1 }, "A"]);
+  mainContents.zoomFactor = 1.25;
+  webFrame.zoomFactor = 1.25;
+  await browser.setBounds(PANEL_BOUNDS);
+  assert.equal(preloadCalls.length, 2, "equal CSS bounds at a different zoom must still be sent");
+  assert.deepEqual(onScreen().getBounds(), { x: 1000, y: 50, width: 500, height: 1125 });
+  const resized = { ...PANEL_BOUNDS, x: 700, width: 500 };
+  await browser.setBounds(resized);
+  await browser.setBounds(resized);
+  assert.equal(preloadCalls.length, 3);
+  assert.deepEqual(onScreen().getBounds(), { x: 875, y: 50, width: 625, height: 1125 });
+  let invalidations = 0;
+  window.addEventListener("openwork:browser:bounds-invalidated", () => { invalidations++; });
+  ipcRenderer.emit("openwork:browser:bounds-invalidated", {});
+  assert.equal(invalidations, 1, "the renderer is explicitly asked to remeasure");
+  await browser.setBounds(resized);
+  assert.equal(preloadCalls.length, 4, "invalidation forces even identical geometry to be resent");
+  await browser.hide();
+  assert.equal(onScreen(), null);
+  await browser.show(resized, "A");
+  await browser.show(resized, "A");
+  assert.equal(preloadCalls.length, 7, "show intent is never deduplicated");
+  assert.ok(onScreen());
+});
+
+test("preload retries rejected zoom snapshots but a late rejection cannot invalidate newer geometry", async (t) => {
+  const browser = await loadPreload(t);
+  controls.invoke = async () => false;
+  assert.equal(await browser.show(PANEL_BOUNDS, "A"), false, "the renderer can retry a rejected show");
+  assert.equal(await browser.setBounds(PANEL_BOUNDS), false);
+  controls.invoke = async () => true;
+  assert.equal(await browser.setBounds(PANEL_BOUNDS), true);
+  assert.equal(preloadCalls.length, 3, "rejected geometry cannot poison deduplication");
+
+  const pending = gate();
+  controls.invoke = async () => { await pending.promise; return false; };
+  const stale = browser.setBounds({ ...PANEL_BOUNDS, width: 300 });
+  controls.invoke = async () => true;
+  webFrame.zoomFactor = 1.25;
+  await browser.setBounds(PANEL_BOUNDS);
+  pending.finish();
+  assert.equal(await stale, false);
+  await browser.setBounds(PANEL_BOUNDS);
+  assert.equal(preloadCalls.length, 5, "late rejection leaves the newer accepted snapshot cached");
+  assert.equal(preloadCalls[3].args[0].zoomFactor, 1, "zoom is captured before awaiting IPC");
+  assert.equal(preloadCalls[4].args[0].zoomFactor, 1.25);
 });
 
 test("selecting a tab from the tab strip resets that tab only", async () => {
