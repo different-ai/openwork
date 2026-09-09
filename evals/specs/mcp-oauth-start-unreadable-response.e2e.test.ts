@@ -9,7 +9,7 @@ import { oauthStartUnreadableWeb } from "../worlds/mcp-oauth-start-unreadable.ts
 // echoing the browser's "Failed to fetch", and it must not pretend the provider
 // was involved. With the response readable again the same button starts the
 // provider sign-in.
-const test = spec.world(oauthStartUnreadableWeb, { timeout: 600_000, needs: { optIn: ["OPENWORK_EVAL_E2E_TESTS"] } });
+const test = spec.world(oauthStartUnreadableWeb, { timeout: 600_000, needs: { optIn: ["OPENWORK_EVAL_E2E_TESTS"], placement: "local" } });
 
 const unreadableMessage = /OpenWork could not read the answer from its API when starting the sign-in/;
 const connectButton = { role: "button", label: "Connect" } as const;
