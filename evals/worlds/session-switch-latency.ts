@@ -271,6 +271,40 @@ export async function sessionSwitchLatency(seed: Seed) {
       ...targets.map((target) => get("/session/" + encodeURIComponent(target.sessionId) + "/message?limit=20")),
     ]);
     const occurrences = (text: string, marker: string) => text.split(marker).length - 1;
+    const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
+    const object = (value: unknown): Record<string, unknown> | null => isRecord(value) ? value : null;
+    const stringField = (value: Record<string, unknown> | null, key: string) => typeof value?.[key] === "string" ? value[key] : "";
+    const numberField = (value: Record<string, unknown> | null, key: string) => typeof value?.[key] === "number" ? value[key] : null;
+    const normalize = (value: string) => value.split("\n").map((line) => line.trim()).filter(Boolean).join("\n");
+    const nativeMessages = (body: string) => {
+      let parsed: unknown = null;
+      try { parsed = JSON.parse(body); } catch {}
+      const parsedRecord = object(parsed);
+      const payload = parsedRecord && "data" in parsedRecord ? parsedRecord.data : parsed;
+      if (!Array.isArray(payload)) return [];
+      return payload.flatMap((entry, arrayIndex) => {
+        const message = object(entry);
+        if (!message) return [];
+        const info = object(message.info) ?? message;
+        const time = object(info.time);
+        const parts = Array.isArray(message.parts) ? message.parts : Array.isArray(message.content) ? message.content : [];
+        const renderedText = parts.flatMap((part) => {
+          const item = object(part);
+          return item && item.type === "text" && typeof item.text === "string" ? [item.text] : [];
+        }).join("");
+        const directText = typeof message.text === "string" ? message.text : "";
+        return [{
+          arrayIndex,
+          id: stringField(info, "id") || stringField(info, "messageID"),
+          sessionId: stringField(info, "sessionID") || stringField(info, "sessionId"),
+          role: stringField(info, "role") || stringField(info, "type"),
+          parentId: stringField(info, "parentID") || stringField(info, "parentId"),
+          created: numberField(time, "created") ?? numberField(info, "timestamp"),
+          completed: numberField(time, "completed"),
+          text: normalize(renderedText || directText),
+        }];
+      });
+    };
     let parsedActive: unknown = null;
     try { parsedActive = JSON.parse(active.body); } catch {}
     const activePayload = parsedActive !== null && typeof parsedActive === "object" && !Array.isArray(parsedActive) && "data" in parsedActive
@@ -298,6 +332,36 @@ export async function sessionSwitchLatency(seed: Seed) {
       activeTargetIds,
       sessions: targets.map((target, index) => {
         const history = histories[index] ?? { status: 0, body: "" };
+        const messages = nativeMessages(history.body);
+        const expectedMatches = target.expectedMessages.map((expected, expectedIndex) => {
+          const matches = messages.filter((message) => message.role === expected.role && message.text === normalize(expected.text));
+          return { expectedIndex, role: expected.role, text: normalize(expected.text), count: matches.length, matches };
+        });
+        const matched = expectedMatches.flatMap((expected) => expected.matches);
+        const matchedIds = matched.map((message) => message.id).filter(Boolean);
+        const assistantRelationships = target.expectedMessages.flatMap((expected, expectedIndex) => {
+          if (expected.role !== "user" || target.expectedMessages[expectedIndex + 1]?.role !== "assistant") return [];
+          const user = expectedMatches[expectedIndex]?.matches[0];
+          const assistant = expectedMatches[expectedIndex + 1]?.matches[0];
+          if (!user || !assistant) return [];
+          return [{
+            userId: user.id,
+            assistantId: assistant.id,
+            assistantParentId: assistant.parentId,
+            available: Boolean(assistant.parentId),
+            matches: Boolean(assistant.parentId) && assistant.parentId === user.id,
+          }];
+        });
+        const timestampRelationships = expectedMatches.slice(0, -1).flatMap((expected, expectedIndex) => {
+          const earlier = expected.matches[0];
+          const later = expectedMatches[expectedIndex + 1]?.matches[0];
+          if (!earlier || !later || earlier.created === null || later.created === null) return [];
+          return [{ earlierId: earlier.id, laterId: later.id, earlierCreated: earlier.created, laterCreated: later.created,
+            chronological: earlier.created <= later.created }];
+        });
+        const timestampsAvailable = timestampRelationships.length > 0;
+        const timestampsChronological = timestampsAvailable && timestampRelationships.every((relationship) => relationship.chronological);
+        const parentRelationshipsAvailable = assistantRelationships.some((relationship) => relationship.available);
         return {
           index: target.index,
           sessionId: target.sessionId,
@@ -306,7 +370,21 @@ export async function sessionSwitchLatency(seed: Seed) {
           promptOccurrences: occurrences(history.body, target.prompt),
           finalLineOccurrences: occurrences(history.body, target.lastLine),
           oldAnswerOccurrences: target.index === 0 ? occurrences(history.body, oldLastLine) : 0,
-          oldBeforeFinal: target.index !== 0 || history.body.indexOf(oldLastLine) < history.body.lastIndexOf(target.lastLine),
+          expectedMessageCount: matched.length,
+          expectedMessagesPresent: expectedMatches.every((expected) => expected.count === 1),
+          expectedMessageIdsUnique: matchedIds.length === matched.length && new Set(matchedIds).size === matchedIds.length,
+          userTurnCount: expectedMatches.filter((expected) => expected.role === "user").reduce((count, expected) => count + expected.count, 0),
+          assistantTurnCount: expectedMatches.filter((expected) => expected.role === "assistant").reduce((count, expected) => count + expected.count, 0),
+          timestampsAvailable,
+          timestampsChronological,
+          parentRelationshipsAvailable,
+          parentRelationshipsValid: parentRelationshipsAvailable
+            && assistantRelationships.every((relationship) => !relationship.available || relationship.matches),
+          expectedMatches,
+          timestampRelationships,
+          parentRelationships: assistantRelationships,
+          rawDiagnostic: target.index === 0
+            ? messages.map(({ text, ...message }) => ({ ...message, textPrefix: text.slice(0, 180) })) : [],
         };
       }),
     };
@@ -329,7 +407,11 @@ export async function sessionSwitchLatency(seed: Seed) {
         inventoryStatus: state.inventory.status,
         activeStatus: state.active.status,
         activeTargetIds: state.activeTargetIds,
-        sessions: state.sessions.map(({ body, ...session }) => ({ ...session, bodyBytes: body.length })),
+        sessions: state.sessions.map(({ body, expectedMatches, rawDiagnostic, ...session }) => ({
+          ...session,
+          expectedMatchCounts: expectedMatches.map((message) => message.count),
+          bodyBytes: body.length,
+        })),
       };
     },
     sidebarTargetState: (sessionId: string) => evaluate(app.client, browserScript((workspaceId, sessionId) => {

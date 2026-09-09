@@ -224,6 +224,7 @@ longTest("TOOL-LONG preserves a real silent tool's activity across switching and
 
   let followupError: unknown;
   let followupFacts: { rootActive: boolean; requests: string[]; screen: string } | undefined;
+  await using followupAdmission = await world.observePromptPosts(world.root.sessionId);
   await step("fresh work is attempted once and the unrelated command completes only after its own release", async () => {
     await send(world.followup.prompt);
     try {
@@ -255,6 +256,28 @@ longTest("TOOL-LONG preserves a real silent tool's activity across switching and
     expect(await world.rootFinished()).toBe(false);
     await user.screenshot();
   });
+
+  const followupRequests = await world.mock.agentRequests({ promptMarker: world.followup.prompt });
+  const followupFinalRequests = followupRequests.filter((request) => request.kind === "final");
+  const followupUtilityRequests = followupRequests.filter((request) => request.kind === "utility");
+  const followupUnexpectedRequests = followupRequests.filter((request) => request.kind === "error" || request.kind === "tool");
+  const followupPromptPosts = await followupAdmission.read();
+  evidence.recordJsonArtifact("TOOL-LONG follow-up admission", {
+    followupFacts,
+    admission: followupPromptPosts,
+    providerRequests: {
+      finalCount: followupFinalRequests.length,
+      utilityCount: followupUtilityRequests.length,
+      unexpectedErrorOrToolCount: followupUnexpectedRequests.length,
+      final: followupFinalRequests,
+      utility: followupUtilityRequests,
+      unexpectedErrorOrTool: followupUnexpectedRequests,
+    },
+  });
+  expect(followupFinalRequests).toHaveLength(1);
+  expect(followupFinalRequests[0]).toMatchObject({ promptMarker: world.followup.prompt, kind: "final" });
+  expect(followupUnexpectedRequests).toEqual([]);
+  expect(followupPromptPosts).toMatchObject({ sessionId: world.root.sessionId, posts: 1 });
 
   await step("the retained timeline proves the visible primary and matching sidebar did not lose active state", async () => {
     const beforeSwitch = observations.beforeSwitch;
@@ -302,7 +325,6 @@ longTest("TOOL-LONG preserves a real silent tool's activity across switching and
     expect.soft(afterStop.current.stopEnabled).toBe(false);
     expect.soft(afterStop.current.stoppingVisible).toBe(false);
     expect.soft(followupError).toBeUndefined();
-    expect.soft((await world.mock.agentRequests({ promptMarker: world.followup.prompt })).map((request) => request.kind)).toEqual(["final"]);
     evidence.recordJsonArtifact("TOOL-LONG native and UI timeline", {
       engine: world.engine,
       surface: world.surface,
@@ -328,6 +350,12 @@ longTest("TOOL-LONG preserves a real silent tool's activity across switching and
         structuredNativeCancellation,
       },
       followupFacts,
+      followupAdmission: followupPromptPosts,
+      followupProviderRequests: {
+        final: followupFinalRequests,
+        utility: followupUtilityRequests,
+        unexpected: followupUnexpectedRequests,
+      },
     });
     if (world.engine === "v1") {
       expect.soft(cancelledRoot.cancelled).toBe(true);

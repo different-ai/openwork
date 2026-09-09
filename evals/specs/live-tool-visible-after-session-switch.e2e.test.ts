@@ -588,6 +588,8 @@ latencyTest("SWITCH-10 opens ten persisted conversations within the normal and w
       targets: world.targets.map(({ index, sessionId, title, prompt, lastLine }) => ({ index, sessionId, title, prompt, lastLine })),
       sidebarExpansion,
       native: world.compactNativeState(native),
+      nativeIndex0HistoryDiagnostic: native.sessions[0]?.rawDiagnostic ?? [],
+      nativeIndex0ResponseBodyDiagnostic: native.sessions[0]?.body.slice(0, 32_000) ?? "",
       controllerCounts: counts,
     });
     expect(runtime).toMatchObject({
@@ -616,9 +618,25 @@ latencyTest("SWITCH-10 opens ten persisted conversations within the normal and w
     expect(native.inventory.status).toBe(200);
     expect(native.active.status).toBe(200);
     expect(native.activeTargetIds).toEqual([]);
-    expect(native.sessions.every((session) => session.status === 200 && session.promptOccurrences === 1
-      && session.finalLineOccurrences === 1 && session.oldBeforeFinal)).toBe(true);
-    expect(native.sessions[0]?.oldAnswerOccurrences).toBe(1);
+    for (const nativeSession of native.sessions) {
+      const target = world.targets[nativeSession.index];
+      if (!target) throw new Error(`Missing SWITCH-10 target ${nativeSession.index}`);
+      expect(nativeSession.status).toBe(200);
+      expect(nativeSession.promptOccurrences).toBe(1);
+      expect(nativeSession.finalLineOccurrences).toBe(1);
+      expect(nativeSession.expectedMessagesPresent).toBe(true);
+      expect(nativeSession.expectedMessageCount).toBe(target.expectedMessages.length);
+      expect(nativeSession.expectedMessageIdsUnique).toBe(true);
+      expect(nativeSession.userTurnCount).toBe(nativeSession.index === 0 ? 2 : 1);
+      expect(nativeSession.assistantTurnCount).toBe(nativeSession.index === 0 ? 2 : 1);
+      if (nativeSession.timestampsAvailable) expect(nativeSession.timestampsChronological).toBe(true);
+      if (nativeSession.parentRelationshipsAvailable) expect(nativeSession.parentRelationshipsValid).toBe(true);
+    }
+    const firstNativeSession = native.sessions[0];
+    if (!firstNativeSession) throw new Error("The oldest SWITCH-10 native history disappeared");
+    expect(firstNativeSession.oldAnswerOccurrences).toBe(1);
+    expect(firstNativeSession.expectedMatches.map((message) => message.count)).toEqual([1, 1, 1, 1]);
+    expect(firstNativeSession.rawDiagnostic.length).toBeGreaterThanOrEqual(4);
     expect(counts.providerFinalRequests).toBe(world.expectedProviderFinalRequests);
     expect(counts.providerModels).toEqual([world.modelId]);
     expect(Object.values(counts.providerByMarker).every((count) => count === 1)).toBe(true);

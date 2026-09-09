@@ -795,6 +795,9 @@ export async function longToolActivity(seed: Seed) {
         ownerSessionId: rootSession.sessionId, ownerToolCallId, uiCallId: ownerToolCallId, kind: "tool",
       });
     },
+    observePromptPosts(sessionId: string) {
+      return observeSessionPromptPosts(app, sessionId);
+    },
     async [Symbol.asyncDispose]() {
       await Promise.all([files.write(ROOT_RELEASE), files.write(OTHER_RELEASE)]);
     },
