@@ -2890,6 +2890,25 @@ async function createMainWindow() {
     if (/^https?:\/\//i.test(url)) void confirmAndOpenExternal(url);
     return { action: "deny" };
   });
+  window.webContents.on("context-menu", (_event, params) => {
+    const { editFlags, isEditable, selectionText } = params;
+    const template = [];
+    if (isEditable) {
+      template.push(
+        { role: "undo", enabled: editFlags.canUndo },
+        { role: "redo", enabled: editFlags.canRedo },
+        { type: "separator" },
+        { role: "cut", enabled: editFlags.canCut },
+        { role: "copy", enabled: editFlags.canCopy },
+        { role: "paste", enabled: editFlags.canPaste },
+        { type: "separator" },
+        { role: "selectAll", enabled: editFlags.canSelectAll },
+      );
+    } else if (selectionText) {
+      template.push({ role: "copy", enabled: editFlags.canCopy });
+    }
+    if (template.length) Menu.buildFromTemplate(template).popup({ window });
+  });
   // A reload replaces the renderer; its deep-link listener must re-announce.
   window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
     if (isMainFrame) { voice.reset(); deepLinkListenerReady = false; browserControl.hideWindow(); }
