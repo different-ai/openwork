@@ -67,6 +67,34 @@ test(`sending an image in ${entryPoint} immediately moves it into the thread whi
   expect(attached.chipStatus).toBe("ready");
   await user.screenshot();
 
+  await step("clicking the draft image thumbnail opens it full-size and Escape returns to the draft", async () => {
+    const thumbnail = (await probe.dom("[data-attachment-id] img")).elements[0];
+    if (!thumbnail) throw new Error("draft image thumbnail missing");
+    await user.click({ role: "button", label: `Expand ${attachmentName}` });
+    const lightbox = await probe.eventually(() => probe.dom("[data-image-lightbox] img"), {
+      within: 10_000,
+      label: "draft image lightbox",
+      until: (dom) => dom.elements.length === 1,
+    });
+    const preview = lightbox.elements[0];
+    if (!preview) throw new Error("lightbox image missing");
+    expect(preview.rect.width).toBeGreaterThan(thumbnail.rect.width * 4);
+    expect(await probe.eval(() => {
+      const chip = document.querySelector<HTMLImageElement>("[data-attachment-id] img");
+      const large = document.querySelector<HTMLImageElement>("[data-image-lightbox] img");
+      return Boolean(chip && large && chip.src === large.src);
+    })).toBe(true);
+    await user.screenshot();
+    await user.press("Escape");
+    await probe.eventually(() => probe.dom("[data-image-lightbox]"), {
+      within: 10_000,
+      label: "draft image lightbox closed",
+      until: (dom) => dom.elements.length === 0,
+    });
+    expect((await probe.dom("[data-attachment-id]")).elements).toHaveLength(1);
+    await user.see("composer", { text: /Describe the attached image\./ });
+  });
+
   await step("paste a video alongside the image", async () => {
     expect(await seed.evalIn(world.app, () => {
       const editor = document.querySelector<HTMLElement>('[contenteditable="true"]');
