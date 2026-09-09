@@ -18,6 +18,8 @@ let cancelled = 0
 let lookups = 0
 let buckets = 0
 let upstreamReads = 0
+let credentialReads = 0
+let tokenCalls = 0
 let config: Record<string, unknown> = {}
 const gatewayKey = `ow_gw_${"A".repeat(43)}`
 const baseAccess = matrixRow()
@@ -61,7 +63,12 @@ const upstream = createServer(async (request, response) => {
     response.end('data: {"id":"body-request-id","error":{"message":"redacted-provider-error"}}\n\n')
     return
   }
-  response.writeHead(200, { "content-type": config.mode === "echo-json" ? "application/json" : "application/octet-stream" })
+  if (config.mode === "invalid-json") {
+    response.writeHead(200, { "content-type": "application/json" })
+    response.end(Buffer.from([255, 254, 0, 128]))
+    return
+  }
+  response.writeHead(200, { "content-type": "application/octet-stream" })
   response.end(Buffer.concat(chunks))
 })
 await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve))
@@ -84,11 +91,11 @@ app.get("/health", (c) => gatewayApp.fetch(c.req.raw))
 app.post("/internal/rollups/run", (c) => gatewayApp.fetch(c.req.raw))
 app.post("/webhooks/openrouter", (c) => gatewayApp.fetch(c.req.raw))
 app.use("/api/*", inferenceAccessLogger)
-app.get("/__test/state", (c) => c.json({ requests, reports, rows, cancelled, lookups, buckets, upstreamReads, gatewayKey }))
+app.get("/__test/state", (c) => c.json({ requests, reports, rows, cancelled, lookups, buckets, upstreamReads, credentialReads, tokenCalls, gatewayKey }))
 app.post("/__test/config", async (c) => {
   config = await c.req.json()
   requests.length = reports.length = rows.length = 0
-  cancelled = lookups = buckets = upstreamReads = 0
+  cancelled = lookups = buckets = upstreamReads = credentialReads = tokenCalls = 0
   process.env.INFERENCE_EGRESS_ALLOWED_ORIGINS = config.allow === false ? "" : origin
   if (config.egressAlias === "canonical") {
     process.env.GATEWAY_EGRESS_ALLOWED_ORIGINS = origin
@@ -140,11 +147,11 @@ registerProxyRoutes(app, {
   },
   analytics: async () => () => ({ chunk() { if (config.observerFailure) throw new Error(marker) }, finish() { if (config.observerFailure) throw new Error(marker) } }),
   gateway: {
-    catalog: createProviderCatalog({ openai: { npm: "@ai-sdk/openai" }, google: { npm: "@ai-sdk/google" }, azure: { npm: "@ai-sdk/azure" }, "google-vertex": { npm: "@ai-sdk/google-vertex" }, "amazon-bedrock": { npm: "@ai-sdk/amazon-bedrock" } }),
+    catalog: createProviderCatalog({ openai: { npm: "@ai-sdk/openai" }, anthropic: { npm: "@ai-sdk/anthropic" }, google: { npm: "@ai-sdk/google" }, azure: { npm: "@ai-sdk/azure" }, "google-vertex": { npm: "@ai-sdk/google-vertex" }, "amazon-bedrock": { npm: "@ai-sdk/amazon-bedrock" } }),
     async loadGatewayProvider({ inferenceProviderId, organizationId }) {
       return { id: inferenceProviderId, organization_id: organizationId, provider_id: typeof config.provider === "string" ? config.provider : "openai",
         provider_config: object(config.providerConfig),
-        settings: config.settings ? object(config.settings) : { upstreamBaseUrl: typeof config.target === "string" ? config.target : `${origin}/v1` },
+        settings: config.mode === "inline-bedrock" ? { ...object(config.settings), upstreamBaseUrl: origin } : config.settings ? object(config.settings) : { upstreamBaseUrl: typeof config.target === "string" ? config.target : `${origin}/v1` },
         status: "active" }
     },
     async loadGatewayAccess() {
@@ -152,17 +159,20 @@ registerProxyRoutes(app, {
       return config.denied === true ? [] : configuredModels.map((model) => ({ ...baseAccess, model, credentialSet }))
     },
     async loadProviderCredential(input) {
+      credentialReads++
       if (input.scope.orgMembershipId !== "om_fixture" || input.scope.gatewayProviderId !== "ipr_fixture"
         || input.subject !== (config.retryReason ? "om_fixture" : "org")) return null
       if (config.retryReason) return { id: "ipc_fixture", kind: "oauth_google", secret: JSON.stringify({ accessToken: "EXPIRED_TOKEN_NEVER_FORWARD", refreshToken: "REFRESH_TOKEN_NEVER_FORWARD" }), expires_at: new Date(0), status: "active" }
       return { id: "ipc_fixture", kind: "api_key", secret: "UPSTREAM_ONLY_KEY", expires_at: null, status: "active" }
     },
     async refreshGoogleOauthToken(input) {
+      tokenCalls++
       if (input.subject !== "om_fixture" || input.provider.id !== baseAccess.credentialSet.id) throw new Error("Incorrect refresh scope")
       const reason = config.retryReason
       if (reason !== "refresh_busy" && reason !== "refresh_unavailable" && reason !== "credential_changed") throw new Error("Unexpected refresh")
       return { kind: "retry", reason }
     },
+    async mintGcpAccessToken() { tokenCalls++; throw new Error("Unexpected token mint") },
   },
 })
 const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 }, (info) => {

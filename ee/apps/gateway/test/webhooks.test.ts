@@ -5,7 +5,7 @@ import { Hono } from "hono"
 import type { OpenRouterUnknownModelUsageReport } from "../src/webhooks.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
-process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_den"
+process.env.DATABASE_URL = "mysql://fixture:fixture@127.0.0.1:1/gateway_unit_fixture"
 process.env.DEN_DB_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1234567890"
 process.env.GATEWAY_WEBHOOK_SECRET = "local-dev-webhook-secret"
 

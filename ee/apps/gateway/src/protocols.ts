@@ -33,9 +33,9 @@ const commonHeaderAllowlist = ["content-type", "accept", "user-agent"]
 
 const familyHeaderAllowlist: Record<ProtocolFamily, string[]> = {
   anthropic: ["anthropic-version", "anthropic-beta"],
-  openai: ["openai-beta", "openai-organization", "openai-project"],
-  azure: ["openai-beta", "openai-organization", "openai-project"],
-  openai_compatible: ["openai-beta", "openai-organization", "openai-project"],
+  openai: ["openai-beta"],
+  azure: ["openai-beta"],
+  openai_compatible: ["openai-beta"],
   google: [],
   google_vertex: [],
   // `anthropic-version` moves into the body (`anthropic_version`) on Vertex.

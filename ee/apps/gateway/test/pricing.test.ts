@@ -149,10 +149,13 @@ test("catalog context tiers include disjoint cache and honor explicit thresholds
   assert.equal(estimateCostMicroUsd({ ...input, modelId: "explicit" }, prices), 512000)
 })
 
-test("recorder falls back to requested model, preserves partial null cost, and includes Anthropic cache in totals", async () => {
+test("only Models identities fall back to requested model; Gateway keeps unselected model and cost null", async () => {
   const rows: InferenceRequestLogRow[] = []
   const recorder = createRecorder(rows)
-  recorder.start(start({ upstreamModel: null }))
+  recorder.start(start({ upstreamModel: null, route: "openwork_openrouter", identity: {
+    kind: "models", organizationId: createDenTypeId("organization"),
+    orgMembershipId: createDenTypeId("member"), inferenceKeyId: createDenTypeId("inferenceKey"),
+  } }))
   recorder.setUsage({ usageSource: "json", inputTokens: 100, outputTokens: 7, cacheReadTokens: 80, cacheWriteTokens: 20 })
   await recorder.finish({ status: 200, outcome: "ok" })
   assert.equal(rows[0]?.upstream_model, "claude-test")
@@ -164,4 +167,12 @@ test("recorder falls back to requested model, preserves partial null cost, and i
   await partial.finish({ status: 200, outcome: "ok" })
   assert.equal(rows[1]?.cost_micro_usd, null)
   assert.equal(rows[1]?.total_tokens, null)
+  const unselected = createRecorder(rows)
+  unselected.start(start({ upstreamModel: null }))
+  unselected.setUsage({ usageSource: "json", inputTokens: 100, outputTokens: 7, cacheReadTokens: 80, cacheWriteTokens: 20 })
+  await unselected.finish({ status: 200, outcome: "ok" })
+  assert.equal(rows[2]?.requested_model, "claude-test")
+  assert.equal(rows[2]?.upstream_model, null)
+  assert.equal(rows[2]?.total_tokens, 207)
+  assert.equal(rows[2]?.cost_micro_usd, null)
 })

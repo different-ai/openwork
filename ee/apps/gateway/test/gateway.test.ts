@@ -16,7 +16,7 @@ import type { GatewayRequestLogRow as InferenceRequestLogRow } from "../src/requ
 import { bedrockStreamFrames } from "./helpers/event-stream.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
-process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_den"
+process.env.DATABASE_URL = "mysql://fixture:fixture@127.0.0.1:1/gateway_unit_fixture"
 process.env.DEN_DB_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1234567890"
 process.env.OPENROUTER_UPSTREAM_URL = "https://upstream.test/api/v1"
 // Explicit operator configuration for the fake endpoint, not a dev-mode bypass.
@@ -147,7 +147,9 @@ function createTestServer(options: TestServerOptions = {}) {
   const logRows: InferenceRequestLogRow[] = []
   const accessChecks: Array<{ inferenceProviderId: string; orgMembershipId: string }> = []
   const credentialLookups: Array<Parameters<LoadProviderCredential>[0]> = []
-  const reporter: InferenceReporter = { request() {}, handledError() {} }
+  const handledErrors: Array<Parameters<InferenceReporter["handledError"]>[0]> = []
+  const tokenCalls = { mint: 0, refresh: 0 }
+  const reporter: InferenceReporter = { request() {}, handledError(report) { handledErrors.push(report) } }
   const capturingFetch: typeof fetch = async (input, init) => {
     upstreamRequests.push({
       url: requestUrl(input),
@@ -199,12 +201,16 @@ function createTestServer(options: TestServerOptions = {}) {
     gateway: {
       catalog,
       now: options.now ? () => options.now ?? new Date() : undefined,
-      refreshGoogleOauthToken: options.refreshGoogleOauthToken ?? (async () => {
+      refreshGoogleOauthToken: async (input) => {
+        tokenCalls.refresh++
+        if (options.refreshGoogleOauthToken) return options.refreshGoogleOauthToken(input)
         throw new Error("unexpected oauth refresh")
-      }),
-      mintGcpAccessToken: options.mintGcpAccessToken ?? (async () => {
+      },
+      mintGcpAccessToken: async (input) => {
+        tokenCalls.mint++
+        if (options.mintGcpAccessToken) return options.mintGcpAccessToken(input)
         throw new Error("unexpected gcp token mint")
-      }),
+      },
       async loadGatewayProvider(input) {
         if (!providerRow || input.organizationId !== providerRow.organization_id || input.inferenceProviderId !== providerRow.id) return null
         return providerRow
@@ -220,7 +226,7 @@ function createTestServer(options: TestServerOptions = {}) {
     },
   })
 
-  return { app, upstreamRequests, logRows, accessChecks, credentialLookups, accessRows }
+  return { app, upstreamRequests, logRows, accessChecks, credentialLookups, accessRows, handledErrors, tokenCalls }
 }
 
 function gatewayRequest(input: { path: string; method?: string; body?: unknown; rawBody?: string; headers?: Record<string, string>; id?: string }) {
@@ -232,6 +238,24 @@ function gatewayRequest(input: { path: string; method?: string; body?: unknown; 
     headers,
     body,
   })
+}
+
+async function assertRejectedBeforeCredentials(fixture: ReturnType<typeof createTestServer>, request: Request, code: string, status = 400) {
+  const response = await fixture.app.fetch(request)
+  assert.equal(response.status, status)
+  if (request.method !== "HEAD") assert.equal((await readError(response)).code, code)
+  assert.ok(response.headers.get("x-openwork-request-id"))
+  assert.equal(fixture.credentialLookups.length, 0)
+  assert.equal(fixture.upstreamRequests.length, 0)
+  assert.deepEqual(fixture.tokenCalls, { mint: 0, refresh: 0 })
+  const row = await waitForRows(fixture.logRows)
+  assert.equal(row.outcome, "rejected")
+  assert.equal(row.status, status)
+  assert.equal(row.error_code, code)
+  assert.equal(row.gateway_provider_credential_id, null)
+  assert.equal(fixture.handledErrors[0]?.reason, code)
+  assert.doesNotMatch(JSON.stringify([row, fixture.handledErrors]), /RESOURCE_SECRET_MARKER|upstream-secret/)
+  assert.ok(!JSON.stringify(fixture.handledErrors).includes(gatewayKey))
 }
 
 const openAiChatUsageEvent = 'data: {"id":"chatcmpl-1","model":"gpt-4o-2024","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":6}}}\n\n'
@@ -251,6 +275,11 @@ test("trusted catalog key maps route Cognitive Services, Alibaba and Moonshot; s
 })
 
 test("openai chat: forwards with bearer auth, strips incoming auth, injects include_usage and logs stream usage", async () => {
+  for (const name of ["openai-organization", "openai-project", "x-amzn-bedrock-guardrailidentifier", "x-amzn-bedrock-guardrailversion"]) {
+    await assertRejectedBeforeCredentials(createTestServer(), gatewayRequest({
+      path: "/chat/completions", body: { model: "gpt-4o", messages: [] }, headers: { [name]: "RESOURCE_SECRET_MARKER" },
+    }), "unsupported_gateway_resource")
+  }
   const { app, upstreamRequests, logRows, accessChecks, credentialLookups } = createTestServer({
     fetch: async () => sseResponse(
       ['data: {"id":"chatcmpl-1","choices":[{"delta":{"content":"hi"}}]}\n\n', openAiChatUsageEvent, "data: [DONE]\n\n"],
@@ -260,7 +289,7 @@ test("openai chat: forwards with bearer auth, strips incoming auth, injects incl
   const response = await app.fetch(gatewayRequest({
     path: "/chat/completions",
     body: { model: "gpt-4o", stream: true, messages: [] },
-    headers: { "openai-organization": "org-abc", "x-stainless-lang": "js", cookie: "a=b", "x-api-key": gatewayKey, "anthropic-version": "2023-06-01" },
+    headers: { "x-stainless-lang": "js", cookie: "a=b", "x-api-key": gatewayKey, "anthropic-version": "2023-06-01" },
   }))
 
   assert.equal(response.status, 200)
@@ -277,7 +306,7 @@ test("openai chat: forwards with bearer auth, strips incoming auth, injects incl
   assert.equal(upstream.headers.get("x-api-key"), null)
   assert.equal(upstream.headers.get("cookie"), null)
   assert.equal(upstream.headers.get("anthropic-version"), null)
-  assert.equal(upstream.headers.get("openai-organization"), "org-abc")
+  assert.equal(upstream.headers.get("openai-organization"), null)
   assert.equal(upstream.headers.get("x-stainless-lang"), "js")
   assert.equal(upstream.headers.get("x-openwork-request-id"), response.headers.get("x-openwork-request-id"))
   const body = parseJsonObject(upstream.body)
@@ -553,16 +582,25 @@ test("google vertex: non-stream anthropic uses rawPredict; missing project/locat
 })
 
 test("GET provider /models returns only local accessible aliases", async () => {
-  const { app, upstreamRequests, logRows } = createTestServer({
-    fetch: async () => Response.json({ object: "list", data: [], usage: { prompt_tokens: 1 } }),
-  })
-  const response = await app.fetch(gatewayRequest({ path: "/models?limit=5", method: "GET" }))
-  assert.equal(response.status, 200)
-  assert.equal(upstreamRequests.length, 0)
-  const body = parseJsonObject(await response.text())
-  assert.ok(Array.isArray(body.data) && body.data.length > 0)
-  assert.ok(body.data.every((model) => isRecord(model) && typeof model.id === "string" && model.id.startsWith("gwm_")))
-  assert.equal(logRows.length, 0)
+  const fixture = createTestServer({ credential: null })
+  for (const path of ["/models?limit=5", "/v1/models", "/v1beta/models/", "/v1alpha/models"]) {
+    const response = await fixture.app.fetch(gatewayRequest({ path, method: "GET" }))
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get("cache-control"), "no-store")
+    const body = parseJsonObject(await response.text())
+    assert.ok(Array.isArray(body.data) && body.data.length === fixture.accessRows.length)
+    assert.ok(body.data.every((model) => isRecord(model) && typeof model.id === "string" && model.id.startsWith("gwm_")))
+  }
+  assert.equal(fixture.upstreamRequests.length, 0)
+  assert.equal(fixture.credentialLookups.length, 0)
+  assert.deepEqual(fixture.tokenCalls, { mint: 0, refresh: 0 })
+  assert.equal(fixture.logRows.length, 0)
+  const denied = createTestServer({ access: false })
+  const response = await denied.app.fetch(gatewayRequest({ path: "/models" }))
+  assert.equal(response.status, 403)
+  assert.equal((await readError(response)).code, "provider_access_denied")
+  assert.equal(denied.credentialLookups.length, 0)
+  assert.equal(denied.upstreamRequests.length, 0)
 })
 
 test("rejects with 404 provider_not_found for another org's provider and unknown ids without logging", async () => {
@@ -967,23 +1005,21 @@ test("logs client_aborted when the client cancels mid-stream", async () => {
   assert.equal(upstreamCancelled, true)
 })
 
-test("uploads non-JSON file bytes unchanged and reports missing usage", async () => {
-  const { app, upstreamRequests, logRows } = createTestServer({
-    fetch: async () => sseResponse(['data: {"id":"1","choices":[{"delta":{"content":"x"}}]}\n\n', "data: [DONE]\n\n"]),
-  })
+test("permitted inline JSON retains exact request bytes and missing usage", async () => {
+  const { app, upstreamRequests, logRows } = createTestServer()
+  const rawBody = ' { "model": "x", "input": "inline text", "metadata": { "file_id": "client-data" } } '
   const response = await app.fetch(gatewayRequest({
-    path: "/files",
-    method: "POST",
-    headers: { "content-type": "text/plain" },
-    rawBody: "raw text",
+    path: "/responses",
+    headers: { "content-type": "application/json" },
+    rawBody,
   }))
   assert.equal(response.status, 200)
   await response.text()
-  assert.equal(upstreamRequests[0]?.body, "raw text")
-  assert.equal(upstreamRequests[0]?.headers.get("content-type"), "text/plain")
+  assert.equal(upstreamRequests[0]?.body, rawBody)
+  assert.equal(upstreamRequests[0]?.headers.get("content-type"), "application/json")
   const row = await waitForRows(logRows)
   assert.equal(row.usage_source, "missing")
-  assert.equal(row.requested_model, null)
+  assert.equal(row.requested_model, "x")
 })
 
 test("Models and Gateway keys cannot authenticate each other's routes", async () => {
@@ -1056,15 +1092,28 @@ test("unqualified overlapping grants conflict; an explicit alias constrains befo
   await response.text()
 })
 
-test("model-less requests require a grant across sets and never forward the selection hint", async () => {
+test("an explicit grant narrows local metadata but never authorizes files or leaks the selection hint", async () => {
   const first = createTestServer().accessRows[0]
   assert.ok(first)
   const second = { ...first, credentialSet: { ...first.credentialSet, id: createDenTypeId("gatewayCredentialSet") },
     grant: { ...first.grant, id: createDenTypeId("inferenceProviderAccess"), org_membership_id: memberId, audience_key: `member:${memberId}` } }
   second.grant.credential_set_id = second.credentialSet.id
   const fixture = createTestServer({ accessRows: [first, second] })
-  assert.equal((await fixture.app.fetch(gatewayRequest({ path: "/files" }))).status, 409)
-  const response = await fixture.app.fetch(gatewayRequest({ path: "/files", headers: { "x-openwork-gateway-grant-id": first.grant.id } }))
+  const grantHeaders: Record<string, string>[] = [{}, { "x-openwork-gateway-grant-id": first.grant.id }]
+  for (const headers of grantHeaders) {
+    const denied = await fixture.app.fetch(gatewayRequest({ path: "/files", headers }))
+    assert.equal(denied.status, 400)
+    assert.equal((await readError(denied)).code, "unsupported_gateway_operation")
+  }
+  const metadata = await fixture.app.fetch(gatewayRequest({ path: "/models", headers: { "x-openwork-gateway-grant-id": first.grant.id } }))
+  assert.equal(metadata.status, 200)
+  const body = parseJsonObject(await metadata.text())
+  assert.ok(first.model)
+  assert.ok(Array.isArray(body.data))
+  assert.deepEqual(body.data.map((model) => isRecord(model) ? model.id : null), [createGatewayModelAlias({ modelGroupId: first.group.id, credentialSetId: first.credentialSet.id, gatewayProviderModelId: first.model.id })])
+  assert.equal(fixture.credentialLookups.length, 0)
+  assert.equal(fixture.upstreamRequests.length, 0)
+  const response = await fixture.app.fetch(gatewayRequest({ path: "/responses", body: { model: first.model.model_id, input: "hi" }, headers: { "x-openwork-gateway-grant-id": first.grant.id } }))
   assert.equal(response.status, 200)
   await response.text()
   assert.equal(fixture.credentialLookups[0]?.selection.row.credentialSet.id, first.credentialSet.id)
@@ -1152,4 +1201,135 @@ test("wire aliases are rewritten in Google, Bedrock and Vertex Anthropic paths",
     assert.ok(!fixture.upstreamRequests[0]?.body?.includes(alias))
     await response.text()
   }
+})
+
+test("provider model grants never authorize account APIs, files, unknown operations or non-POST invocations", async (t) => {
+  const errors = t.mock.method(console, "error", () => {})
+  const providers: Array<{ provider: Partial<GatewayProvider>; invocation: string; denied: string[] }> = [
+    { provider: {}, invocation: "/responses", denied: ["/files", "/files/file-other", "/files/file-other/content", "/uploads", "/uploads/upload-other/parts", "/fine_tuning/jobs", "/fine_tuning/jobs/job-other/cancel", "/batches", "/assistants", "/threads/thread-other/runs", "/conversations", "/responses/resp-other", "/responses/resp-other/input_items", "/vector_stores", "/containers", "/organization/users", "/organization/admin_api_keys", "/account", "/models/x", "/unknown", "/responses/unknown", "/chat/completions/unknown", "/v1/files"] },
+    { provider: { provider_id: "anthropic" }, invocation: "/messages", denied: ["/v1/files", "/v1/files/file-other/content", "/v1/messages/batches", "/organizations/me", "/models/claude"] },
+    { provider: { provider_id: "google" }, invocation: "/models/gemini:generateContent", denied: ["/files", "/v1beta/files", "/upload/v1beta/files", "/v1beta/files/file-other:download", "/cachedContents", "/tunedModels", "/models/gemini:batchGenerateContent", "/models/gemini:rawPredict", "/models/gemini:predict"] },
+    { provider: vertexProvider, invocation: "/models/gemini:generateContent", denied: ["/v1/files", "/models/gemini:rawPredict", "/models/gemini:streamRawPredict", "/models/gemini:predict", "/batchPredictionJobs"] },
+    { provider: { ...vertexProvider, provider_id: "google-vertex-anthropic" }, invocation: "/messages", denied: ["/files", "/messages/count_tokens", "/models/claude:rawPredict"] },
+    { provider: { provider_id: "amazon-bedrock", settings: { region: "us-east-1" } }, invocation: "/model/claude/converse", denied: ["/files", "/async-invoke", "/agents", "/model/claude/unknown"] },
+    { provider: { provider_id: "azure", settings: { resourceName: "test-resource" } }, invocation: "/deployments/x/chat/completions", denied: ["/files", "/fine_tuning/jobs", "/deployments/x/files", "/deployments/x/responses/resp-other"] },
+  ]
+  for (const entry of providers) {
+    const requests = entry.denied.flatMap((path) => ["GET", "HEAD", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"].map((method) => ({ path, method })))
+    requests.push(...["GET", "HEAD", "DELETE", "PUT", "PATCH", "OPTIONS"].map((method) => ({ path: entry.invocation, method })))
+    for (const { path, method } of requests) {
+      const fixture = createTestServer({ provider: entry.provider, credential: { kind: "gcp_service_account", secret: '{"client_email":"fixture@example.test","private_key":"RESOURCE_SECRET_MARKER"}' } })
+      await assertRejectedBeforeCredentials(fixture, gatewayRequest({
+        path: `${path}?note=RESOURCE_SECRET_MARKER`, method,
+        body: method === "GET" || method === "HEAD" ? undefined : { model: "x", input: "RESOURCE_SECRET_MARKER" },
+        headers: { "x-extra": "RESOURCE_SECRET_MARKER", "x-openwork-gateway-grant-id": fixture.accessRows[0].grant.id },
+      }), "unsupported_gateway_operation")
+    }
+  }
+  for (const method of ["POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"]) {
+    await assertRejectedBeforeCredentials(createTestServer(), gatewayRequest({ path: "/models", method }), "unsupported_gateway_operation")
+  }
+  assert.doesNotMatch(JSON.stringify(errors.mock.calls), /RESOURCE_SECRET_MARKER|upstream-secret/)
+})
+
+test("files and multipart are intentionally denied, not a binary passthrough transport", async () => {
+  for (const path of ["/files", "/v1/files", "/uploads", "/audio/transcriptions", "/images/edits"]) {
+    const fixture = createTestServer()
+    const response = new Request(`http://openwork.test/api/v1/providers/${providerId}${path}`, {
+      method: "POST", headers: { authorization: `Bearer ${gatewayKey}`, "content-type": "multipart/form-data; boundary=fixture" },
+      body: new Uint8Array([45, 45, 255, 254, 0, 128]),
+    })
+    await assertRejectedBeforeCredentials(fixture, response, path.startsWith("/audio") || path.startsWith("/images") ? "unsupported_media_type" : "unsupported_gateway_operation", path.startsWith("/audio") || path.startsWith("/images") ? 415 : 400)
+  }
+})
+
+test("inference cannot traverse provider-owned response, file, conversation, cache, retrieval or container resources", async (t) => {
+  const errors = t.mock.method(console, "error", () => {})
+  const cases: Array<{ provider?: Partial<GatewayProvider>; path: string; body: Record<string, unknown> }> = [
+    ...[
+      { previous_response_id: "RESOURCE_SECRET_MARKER" }, { previous_response_id: null },
+      { conversation: "RESOURCE_SECRET_MARKER" }, { conversation: { id: "RESOURCE_SECRET_MARKER" } },
+      { prompt: { id: "RESOURCE_SECRET_MARKER" } },
+      { input: [{ type: "item_reference", id: "RESOURCE_SECRET_MARKER" }] },
+      { input: [{ type: "message", id: "RESOURCE_SECRET_MARKER", role: "user", content: "hi" }] },
+      { input: [{ role: "user", content: [{ type: "input_file", file_id: "RESOURCE_SECRET_MARKER" }] }] },
+      { type: "tool_use", input: [{ role: "user", content: [{ type: "input_file", file_id: "RESOURCE_SECRET_MARKER" }] }] },
+      { input: [{ type: "function_call_output", call_id: "call-local", output: [{ type: "input_file", file_id: "RESOURCE_SECRET_MARKER" }] }] },
+      { input: [{ role: "user", content: [{ type: "input_file", file_url: "https://files.example.test/input.pdf" }] }] },
+      { tools: [{ type: "file_search", vector_store_ids: ["RESOURCE_SECRET_MARKER"] }] },
+      { tools: [{ type: "code_interpreter", container: "RESOURCE_SECRET_MARKER" }] },
+      { tools: [{ type: "code_interpreter", container: { type: "auto" } }] },
+      { tools: [{ type: "mcp", connector_id: "RESOURCE_SECRET_MARKER" }] },
+      { tools: [{ type: "future_hosted_tool" }] },
+      { tool_choice: { type: "file_search" } },
+      { tool_resources: { file_search: { vector_store_ids: ["RESOURCE_SECRET_MARKER"] } } },
+    ].map((body) => ({ path: "/responses", body: { model: "x", ...body } })),
+    { path: "/chat/completions", body: { model: "x", messages: [{ role: "assistant", audio: { id: "RESOURCE_SECRET_MARKER" } }] } },
+    { path: "/chat/completions", body: { model: "x", messages: [{ role: "user", content: [{ type: "file", file: { file_id: "RESOURCE_SECRET_MARKER" } }] }] } },
+    { path: "/chat/completions", body: { model: "x", data_sources: [{ type: "azure_search", parameters: { index_name: "RESOURCE_SECRET_MARKER" } }] } },
+    { provider: { provider_id: "anthropic" }, path: "/messages", body: { model: "claude", messages: [{ role: "user", content: [{ type: "document", source: { type: "file", file_id: "RESOURCE_SECRET_MARKER" } }] }] } },
+    { provider: { provider_id: "anthropic" }, path: "/messages/count_tokens", body: { model: "claude", container: "RESOURCE_SECRET_MARKER" } },
+    { provider: { provider_id: "anthropic" }, path: "/messages", body: { model: "claude", tools: [{ type: "code_execution_20250522", name: "code_execution" }] } },
+    { provider: vertexProvider, path: "/models/gemini:generateContent", body: { cachedContent: "RESOURCE_SECRET_MARKER", contents: [] } },
+    { provider: { provider_id: "google" }, path: "/models/gemini:countTokens", body: { generateContentRequest: { contents: [{ parts: [{ fileData: { fileUri: "RESOURCE_SECRET_MARKER" } }] }] } } },
+    { provider: { provider_id: "google" }, path: "/models/gemini:generateContent", body: { contents: [{ parts: [{ functionResponse: { name: "local", response: {}, parts: [{ fileData: { fileUri: "RESOURCE_SECRET_MARKER" } }] } }] }] } },
+    { provider: vertexProvider, path: "/models/gemini:generateContent", body: { tools: [{ retrieval: { vertexAiSearch: { datastore: "RESOURCE_SECRET_MARKER" } } }] } },
+    { provider: { provider_id: "amazon-bedrock", settings: { region: "us-east-1" } }, path: "/model/claude/converse", body: { messages: [{ role: "user", content: [{ document: { source: { s3Location: { uri: "s3://RESOURCE_SECRET_MARKER" } } } }] }] } },
+    { provider: { provider_id: "amazon-bedrock", settings: { region: "us-east-1" } }, path: "/model/claude/converse", body: { messages: [], guardrailConfig: { guardrailIdentifier: "RESOURCE_SECRET_MARKER", guardrailVersion: "1" } } },
+  ]
+  for (const entry of cases) {
+    const fixture = createTestServer({ provider: entry.provider })
+    await assertRejectedBeforeCredentials(fixture, gatewayRequest({ path: entry.path, body: entry.body }), "unsupported_gateway_resource")
+  }
+  assert.doesNotMatch(JSON.stringify(errors.mock.calls), /RESOURCE_SECRET_MARKER|upstream-secret/)
+})
+
+test("counting and embedding do not bypass model grants or admit nested model routing", async () => {
+  for (const entry of [
+    { provider: { provider_id: "anthropic" }, path: "/messages/count_tokens", body: { model: "not-configured", messages: [] } },
+    { provider: { provider_id: "google" }, path: "/models/not-configured:countTokens", body: { contents: [] } },
+    { provider: vertexProvider, path: "/models/not-configured:embedContent", body: { content: { parts: [{ text: "hi" }] } } },
+  ]) {
+    const fixture = createTestServer({ provider: entry.provider })
+    await assertRejectedBeforeCredentials(fixture, gatewayRequest(entry), "model_access_denied", 403)
+  }
+  for (const nested of [{ generateContentRequest: { model: "models/not-configured", contents: [] } }, { generate_content_request: { model: "models/gemini", contents: [] } }]) {
+    const fixture = createTestServer({ provider: { provider_id: "google" } })
+    await assertRejectedBeforeCredentials(fixture, gatewayRequest({ path: "/models/gemini:countTokens", body: nested }), "unsupported_model_selection")
+  }
+})
+
+test("inline messages, image/audio URLs and client function names or schemas are not account-resource references", async () => {
+  const schema = { type: "object", properties: { file_id: { type: "string" }, model: { type: "string" }, conversation: { type: "string" } } }
+  const cases: Array<{ provider?: Partial<GatewayProvider>; path: string; body: Record<string, unknown> }> = [
+    { path: "/chat/completions", body: { model: "x", messages: [{ role: "user", content: [{ type: "text", text: "previous_response_id: file_search" }, { type: "image_url", image_url: { url: "https://media.example.test/image.png" } }, { type: "input_audio", input_audio: { data: "aGk=", format: "wav" } }, { type: "audio_url", audio_url: { url: "https://media.example.test/audio.wav" } }] }], tools: [{ type: "function", function: { name: "file_search", parameters: schema } }] } },
+    { path: "/responses", body: { model: "x", input: [{ role: "user", content: [{ type: "input_image", image_url: "data:image/png;base64,aGk=" }] }, { type: "function_call", call_id: "call-local", name: "container", arguments: '{"file_id":"client-data"}' }, { type: "function_call_output", call_id: "call-local", output: '{"file_id":"client-data"}' }], tools: [{ type: "function", name: "container", parameters: schema }], text: { format: { type: "json_schema", name: "result", schema } } } },
+    { provider: { provider_id: "anthropic" }, path: "/messages", body: { model: "claude", messages: [{ role: "user", content: [{ type: "image", source: { type: "url", url: "https://media.example.test/image.png" } }] }, { role: "assistant", content: [{ type: "tool_use", id: "tool-local", name: "file_search", input: { file_id: "client-data", model: "math-model" } }] }], tools: [{ name: "file_search", input_schema: schema }] } },
+    { provider: { provider_id: "anthropic" }, path: "/messages/count_tokens", body: { model: "claude", messages: [{ role: "user", content: "hi" }] } },
+    { provider: { provider_id: "google" }, path: "/models/gemini:countTokens", body: { contents: [{ role: "user", parts: [{ text: "hi" }] }] } },
+    { provider: vertexProvider, path: "/models/gemini:generateContent", body: { contents: [{ role: "user", parts: [{ text: "hi" }, { inlineData: { mimeType: "image/png", data: "aGk=" } }, { functionCall: { name: "container", args: { file_id: "client-data" } } }, { functionResponse: { name: "container", response: { file_id: "client-data", model: "math-model" }, parts: [{ inlineData: { mimeType: "image/png", data: "aGk=" } }] } }] }], tools: [{ functionDeclarations: [{ name: "container", parameters: schema }] }] } },
+    { provider: { provider_id: "google" }, path: "/models/gemini:embedContent", body: { content: { parts: [{ text: "hi" }] } } },
+    { path: "/embeddings", body: { model: "x", input: "a mathematical model of containers" } },
+  ]
+  for (const entry of cases) {
+    const fixture = createTestServer({ provider: entry.provider })
+    const response = await fixture.app.fetch(gatewayRequest(entry))
+    assert.equal(response.status, 200, await response.text())
+    assert.equal(fixture.upstreamRequests.length, 1)
+    assert.deepEqual(parseJsonObject(fixture.upstreamRequests[0].body), entry.body)
+    assert.ok(fixture.credentialLookups.every((lookup) => lookup.selection.upstreamModel !== null))
+    assert.equal((await waitForRows(fixture.logRows)).outcome, "ok")
+  }
+})
+
+test("OpenRouter alternate models and server tools stay blocked without matching harmless function names", async () => {
+  for (const body of [{ models: ["not-configured"] }, { preset: "remote" }, { plugins: [{ id: "fusion" }] }, { tools: [{ type: "openrouter:subagent" }] }]) {
+    const fixture = createTestServer({ provider: { provider_id: "openrouter" } })
+    await assertRejectedBeforeCredentials(fixture, gatewayRequest({ path: "/chat/completions", body: { model: "x", ...body } }), "unsupported_model_selection")
+  }
+  const fixture = createTestServer({ provider: { provider_id: "openrouter" } })
+  const response = await fixture.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x", messages: [{ role: "user", content: "solve a math model" }], tools: [{ type: "function", function: { name: "openrouter:subagent", parameters: { type: "object" } } }] } }))
+  assert.equal(response.status, 200)
+  await response.text()
+  assert.equal(fixture.upstreamRequests.length, 1)
 })

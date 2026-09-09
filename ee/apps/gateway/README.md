@@ -104,16 +104,25 @@ before running the new runtime. Do not deploy it against the old table names.
   `config.id`, raw `upstreamModelId`, and group/set IDs and names. A listed grant
   does not guarantee its member token is ready; management supplies per-set
   `authorizationRequests`. The listing never materializes a credential.
-- Model-less file operations require `x-openwork-gateway-grant-id` when several
-  sets apply, even across audience priorities. The hint is reauthorized and never
-  forwarded. It also constrains model requests, never enlarging model access.
+- Provider management requires an organization admin or higher role; writes
+  additionally require fresh authentication. Provider identity and destination
+  settings are immutable after creation. Names, model selection and status may
+  be edited. Members retain granted connect/sign-in/revocation flows for their
+  own member-mode credentials, not access to shared credential administration.
+- `x-openwork-gateway-grant-id` is a selection hint for model requests, never
+  permission by itself. It is reauthorized and is not forwarded upstream.
 - JSON model extraction also applies to embeddings and other supported native
   model operations without a usage parser. Conflicting body/path selectors,
   OpenRouter routing arrays/plugins and missing models fail before credential
-  lookup. Deferred inference (batches/assistant runs) and unrecognized operations
-  return `unsupported_gateway_operation`; non-JSON model-bearing payloads return
-  `unsupported_media_type`. File uploads keep their original bytes. Multipart
-  audio/image model calls require a separately reviewed selector extractor.
+  lookup. Upstream requests are limited to explicitly supported POST model
+  operations. File/account/fine-tuning management, batches/assistant runs and
+  unrecognized operations return `unsupported_gateway_operation`; non-JSON
+  payloads, including multipart uploads, return `unsupported_media_type`.
+  Provider-stored resources, prior-response/conversation references and hosted
+  tools return `unsupported_gateway_resource` until ownership checks exist.
+  Caller-selected OpenAI organization/project headers and Bedrock guardrail
+  references are also rejected before credential lookup.
+  Inline content and client-executed function tools remain supported.
 - Credentials are selected by set + subject (`org` or the requesting member).
   Set mode and OAuth client configuration are authoritative. OAuth refresh leases
   recheck active membership/key/provider/group/set/grant/model links and current

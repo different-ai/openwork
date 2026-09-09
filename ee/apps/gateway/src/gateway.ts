@@ -1,4 +1,4 @@
-// Org provider gateway: `ANY /api/v1/providers/:inferenceProviderId/*`
+// Org provider gateway: model-granted POST invocations and local GET models.
 // (plan §5.2). Forwards the desktop's native provider request to the org's
 // configured upstream with the org/member credential, logging one row per
 // request. Never translates protocols and never returns raw credentials.
@@ -110,7 +110,6 @@ type UpstreamAuth =
 export const gatewayPathPrefix = "/api/v1/providers"
 
 const droppedResponseHeaders = new Set(["content-length", "transfer-encoding", "connection"])
-const bodylessMethods = new Set(["GET", "HEAD"])
 const vertexAnthropicVersion = "vertex-2023-10-16"
 
 export const loadGatewayProviderFromDb: LoadGatewayProvider = async (input) => {
@@ -176,7 +175,7 @@ function resolveUpstream(provider: GatewayProvider, catalog: CatalogProvider | n
     }
   }
   const forwardedRest = family === "google_vertex" || family === "google_vertex_anthropic" ? stripApiVersionPrefix(rest) : rest
-  // Check before URL normalization can move a file operation to another path.
+  // Check before URL normalization can move an operation to another path.
   if (rest.includes("\\") || rest.split("/").some((part) => /^(?:\.|%2e){1,2}$/i.test(part))) return { error: "Invalid upstream path." }
   const protocol = classifyRequestProtocol(family, forwardedRest)
   let url: URL
@@ -222,41 +221,102 @@ function materializeAuth(credential: UsableCredential, provider: GatewayProvider
   }
 }
 
+function unsupportedGatewayPayload(body: JsonObject, family: ProtocolFamily, providerId: string): "resource" | "model" | null {
+  // Grants cover models, not ownership of provider-side state. Walk protocol
+  // envelopes, never interpret user text or client function schemas/arguments.
+  const pending: unknown[] = [body]
+  const resourceFields = new Set([
+    "previousresponseid", "responseid", "conversation", "conversationid", "threadid", "assistantid",
+    "fileid", "fileids", "fileuri", "fileurl", "vectorstoreid", "vectorstoreids", "container", "containerid",
+    "cachedcontent", "cachename", "s3location", "s3uri", "gcsuri", "toolresources", "datasources",
+    "mcpservers", "connectorid", "promptarn", "sessionid", "guardrailidentifier",
+  ])
+  while (pending.length) {
+    const value = pending.pop()
+    if (Array.isArray(value)) { for (const item of value) pending.push(item); continue }
+    if (!isJsonObject(value)) continue
+    if ((value !== body && Object.hasOwn(value, "model")) || hasAlternateModelSelection(value, providerId)) return "model"
+    if (value.type === "item_reference") return "resource"
+    for (const [key, child] of Object.entries(value)) {
+      if (value !== body && ((value.type === "tool_use" && key === "input" && ["anthropic", "google_vertex_anthropic", "bedrock"].includes(family)) || (value.type === "function_call" && key === "arguments"))) continue
+      if (resourceFields.has(key.replace(/_/g, "").toLowerCase())) return "resource"
+      if (key === "prompt" && isJsonObject(child)) return "resource" // Saved OpenAI prompt templates.
+      if (key === "audio" && isJsonObject(child) && Object.hasOwn(child, "id")) return "resource"
+      if (key === "input" && Array.isArray(child) && child.some((item) => isJsonObject(item) && Object.hasOwn(item, "id")
+        && !(item.type === "function_call" && typeof item.call_id === "string" && typeof item.name === "string" && typeof item.arguments === "string"))) return "resource"
+      if (key === "tool_choice" && isJsonObject(child) && (typeof child.type !== "string" || !["auto", "none", "required", "any", "tool", "function", "custom", "allowed_tools"].includes(child.type))) return "resource"
+      if (key === "tools") {
+        if (!Array.isArray(child)) return "resource"
+        for (const tool of child) {
+          if (!isJsonObject(tool)) return "resource"
+          switch (family) {
+            case "google":
+            case "google_vertex":
+              if (!Object.keys(tool).every((name) => name === "functionDeclarations" || name === "function_declarations")) return "resource"
+              break
+            case "bedrock":
+              if (isJsonObject(tool.toolSpec) && Object.keys(tool).every((name) => name === "toolSpec")) break
+              // Bedrock InvokeModel also accepts Anthropic's native client tools.
+            case "anthropic":
+            case "google_vertex_anthropic":
+              if (tool.type !== undefined && tool.type !== "custom") return "resource"
+              if (typeof tool.name !== "string" || !isJsonObject(tool.input_schema)) return "resource"
+              break
+            default:
+              if (tool.type !== "function" && tool.type !== "custom") return "resource"
+          }
+        }
+        continue
+      }
+      if (key === "functionResponse" || key === "function_response") {
+        // Function result JSON is client data, but multimodal result parts can
+        // still ask Google to read a provider-owned file.
+        if (isJsonObject(child)) pending.push(child.parts)
+        continue
+      }
+      if ([
+        "metadata", "schema", "input_schema", "output_schema", "response_format",
+        "responseSchema", "response_schema", "responseJsonSchema", "response_json_schema",
+        "functions", "functionCall", "function_call", "tool_calls", "toolUse", "json",
+      ].includes(key)) continue
+      pending.push(child)
+    }
+  }
+  return null
+}
+
 async function prepareRequest(request: Request, upstream: ResolvedUpstream, providerId: string, rest: string): Promise<PreparedRequest | { error: Response; errorCode: string }> {
   const url = new URL(upstream.url)
   const invalid = (status: number, code: string, message: string) => ({ error: gatewayError(status, code, message), errorCode: code })
   let pathModel: string | null
   try { pathModel = requestedModelFromPath(url.pathname) } catch { return invalid(400, "invalid_model_path", "Invalid model path encoding.") }
-  // Only known non-inference resource operations may omit a model. In particular
-  // batches, assistants/runs and unknown endpoints cannot execute hidden models.
-  const modelLess = /^(?:v1(?:beta|alpha)?\/)?files(?:\/[^/]+(?:\/content)?)?$/.test(rest)
-    || /^(?:upload\/)?v1beta\/files$/.test(rest)
+  // No account/file management, deferred inference, or arbitrary provider RPCs.
+  // GET models is generated locally before reaching this upstream-only path.
   const operation = stripApiVersionPrefix(rest)
   const modelOperation = (() => {
     switch (upstream.family) {
       case "google":
       case "google_vertex":
-        return /^models\/[^/]+:(?:generateContent|streamGenerateContent|embedContent|countTokens|predict|rawPredict|streamRawPredict)$/.test(operation)
+        return /^models\/[^/]+:(?:generateContent|streamGenerateContent|embedContent|countTokens)$/.test(operation)
       case "bedrock":
         return /^model\/[^/]+\/(?:converse|converse-stream|invoke|invoke-with-response-stream)$/.test(operation)
       case "anthropic":
-      case "google_vertex_anthropic":
         return /^messages(?:\/count_tokens)?$/.test(operation)
+      case "google_vertex_anthropic":
+        return operation === "messages"
       case "openai":
       case "openai_compatible":
       case "azure":
         return /^(?:deployments\/[^/]+\/)?(?:chat\/completions|completions|responses|embeddings|rerank|moderations|images\/(?:generations|edits|variations)|audio\/(?:speech|transcriptions|translations))$/.test(operation)
     }
   })()
-  if (!modelLess && !modelOperation) return invalid(400, "unsupported_gateway_operation", "This operation cannot be authorized by a single Gateway model grant.")
+  if (request.method !== "POST" || !modelOperation) return invalid(400, "unsupported_gateway_operation", "Gateway grants allow only supported POST model invocations and local GET /models metadata, not provider account or file management.")
+  if (["openai-organization", "openai-project", "x-amzn-bedrock-guardrailidentifier", "x-amzn-bedrock-guardrailversion"].some((name) => request.headers.has(name))) {
+    return invalid(400, "unsupported_gateway_resource", "Caller-selected provider accounts and resources are not authorized by a Gateway model grant.")
+  }
   if ([...url.searchParams.keys()].some((name) => name.toLowerCase() === GATEWAY_GRANT_HEADER || /model|deployment|preset|fallback|route/i.test(name))) {
     return invalid(400, "unsupported_model_selection", "Model selection in query parameters is not supported.")
   }
-  if (bodylessMethods.has(request.method)) {
-    if (!pathModel && !modelLess) return invalid(400, "model_required", "This operation requires a configured model.")
-    return { body: null, json: null, pathModel, requestedModel: pathModel, stream: isStreamingPath(upstream.protocol, url.pathname), url }
-  }
-
   let bytes: Uint8Array<ArrayBuffer>
   try { bytes = await readBoundedBody(request) } catch (error) {
     const limited = error instanceof RequestBodyLimitError
@@ -272,15 +332,15 @@ async function prepareRequest(request: Request, upstream: ResolvedUpstream, prov
     }
   }
   if (!isJsonObject(json)) {
-    if (!modelLess && bytes.length) return invalid(415, "unsupported_media_type", "Model-bearing request bodies must be JSON objects.")
-    if (!modelLess && !pathModel) return invalid(400, "model_required", "This operation requires a configured model.")
-    return { body: bytes, json: null, pathModel, requestedModel: pathModel, stream: isStreamingPath(upstream.protocol, url.pathname), url }
+    return invalid(415, "unsupported_media_type", "Model invocation bodies must be JSON objects; multipart and file uploads are not supported.")
   }
-  if (hasAlternateModelSelection(json, providerId)) return invalid(400, "unsupported_model_selection", "Alternate model selection is not supported.")
+  const unsupported = unsupportedGatewayPayload(json, upstream.family, providerId)
+  if (unsupported === "model") return invalid(400, "unsupported_model_selection", "Alternate or nested model selection is not supported.")
+  if (unsupported === "resource") return invalid(400, "unsupported_gateway_resource", "Provider-stored resources and hosted tools are not supported: Gateway model grants do not establish resource ownership. Send inline content and client-executed tools instead.")
   if (Object.hasOwn(json, "model") && (typeof json.model !== "string" || !json.model)) return invalid(400, "model_required", "model must be a nonempty string.")
   if (pathModel && typeof json.model === "string" && json.model !== pathModel) return invalid(400, "conflicting_model_selection", "Body and path must select the same model.")
   const requestedModel = typeof json.model === "string" ? json.model : pathModel
-  if (!requestedModel && !modelLess) return invalid(400, "model_required", "This operation requires a configured model.")
+  if (!requestedModel) return invalid(400, "model_required", "This operation requires a configured model.")
   const stream = json.stream === true || isStreamingPath(upstream.protocol, url.pathname)
   return { body: bytes, json, pathModel, requestedModel, stream, url }
 }
@@ -574,7 +634,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const prepared = await prepareRequest(c.req.raw, resolved, provider.provider_id, rest)
     if ("error" in prepared) {
       startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: null, stream: false })
-      return reject(prepared.error, prepared.errorCode, "Invalid gateway request body")
+      return reject(prepared.error, prepared.errorCode, "Unsupported or invalid gateway request")
     }
     const selected = selectGatewayGrant(accessRows, prepared.requestedModel, c.req.header(GATEWAY_GRANT_HEADER) ?? null)
     if (selected.kind !== "selected") {
