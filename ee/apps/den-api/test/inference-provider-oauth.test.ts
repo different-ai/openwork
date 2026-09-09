@@ -120,6 +120,7 @@ beforeAll(async () => {
   mock.module("../src/llm/models-dev.js", () => ({
     getModelsDevProvider: async (providerId: string) => (providerId === "google-vertex" ? vertexCatalog : null),
     listModelsDevProviders: async () => [],
+    getModelsDevProviders: async (providerIds: readonly string[]) => providerIds.includes(vertexCatalog.id) ? [vertexCatalog] : [],
   }))
 
   const [appModule, dbModule, schemaModule, drizzleModule] = await Promise.all([
@@ -235,13 +236,13 @@ test("member set configuration is explicit and flat writes cannot replace it", a
       oauthClientId: OAUTH_CLIENT_ID,
     }),
   })
-  expect(missingClient.status).toBe(201)
-  expect(defaultSet(readProvider(await missingClient.json()))).toMatchObject({ configured: false, credentialStatus: "member_auth_required" })
+  expect(missingClient.status).toBe(400)
+  expect(await missingClient.json()).toMatchObject({ error: "oauth_client_required" })
 
   // Org mode never needs the client; flipping to member mode later validates the stored row.
   const orgMode = await request(ownerCookie, "/v1/inference-providers", {
     method: "POST",
-    body: JSON.stringify({ name: "Org Vertex", providerId: "google-vertex", modelIds: ["gemini-2.5-pro"], settings: { project: "test-project", location: "us-central1" }, allMembers: true }),
+    body: JSON.stringify({ name: "Org Vertex", providerId: "google-vertex", modelIds: ["gemini-2.5-pro"], settings: { project: "test-project", location: "us-central1" }, credential: { kind: "api_key", secret: "fake-org-vertex-key" }, allMembers: true }),
   })
   expect(orgMode.status).toBe(201)
   const orgProvider = readProvider(await orgMode.json())
@@ -268,10 +269,16 @@ test("member set configuration is explicit and flat writes cannot replace it", a
   const memberStart = await request(memberCookie, `/v1/inference-providers/${orgProviderId}/oauth/start`)
   expect(memberStart.status).toBe(302)
 
-  // Switching back to org mode may drop the secret; the client id is kept for later.
-  const backToOrg = await request(ownerCookie, `/v1/inference-providers/${orgProviderId}/credential-sets/${setId}`, {
+  // Switching back requires a new shared credential, never a member's token.
+  const missingCredential = await request(ownerCookie, `/v1/inference-providers/${orgProviderId}/credential-sets/${setId}`, {
     method: "PATCH",
     body: JSON.stringify({ credentialMode: "org", oauthClientSecret: "" }),
+  })
+  expect(missingCredential.status).toBe(400)
+  expect(await missingCredential.json()).toMatchObject({ error: "credential_required" })
+  const backToOrg = await request(ownerCookie, `/v1/inference-providers/${orgProviderId}/credential-sets/${setId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ credentialMode: "org", oauthClientSecret: "", credential: { kind: "api_key", secret: "fake-replacement-org-vertex-key" } }),
   })
   expect(backToOrg.status).toBe(200)
   expect(await backToOrg.json()).toMatchObject({ credentialSet: { credentialMode: "org", oauthClientId: OAUTH_CLIENT_ID, hasOauthClientSecret: false } })
@@ -631,6 +638,104 @@ test("named member sets coexist with ready models and fence in-flight consent in
       expect(calls).toHaveLength(0)
     },
   )
-  expect((await request(memberCookie, `${base}/oauth?credentialSetId=${secondSetId}`, { method: "DELETE" })).status).toBe(204)
+  expect((await request(memberCookie, `${base}/oauth?credentialSetId=${secondSetId}`, { method: "DELETE" })).status).toBe(403)
   expect(readProvider(await (await request(memberCookie, `${base}/connect`)).json()).models).toMatchObject([{ credentialSetId: firstSetId }])
+})
+
+test("personal OAuth requires a current same-org member grant, never permits shared-key administration or another member's credential", async () => {
+  const created = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ name: "Personal OAuth boundary", providerId: "google-vertex", modelIds: ["gemini-2.5-pro"], settings: { project: "test-project", location: "us-central1" }, credentialMode: "member", oauthClientId: OAUTH_CLIENT_ID, oauthClientSecret: OAUTH_CLIENT_SECRET, memberIds: [memberId, ownerMemberId] }) })
+  expect(created.status).toBe(201)
+  const provider = readProvider(await created.json())
+  const id = readString(provider, "id")
+  const setId = readString(defaultSet(provider), "id")
+  const base = `/v1/inference-providers/${id}`
+  if (!Array.isArray(provider.accessGrants)) throw new Error("accessGrants missing")
+  const memberGrant = provider.accessGrants.find((entry: unknown) => isRecord(entry) && isRecord(entry.audience) && entry.audience.memberId === memberId)
+  if (!isRecord(memberGrant)) throw new Error("Member grant missing")
+  const start = async (cookie: string) => {
+    const response = await request(cookie, `${base}/oauth/start?credentialSetId=${setId}`)
+    expect(response.status).toBe(302)
+    const state = new URL(response.headers.get("location") ?? "").searchParams.get("state")
+    if (!state) throw new Error("OAuth state missing")
+    return state
+  }
+  const credentials = () => db.select().from(schema.GatewayProviderCredentialTable).where(drizzle.eq(schema.GatewayProviderCredentialTable.gateway_provider_id, id))
+  const callback = (state: string) => publicRequest(`/v1/inference-providers/oauth/callback?code=fake-code&state=${encodeURIComponent(state)}`)
+  // Ordinary self-service must not inherit the fresh-auth requirement for administration.
+  await db.update(schema.AuthSessionTable).set({ createdAt: new Date(Date.now() - 60 * 60 * 1000) }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
+  try {
+    await withFakeGoogle(
+      () => Response.json({ access_token: "fake-personal-access", refresh_token: "fake-personal-refresh", expires_in: 3600 }),
+      async () => {
+        expect((await callback(await start(ownerCookie))).status).toBe(200)
+        expect((await callback(await start(memberCookie))).status).toBe(200)
+      },
+    )
+    const before = await credentials()
+    expect(before).toHaveLength(2)
+    const otherCredential = before.find((row) => row.org_membership_id === ownerMemberId)
+    if (!otherCredential) throw new Error("Other member credential missing")
+    const connect = await request(memberCookie, `${base}/connect`)
+    expect(connect.status).toBe(200)
+    const connectedText = await connect.text()
+    expect(connectedText).not.toContain(ownerMemberId)
+    expect(connectedText).not.toContain(otherCredential.id)
+    expect(connectedText).not.toContain("fake-personal")
+    const connected = readProvider(JSON.parse(connectedText))
+    expect(connected.credentialStatus).toBe("ready")
+    expect(connected.credentials).toBeUndefined()
+    expect(connected.credentialSets).toBeUndefined()
+    expect(connected.accessGrants).toBeUndefined()
+    const listed = await request(memberCookie, "/v1/inference-providers?scope=usable")
+    expect(listed.status).toBe(200)
+    const listedText = await listed.text()
+    expect(listedText).not.toContain(otherCredential.id)
+    expect(listedText).not.toContain("fake-personal")
+    for (const body of [
+      { credentialMode: "org", credential: { kind: "api_key", secret: "fake-claimed-shared-key" } },
+      { oauthClientId: "fake-replacement-client", oauthClientSecret: "fake-replacement-secret" },
+    ]) expect((await request(memberCookie, `${base}/credential-sets/${setId}`, { method: "PATCH", body: JSON.stringify(body) })).status).toBe(403)
+    expect((await request(memberCookie, `${base}/oauth?credentialSetId=${setId}&orgMembershipId=${ownerMemberId}`, { method: "DELETE" })).status).toBe(400)
+    expect(await credentials()).toEqual(before)
+    await withFakeGoogle(() => new Response(null, { status: 200 }), async (calls) => {
+      expect((await request(memberCookie, `${base}/oauth?credentialSetId=${setId}`, { method: "DELETE" })).status).toBe(204)
+      expect(calls).toHaveLength(1)
+      expect(calls[0]?.url).toBe(GOOGLE_REVOKE_URL)
+    })
+    expect((await credentials()).find((row) => row.org_membership_id === ownerMemberId)).toEqual(otherCredential)
+    expect((await credentials()).find((row) => row.org_membership_id === memberId)?.status).toBe("revoked")
+
+    const foreignOrg = createDenTypeId("organization")
+    const foreignMember = createDenTypeId("member")
+    await db.insert(schema.OrganizationTable).values({ id: foreignOrg, name: "Foreign OAuth boundary", slug: foreignOrg })
+    await db.insert(schema.MemberTable).values({ id: foreignMember, organizationId: foreignOrg, userId: memberUserId, role: "owner" })
+    try {
+      const state = await start(memberCookie)
+      await db.update(schema.GatewayProviderOauthStateTable).set({ org_membership_id: foreignMember }).where(drizzle.eq(schema.GatewayProviderOauthStateTable.state, state))
+      await withFakeGoogle(() => { throw new Error("Cross-org state must not exchange credentials") }, async (calls) => {
+        expect((await callback(state)).status).toBe(400)
+        expect(calls).toHaveLength(0)
+      })
+      await db.delete(schema.GatewayProviderOauthStateTable).where(drizzle.eq(schema.GatewayProviderOauthStateTable.state, state))
+    } finally {
+      await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.id, foreignMember))
+      await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, foreignOrg))
+    }
+
+    const pending = await start(memberCookie)
+    expect((await request(ownerCookie, `${base}/access-grants/${readString(memberGrant, "id")}`, { method: "DELETE" })).status).toBe(204)
+    const afterRevocation = await credentials()
+    await withFakeGoogle(() => { throw new Error("Revoked grants must not exchange or revoke credentials") }, async (calls) => {
+      expect((await callback(pending)).status).toBe(400)
+      expect((await request(memberCookie, `${base}/oauth/start?credentialSetId=${setId}`)).status).toBe(403)
+      expect((await request(memberCookie, `${base}/oauth?credentialSetId=${setId}`, { method: "DELETE" })).status).toBe(403)
+      expect(calls).toHaveLength(0)
+    })
+    expect((await request(memberCookie, `${base}/connect`)).status).toBe(403)
+    expect(await (await request(memberCookie, "/v1/inference-providers?scope=usable")).text()).not.toContain(id)
+    expect(await credentials()).toEqual(afterRevocation)
+    expect((await request(ownerCookie, `${base}/connect`)).status).toBe(200)
+  } finally {
+    await db.update(schema.AuthSessionTable).set({ createdAt: new Date() }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
+  }
 })

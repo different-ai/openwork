@@ -12,7 +12,7 @@ import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { ensureMemberGatewayKey } from "../../gateway-keys.js"
 import { GatewayWriteError, gatewayCatalog, gatewayGrantSummary, gatewaySummary, refreshGatewayCatalog, resolveGatewayCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
-import { gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, readProviderConfigNpm } from "../../llm/inference-provider-config.js"
+import { gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm } from "../../llm/inference-provider-config.js"
 import { buildGoogleAuthorizeUrl, exchangeGoogleAuthorizationCode, GOOGLE_CLOUD_PLATFORM_SCOPE, revokeGoogleToken } from "../../llm/inference-provider-google-oauth.js"
 import { effectiveGatewayGrants, lockMemberOAuthAuthorization, memberGatewayTeams, revokeGoogleCredentials } from "../../llm/inference-provider-lifecycle.js"
 import { isMigrationSourceLockConflict } from "../../llm/inference-provider-migration.js"
@@ -20,7 +20,7 @@ import { getModelsDevProvider } from "../../llm/models-dev.js"
 import { decodeProviderCredential, readProviderEnvNames, runtimeProviderEnvNames } from "../../llm/provider-credentials.js"
 import { jsonValidator, orgMemberRoute, paramValidator, publicRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
-import { ensureOrganizationAdmin, idParamSchema, memberHasRole, orgAccessFailureStatus } from "./shared.js"
+import { ensureOrganizationAdmin, ensureOrganizationAdminRole, idParamSchema, memberHasRole, orgAccessFailureStatus } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgGatewayUsageRoutes } from "./gateway-usage.js"
 
@@ -76,30 +76,32 @@ function route(summary: string, schema?: z.ZodType, status: 200 | 201 | 204 = 20
   return describeRoute(options)
 }
 
-type Actor = { organization: { id: GatewayProvider["organization_id"] }; currentMember: { id: GatewayMemberId; isOwner: boolean; role: string } }
-const managementWrite: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
-  const actor = c.get("organizationContext")
-  if (actor && (actor.currentMember.isOwner || memberHasRole(actor.currentMember.role, "admin"))) {
-    const permission = ensureOrganizationAdmin(c, "Only the provider creator or a workspace admin can manage this provider.")
-    if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
-  }
+type Actor = NonNullable<OrgRouteVariables["organizationContext"]>
+const managementMessage = "Only workspace owners and admins can manage inference providers."
+const managementRead: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
+  const permission = ensureOrganizationAdminRole(c, managementMessage)
+  if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
   await next()
 }
-function canManage(actor: Actor, provider: GatewayProvider, role: string) {
-  return memberHasRole(role, "admin") || provider.created_by_org_membership_id === actor.currentMember.id
+const managementWrite: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
+  const permission = ensureOrganizationAdmin(c, managementMessage)
+  if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+  await next()
 }
-async function liveMember(database: GatewayTx | typeof db, actor: Actor, lock: boolean) {
+async function liveMember(database: GatewayTx | typeof db, actor: Actor, lock: boolean, manage = false) {
   const query = database.select().from(MemberTable).where(and(eq(MemberTable.id, actor.currentMember.id), eq(MemberTable.organizationId, actor.organization.id), isNull(MemberTable.removedAt)))
   const [member] = await (lock ? query.for("update") : query)
   if (!member?.userId) throw new GatewayWriteError(403, "forbidden")
+  if (manage && !ensureOrganizationAdminRole({ get: () => ({ ...actor, currentMember: { ...actor.currentMember, role: member.role, isOwner: memberHasRole(member.role, "owner") } }) }, managementMessage).ok) {
+    throw new GatewayWriteError(403, "forbidden")
+  }
   return member
 }
 async function getProvider(database: GatewayTx | typeof db, actor: Actor, id: string, manage = false, lock = false) {
-  const member = await liveMember(database, actor, lock)
+  await liveMember(database, actor, lock, manage)
   const query = database.select().from(GatewayProviderTable).where(and(eq(GatewayProviderTable.id, normalizeDenTypeId("inferenceProvider", id)), eq(GatewayProviderTable.organization_id, actor.organization.id)))
   const [provider] = await (lock ? query.for("update") : query)
   if (!provider) throw new GatewayWriteError(404, "inference_provider_not_found")
-  if (manage && !canManage(actor, provider, member.role)) throw new GatewayWriteError(403, "forbidden")
   return provider
 }
 function respond(c: { json: (body: unknown, status: 400 | 403 | 404 | 409) => Response }, error: unknown) {
@@ -149,13 +151,13 @@ async function defaultMatrix(tx: GatewayTx, provider: GatewayProvider, input: z.
   for (const audience of audiences) await writeGatewayGrant(tx, provider, { modelGroupId: groupId, credentialSetId: set.id, audience })
   return { groupId, setId: set.id }
 }
-async function selectOAuthSet(provider: GatewayProvider, memberId: GatewayMemberId, selected?: string, disconnect = false): Promise<GatewaySet> {
+async function selectOAuthSet(provider: GatewayProvider, memberId: GatewayMemberId, selected?: string): Promise<GatewaySet> {
   const sets = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))
   const groups = await db.select().from(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.gateway_provider_id, provider.id))
   const rows = await db.select().from(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id))
   const teams = await memberGatewayTeams(db, provider.organization_id, memberId)
   const grants = effectiveGatewayGrants(rows.filter((grant) => groups.some((group) => group.id === grant.model_group_id && group.status === "active") && sets.some((set) => set.id === grant.credential_set_id && set.status === "active")), memberId, teams.map((team) => team.id))
-  const candidates = sets.filter((set) => set.credential_mode === "member" && (disconnect || set.status === "active" && grants.some((grant) => grant.credential_set_id === set.id)))
+  const candidates = sets.filter((set) => set.credential_mode === "member" && set.status === "active" && grants.some((grant) => grant.credential_set_id === set.id))
   const chosen = selected ? candidates.filter((set) => set.id === selected) : candidates
   if (!chosen.length) throw new GatewayWriteError(403, "forbidden", "No granted member credential set matches this selection.")
   if (chosen.length !== 1) throw new GatewayWriteError(409, "credential_set_required", "Specify credentialSetId when more than one member credential set is available.")
@@ -168,11 +170,15 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     try {
     const actor = c.get("organizationContext")
     const manage = c.req.valid("query").scope === "manageable"
-    const member = await liveMember(db, actor, false)
+    if (manage) {
+      const permission = ensureOrganizationAdminRole(c, managementMessage)
+      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+    }
+    await liveMember(db, actor, false, manage)
     const providers = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, actor.organization.id)).orderBy(desc(GatewayProviderTable.updated_at))
     const summaries: GatewayProviderSummary[] = []
     for (const provider of providers) {
-      if (manage ? !canManage(actor, provider, member.role) : provider.status !== "active") continue
+      if (!manage && provider.status !== "active") continue
       // An organization set may be unconfigured; keep its granted provider discoverable without leaking models.
       if (!manage) {
         const teams = await memberGatewayTeams(db, provider.organization_id, actor.currentMember.id)
@@ -188,7 +194,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/:inferenceProviderId", route("Get inference gateway provider", detailsResponse), orgMemberRoute(), paramValidator(paramsSchema), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId", route("Get inference gateway provider", detailsResponse), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true)
@@ -215,7 +221,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.post("/v1/inference-providers", route("Create inference gateway provider", detailsResponse, 201), orgMemberRoute(), jsonValidator(createSchema), async (c) => {
+  app.post("/v1/inference-providers", route("Create inference gateway provider", detailsResponse, 201), orgMemberRoute(), managementWrite, jsonValidator(createSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const input = c.req.valid("json")
@@ -224,7 +230,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const now = new Date()
       const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: catalog.catalog.id, name: input.name, model_ids: [...new Set(input.modelIds)], provider_config: catalog.config, settings: input.settings ?? {}, credential_mode: input.credentialMode ?? "org", oauth_client_id: null, oauth_client_secret: null, status: input.status ?? "active", created_at: now, updated_at: now }
       await db.transaction(async (tx) => {
-        const member = await liveMember(tx, actor, true)
+        const member = await liveMember(tx, actor, true, true)
         await tx.insert(GatewayProviderTable).values(provider)
         await writeGatewayModels(tx, provider, catalog.models)
         await defaultMatrix(tx, provider, input, member.id)
@@ -246,15 +252,20 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         const existing = await getProvider(tx, actor, c.req.valid("param").inferenceProviderId, true, true)
         if (input.providerId !== undefined && input.providerId !== existing.provider_id) throw new GatewayWriteError(409, "provider_identity_immutable", "Create a separate provider rather than moving existing groups and credentials to another catalog provider.")
         if (!trusted || trusted.id !== existing.provider_id || trusted.npm !== readProviderConfigNpm(existing.provider_config)) throw new GatewayWriteError(400, "provider_requires_configuration")
-        const settings = input.settings === undefined ? existing.settings : { ...input.settings, ...(existing.settings.migration ? { migration: existing.settings.migration } : {}) }
-        const config = { ...existing.provider_config, env: trusted.env }
-        validateGatewaySettings(config, settings)
+        const config = existing.provider_config
+        if (input.settings !== undefined) {
+          const persisted: Record<string, unknown> = settingsSchema.parse(publicProviderSettings(existing.settings))
+          validateGatewaySettings(config, { ...persisted, ...input.settings })
+          if (Object.entries(input.settings).some(([key, value]) => value !== persisted[key])) {
+            throw new GatewayWriteError(409, "provider_destination_immutable", "Create a separate provider to change the upstream account or destination. Existing credentials cannot be relocated.")
+          }
+        }
         const modelIds = input.modelIds === undefined ? existing.model_ids : [...new Set(input.modelIds)]
         const catalog = resolveGatewayCatalog(trusted, modelIds, config, input.modelIds !== undefined)
         if (input.status === "disabled" && existing.status === "active") await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.gateway_provider_id, existing.id))
-        const provider: GatewayProvider = { ...existing, name: input.name ?? existing.name, model_ids: modelIds, status: input.status ?? existing.status, settings, provider_config: config, updated_at: new Date() }
+        const provider: GatewayProvider = { ...existing, name: input.name ?? existing.name, model_ids: modelIds, status: input.status ?? existing.status, updated_at: new Date() }
         await writeGatewayModels(tx, provider, catalog.models)
-        await tx.update(GatewayProviderTable).set({ name: provider.name, model_ids: modelIds, status: provider.status, settings, provider_config: config, updated_at: provider.updated_at }).where(eq(GatewayProviderTable.id, provider.id))
+        await tx.update(GatewayProviderTable).set({ name: provider.name, model_ids: modelIds, status: provider.status, updated_at: provider.updated_at }).where(eq(GatewayProviderTable.id, provider.id))
         return provider
       })
       return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true) })
@@ -262,7 +273,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
   })
 
   // The management catalog is independent of selected wire models and group memberships.
-  app.get("/v1/inference-providers/:inferenceProviderId/models", route("List configured gateway catalog models", z.object({ modelIds: universeSchema, catalogWarning: z.string().optional(), models: z.array(z.object({ id: z.string(), name: z.string(), config: z.record(z.string(), z.unknown()) })) })), orgMemberRoute(), paramValidator(paramsSchema), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId/models", route("List configured gateway catalog models", z.object({ modelIds: universeSchema, catalogWarning: z.string().optional(), models: z.array(z.object({ id: z.string(), name: z.string(), config: z.record(z.string(), z.unknown()) })) })), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
     try {
       const { provider, catalogWarning } = await refreshGatewayCatalog(await getProvider(db, c.get("organizationContext"), c.req.valid("param").inferenceProviderId, true))
       const models = (await db.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id)))
@@ -271,7 +282,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/:inferenceProviderId/model-groups", route("List gateway model groups", z.object({ modelGroups: z.array(groupSchema) })), orgMemberRoute(), paramValidator(paramsSchema), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId/model-groups", route("List gateway model groups", z.object({ modelGroups: z.array(groupSchema) })), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true)
@@ -330,7 +341,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/:inferenceProviderId/credential-sets", route("List gateway credential sets", z.object({ credentialSets: z.array(setSchema) })), orgMemberRoute(), paramValidator(paramsSchema), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId/credential-sets", route("List gateway credential sets", z.object({ credentialSets: z.array(setSchema) })), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true)
@@ -398,7 +409,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/:inferenceProviderId/access-grants", route("List gateway access grants", z.object({ accessGrants: z.array(grantSchema) })), orgMemberRoute(), paramValidator(paramsSchema), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId/access-grants", route("List gateway access grants", z.object({ accessGrants: z.array(grantSchema) })), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
     try {
       const provider = await getProvider(db, c.get("organizationContext"), c.req.valid("param").inferenceProviderId, true)
       const rows = await db.select().from(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id))
@@ -547,15 +558,14 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     return redirectTo ? c.redirect(redirectTo, 302) : c.html(connectCallbackPage({ ok: true, name: set.name }))
   })
 
-  app.delete("/v1/inference-providers/:inferenceProviderId/oauth", route("Disconnect the caller's Google credential for an inference provider", undefined, 204), orgMemberRoute(), paramValidator(paramsSchema), queryValidator(z.object({ credentialSetId: denTypeIdSchema("gatewayCredentialSet").optional() })), async (c) => {
+  app.delete("/v1/inference-providers/:inferenceProviderId/oauth", route("Disconnect the caller's Google credential for an inference provider", undefined, 204), orgMemberRoute(), paramValidator(paramsSchema), queryValidator(z.object({ credentialSetId: denTypeIdSchema("gatewayCredentialSet").optional() }).strict()), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
-      const set = await selectOAuthSet(provider, actor.currentMember.id, c.req.valid("query").credentialSetId, true)
+      if (provider.status !== "active") throw new GatewayWriteError(404, "inference_provider_not_found")
+      const set = await selectOAuthSet(provider, actor.currentMember.id, c.req.valid("query").credentialSetId)
       const credentials = await db.transaction(async (tx) => {
-        await tx.select({ id: MemberTable.id }).from(MemberTable).where(and(eq(MemberTable.id, actor.currentMember.id), eq(MemberTable.organizationId, actor.organization.id))).for("update")
-        await getProvider(tx, actor, provider.id, false, true)
-        await tx.select({ id: GatewayCredentialSetTable.id }).from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, set.id)).for("update")
+        if (!await lockMemberOAuthAuthorization(tx, provider, set, actor.currentMember.id)) throw new GatewayWriteError(403, "forbidden")
         await tx.delete(GatewayProviderOauthStateTable).where(and(eq(GatewayProviderOauthStateTable.credential_set_id, set.id), eq(GatewayProviderOauthStateTable.org_membership_id, actor.currentMember.id)))
         const where = and(eq(GatewayProviderCredentialTable.credential_set_id, set.id), eq(GatewayProviderCredentialTable.gateway_provider_id, provider.id), eq(GatewayProviderCredentialTable.organization_id, actor.organization.id), eq(GatewayProviderCredentialTable.subject, actor.currentMember.id), eq(GatewayProviderCredentialTable.org_membership_id, actor.currentMember.id))
         const rows = await tx.select().from(GatewayProviderCredentialTable).where(where).for("update")
@@ -576,13 +586,12 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       if (!before) throw new GatewayWriteError(409, "migration_source_unavailable")
       const trusted = await getModelsDevProvider(before.providerId)
       const provider = await db.transaction(async (tx) => {
-        const member = await liveMember(tx, actor, true)
+        const member = await liveMember(tx, actor, true, true)
         const [source] = await tx.select().from(LlmProviderTable).where(and(eq(LlmProviderTable.id, sourceId), eq(LlmProviderTable.organizationId, actor.organization.id))).for("update", { noWait: true }).catch((error: unknown) => {
           if (isMigrationSourceLockConflict(error)) throw new GatewayWriteError(409, "migration_in_progress")
           throw error
         })
         if (!source) throw new GatewayWriteError(409, "migration_source_unavailable")
-        if (!memberHasRole(member.role, "admin") && source.createdByOrgMembershipId !== member.id) throw new GatewayWriteError(403, "forbidden")
         const invalid = (message: string) => new GatewayWriteError(400, "migration_requires_configuration", `${message} The source has been kept.`)
         const memberCredentials = await tx.select({ id: LlmProviderMemberCredentialTable.id }).from(LlmProviderMemberCredentialTable).where(eq(LlmProviderMemberCredentialTable.llmProviderId, source.id)).for("update")
         if (source.source !== "models_dev" || source.credentialMode === "per_member" || memberCredentials.length) throw invalid("Only shared models.dev providers can be converted.")

@@ -26,9 +26,9 @@ import { bootServer, close, listen, stopChild } from "../worlds/openwork-server-
  * Inference gateway, org provider route (plan §3 #1–#4, §5.2):
  *
  *   admin  ── POST /v1/inference-providers ──▶ den-api  (stores the upstream key server-side)
- *   member ── GET  …/:ipr/connect ───────────▶ den-api  (gateway URL + ow_inf_ key, never the upstream key)
+ *   member ── GET  …/:ipr/connect ───────────▶ den-api  (gateway URL + ow_gw_ key, never the upstream key)
  *   member ── POST {gateway}/api/v1/providers/:ipr/messages ──▶ inference ──▶ fake Anthropic upstream /v1/messages
- *                                                                  └── one inference_request_logs row
+ *                                                                  └── one gateway_request_logs row
  *
  * The upstream is a loopback HTTP server owned by this spec; the provider
  * reaches it through `settings.upstreamBaseUrl` plus the operator's exact-origin
@@ -44,12 +44,12 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const INFERENCE_BOOT_TIMEOUT_MS = 120_000;
 const LOG_ROW_TIMEOUT_MS = 15_000;
 // Mirrors the constant @openwork/testkit hands den-api (packages/env/src/den.ts).
-// Encrypted columns (credential secrets, ow_inf_ keys) only decrypt when both
+// Encrypted columns (credential secrets, ow_gw_ keys) only decrypt when both
 // services use the same key; a mismatch surfaces as 502 provider_credential_invalid.
 const DEN_DB_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1234567890";
 const FAKE_UPSTREAM_KEY = "sk-ant-fake-upstream-key-never-leaves-the-server";
 const FAKE_GOOGLE_KEY = "fake-google-upstream-key-never-leaves-the-server";
-const GATEWAY_KEY_PREFIX = "ow_inf_";
+const GATEWAY_KEY_PREFIX = "ow_gw_";
 const UPSTREAM_INPUT_TOKENS = 25;
 const UPSTREAM_OUTPUT_TOKENS = 42;
 const UPSTREAM_REQUEST_ID = "req_fake_anthropic_0001";
@@ -458,18 +458,21 @@ for (const providerId of ["google", "anthropic"]) {
     needs({ commands: ["bun", OPENCODE_BIN] });
     expect((await execFileAsync(OPENCODE_BIN, ["--version"], { timeout: 10_000 })).stdout.trim()).toBe("1.18.18");
     const id = "ipr_01kx4t3amgendr682dmp6120jv";
-    const key = `ow_inf_native_${providerId}_fixture_only`;
-    const orgId = "org_native_sdk_fixture";
+    const key = `${GATEWAY_KEY_PREFIX}native_${providerId}_fixture_only`;
+    const orgId = "org_01kx4t3amgendr682dmp6120jv";
     const token = "native-sdk-den-fixture-session";
     const google = providerId === "google";
     const modelId = google ? "gemini-2.5-flash-lite" : "claude-haiku-4-5-20251001";
+    const modelGroupId = "gmg_01kx4t3amgendr682dmp6120jv";
+    const credentialSetId = "gcs_01kx4t3amgendr682dmp6120jv";
+    const modelAlias = "gwm_01kx4t3amgendr682dmp6120jv_01kx4t3amgendr682dmp6120jv_01kx4t3amgendr682dmp6120jv";
     const env = (google ? ["GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY"] : ["ANTHROPIC_API_KEY"]).map((name) => `${id.toUpperCase()}_${name}`);
     await using upstream = await startFakeAnthropicUpstream(key, key);
     const api = `${upstream.baseUrl}/${google ? "v1beta" : "v1"}`;
     const config = { npm: `@ai-sdk/${providerId}`, env, api, options: { baseURL: api } };
     const apiKeys = Object.fromEntries(env.map((name) => [name, key]));
     const summary = { id, providerId, source: "openwork_gateway", name: `Managed native ${providerId}`, credentialStatus: "ready",
-      providerConfig: config, models: [{ id: modelId, name: modelId, config: { limit: { context: 1000000, output: 8192 } } }] };
+      providerConfig: config, models: [{ id: modelAlias, name: modelId, upstreamModelId: modelId, modelGroupId, modelGroupName: "Fixture models", credentialSetId, credentialSetName: "Fixture credentials", config: { id: modelAlias, limit: { context: 1000000, output: 8192 } } }] };
     const denRequests: string[] = [];
     const den = createServer((request, response) => {
       response.setHeader("content-type", "application/json");
@@ -485,12 +488,12 @@ for (const providerId of ["google", "anthropic"]) {
     });
     const apiUrl = await listen(den);
     try {
-      await nativeAdapterCall({ id, config, apiKeys, modelId, session: { apiUrl, token }, orgId });
+      await nativeAdapterCall({ id, config, apiKeys, modelId: modelAlias, session: { apiUrl, token }, orgId });
       expect(denRequests).toContain(`/v1/inference-providers/${id}/connect`);
       expect(upstream.requests).toHaveLength(1);
       const request = upstream.requests[0];
       expect(request?.method).toBe("POST");
-      expect(request?.path).toBe(google ? `/v1beta/models/${modelId}:streamGenerateContent?alt=sse` : "/v1/messages");
+      expect(request?.path).toBe(google ? `/v1beta/models/${modelAlias}:streamGenerateContent?alt=sse` : "/v1/messages");
       expect(request?.headers[google ? "x-goog-api-key" : "x-api-key"] === key).toBe(true);
       expect(request?.headers.authorization).toBeUndefined();
       expect(request?.headers[google ? "x-api-key" : "x-goog-api-key"]).toBeUndefined();
@@ -553,7 +556,8 @@ test("an org inference provider routes native member requests with the org crede
   const createdOptions = createdConfig && isRecord(createdConfig.options) ? createdConfig.options : null;
   expect(scoped.id.startsWith("ipr_")).toBe(true);
   expect(scoped.body.source).toBe("openwork_gateway");
-  expect(scoped.body.credentialStatus).toBe("ready");
+  expect(scoped.body.credentialStatus).toBe("org_credential_missing");
+  expect(scoped.body.models).toEqual([]);
   expect(stringAt(createdConfig, "api")).toBe(scopedGatewayUrl);
   expect(stringAt(createdOptions, "baseURL")).toBe(scopedGatewayUrl);
   expect(scoped.text.includes(FAKE_UPSTREAM_KEY)).toBe(false);
@@ -596,6 +600,65 @@ test("an org inference provider routes native member requests with the org crede
   expect(unapproved.text.includes(FAKE_UPSTREAM_KEY)).toBe(false);
   expect(upstream.requests).toHaveLength(0);
 
+  // A historical creator is not a provider administrator. Exercise the denied
+  // management boundary without changing the member's existing inference grant.
+  const providerPath = `/v1/inference-providers/${scoped.id}`;
+  const matrixId = (field: string) => {
+    const rows = scoped.body[field];
+    if (!Array.isArray(rows) || !isRecord(rows[0]) || typeof rows[0].id !== "string") throw new Error(`Missing ${field} fixture`);
+    return rows[0].id;
+  };
+  const groupId = matrixId("modelGroups");
+  const setId = matrixId("credentialSets");
+  const grantId = matrixId("accessGrants");
+  const providerSnapshot = () => queryDenDatabase(databaseUrl, "SELECT * FROM gateway_providers WHERE id = ?", [scoped.id]);
+  const credentialSnapshot = () => queryDenDatabase(databaseUrl, "SELECT * FROM gateway_provider_credentials WHERE gateway_provider_id = ?", [scoped.id]);
+  const originalProvider = await providerSnapshot();
+  const originalCredentials = await credentialSnapshot();
+  expect(originalCredentials).toHaveLength(1);
+  await queryDenDatabase(databaseUrl, "UPDATE gateway_providers SET created_by_org_membership_id = ? WHERE id = ?", [grantedMemberId, scoped.id]);
+  try {
+    const creatorSnapshot = await providerSnapshot();
+    for (const path of ["/v1/inference-providers?scope=manageable", providerPath, `${providerPath}/models`, `${providerPath}/model-groups`, `${providerPath}/credential-sets`, `${providerPath}/access-grants`]) {
+      expect((await denFetch(granted, path, { headers: orgHeaders(granted, orgId) })).response.status).toBe(403);
+    }
+    for (const [path, method, body] of [
+      ["/v1/inference-providers", "POST", { name: "Denied creation", providerId: "anthropic", modelIds: [modelId] }],
+      [providerPath, "PATCH", { name: "Denied rename" }],
+      [providerPath, "DELETE", undefined],
+      [`${providerPath}/model-groups`, "POST", { name: "Denied group", modelIds: [modelId] }],
+      [`${providerPath}/model-groups/${groupId}`, "PATCH", { name: "Denied edit" }],
+      [`${providerPath}/model-groups/${groupId}`, "DELETE", undefined],
+      [`${providerPath}/credential-sets`, "POST", { name: "Denied key", credentialMode: "org", credential: { kind: "api_key", secret: "fake-denied-key" } }],
+      [`${providerPath}/credential-sets/${setId}`, "PATCH", { name: "Denied edit" }],
+      [`${providerPath}/credential-sets/${setId}`, "DELETE", undefined],
+      [`${providerPath}/access-grants`, "POST", { modelGroupId: groupId, credentialSetId: setId, audience: { type: "organization" } }],
+      [`${providerPath}/access-grants/${grantId}`, "PATCH", { audience: { type: "organization" } }],
+      [`${providerPath}/access-grants/${grantId}`, "DELETE", undefined],
+      [`${providerPath}/access/${grantId}`, "DELETE", undefined],
+    ] satisfies Array<[string, string, Record<string, unknown> | undefined]>) {
+      const denied = await denFetch(granted, path, { method, headers: orgHeaders(granted, orgId), ...(body ? { body: JSON.stringify(body) } : {}) });
+      expect(denied.response.status).toBe(403);
+    }
+    expect(await providerSnapshot()).toEqual(creatorSnapshot);
+    expect(await credentialSnapshot()).toEqual(originalCredentials);
+    expect((await connect(granted, orgId, scoped.id)).status).toBe(200);
+  } finally {
+    const original = originalProvider[0];
+    if (!isRecord(original) || typeof original.created_by_org_membership_id !== "string") throw new Error("Missing original creator");
+    await queryDenDatabase(databaseUrl, "UPDATE gateway_providers SET created_by_org_membership_id = ? WHERE id = ?", [original.created_by_org_membership_id, scoped.id]);
+  }
+  const restoredProvider = await providerSnapshot();
+  for (const upstreamBaseUrl of ["https://different.example/v1", `${upstream.baseUrl}/another-account/v1`]) {
+    const denied = await denFetch(den.admin, providerPath, { method: "PATCH", headers: orgHeaders(den.admin, orgId), body: JSON.stringify({ name: "Must not persist", settings: { upstreamBaseUrl } }) });
+    expect(denied.response.status).toBe(409);
+    expect(denied.body).toMatchObject({ error: "provider_destination_immutable" });
+    expect(await providerSnapshot()).toEqual(restoredProvider);
+    expect(await credentialSnapshot()).toEqual(originalCredentials);
+  }
+  expect(upstream.requests).toHaveLength(0);
+  evidence.recordAssertionEvidence("Provider creators cannot administer providers or relocate stored credentials", "Real Den management reads and CRUD rejected the nonadmin creator while their existing connect grant remained usable. Admin origin/account-path changes returned 409 without changing provider rows or encrypted credentials, and no upstream request occurred.", true);
+
   // --- Distinct resource: gateway providers do not appear in /v1/llm-providers. ---
   const llmList = await denFetch(den.admin, "/v1/llm-providers?scope=manageable", {
     headers: orgHeaders(den.admin, orgId),
@@ -613,7 +676,7 @@ test("an org inference provider routes native member requests with the org crede
     !llmIds.includes(scoped.id) && badSettings.response.status === 400,
   );
 
-  // --- Granted member connects: gateway URL + ow_inf_ key, no upstream key. ---
+  // --- Granted member connects: gateway URL + ow_gw_ key, no upstream key. ---
   const grantedConnect = await connect(granted, orgId, scoped.id);
   const grantedConfig = grantedConnect.provider && isRecord(grantedConnect.provider.providerConfig) ? grantedConnect.provider.providerConfig : null;
   const grantedOptions = grantedConfig && isRecord(grantedConfig.options) ? grantedConfig.options : null;
@@ -624,6 +687,11 @@ test("an org inference provider routes native member requests with the org crede
   expect(stringAt(grantedOptions, "baseURL")).toBe(scopedGatewayUrl);
   expect(stringAt(grantedConfig, "npm")).toBe("@ai-sdk/anthropic");
   expect(grantedKey.startsWith(GATEWAY_KEY_PREFIX)).toBe(true);
+  const grantedModels = grantedConnect.provider?.models;
+  if (!Array.isArray(grantedModels) || !isRecord(grantedModels[0])) throw new Error("Granted model missing");
+  const modelAlias = stringAt(grantedModels[0], "id");
+  expect(modelAlias).toMatch(/^gwm_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}$/);
+  expect(grantedModels[0].upstreamModelId).toBe(modelId);
   const grantedEnv = Array.isArray(grantedConfig?.env) ? grantedConfig.env : [];
   expect(grantedEnv).toHaveLength(1);
   const envName: unknown = grantedEnv[0];
@@ -652,11 +720,11 @@ test("an org inference provider routes native member requests with the org crede
 
   // --- Granted member calls the gateway; the fake upstream sees the org key only. ---
   const release = upstream.holdNextResponse();
-  const relay = gatewayMessages({ gatewayBaseUrl: scopedGatewayUrl, apiKey: grantedKey, model: modelId });
+  const relay = gatewayMessages({ gatewayBaseUrl: scopedGatewayUrl, apiKey: grantedKey, model: modelAlias });
   let pendingId = "";
   try {
     await eventually(() => upstream.requests.length === 1, { within: 10_000, intervalMs: 50, label: "upstream reached while response held" });
-    const pendingRows = await queryDenDatabase(databaseUrl, "SELECT id, organization_id, org_membership_id, openwork_request_id, completed_at, status, usage_source, cost_micro_usd FROM inference_request_logs WHERE inference_provider_id = ?", [scoped.id]);
+    const pendingRows = await queryDenDatabase(databaseUrl, "SELECT id, organization_id, org_membership_id, openwork_request_id, completed_at, status, usage_source, cost_micro_usd FROM gateway_request_logs WHERE gateway_provider_id = ?", [scoped.id]);
     expect(pendingRows).toHaveLength(1);
     const pending = pendingRows.filter(isRecord)[0];
     if (!pending) throw new Error("Upstream was reached before the write-ahead row existed.");
@@ -696,28 +764,28 @@ test("an org inference provider routes native member requests with the org crede
   expect(isRecord(forwardedBody) ? forwardedBody.model : null).toBe(modelId);
   evidence.recordAssertionEvidence(
     "The gateway forwards to the org's upstream with the org credential and without the member's OpenWork key",
-    `POST ${scopedGatewayUrl}/messages returned HTTP ${relayed.status} and streamed the upstream SSE; the fake upstream saw exactly one ${forwarded.method} ${forwarded.path} with x-api-key equal to the org secret, no authorization header, anthropic-version preserved, and no ow_inf_ value in any header or the body.`,
+    `POST ${scopedGatewayUrl}/messages returned HTTP ${relayed.status} and streamed the upstream SSE; the fake upstream saw exactly one ${forwarded.method} ${forwarded.path} with x-api-key equal to the org secret, no authorization header, anthropic-version preserved, and no ow_gw_ value in any header or the body.`,
     relayed.status === 200
       && forwarded.headers["x-api-key"] === FAKE_UPSTREAM_KEY
       && forwarded.headers.authorization === undefined
       && !headersContain(upstream.requests, GATEWAY_KEY_PREFIX),
   );
 
-  // --- One inference_request_logs row with parsed Anthropic SSE usage. ---
+  // --- One gateway_request_logs row with parsed Anthropic SSE usage. ---
   const logRows = await eventually(
     () => queryDenDatabase(
       databaseUrl,
-      "SELECT id, organization_id, completed_at, cost_micro_usd, metadata, route, protocol, outcome, status, stream, usage_source, input_tokens, output_tokens, total_tokens, requested_model, upstream_model, upstream_host, upstream_path, upstream_provider_id, upstream_request_id, openwork_request_id, org_membership_id, inference_provider_id FROM inference_request_logs WHERE inference_provider_id = ?",
+      "SELECT id, organization_id, completed_at, cost_micro_usd, metadata, route, protocol, outcome, status, stream, usage_source, input_tokens, output_tokens, total_tokens, requested_model, upstream_model, upstream_host, upstream_path, upstream_provider_id, upstream_request_id, openwork_request_id, org_membership_id, gateway_provider_id FROM gateway_request_logs WHERE gateway_provider_id = ?",
       [scoped.id],
     ),
-    { within: LOG_ROW_TIMEOUT_MS, intervalMs: 500, label: `completed inference_request_logs row for ${scoped.id}`, until: (rows) => rows.some((row) => isRecord(row) && row.completed_at != null) },
+    { within: LOG_ROW_TIMEOUT_MS, intervalMs: 500, label: `completed gateway_request_logs row for ${scoped.id}`, until: (rows) => rows.some((row) => isRecord(row) && row.completed_at != null) },
   );
   const logRow = logRows.filter(isRecord)[0] ?? null;
-  if (!logRow) throw new Error("No inference_request_logs row was written.");
+  if (!logRow) throw new Error("No gateway_request_logs row was written.");
   expect(logRows).toHaveLength(1);
   expect(logRow.id).toBe(pendingId);
   expect(logRow.organization_id).toBe(orgId);
-  expect(logRow.inference_provider_id).toBe(scoped.id);
+  expect(logRow.gateway_provider_id).toBe(scoped.id);
   expect(logRow.completed_at).not.toBeNull();
   expect(logRow.cost_micro_usd).not.toBeNull();
   expect(Number(logRow.cost_micro_usd)).toBe(anthropicModel.costMicroUsd);
@@ -734,7 +802,7 @@ test("an org inference provider routes native member requests with the org crede
   expect(Number(logRow.input_tokens)).toBe(UPSTREAM_INPUT_TOKENS);
   expect(Number(logRow.output_tokens)).toBe(UPSTREAM_OUTPUT_TOKENS);
   expect(Number(logRow.total_tokens)).toBe(UPSTREAM_INPUT_TOKENS + UPSTREAM_OUTPUT_TOKENS);
-  expect(logRow.requested_model).toBe(modelId);
+  expect(logRow.requested_model).toBe(modelAlias);
   expect(logRow.upstream_model).toBe(modelId);
   expect(logRow.upstream_provider_id).toBe("anthropic");
   expect(logRow.upstream_host).toBe("127.0.0.1");
@@ -776,23 +844,23 @@ test("an org inference provider routes native member requests with the org crede
   expect(sharedEnv[0]).toMatch(/^IPR_[A-Z0-9]+_ANTHROPIC_API_KEY$/);
 
   const upstreamRequestsBeforeDenials = upstream.requests.length;
-  const denied = await gatewayMessages({ gatewayBaseUrl: scopedGatewayUrl, apiKey: outsiderKey, model: modelId });
+  const denied = await gatewayMessages({ gatewayBaseUrl: scopedGatewayUrl, apiKey: outsiderKey, model: modelAlias });
   expect(denied.status).toBe(403);
   expect(denied.errorCode).toBe("provider_access_denied");
 
   const unknownId = siblingProviderId(scoped.id);
-  const missing = await gatewayMessages({ gatewayBaseUrl: `${gatewayOrigin}/api/v1/providers/${unknownId}`, apiKey: grantedKey, model: modelId });
+  const missing = await gatewayMessages({ gatewayBaseUrl: `${gatewayOrigin}/api/v1/providers/${unknownId}`, apiKey: grantedKey, model: modelAlias });
   expect(missing.status).toBe(404);
   expect(missing.errorCode).toBe("provider_not_found");
 
-  const forged = await gatewayMessages({ gatewayBaseUrl: scopedGatewayUrl, apiKey: `${GATEWAY_KEY_PREFIX}forged_${runId}`, model: modelId });
+  const forged = await gatewayMessages({ gatewayBaseUrl: scopedGatewayUrl, apiKey: `${GATEWAY_KEY_PREFIX}forged_${runId}`, model: modelAlias });
   expect(forged.status).toBe(401);
   expect(forged.errorCode).toBe("invalid_api_key");
 
   expect(upstream.requests).toHaveLength(upstreamRequestsBeforeDenials);
   evidence.recordAssertionEvidence(
     "Members without access, unknown providers, and forged keys never reach the upstream",
-    `With a valid key from the org-wide provider ${shared.id}, the outsider got HTTP ${denied.status} ${denied.errorCode} on ${scoped.id}; a well-formed unknown id got HTTP ${missing.status} ${missing.errorCode}; a forged ow_inf_ key got HTTP ${forged.status} ${forged.errorCode}; the fake upstream request count stayed at ${upstreamRequestsBeforeDenials}.`,
+    `With a valid key from the org-wide provider ${shared.id}, the outsider got HTTP ${denied.status} ${denied.errorCode} on ${scoped.id}; a well-formed unknown id got HTTP ${missing.status} ${missing.errorCode}; a forged ow_gw_ key got HTTP ${forged.status} ${forged.errorCode}; the fake upstream request count stayed at ${upstreamRequestsBeforeDenials}.`,
     denied.status === 403
       && denied.errorCode === "provider_access_denied"
       && missing.status === 404
@@ -804,24 +872,24 @@ test("an org inference provider routes native member requests with the org crede
   const rejectedRows = await eventually(
     () => queryDenDatabase(
       databaseUrl,
-      "SELECT outcome, error_code, org_membership_id FROM inference_request_logs WHERE inference_provider_id = ? AND outcome = 'rejected' AND completed_at IS NOT NULL",
+      "SELECT outcome, error_code, org_membership_id FROM gateway_request_logs WHERE gateway_provider_id = ? AND outcome = 'rejected' AND completed_at IS NOT NULL",
       [scoped.id],
     ),
-    { within: LOG_ROW_TIMEOUT_MS, intervalMs: 500, label: `rejected inference_request_logs row for ${scoped.id}`, until: (rows) => rows.length >= 1 },
+    { within: LOG_ROW_TIMEOUT_MS, intervalMs: 500, label: `rejected gateway_request_logs row for ${scoped.id}`, until: (rows) => rows.length >= 1 },
   );
   const rejectedRow = rejectedRows.filter(isRecord)[0] ?? null;
   expect(rejectedRows).toHaveLength(1);
   expect(rejectedRow?.error_code).toBe("provider_access_denied");
   expect(rejectedRow?.org_membership_id).toBe(outsiderMemberId);
-  const unknownRows = await queryDenDatabase(databaseUrl, "SELECT id FROM inference_request_logs WHERE inference_provider_id = ?", [unknownId]);
+  const unknownRows = await queryDenDatabase(databaseUrl, "SELECT id FROM gateway_request_logs WHERE gateway_provider_id = ?", [unknownId]);
   expect(unknownRows).toHaveLength(0);
-  const okRowsAfter = await queryDenDatabase(databaseUrl, "SELECT id FROM inference_request_logs WHERE inference_provider_id = ? AND outcome = 'ok'", [scoped.id]);
+  const okRowsAfter = await queryDenDatabase(databaseUrl, "SELECT id FROM gateway_request_logs WHERE gateway_provider_id = ? AND outcome = 'ok'", [scoped.id]);
   expect(okRowsAfter).toHaveLength(1);
 
   // Den's approval alone is insufficient: inference independently needs the
   // exact operator exception. This process trusts a different origin only.
   await using blockedInference = await startInferenceApp({ port: await freeLoopbackPort(), databaseUrl, allowedOrigin: deniedOrigin });
-  const blocked = await gatewayMessages({ gatewayBaseUrl: `${blockedInference.baseUrl}/api/v1/providers/${scoped.id}`, apiKey: grantedKey, model: modelId });
+  const blocked = await gatewayMessages({ gatewayBaseUrl: `${blockedInference.baseUrl}/api/v1/providers/${scoped.id}`, apiKey: grantedKey, model: modelAlias });
   expect(blocked.status).toBe(502);
   expect(blocked.errorCode).toBe("provider_misconfigured");
   expect(blocked.text.includes(FAKE_UPSTREAM_KEY)).toBe(false);
@@ -855,8 +923,11 @@ test("an org inference provider routes native member requests with the org crede
     const expectedEnv = native.env.map((name) => `${native.id.toUpperCase()}_${name}`);
     expect(config.env).toEqual(expectedEnv);
     expect(apiKeys).toEqual(Object.fromEntries(expectedEnv.map((name) => [name, key])));
+    const models = connection.provider?.models;
+    const model = Array.isArray(models) ? models.find((entry: unknown) => isRecord(entry) && entry.upstreamModelId === native.model.modelId) : null;
+    if (!isRecord(model) || typeof model.id !== "string") throw new Error("Native SDK model alias missing");
     const before = upstream.requests.length;
-    await nativeAdapterCall({ id: native.id, config, apiKeys: Object.fromEntries(bindings.map(([name]) => [name, key])), modelId: native.model.modelId, session: granted, orgId });
+    await nativeAdapterCall({ id: native.id, config, apiKeys: Object.fromEntries(bindings.map(([name]) => [name, key])), modelId: model.id, session: granted, orgId });
     const sdkRequests = upstream.requests.slice(before);
     expect(sdkRequests).toHaveLength(1);
     const sdkRequest = sdkRequests[0];
@@ -880,12 +951,12 @@ test("an org inference provider routes native member requests with the org crede
       expect(sdkRequest.headers["x-goog-api-key"]).toBeUndefined();
     }
     const sdkRows = await eventually(() => queryDenDatabase(databaseUrl,
-      "SELECT organization_id, org_membership_id, inference_provider_id, protocol, outcome, status, usage_source, input_tokens, output_tokens, cost_micro_usd, completed_at FROM inference_request_logs WHERE openwork_request_id = ?",
+      "SELECT organization_id, org_membership_id, gateway_provider_id, protocol, outcome, status, usage_source, input_tokens, output_tokens, cost_micro_usd, completed_at FROM gateway_request_logs WHERE openwork_request_id = ?",
       [sdkRequest.headers["x-openwork-request-id"]]),
     { within: LOG_ROW_TIMEOUT_MS, intervalMs: 500, label: `${native.npm} finalized usage`, until: (rows) => rows.some((row) => isRecord(row) && row.completed_at != null) });
     expect(sdkRows).toHaveLength(1);
     const row = sdkRows.filter(isRecord)[0];
-    expect(row).toMatchObject({ organization_id: orgId, org_membership_id: grantedMemberId, inference_provider_id: native.id,
+    expect(row).toMatchObject({ organization_id: orgId, org_membership_id: grantedMemberId, gateway_provider_id: native.id,
       protocol: native.protocol, outcome: "ok", usage_source: "stream" });
     expect(Number(row?.status)).toBe(200);
     expect(Number(row?.input_tokens)).toBe(UPSTREAM_INPUT_TOKENS);

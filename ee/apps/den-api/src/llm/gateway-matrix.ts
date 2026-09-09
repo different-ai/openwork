@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util"
-import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { createGatewayModelAlias, gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
@@ -75,7 +75,7 @@ export async function refreshGatewayCatalog(provider: GatewayProvider) {
     if (!current) throw new GatewayWriteError(404, "inference_provider_not_found")
     if (!catalog) return { provider: current, catalogWarning: "Catalog refresh unavailable. Previously configured models are retained within the saved modelIds policy." }
     if (catalog.id !== current.provider_id || !isSupportedGatewayNpm(catalog.npm) || catalog.npm !== readProviderConfigNpm(current.provider_config)) {
-      return { provider: current, catalogWarning: "The catalog provider SDK changed or is unsupported. Reconfigure the provider before refreshing its models." }
+      return { provider: current, catalogWarning: "The catalog provider SDK changed or is unsupported. Create a separate provider to use the new SDK; the saved provider configuration is retained." }
     }
     const resolved = resolveGatewayCatalog(catalog, current.model_ids, current.provider_config, false)
     if (await writeGatewayModels(tx, current, resolved.models)) {
@@ -257,8 +257,12 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   const links = groups.length ? await db.select().from(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id))) : []
   const access = await db.select().from(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id))
   const credentials = await db.select({ credential: GatewayProviderCredentialTable, memberName: AuthUserTable.name, memberEmail: AuthUserTable.email }).from(GatewayProviderCredentialTable)
-    .leftJoin(MemberTable, eq(MemberTable.id, GatewayProviderCredentialTable.org_membership_id)).leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
-    .where(and(eq(GatewayProviderCredentialTable.gateway_provider_id, provider.id), eq(GatewayProviderCredentialTable.organization_id, provider.organization_id)))
+    .leftJoin(MemberTable, and(eq(MemberTable.id, GatewayProviderCredentialTable.org_membership_id), eq(MemberTable.organizationId, provider.organization_id))).leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
+    .where(and(eq(GatewayProviderCredentialTable.gateway_provider_id, provider.id), eq(GatewayProviderCredentialTable.organization_id, provider.organization_id),
+      manage ? undefined : or(
+        and(eq(GatewayProviderCredentialTable.subject, "org"), isNull(GatewayProviderCredentialTable.org_membership_id)),
+        and(eq(GatewayProviderCredentialTable.subject, memberId), eq(GatewayProviderCredentialTable.org_membership_id, memberId)),
+      )))
   const teams = await memberGatewayTeams(db, provider.organization_id, memberId)
   const activeAccess = access.filter((grant) => groups.some((group) => group.id === grant.model_group_id && group.status === "active") && sets.some((set) => set.id === grant.credential_set_id && set.status === "active"))
   const grants = provider.status === "active" ? effectiveGatewayGrants(activeAccess, memberId, teams.map((team) => team.id)) : []

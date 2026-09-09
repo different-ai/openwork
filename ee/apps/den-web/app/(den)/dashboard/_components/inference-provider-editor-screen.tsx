@@ -133,6 +133,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
       {catalogError ? <DenNotice tone="error" message={catalogError} className="mb-6" /> : null}
       <section className={SECTION_CLASS}>
         <h2 className="mb-5 text-xl font-semibold">Provider</h2>
+        {provider ? <p className="mb-5 text-sm text-gray-500">The provider and its connection settings are fixed after creation. Create a new provider to use a different destination.</p> : null}
         <div className="grid gap-6">
           {provider ? <p>{provider.providerId}</p> : <DenCombobox
             ariaLabel="Provider" value={providerId} options={buildCatalogProviderOptions(catalog.filter((item) => isSupportedGatewayNpm(item.npm)))}
@@ -147,6 +148,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
             <DenInput id="gateway-provider-name" data-testid="gateway-provider-name" aria-describedby="gateway-provider-name-description" value={name} onChange={(event) => setName(event.target.value)} />
           </div>
           {getRequiredSettingKeys(npm).map((key) => <label key={key} className="grid gap-2">{getSettingLabel(key)}<DenInput
+            readOnly={Boolean(provider)}
             value={settings[key] ?? ""} onChange={(event) => setSettings((current) => ({ ...current, [key]: key === "resourceName" ? normalizeAzureResourceNameInput(event.target.value) : event.target.value }))}
           /></label>)}
           <div className="flex items-center justify-between"><span>Provider active</span><DenSwitch checked={active} onChange={setActive} aria-label="Provider active" /></div>

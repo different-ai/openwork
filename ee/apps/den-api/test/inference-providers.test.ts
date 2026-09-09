@@ -171,6 +171,7 @@ beforeAll(async () => {
       return reviewCatalog.find((provider) => provider.id === providerId) ?? null
     },
     listModelsDevProviders: async () => [],
+    getModelsDevProviders: async (providerIds: readonly string[]) => [...Object.values(catalog), ...reviewCatalog].filter((provider) => providerIds.includes(provider.id)),
   }))
 
   const [appModule, dbModule, schemaModule, drizzleModule] = await Promise.all([
@@ -296,7 +297,7 @@ test("org-credential provider: create, scoped lists, connect with member key and
       options: { baseURL: `${PROXY_BASE_URL}/api/v1/providers/${inferenceProviderId}` },
     },
     models: [],
-    modelGroups: [{ name: "All configured models", modelIds: ["claude-sonnet-4"] }],
+    modelGroups: [{ name: "All Allowed Models", modelIds: ["claude-sonnet-4"] }],
     accessGrants: [{ audience: { type: "member", memberId } }],
     credentials: [{ subject: "org", kind: "api_key", status: "active", expiresAt: null }],
   })
@@ -315,8 +316,7 @@ test("org-credential provider: create, scoped lists, connect with member key and
 
   const outsiderList = readProviderList(await (await request(outsiderCookie, "/v1/inference-providers?scope=usable")).json())
   expect(outsiderList).toEqual([])
-  const memberManageable = readProviderList(await (await request(memberCookie, "/v1/inference-providers?scope=manageable")).json())
-  expect(memberManageable).toEqual([])
+  expect((await request(memberCookie, "/v1/inference-providers?scope=manageable")).status).toBe(403)
   const ownerManageable = readProviderList(await (await request(ownerCookie, "/v1/inference-providers?scope=manageable")).json())
   expect(ownerManageable.map((provider) => provider.id)).toContain(inferenceProviderId)
 
@@ -389,6 +389,178 @@ test("org-credential provider: create, scoped lists, connect with member key and
     .from(schema.GatewayProviderCredentialTable)
     .where(drizzle.eq(schema.GatewayProviderCredentialTable.gateway_provider_id, inferenceProviderId))
   expect(remainingCredentials).toHaveLength(0)
+})
+
+test("all gateway management boundaries deny nonadmin creators, require fresh admin writes, and isolate organizations", async () => {
+  const input = { name: "Management boundary", providerId: "anthropic", modelIds: ["claude-sonnet-4"], credential: { kind: "api_key", secret: "fake-boundary-upstream-key" }, memberIds: [memberId] }
+  const created = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify(input) })
+  expect(created.status).toBe(201)
+  const provider = readProvider(await created.json())
+  const id = readString(provider, "id")
+  const base = `/v1/inference-providers/${id}`
+  const groupId = readString(firstRow(provider, "modelGroups"), "id")
+  const setId = readString(firstRow(provider, "credentialSets"), "id")
+  const grantId = readString(firstRow(provider, "accessGrants"), "id")
+  const legacy = await request(ownerCookie, "/v1/llm-providers", { method: "POST", body: JSON.stringify({ name: "Legacy boundary", source: "models_dev", providerId: "anthropic", modelIds: input.modelIds, apiKey: "fake-legacy-boundary-key" }) })
+  expect(legacy.status).toBe(201)
+  const sourceId = readString(readResource(await legacy.json(), "llmProvider"), "id")
+  // Historical ownership is deliberately retained after the creator loses admin rights.
+  await db.update(schema.GatewayProviderTable).set({ created_by_org_membership_id: memberId }).where(drizzle.eq(schema.GatewayProviderTable.id, id))
+  await db.update(schema.GatewayCredentialSetTable).set({ created_by_org_membership_id: memberId }).where(drizzle.eq(schema.GatewayCredentialSetTable.id, setId))
+  await db.update(schema.LlmProviderTable).set({ createdByOrgMembershipId: memberId }).where(drizzle.eq(schema.LlmProviderTable.id, sourceId))
+  const reads = ["/v1/inference-providers?scope=manageable", base, `${base}/models`, `${base}/model-groups`, `${base}/credential-sets`, `${base}/access-grants`, "/v1/inference-providers/usage"]
+  const writes: Array<{ path: string; method: string; body?: Record<string, unknown> }> = [
+    { path: "/v1/inference-providers", method: "POST", body: input },
+    { path: base, method: "PATCH", body: { name: "Denied rename" } },
+    { path: base, method: "DELETE" },
+    { path: `${base}/model-groups`, method: "POST", body: { name: "Denied group", modelIds: input.modelIds } },
+    { path: `${base}/model-groups/${groupId}`, method: "PATCH", body: { name: "Denied group edit" } },
+    { path: `${base}/model-groups/${groupId}`, method: "DELETE" },
+    { path: `${base}/credential-sets`, method: "POST", body: { name: "Denied shared key", credentialMode: "org", credential: input.credential } },
+    { path: `${base}/credential-sets/${setId}`, method: "PATCH", body: { credential: { kind: "api_key", secret: "fake-denied-replacement" } } },
+    { path: `${base}/credential-sets/${setId}`, method: "DELETE" },
+    { path: `${base}/access-grants`, method: "POST", body: { modelGroupId: groupId, credentialSetId: setId, audience: { type: "organization" } } },
+    { path: `${base}/access-grants/${grantId}`, method: "PATCH", body: { audience: { type: "organization" } } },
+    { path: `${base}/access-grants/${grantId}`, method: "DELETE" },
+    { path: `${base}/access/${grantId}`, method: "DELETE" },
+    { path: "/v1/inference-providers/migrate-from-llm-provider", method: "POST", body: { llmProviderId: sourceId } },
+  ]
+  const snapshot = async () => ({
+    provider: await db.select().from(schema.GatewayProviderTable).where(drizzle.eq(schema.GatewayProviderTable.id, id)),
+    credentials: await db.select().from(schema.GatewayProviderCredentialTable).where(drizzle.eq(schema.GatewayProviderCredentialTable.gateway_provider_id, id)),
+    sets: await db.select().from(schema.GatewayCredentialSetTable).where(drizzle.eq(schema.GatewayCredentialSetTable.gateway_provider_id, id)),
+    groups: await db.select().from(schema.GatewayModelGroupTable).where(drizzle.eq(schema.GatewayModelGroupTable.gateway_provider_id, id)),
+    grants: await db.select().from(schema.GatewayProviderAccessTable).where(drizzle.eq(schema.GatewayProviderAccessTable.gateway_provider_id, id)),
+    source: await db.select().from(schema.LlmProviderTable).where(drizzle.eq(schema.LlmProviderTable.id, sourceId)),
+  })
+  const before = await snapshot()
+  const foreignOrg = createDenTypeId("organization")
+  const foreignMember = createDenTypeId("member")
+  await db.insert(schema.OrganizationTable).values({ id: foreignOrg, name: "Boundary foreign org", slug: foreignOrg })
+  await db.insert(schema.MemberTable).values({ id: foreignMember, organizationId: foreignOrg, userId: outsiderUserId, role: "owner" })
+  try {
+    for (const role of ["member", "provider-manager"]) {
+      await db.update(schema.MemberTable).set({ role }).where(drizzle.eq(schema.MemberTable.id, memberId))
+      for (const path of reads) expect((await request(memberCookie, path)).status).toBe(403)
+      for (const attempt of writes) {
+        const response = await request(memberCookie, attempt.path, { method: attempt.method, ...(attempt.body ? { body: JSON.stringify(attempt.body) } : {}) })
+        expect(response.status).toBe(403)
+        expect(await response.json()).toMatchObject({ error: "forbidden" })
+      }
+    }
+    expect(await snapshot()).toEqual(before)
+    const connected = await request(memberCookie, `${base}/connect`)
+    expect(connected.status).toBe(200)
+    const usable = readProviderList(await (await request(memberCookie, "/v1/inference-providers?scope=usable")).json()).find((entry) => entry.id === id)
+    expect(usable).toBeDefined()
+    for (const entry of [usable, readProvider(await connected.json())]) {
+      expect(entry?.credentials).toBeUndefined()
+      expect(entry?.credentialSets).toBeUndefined()
+      expect(entry?.accessGrants).toBeUndefined()
+    }
+    expect((await request(memberCookie, `${base}/oauth/start?credentialSetId=${setId}`)).status).toBe(403)
+    expect((await request(memberCookie, `${base}/oauth?credentialSetId=${setId}`, { method: "DELETE" })).status).toBe(403)
+    const foreignHeaders = { "x-openwork-org-id": foreignOrg }
+    for (const path of reads.filter((path) => path.startsWith(base))) expect((await request(outsiderCookie, path, { headers: foreignHeaders })).status).toBe(404)
+    for (const attempt of writes.filter((attempt) => attempt.path.startsWith(base) || attempt.path.endsWith("migrate-from-llm-provider"))) {
+      const response = await request(outsiderCookie, attempt.path, { method: attempt.method, headers: foreignHeaders, ...(attempt.body ? { body: JSON.stringify(attempt.body) } : {}) })
+      expect(response.status).toBe(attempt.path.endsWith("migrate-from-llm-provider") ? 409 : 404)
+    }
+    expect((await request(outsiderCookie, `${base}/connect`, { headers: foreignHeaders })).status).toBe(404)
+    const foreignList = readProviderList(await (await request(outsiderCookie, "/v1/inference-providers?scope=manageable", { headers: foreignHeaders })).json())
+    expect(foreignList).toEqual([])
+    expect(await snapshot()).toEqual(before)
+
+    for (const role of ["admin", "super-admin", "owner", "provider-manager,admin"]) {
+      await db.update(schema.MemberTable).set({ role }).where(drizzle.eq(schema.MemberTable.id, memberId))
+      await db.update(schema.AuthSessionTable).set({ createdAt: new Date(Date.now() - 60 * 60 * 1000) }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
+      for (const path of reads) expect((await request(memberCookie, path)).status).toBe(200)
+      for (const attempt of writes) {
+        const response = await request(memberCookie, attempt.path, { method: attempt.method, ...(attempt.body ? { body: JSON.stringify(attempt.body) } : {}) })
+        expect(response.status).toBe(403)
+        expect(await response.json()).toMatchObject({ error: "reauth", reason: "fresh_auth_required" })
+      }
+      await db.update(schema.AuthSessionTable).set({ createdAt: new Date() }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
+      expect((await request(memberCookie, base, { method: "PATCH", body: JSON.stringify({ name: `Allowed ${role}` }) })).status).toBe(200)
+    }
+    expect((await request(memberCookie, `${base}/credential-sets/${setId}`, { method: "PATCH", body: JSON.stringify({ name: "Admin edit" }) })).status).toBe(200)
+    expect((await request(memberCookie, `${base}/model-groups/${groupId}`, { method: "PATCH", body: JSON.stringify({ name: "Admin group" }) })).status).toBe(200)
+    expect((await request(memberCookie, `${base}/access-grants/${grantId}`, { method: "PATCH", body: JSON.stringify({ audience: { type: "organization" } }) })).status).toBe(200)
+    expect((await request(memberCookie, "/v1/inference-providers/migrate-from-llm-provider", { method: "POST", body: JSON.stringify({ llmProviderId: sourceId }) })).status).toBe(201)
+    expect((await request(memberCookie, `${base}/access-grants/${grantId}`, { method: "DELETE" })).status).toBe(204)
+    expect((await request(memberCookie, `${base}/credential-sets/${setId}`, { method: "DELETE" })).status).toBe(204)
+    expect((await request(memberCookie, `${base}/model-groups/${groupId}`, { method: "DELETE" })).status).toBe(204)
+    expect((await request(memberCookie, base, { method: "DELETE" })).status).toBe(204)
+  } finally {
+    await db.update(schema.MemberTable).set({ role: "member" }).where(drizzle.eq(schema.MemberTable.id, memberId))
+    await db.update(schema.AuthSessionTable).set({ createdAt: new Date() }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
+    await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.id, foreignMember))
+    await db.delete(schema.OrganizationRoleTable).where(drizzle.eq(schema.OrganizationRoleTable.organizationId, foreignOrg))
+    await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, foreignOrg))
+  }
+})
+
+test("provider destinations and source snapshots are immutable without stripping credentials; metadata edits remain allowed", async () => {
+  for (const fixture of [
+    { providerId: "anthropic", modelIds: ["claude-sonnet-4"], settings: { upstreamBaseUrl: "https://original.example/v1", region: "us-east-1" }, changes: [{ upstreamBaseUrl: "https://different.example/v1" }, { upstreamBaseUrl: "https://original.example/another-account/v1" }, { region: "eu-west-1" }] },
+    { providerId: "azure", modelIds: ["fixture-deployment"], settings: { resourceName: "original-resource", apiVersion: "2025-04-01-preview" }, changes: [{ resourceName: "other-resource" }, { apiVersion: "2025-01-01-preview" }] },
+    { providerId: "google-vertex", modelIds: ["gemini-2.5-pro"], settings: { project: "original-project", location: "us-central1" }, changes: [{ project: "different-project" }, { location: "europe-west1" }] },
+  ]) {
+    const created = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ name: "Pinned destination", providerId: fixture.providerId, modelIds: fixture.modelIds, settings: fixture.settings, credential: { kind: "api_key", secret: "fake-pinned-destination-key" } }) })
+    expect(created.status).toBe(201)
+    const id = readString(readProvider(await created.json()), "id")
+    const base = `/v1/inference-providers/${id}`
+    const load = async () => ({
+      providers: await db.select().from(schema.GatewayProviderTable).where(drizzle.eq(schema.GatewayProviderTable.id, id)),
+      credentials: await db.select().from(schema.GatewayProviderCredentialTable).where(drizzle.eq(schema.GatewayProviderCredentialTable.gateway_provider_id, id)),
+      models: await db.select().from(schema.GatewayProviderModelTable).where(drizzle.eq(schema.GatewayProviderModelTable.gateway_provider_id, id)),
+    })
+    const before = await load()
+    expect(before.credentials).toHaveLength(1)
+    for (const settings of fixture.changes) {
+      const denied = await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ name: "Must not persist", settings }) })
+      expect(denied.status).toBe(409)
+      expect(await denied.json()).toMatchObject({ error: "provider_destination_immutable" })
+      expect(await load()).toEqual(before)
+    }
+    const identity = await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ providerId: "moonshotai" }) })
+    expect(identity.status).toBe(409)
+    expect(await identity.json()).toMatchObject({ error: "provider_identity_immutable" })
+    for (const body of [
+      { providerConfig: { api: "https://different.example/v1", npm: "@ai-sdk/openai", options: { baseURL: "https://different.example/v1" } } },
+      { provider_config: { api: "https://different.example/v1" } },
+      { settings: { migration: { llmProviderId: createDenTypeId("llmProvider"), runtimeEnvNames: [] } } },
+    ]) expect((await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify(body) })).status).toBe(400)
+    expect(await load()).toEqual(before)
+    expect((await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ providerId: fixture.providerId, settings: fixture.settings, name: "Same destination" }) })).status).toBe(200)
+    expect((await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ settings: {}, name: "Partial settings preserve destination", modelIds: [] }) })).status).toBe(200)
+    expect((await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ status: "disabled" }) })).status).toBe(200)
+    const after = await load()
+    expect(after.providers[0]).toMatchObject({ name: "Partial settings preserve destination", model_ids: [], status: "disabled", settings: before.providers[0]?.settings, provider_config: before.providers[0]?.provider_config })
+    expect(after.credentials).toEqual(before.credentials)
+  }
+
+  const source = reviewCatalog.find((entry) => entry.id === "moonshotai")
+  if (!source) throw new Error("Catalog fixture missing")
+  const created = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ name: "Catalog snapshot", providerId: source.id, modelIds: ["fixture-model"], credential: { kind: "api_key", secret: "fake-snapshot-key" } }) })
+  expect(created.status).toBe(201)
+  const id = readString(readProvider(await created.json()), "id")
+  const loadConfig = async () => (await db.select({ config: schema.GatewayProviderTable.provider_config }).from(schema.GatewayProviderTable).where(drizzle.eq(schema.GatewayProviderTable.id, id)))[0]
+  const before = await loadConfig()
+  const original = { api: source.api, npm: source.npm, config: source.config }
+  try {
+    source.api = "https://changed-catalog.example/v1"
+    source.config = { ...source.config, api: source.api }
+    expect((await request(ownerCookie, `/v1/inference-providers/${id}/models`)).status).toBe(200)
+    expect((await request(ownerCookie, `/v1/inference-providers/${id}`, { method: "PATCH", body: JSON.stringify({ name: "Rename with new catalog" }) })).status).toBe(200)
+    expect(await loadConfig()).toEqual(before)
+    source.npm = "@ai-sdk/openai"
+    const detail = readProvider(await (await request(ownerCookie, `/v1/inference-providers/${id}`)).json())
+    expect(detail.catalogWarning).toContain("SDK changed")
+    expect(await loadConfig()).toEqual(before)
+  } finally {
+    Object.assign(source, original)
+  }
 })
 
 test("member-credential mode reports member_auth_required until the member holds a credential", async () => {
@@ -569,7 +741,7 @@ test("Azure connect returns the source id and resource settings without treating
   expect(JSON.stringify(connected.apiKeys)).not.toContain("AZURE_RESOURCE_NAME")
 })
 
-test("blank and absent multi-env fields preserve encrypted credentials while supplied values merge", async () => {
+test("blank multi-env writes are rejected, omitted fields preserve credentials, and supplied values merge", async () => {
   const created = await request(ownerCookie, "/v1/inference-providers", {
     method: "POST",
     body: JSON.stringify({ name: "Credential merge", providerId: "azure-cognitive-services", modelIds: ["fixture-model"], apiKeys: { AZURE_COGNITIVE_SERVICES_API_KEY: "fake-primary" } }),
@@ -582,7 +754,11 @@ test("blank and absent multi-env fields preserve encrypted credentials while sup
     .where(drizzle.eq(schema.GatewayProviderCredentialTable.credential_set_id, setId)))[0]
   const original = await load()
   const blank = await request(ownerCookie, `/v1/inference-providers/${id}/credential-sets/${setId}`, { method: "PATCH", body: JSON.stringify({ apiKeys: { AZURE_COGNITIVE_SERVICES_API_KEY: "" } }) })
-  expect(blank.status).toBe(200)
+  expect(blank.status).toBe(400)
+  expect(await blank.json()).toMatchObject({ error: "invalid_credential" })
+  expect(await load()).toEqual(original)
+  const absent = await request(ownerCookie, `/v1/inference-providers/${id}/credential-sets/${setId}`, { method: "PATCH", body: JSON.stringify({ name: "Renamed credentials" }) })
+  expect(absent.status).toBe(200)
   expect(await load()).toEqual(original)
   const merged = await request(ownerCookie, `/v1/inference-providers/${id}/credential-sets/${setId}`, { method: "PATCH", body: JSON.stringify({ apiKeys: { AZURE_COGNITIVE_SERVICES_API_TOKEN: "fake-secondary" } }) })
   expect(merged.status).toBe(200)
@@ -729,6 +905,15 @@ test("migrate-from-llm-provider moves config, models, access and credential then
   expect(migrateText).not.toContain(llmSecret)
   const migrated = readProvider(JSON.parse(migrateText))
   const inferenceProviderId = readString(migrated, "id")
+  const [migrationSnapshot] = await db.select().from(schema.GatewayProviderTable).where(drizzle.eq(schema.GatewayProviderTable.id, inferenceProviderId))
+  expect(migrationSnapshot?.settings.migration).toBeDefined()
+  const forgedMigration = await request(ownerCookie, `/v1/inference-providers/${inferenceProviderId}`, { method: "PATCH", body: JSON.stringify({ settings: { migration: { llmProviderId: createDenTypeId("llmProvider"), runtimeEnvNames: [] } } }) })
+  expect(forgedMigration.status).toBe(400)
+  expect((await db.select().from(schema.GatewayProviderTable).where(drizzle.eq(schema.GatewayProviderTable.id, inferenceProviderId)))[0]).toEqual(migrationSnapshot)
+  expect((await request(ownerCookie, `/v1/inference-providers/${inferenceProviderId}`, { method: "PATCH", body: JSON.stringify({ settings: {}, name: "Legacy Anthropic" }) })).status).toBe(200)
+  const [unchangedMigration] = await db.select().from(schema.GatewayProviderTable).where(drizzle.eq(schema.GatewayProviderTable.id, inferenceProviderId))
+  expect(unchangedMigration?.settings).toEqual(migrationSnapshot?.settings)
+  expect(unchangedMigration?.provider_config).toEqual(migrationSnapshot?.provider_config)
   expect(migrated).toMatchObject({
     name: "Legacy Anthropic",
     providerId: "anthropic",
@@ -858,9 +1043,10 @@ test("matrix CRUD keeps overlapping groups, explicit equal-priority choices, cat
   expect(choices.filter((model) => model.modelGroupId === groupId && model.credentialSetId === firstSetId)).toHaveLength(2)
   expect(choices.filter((model) => model.upstreamModelId === "claude-haiku-4")).toHaveLength(4)
   for (const model of choices) {
-    expect(model.config).toMatchObject({ id: model.id })
-    expect(model.name).toContain(readString(model, "credentialSetName"))
-    expect(model.name).toContain(readString(model, "modelGroupName"))
+    expect(model.name).toBe(catalog.anthropic.models.find((entry) => entry.id === model.upstreamModelId)?.name)
+    expect(model.config).toMatchObject({ id: model.id, name: model.name })
+    expect(readString(model, "credentialSetName")).toBe(model.credentialSetId === firstSetId ? "Default credentials" : model.credentialSetId === secondSetId ? "Second" : "Third")
+    expect(readString(model, "modelGroupName")).toBe(model.modelGroupId === groupId ? "All Allowed Models" : "Overlap")
   }
   const originalModelRows = await db.select().from(schema.GatewayProviderModelTable).where(drizzle.eq(schema.GatewayProviderModelTable.gateway_provider_id, id))
   const teamOne = createDenTypeId("team")
@@ -895,7 +1081,10 @@ test("matrix CRUD keeps overlapping groups, explicit equal-priority choices, cat
   const catalogPatch = await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ modelIds: ["claude-haiku-4", "claude-sonnet-4"] }) })
   expect(catalogPatch.status).toBe(200)
   expect((await db.select().from(schema.GatewayProviderModelTable).where(drizzle.eq(schema.GatewayProviderModelTable.gateway_provider_id, id))).map((model) => model.id).sort()).toEqual(originalModelRows.map((model) => model.id).sort())
-  expect((await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ modelIds: ["claude-sonnet-4"] }) })).status).toBe(409)
+  expect((await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ modelIds: ["claude-sonnet-4"] }) })).status).toBe(200)
+  const restricted = readProvider(await (await request(memberCookie, `${base}/connect`)).json())
+  expect(readRows(restricted, "models").map((model) => model.upstreamModelId)).toEqual(["claude-sonnet-4", "claude-sonnet-4", "claude-sonnet-4"])
+  expect((await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ modelIds: ["claude-haiku-4", "claude-sonnet-4"] }) })).status).toBe(200)
   expect((await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ allMembers: false }) })).status).toBe(409)
   expect((await request(ownerCookie, `${base}/model-groups/${groupId}`, { method: "DELETE" })).status).toBe(409)
   expect((await request(ownerCookie, `${base}/credential-sets/${secondSetId}`, { method: "DELETE" })).status).toBe(409)
@@ -913,7 +1102,8 @@ test("matrix CRUD keeps overlapping groups, explicit equal-priority choices, cat
     await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.id, foreignMember))
     await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, foreignOrg))
   }
-  const otherCreate = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ name: "Other provider", providerId: "anthropic", modelIds: ["claude-haiku-4"] }) })
+  const otherCreate = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ name: "Other provider", providerId: "anthropic", modelIds: ["claude-haiku-4"], credential: { kind: "api_key", secret: "fake-other-provider-key" } }) })
+  expect(otherCreate.status).toBe(201)
   const other = readProvider(await otherCreate.json())
   expect((await grant(readString(firstRow(other, "modelGroups"), "id"), firstSetId, { type: "member", memberId })).status).toBe(404)
   expect((await grant(groupId, readString(firstRow(other, "credentialSets"), "id"), { type: "member", memberId })).status).toBe(404)
