@@ -118,14 +118,25 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
   Object.defineProperty(document, "compatMode", { configurable: true, value: "CSS1Compat" });
   let acceptedMessageId: string | null = null;
   const acceptanceRequests: Request[] = [];
+  const abortRequests: Request[] = [];
+  let abortResponse: ReturnType<typeof Promise.withResolvers<Response>> | null = null;
   const fetchStub = async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
-    if (new URL(request.url).pathname.includes(`/session/${sessionId}/message/`)) {
+    const path = new URL(request.url).pathname;
+    if (path.includes(`/session/${sessionId}/message/`)) {
       acceptanceRequests.push(request);
       return acceptedMessageId
         ? Response.json({ info: { id: acceptedMessageId, sessionID: sessionId, role: "user" }, parts: [] })
         : new Response(null, { status: 404 });
     }
+    if (path.endsWith(`/session/${sessionId}/abort`)) {
+      abortRequests.push(request);
+      if (!abortResponse) throw new Error("Unexpected Stop request");
+      return abortResponse.promise.then((response) => response.clone());
+    }
+    if (path.endsWith(`/session/${sessionId}/message`)) return Response.json([]);
+    if (path.endsWith(`/session/${sessionId}`)) return Response.json(createSnapshot({ type: "busy" }, 1).session);
+    if (path.endsWith("/session/status")) return Response.json({});
     return Response.json({});
   };
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchStub });
@@ -223,6 +234,39 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
     if (!editor) throw new Error("Expected the Lexical editor");
     editor.focus();
     expect(document.activeElement).toBe(editor);
+
+    abortResponse = Promise.withResolvers<Response>();
+    const stop = container.querySelector<HTMLButtonElement>('button[aria-label="Stop"]');
+    if (!stop || stop.disabled) throw new Error(`Expected an enabled Stop button: ${container.textContent}`);
+    await act(async () => {
+      stop.click();
+      stop.click();
+    });
+    const stopping = container.querySelector<HTMLButtonElement>('button[aria-label="Stopping"]');
+    expect(stopping?.disabled).toBe(true);
+    expect(stopping?.getAttribute("aria-busy")).toBe("true");
+    expect(abortRequests).toHaveLength(1);
+    expect(container.querySelector('button[aria-label="Run task"]')).toBeNull();
+
+    await act(async () => abortResponse?.resolve(Response.json({ message: "Stop unavailable" }, { status: 503 })));
+    await waitFor(() => container.querySelector<HTMLButtonElement>('button[aria-label="Stop"]')?.disabled === false, "Stop retry after failure");
+    expect(container.querySelector('button[aria-label="Stopping"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Run task"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Dismiss error"]')).not.toBeNull();
+    expect(container.textContent).toContain("Stop unavailable");
+
+    abortResponse = Promise.withResolvers<Response>();
+    const retryStop = container.querySelector<HTMLButtonElement>('button[aria-label="Stop"]');
+    if (!retryStop) throw new Error("Expected Stop retry");
+    await act(async () => retryStop.click());
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Stopping"]')?.disabled).toBe(true);
+    expect(abortRequests).toHaveLength(2);
+    fetchedSnapshot = createSnapshot({ type: "idle" }, 2);
+    await act(async () => abortResponse?.resolve(Response.json(true)));
+    await waitFor(() => container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]')?.disabled === false, "verified Stop completion");
+    expect(container.querySelector('button[aria-label="Stopping"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Dismiss error"]')).toBeNull();
+    expect(abortRequests).toHaveLength(3);
 
     await act(async () => {
       fetchedSnapshot = createSnapshot({ type: "idle" }, 2);

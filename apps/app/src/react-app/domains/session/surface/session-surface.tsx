@@ -7,7 +7,7 @@ import { Check, CirclePause, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
-import { interruptSessionTurn, sessionNeedsStop, submitAfterInterruption, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
+import { interruptSessionTurn, sessionIsStopping, sessionNeedsStop, submitAfterInterruption, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
 import { createClient, createPromptMessageID, hasAcceptedPromptMessage, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import * as opencodeSessionNative from "@/app/lib/opencode-session-native";
@@ -1391,6 +1391,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     useCallback((listener) => subscribeSessionInterruption(props.opencodeBaseUrl, props.sessionId, listener), [props.opencodeBaseUrl, props.sessionId]),
     useCallback(() => sessionNeedsStop(props.opencodeBaseUrl, props.sessionId), [props.opencodeBaseUrl, props.sessionId]),
   );
+  const isStopping = useSyncExternalStore(
+    useCallback((listener) => subscribeSessionInterruption(props.opencodeBaseUrl, props.sessionId, listener), [props.opencodeBaseUrl, props.sessionId]),
+    useCallback(() => sessionIsStopping(props.opencodeBaseUrl, props.sessionId), [props.opencodeBaseUrl, props.sessionId]),
+  );
   const chatStreaming = needsStop || sending || liveStatus.type === "busy" || liveStatus.type === "retry";
   // A busy status is a claim that decays: the sync layer revalidates it
   // continuously against /session/status, and once that validation keeps
@@ -2216,6 +2220,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   ]);
 
   const handleAbort = useCallback(async () => {
+    if (sessionIsStopping(props.opencodeBaseUrl, props.sessionId)) return false;
     const phase = getQueuedDrainState(props.sessionId).phase;
     if (!chatStreaming && phase.kind !== "sending" && phase.kind !== "admission_unknown") return;
     setError(null);
@@ -2548,10 +2553,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     label: "Stop the current run",
     description: "Stop the current streaming session run.",
     sideEffect: "mutation",
-    disabled: !chatStreaming && queuedDrainState.phase.kind !== "sending" && queuedDrainState.phase.kind !== "admission_unknown",
+    disabled: isStopping || (!chatStreaming && queuedDrainState.phase.kind !== "sending" && queuedDrainState.phase.kind !== "admission_unknown"),
     targetRef: composerShellRef,
     execute: handleAbort,
-  }), [chatStreaming, handleAbort, queuedDrainState.phase.kind]);
+  }), [chatStreaming, handleAbort, isStopping, queuedDrainState.phase.kind]);
   useControlAction(props.isControlTarget ? composerStopControlAction : null);
 
   const listSkills = useCallback(async (): Promise<SkillCard[]> => {
@@ -3230,6 +3235,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onQueue={handleQueue}
         onStop={async () => { await handleAbort(); }}
         busy={chatStreaming}
+        isStopping={isStopping}
         steering={steering}
         submissionPreparing={preparingCloudTools || sending || autoSending}
         queuedCount={queuedItems.length}

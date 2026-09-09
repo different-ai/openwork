@@ -58,6 +58,10 @@ export function sessionNeedsStop(baseUrl: string, sessionID: string): boolean {
   return turnFor(baseUrl, sessionID).needsStop;
 }
 
+export function sessionIsStopping(baseUrl: string, sessionID: string): boolean {
+  return turnFor(baseUrl, sessionID).stopping;
+}
+
 export function subscribeSessionInterruption(baseUrl: string, sessionID: string, listener: () => void): () => void {
   const turn = turnFor(baseUrl, sessionID);
   turn.listeners.add(listener);

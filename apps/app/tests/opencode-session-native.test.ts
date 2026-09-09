@@ -3,7 +3,7 @@ import { focusManager } from "@tanstack/react-query";
 import type { Message, Part, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, createPromptMessageID, hasAcceptedPromptMessage, unwrap, type FieldsResult } from "../src/app/lib/opencode";
-import { interruptSessionTurn, sessionNeedsStop, submitAfterInterruption } from "../src/app/lib/opencode-interruption";
+import { interruptSessionTurn, sessionIsStopping, sessionNeedsStop, submitAfterInterruption } from "../src/app/lib/opencode-interruption";
 import { createClientV2 } from "../src/app/lib/opencode-v2-adapter";
 import {
   composeNativeSessionSnapshot,
@@ -321,12 +321,14 @@ describe("native Stop and follow-up handoff", () => {
           const outcome = stop.then(() => undefined, (error: unknown) => error);
           try {
             await reached.promise;
+            expect(sessionIsStopping(endpoint.opencodeBaseUrl, root.id)).toBe(true);
             expect(requests.filter((request) => request.method === "POST").map((request) => new URL(request.url).pathname))
               .toEqual([`/workspace/ws-native/opencode/session/${root.id}/abort`]);
             if (failure === "failed") discovery.resolve(Response.json({ message: "Discovery failed" }, { status: 503 }));
             const error = await outcome;
             expect(error).toBeInstanceOf(Error);
             expect(error).toMatchObject({ message: expect.stringContaining(failure === "hanging" ? "timed out" : "Discovery failed") });
+            expect(sessionIsStopping(endpoint.opencodeBaseUrl, root.id)).toBe(false);
             expect(sessionNeedsStop(endpoint.opencodeBaseUrl, root.id)).toBe(true);
           } finally {
             discovery.resolve(Response.json(action === "get" ? root : []));
@@ -706,6 +708,7 @@ describe("native Stop and follow-up handoff", () => {
       });
       try {
         await childReached.promise;
+        expect(sessionIsStopping(baseUrl, root.id)).toBe(true);
         expect(sent).toEqual([]);
         expect(sessionNeedsStop(baseUrl, root.id)).toBe(true);
         childAbort.resolve(Response.json(true));
@@ -716,6 +719,7 @@ describe("native Stop and follow-up handoff", () => {
         // Busy sessions outside this turn must neither be stopped nor hold the fence.
         idle.resolve(Response.json({ [root.id]: { type: "idle" }, ses_unrelated: { type: "busy" }, ses_old: { type: "busy" } }));
         await Promise.all([stop, followUp]);
+        expect(sessionIsStopping(baseUrl, root.id)).toBe(false);
         expect(sent).toEqual([true]);
         expect(sessionNeedsStop(baseUrl, root.id)).toBe(false);
         expect(requests.filter((request) => /\/session\/ses_[^/]+$/.test(new URL(request.url).pathname))
