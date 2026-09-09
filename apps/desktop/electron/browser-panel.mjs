@@ -408,6 +408,56 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     });
   }
 
+  async function showPageContextMenu(tab, params) {
+    if (!browserTabVisible(tab.tabId)) return;
+    const contents = tab.view.webContents;
+    const items = [];
+    const actions = new Map();
+    const add = (id, label, action, enabled = true) => {
+      items.push({ type: "item", id, label, enabled });
+      actions.set(id, action);
+    };
+    const separator = () => { if (items.length) items.push({ type: "separator" }); };
+    if (params.linkURL) {
+      add("open-new-tab", "Open Link in New Tab", null, isHttpUrl(params.linkURL));
+      add("copy-link", "Copy Link Address", () => clipboard.writeText(params.linkURL));
+    }
+    if (params.mediaType === "image") {
+      separator();
+      add("copy-image", "Copy Image", () => contents.copyImageAt(params.x, params.y), params.hasImageContents === true);
+      if (params.srcURL) add("copy-image-address", "Copy Image Address", () => clipboard.writeText(params.srcURL));
+    }
+    if (params.isEditable || params.selectionText) {
+      separator();
+      const edit = (id, label, flag) => add(id, label, () => contents[id](), params.editFlags?.[flag] === true);
+      if (params.isEditable) {
+        edit("undo", "Undo", "canUndo");
+        edit("redo", "Redo", "canRedo");
+        separator();
+        edit("cut", "Cut", "canCut");
+      }
+      edit("copy", "Copy", "canCopy");
+      if (params.isEditable) {
+        edit("paste", "Paste", "canPaste");
+        edit("selectAll", "Select All", "canSelectAll");
+      }
+    }
+    if (!params.isEditable && !params.selectionText && !params.linkURL && params.mediaType !== "image") {
+      add("back", "Back", () => contents.goBack(), contents.canGoBack());
+      add("forward", "Forward", () => contents.goForward(), contents.canGoForward());
+      add("reload", "Reload", () => contents.reload());
+    }
+    // Chromium supplies view-relative coordinates, already in window DIPs.
+    // Convert to app CSS pixels for the shared helper, not through page zoom.
+    const bounds = tab.view.getBounds();
+    const appZoom = window().webContents.getZoomFactor();
+    await showContextMenu({
+      source: "page", tabId: tab.tabId, ownerSessionId: registry.ownerOf(tab.tabId),
+      url: params.linkURL, items, actions,
+      point: { x: (bounds.x + params.x) / appZoom, y: (bounds.y + params.y) / appZoom },
+    });
+  }
+
   async function showContextMenu(request) {
     hideContextMenu();
     const showSerial = ++menuShowSerial;
@@ -416,14 +466,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = request.tabId ? getBrowserTab(request.tabId) : null;
     const isCurrent = () => showSerial === menuShowSerial && window() === mainWindow
       && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()
-      && (!tab || (getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed() && registry.ownerOf(tab.tabId) === request.ownerSessionId));
+      && (!tab || (getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed() && registry.ownerOf(tab.tabId) === request.ownerSessionId))
+      && (request.source !== "page" || browserTabVisible(request.tabId));
     const dismiss = () => { if (menuRequest === request) hideContextMenu(); };
     const invalidate = () => {
       if (showSerial !== menuShowSerial) return;
       dismiss();
       menuShowSerial += 1;
     };
-    const navigated = (_event, _url, _isInPlace, isMainFrame) => { if (isMainFrame) invalidate(); };
+    const navigated = (_event, _url, _isInPlace, isMainFrame) => { if (isMainFrame || request.source === "page") invalidate(); };
     menuRequest = request;
     mainWindow.on("blur", dismiss);
     mainWindow.webContents.on("did-start-navigation", navigated);
@@ -461,9 +512,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   async function handleMenuChoice(request, itemId, isCurrent) {
     const tab = getBrowserTab(request.tabId);
 
-    if (request.source === "link" && itemId !== "copy-url") {
+    if ((request.source === "link" && itemId !== "copy-url") || (request.source === "page" && itemId === "open-new-tab")) {
       try {
-        const external = itemId !== "open-builtin";
+        const external = request.source === "link" && itemId !== "open-builtin";
         await checkPolicy?.({ url: request.url, external });
         if (!isCurrent()) return;
         if (!external) {
@@ -482,6 +533,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           });
         }
       }
+      return;
+    }
+
+    if (request.source === "page") {
+      request.actions.get(itemId)?.();
       return;
     }
 
@@ -707,6 +763,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     };
     browserTabs.set(tabId, tab);
     if (!restoreTabId) registry.add({ tabId, ownerSessionId });
+    view.webContents.on("context-menu", (_event, params) => {
+      runDetachedTask("show browser page menu", () => showPageContextMenu(tab, params));
+    });
     view.webContents.once("dom-ready", () => {
       tab.domReady = true;
       if (tab.background) emulateBackgroundTab(tab);

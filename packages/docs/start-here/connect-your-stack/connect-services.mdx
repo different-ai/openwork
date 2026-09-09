@@ -68,6 +68,54 @@ support return `file_input_requires_host` and create no draft. Do not retry
 without the requested attachments. If an upload's result is uncertain, check
 Gmail Drafts before attempting creation again.
 
+## Manage connected services
+
+Google Workspace and Microsoft 365 connections can perform service actions, not
+only retrieve information. An administrator chooses the enabled permissions;
+each member authorizes their own account. Additional sending, mailbox-management,
+and spreadsheet permission choices are **off by default**. Existing draft-only
+access does not automatically enable sending.
+
+| Service | Available actions |
+| --- | --- |
+| Gmail | Search/read messages and attachments; create/read/update drafts; send an existing draft, including its reply threading and attachments; archive/unarchive, mark read/unread, star, trash/restore, and manage user labels. |
+| Google Calendar | List/create events; read, edit/reschedule, and cancel events in a selected calendar; add Meet to an existing event. |
+| Drive | Search/list with date, folder, and pagination controls; read files, upload/share, create folders, rename/move, and trash/restore. |
+| Sheets | Create spreadsheets, inspect their tabs, read cell ranges, write cells, and append rows. Writes default to literal values; formula parsing requires explicit approval. |
+| Outlook | Read mail, create drafts and reply drafts, send existing drafts, change read status/categories, and move messages between inbox/archive/deleted items. |
+| Outlook Calendar | List/create, edit/reschedule, cancel, and delete events. |
+| OneDrive | Search/read, write text files, create folders, and rename/move items. |
+
+For Gmail mailbox management enable **Manage Gmail**; for sending without mailbox
+management enable **Send email drafts after confirmation**. Google uses the same
+OAuth grant for draft editing and draft sending, but OpenWork enforces the
+administrator's separate action choices. For Sheets, enable spreadsheet read or
+write access, or use the applicable selected-file Drive access. Microsoft mail
+sending and mailbox management have separate permission choices as well.
+
+After enabling a new provider permission, reconnect and grant the requested
+access. Disabling a write permission in OpenWork blocks the new management
+actions even when an older provider token still carries that grant. A selected
+connection always uses that member's selected account, not another available
+account.
+
+Ask for an outcome, for example “Archive this thread and mark it read,” “Move
+tomorrow's meeting to 3 pm,” or “Append these rows to the budget spreadsheet.”
+Sending mail, deleting/trashing content, notifying meeting guests, and enabling
+spreadsheet formula parsing require explicit requests and the corresponding
+confirmation inputs. Creating or selecting a connector does not authorize them.
+If a write times out, check the service before retrying: it may already have
+completed. Microsoft accepts sends asynchronously, so its receipt means
+**accepted**, not delivered.
+
+Drive's generic file reader exports the first Sheets tab as CSV. Use the Sheets
+metadata and range operations to work with other tabs. Cell operations are
+bounded to 5,000 cells per request; split larger work into explicit ranges.
+These operations do not claim every provider feature: rich Docs/Slides editing,
+spreadsheet formatting/pivots, and permanent mailbox/file deletion are separate
+from the actions above. External MCP connectors expose their provider's actual
+tools and remain subject to that provider's account, plan, and approval rules.
+
 ## Connect, connectors, and connections
 
 - **Connect** is the member-facing page in the desktop app for signing in to

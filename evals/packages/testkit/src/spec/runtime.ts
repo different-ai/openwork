@@ -11,6 +11,7 @@ import {
   readComposerState,
   readBrowserState,
   readBrowserTabMetrics,
+  readConnectorCatalog,
   renameSessionAndWait,
   signInDesktopAs,
   waitUntilInteractive,
@@ -609,6 +610,15 @@ export class SeedChannel implements Seed {
     });
   }
 
+  deepLink(app: Surface, url: string) {
+    return this.#runtime.call("seed", "deepLink", "deepLink(renderer ingress)", app, async () => {
+      if (new URL(url).protocol !== "openwork:") throw new Error("Expected an OpenWork deep link.");
+      await callFunctionOnSurface(app, (url) => {
+        window.dispatchEvent(new CustomEvent("openwork:deep-link", { detail: { urls: [url] } }));
+      }, [url]);
+    });
+  }
+
   browserFixtureDiscovery(app: Surface, origin: string, action: "hold" | "release") {
     return this.#runtime.call("seed", "browserFixtureDiscovery", `browserFixtureDiscovery(${action})`, app,
       () => setBrowserFixtureDiscovery(app, origin, action));
@@ -951,6 +961,11 @@ export class ProbeChannel implements Probe {
   composer() {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "composer", "composer", surface, () => readComposerState(surface));
+  }
+
+  connectorCatalog() {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "connectorCatalog", "connectorCatalog", surface, () => readConnectorCatalog(surface));
   }
 
   storage(key: string): Promise<unknown>;

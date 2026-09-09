@@ -368,10 +368,33 @@ export async function connectorBranding(seed: Seed) {
   return { app, den, prompt, failurePrompt, proof };
 }
 
-export async function connectorsQuickAdd(seed: Seed) {
+export async function connectorCatalogManagement(seed: Seed) {
   const den = await seed.den({
-    org: { name: `Connectors Quick Add ${Date.now()}`, admin: { name: "Sarah" } },
+    org: { name: `Connector Catalog ${Date.now()}`, admin: { name: "Catalog Admin" }, members: { member: { name: "Catalog Member" } } },
     mocks: { connector: seed.mock() },
+  });
+  const connection = await seed.orgConnection(den.admin, {
+    name: "Catalog Notes",
+    url: den.mocks.connector.mcpUrl,
+    authType: "oauth",
+    credentialMode: "per_member",
+    access: { orgWide: true },
+  });
+  // Native OAuth clients intentionally have no managed MCP row.
+  const google = await seed.api(den.admin, "/v1/oauth-providers/google-workspace/client", {
+    method: "POST",
+    body: JSON.stringify({ clientId: "catalog-test-client", clientSecret: "catalog-test-secret" }),
+  });
+  if (!google.response.ok) throw new Error("Could not arrange the native Google client.");
+  // Fault the provider boundary, not Den's startup response or persisted readiness.
+  const rejected = await seed.faultProxy(den);
+  await rejected.faults.status("/mcp", 503, { times: 1000, body: { error: "catalog_provider_unavailable" } });
+  const rejectedConnection = await seed.orgConnection(den.admin, {
+    name: "Catalog Recovery",
+    url: `${rejected.ref.webUrl}/mcp`,
+    authType: "oauth",
+    credentialMode: "per_member",
+    access: { orgWide: true },
   });
   const web = await seed.web({
     den,
@@ -380,7 +403,10 @@ export async function connectorsQuickAdd(seed: Seed) {
     headless: true,
     viewport: { width: 1440, height: 1200 },
   });
-  return { web, connector: den.mocks.connector };
+  const memberWeb = await seed.web({
+    den, signedInAs: den.members.member, startPath: `/dashboard/your-connections?connectionId=${connection.id}`, headless: true,
+  });
+  return { den, web, memberWeb, connection, rejectedConnection, connector: den.mocks.connector, rejected };
 }
 
 export async function libraryConnectorDiscovery(seed: Seed) {

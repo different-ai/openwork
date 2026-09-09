@@ -35,6 +35,7 @@ import { buildOpenworkEnvRuntimeKey } from "@/app/lib/openwork-env-runtime";
 import {
   getDesktopHomeDir,
   joinDesktopPath,
+  openworkServerInfo,
   revealDesktopItemInDir,
   pickDirectory,
   resolveWorkspaceListSelectedId,
@@ -690,6 +691,31 @@ export function SessionRoute() {
     onSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
   });
 
+  useEffect(() => {
+    if (!isDesktopRuntime() || selectedWorkspace?.workspaceType !== "local") return;
+    let cancelled = false;
+    let checking = false;
+    // Ports and credentials can survive a restart. Observe the host's actual
+    // generation even when no settings-change event accompanies it.
+    const interval = window.setInterval(async () => {
+      if (checking || document.visibilityState !== "visible") return;
+      checking = true;
+      try {
+        const info = await openworkServerInfo();
+        if (cancelled || !info.running || info.generation === openworkServerHostInfoState?.generation) return;
+        await refreshRouteState({ supersede: true });
+      } catch {
+        // The next probe can recover a temporarily unavailable desktop bridge.
+      } finally {
+        checking = false;
+      }
+    }, 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [openworkServerHostInfoState?.generation, refreshRouteState, selectedWorkspace?.workspaceType]);
+
   const { engineReloadVersion, routeEngineInfo, reloadWorkspaceEngineFromUi } = useEngineReload({
     client,
     workspaceId: selectedWorkspaceId,
@@ -840,6 +866,7 @@ export function SessionRoute() {
     selectedWorkspaceRoot,
     selectedWorkspaceId,
     localServerHostToken: openworkServerHostInfoState?.hostToken?.trim() ?? "",
+    localServerGeneration: openworkServerHostInfoState?.generation ?? null,
     setProviders,
     setProviderDefaults,
     setProviderConnectedIds,

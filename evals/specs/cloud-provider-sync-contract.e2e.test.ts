@@ -722,4 +722,41 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   expect(await evalIn(desktopApp, () => (window.__modelSelectionProof.loops))).toBe(0);
   evidence.recordAssertionEvidence("selected model survives cloud sync and return to v1", "The exact selected provider/model remained after another Den provider was published, the normal cloud sync completed, and routing returned to v1; no React update loop occurred.", true);
   expect(hotMirrored, `Initial v2 status: ${JSON.stringify(initialV2)}; third v2 status: ${JSON.stringify(thirdV2)}`).toBe(true);
+
+  // Replace only the local runtime: the mounted renderer must redeliver its
+  // identity even when the server reuses the same loopback address. Do not
+  // navigate, focus, manually sync, or reload the renderer to repair it.
+  const beforeRestart = parseSyncStatus(await readSyncStatusPayload(desktopApp));
+  const restart = await evalIn(desktopApp, async () => {
+    const invoke = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+    if (!invoke) throw new Error("Desktop runtime bridge unavailable");
+    const before = await invoke("openworkServerInfo");
+    const timeOrigin = performance.timeOrigin;
+    const route = location.hash;
+    const token = localStorage.getItem("openwork.den.authToken");
+    const org = localStorage.getItem("openwork.den.activeOrgId");
+    const after = await invoke("openworkServerRestart");
+    return {
+      generationChanged: after.generation !== before.generation,
+      samePort: after.port === before.port,
+      identityUnchanged: token === localStorage.getItem("openwork.den.authToken")
+        && org === localStorage.getItem("openwork.den.activeOrgId"),
+      timeOrigin,
+      route,
+    };
+  }, { awaitPromise: true, timeoutMs: 120_000 });
+  expect(restart).toMatchObject({ generationChanged: true, samePort: true, identityUnchanged: true });
+  const redelivered = await eventually(async () => parseSyncStatus(await readSyncStatusPayload(desktopApp)), {
+    within: 30_000,
+    intervalMs: 500,
+    label: "automatic session redelivery after same-address runtime replacement",
+    until: (status) => status.hasSession && isTerminal(status) && status.lastRunAt !== beforeRestart.lastRunAt,
+  });
+  expect(await evalIn(desktopApp, () => ({ timeOrigin: performance.timeOrigin, route: location.hash })))
+    .toMatchObject({ timeOrigin: restart.timeOrigin, route: restart.route });
+  evidence.recordAssertionEvidence(
+    "same-address runtime replacement automatically restores the signed-in session",
+    `Runtime generation changed without renderer reload, navigation or account change; the replacement server reached ${redelivered.lastRunStatus} within 30 seconds with both assigned providers restored.`,
+    true,
+  );
 });

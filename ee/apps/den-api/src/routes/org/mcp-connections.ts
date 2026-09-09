@@ -106,6 +106,8 @@ import {
   externalMcpOAuthConfigurationDefaults,
   pluginMcpRequiresPreRegisteredOAuthClient,
   requiredPluginMcpAuthType,
+  existingPluginMcpAuthTypeCompatible,
+  matchExternalMcpPresetForUrl,
 } from "../../capability-sources/external-mcp-auth-policy.js"
 import {
   EXTERNAL_MCP_DIAGNOSTIC_PHASES,
@@ -1153,7 +1155,8 @@ async function toConnectionResponse(
     : null
   if (requiredAuthTypes.length === 0 && presetRequiredAuthType) requiredAuthTypes.push(presetRequiredAuthType)
   const authPolicyConfirmed = options.identityManagedBy.length === 0 || requiredAuthTypes.length > 0
-  const authTypeMismatch = requiredAuthTypes.some((requiredAuthType) => requiredAuthType !== row.authType)
+    || (row.kind === "external_mcp" && matchExternalMcpPresetForUrl(row.url) !== null)
+  const authTypeMismatch = requiredAuthTypes.some((requiredAuthType) => !existingPluginMcpAuthTypeCompatible({ authType: row.authType, requiredAuthType }))
   const oauthClientRequired = row.kind === "external_mcp" && row.authType === "oauth" && pluginMcpRequiresPreRegisteredOAuthClient(row.url)
   const oauthClientConfigured = Boolean(oauthClient)
   const setupRequired = options.identityManagedBy.length > 0 && (
@@ -1608,6 +1611,8 @@ async function createExternalConnectionResponse(
         await markExternalMcpConnectionConnected(created.id)
       }
     } catch (error) {
+      // Failed creation must not leave a saved API key looking ready or reserve its external key.
+      await deleteExternalMcpConnection({ organizationId: payload.organization.id, connectionId: created.id })
       const diagnostic = externalMcpDiagnosticForResponse(error, requestId, "MCP_INITIALIZE")
       logger.error("external_mcp_connection_validation_failed", {
         connection_id: created.id,
