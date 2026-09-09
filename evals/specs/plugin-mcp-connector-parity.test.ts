@@ -386,4 +386,29 @@ test("persisted GitHub bindings preserve desktop readiness without allowing new 
     "A persisted shared OAuth token with no organization OAuth client remains ready in resolved desktop readiness and skill search. Executing the same skill still returns needs_admin_setup and no instruction content.",
     true,
   );
+
+  // A plaintext lookalike must not inherit the trusted HTTPS preset policy.
+  const httpUrl = "http://api.githubcopilot.com/mcp/";
+  await queryDenDatabase(databaseUrl,
+    "UPDATE external_mcp_connection SET url = ?, auth_type = 'none', access_token = NULL WHERE organization_id = ? AND id = ?",
+    [httpUrl, orgId, connectionId],
+  );
+  const httpVersion = await denFetch(den.admin, `/v1/config-objects/${binding.configObjectId}/versions`, {
+    method: "POST", headers,
+    body: JSON.stringify({ input: { normalizedPayloadJson: { mcpServers: { crm: { type: "remote", url: httpUrl } } } } }),
+  });
+  expect(httpVersion.response.status, httpVersion.text).toBe(201);
+  await queryDenDatabase(databaseUrl,
+    "UPDATE plugin_mcp_requirement_binding SET required_auth_type = NULL WHERE organization_id = ? AND plugin_id = ?",
+    [orgId, plugin.id],
+  );
+  const httpListed = await denFetch(den.admin, "/v1/mcp-connections?scope=usable", { headers });
+  expect(httpListed.response.status, httpListed.text).toBe(200);
+  const httpRows = isRecord(httpListed.body) && Array.isArray(httpListed.body.connections) ? httpListed.body.connections.filter(isRecord) : [];
+  expect(httpRows.find((row) => row.id === connectionId)).toMatchObject({ authPolicyConfirmed: false, setupRequired: true });
+  evidence.recordAssertionEvidence(
+    "HTTP lookalikes do not inherit HTTPS preset authentication policy",
+    "The persisted HTTPS GitHub positive control was recognized; after changing both declaration and connection to HTTP, the connection-list boundary reported unconfirmed auth policy and required setup. No provider endpoint was contacted.",
+    true,
+  );
 });

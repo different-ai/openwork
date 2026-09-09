@@ -36,6 +36,9 @@ describe("External MCP preset OAuth defaults", () => {
     expect(matchExternalMcpPresetForUrl("https://MCP.SLACK.COM:443/mcp/")?.presetId).toBe("slack")
     expect(matchExternalMcpPresetForUrl("http://mcp.slack.com:443/mcp")).toBeNull()
     expect(matchExternalMcpPresetForUrl("https://mcp.slack.com:8443/mcp")).toBeNull()
+    expect(matchExternalMcpPresetForUrl("wss://mcp.slack.com/mcp")).toBeNull()
+    expect(matchExternalMcpPresetForUrl("https://mcp.slack.com/other")).toBeNull()
+    expect(matchExternalMcpPresetForUrl("not a URL")).toBeNull()
   })
 
   test("Slack pins its issuer and sane default scope subset", () => {

@@ -11,6 +11,15 @@ import {
 describe("GitHub plugin MCP authentication", () => {
   const githubUrl = "https://api.githubcopilot.com/mcp/"
 
+  test("HTTP lookalikes do not inherit preset authentication policy", () => {
+    for (const url of ["http://api.githubcopilot.com/mcp/", "http://mcp.slack.com/mcp/"]) {
+      expect(requiredPluginMcpAuthType({ declaredAuthType: null, url })).toBeNull()
+      expect(pluginMcpRequiresPreRegisteredOAuthClient(url)).toBe(false)
+      expect(resolveGithubPluginMcpImportAuthType({ declaredAuthType: null, requestedAuthType: "none", url })).toBe("none")
+      expect(requiredPluginMcpAuthType({ declaredAuthType: "oauth", url })).toBe("oauth")
+    }
+  })
+
   test("GitHub defaults new imports to OAuth without making it the only supported authentication", () => {
     expect(resolveGithubPluginMcpImportAuthType({
       declaredAuthType: null,

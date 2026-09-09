@@ -3,8 +3,11 @@ import { createNativeConnector, denFetch, type DenSession } from "@openwork/beha
 import { startMockGoogle } from "@openwork/labs";
 import { needs, server, test } from "@openwork/testkit";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 function record(value: unknown): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Expected an object");
+  if (!isRecord(value)) throw new Error("Expected an object");
   return value;
 }
 function rows(value: unknown): Record<string, unknown>[] {
@@ -71,8 +74,9 @@ test("connected service actions reach only the selected account and enforce writ
   };
   const first = await connect(writer, "google-workspace", "Primary Google", writeFeatures, primary);
   const google = await connect(writer, "google-workspace", "Selected Google", writeFeatures, selected);
-  const readGoogle = await connect(reader, "google-workspace", "Readonly Google", ["gmailRead", "calendarRead", "sheetsRead"], readonly);
-  const microsoft = await connect(writer, "microsoft-365", "Selected Outlook", ["mailSend", "mailRead"], selected);
+  const readGoogle = await connect(reader, "google-workspace", "Readonly Google", ["gmailRead", "calendarRead", "sheetsRead", "driveRead"], readonly);
+  const microsoft = await connect(writer, "microsoft-365", "Selected Outlook", ["mailSend", "mailRead", "mailDraft", "mailManage", "calendarWrite", "filesWrite"], selected);
+  const readMicrosoft = await connect(reader, "microsoft-365", "Readonly Outlook", ["mailRead", "calendarRead", "filesRead"], readonly);
   expect(google.id).not.toBe(first.id);
 
   async function mint(member: DenSession, scopes = ["mcp:read", "mcp:write"]) {
@@ -150,48 +154,152 @@ test("connected service actions reach only the selected account and enforce writ
   };
   const untouched = await snapshot(primary);
   const readerBefore = await snapshot(readonly);
-  const cases = [
-    { providerKey: "google-workspace", connection: google, method: "POST", suffix: "gmail-message/{messageId}/modify",
+  type Action = {
+    method: string; suffix: string; path?: Record<string, string>; query?: Record<string, string>;
+    body?: Record<string, unknown>; unconfirmed?: Record<string, unknown>; unconfirmedQuery?: Record<string, string>;
+    providerPath: string; providerBody?: unknown; providerQuery?: Record<string, string>; preflight?: boolean;
+    receipt: Record<string, unknown>; state?: Record<string, unknown>;
+  };
+  const raw = Buffer.from("To: recipient@example.test\r\nSubject: Revised\r\n\r\nRevised draft").toString("base64url");
+  const fileQuery = { fields: "id,name,mimeType,trashed,parents,webViewLink", supportsAllDrives: "true" };
+  const spreadsheetFields = "spreadsheetId,spreadsheetUrl,properties(title,locale,timeZone),sheets(properties(sheetId,title,index,gridProperties(rowCount,columnCount)))";
+  const googleCases: Action[] = [
+    { method: "POST", suffix: "gmail-message/{messageId}/modify",
       path: { messageId: "message-1" }, body: { addLabelIds: ["STARRED"], removeLabelIds: ["INBOX", "UNREAD"] },
       providerPath: "/gmail/v1/users/me/messages/message-1/modify", providerBody: { addLabelIds: ["STARRED"], removeLabelIds: ["INBOX", "UNREAD"] }, providerQuery: {},
-      receipt: { id: "message-1", threadId: "thread-1", labelIds: ["STARRED"] } },
-    { providerKey: "google-workspace", connection: google, method: "POST", suffix: "gmail-draft/{draftId}/send",
+      receipt: { id: "message-1", threadId: "thread-1", labelIds: ["STARRED"] }, state: { labelIds: ["STARRED"] } },
+    { method: "POST", suffix: "gmail-message/{messageId}/trash", path: { messageId: "message-1" }, body: { confirm: true }, unconfirmed: {},
+      providerPath: "/gmail/v1/users/me/messages/message-1/trash", receipt: { id: "message-1", labelIds: ["STARRED", "TRASH"] }, state: { labelIds: ["STARRED", "TRASH"] } },
+    { method: "POST", suffix: "gmail-message/{messageId}/untrash", path: { messageId: "message-1" },
+      providerPath: "/gmail/v1/users/me/messages/message-1/untrash", receipt: { id: "message-1", labelIds: ["STARRED"] }, state: { labelIds: ["STARRED"] } },
+    { method: "GET", suffix: "gmail-drafts", query: { maxResults: "2", q: "in:drafts", includeSpamTrash: "false" },
+      providerPath: "/gmail/v1/users/me/drafts", providerQuery: { maxResults: "2", q: "in:drafts", includeSpamTrash: "false" },
+      receipt: { drafts: [{ id: "draft-1" }, { id: "draft-2" }], resultSizeEstimate: 2 } },
+    { method: "PUT", suffix: "gmail-draft/{draftId}", path: { draftId: "draft-1" },
+      body: { confirm: true, message: { raw, threadId: "thread-1" } }, unconfirmed: { message: { raw } },
+      providerPath: "/gmail/v1/users/me/drafts/draft-1", providerBody: { message: { raw, threadId: "thread-1" } },
+      receipt: { id: "draft-1", message: { raw, threadId: "thread-1" } }, state: { draftMessage: { raw, threadId: "thread-1" }, sent: [] } },
+    { method: "GET", suffix: "gmail-draft/{draftId}", path: { draftId: "draft-1" }, query: { format: "raw" },
+      providerPath: "/gmail/v1/users/me/drafts/draft-1", providerQuery: { format: "raw" }, receipt: { id: "draft-1", message: { raw, threadId: "thread-1" } } },
+    { method: "DELETE", suffix: "gmail-draft/{draftId}", path: { draftId: "draft-2" }, body: { confirm: true }, unconfirmed: {},
+      providerPath: "/gmail/v1/users/me/drafts/draft-2", receipt: { ok: true }, state: { draftIds: ["draft-1"], sent: [] } },
+    { method: "POST", suffix: "gmail-draft/{draftId}/send",
       path: { draftId: "draft-1" }, body: { confirm: true }, unconfirmed: {},
-      providerPath: "/gmail/v1/users/me/drafts/send", providerBody: { id: "draft-1" }, providerQuery: {}, receipt: { id: "sent-1", threadId: "thread-1" } },
-    { providerKey: "google-workspace", connection: google, method: "PATCH", suffix: "calendar-events/{eventId}",
-      path: { eventId: "event-1" }, body: { summary: "After", sendUpdates: "all", confirmNotifications: true }, unconfirmed: { summary: "After", sendUpdates: "all" },
-      providerPath: "/calendar/v3/calendars/primary/events/event-1", providerBody: { summary: "After" }, providerQuery: { sendUpdates: "all", maxAttendees: "100" },
-      receipt: { ok: true, event: { id: "event-1", status: "confirmed", summary: "After" }, sendUpdates: "all" } },
-    { providerKey: "google-workspace", connection: google, method: "PUT", suffix: "spreadsheets/{spreadsheetId}/values",
+      providerPath: "/gmail/v1/users/me/drafts/send", providerBody: { id: "draft-1" }, receipt: { id: "sent-1", threadId: "thread-1" }, state: { draftIds: [], sent: ["sent-1"] } },
+    { method: "POST", suffix: "gmail-labels", body: { name: "Review", labelListVisibility: "labelShow" },
+      providerPath: "/gmail/v1/users/me/labels", providerBody: { name: "Review", labelListVisibility: "labelShow" },
+      receipt: { id: "label-1", name: "Review", type: "user" } },
+    { method: "PATCH", suffix: "gmail-label/{labelId}", path: { labelId: "label-1" }, body: { name: "Reviewed", messageListVisibility: "hide" }, preflight: true,
+      providerPath: "/gmail/v1/users/me/labels/label-1", providerBody: { name: "Reviewed", messageListVisibility: "hide" },
+      receipt: { id: "label-1", name: "Reviewed", type: "user", messageListVisibility: "hide" } },
+    { method: "GET", suffix: "gmail-labels", providerPath: "/gmail/v1/users/me/labels",
+      receipt: { labels: [{ id: "INBOX", type: "system" }, { id: "label-1", name: "Reviewed", type: "user" }] } },
+    { method: "DELETE", suffix: "gmail-label/{labelId}", path: { labelId: "label-1" }, body: { confirm: true }, unconfirmed: {}, preflight: true,
+      providerPath: "/gmail/v1/users/me/labels/label-1", receipt: { ok: true }, state: { labels: [{ id: "INBOX", name: "INBOX", type: "system" }], labelIds: ["STARRED"] } },
+    { method: "PATCH", suffix: "calendar-events/{eventId}", path: { eventId: "event-1" },
+      body: { summary: "After", start: { date: "2026-10-01" }, end: { date: "2026-10-02" }, attendees: [], sendUpdates: "all", confirmNotifications: true },
+      unconfirmed: { summary: "After", sendUpdates: "all" },
+      providerPath: "/calendar/v3/calendars/primary/events/event-1",
+      providerBody: { summary: "After", start: { date: "2026-10-01" }, end: { date: "2026-10-02" }, attendees: [] }, providerQuery: { sendUpdates: "all", maxAttendees: "100" },
+      receipt: { ok: true, event: { id: "event-1", status: "confirmed", summary: "After", start: { date: "2026-10-01" }, end: { date: "2026-10-02" }, attendees: [] }, sendUpdates: "all" } },
+    { method: "GET", suffix: "calendar-events/{eventId}", path: { eventId: "event-1" },
+      providerPath: "/calendar/v3/calendars/primary/events/event-1", providerQuery: { maxAttendees: "100" }, receipt: { ok: true, calendarId: "primary", event: { id: "event-1", summary: "After" } } },
+    { method: "DELETE", suffix: "calendar-events/{eventId}", path: { eventId: "event-1" },
+      query: { confirmCancellation: "true", sendUpdates: "externalOnly", confirmNotifications: "true" }, unconfirmedQuery: { confirmCancellation: "true", sendUpdates: "externalOnly" },
+      providerPath: "/calendar/v3/calendars/primary/events/event-1", providerQuery: { sendUpdates: "externalOnly" },
+      receipt: { ok: true, eventId: "event-1", cancelled: true, sendUpdates: "externalOnly" }, state: { event: { status: "cancelled" } } },
+    { method: "POST", suffix: "spreadsheets", body: { title: "Action sheet", sheetTitle: "Sheet1", rowCount: 10, columnCount: 2 },
+      providerPath: "/v4/spreadsheets", providerQuery: { fields: spreadsheetFields },
+      providerBody: { properties: { title: "Action sheet" }, sheets: [{ properties: { title: "Sheet1", gridProperties: { rowCount: 10, columnCount: 2 } } }] },
+      receipt: { ok: true, spreadsheet: { spreadsheetId: "sheet-1", properties: { title: "Action sheet" }, sheets: [{ properties: { sheetId: 0, title: "Sheet1", gridProperties: { rowCount: 10, columnCount: 2 } } }] } } },
+    { method: "GET", suffix: "spreadsheets/{spreadsheetId}", path: { spreadsheetId: "sheet-1" },
+      providerPath: "/v4/spreadsheets/sheet-1", providerQuery: { fields: spreadsheetFields, includeGridData: "false" },
+      receipt: { ok: true, spreadsheet: { spreadsheetId: "sheet-1", properties: { title: "Action sheet" } } } },
+    { method: "PUT", suffix: "spreadsheets/{spreadsheetId}/values",
       path: { spreadsheetId: "sheet-1" }, body: { range: "Sheet1!A1:B1", values: [["=1+1", 7]] },
       unconfirmed: { range: "Sheet1!A1:B1", values: [["=1+1", 7]], valueInputOption: "USER_ENTERED" },
       providerPath: "/v4/spreadsheets/sheet-1/values/Sheet1!A1:B1", providerBody: { range: "Sheet1!A1:B1", majorDimension: "ROWS", values: [["=1+1", 7]] },
-      providerQuery: { valueInputOption: "RAW" }, receipt: { ok: true, spreadsheetId: "sheet-1", updatedCells: 2, valueInputOption: "RAW" } },
-    { providerKey: "microsoft-365", connection: microsoft, method: "POST", suffix: "mail-drafts/{messageId}/send",
+      providerQuery: { valueInputOption: "RAW" }, receipt: { ok: true, spreadsheetId: "sheet-1", updatedCells: 2, valueInputOption: "RAW" }, state: { values: [["=1+1", 7]] } },
+    { method: "POST", suffix: "spreadsheets/{spreadsheetId}/values/append", path: { spreadsheetId: "sheet-1" },
+      body: { range: "Sheet1!A1:B1", values: [["Next", true]] },
+      providerPath: "/v4/spreadsheets/sheet-1/values/Sheet1!A1:B1:append", providerQuery: { valueInputOption: "RAW", insertDataOption: "INSERT_ROWS" },
+      providerBody: { range: "Sheet1!A1:B1", majorDimension: "ROWS", values: [["Next", true]] },
+      receipt: { ok: true, spreadsheetId: "sheet-1", updatedRange: "Sheet1!A2:B2", updatedRows: 1, updatedColumns: 2, updatedCells: 2, tableRange: "Sheet1!A1:B1", valueInputOption: "RAW" },
+      state: { values: [["=1+1", 7], ["Next", true]] } },
+    { method: "GET", suffix: "spreadsheets/{spreadsheetId}/values", path: { spreadsheetId: "sheet-1" }, query: { range: "Sheet1!A1:B2", valueRenderOption: "UNFORMATTED_VALUE" },
+      providerPath: "/v4/spreadsheets/sheet-1/values/Sheet1!A1:B2", providerQuery: { majorDimension: "ROWS", valueRenderOption: "UNFORMATTED_VALUE" },
+      receipt: { ok: true, spreadsheetId: "sheet-1", range: "Sheet1!A1:B2", values: [["=1+1", 7], ["Next", true]], valueRenderOption: "UNFORMATTED_VALUE" } },
+    { method: "POST", suffix: "drive-folders", body: { name: "Review", parentId: "parent-2" },
+      providerPath: "/drive/v3/files", providerQuery: fileQuery, providerBody: { name: "Review", mimeType: "application/vnd.google-apps.folder", parents: ["parent-2"] },
+      receipt: { ok: true, file: { id: "folder-1", name: "Review", mimeType: "application/vnd.google-apps.folder", parents: ["parent-2"], trashed: false } } },
+    { method: "PATCH", suffix: "drive-files/{fileId}", path: { fileId: "file-1" },
+      body: { name: "After.txt", addParentId: "parent-2", removeParentId: "parent-1", trashed: true, confirmTrash: true }, unconfirmed: { trashed: true },
+      providerPath: "/drive/v3/files/file-1", providerQuery: { ...fileQuery, addParents: "parent-2", removeParents: "parent-1" }, providerBody: { name: "After.txt", trashed: true },
+      receipt: { ok: true, file: { id: "file-1", name: "After.txt", parents: ["parent-2"], trashed: true } } },
+    { method: "GET", suffix: "drive-files/{fileId}", path: { fileId: "file-1" }, providerPath: "/drive/v3/files/file-1", providerQuery: fileQuery,
+      receipt: { ok: true, file: { id: "file-1", name: "After.txt", parents: ["parent-2"], trashed: true } } },
+  ];
+  const microsoftCases: Action[] = [
+    { method: "POST", suffix: "mail-drafts/{messageId}/send",
       path: { messageId: "outlook-draft-1" }, body: { confirmSend: true }, unconfirmed: {},
       providerPath: "/v1.0/me/messages/outlook-draft-1/send", providerBody: null, providerQuery: {},
-      receipt: { ok: true, draftId: "outlook-draft-1", status: "accepted" } },
+      receipt: { ok: true, draftId: "outlook-draft-1", status: "accepted" }, state: { outlookDraftIds: [], outlookAccepted: ["outlook-draft-1"] } },
+    { method: "POST", suffix: "mail-message/{messageId}/reply-draft", path: { messageId: "outlook-message-1" }, body: { comment: "Reply for review" },
+      providerPath: "/v1.0/me/messages/outlook-message-1/createReply", providerBody: { comment: "Reply for review" },
+      receipt: { ok: true, draft: { id: "outlook-reply-1", conversationId: "conversation-1", isDraft: true, body: "Reply for review" } },
+      state: { outlookDraftIds: ["outlook-reply-1"], outlookAccepted: ["outlook-draft-1"] } },
+    { method: "PATCH", suffix: "mail-message/{messageId}", path: { messageId: "outlook-message-1" }, body: { isRead: true, categories: ["Reviewed"] },
+      providerPath: "/v1.0/me/messages/outlook-message-1", providerBody: { isRead: true, categories: ["Reviewed"] },
+      receipt: { ok: true, message: { id: "outlook-message-1", isRead: true, categories: ["Reviewed"] } } },
+    { method: "POST", suffix: "mail-message/{messageId}/move", path: { messageId: "outlook-message-1" }, body: { destination: "deleteditems", confirmTrash: true }, unconfirmed: { destination: "deleteditems" },
+      providerPath: "/v1.0/me/messages/outlook-message-1/move", providerBody: { destinationId: "deleteditems" },
+      receipt: { ok: true, message: { id: "outlook-moved-1", parentFolderId: "deleteditems", isRead: true, categories: ["Reviewed"] } } },
+    { method: "PATCH", suffix: "calendar-events/{eventId}", path: { eventId: "outlook-event-1" },
+      body: { confirmNotifications: true, subject: "After", body: "Agenda", location: "Room 1", start: "2026-10-01T10:00:00Z", end: "2026-10-01T11:00:00Z" }, unconfirmed: { subject: "After" },
+      providerPath: "/v1.0/me/events/outlook-event-1", providerBody: { subject: "After", body: { contentType: "Text", content: "Agenda" }, location: { displayName: "Room 1" },
+        start: { dateTime: "2026-10-01T10:00:00Z", timeZone: "UTC" }, end: { dateTime: "2026-10-01T11:00:00Z", timeZone: "UTC" } },
+      receipt: { ok: true, event: { id: "outlook-event-1", subject: "After", location: "Room 1", start: "2026-10-01T10:00:00Z", end: "2026-10-01T11:00:00Z", startTimeZone: "UTC", endTimeZone: "UTC" } },
+      state: { outlookEvent: { subject: "After", body: { contentType: "Text", content: "Agenda" } } } },
+    { method: "POST", suffix: "calendar-events/{eventId}/cancel", path: { eventId: "outlook-event-1" }, body: { confirmCancel: true, comment: "Cancelled" }, unconfirmed: { comment: "Cancelled" },
+      providerPath: "/v1.0/me/events/outlook-event-1/cancel", providerBody: { comment: "Cancelled" },
+      receipt: { ok: true, eventId: "outlook-event-1", status: "accepted" }, state: { outlookCancelled: ["outlook-event-1"] } },
+    { method: "DELETE", suffix: "calendar-events/{eventId}", path: { eventId: "outlook-event-1" }, body: { confirmDelete: true }, unconfirmed: {},
+      providerPath: "/v1.0/me/events/outlook-event-1", receipt: { ok: true, eventId: "outlook-event-1", status: "deleted" }, state: { outlookDeleted: ["outlook-event-1"] } },
+    { method: "PATCH", suffix: "drive-file/{itemId}", path: { itemId: "item-1" }, body: { name: "After.txt", parentId: "parent-2" },
+      providerPath: "/v1.0/me/drive/items/item-1", providerBody: { name: "After.txt", parentReference: { id: "parent-2" } },
+      receipt: { ok: true, file: { id: "item-1", name: "After.txt", kind: "file" } }, state: { onedriveFile: { name: "After.txt", parentReference: { id: "parent-2" } } } },
+    { method: "POST", suffix: "drive-folders", body: { name: "Review", parentId: "parent-2" },
+      providerPath: "/v1.0/me/drive/items/parent-2/children", providerBody: { name: "Review", folder: {}, "@microsoft.graph.conflictBehavior": "fail" },
+      receipt: { ok: true, file: { id: "onedrive-folder-1", name: "Review", kind: "folder" } }, state: { onedriveFolders: [{ id: "onedrive-folder-1", name: "Review", parentReference: { id: "parent-2" } }] } },
   ];
+  const cases = [
+    ...googleCases.map((action) => ({ ...action, providerKey: "google-workspace", connection: google, readConnection: readGoogle })),
+    ...microsoftCases.map((action) => ({ ...action, providerKey: "microsoft-365", connection: microsoft, readConnection: readMicrosoft })),
+  ];
+  expect(new Set(cases.map((action) => `${action.providerKey} ${action.method} ${action.suffix}`)).size).toBe(32);
+  const selectedTokens = new Map<string, string>();
   for (const action of cases) {
     const fullPath = `/v1/capabilities/${action.providerKey}/${action.suffix}`;
-    const match = [...found.values()].find((entry) => entry.method === action.method && entry.path === fullPath);
+    const match = [...found.values()].find((entry) => text(entry.name).startsWith(`native:${action.connection.id}:`) && entry.method === action.method && entry.path === fullPath);
     if (!match) throw new Error(`Missing discovered action ${action.method} ${fullPath}`);
-    expect(match.hasBody).toBe(true);
+    expect(match.hasBody).toBe(action.body !== undefined);
     // The gateway returns the OpenAPI schema unchanged, including named refs.
-    if (action.providerKey === "microsoft-365") {
-      expect(match.bodySchema).toEqual({ $ref: "#/components/schemas/Microsoft365MailSendBody" });
-    } else {
-      expect(record(match.bodySchema).type).toBe("object");
+    if (action.body) {
+      if (action.providerKey === "microsoft-365") {
+        expect(record(match.bodySchema).$ref).toMatch(/^#\/components\/schemas\/Microsoft365/);
+      } else {
+        expect(record(match.bodySchema).type).toBe("object");
+      }
     }
-    expect(match.pathParams).toEqual(Object.keys(action.path));
-    const args = { name: text(match.name), path: action.path, body: action.body };
+    expect(match.pathParams).toEqual(Object.keys(action.path ?? {}));
+    const args = { name: text(match.name), path: action.path, query: action.query, body: action.body };
     const before = await snapshot(selected);
-    const denied = await gateway(readScopeToken, "execute_capability", args);
-    expect(denied.result.isError).toBe(true);
-    expect(denied.payload).toMatchObject({ error: "insufficient_mcp_scope", requiredScope: "mcp:write" });
-    expect(await snapshot(selected)).toEqual(before);
-    if (action.providerKey === "google-workspace") {
-      const readerMatches = await discover(readGoogle, "google-workspace", action.suffix, [action.method], readerToken);
+    if (action.method !== "GET") {
+      const denied = await gateway(readScopeToken, "execute_capability", args);
+      expect(denied.result.isError).toBe(true);
+      expect(denied.payload).toMatchObject({ error: "insufficient_mcp_scope", requiredScope: "mcp:write" });
+      expect(await snapshot(selected)).toEqual(before);
+      const readerMatches = await discover(action.readConnection, action.providerKey, action.suffix, [action.method], readerToken);
       const readerMatch = readerMatches.find((entry) => entry.method === action.method);
       if (!readerMatch) throw new Error("Read-only member's operation missing");
       const deniedGrant = await gateway(readerToken, "execute_capability", { ...args, name: readerMatch.name });
@@ -201,35 +309,68 @@ test("connected service actions reach only the selected account and enforce writ
       expect((await snapshot(readonly)).state).toEqual(readerBefore.state);
       expect((await snapshot(readonly)).requests).toEqual([]);
     }
-    if (action.unconfirmed) {
-      const rejected = await gateway(writerToken, "execute_capability", { ...args, body: action.unconfirmed });
+    if (action.unconfirmed || action.unconfirmedQuery) {
+      const rejected = await gateway(writerToken, "execute_capability", { ...args,
+        body: action.unconfirmed ?? action.body, query: action.unconfirmedQuery ?? action.query });
       expect(rejected.result.isError).toBe(true);
       expect(rejected.payload).toMatchObject({ error: "invalid_request" });
       expect(await snapshot(selected)).toEqual(before);
     }
-    const executed = await gateway(writerToken, "execute_capability", args);
+    const executed = await gateway(action.method === "GET" ? readScopeToken : writerToken, "execute_capability", args);
     expect(executed.result.isError, JSON.stringify(executed.payload)).not.toBe(true);
     expect(executed.payload).toMatchObject(action.receipt);
     const after = await snapshot(selected);
-    expect(after.totalRequests).toBe(Number(before.totalRequests) + 1);
-    const observed = rows(after.requests).at(-1);
-    expect(observed).toEqual({ method: action.method, path: action.providerPath, query: action.providerQuery,
-      body: action.providerBody, email: selected, tokenId: expect.stringMatching(/^[a-f0-9]{12}$/) });
+    const observed = rows(after.requests).slice(rows(before.requests).length);
+    const expected = { method: action.method, path: action.providerPath, query: action.providerQuery ?? {},
+      body: action.providerBody ?? null, email: selected, tokenId: expect.stringMatching(/^[a-f0-9]{12}$/) };
+    expect(observed).toEqual(action.preflight ? [{ ...expected, method: "GET", body: null }, expected] : [expected]);
+    expect(after.totalRequests).toBe(Number(before.totalRequests) + observed.length);
+    for (const request of observed) {
+      const token = text(request.tokenId);
+      if (!selectedTokens.has(action.connection.id)) selectedTokens.set(action.connection.id, token);
+      expect(token).toBe(selectedTokens.get(action.connection.id));
+    }
+    if (action.method === "GET") expect(after.state).toEqual(before.state);
+    if (action.state) expect(after.state).toMatchObject(action.state);
     expect((await snapshot(primary)).state).toEqual(untouched.state);
     expect((await snapshot(primary)).requests).toEqual([]);
-    evidence.recordAssertionEvidence(`${action.method} ${action.suffix} crosses the provider boundary only with write authority`,
-      "Read-only MCP scope and applicable provider-grant/confirmation denials produced zero HTTP calls. The authorized call produced exactly one authenticated provider request with the exact method, path, query, and body for the selected account, never the other account.", true);
+    evidence.recordAssertionEvidence(`${action.providerKey} ${action.method} ${action.suffix} uses only the selected account`,
+      action.method === "GET"
+        ? "Read-scoped execution returned the provider state through the exact authenticated method/path/query, without changing any account."
+        : "MCP write-scope, provider-grant, and applicable confirmation denials produced zero provider calls. Authorized execution matched the exact method/path/query/body and selected credential, including any label-type preflight; the other accounts stayed unchanged.", true);
   }
-  const final = await snapshot(selected);
-  expect(final.state).toEqual({ labelIds: ["STARRED"], draftIds: [], sent: ["sent-1"],
-    event: { id: "event-1", status: "confirmed", summary: "After" }, values: [["=1+1", 7]],
-    outlookDraftIds: [], outlookAccepted: ["outlook-draft-1"] });
-  expect(final.totalRequests).toBe(5);
+  const completed = await snapshot(selected);
+  expect(completed.state).toMatchObject({ labelIds: ["STARRED"], draftIds: [], sent: ["sent-1"],
+    event: { id: "event-1", status: "cancelled", summary: "After" }, values: [["=1+1", 7], ["Next", true]],
+    folders: [{ id: "folder-1", name: "Review", parents: ["parent-2"] }], file: { id: "file-1", name: "After.txt", trashed: true, parents: ["parent-2"] },
+    outlookDraftIds: ["outlook-reply-1"], outlookAccepted: ["outlook-draft-1"],
+    outlookMessage: { id: "outlook-moved-1", parentFolderId: "deleteditems", isRead: true, categories: ["Reviewed"] },
+    outlookReply: { id: "outlook-reply-1", isDraft: true, conversationId: "conversation-1", body: { content: "Reply for review" } },
+    outlookEvent: null,
+    outlookCancelled: ["outlook-event-1"], outlookDeleted: ["outlook-event-1"] });
+  expect(completed.totalRequests).toBe(34);
+  expect(new Set(selectedTokens.values()).size).toBe(2);
   expect((await snapshot(readonly)).state).toEqual(readerBefore.state);
-  evidence.recordAssertionEvidence("Provider state reflects five actual mutations, not UI text or canned gateway success", "Selected account is archived/read/starred; Gmail draft is consumed into sent mail; Calendar summary changed; Sheets stores literal RAW values; Outlook accepted and consumed its draft (not a delivery claim). Both other accounts remain unchanged.", true);
+  evidence.recordAssertionEvidence("All 32 new native operations execute against stateful synthetic providers", "Seven reads and 25 writes produced 34 exact provider requests (two user-label preflights). Readbacks reflect previous writes; send consumes drafts, reply stays unsent, moves preserve account identity, and cancellation/deletion have distinct receipts. Google and Microsoft use distinct selected credentials; neither other account changed.", true);
+  for (const method of ["PATCH", "DELETE"]) {
+    const match = [...found.values()].find((entry) => text(entry.name).startsWith(`native:${google.id}:`) && entry.method === method
+      && entry.path === "/v1/capabilities/google-workspace/gmail-label/{labelId}");
+    if (!match) throw new Error("Missing label action");
+    const before = await snapshot(selected);
+    const denied = await gateway(writerToken, "execute_capability", { name: match.name, path: { labelId: "INBOX" }, body: method === "PATCH" ? { name: "Forbidden" } : { confirm: true } });
+    expect(denied.result.isError).toBe(true);
+    expect(denied.payload).toMatchObject({ error: "protected_label" });
+    const after = await snapshot(selected);
+    expect(after.state).toEqual(before.state);
+    expect(after.totalRequests).toBe(Number(before.totalRequests) + 1);
+    expect(rows(after.requests).slice(rows(before.requests).length)).toEqual([{ method: "GET", path: "/gmail/v1/users/me/labels/INBOX", query: {}, body: null,
+      email: selected, tokenId: selectedTokens.get(google.id) }]);
+  }
+  evidence.recordAssertionEvidence("Gmail system labels cannot be renamed or deleted", "Both operations read the selected label type and return protected_label. Only the authenticated GET reaches the provider; no mutation or state change occurs.", true);
+  const final = await snapshot(selected);
   for (const [connection, features, action] of [
     [google, ["gmailRead", "calendarRead", "sheetsRead"], cases[0]],
-    [microsoft, ["mailRead"], cases[4]],
+    [microsoft, ["mailRead"], cases[googleCases.length]],
   ] as const) {
     const disabled = await denFetch(den.admin, `/v1/oauth-providers/${connection.id}/client`, {
       method: "POST", headers: { authorization: `Bearer ${den.admin.token}` }, body: JSON.stringify({ features }),
