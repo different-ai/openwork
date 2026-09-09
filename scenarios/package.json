@@ -17,7 +17,7 @@
     "remotion": "4.0.520",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
   },
   "devDependencies": {
     "@types/react": "^19.1.13",

@@ -23,7 +23,7 @@ export type InvalidRequestError = {
   details: Array<{
     message: string;
     path?: Array<string | number>;
-    [key: string]: unknown | string | Array<string | number> | undefined;
+    [key: string]: unknown;
   }>;
   capability?: string;
 };
@@ -325,7 +325,7 @@ export type CurrentUserOrganizationsResponse = {
      */
     id: string;
     isActive: boolean;
-    [key: string]: unknown | string | boolean;
+    [key: string]: unknown;
   }>;
   activeOrgId: string | null;
   activeOrgSlug: string | null;
@@ -550,7 +550,7 @@ export type OrganizationOwner = {
 export type OrganizationContextResponse = {
   organization: {
     owner?: OrganizationOwner | null;
-    [key: string]: unknown | OrganizationOwner | null | undefined;
+    [key: string]: unknown;
   };
   currentMember: {
     [key: string]: unknown;
@@ -558,18 +558,7 @@ export type OrganizationContextResponse = {
   currentMemberTeams: Array<{
     [key: string]: unknown;
   }>;
-  [key: string]:
-    | unknown
-    | {
-        owner?: OrganizationOwner | null;
-        [key: string]: unknown | OrganizationOwner | null | undefined;
-      }
-    | {
-        [key: string]: unknown;
-      }
-    | Array<{
-        [key: string]: unknown;
-      }>;
+  [key: string]: unknown;
 };
 
 export type DeleteOrganizationResponse = {
@@ -952,7 +941,7 @@ export type ScimInvalidRequestError = {
   details: Array<{
     message: string;
     path?: Array<string | number>;
-    [key: string]: unknown | string | Array<string | number> | undefined;
+    [key: string]: unknown;
   }>;
 };
 
@@ -1041,7 +1030,7 @@ export type SsoInvalidRequestError = {
   details: Array<{
     message: string;
     path?: Array<string | number>;
-    [key: string]: unknown | string | Array<string | number> | undefined;
+    [key: string]: unknown;
   }>;
 };
 
@@ -1212,12 +1201,7 @@ export type LlmProviderResponse = {
     memberCredential?: {
       state: "missing" | "active" | "blocked" | "stale" | "error";
     };
-    [key: string]:
-      | unknown
-      | {
-          state: "missing" | "active" | "blocked" | "stale" | "error";
-        }
-      | undefined;
+    [key: string]: unknown;
   };
 };
 
@@ -2581,37 +2565,7 @@ export type OpenWorkExtensionManifest = {
   lifecycle?: {
     [key: string]: unknown;
   };
-  [key: string]:
-    | unknown
-    | 1
-    | string
-    | string
-    | {
-        format:
-          | "agent-plugin"
-          | "openwork-builtin"
-          | "openwork-extension-manifest"
-          | "claude-plugin"
-          | "opencode-plugin"
-          | "mcp-directory"
-          | "manual";
-        trusted: boolean;
-        origin?: "builtin" | "den" | "workspace" | "local";
-        reference?: string;
-      }
-    | Array<{
-        [key: string]: unknown;
-      }>
-    | Array<{
-        [key: string]: unknown;
-      }>
-    | {
-        [key: string]: unknown;
-      }
-    | {
-        [key: string]: unknown;
-      }
-    | undefined;
+  [key: string]: unknown;
 };
 
 export type PluginArchExtensionProjection = {
@@ -3667,13 +3621,7 @@ export type PluginArchConnectorSyncSummary = {
   failures?: Array<{
     [key: string]: unknown;
   }>;
-  [key: string]:
-    | unknown
-    | number
-    | Array<{
-        [key: string]: unknown;
-      }>
-    | undefined;
+  [key: string]: unknown;
 };
 
 export type PluginArchConnectorSyncEvent = {
@@ -4049,7 +3997,7 @@ export type OpenApiDocument = {
   info: {
     title: string;
     version: string;
-    [key: string]: unknown | string;
+    [key: string]: unknown;
   };
   paths: {
     [key: string]: unknown;
@@ -4057,21 +4005,7 @@ export type OpenApiDocument = {
   components?: {
     [key: string]: unknown;
   };
-  [key: string]:
-    | unknown
-    | string
-    | {
-        title: string;
-        version: string;
-        [key: string]: unknown | string;
-      }
-    | {
-        [key: string]: unknown;
-      }
-    | {
-        [key: string]: unknown;
-      }
-    | undefined;
+  [key: string]: unknown;
 };
 
 export type GetHealthData = {

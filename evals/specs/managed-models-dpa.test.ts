@@ -53,7 +53,7 @@ test("DPA policy blocks warm managed keys without revoking customer-owned models
     const response = await sdk.patchV1AdminOrganizationsByOrganizationIdDpa(
       { organizationId: world.orgId, dpaSigned, reason }, { signal: AbortSignal.timeout(30_000) },
     );
-    expect(response.response.status, JSON.stringify(response.error)).toBe(200);
+    expect(response.response?.status, JSON.stringify(response.error)).toBe(200);
     expect(response.data).toEqual({ ok: true, organization: { id: world.orgId, dpaSigned } });
   };
   const blocked = async (extra: Record<string, unknown> = {}, headers: Record<string, string> = {}, status = 403) => {
@@ -251,7 +251,7 @@ test("DPA policy blocks warm managed keys without revoking customer-owned models
     { organizationId: world.orgId, dpaSigned: true, reason: "SDK unauthorized mutation" },
     { signal: AbortSignal.timeout(30_000) },
   );
-  expect(forbiddenSdk.response.status).toBe(403);
+  expect(forbiddenSdk.response?.status).toBe(403);
   expect(forbiddenSdk.data).toBeUndefined();
   expect(record((await fixture()).metadata).dpaSigned).toBe(false);
   expect((await fixture()).audits).toEqual(unset.audits);
