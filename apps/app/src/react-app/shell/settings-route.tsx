@@ -72,6 +72,8 @@ import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mc
 import { createOpenworkServerStore, useOpenworkServerStoreSnapshot } from "@/react-app/domains/connections/openwork-server-store";
 import {
   connectGatewayProvider,
+  gatewayConnectProviderKey,
+  isGatewaySetConnected,
   type GatewayConnectProvider,
   resolveGatewayConnectProviders,
   resolveGatewayProviderIds,
@@ -866,7 +868,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     gatewayConnectAbort.current?.abort();
     const controller = new AbortController();
     gatewayConnectAbort.current = controller;
-    setConnectingGatewayProviderId(provider.cloudProviderId);
+    setConnectingGatewayProviderId(gatewayConnectProviderKey(provider));
     try {
       await connectGatewayProvider({
         provider,
@@ -875,7 +877,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         openUrl: (url) => platform.openLink(url),
         resync: () => providerAuthStore.runCloudProviderSync("manual"),
         isConnected: () => {
-          return provider.cloudProviderId in providerAuthStore.getSnapshot().importedCloudProviders;
+          return isGatewaySetConnected(provider, providerAuthStore.getSnapshot().importedCloudProviders);
         },
       });
     } catch (error) {

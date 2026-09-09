@@ -10,10 +10,13 @@ import type {
   InferenceProviderCredentialMode,
   InferenceProviderStatus,
 } from "@openwork/types/den/inference";
+import type { GatewayAccessGrant, GatewayCredentialSet, GatewayModelGroup, GatewayAuthorizationRequest, GatewayUsableModel } from "@openwork/types/den/gateway";
+import { z } from "zod";
 
 export type InferenceCredentialStatus = "ready" | "member_auth_required" | "org_credential_missing";
 
 export type DenInferenceProviderCredential = {
+  credentialSetId: string | null;
   subject: string;
   orgMembershipId: string | null;
   memberName: string | null;
@@ -31,8 +34,11 @@ export type DenInferenceProvider = {
   status: InferenceProviderStatus;
   updatedAt: string | null;
   providerConfig: Record<string, unknown>;
+  /** Empty follows the catalog; null means an older response omitted the policy. */
+  modelIds: string[] | null;
+  catalogWarning: string | null;
   settings: Record<string, string>;
-  models: Array<{ id: string; name: string; config: Record<string, unknown> }>;
+  models: Array<{ id: string; name: string; config: Record<string, unknown> } & Partial<Pick<GatewayUsableModel, "upstreamModelId" | "modelGroupId" | "modelGroupName" | "credentialSetId" | "credentialSetName">>>;
   credentialStatus: InferenceCredentialStatus;
   access: { allMembers: boolean; memberIds: string[]; teamIds: string[] } | null;
   credentials: DenInferenceProviderCredential[] | null;
@@ -40,7 +46,43 @@ export type DenInferenceProvider = {
   oauthClientId: string | null;
   hasOauthClientSecret: boolean;
   oauthCallbackUrl: string | null;
+  modelGroups: GatewayModelGroup[] | null;
+  credentialSets: GatewayCredentialSet[] | null;
+  accessGrants: GatewayAccessGrant[] | null;
+  authorizationRequests: GatewayAuthorizationRequest[];
 };
+
+export type DenInferenceProviderDetails = DenInferenceProvider & {
+  catalogModels: Array<{ id: string; name: string; config: Record<string, unknown> }>;
+  modelGroups: GatewayModelGroup[];
+  credentialSets: GatewayCredentialSet[];
+  accessGrants: GatewayAccessGrant[];
+};
+
+const resourceStatusSchema = z.enum(["active", "disabled"]);
+const modelGroupSchema: z.ZodType<GatewayModelGroup> = z.object({
+  id: z.string(), name: z.string(), description: z.string().nullable(),
+  status: resourceStatusSchema, modelIds: z.array(z.string()),
+});
+const credentialSetSchema: z.ZodType<GatewayCredentialSet> = z.object({
+  id: z.string(), name: z.string(), credentialMode: z.enum(["org", "member"]),
+  status: resourceStatusSchema, configured: z.boolean(),
+  credentialStatus: z.enum(["ready", "member_auth_required", "org_credential_missing"]),
+  oauthClientId: z.string().nullable().optional(), hasOauthClientSecret: z.boolean().optional(),
+  createdAt: z.string().optional(),
+  createdBy: z.object({ id: z.string(), name: z.string().nullable(), email: z.string().nullable() }).nullable().optional(),
+});
+const accessGrantSchema: z.ZodType<GatewayAccessGrant> = z.object({
+  id: z.string(), modelGroupId: z.string(), credentialSetId: z.string(),
+  audience: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("organization") }),
+    z.object({ type: z.literal("team"), teamId: z.string() }),
+    z.object({ type: z.literal("member"), memberId: z.string() }),
+  ]),
+});
+const authorizationRequestSchema: z.ZodType<GatewayAuthorizationRequest> = z.object({
+  credentialSetId: z.string(), name: z.string(), authUrl: z.string(),
+});
 
 /** models.dev `npm` packages the gateway can proxy; mirrors den-api. */
 export const SUPPORTED_GATEWAY_NPM_PACKAGES = [
@@ -136,6 +178,7 @@ function asCredential(value: unknown): DenInferenceProviderCredential | null {
   if (!subject || !kind || !status) return null;
   return {
     subject,
+    credentialSetId: asString(value.credentialSetId),
     orgMembershipId: asString(value.orgMembershipId),
     memberName: asString(value.memberName),
     memberEmail: asString(value.memberEmail),
@@ -168,13 +211,22 @@ export function asInferenceProvider(value: unknown): DenInferenceProvider | null
     status,
     updatedAt: asString(value.updatedAt),
     providerConfig: asJsonRecord(value.providerConfig),
+    modelIds: value.modelIds === undefined ? null : z.array(z.string()).parse(value.modelIds),
+    catalogWarning: asString(value.catalogWarning),
     settings,
     models: Array.isArray(value.models)
       ? value.models.flatMap((model) => {
           if (!isRecord(model)) return [];
           const modelId = asString(model.id);
           const modelName = asString(model.name);
-          return modelId && modelName ? [{ id: modelId, name: modelName, config: asJsonRecord(model.config) }] : [];
+          return modelId && modelName ? [{
+            id: modelId, name: modelName, config: asJsonRecord(model.config),
+            upstreamModelId: asString(model.upstreamModelId) ?? undefined,
+            modelGroupId: asString(model.modelGroupId) ?? undefined,
+            modelGroupName: asString(model.modelGroupName) ?? undefined,
+            credentialSetId: asString(model.credentialSetId) ?? undefined,
+            credentialSetName: asString(model.credentialSetName) ?? undefined,
+          }] : [];
         })
       : [],
     credentialStatus: asCredentialStatus(value.credentialStatus),
@@ -191,11 +243,22 @@ export function asInferenceProvider(value: unknown): DenInferenceProvider | null
     oauthClientId: asString(value.oauthClientId),
     hasOauthClientSecret: value.hasOauthClientSecret === true,
     oauthCallbackUrl: asString(value.oauthCallbackUrl),
+    modelGroups: value.modelGroups === undefined ? null : z.array(modelGroupSchema).parse(value.modelGroups),
+    credentialSets: value.credentialSets === undefined ? null : z.array(credentialSetSchema).parse(value.credentialSets),
+    accessGrants: value.accessGrants === undefined ? null : z.array(accessGrantSchema).parse(value.accessGrants),
+    authorizationRequests: value.authorizationRequests === undefined ? [] : z.array(authorizationRequestSchema).parse(value.authorizationRequests),
   };
 }
 
 export function readInferenceProviderFromPayload(payload: unknown): DenInferenceProvider | null {
   return isRecord(payload) ? asInferenceProvider(payload.inferenceProvider) : null;
+}
+
+export function readInferenceProviderDetails(payload: unknown, catalogPayload: unknown): DenInferenceProviderDetails | null {
+  const provider = readInferenceProviderFromPayload(payload);
+  if (!provider?.modelGroups || !provider.credentialSets || !provider.accessGrants) return null;
+  const catalog = z.object({ models: z.array(z.object({ id: z.string(), name: z.string(), config: z.record(z.string(), z.unknown()) })) }).parse(catalogPayload);
+  return { ...provider, catalogModels: catalog.models, modelGroups: provider.modelGroups, credentialSets: provider.credentialSets, accessGrants: provider.accessGrants };
 }
 
 export function readInferenceProvidersFromPayload(payload: unknown): DenInferenceProvider[] {

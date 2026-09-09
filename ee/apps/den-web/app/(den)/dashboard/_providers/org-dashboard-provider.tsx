@@ -34,6 +34,7 @@ type OrgDashboardContextValue = {
   orgBusy: boolean;
   orgError: string | null;
   mutationBusy: string | null;
+  reauthDialogOpen: boolean;
   orgSettingsCompletion: OrgSettingsCompletion | null;
   clearOrgSettingsCompletion: () => void;
   refreshOrgData: () => Promise<void>;
@@ -917,6 +918,7 @@ export function OrgDashboardProvider({
     orgBusy,
     orgError,
     mutationBusy,
+    reauthDialogOpen,
     orgSettingsCompletion,
     clearOrgSettingsCompletion,
     refreshOrgData,

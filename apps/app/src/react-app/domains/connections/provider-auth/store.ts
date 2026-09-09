@@ -714,7 +714,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         setStateField("cloudProviderServerSync", {
           reloadPending: status.reloadPending,
           skippedProviders: Object.fromEntries(
-            status.skippedProviders.map((provider) => [provider.cloudProviderId, provider]),
+            status.skippedProviders.map((provider) => [provider.credentialSetId ? `${provider.cloudProviderId}:${provider.credentialSetId}` : provider.cloudProviderId, provider]),
           ),
         });
         return next;
@@ -2192,12 +2192,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
-  async function startGatewayProviderOAuth(providerId: string) {
+  async function startGatewayProviderOAuth(providerId: string, credentialSetId?: string) {
     const orgId = readDenSettings().activeOrgId;
     const client = options.openworkServer.getSnapshot().openworkServerClient;
     if (!orgId || !client) throw new Error("Sign in to OpenWork before connecting this provider.");
     await pushDenSession();
-    return client.startGatewayProviderOAuth(providerId, orgId);
+    return client.startGatewayProviderOAuth(providerId, orgId, credentialSetId);
   }
 
   async function runCloudProviderSync(reason: CloudProviderSyncReason): Promise<void | { outcome: "handled_server_side" }> {

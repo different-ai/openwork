@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Search, User, Users } from "lucide-react";
+import { Check, Search, User, Users } from "lucide-react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import type { DenComboboxOption } from "../../_components/ui/combobox";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelectableRow } from "../../_components/ui/selectable-row";
 import { DenToggleRow } from "../../_components/ui/toggle-row";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../_components/ui/tooltip";
 import type { DenOrgContext } from "../../_lib/den-org";
 import { getProviderIconSlug, type DenModelsDevProviderSummary } from "./llm-provider-data";
 
@@ -44,11 +45,13 @@ export function ProviderModelPicker({
     selectedModelIds,
     onChange,
     emptyLabel = "Select a provider to browse its models.",
+    layout = "rows",
 }: {
     models: ProviderModelOption[] | null;
     selectedModelIds: string[];
     onChange: (next: string[]) => void;
     emptyLabel?: string;
+    layout?: "rows" | "cards";
 }) {
     const [query, setQuery] = useState("");
     const filtered = useMemo(() => {
@@ -82,17 +85,54 @@ export function ProviderModelPicker({
             </div>
             {models ? (
                 filtered.length ? (
-                    <div className="mt-4 overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
-                        {filtered.map((model) => (
-                            <DenSelectableRow
-                                key={model.id}
-                                selected={selectedModelIds.includes(model.id)}
-                                title={model.name}
-                                description={model.id}
-                                onClick={() => toggle(model.id)}
-                            />
-                        ))}
-                    </div>
+                    layout === "cards" ? (
+                        <TooltipProvider delay={250}>
+                            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                                {filtered.map((model) => {
+                                    const selected = selectedModelIds.includes(model.id);
+                                    return (
+                                        <Tooltip key={model.id}>
+                                            <TooltipTrigger
+                                                type="button"
+                                                role="checkbox"
+                                                aria-checked={selected}
+                                                aria-label={`${model.name} (${model.id})`}
+                                                onClick={() => toggle(model.id)}
+                                                className={`flex min-w-0 cursor-pointer items-center gap-3 overflow-hidden rounded-2xl border p-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 ${selected ? "border-emerald-600 bg-emerald-50 hover:bg-emerald-100" : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"}`}
+                                            >
+                                                <span className="grid min-w-0 flex-1 gap-1 overflow-hidden">
+                                                    <span className="truncate text-base font-medium text-gray-950">{model.name}</span>
+                                                    <span className="truncate text-xs text-gray-400">{model.id}</span>
+                                                </span>
+                                                <span
+                                                    aria-hidden="true"
+                                                    className={`flex size-5 shrink-0 items-center justify-center rounded-md border ${selected ? "border-emerald-700 bg-emerald-700 text-white" : "border-gray-300 bg-white"}`}
+                                                >
+                                                    {selected ? <Check className="size-3.5" /> : null}
+                                                </span>
+                                            </TooltipTrigger>
+                                            <TooltipContent>
+                                                <p className="break-words font-medium">{model.name}</p>
+                                                <p className="break-all text-gray-300">{model.id}</p>
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    );
+                                })}
+                            </div>
+                        </TooltipProvider>
+                    ) : (
+                        <div className="mt-4 overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
+                            {filtered.map((model) => (
+                                <DenSelectableRow
+                                    key={model.id}
+                                    selected={selectedModelIds.includes(model.id)}
+                                    title={model.name}
+                                    description={model.id}
+                                    onClick={() => toggle(model.id)}
+                                />
+                            ))}
+                        </div>
+                    )
                 ) : (
                     <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
                         No models match <span className="font-medium text-gray-700">&quot;{query}&quot;</span>.
@@ -123,12 +163,14 @@ export function ProviderAccessPicker({
     onChange,
     lockedMemberId,
     testIdPrefix,
+    singleAudience = false,
 }: {
     orgContext: DenOrgContext | null;
     value: ProviderAccessValue;
     onChange: (next: ProviderAccessValue) => void;
     lockedMemberId: string | null;
     testIdPrefix: string;
+    singleAudience?: boolean;
 }) {
     const [accessTab, setAccessTab] = useState<"teams" | "people">("teams");
     const [accessQuery, setAccessQuery] = useState("");
@@ -155,14 +197,16 @@ export function ProviderAccessPicker({
     const toggleTeam = (teamId: string) =>
         onChange({
             ...value,
-            teamIds: teamIds.includes(teamId) ? teamIds.filter((entry) => entry !== teamId) : [...teamIds, teamId],
+            ...(singleAudience ? { allMembers: false, memberIds: [] } : {}),
+            teamIds: teamIds.includes(teamId) ? teamIds.filter((entry) => entry !== teamId) : singleAudience ? [teamId] : [...teamIds, teamId],
         });
     const toggleMember = (memberId: string) =>
         onChange({
             ...value,
+            ...(singleAudience ? { allMembers: false, teamIds: [] } : {}),
             memberIds: memberIds.includes(memberId)
                 ? memberIds.filter((entry) => entry !== memberId)
-                : [...memberIds, memberId],
+                : singleAudience ? [memberId] : [...memberIds, memberId],
         });
 
     return (
@@ -174,7 +218,7 @@ export function ProviderAccessPicker({
                     title={`Everyone in ${orgContext?.organization.name ?? "this organization"}`}
                     description={`All ${orgContext?.members.length ?? 0} current members — and anyone who joins later — can use these models.`}
                     checked={allMembers}
-                    onChange={(checked) => onChange({ ...value, allMembers: checked })}
+                    onChange={(checked) => onChange({ ...value, ...(singleAudience ? { memberIds: [], teamIds: [] } : {}), allMembers: checked })}
                 />
             </div>
 
@@ -183,7 +227,7 @@ export function ProviderAccessPicker({
             ) : null}
 
             <div className={allMembers ? "pointer-events-none select-none opacity-45" : undefined} aria-disabled={allMembers}>
-                <div className="mt-6 grid w-80 grid-cols-2 rounded-xl bg-gray-200 p-1 text-[13px] font-medium text-gray-500">
+                <div className="mt-6 grid w-full max-w-80 grid-cols-2 rounded-xl bg-gray-200 p-1 text-[13px] font-medium text-gray-500">
                     <button
                         type="button"
                         onClick={() => {

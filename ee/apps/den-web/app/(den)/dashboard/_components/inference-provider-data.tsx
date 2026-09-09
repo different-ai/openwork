@@ -1,11 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import type { GatewayAccessGrantWrite, GatewayCredentialSetWrite, GatewayModelGroupWrite } from "@openwork/types/den/gateway";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import {
   buildMigrateFromLlmProviderBody,
   readInferenceProviderFromPayload,
   readInferenceProvidersFromPayload,
+  readInferenceProviderDetails,
+  type DenInferenceProviderDetails,
   type DenInferenceProvider,
   type InferenceProviderRequestBody,
 } from "./inference-provider-request";
@@ -46,7 +49,7 @@ export function useOrgInferenceProviders(orgId: string | null) {
 
 /** One provider with its access grants and credential list (no secret values). */
 export function useInferenceProvider(orgId: string | null, inferenceProviderId: string | null) {
-  const [provider, setProvider] = useState<DenInferenceProvider | null>(null);
+  const [provider, setProvider] = useState<DenInferenceProviderDetails | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,9 +70,11 @@ export function useInferenceProvider(orgId: string | null, inferenceProviderId: 
       if (!response.ok) {
         throw new Error(getErrorMessage(payload, `Failed to load the provider (${response.status}).`));
       }
-      const next = readInferenceProviderFromPayload(payload);
+      const catalog = await requestJson(`/v1/inference-providers/${encodeURIComponent(inferenceProviderId)}/models`, { method: "GET" }, 15000);
+      if (!catalog.response.ok) throw new Error(getErrorMessage(catalog.payload, "Could not load configured catalog models."));
+      const next = readInferenceProviderDetails(payload, catalog.payload);
       if (!next) {
-        throw new Error("The provider could not be parsed.");
+        throw new Error("The server did not return valid model groups, credential sets and access rules. Matrix editing is unavailable until the API is updated.");
       }
       setProvider(next);
     } catch (loadError) {
@@ -89,7 +94,7 @@ export function useInferenceProvider(orgId: string | null, inferenceProviderId: 
 
 export async function saveInferenceProvider(input: {
   inferenceProviderId: string | null;
-  body: InferenceProviderRequestBody;
+  body: Partial<InferenceProviderRequestBody>;
 }): Promise<DenInferenceProvider> {
   const path = input.inferenceProviderId
     ? `/v1/inference-providers/${encodeURIComponent(input.inferenceProviderId)}`
@@ -107,6 +112,27 @@ export async function saveInferenceProvider(input: {
     throw new Error("The provider was saved, but no provider was returned.");
   }
   return provider;
+}
+
+type GatewayResourceWrite =
+  | { resource: "model-groups"; body: GatewayModelGroupWrite }
+  | { resource: "credential-sets"; body: GatewayCredentialSetWrite }
+  | { resource: "access-grants"; body: GatewayAccessGrantWrite };
+
+export async function saveGatewayResource(providerId: string, id: string | null, input: GatewayResourceWrite) {
+  const path = `/v1/inference-providers/${encodeURIComponent(providerId)}/${input.resource}${id ? `/${encodeURIComponent(id)}` : ""}`;
+  const { response, payload } = await requestJson(path, {
+    method: id ? "PATCH" : "POST", body: JSON.stringify(input.body),
+  }, 20000);
+  if (!response.ok) throw getRequestError(payload, response, `Could not save ${input.resource} (${response.status}).`);
+}
+
+export async function deleteGatewayResource(providerId: string, resource: GatewayResourceWrite["resource"], id: string) {
+  const { response, payload } = await requestJson(
+    `/v1/inference-providers/${encodeURIComponent(providerId)}/${resource}/${encodeURIComponent(id)}`,
+    { method: "DELETE" }, 20000,
+  );
+  if (!response.ok) throw getRequestError(payload, response, `Could not delete ${resource} (${response.status}).`);
 }
 
 export async function deleteInferenceProvider(inferenceProviderId: string) {

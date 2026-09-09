@@ -127,11 +127,23 @@ export const OPENWORK_GATEWAY_BADGE_LABEL = "via OpenWork Gateway";
  */
 export type GatewayConnectProvider = {
   cloudProviderId: string;
+  credentialSetId?: string;
   providerId: string;
   name: string;
   /** Legacy metadata only; never opened or sent to an authenticated endpoint. */
   authUrl: string | null;
 };
+
+export const gatewayConnectProviderKey = (provider: { cloudProviderId: string; credentialSetId?: string }) =>
+  provider.credentialSetId ? `${provider.cloudProviderId}:${provider.credentialSetId}` : provider.cloudProviderId;
+
+export function isGatewaySetConnected(provider: GatewayConnectProvider, imported: Record<string, CloudImportedProvider>) {
+  const ready = imported[provider.cloudProviderId];
+  if (!ready) return false;
+  if (!provider.credentialSetId) return true;
+  const suffix = provider.credentialSetId.slice(4);
+  return ready.modelIds.some((id) => id.startsWith("gwm_") && id.split("_")[2] === suffix);
+}
 
 export const GATEWAY_MEMBER_AUTH_REQUIRED_REASON = "member_auth_required";
 
@@ -141,7 +153,7 @@ export const gatewayConnectCopy = (name: string) => `Sign in to ${name} to use i
 /** Skipped sync entries that need the member's own sign-in, in server order. */
 export const resolveGatewayConnectProviders = (
   skippedProviders:
-    | Record<string, { cloudProviderId: string; providerId: string; name: string; reason: string; authUrl?: string | null }>
+    | Record<string, { cloudProviderId: string; credentialSetId?: string; providerId: string; name: string; reason: string; authUrl?: string | null }>
     | undefined
     | null,
 ): GatewayConnectProvider[] =>
@@ -149,6 +161,7 @@ export const resolveGatewayConnectProviders = (
     .filter((provider) => provider.reason === GATEWAY_MEMBER_AUTH_REQUIRED_REASON)
     .map((provider) => ({
       cloudProviderId: provider.cloudProviderId,
+      credentialSetId: provider.credentialSetId,
       providerId: provider.providerId,
       name: provider.name,
       authUrl: provider.authUrl ?? null,
@@ -165,7 +178,7 @@ export const GATEWAY_CONNECT_POLL_ATTEMPTS = 6;
  */
 export async function connectGatewayProvider(input: {
   provider: GatewayConnectProvider;
-  startOAuth: (providerId: string) => Promise<{ authorizationUrl: string }>;
+  startOAuth: (providerId: string, credentialSetId?: string) => Promise<{ authorizationUrl: string }>;
   signal: AbortSignal;
   openUrl: (url: string) => void | Promise<void>;
   resync: () => Promise<unknown>;
@@ -176,7 +189,7 @@ export async function connectGatewayProvider(input: {
   attempts?: number;
 }): Promise<boolean> {
   if (input.signal.aborted) return false;
-  const { authorizationUrl } = await input.startOAuth(input.provider.cloudProviderId);
+  const { authorizationUrl } = await input.startOAuth(input.provider.cloudProviderId, input.provider.credentialSetId);
   if (input.signal.aborted) return false;
   await input.openUrl(authorizationUrl);
   const wait = input.wait ?? ((ms: number) => new Promise<void>((resolve) => {

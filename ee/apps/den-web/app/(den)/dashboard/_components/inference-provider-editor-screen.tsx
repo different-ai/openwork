@@ -2,654 +2,204 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Trash2 } from "lucide-react";
-import { DenBrandMark } from "../../_components/ui/brand-mark";
-import { DenButton } from "../../_components/ui/button";
+import { useEffect, useRef, useState } from "react";
+import { AlertDialog } from "@base-ui/react/alert-dialog";
+import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCombobox } from "../../_components/ui/combobox";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
-import { DenOptionCard } from "../../_components/ui/option-card";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
-import { DenTextarea } from "../../_components/ui/textarea";
 import { getGatewayProviderRoute, getGatewayProvidersRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteInferenceProvider, saveInferenceProvider, useInferenceProvider } from "./inference-provider-data";
-import {
-  buildInferenceProviderRequestBody,
-  getRequiredSettingKeys,
-  getSettingLabel,
-  isGoogleVertexNpm,
-  isSupportedGatewayNpm,
-  supportsMemberCredentialMode,
-  validateInferenceProviderForm,
-  type DenInferenceProvider,
-} from "./inference-provider-request";
-import {
-  getProviderDocUrl,
-  getProviderEnvNames,
-  getProviderIconSlug,
-  getProviderNpmPackage,
-  requestLlmProviderCatalog,
-  requestLlmProviderCatalogDetail,
-  type DenModelsDevProviderDetail,
-  type DenModelsDevProviderSummary,
-} from "./llm-provider-data";
+import { getRequiredSettingKeys, getSettingLabel, isSupportedGatewayNpm } from "./inference-provider-request";
+import { getProviderNpmPackage, requestLlmProviderCatalog, requestLlmProviderCatalogDetail, type DenModelsDevProviderDetail, type DenModelsDevProviderSummary } from "./llm-provider-data";
 import { normalizeAzureResourceNameInput } from "./llm-provider-guided";
-import { buildCatalogProviderOptions, ProviderAccessPicker, ProviderModelPicker, type ProviderAccessValue } from "./llm-provider-pickers";
-import { InferenceCredentialStatusBadge } from "./inference-providers-screen";
+import { buildCatalogProviderOptions } from "./llm-provider-pickers";
+import { GatewayAccessMatrix } from "./inference-provider-matrix";
+import { GatewayModelUniverse } from "./inference-provider-model-universe";
 
-const SECTION_CLASS =
-  "mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]";
-
-function settingPlaceholder(key: string) {
-  switch (key) {
-    case "project":
-      return "my-gcp-project";
-    case "location":
-      return "us-central1";
-    case "resourceName":
-      return "Paste the resource name or Azure Foundry project URL";
-    default:
-      return "";
-  }
-}
+const SECTION_CLASS = "mb-8 border-b border-gray-200 pb-8";
 
 export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferenceProviderId?: string }) {
   const router = useRouter();
-  const { orgId, orgSlug, orgContext, runReauthableAction } = useOrgDashboard();
-  const { provider, busy, error } = useInferenceProvider(orgId, inferenceProviderId ?? null);
-
-  const [catalogProviders, setCatalogProviders] = useState<DenModelsDevProviderSummary[]>([]);
+  const { orgId, orgSlug, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
+  const { provider, busy, error, reload } = useInferenceProvider(orgId, inferenceProviderId ?? null);
+  const [catalog, setCatalog] = useState<DenModelsDevProviderSummary[]>([]);
+  const [detail, setDetail] = useState<DenModelsDevProviderDetail | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [selectedProviderId, setSelectedProviderId] = useState("");
-  const [catalogDetail, setCatalogDetail] = useState<DenModelsDevProviderDetail | null>(null);
-  const [detailBusy, setDetailBusy] = useState(false);
-  const [detailError, setDetailError] = useState<string | null>(null);
+  const [providerId, setProviderId] = useState("");
   const [name, setName] = useState("");
-  const [nameTouched, setNameTouched] = useState(false);
-  const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
+  const [modelIds, setModelIds] = useState<string[]>([]);
+  const [allowAllModels, setAllowAllModels] = useState(true);
   const [settings, setSettings] = useState<Record<string, string>>({});
-  const [credentialMode, setCredentialMode] = useState<"org" | "member">("org");
-  const [apiKey, setApiKey] = useState("");
-  const [apiKeyValues, setApiKeyValues] = useState<Record<string, string>>({});
-  const [serviceAccountJson, setServiceAccountJson] = useState("");
-  const [oauthClientId, setOauthClientId] = useState("");
-  const [oauthClientSecret, setOauthClientSecret] = useState("");
-  const [access, setAccess] = useState<ProviderAccessValue>({ allMembers: false, memberIds: [], teamIds: [] });
   const [active, setActive] = useState(true);
-  const [saveBusy, setSaveBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const cancelDeleteRef = useRef<HTMLButtonElement | null>(null);
+  const initializedProviderId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!provider || initializedProviderId.current === provider.id) return;
+    initializedProviderId.current = provider.id;
+    setProviderId(provider.providerId);
+    setName(provider.name);
+    setModelIds(provider.modelIds ?? provider.catalogModels.map((model) => model.id));
+    setAllowAllModels(provider.modelIds !== null && provider.modelIds.length === 0);
+    setSettings(provider.settings);
+    setActive(provider.status === "active");
+  }, [provider]);
 
   useEffect(() => {
     if (!orgId) return;
-    let canceled = false;
-    setCatalogError(null);
-    void requestLlmProviderCatalog(orgId)
-      .then((providers) => {
-        if (!canceled) setCatalogProviders(providers);
-      })
-      .catch((loadError) => {
-        if (!canceled) {
-          setCatalogError(loadError instanceof Error ? loadError.message : "Failed to load the provider catalog.");
-        }
-      });
-    return () => {
-      canceled = true;
-    };
+    let cancelled = false;
+    void requestLlmProviderCatalog(orgId).then((result) => {
+      if (!cancelled) setCatalog(result);
+    }).catch(() => {
+      if (!cancelled) setCatalogError("Could not load the provider catalog.");
+    });
+    return () => { cancelled = true; };
   }, [orgId]);
 
-  // Populate the form from the stored provider (edit) or defaults (create).
   useEffect(() => {
-    if (provider) {
-      setSelectedProviderId(provider.providerId);
-      setName(provider.name);
-      setNameTouched(true);
-      setSelectedModelIds(provider.models.map((model) => model.id));
-      setSettings(provider.settings);
-      setCredentialMode(provider.credentialMode);
-      setOauthClientId(provider.oauthClientId ?? "");
-      setAccess(provider.access ?? { allMembers: false, memberIds: [], teamIds: [] });
-      setActive(provider.status === "active");
-    } else {
-      setSelectedProviderId("");
-      setName("");
-      setNameTouched(false);
-      setSelectedModelIds([]);
-      setSettings({});
-      setCredentialMode("org");
-      setOauthClientId("");
-      setAccess({
-        allMembers: false,
-        memberIds: orgContext?.currentMember.id ? [orgContext.currentMember.id] : [],
-        teamIds: [],
-      });
-      setActive(true);
-    }
-    setApiKey("");
-    setApiKeyValues({});
-    setServiceAccountJson("");
-    setOauthClientSecret("");
-  }, [orgContext?.currentMember.id, provider]);
-
-  // den-api only allows member mode for Google Vertex; fall back to org when the provider changes.
-  const memberModeSupported = supportsMemberCredentialMode(selectedProviderId);
-  useEffect(() => {
-    if (!memberModeSupported) setCredentialMode("org");
-  }, [memberModeSupported]);
-
-  useEffect(() => {
-    if (!orgId || !selectedProviderId) {
-      setCatalogDetail(null);
-      setDetailError(null);
-      return;
-    }
-    let canceled = false;
-    setDetailBusy(true);
-    setDetailError(null);
-    void requestLlmProviderCatalogDetail(orgId, selectedProviderId)
-      .then((detail) => {
-        if (canceled) return;
-        setCatalogDetail(detail);
-        if (provider?.providerId !== selectedProviderId) {
-          setSelectedModelIds((current) => current.filter((entry) => detail.models.some((model) => model.id === entry)));
-        }
-      })
-      .catch((loadError) => {
-        if (canceled) return;
-        setCatalogDetail(null);
-        setDetailError(loadError instanceof Error ? loadError.message : "Failed to load provider details.");
-      })
-      .finally(() => {
-        if (!canceled) setDetailBusy(false);
-      });
-    return () => {
-      canceled = true;
-    };
-  }, [orgId, selectedProviderId, provider?.providerId]);
-
-  const catalogProviderOptions = useMemo(
-    () =>
-      buildCatalogProviderOptions(catalogProviders, (entry) =>
-        isSupportedGatewayNpm(entry.npm) ? entry.id : `${entry.id} · not available via gateway`,
-      ),
-    [catalogProviders],
-  );
-
-  const selectedCatalog = catalogProviders.find((entry) => entry.id === selectedProviderId) ?? null;
-  const npm = catalogDetail
-    ? getProviderNpmPackage(catalogDetail.config)
-    : selectedCatalog?.npm ?? (provider ? getProviderNpmPackage(provider.providerConfig) : null);
-  const supported = selectedProviderId ? isSupportedGatewayNpm(npm) : true;
-  const envNames = catalogDetail
-    ? getProviderEnvNames(catalogDetail.config)
-    : provider
-      ? getProviderEnvNames(provider.providerConfig)
-      : [];
-  const requiredSettingKeys = getRequiredSettingKeys(npm);
-  const isVertex = isGoogleVertexNpm(npm);
-  const autoName = selectedCatalog?.name ?? catalogDetail?.name ?? "";
-  const effectiveName = nameTouched && name.trim() ? name.trim() : autoName;
-  const lockedMemberId = orgContext?.currentMember.id ?? null;
-  const orgCredentialSaved = provider?.credentials?.some((credential) => credential.subject === "org" && credential.status === "active") ?? false;
-  const hasOauthClientSecret = provider?.hasOauthClientSecret ?? false;
-
-  async function save() {
-    if (!catalogDetail || catalogDetail.id !== selectedProviderId || detailBusy || detailError) {
-      setSaveError("Wait for the provider catalog to load before saving. Your existing settings and credentials have not changed.");
-      return;
-    }
-    const validationError = validateInferenceProviderForm({
-      npm,
-      name: effectiveName,
-      providerId: selectedProviderId,
-      modelIds: selectedModelIds,
-      settings,
-      serviceAccountJson,
-      credentialMode,
-      oauthClientId,
-      oauthClientSecret,
-      hasOauthClientSecret,
+    setDetail(null);
+    if (!orgId || !providerId) return;
+    let cancelled = false;
+    setCatalogError(null);
+    void requestLlmProviderCatalogDetail(orgId, providerId).then((result) => {
+      if (!cancelled) setDetail(result);
+    }).catch(() => {
+      if (!cancelled) setCatalogError("Could not load this provider's models. Existing configuration has not changed.");
     });
-    if (validationError) {
-      setSaveError(validationError);
-      return;
-    }
+    return () => { cancelled = true; };
+  }, [orgId, providerId]);
+
+  const npm = detail ? getProviderNpmPackage(detail.config) : null;
+  async function save() {
     setSaveError(null);
-    setSaveBusy(true);
+    if (!detail || detail.id !== providerId) return setSaveError("Select a provider and wait for its catalog to load.");
+    if (!isSupportedGatewayNpm(npm)) return setSaveError("This provider is not supported by AI Gateway.");
+    if (!name.trim()) return setSaveError("Give the provider a name.");
+    if (!allowAllModels && !modelIds.length) return setSaveError("Select at least one model, or turn on Allow all models.");
+    for (const key of getRequiredSettingKeys(npm)) {
+      if (!settings[key]?.trim()) return setSaveError(`${getSettingLabel(key)} is required.`);
+    }
+    setSaving(true);
     try {
       await runReauthableAction("save-inference-provider", async () => {
         const saved = await saveInferenceProvider({
           inferenceProviderId: provider?.id ?? null,
-          body: buildInferenceProviderRequestBody({
-            name: effectiveName,
-            providerId: selectedProviderId,
-            modelIds: selectedModelIds,
-            credentialMode,
-            status: active ? "active" : "disabled",
-            settings,
-            previousSettings: provider?.settings,
-            envNames,
-            apiKey,
-            apiKeyValues,
-            serviceAccountJson,
-            oauthClientId,
-            oauthClientSecret,
-            access,
-          }),
+          body: {
+            name: name.trim(), modelIds: allowAllModels ? [] : modelIds, status: active ? "active" : "disabled",
+            // Editing the catalog never writes credentials or legacy flat access.
+            ...(!provider ? { providerId, credentialMode: "org", allMembers: false, memberIds: [], teamIds: [] } : {}),
+            ...(provider && JSON.stringify(settings) === JSON.stringify(provider.settings) ? {} : { settings }),
+          },
         });
         router.push(getGatewayProviderRoute(orgSlug, saved.id));
         router.refresh();
       });
-    } catch (nextError) {
-      setSaveError(nextError instanceof Error ? nextError.message : "Could not save the gateway provider.");
-    } finally {
-      setSaveBusy(false);
-    }
+    } catch (cause) {
+      setSaveError(cause instanceof Error ? cause.message : "Could not save the provider.");
+    } finally { setSaving(false); }
   }
 
-  async function remove(target: DenInferenceProvider) {
+  async function remove() {
+    if (!provider || saving) return;
+    setSaving(true);
     setSaveError(null);
-    setDeleteBusy(true);
     try {
       await runReauthableAction("delete-inference-provider", async () => {
-        await deleteInferenceProvider(target.id);
+        await deleteInferenceProvider(provider.id);
+        setConfirmDelete(false);
         router.push(getGatewayProvidersRoute(orgSlug));
         router.refresh();
       });
-    } catch (nextError) {
-      setSaveError(nextError instanceof Error ? nextError.message : "Could not delete the gateway provider.");
-      setConfirmingDelete(false);
-    } finally {
-      setDeleteBusy(false);
-    }
+    } catch (cause) {
+      setSaveError(cause instanceof Error ? cause.message : "Could not delete the provider.");
+    } finally { setSaving(false); }
   }
 
-  if (inferenceProviderId && busy && !provider) {
-    return (
-      <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
-        <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
-          Loading provider details...
-        </div>
-      </div>
-    );
-  }
-
-  if (inferenceProviderId && !provider) {
-    return (
-      <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
-        <DenNotice message={error ?? "That gateway provider could not be found."} tone="error" />
-      </div>
-    );
-  }
-
+  if (inferenceProviderId && !provider) return <div className="p-8">{busy ? "Loading provider..." : <DenNotice tone="error" message={error ?? "Provider not found."} />}</div>;
   const backHref = provider ? getGatewayProviderRoute(orgSlug, provider.id) : getGatewayProvidersRoute(orgSlug);
-
   return (
     <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
-      <div className="mb-8 flex flex-col gap-3">
-        <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">
-          {provider ? "Edit gateway provider" : "Add gateway provider"}
-        </p>
-        <h1 className="text-[34px] font-semibold tracking-[-0.07em] text-gray-950">
-          {provider ? effectiveName || provider.name : "Add a provider via OpenWork Gateway"}
-        </h1>
-        <p className="max-w-[720px] text-[16px] leading-8 text-gray-500">
-          Pick a provider and models, store the credential once, and choose who can use it. Members call it through the
-          OpenWork Gateway with their own OpenWork key.
-        </p>
-      </div>
-
-      <div className="mb-8 flex items-center justify-between gap-4">
-        <Link href={backHref} className="inline-flex items-center gap-2 text-[15px] font-medium text-gray-500 transition hover:text-gray-900">
-          <ArrowLeft className="h-5 w-5" />
-          Back
-        </Link>
-        {provider ? (
-          <DenButton variant="destructive" data-testid="gateway-provider-delete" onClick={() => setConfirmingDelete(true)}>
-            <Trash2 className="h-4 w-4" />
-            Delete
-          </DenButton>
-        ) : null}
-      </div>
-
-      {saveError ? <DenNotice message={saveError} tone="error" className="mb-6" /> : null}
-
+      <Link href={backHref} className="text-sm text-gray-500">Back</Link>
+      <h1 className="my-6 text-3xl font-semibold">{provider ? `Edit ${provider.name}` : "Add an AI Gateway provider"}</h1>
+      <p className="mb-8 text-gray-500">Choose the model universe first, then create model groups, upstream keys and access groups. Administrators are not automatically granted model access.</p>
+      {saveError ? <DenNotice tone="error" message={saveError} className="mb-6" /> : null}
+      {catalogError ? <DenNotice tone="error" message={catalogError} className="mb-6" /> : null}
       <section className={SECTION_CLASS}>
-        <h2 className="mb-6 text-[24px] font-semibold tracking-[-0.05em] text-gray-950">Provider</h2>
+        <h2 className="mb-5 text-xl font-semibold">Provider</h2>
         <div className="grid gap-6">
-          <div className="grid gap-3">
-            <span className="text-[14px] font-medium text-gray-700">Provider</span>
-            <DenCombobox
-              value={selectedProviderId}
-              options={catalogProviderOptions}
-              onChange={setSelectedProviderId}
-              ariaLabel="Provider"
-              placeholder="Select a provider..."
-              searchPlaceholder="Search providers..."
-              emptyLabel="No providers match"
-            />
-            <p className="text-[13px] text-gray-500">
-              Anthropic, OpenAI, Azure, OpenAI-compatible, OpenRouter, Google and Google Vertex providers can be routed
-              via OpenWork Gateway. Amazon Bedrock and custom providers are not supported yet.
-            </p>
-          </div>
-          {catalogError ? <p className="text-[14px] text-red-600">{catalogError}</p> : null}
-          {detailBusy ? <p className="text-[14px] text-gray-500">Loading provider details...</p> : null}
-          {detailError ? <p className="text-[14px] text-red-600">{detailError}</p> : null}
-          {selectedProviderId && !supported ? (
-            <DenNotice
-              tone="warning"
-              message={`${selectedCatalog?.name ?? selectedProviderId} cannot be routed through the OpenWork gateway yet. Add it under Bring your Own Keys instead.`}
-            />
-          ) : null}
-
-          <label className="grid gap-3">
-            <span className="text-[14px] font-medium text-gray-700">Name</span>
-            <DenInput
-              data-testid="gateway-provider-name"
-              value={effectiveName}
-              onChange={(event) => {
-                setName(event.target.value);
-                setNameTouched(true);
-              }}
-              placeholder="Pick a provider first"
-            />
-          </label>
-
-          {requiredSettingKeys.length > 0 ? (
-            <div className="grid gap-4 md:grid-cols-2">
-              {requiredSettingKeys.map((key) => (
-                <label key={key} className="grid gap-3">
-                  <span className="text-[14px] font-medium text-gray-700">{getSettingLabel(key)}</span>
-                  <DenInput
-                    data-testid={`gateway-provider-setting-${key}`}
-                    value={settings[key] ?? ""}
-                    onChange={(event) =>
-                      setSettings((current) => ({
-                        ...current,
-                        [key]: key === "resourceName" ? normalizeAzureResourceNameInput(event.target.value) : event.target.value,
-                      }))
-                    }
-                    placeholder={settingPlaceholder(key)}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                </label>
-              ))}
+          {provider ? <p>{provider.providerId}</p> : <DenCombobox
+            ariaLabel="Provider" value={providerId} options={buildCatalogProviderOptions(catalog.filter((item) => isSupportedGatewayNpm(item.npm)))}
+            onChange={(id) => { setProviderId(id); setName(catalog.find((item) => item.id === id)?.name ?? ""); setModelIds([]); setAllowAllModels(true); setSettings({}); }}
+            placeholder="Select a provider..." searchPlaceholder="Search providers..." emptyLabel="No providers match"
+          />}
+          <div className="grid gap-2">
+            <div className="grid gap-1">
+              <label htmlFor="gateway-provider-name">Name</label>
+              <p id="gateway-provider-name-description" className="text-sm text-gray-500">Give this provider a unique name to differentiate it in your org</p>
             </div>
-          ) : null}
+            <DenInput id="gateway-provider-name" data-testid="gateway-provider-name" aria-describedby="gateway-provider-name-description" value={name} onChange={(event) => setName(event.target.value)} />
+          </div>
+          {getRequiredSettingKeys(npm).map((key) => <label key={key} className="grid gap-2">{getSettingLabel(key)}<DenInput
+            value={settings[key] ?? ""} onChange={(event) => setSettings((current) => ({ ...current, [key]: key === "resourceName" ? normalizeAzureResourceNameInput(event.target.value) : event.target.value }))}
+          /></label>)}
+          <div className="flex items-center justify-between"><span>Provider active</span><DenSwitch checked={active} onChange={setActive} aria-label="Provider active" /></div>
         </div>
       </section>
-
       <section className={SECTION_CLASS}>
-        <div className="flex flex-wrap items-center gap-3">
-          <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">Models</h2>
-          {catalogDetail ? (
-            <span className="rounded-full bg-gray-200 px-3 py-1 text-[12px] font-medium text-gray-700">
-              {selectedModelIds.length} {selectedModelIds.length === 1 ? "model selected" : "models selected"}
-            </span>
-          ) : null}
-        </div>
-        <p className="mt-2 text-[15px] text-gray-500">Pick the exact models members can use through this provider.</p>
-        <ProviderModelPicker
-          models={catalogDetail ? catalogDetail.models : null}
-          selectedModelIds={selectedModelIds}
-          onChange={setSelectedModelIds}
+        <GatewayModelUniverse
+          models={detail?.models ?? null}
+          allowAllModels={allowAllModels}
+          modelIds={modelIds}
+          disabled={saving}
+          warning={provider?.catalogWarning}
+          onChange={(allowAll, selected) => { setAllowAllModels(allowAll); setModelIds(selected); }}
         />
       </section>
-
-      <section className={SECTION_CLASS}>
-        <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">Credential</h2>
-            <p className="mt-2 text-[15px] text-gray-500">
-              Stored on the OpenWork server only. Members never see it and it is never sent to devices.
-            </p>
-          </div>
-          {provider ? <InferenceCredentialStatusBadge provider={provider} /> : null}
-        </div>
-
-        <div className="grid gap-3 lg:grid-cols-2">
-          <DenOptionCard
-            type="radio"
-            name="gateway-credential-mode"
-            testId="gateway-credential-mode-org"
-            title="Organization key"
-            description="One credential for everyone with access. Recommended for API keys."
-            checked={credentialMode === "org"}
-            onChange={() => setCredentialMode("org")}
-          />
-          <DenOptionCard
-            type="radio"
-            name="gateway-credential-mode"
-            testId="gateway-credential-mode-member"
-            title="Each member signs in"
-            description={
-              memberModeSupported
-                ? "Every member authorizes their own Google account before using the models."
-                : "Only available for Google Vertex providers (google-vertex, google-vertex-anthropic)."
-            }
-            checked={credentialMode === "member"}
-            onChange={() => setCredentialMode("member")}
-            disabled={!memberModeSupported}
-          />
-        </div>
-
-        {credentialMode === "member" ? (
-          <div className="mt-6 grid gap-6">
-            <p className="rounded-[20px] bg-gray-50 px-5 py-4 text-[14px] leading-6 text-gray-600">
-              No organization credential is stored. Members will be asked to sign in with Google from their OpenWork app
-              the first time they use these models.
-            </p>
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="grid gap-3">
-                <span className="text-[14px] font-medium text-gray-700">Google OAuth client ID</span>
-                <DenInput
-                  data-testid="gateway-provider-oauth-client-id"
-                  value={oauthClientId}
-                  onChange={(event) => setOauthClientId(event.target.value)}
-                  placeholder="1234567890-abc.apps.googleusercontent.com"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </label>
-              <label className="grid gap-3">
-                <span className="flex flex-wrap items-center gap-2 text-[14px] font-medium text-gray-700">
-                  Google OAuth client secret
-                  {hasOauthClientSecret ? (
-                    <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700">
-                      Configured
-                    </span>
-                  ) : null}
-                </span>
-                <DenInput
-                  type="password"
-                  data-testid="gateway-provider-oauth-client-secret"
-                  value={oauthClientSecret}
-                  onChange={(event) => setOauthClientSecret(event.target.value)}
-                  placeholder={hasOauthClientSecret ? "Leave blank to keep the current secret" : "Paste the client secret"}
-                  autoComplete="off"
-                />
-              </label>
-            </div>
-            {provider?.oauthCallbackUrl ? <p className="text-[13px] text-gray-500">
-              Create an Internal OAuth client in your Google Cloud project and add this redirect URI:{" "}
-              <code data-testid="gateway-provider-oauth-redirect-uri" className="rounded bg-gray-100 px-2 py-0.5 font-mono text-[12px]">
-                {provider.oauthCallbackUrl}
-              </code>
-            </p> : <p className="text-[13px] text-gray-500">
-              Save the provider to see the server's OAuth callback URL on its details page, then add that URL to your Google OAuth client.
-            </p>}
-          </div>
-        ) : (
-          <div className="mt-6 grid gap-6">
-            {isVertex ? (
-              <label className="grid gap-3">
-                <span className="flex flex-wrap items-center gap-2 text-[14px] font-medium text-gray-700">
-                  Service account JSON
-                  {orgCredentialSaved ? (
-                    <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700">
-                      Configured
-                    </span>
-                  ) : null}
-                </span>
-                <DenTextarea
-                  data-testid="gateway-provider-service-account"
-                  value={serviceAccountJson}
-                  onChange={(event) => setServiceAccountJson(event.target.value)}
-                  rows={8}
-                  placeholder={
-                    orgCredentialSaved
-                      ? "Leave blank to keep the current service account"
-                      : '{ "type": "service_account", "project_id": "...", ... }'
-                  }
-                  spellCheck={false}
-                />
-                <span className="text-[13px] text-gray-500">
-                  Paste the key file downloaded from Google Cloud. It is stored on the server and never shown again.
-                </span>
-              </label>
-            ) : envNames.length > 1 ? (
-              <>
-                <p className="text-[14px] text-gray-500">
-                  This provider reads several environment variables. Values left blank keep what is already saved.
-                </p>
-                {envNames.map((envName) => (
-                  <label key={envName} className="grid gap-3">
-                    <span className="flex flex-wrap items-center gap-2 text-[14px] font-medium text-gray-700">
-                      <code className="rounded bg-gray-100 px-2 py-0.5 font-mono text-[12px]">{envName}</code>
-                      {orgCredentialSaved ? (
-                        <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700">
-                          Configured
-                        </span>
-                      ) : null}
-                    </span>
-                    <DenInput
-                      type="password"
-                      value={apiKeyValues[envName] ?? ""}
-                      onChange={(event) => setApiKeyValues((current) => ({ ...current, [envName]: event.target.value }))}
-                      placeholder={orgCredentialSaved ? "Leave blank to keep current value" : `Paste the ${envName} value`}
-                    />
-                  </label>
-                ))}
-              </>
-            ) : (
-              <label className="grid gap-3">
-                <span className="flex flex-wrap items-center gap-2 text-[14px] font-medium text-gray-700">
-                  API key
-                  {orgCredentialSaved ? (
-                    <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700">
-                      Configured
-                    </span>
-                  ) : null}
-                </span>
-                <DenInput
-                  type="password"
-                  data-testid="gateway-provider-api-key"
-                  value={apiKey}
-                  onChange={(event) => setApiKey(event.target.value)}
-                  placeholder={orgCredentialSaved ? "Leave blank to keep current credential" : "Paste the provider API key"}
-                />
-              </label>
-            )}
-          </div>
-        )}
-      </section>
-
-      <section className={SECTION_CLASS}>
-        <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">Who can use it</h2>
-        <p className="mt-2 text-[15px] text-gray-500">Grant everyone access, or pick teams and people.</p>
-        <ProviderAccessPicker
-          orgContext={orgContext}
-          value={access}
-          onChange={setAccess}
-          lockedMemberId={lockedMemberId}
-          testIdPrefix="gateway-provider"
-        />
-      </section>
-
-      <section className={SECTION_CLASS}>
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">Status</h2>
-            <p className="mt-2 text-[15px] text-gray-500">
-              {active ? "Members with access can use these models." : "Hidden from members until you turn it back on."}
-            </p>
-          </div>
-          <DenSwitch checked={active} onChange={setActive} aria-label="Provider active" testId="gateway-provider-active" />
-        </div>
-      </section>
-
-      <DenStickyActionBar
-        testId="gateway-provider-save-bar"
-        summary={
-          <>
-            {selectedProviderId ? (
-              <DenBrandMark
-                name={effectiveName || "Provider"}
-                simpleIconSlug={getProviderIconSlug(selectedProviderId)}
-                serviceUrl={catalogDetail ? getProviderDocUrl(catalogDetail.config) : null}
-                className="h-6 w-6 rounded-[8px]"
-                imageClassName="h-3.5 w-3.5"
-              />
-            ) : null}
-            <span className="truncate font-medium text-gray-950">{effectiveName || "New gateway provider"}</span>
-            <span className="text-gray-300">·</span>
-            <span className="whitespace-nowrap">
-              {selectedModelIds.length} {selectedModelIds.length === 1 ? "model" : "models"}
-            </span>
-            <span className="text-gray-300">·</span>
-            <span className="truncate">
-              {access.allMembers
-                ? `Everyone in ${orgContext?.organization.name ?? "the organization"}`
-                : `${access.teamIds.length} ${access.teamIds.length === 1 ? "team" : "teams"} · ${access.memberIds.length} ${access.memberIds.length === 1 ? "person" : "people"}`}
-            </span>
-          </>
-        }
-      >
-        <Link href={backHref} className="px-2 text-[13px] font-medium text-gray-500 transition hover:text-gray-900">
-          Cancel
-        </Link>
-        <DenButton data-testid="gateway-provider-save" loading={saveBusy} onClick={() => void save()}>
-          {provider ? "Save provider" : "Create provider"}
-        </DenButton>
+      {provider ? <GatewayAccessMatrix key={`${orgId}:${provider.id}`} provider={provider} reload={reload} /> : <DenNotice tone="info" message="Create the provider, then configure its model groups and credential sets. Access rules must be added explicitly; no one receives spend access by default." />}
+      <DenStickyActionBar summary={allowAllModels ? "All models · follows catalog updates" : `${modelIds.length} selected models`}>
+        <DenButton data-testid="gateway-provider-save" loading={saving} onClick={() => void save()}>{provider ? "Save provider and models" : "Create provider"}</DenButton>
       </DenStickyActionBar>
-
-      {confirmingDelete && provider ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/30 px-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="delete-gateway-provider-title"
+      {provider ? <div className="mt-8 grid gap-3">
+        <AlertDialog.Root
+          open={confirmDelete && !reauthDialogOpen}
+          onOpenChange={(open) => {
+            if (saving) return;
+            setConfirmDelete(open);
+            if (open) setSaveError(null);
+          }}
         >
-          <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-xl">
-            <h2 id="delete-gateway-provider-title" className="text-[18px] font-semibold text-gray-950">
-              Delete “{provider.name}”?
-            </h2>
-            <p className="mt-2 text-[13px] leading-5 text-gray-500">
-              This removes the provider, its stored credential, model list and access rules. Members lose these models
-              on their next sync.
-            </p>
-            <div className="mt-6 flex justify-end gap-2">
-              <DenButton variant="secondary" onClick={() => setConfirmingDelete(false)}>
-                Cancel
-              </DenButton>
-              <DenButton
-                variant="destructive"
-                data-testid="gateway-provider-delete-confirm"
-                loading={deleteBusy}
-                onClick={() => void remove(provider)}
-              >
-                Delete
-              </DenButton>
-            </div>
-          </div>
-        </div>
-      ) : null}
+          <AlertDialog.Trigger disabled={saving} className={buttonVariants({ variant: "destructive", className: "w-fit" })}>
+            Delete provider
+          </AlertDialog.Trigger>
+          <AlertDialog.Portal>
+            <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-gray-950/45" />
+            <AlertDialog.Popup
+              initialFocus={cancelDeleteRef}
+              aria-busy={saving}
+              className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[28px] border border-gray-200 bg-white p-6 outline-none"
+            >
+              <AlertDialog.Title className="text-xl font-semibold text-gray-950">Delete {provider.name}?</AlertDialog.Title>
+              <AlertDialog.Description className="mt-3 text-sm leading-6 text-gray-600">
+                This will delete the provider, its model groups, upstream keys and access rules. Members will lose access. This cannot be undone.
+              </AlertDialog.Description>
+              {saveError ? <DenNotice className="mt-4" tone="error" message={saveError} /> : null}
+              <div className="mt-6 flex flex-wrap justify-end gap-3">
+                <AlertDialog.Close ref={cancelDeleteRef} disabled={saving} className={buttonVariants({ variant: "secondary" })}>
+                  Cancel
+                </AlertDialog.Close>
+                <DenButton variant="destructive" loading={saving} onClick={() => void remove()}>Delete provider</DenButton>
+              </div>
+            </AlertDialog.Popup>
+          </AlertDialog.Portal>
+        </AlertDialog.Root>
+      </div> : null}
     </div>
   );
 }

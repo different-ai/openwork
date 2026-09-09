@@ -2,20 +2,19 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { ChevronRight, KeyRound, Plus, Search, Shield } from "lucide-react";
+import { ChevronRight, KeyRound, Layers3, Plus, Search, Shield } from "lucide-react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
+import { DenCard } from "../../_components/ui/card";
 import { buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
-import { DenSectionHeader } from "../../_components/ui/section-header";
-import { DenTable, type DenTableColumn } from "../../_components/ui/table";
 import { getGatewayProviderRoute, getNewGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useOrgInferenceProviders } from "./inference-provider-data";
+import { GatewayUsageSection } from "./gateway-usage-section";
 import {
-  getCredentialModeLabel,
   getCredentialStatusLabel,
   getCredentialStatusTone,
   getProviderStatusLabel,
@@ -36,81 +35,59 @@ export function InferenceCredentialStatusBadge({
   );
 }
 
-function buildColumns(orgSlug: string | null): readonly DenTableColumn<DenInferenceProvider>[] {
-  return [
-  {
-    key: "name",
-    header: "Name",
-    render: (row) => (
-      <div className="flex items-center gap-3">
-        <DenBrandMark
-          name={row.name}
-          simpleIconSlug={getProviderIconSlug(row.providerId)}
-          serviceUrl={getProviderDocUrl(row.providerConfig)}
-          className="h-8 w-8 rounded-[10px]"
-          imageClassName="h-4 w-4"
-        />
-        <div className="min-w-0">
-          <p className="truncate text-[14px] font-medium text-gray-950">{row.name}</p>
-          <p className="truncate text-[12px] text-gray-500">{formatProviderTimestamp(row.updatedAt)}</p>
+function GatewayProviderCard({ provider, orgSlug }: { provider: DenInferenceProvider; orgSlug: string | null }) {
+  const keyCount = provider.credentialSets?.filter((set) => set.credentialMode === "org" && set.configured).length;
+  const groupCount = provider.modelGroups?.length;
+
+  return (
+    <Link
+      href={getGatewayProviderRoute(orgSlug, provider.id)}
+      aria-label={`Open ${provider.name}`}
+      data-testid="gateway-provider-open"
+      className="group block min-w-0 rounded-[30px] outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2"
+    >
+      <DenCard className="flex h-full min-w-0 flex-col gap-5 transition-colors group-hover:border-gray-300 group-hover:bg-gray-50">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <DenBrandMark
+              name={provider.providerId}
+              simpleIconSlug={getProviderIconSlug(provider.providerId)}
+              serviceUrl={getProviderDocUrl(provider.providerConfig)}
+              className="h-10 w-10 shrink-0 rounded-xl"
+              imageClassName="h-5 w-5"
+            />
+            <div className="min-w-0">
+              <h2 className="truncate text-base font-semibold text-gray-950" title={provider.name}>{provider.name}</h2>
+              <p className="mt-1 truncate text-xs text-gray-400" title={provider.providerId}>{provider.providerId}</p>
+            </div>
+          </div>
+          <DenBadge tone={provider.status === "active" ? "success" : "neutral"} className="shrink-0">
+            {getProviderStatusLabel(provider.status)}
+          </DenBadge>
         </div>
-      </div>
-    ),
-  },
-  {
-    key: "provider",
-    header: "Provider",
-    render: (row) => <span className="text-[13px] text-gray-600">{row.providerId}</span>,
-  },
-  {
-    key: "models",
-    header: "Models",
-    render: (row) => (
-      <span className="text-[13px] text-gray-600">
-        {row.models.length} {row.models.length === 1 ? "model" : "models"}
-      </span>
-    ),
-  },
-  {
-    key: "mode",
-    header: "Credential",
-    render: (row) => <span className="text-[13px] text-gray-600">{getCredentialModeLabel(row.credentialMode)}</span>,
-  },
-  {
-    key: "credential-status",
-    header: "Credential status",
-    render: (row) => <InferenceCredentialStatusBadge provider={row} />,
-  },
-  {
-    key: "status",
-    header: "Status",
-    render: (row) => (
-      <DenBadge tone={row.status === "active" ? "success" : "neutral"}>{getProviderStatusLabel(row.status)}</DenBadge>
-    ),
-  },
-  {
-    key: "open",
-    header: "",
-    align: "right",
-    render: (row) => (
-      <Link
-        href={getGatewayProviderRoute(orgSlug, row.id)}
-        data-testid="gateway-provider-open"
-        className="inline-flex items-center gap-1 text-[13px] font-medium text-gray-600 transition hover:text-gray-950"
-      >
-        Open
-        <ChevronRight className="h-4 w-4" aria-hidden="true" />
-      </Link>
-    ),
-  },
-  ];
+
+        <div className="flex flex-wrap gap-2">
+          <DenBadge icon={KeyRound}>
+            {keyCount === undefined ? "Keys unavailable" : `${keyCount} ${keyCount === 1 ? "key" : "keys"}`}
+          </DenBadge>
+          <DenBadge icon={Layers3}>
+            {groupCount === undefined ? "Model groups unavailable" : `${groupCount} model ${groupCount === 1 ? "group" : "groups"}`}
+          </DenBadge>
+        </div>
+
+        <div className="mt-auto flex items-center justify-between gap-3 border-t border-gray-100 pt-4 text-xs text-gray-400">
+          <span>Updated {formatProviderTimestamp(provider.updatedAt)}</span>
+          <ChevronRight className="h-4 w-4 shrink-0 text-gray-400 transition-colors group-hover:text-gray-700" aria-hidden="true" />
+        </div>
+      </DenCard>
+    </Link>
+  );
 }
 
 export function InferenceProvidersScreen() {
   const { orgId, orgSlug } = useOrgDashboard();
   const { inferenceProviders, busy, error } = useOrgInferenceProviders(orgId);
   const [query, setQuery] = useState("");
-  const columns = useMemo(() => buildColumns(orgSlug), [orgSlug]);
 
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -119,6 +96,8 @@ export function InferenceProvidersScreen() {
       (provider) =>
         provider.name.toLowerCase().includes(normalized) ||
         provider.providerId.toLowerCase().includes(normalized) ||
+        provider.modelGroups?.some((group) => group.name.toLowerCase().includes(normalized)) ||
+        provider.credentialSets?.some((set) => set.name.toLowerCase().includes(normalized)) ||
         provider.models.some((model) => model.name.toLowerCase().includes(normalized)),
     );
   }, [inferenceProviders, query]);
@@ -126,57 +105,59 @@ export function InferenceProvidersScreen() {
   return (
     <DashboardPageTemplate
       icon={Shield}
-      title="Gateway providers"
-      description="Connect Anthropic, OpenAI, Google, Azure and other providers through OpenWork Gateway. Members use their OpenWork key; the provider credential stays on the server and never reaches devices."
+      title="Gateway"
+      description="Configure your organizations AI Model Providers once, track and control each user's access and usage individually"
       colors={["#F1F5FF", "#1D4ED8", "#60A5FA", "#A7F3D0"]}
     >
-      <div className="mb-8 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-        <DenInput
-          type="search"
-          icon={Search}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search providers or models..."
-        />
-        <Link
-          href={getNewGatewayProviderRoute(orgSlug)}
-          data-testid="gateway-provider-create"
-          className={buttonVariants({ variant: "primary" })}
-        >
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          Add gateway provider
-        </Link>
-      </div>
+      {orgId ? <GatewayUsageSection key={orgId} orgId={orgId} /> : null}
 
-      {error ? <DenNotice message={error} tone="error" className="mb-6" /> : null}
-
-      {busy ? (
-        <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
-          Loading gateway providers...
-        </div>
-      ) : (
-        <section className="overflow-hidden rounded-[28px] border border-gray-200 bg-white">
-          <DenSectionHeader
-            className="border-b border-gray-100 px-6 py-4"
-            title="Your gateway providers"
-            description="Each row is one provider routed via OpenWork Gateway. Open a row to see its credentials and access."
+      <section aria-labelledby="gateway-providers-heading">
+        <h2 id="gateway-providers-heading" className="mb-4 text-lg font-semibold tracking-tight text-gray-950">Providers</h2>
+        <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <DenInput
+            type="search"
+            icon={Search}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search providers or models..."
           />
-          {filtered.length === 0 ? (
-            <div className="px-6 py-12 text-center">
-              <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900">
-                {inferenceProviders.length === 0 ? "No gateway providers yet." : "No providers match that search."}
-              </p>
-              <p className="mx-auto mt-3 max-w-[560px] text-[15px] leading-8 text-gray-500">
-                {inferenceProviders.length === 0
-                  ? "Add a provider from the models.dev catalog, store its credential once, and members will use it through the OpenWork gateway with their own OpenWork key."
-                  : "Try a broader search term."}
-              </p>
-            </div>
-          ) : (
-            <DenTable columns={columns} rows={filtered} getRowKey={(row) => row.id} />
-          )}
-        </section>
-      )}
+          <Link
+            href={getNewGatewayProviderRoute(orgSlug)}
+            data-testid="gateway-provider-create"
+            className={buttonVariants({ variant: "primary" })}
+          >
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            Add gateway provider
+          </Link>
+        </div>
+
+        {error ? <DenNotice message={error} tone="error" className="mb-6" /> : null}
+
+        {busy ? (
+          <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
+            Loading gateway providers...
+          </div>
+        ) : (
+          <section aria-label="Configured providers">
+            {filtered.length === 0 ? (
+              <DenCard className="px-6 py-12 text-center">
+                <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900">
+                  {inferenceProviders.length === 0 ? "No gateway providers yet." : "No providers match that search."}
+                </p>
+                <p className="mx-auto mt-3 max-w-[560px] text-[15px] leading-8 text-gray-500">
+                  {inferenceProviders.length === 0
+                    ? "Add a catalog provider, create model groups and named credential sets, then grant people or teams access through explicit rules."
+                    : "Try a broader search term."}
+                </p>
+              </DenCard>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {filtered.map((provider) => <GatewayProviderCard key={provider.id} provider={provider} orgSlug={orgSlug} />)}
+              </div>
+            )}
+          </section>
+        )}
+      </section>
     </DashboardPageTemplate>
   );
 }

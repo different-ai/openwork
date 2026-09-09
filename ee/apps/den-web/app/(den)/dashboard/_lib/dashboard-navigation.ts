@@ -122,11 +122,11 @@ export function buildDashboardNavSections({
         icon: Sparkles,
         badge: "Providers",
         children: [
+          { href: getGatewayProvidersRoute(orgSlug), label: "Gateway", badge: "New" },
           ...(showOpenWorkModels
             ? [{ href: getInferenceRoute(orgSlug), label: "OpenWork Models" }]
             : []),
-          { href: getCustomLlmProvidersRoute(orgSlug), label: "Bring your Own Keys" },
-          { href: getGatewayProvidersRoute(orgSlug), label: "Gateway providers" },
+          { href: getCustomLlmProvidersRoute(orgSlug), label: "Bring Your Own Keys (Legacy)" },
         ],
       }
     : null;
@@ -202,10 +202,11 @@ export function buildDashboardNavSections({
 // Alias order is ranking priority in the command palette.
 const PAGE_KEYWORDS: Record<string, string[]> = {
   Advanced: ["policy", "desktop policies", "mdm", "lock", "marketplace", "branding"],
+  Gateway: ["llm", "provider", "gateway", "inference", "usage"],
   Analytics: ["usage", "stats", "consumption", "workflow runs", "history", "langfuse"],
   "API Keys": ["token", "secret"],
   Billing: ["plan", "invoice", "payment"],
-  "Bring your Own Keys": ["llm", "provider", "byok", "api key"],
+  "Bring Your Own Keys (Legacy)": ["llm", "provider", "byok", "api key"],
   Connectors: ["mcp", "integrations", "servers", "connect"],
   Dashboard: ["home", "overview"],
   Dashboards: ["boards", "apps"],

@@ -14,6 +14,7 @@
     "test:observability": "bun test tests/observability-config.test.ts app/api/_lib/upstream-proxy.test.mjs app/api/_lib/upstream-proxy-lifecycle.test.mjs"
   },
   "dependencies": {
+    "@base-ui/react": "^1.4.1",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/api-logs": "0.220.0",
     "@opentelemetry/exporter-logs-otlp-proto": "0.220.0",

@@ -3,7 +3,7 @@ import type { UIMessage } from "ai";
 import { safeStringify } from "../../../../app/utils";
 import { normalizeErrorText } from "../../../../lib/error-text";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "gateway-selection-required" | "generic";
 
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
@@ -70,6 +70,7 @@ function sessionErrorKind(
   responseBody: string | null,
 ): OpencodeSessionErrorKind {
   const searchable = [name, message, code, responseBody].filter(Boolean).join(" ");
+  if (searchable.includes("gateway_selection_required")) return "gateway-selection-required";
   if (/\b(?:ENOSPC|EDQUOT|SQLITE_FULL)\b|no space left on device|database or disk is full|disk quota exceeded/i.test(searchable)) {
     return "disk-full";
   }
@@ -105,10 +106,12 @@ function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
   if (kind === "provider-incomplete") return "The model response was interrupted";
   if (kind === "free-model-limit") return "The free starter model is busy right now";
   if (kind === "gateway-auth-required") return GATEWAY_AUTH_REQUIRED_TITLE;
+  if (kind === "gateway-selection-required") return "Choose a Gateway model group and credential set";
   return fallback;
 }
 
 function errorDescription(kind: OpencodeSessionErrorKind, gatewayAuth: GatewayAuthRequired | null) {
+  if (kind === "gateway-selection-required") return "More than one access rule can apply. Open the model picker and select the model with the group and credential set you want, then retry. No credential is selected automatically.";
   if (kind === "disk-full") {
     return "A storage limit was reported by the task runtime or a connected service. This does not necessarily mean your computer is full. Check the affected service or workspace before freeing local disk space.";
   }
@@ -246,13 +249,14 @@ function technicalErrorDetails(error: unknown, fallback: string, fields: ReturnT
 export function presentOpencodeSessionError(error: unknown, fallback = "Session failed"): OpencodeSessionErrorPresentation {
   const fields = sessionErrorFields(error, fallback);
   const gatewayAuth = detectGatewayAuthRequired(error, fields);
-  const kind = gatewayAuth ? "gateway-auth-required" : sessionErrorKind(fields.name, fields.message, fields.code, fields.responseBody);
+  const gatewaySelection = safeStringify(error)?.includes("gateway_selection_required") === true;
+  const kind = gatewayAuth ? "gateway-auth-required" : gatewaySelection ? "gateway-selection-required" : sessionErrorKind(fields.name, fields.message, fields.code, fields.responseBody);
   const fallbackTitle = normalizeSessionError(fields.message ?? defaultErrorMessage(fields.name, fallback));
   return {
     kind,
     title: errorTitle(kind, fallbackTitle),
     description: errorDescription(kind, gatewayAuth),
-    technicalDetails: technicalErrorDetails(error, fallback, fields),
+    technicalDetails: kind === "gateway-selection-required" ? "Error code: gateway_selection_required\nStatus: 409" : gatewayAuth ? "Error code: openwork_auth_required\nStatus: 401" : technicalErrorDetails(error, fallback, fields),
     recoveryPrompt: errorRecoveryPrompt(kind),
     ...(gatewayAuth ? { connectUrl: gatewayAuth.connectUrl } : {}),
   };

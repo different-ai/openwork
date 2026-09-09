@@ -24,6 +24,7 @@ import { readDenSettings } from "@/app/lib/den";
 import { getModelBehaviorSelection } from "@/app/lib/model-behavior";
 import {
   gatewayConnectCopy,
+  gatewayConnectProviderKey,
   type GatewayConnectProvider,
   OPENWORK_GATEWAY_BADGE_LABEL,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
@@ -352,9 +353,10 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             </div>
           ) : null}
 
+          <div className="max-h-40 shrink-0 overflow-y-auto">
           {props.gatewayConnectProviders?.map((provider) => (
             <div
-              key={provider.cloudProviderId}
+              key={gatewayConnectProviderKey(provider)}
               className="mb-3 flex shrink-0 items-center gap-3 rounded-2xl border border-dashed border-dls-border px-3 py-2.5"
             >
               <ProviderIcon providerId={provider.providerId} providerName={provider.name} size={18} className="shrink-0 text-dls-secondary" />
@@ -377,6 +379,8 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               </Button>
             </div>
           ))}
+
+          </div>
 
           {/* Content */}
           <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 -mr-1">

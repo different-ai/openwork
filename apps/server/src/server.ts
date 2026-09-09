@@ -2947,10 +2947,10 @@ function createRoutes(
       throw new ApiError(415, "invalid_content_type", "A JSON request is required");
     }
     const body = await readJsonBody(ctx.request);
-    if (typeof body.orgId !== "string" || Object.keys(body).some((key) => key !== "orgId")) {
-      throw new ApiError(400, "invalid_payload", "Only the active orgId is accepted");
+    if (typeof body.orgId !== "string" || (body.credentialSetId !== undefined && typeof body.credentialSetId !== "string") || Object.keys(body).some((key) => key !== "orgId" && key !== "credentialSetId")) {
+      throw new ApiError(400, "invalid_payload", "Only the active orgId and optional credentialSetId are accepted");
     }
-    return jsonResponse(await cloudProviderSync.startProviderOAuth(ctx.params.id, body.orgId));
+    return jsonResponse(await cloudProviderSync.startProviderOAuth(ctx.params.id, body.orgId, body.credentialSetId));
   });
 
   addRoute(routes, "GET", "/managed-policy", "client", async () =>

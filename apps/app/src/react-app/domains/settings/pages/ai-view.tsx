@@ -7,6 +7,7 @@ import { ArrowRight, CheckCircle2, KeyRound, LogIn, X } from "lucide-react";
 import { t } from "@/i18n";
 import {
   gatewayConnectCopy,
+  gatewayConnectProviderKey,
   type GatewayConnectProvider,
   isCloudManagedProviderKey,
   OPENWORK_GATEWAY_BADGE_LABEL,
@@ -265,9 +266,9 @@ export function AiSettingsView(props: AiSettingsViewProps) {
 
         {props.gatewayConnectProviders?.map((provider) => (
           <GatewayConnectRow
-            key={provider.cloudProviderId}
+            key={gatewayConnectProviderKey(provider)}
             provider={provider}
-            busy={props.connectingGatewayProviderId === provider.cloudProviderId}
+            busy={props.connectingGatewayProviderId === gatewayConnectProviderKey(provider)}
             onConnect={props.onConnectGatewayProvider}
           />
         ))}

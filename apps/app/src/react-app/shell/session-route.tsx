@@ -154,6 +154,7 @@ import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-works
 import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types";
 import {
   connectGatewayProvider,
+  isGatewaySetConnected,
   type GatewayConnectProvider,
   isCloudManagedProviderKey,
   resolveGatewayConnectProviders,
@@ -995,7 +996,7 @@ export function SessionRoute() {
         startOAuth: sessionProviderAuthStore.startGatewayProviderOAuth,
         openUrl: (url) => platform.openLink(url),
         resync: () => refreshCloudProviderSync("manual"),
-        isConnected: () => provider.cloudProviderId in sessionProviderAuthStore.getSnapshot().importedCloudProviders,
+        isConnected: () => isGatewaySetConnected(provider, sessionProviderAuthStore.getSnapshot().importedCloudProviders),
       });
     } catch (error) {
       if (!controller.signal.aborted) toast.error(describeRouteError(error));

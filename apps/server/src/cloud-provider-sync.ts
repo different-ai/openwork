@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import type { GatewayAuthorizationRequest, GatewayDesktopOauthStartResponse, GatewayUsableModel } from "@openwork/types/den/gateway";
 
 import type { EnvService } from "./env-file.js";
 import { ApiError } from "./errors.js";
@@ -62,7 +63,8 @@ export type CloudProviderSyncSkippedProvider = {
    * credential to fill them). Gateway providers report Den's credentialStatus
    * verbatim when it is not "ready".
    */
-  reason: "missing_credentials" | "needs_key" | "member_auth_required" | "org_credential_missing";
+  reason: "missing_credentials" | "needs_key" | "member_auth_required" | "org_credential_missing" | "no_accessible_models";
+  credentialSetId?: string;
   /**
    * Legacy Den OAuth URL, kept for older readers. Current clients must start
    * OAuth using the host-authenticated provider-ID action, not this URL.
@@ -106,7 +108,7 @@ type DenProviderModel = {
   id: string;
   name: string;
   config: JsonRecord;
-};
+} & Partial<Pick<GatewayUsableModel, "upstreamModelId" | "modelGroupId" | "modelGroupName" | "credentialSetId" | "credentialSetName">>;
 
 type DenProvider = {
   id: string;
@@ -133,6 +135,7 @@ type DenProviderConnection = DenProvider & {
   credentialStatus: "ready" | "member_auth_required" | "org_credential_missing" | null;
   /** Gateway providers only: OAuth start URL when the member must authorize. */
   authUrl: string | null;
+  authorizationRequests?: GatewayAuthorizationRequest[];
 };
 
 const gatewayProviderSource = "openwork_gateway";
@@ -271,7 +274,14 @@ function parseModel(value: unknown): DenProviderModel | null {
   const id = readRequiredString(value.id);
   const name = readRequiredString(value.name);
   if (!id || !name || (!isRecord(value.config) && typeof value.config !== "string")) return null;
-  return { id, name, config: parseJsonRecord(value.config) };
+  return {
+    id, name, config: parseJsonRecord(value.config),
+    upstreamModelId: readOptionalString(value.upstreamModelId) ?? undefined,
+    modelGroupId: readOptionalString(value.modelGroupId) ?? undefined,
+    modelGroupName: readOptionalString(value.modelGroupName) ?? undefined,
+    credentialSetId: readOptionalString(value.credentialSetId) ?? undefined,
+    credentialSetName: readOptionalString(value.credentialSetName) ?? undefined,
+  };
 }
 
 function parseProvider(value: unknown, idPattern: RegExp = /^lpr_/i): DenProvider | null {
@@ -347,6 +357,7 @@ function parseProviderConnection(payload: unknown, listed: DenProvider): DenProv
 type DenInferenceProviderSummary = DenProvider & {
   credentialStatus: NonNullable<DenProviderConnection["credentialStatus"]>;
   authUrl: string | null;
+  authorizationRequests: GatewayAuthorizationRequest[];
 };
 
 function parseCredentialStatus(value: unknown): DenInferenceProviderSummary["credentialStatus"] | null {
@@ -362,9 +373,26 @@ function parseInferenceProvider(value: unknown): DenInferenceProviderSummary | n
   if (!provider || !isRecord(value)) return null;
   const credentialStatus = parseCredentialStatus(value.credentialStatus);
   if (!credentialStatus) return null;
+  for (const model of provider.models) {
+    if (!/^gwm_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(model.id)
+      || model.config.id !== model.id || !model.upstreamModelId || !model.modelGroupId || !model.modelGroupName
+      || !model.credentialSetId || !model.credentialSetName) return null;
+  }
+  const authorizationRequests: GatewayAuthorizationRequest[] = [];
+  if (value.authorizationRequests !== undefined) {
+    if (!Array.isArray(value.authorizationRequests)) return null;
+    for (const request of value.authorizationRequests) {
+      if (!isRecord(request)) return null;
+      const credentialSetId = readRequiredString(request.credentialSetId);
+      const name = readRequiredString(request.name);
+      const authUrl = readRequiredString(request.authUrl);
+      if (!credentialSetId || !/^gcs_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(credentialSetId) || !name || !authUrl) return null;
+      authorizationRequests.push({ credentialSetId, name, authUrl });
+    }
+  }
   // Tolerant: older Den servers omit authUrl; a non-string is treated as absent.
   const authUrl = typeof value.authUrl === "string" && value.authUrl.trim() ? value.authUrl : null;
-  return { ...provider, source: gatewayProviderSource, credentialStatus, authUrl };
+  return { ...provider, source: gatewayProviderSource, credentialStatus, authUrl, authorizationRequests };
 }
 
 function parseInferenceProviderList(payload: unknown): DenInferenceProviderSummary[] {
@@ -393,7 +421,7 @@ function parseInferenceProviderConnection(payload: unknown, expectedId: string):
   const apiKeys = parseApiKeys(payload.inferenceProvider.apiKeys);
   const apiKey = readRequiredString(payload.inferenceProvider.apiKey);
   if (!envNames.length || envNames.some((name) => !name.startsWith(scopedPrefix))
-    || !apiKey || envNames.some((name) => apiKeys?.[name] !== apiKey)
+    || !apiKey?.startsWith("ow_gw_") || envNames.some((name) => apiKeys?.[name] !== apiKey)
     || Object.keys(apiKeys ?? {}).some((name) => !envNames.includes(name))) {
     throw new Error(`den_inference_provider_unscoped_credentials_${expectedId}`);
   }
@@ -444,6 +472,13 @@ async function requestJson(
     throw new Error(error instanceof Error ? `den_request_failed: ${error.message}` : "den_request_failed");
   }
   if (response.status === 404 && options.allowNotFound) return null;
+  if (response.status === 409 && path.startsWith("/v1/inference-providers/")) {
+    const conflict: unknown = await response.json().catch(() => null);
+    const code = isRecord(conflict) ? (isRecord(conflict.error) ? conflict.error.code : conflict.error) : null;
+    if (code === "gateway_selection_required" || code === "credential_set_required") {
+      throw new ApiError(409, "gateway_selection_required", "Choose a model group and credential set in the model picker, or select the named credential set's Connect row in AI Providers.");
+    }
+  }
   if (!response.ok) throw new Error(`den_request_failed_${response.status}`);
   try {
     const payload: unknown = await response.json();
@@ -480,9 +515,8 @@ async function fetchInferenceProviders(
   const providers = parseInferenceProviderList(payload);
   return Promise.all(
     providers.map(async (provider) => {
-      // Connect would hand back a key the gateway rejects until the credential
-      // is ready; keep the summary so materialization skips it with the reason.
-      if (provider.credentialStatus !== "ready") {
+      // Ready combinations and pending member-auth sets can coexist.
+      if (provider.models.length === 0) {
         return { ...provider, apiKey: null, apiKeys: null, memberCredentialState: null, declaredEnvNames: [] };
       }
       return parseInferenceProviderConnection(
@@ -579,7 +613,13 @@ function providerEnvEntries(provider: DenProviderConnection): EnvEntry[] {
 }
 
 function buildModelConfig(model: DenProviderModel): JsonRecord {
-  const next: JsonRecord = { id: model.id, name: model.name };
+  // Older Den responses included routing labels in the display name. Keep the
+  // wire ID and selection metadata, but don't expose those labels in the picker.
+  const selection = model.modelGroupName && model.credentialSetName ? ` (${model.modelGroupName} / ${model.credentialSetName})` : "";
+  const next: JsonRecord = {
+    id: model.id,
+    name: selection && model.name.endsWith(selection) ? model.name.slice(0, -selection.length) : model.name,
+  };
   for (const key of modelConfigPassthroughKeys) {
     const value = model.config[key];
     if (value !== undefined) next[key] = value;
@@ -619,6 +659,13 @@ function prepareMaterialization(
   const skipped: CloudProviderSyncSkippedProvider[] = [];
   const availableLocalEnvNames = [...localEnvNames];
   for (const provider of providers) {
+    for (const request of provider.authorizationRequests ?? []) {
+      skipped.push({
+        cloudProviderId: provider.id, providerId: runtimeProviderId(provider),
+        credentialSetId: request.credentialSetId, name: `${provider.name} / ${request.name}`,
+        reason: "member_auth_required",
+      });
+    }
     if (provider.memberCredentialState && provider.memberCredentialState !== "active") {
       skipped.push({
         cloudProviderId: provider.id,
@@ -628,13 +675,12 @@ function prepareMaterialization(
       });
       continue;
     }
-    if (provider.credentialStatus && provider.credentialStatus !== "ready") {
-      skipped.push({
+    if (provider.source === gatewayProviderSource && provider.models.length === 0) {
+      if (!provider.authorizationRequests?.length) skipped.push({
         cloudProviderId: provider.id,
         providerId: runtimeProviderId(provider),
         name: provider.name,
-        reason: provider.credentialStatus,
-        ...(provider.credentialStatus === "member_auth_required" ? { authUrl: provider.authUrl } : {}),
+        reason: provider.credentialStatus === "member_auth_required" ? "member_auth_required" : provider.credentialStatus === "org_credential_missing" ? "org_credential_missing" : "no_accessible_models",
       });
       continue;
     }
@@ -926,13 +972,15 @@ export class CloudProviderSync {
     };
   }
 
-  async startProviderOAuth(providerId: string, orgId: string): Promise<{ authorizationUrl: string }> {
+  async startProviderOAuth(providerId: string, orgId: string, credentialSetId?: string): Promise<GatewayDesktopOauthStartResponse> {
     if (!/^ipr_[a-z0-9]+$/.test(providerId)) throw new ApiError(400, "invalid_provider", "A gateway provider ID is required");
+    if (credentialSetId !== undefined && !/^gcs_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(credentialSetId)) throw new ApiError(400, "invalid_credential_set", "A credential set ID is required");
     const session = this.session;
     const generation = this.contextGeneration;
     if (!session) throw new ApiError(401, "no_session", "Sign in to OpenWork first");
     if (session.orgId !== orgId) throw new ApiError(403, "organization_mismatch", "The active organization changed");
-    const payload = await requestJson(this.fetchImpl, session, `/v1/inference-providers/${providerId}/oauth/start`);
+    const query = credentialSetId ? `?credentialSetId=${encodeURIComponent(credentialSetId)}` : "";
+    const payload = await requestJson(this.fetchImpl, session, `/v1/inference-providers/${providerId}/oauth/start${query}`);
     if (generation !== this.contextGeneration || this.session !== session) {
       throw new ApiError(409, "session_changed", "The active account changed; try again");
     }
@@ -1163,6 +1211,15 @@ export class CloudProviderSync {
     const retiredProviderIds = [...this.managedProviderIds].filter((id) => !(id in desiredProviders));
     const providerStateChanged = stableJson(currentManagedProviders) !== stableJson(desiredProviders);
     const storedEnv = new Map((await this.env.list()).map((entry) => [entry.key, entry.value]));
+    for (const { provider, envEntries } of prepared.providers) {
+      if (provider.source !== gatewayProviderSource) continue;
+      for (const entry of envEntries) {
+        const previous = storedEnv.get(entry.key);
+        if (previous?.startsWith("ow_inf_") && (!this.managedProviderIds.has(provider.id) || this.ownedEnvKeys.get(entry.key) !== hashString(previous))) {
+          throw new Error("gateway_credential_ownership_conflict: Existing key is not a proven Gateway-owned binding; reconnect this provider without changing OpenWork Models credentials.");
+        }
+      }
+    }
     const envDeletes = [...this.ownedEnvKeys].filter(([key, hash]) => {
       const value = storedEnv.get(key);
       return !prepared.envEntries.some((entry) => entry.key === key)

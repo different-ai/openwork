@@ -247,7 +247,7 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "Bring your Own Keys";
   }
   if (pathname.startsWith(getGatewayProvidersRoute(orgSlug))) {
-    return "Gateway providers";
+    return "Gateway";
   }
   if (
     pathname.startsWith(getDesktopPoliciesRoute(orgSlug))
