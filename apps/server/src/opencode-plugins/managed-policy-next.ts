@@ -1,4 +1,6 @@
-import { check, checkManagedTool } from "./managed-policy-client.js";
+import { checkManagedTool } from "./managed-policy-client.js";
+import { createManagedPolicyIpcClient } from "../managed-policy-ipc.js";
+const check = createManagedPolicyIpcClient();
 // Plugin.define is the identity function in the pinned SDK. The structural
 // contract avoids loading either engine's SDK into the other engine.
 export default {
@@ -8,7 +10,7 @@ export default {
     shell: { hook(name: "create.before", callback: (event: { command: string }) => Promise<void>): Promise<unknown> };
     session: { hook(name: "http.request", callback: (event: { model: { providerID: string; id: string } }) => Promise<void>): Promise<unknown> };
   }) {
-    await ctx.tool.hook("execute.before", (event) => checkManagedTool(event.tool, event.input));
+    await ctx.tool.hook("execute.before", (event) => checkManagedTool(event.tool, event.input, check));
     await ctx.shell.hook("create.before", (event) => check("shell", { command: event.command }));
     await ctx.session.hook("http.request", (event) => check("model", event.model));
   },
