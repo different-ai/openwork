@@ -1221,7 +1221,7 @@ async function resolveMcpReadinessConnections(input: {
       authType: matched.authType,
       requiredAuthType: dependency.requiredAuthType,
     })
-    const oauthClientRequired = matched.authType === "oauth" && pluginMcpRequiresPreRegisteredOAuthClient(matched.url)
+    const oauthClientRequired = dependency.requiredAuthType === "oauth" && pluginMcpRequiresPreRegisteredOAuthClient(matched.url)
     if (dependency.requiredAuthType === "oauth" || matched.authType === "oauth") {
       oauthClientConfigured = oauthClientConfiguredCache.get(matched.id)
       if (oauthClientConfigured === undefined) {

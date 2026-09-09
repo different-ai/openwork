@@ -150,7 +150,7 @@ test("plugin-sourced GitHub PATs and legacy none remain usable without bypassing
   expect(transactionCalls).toBe(0)
 })
 
-test("GitHub plugin readiness preserves connected legacy none but still enforces OAuth setup", async () => {
+test("GitHub plugin readiness preserves legacy ready and sign-in states but still enforces required OAuth setup", async () => {
   // The marketplace module imports the app graph; do not initialize auth's resource registry.
   mock.module("../src/auth.js", () => ({
     auth: { api: { getSession: async () => null }, handler: async () => new Response() },
@@ -177,13 +177,19 @@ test("GitHub plugin readiness preserves connected legacy none but still enforces
     { authType: "none", oauth: false, client: false, state: "ready" },
     { authType: "none", oauth: true, client: false, state: "needs_admin_setup" },
     { authType: "none", oauth: false, client: false, state: "needs_admin_setup", disconnected: true },
-    { authType: "oauth", oauth: false, client: false, state: "needs_admin_setup" },
+    { authType: "oauth", oauth: false, client: false, state: "ready" },
     { authType: "oauth", oauth: false, client: true, state: "ready" },
+    { authType: "oauth", oauth: true, client: false, state: "needs_admin_setup" },
+    { authType: "oauth", oauth: true, client: true, state: "ready" },
+    { authType: "oauth", oauth: false, client: false, state: "needs_admin_setup", disconnected: true },
+    { authType: "oauth", oauth: false, client: false, state: "ready", perMember: true },
+    { authType: "oauth", oauth: false, client: false, state: "needs_signin", perMember: true, disconnected: true },
+    { authType: "oauth", oauth: true, client: false, state: "needs_admin_setup", perMember: true, disconnected: true },
   ]) {
     const candidate = {
-      ...connection, organizationId, url, authType: input.authType, credentialMode: "shared",
+      ...connection, organizationId, url, authType: input.authType, credentialMode: input.perMember ? "per_member" : "shared",
       apiKey: input.authType === "apikey" ? "fixture-pat" : null,
-      accessToken: input.authType === "oauth" ? "fixture-token" : null,
+      accessToken: input.authType === "oauth" && !input.perMember && !input.disconnected ? "fixture-token" : null,
       connectedAt: input.disconnected ? null : new Date(),
     }
     queueSelectResults([
@@ -193,6 +199,7 @@ test("GitHub plugin readiness preserves connected legacy none but still enforces
       [],
       [candidate],
       [],
+      ...(input.perMember ? [input.disconnected ? [] : [{ ...account, organizationId, orgMembershipId }]] : []),
       ...(input.oauth || input.authType === "oauth" ? [input.client ? [orgClient] : []] : []),
     ])
     const readiness = await resolveMarketplacePluginCloudReadiness({
@@ -200,7 +207,9 @@ test("GitHub plugin readiness preserves connected legacy none but still enforces
     })
     expect(readiness.get(pluginId)?.state).toBe(input.state)
     expect(readiness.get(pluginId)?.connections[0]?.authTypeMismatch).toBe(input.oauth && input.authType !== "oauth")
-    expect(readiness.get(pluginId)?.connections[0]?.oauthClientRequired).toBe(input.authType === "oauth" ? true : input.oauth ? false : undefined)
+    expect(readiness.get(pluginId)?.connections[0]?.connectedForMe).toBe(!input.disconnected)
+    expect(readiness.get(pluginId)?.connections[0]?.oauthClientConfigured).toBe(input.oauth || input.authType === "oauth" ? input.client : undefined)
+    expect(readiness.get(pluginId)?.connections[0]?.oauthClientRequired).toBe(input.oauth ? true : input.authType === "oauth" ? false : undefined)
     expect(selectResults).toHaveLength(0)
   }
 })

@@ -167,21 +167,35 @@ test.skipIf(!mysqlOpen || !redisOpen)(title, { timeout: 300_000 }, async ({ evid
   );
 });
 
-test("persisted GitHub no-auth bindings stay discoverable without allowing new anonymous setup or overriding OAuth", { timeout: 300_000 }, async ({ evidence, place, skip }) => {
+test("persisted GitHub bindings preserve desktop readiness without allowing new anonymous setup or bypassing OAuth execution gates", { timeout: 300_000 }, async ({ evidence, place, skip }) => {
   needs({ placement: "local" });
   if (!await localMysqlIsRunning() || !await localRedisIsRunning()) skip("needs: local MySQL and Redis");
   const organizationName = `Legacy Connector ${Date.now().toString(36)}`;
-  await using den = await server({ place, web: false, org: { name: organizationName, members: {} } });
+  await using den = await server({ place, web: false, org: { name: organizationName, members: { reader: {} } } });
   if (!den.database) throw new Error("Persisted legacy connector coverage requires an isolated database");
   const orgId = await organizationId(den.admin, organizationName);
   const headers = orgHeaders(den.admin, orgId);
   const url = "https://api.githubcopilot.com/mcp/";
   const databaseUrl = den.database.url;
+  const skillSource = "---\nname: legacy-github-readiness\ndescription: Checks legacy GitHub readiness.\n---\n\nLegacy GitHub instruction sentinel.";
+  const marketplaceCreated = await denFetch(den.admin, "/v1/marketplaces", {
+    method: "POST", headers, body: JSON.stringify({ name: "Legacy GitHub collection" }),
+  });
+  expect(marketplaceCreated.response.status, marketplaceCreated.text).toBe(201);
+  const marketplace = isRecord(marketplaceCreated.body) && isRecord(marketplaceCreated.body.item) ? marketplaceCreated.body.item : null;
+  if (!marketplace || typeof marketplace.id !== "string") throw new Error("Missing created marketplace");
+  const shared = await denFetch(den.admin, `/v1/marketplaces/${marketplace.id}/access`, {
+    method: "POST", headers, body: JSON.stringify({ orgWide: true, role: "viewer" }),
+  });
+  expect(shared.response.status, shared.text).toBe(201);
 
   async function createPlugin(authType: "none" | "oauth") {
     return denFetch(den.admin, "/v1/plugins", {
       method: "POST", headers,
-      body: JSON.stringify({ name: "Legacy GitHub", orgWide: true, components: [mcpComponent(url, { authType, credentialMode: "shared" })] }),
+      body: JSON.stringify({ name: "Legacy GitHub", orgWide: true, marketplaceId: marketplace.id, components: [
+        mcpComponent(url, { authType, credentialMode: "shared" }),
+        { type: "skill", input: { rawSourceText: skillSource } },
+      ] }),
     });
   }
 
@@ -200,6 +214,16 @@ test("persisted GitHub no-auth bindings stay discoverable without allowing new a
   if (!isRecord(binding) || typeof binding.connectionId !== "string" || typeof binding.configObjectId !== "string") throw new Error("Missing created binding");
   const connectionId = binding.connectionId;
 
+  async function desktopReadiness(member: DenSession = den.admin) {
+    const resolved = await denFetch(member, `/v1/marketplaces/${marketplace.id}/resolved`, { headers: orgHeaders(member, orgId) });
+    expect(resolved.response.status, resolved.text).toBe(200);
+    const item = isRecord(resolved.body) && isRecord(resolved.body.item) ? resolved.body.item : null;
+    const plugins = item && Array.isArray(item.plugins) ? item.plugins.filter(isRecord) : [];
+    const found = plugins.find((entry) => entry.id === plugin.id);
+    if (!found || !isRecord(found.cloudReadiness)) throw new Error("Missing desktop cloud readiness");
+    return found.cloudReadiness;
+  }
+
   // Only the isolated fixture bypasses current setup validation to model a row
   // accepted before the GitHub preset existed. No provider request is needed.
   await queryDenDatabase(databaseUrl,
@@ -211,26 +235,49 @@ test("persisted GitHub no-auth bindings stay discoverable without allowing new a
     method: "POST", headers, body: JSON.stringify({ scopes: ["mcp:read"] }),
   });
   expect(minted.response.status, minted.text).toBe(200);
-  if (!isRecord(minted.body) || typeof minted.body.appHostToken !== "string") throw new Error("Missing desktop MCP token");
+  if (!isRecord(minted.body) || typeof minted.body.appHostToken !== "string" || typeof minted.body.token !== "string") throw new Error("Missing MCP tokens");
   const token = minted.body.appHostToken;
+  const toolToken = minted.body.token;
 
-  async function desktopServerIndex() {
+  async function mcpRequest(method: string, params: Record<string, unknown>, bearerToken: string) {
     const response = await fetch(`${den.ref.apiUrl}/mcp/agent`, {
       method: "POST", signal: AbortSignal.timeout(30_000),
-      headers: { authorization: `Bearer ${token}`, accept: "application/json, text/event-stream", "content-type": "application/json", "x-openwork-mcp-client-capabilities": "mcp-app-host-v1" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "resources/read", params: { uri: "openwork://connect/mcp-servers/index.json" } }),
+      headers: { authorization: `Bearer ${bearerToken}`, accept: "application/json, text/event-stream", "content-type": "application/json", "x-openwork-mcp-client-capabilities": "mcp-app-host-v1" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
     });
     const text = await response.text();
     expect(response.status, text).toBe(200);
     const data = text.split("\n").find((line) => line.startsWith("data:"));
     const rpc: unknown = JSON.parse(data ? data.slice(5) : text);
-    if (!isRecord(rpc) || !isRecord(rpc.result) || !Array.isArray(rpc.result.contents)) throw new Error(`Missing MCP index: ${text}`);
-    const content = rpc.result.contents[0];
+    if (!isRecord(rpc) || !isRecord(rpc.result)) throw new Error(`Missing MCP result: ${text}`);
+    expect(rpc.error).toBeUndefined();
+    return rpc.result;
+  }
+
+  async function desktopServerIndex() {
+    const result = await mcpRequest("resources/read", { uri: "openwork://connect/mcp-servers/index.json" }, token);
+    if (!Array.isArray(result.contents)) throw new Error("Missing MCP index");
+    const content = result.contents[0];
     if (!isRecord(content) || typeof content.text !== "string") throw new Error("Missing MCP index content");
     const index: unknown = JSON.parse(content.text);
     if (!isRecord(index) || !Array.isArray(index.servers)) throw new Error("Invalid MCP index");
     return index.servers.filter(isRecord).map((entry) => entry.connectionId);
   }
+
+  async function callTool(name: string, args: Record<string, unknown>) {
+    const result = await mcpRequest("tools/call", { name, arguments: args }, toolToken);
+    expect(result.isError).not.toBe(true);
+    const content = Array.isArray(result.content) ? result.content[0] : null;
+    if (!isRecord(content) || typeof content.text !== "string") throw new Error("Missing tool content");
+    const payload: unknown = JSON.parse(content.text);
+    if (!isRecord(payload)) throw new Error("Invalid tool payload");
+    return payload;
+  }
+
+  const search = await callTool("search_capabilities", { query: "legacy-github-readiness", type: "skills", limit: 20 });
+  const matches = Array.isArray(search.matches) ? search.matches.filter(isRecord) : [];
+  const skill = matches.find((entry) => entry.kind === "skill" && typeof entry.name === "string" && entry.name.startsWith(`plugin:${plugin.id}:`));
+  if (!skill || typeof skill.name !== "string") throw new Error("Missing assigned GitHub skill");
 
   for (const requiredAuthType of [null, "none", "oauth"]) {
     if (requiredAuthType === "oauth") {
@@ -253,13 +300,52 @@ test("persisted GitHub no-auth bindings stay discoverable without allowing new a
     });
     const index = await desktopServerIndex();
     expect(index.includes(connectionId), `required auth: ${requiredAuthType}`).toBe(requiredAuthType !== "oauth");
+    expect(await desktopReadiness()).toMatchObject({
+      state: requiredAuthType === "oauth" ? "needs_admin_setup" : "ready",
+      connections: [{ id: connectionId, authType: "none", connectedForMe: true, authTypeMismatch: requiredAuthType === "oauth" }],
+    });
+    const executed = await callTool("execute_capability", { name: skill.name });
+    if (requiredAuthType === "oauth") {
+      expect(executed).toMatchObject({ status: "needs_admin_setup", action: { surface: "openwork_organization_connections" } });
+      expect(executed.content).toBeUndefined();
+    } else {
+      expect(executed.content).toBe(skillSource);
+    }
   }
   expect(await queryDenDatabase(databaseUrl,
     "SELECT auth_type AS authType FROM external_mcp_connection WHERE organization_id = ? AND id = ?", [orgId, connectionId],
   )).toEqual([{ authType: "none" }]);
   evidence.recordAssertionEvidence(
     "Legacy GitHub discovery does not relax new setup or explicit OAuth",
-    "New anonymous plugin configuration was rejected. A persisted connected none binding, with either no required auth or required none, remained setup-ready and present in the desktop MCP index. Explicit OAuth blocked it without rewriting the stored auth type. No GitHub endpoint was contacted.",
+    "New anonymous plugin configuration was rejected. A persisted connected none binding, with either no required auth or required none, remained ready in desktop marketplace readiness and the MCP index, and allowed its skill. Explicit OAuth blocked discovery and skill content without rewriting the stored auth type. No GitHub endpoint was contacted.",
+    true,
+  );
+
+  // Model an existing per-member OAuth connection without a registered client.
+  // Legacy desktop readiness offers sign-in; execution must still require setup.
+  await queryDenDatabase(databaseUrl,
+    "UPDATE external_mcp_connection SET auth_type = 'oauth', credential_mode = 'per_member', connected_at = NULL WHERE organization_id = ? AND id = ?",
+    [orgId, connectionId],
+  );
+  await queryDenDatabase(databaseUrl,
+    "UPDATE plugin_mcp_requirement_binding SET required_auth_type = NULL WHERE organization_id = ? AND plugin_id = ?",
+    [orgId, plugin.id],
+  );
+  const versioned = await denFetch(den.admin, `/v1/config-objects/${binding.configObjectId}/versions`, {
+    method: "POST", headers,
+    body: JSON.stringify({ input: { normalizedPayloadJson: { mcpServers: { crm: { type: "remote", url, oauth: false } } } } }),
+  });
+  expect(versioned.response.status, versioned.text).toBe(201);
+  expect(await desktopReadiness(den.members.reader)).toMatchObject({
+    state: "needs_signin",
+    connections: [{ id: connectionId, authType: "oauth", connectedForMe: false, oauthClientConfigured: false, oauthClientRequired: false, authTypeMismatch: false }],
+  });
+  const blocked = await callTool("execute_capability", { name: skill.name });
+  expect(blocked).toMatchObject({ status: "needs_admin_setup", action: { surface: "openwork_organization_connections" } });
+  expect(blocked.content).toBeUndefined();
+  evidence.recordAssertionEvidence(
+    "Legacy OAuth desktop sign-in readiness does not authorize execution",
+    "An authorized non-admin member still sees needs_signin for the existing GitHub OAuth connection when the dependency permits alternative auth. With no registered OAuth client, instructional execution still returns needs_admin_setup without skill content.",
     true,
   );
 });
