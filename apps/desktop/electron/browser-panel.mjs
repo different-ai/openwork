@@ -4,7 +4,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, WebContentsView, clipboard, dialog, session, shell } from "electron";
+import { app, BrowserWindow, WebContents, WebContentsView, clipboard, dialog, session, shell } from "electron";
 import {
   BACKGROUND_TAB_VIEWPORT,
   backgroundTabEmulationCommands,
@@ -680,10 +680,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     installBrowserSessionHooks();
     ensureWebMcpFramePolicy();
     const tabId = restoreTabId ?? createBrowserTabId();
+    const { webContents: openerWebContents, ...restContentsOptions } = contentsOptions;
     const view = new WebContentsView({
-      ...contentsOptions,
+      ...restContentsOptions,
+      ...(openerWebContents instanceof WebContents ? { webContents: openerWebContents } : {}),
       webPreferences: {
-        ...contentsOptions.webPreferences,
+        ...restContentsOptions.webPreferences,
         backgroundThrottling: false,
         ...BROWSER_SECURITY_PREFERENCES,
         preload: path.join(__dirname, "browser-content-preload.cjs"),
