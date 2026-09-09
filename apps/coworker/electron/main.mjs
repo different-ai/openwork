@@ -2790,6 +2790,7 @@ commands["maintenance.handoffReceived"] = async ({ handoffId }) => {
   try {
     await pending.handoff.arm([...pending.previousProcesses, ...captureMaintenanceProcesses(app.getAppMetrics().map((metric) => metric.pid).filter((pid) => pid !== pending.handoff.pid))]);
     await pending.handoff.commit();
+    console.info("[fresh-start] Native handoff committed; closing previous app.");
     resetExitReady = true;
     // This separate IPC call proves the renderer received the HANDOFF receipt.
     // No completed-backup claim is made before exiting the old application.
