@@ -499,11 +499,10 @@ async function configureWorkspaceProvider(
     baseUrl: string;
     smallModel?: string;
     allowTools?: boolean;
-    commands?: Record<string, { template: string }>;
   },
 ): Promise<void> {
   // TODO(primitive): seed.configureWorkspaceProvider should configure and reload a workspace model without raw renderer evaluation.
-  const result = await seed.evalIn(app, browserScript(async (workspaceIds, smallModel, allowTools, providerId, modelId, modelName, baseUrl, defaultModel, commands) => {
+  const result = await seed.evalIn(app, browserScript(async (workspaceIds, smallModel, allowTools, providerId, modelId, modelName, baseUrl, defaultModel) => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
     const root = String(info.baseUrl).replace(/\/+$/, "");
@@ -513,7 +512,7 @@ async function configureWorkspaceProvider(
     };
     const outcomes = [];
     for (const workspaceId of workspaceIds) {
-      const opencode: { model: string; provider: Record<string, unknown>; small_model?: string; permission?: unknown; command?: Record<string, { template: string }> } = {
+      const opencode: { model: string; provider: Record<string, unknown>; small_model?: string; permission?: unknown } = {
         model: defaultModel,
         provider: {
           [providerId]: {
@@ -525,7 +524,6 @@ async function configureWorkspaceProvider(
         },
       };
       if (smallModel) opencode.small_model = smallModel;
-      if (commands) opencode.command = commands;
       if (allowTools) opencode.permission = { edit: "allow", write: "allow", read: "allow", bash: "allow" };
       const response = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
         method: "PATCH",
@@ -566,7 +564,6 @@ async function configureWorkspaceProvider(
       options.modelName,
       options.baseUrl,
       `${options.providerId}/${options.modelId}`,
-      options.commands,
     ]), { awaitPromise: true, timeoutMs: 240_000 });
   if (typeof result !== "object" || result === null || !("outcomes" in result) || !Array.isArray(result.outcomes)) {
     throw new Error(`Workspace provider configuration failed: ${JSON.stringify(result)}`);
@@ -1402,7 +1399,12 @@ export async function commandPaletteSearch(seed: Seed) {
 }
 
 type ArchiveFault = "none" | "false" | "error" | "timeout" | "unconfirmed" | "hold" | "retry" | "permission" | "question" | "prompt_error" | "hold_prompt" | "accepted_command" | "hold_archive";
-type ArchiveRequest = { path: string; sessionId: string; action: string; messageID: string | null; result: string | number | null };
+type ArchiveRequest = {
+  path: string; sessionId: string; action: string; messageID: string | null; result: string | number | null;
+  command?: { name: string; arguments: string; model: string | null; agent: string | null };
+  responseBody?: string;
+  dispatchError?: string;
+};
 
 declare global {
   interface Window {
@@ -1448,9 +1450,43 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
   const workspaceB = await additionalWorkspace(seed, app, `/tmp/${workspaceBName}`);
   await configureWorkspaceProvider(seed, app, [workspaceA.workspaceId, workspaceB.workspaceId], {
     providerId, modelId, modelName: "Archive fixture model", baseUrl: `${mock.url}/v1`, allowTools: true,
-    smallModel: `${providerId}/${modelId}`,
-    commands: { "archive-witness": { template: "Archive command witness task." } },
   });
+  // OpenWork's runtime config drops command/model keys. In v1.18.18 the native
+  // workspace PATCH also writes config.json, which its project loader ignores.
+  // Use the native global config in this desktop's isolated profile instead.
+  const commandSetup = await seed.evalIn(app, browserScript(async (workspaceId, model) => {
+    const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    if (!info.running || !info.baseUrl) throw new Error("Archive engine is unavailable");
+    const base = `${info.baseUrl.replace(/\/+$/, "")}/workspace/${workspaceId}/opencode`;
+    const headers = { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken), "Content-Type": "application/json" };
+    const read = async () => {
+      const [configResponse, commandsResponse] = await Promise.all(["config", "command"].map(endpoint =>
+        fetch(`${base}/${endpoint}`, { headers, signal: AbortSignal.timeout(15000) })));
+      if (!configResponse.ok || !commandsResponse.ok) throw new Error(`Archive command inventory failed: config=${configResponse.status}, commands=${commandsResponse.status}`);
+      const config: { model?: string; small_model?: string; default_agent?: string } = await configResponse.json();
+      const commands: { name: string; template: string; model?: string; agent?: string }[] = await commandsResponse.json();
+      const command = commands.find(command => command.name === "archive-witness");
+      return { model: config.model ?? null, smallModel: config.small_model ?? null, agent: config.default_agent ?? null,
+        command: command ? { name: command.name, template: command.template, model: command.model ?? null, agent: command.agent ?? null } : null,
+        commandNames: commands.map(command => command.name).sort() };
+    };
+    const before = await read();
+    const response = await fetch(`${base}/global/config`, {
+      method: "PATCH", headers, signal: AbortSignal.timeout(30000),
+      body: JSON.stringify({ model, small_model: model, command: { "archive-witness": { template: "Archive command witness task." } } }),
+    });
+    if (!response.ok) throw new Error(`Archive native command configuration failed: ${response.status} ${(await response.text()).slice(0, 2000)}`);
+    // Global config invalidates instances asynchronously; observe actual engine
+    // readiness before creating sessions or submitting any held command.
+    const deadline = Date.now() + 30_000;
+    let after = await read();
+    while (after.model !== model || after.smallModel !== model || after.command?.template !== "Archive command witness task.") {
+      if (Date.now() >= deadline) throw new Error(`Archive command is not ready: ${JSON.stringify({ after, before })}`);
+      await new Promise(resolve => setTimeout(resolve, 250));
+      after = await read();
+    }
+    return { before, after };
+  }, [workspaceA.workspaceId, `${providerId}/${modelId}`]), { timeoutMs: 90_000 });
   // Seed each owning engine once; UI task creation can race route changes and create extra sessions.
   async function createSession(workspaceId: string, title: string, parentID?: string): Promise<ShellSession & { workspaceId: string }> {
     const result = await seed.evalIn(app, browserScript(async (workspaceId, title, parentID) => {
@@ -1545,6 +1581,12 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
       if (record && ["prompt_async", "command"].includes(record.action)) {
         const body: unknown = await request.clone().json();
         if (body && typeof body === "object" && "messageID" in body && typeof body.messageID === "string") record.messageID = body.messageID;
+        if (record.action === "command" && body && typeof body === "object" && "command" in body && typeof body.command === "string"
+          && "arguments" in body && typeof body.arguments === "string") {
+          record.command = { name: body.command, arguments: body.arguments,
+            model: "model" in body && typeof body.model === "string" ? body.model : null,
+            agent: "agent" in body && typeof body.agent === "string" ? body.agent : null };
+        }
       }
       if (record) state.requests.push(record);
       const owner = url.pathname.startsWith("/workspace/" + encodeURIComponent(state.workspaceId) + "/opencode/");
@@ -1558,9 +1600,15 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
         const admitted = new Request(request, { signal: new AbortController().signal });
         state.release = async () => {
           state.release = null;
-          const response = await original(admitted);
-          record.result = response.status;
-          if (!response.ok) throw new Error("Admitted command dispatch failed: " + response.status + " " + await response.text());
+          try {
+            const response = await original(admitted);
+            record.result = response.status;
+            record.responseBody = (await response.text()).slice(0, 2000);
+            if (!response.ok) throw new Error("Admitted command dispatch failed: " + response.status + " " + record.responseBody);
+          } catch (error) {
+            record.dispatchError = error instanceof Error ? error.message : String(error);
+            throw error;
+          }
         };
         return Response.json({ ok: true, accepted: true });
       }
@@ -1669,7 +1717,8 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
     const requests = result.requests.map((entry) => {
       if (!isRecord(entry) || typeof entry.path !== "string" || typeof entry.sessionId !== "string"
         || typeof entry.action !== "string") throw new Error("Malformed archive request");
-      return { path: entry.path, sessionId: entry.sessionId, action: entry.action, result: entry.result, messageID: entry.messageID };
+      return { path: entry.path, sessionId: entry.sessionId, action: entry.action, result: entry.result, messageID: entry.messageID,
+        command: entry.command, responseBody: entry.responseBody, dispatchError: entry.dispatchError };
     });
     return { sessions, requests, surfaces: result.surfaces, activeRows: result.activeRows, tabs: result.tabs, memory: result.memory };
   }
@@ -1685,6 +1734,7 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
     child,
     faultCandidate,
     workspaceBName,
+    commandSetup,
     facts,
     networkFault,
     faultObservation: () => seed.evalIn(app, browserScript(async (workspaceIds) => {
@@ -1754,9 +1804,9 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
         headers: { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken) }, signal: AbortSignal.timeout(15000),
       });
       if (!response.ok) throw new Error("Could not read transcript: " + response.status);
-      const messages: { info: { id: string; sessionID: string; role: string; parentID?: string; time: { completed?: number }; finish?: string }; parts: { type: string; text?: string; state?: { status: string } }[] }[] = await response.json();
+      const messages: { info: { id: string; sessionID: string; role: string; parentID?: string; time: { completed?: number }; finish?: string; error?: unknown }; parts: { type: string; text?: string; state?: { status: string } }[] }[] = await response.json();
       return messages.map(({ info, parts }) => ({ id: info.id, sessionId: info.sessionID, role: info.role, parentID: info.parentID ?? null,
-        completed: info.time.completed ?? null, finish: info.finish ?? null,
+        completed: info.time.completed ?? null, finish: info.finish ?? null, error: info.error ?? null,
         pendingTools: parts.some(p => p.type === "tool" && (p.state?.status === "pending" || p.state?.status === "running")),
         text: parts.filter(p => p.type === "text").map(p => p.text).join("\n") }));
     }, [session.workspaceId, session.sessionId]), { timeoutMs: 20_000 }),

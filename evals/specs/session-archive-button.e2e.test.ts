@@ -1,19 +1,18 @@
 import { expect } from "vitest";
-import { spec } from "@openwork/testkit";
+import { spec, type SpecBodyContext } from "@openwork/testkit";
 import { archiveActiveSessions } from "../worlds/session-shell.ts";
 import { awayFirstPrompt, awayQueuedPrompt } from "../worlds/chat.ts";
 
 const test = spec.world(archiveActiveSessions, { timeout: 12 * 60_000 });
 
-test("archiving exits only the viewed conversation, and working sessions require a confirmed stop without replay", async ({ world, user, agent, probe, step }) => {
-  const { a1, a2, b1, faultCandidate } = world;
+async function archiveActions({ world, user, agent, probe }: Pick<SpecBodyContext<Awaited<ReturnType<typeof archiveActiveSessions>>>, "world" | "user" | "agent" | "probe">) {
+  const { a1 } = world;
   const route = (target: typeof a1) => `#/workspace/${target.workspaceId}/session/${target.sessionId}`;
   const start = (target: typeof a1) => `#/workspace/${target.workspaceId}/session`;
   const quickAction = (target: typeof a1) => ({ testId: `session-archive-${target.sessionId}` });
   const aborts = async () => (await world.facts()).requests.filter(request => request.action === "abort");
   const initial = await world.facts();
   const initialIds = initial.sessions.map(session => session.sessionId).sort();
-  const unsentDraft = "Keep this unsent draft when I cancel archiving.";
 
   async function open(target: typeof a1, via: "sidebar" | "control" = "sidebar") {
     if (via === "control") {
@@ -65,6 +64,14 @@ test("archiving exits only the viewed conversation, and working sessions require
     if (expected) await probe.eventually(() => world.undoToastSettled(), { within: 10_000, label: "View/Undo toast entrance settles" });
     return facts;
   }
+
+  return { route, start, aborts, open, send, archive, archived };
+}
+
+test("archiving exits only the viewed conversation, and working sessions require a confirmed stop without replay", async ({ world, user, agent, probe, step }) => {
+  const { a1, a2, b1, faultCandidate } = world;
+  const { route, start, aborts, open, send, archive, archived } = await archiveActions({ world, user, agent, probe });
+  const unsentDraft = "Keep this unsent draft when I cancel archiving.";
 
   await step("idle active archive returns to the same workspace without creating a session; Undo reopens without sending", async () => {
     await open(a2);
@@ -523,6 +530,24 @@ test("archiving exits only the viewed conversation, and working sessions require
       return Date.now() >= deadline;
     }, { within: 20_000, label: "restoring the parent never replays a descendant queue" });
   });
+});
+
+test("accepted commands require exact engine admission before archive and never replay after Undo", async ({ world, user, agent, probe, step }) => {
+  const { a2, b1 } = world;
+  const { aborts, open, send, archive, archived } = await archiveActions({ world, user, agent, probe });
+  expect(await world.requests()).toHaveLength(0);
+  expect(await aborts()).toHaveLength(0);
+  console.info("[archive command setup]", JSON.stringify(world.commandSetup));
+  await step("the owning engine exposes the configured command and fixture model", async () => {
+    expect(await probe.desktopApi(`/workspace/${a2.workspaceId}/opencode/command`)).toMatchObject({
+      status: 200,
+      body: expect.arrayContaining([expect.objectContaining({ name: "archive-witness", template: "Archive command witness task." })]),
+    });
+    expect(await probe.desktopApi(`/workspace/${a2.workspaceId}/opencode/config`)).toMatchObject({
+      status: 200,
+      body: { model: "session-archive-mock/mock-agent-workload-model", small_model: "session-archive-mock/mock-agent-workload-model" },
+    });
+  });
 
   for (const queued of [false, true]) {
     await step(`${queued ? "queued" : "direct"} accepted commands cannot archive before their engine admission is observed`, async () => {
@@ -535,6 +560,7 @@ test("archiving exits only the viewed conversation, and working sessions require
       }
       await world.networkFault("accepted_command", a2.sessionId);
       const commandCount = (await world.facts()).requests.filter(request => request.action === "command").length;
+      await probe.eventually(() => world.surfaceReady(a2.sessionId), { within: 30_000, label: "command composer belongs to the owning session" });
       await agent.run("composer.set_text", { text: "/archive-witness" });
       await user.see("composer", { text: "/archive-witness" });
       if (queued) {
@@ -554,7 +580,7 @@ test("archiving exits only the viewed conversation, and working sessions require
         until: facts => facts.requests.filter(request => request.action === "command").length === commandCount + 1,
       });
       const command = accepted.requests.filter(request => request.action === "command")[commandCount];
-      expect(command).toMatchObject({ sessionId: a2.sessionId, path: `/workspace/${a2.workspaceId}/opencode/session/${a2.sessionId}/command`, result: "accepted, not dispatched" });
+      expect(command).toMatchObject({ sessionId: a2.sessionId, path: `/workspace/${a2.workspaceId}/opencode/session/${a2.sessionId}/command`, command: { name: "archive-witness", arguments: "" }, result: "accepted, not dispatched" });
       expect(command.messageID).toMatch(/^msg_/);
       expect((await world.transcript(a2)).some(message => message.id === command.messageID)).toBe(false);
       await archive(a2);
@@ -575,18 +601,34 @@ test("archiving exits only the viewed conversation, and working sessions require
       });
       await user.click({ role: "button", label: "Stop and archive" });
       await user.see({ text: /The session has not been archived/ }, { timeoutMs: 25_000 });
-      await archived(a2, false);
-      expect((await world.transcript(a2)).some(message => message.id === command.messageID)).toBe(false);
+      const unrelatedStopped = await archived(a2, false);
+      expect(unrelatedStopped.sessions.find(session => session.sessionId === a2.sessionId)?.status).toBe("idle");
+      const unrelatedTranscript = await world.transcript(a2);
+      expect(unrelatedTranscript.some(message => message.id === command.messageID)).toBe(false);
+      const unrelatedUser = unrelatedTranscript.findLast(message => message.role === "user" && message.text === "An independently submitted task, not the accepted command.");
+      expect(unrelatedUser).toBeDefined();
+      expect(unrelatedTranscript).toEqual(expect.arrayContaining([
+        expect.objectContaining({ parentID: unrelatedUser?.id, role: "assistant", completed: expect.any(Number), pendingTools: false }),
+      ]));
       expect((await world.facts()).requests.filter(request => request.action === "metadata")).toHaveLength(accepted.requests.filter(request => request.action === "metadata").length);
 
       await world.holdRun();
-      await world.releaseAbort();
-      await world.networkFault("none", a2.sessionId);
       const expected = before + Number(queued) + 2;
-      await probe.eventually(async () => ({ requests: await world.requests(), transcript: await world.transcript(a2) }), {
-        within: 60_000, label: "exact accepted command reaches the engine and held provider",
-        until: value => value.requests.length === expected && value.transcript.some(message => message.id === command.messageID && message.role === "user"),
-      });
+      try {
+        await world.releaseAbort();
+        await world.networkFault("none", a2.sessionId);
+        await probe.eventually(async () => ({ requests: await world.requests(), transcript: await world.transcript(a2), facts: await world.facts() }), {
+          within: 60_000, label: "exact accepted command reaches the engine and held provider",
+          until: value => value.requests.length === expected && value.transcript.some(message => message.id === command.messageID && message.role === "user"),
+        });
+      } catch (error) {
+        console.info("[archive command dispatch:failure]", JSON.stringify({
+          queued, command, expected, diagnostics: await world.diagnostics(),
+          commands: await probe.desktopApi(`/workspace/${a2.workspaceId}/opencode/command`),
+          transcript: await world.transcript(a2), provider: await world.requests(),
+        }));
+        throw error;
+      }
       await user.click({ role: "button", label: "Stop and archive" });
       await user.see({ text: "Session archived" });
       await archived(a2, true);
