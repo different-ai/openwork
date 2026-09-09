@@ -197,7 +197,7 @@ function useDenClient() {
  * prepared summary so the onboarding payoff can greet the
  * user with "Setup complete" instead of a generic resource list.
  */
-type PreparedBootstrapSummary = {
+export type PreparedBootstrapSummary = {
   orgName: string;
   claimLinks: Array<{ id: string; role: string; url: string; expiresAt: string }>;
 };
@@ -387,6 +387,21 @@ export function resolveOrgOnboardingPostListStep({
 }
 
 /**
+ * The "nothing to onboard" exit: the user is already signed in with an
+ * active org, so this page has nothing left to resolve and should hand
+ * back to /session. Unlike this page's other exits, this one used to leave
+ * a stale `orgSelectionPending` flag set — see clearOrgSelectionPending()
+ * at the call site for the failure mode that caused.
+ */
+export function isAlreadyOnboardedExit(input: {
+  authToken: string | null | undefined;
+  orgId: string | null | undefined;
+  prepared: PreparedBootstrapSummary | null;
+}): boolean {
+  return Boolean(input.authToken && input.orgId && input.prepared);
+}
+
+/**
  * Full-screen onboarding page shown after sign-in + org selection.
  * Fetches all org resources (providers, marketplaces, skills)
  * and shows them so the user knows what their org provides.
@@ -429,7 +444,8 @@ export function OrgOnboardingPage() {
   }, [authToken, navigate, prepared]);
 
   useEffect(() => {
-    if (authToken && orgId && prepared) {
+    if (isAlreadyOnboardedExit({ authToken, orgId, prepared })) {
+      clearOrgSelectionPending();
       navigate("/session", { replace: true });
     }
   }, [authToken, navigate, orgId, prepared]);
