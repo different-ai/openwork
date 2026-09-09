@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { selectModel } from "@openwork/behaviors";
-import { spec } from "@openwork/testkit";
+import { spec, type Agent, type User } from "@openwork/testkit";
 import { defaultPolicyEditorAndMemberDesktop, managedPolicyRecovery, readDefaultDesktopPolicy, teamAccess } from "../worlds/desktop-policies.ts";
 
 // An organization that wants a vanilla OpenWork picks one decision, Restricted,
@@ -99,7 +99,7 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
     await member.user.see({ role: "textbox", label: "App name" });
     const localMcpFormText = await member.probe.text();
     await member.user.press("Escape");
-    await member.user.notSee({ text: "Add workspace MCP" });
+    await member.user.notSee({ role: "textbox", label: "App name" });
     await member.user.click({ role: "button", label: /^All$/ });
     return { libraryHashBefore: await member.probe.hash(), localMcpFormText };
   });
@@ -578,6 +578,12 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
   if (!world) throw new Error("Expected the Team Access world");
   const member = { user: user.on(world.member), agent: agent.on(world.member), probe: probe.on(world.member) };
   const admin = { user: user.on(world.admin), probe: probe.on(world.admin) };
+  const openOwnedPolicyTab = async (tabAgent: Agent, tabUser: User, title: string, url: string) => {
+    const sessionId = await tabAgent.createSession(title);
+    const opening = tabAgent.run("browser.open_url", { url, provider: "builtin" });
+    await tabUser.click({ role: "button", label: "Allow origin in this tab" });
+    expect(await opening).toMatchObject({ owner_session_id: sessionId });
+  };
   const effective = async (identity: typeof world.den.admin) => {
     const result = await probe.api(identity, "/v1/me/desktop-config");
     expect(result.response.ok).toBe(true);
@@ -1073,6 +1079,8 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     expect(deniedExtension.status).toBe(403);
     expect(permittedExtension.status).toBe(200);
     evidence.recordAssertionEvidence("Direct config and extension requests cannot bypass the restricted member's UI", JSON.stringify({ forbiddenConfig, deniedExtension, permittedExtension }), forbiddenConfig.status === 403 && deniedExtension.status === 403 && permittedExtension.status === 200);
+    await openOwnedPolicyTab(member.agent, member.user, "Restricted browsing policy proof", world.den.mocks.witness.url);
+    await openOwnedPolicyTab(other.agent, other.user, "Control browsing policy proof", world.den.mocks.witness.url);
     const allowedBrowser = await member.agent.browserRequest({ url: `${world.den.mocks.witness.url}/health` });
     expect(allowedBrowser.reached).toBe(true);
     const outside = new URL("/health", world.den.ref.apiUrl).toString();
@@ -1128,6 +1136,8 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     const origin = new URL(world.den.mocks.witness.url).origin;
     const url = `${origin}/health`;
     const other = agent.on(world.control);
+    await openOwnedPolicyTab(member.agent, member.user, "Restricted empty-site policy proof", origin);
+    await openOwnedPolicyTab(other, user.on(world.control), "Control empty-site policy proof", origin);
     const controlBefore = await effective(world.den.members.casey);
     const before = await member.agent.browserRequest({ url });
     expect(before.reached).toBe(true);
