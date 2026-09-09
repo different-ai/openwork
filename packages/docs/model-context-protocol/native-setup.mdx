@@ -23,7 +23,7 @@ A request such as “connect Resend” should lead to a setup card in the task. 
 2. A click reads `/v1/mcp-connections/setup`. This checks the current organization and member, matches existing accessible connections, and discovers requirements for custom endpoints. It does not register OAuth clients or create credentials.
 3. An admin or a custom role with `mcp_connections.manage` sees configuration. Other members can sign in to an existing granted connection; otherwise they see a concrete access explanation.
 4. Save uses the existing connection create API. Account mode defaults to a separate account per person for OAuth. Access defaults to the current person, with explicit people, teams, and organization options.
-5. API keys stay in authenticated human requests. OAuth opens the provider's authorization URL and waits for that member's account. Google Workspace and Microsoft 365 use their existing native provider routes and callback contracts.
+5. API keys stay in authenticated human requests. OAuth opens the provider's authorization URL and waits for the specific sign-in attempt. Google Workspace and Microsoft 365 use their existing native provider routes and callback contracts.
 6. `/v1/mcp-connections/:connectionId/readiness` checks the caller's access and live capabilities. External MCPs must return at least one permitted tool. Native providers must have the selected scopes and a valid account. A saved credential alone is insufficient.
 7. Readiness refreshes cloud inventory and resumes the same task through the normal submission path. The composer draft and attachments are preserved. An unavailable service stays visibly distinct from a ready connection.
 
@@ -45,3 +45,50 @@ The task surface owns the sheet and its readiness state. Streaming or regrouping
 `connector-catalog.e2e.test.ts` uses a real OpenAI model and separate admin/member desktops. The controlled MCP service records actual authenticated tool calls. Screenshots cover discovery, configuration, pending OAuth, ready/continued task, denied member access, service failure/recovery, and native provider client setup.
 
 `connector-search-intent.test.ts` checks the gateway's quiet discovery behavior, delegated permission and revocation, exact attempt recovery, duplicate prevention, API-key repair, and external/native OAuth app repair at live Den boundaries. Provider fixtures are explicitly synthetic; model decisions and app interactions are real.
+
+## One lifecycle across the app, Den and the provider
+
+```mermaid
+sequenceDiagram
+  participant Task as Task and native setup sheet
+  participant Den as Den control plane
+  participant Provider as OAuth provider
+  participant MCP as MCP service
+  Task->>Den: Read requirements and current access
+  Den->>MCP: Discover authentication and capabilities
+  Task->>Den: Save configuration (human session)
+  Task->>Den: Start sign-in
+  Den->>Provider: Discover issuer and identify/register client
+  Den-->>Task: Browser URL and non-secret attempt ID
+  Task->>Provider: Human signs in and consents
+  loop While pending
+    Task->>Den: Read this member's exact attempt
+  end
+  Provider->>Den: Signed-state callback and authorization code
+  Den->>Provider: Exchange code with the bound verifier
+  Den->>MCP: Validate issued tokens and negotiate protocol
+  Den-->>Task: Authorized or failed with safe diagnostic
+  Task->>Den: Verify permitted live tools
+  Den-->>Task: Ready, needs sign-in, blocked or unavailable
+  Task->>Den: Resume the original model task through the gateway
+```
+
+| State | Meaning | Next action |
+| --- | --- | --- |
+| Configuration saved | Endpoint, client settings, requested scopes and grants exist | Sign in; a saved client ID is not evidence of authorization |
+| Pending | A particular signed, expiring transaction was started | Finish provider consent; stopping the local wait does not revoke the provider request |
+| Token exchange rejected | The provider did not issue usable tokens | Use the diagnostic's action: review client registration, redirect URI, secret or client authentication method |
+| MCP rejected issued token | Token exchange completed, but the MCP resource rejected authorization | Provider administrator checks issuer, audience, tenant and granted scopes |
+| Authorized | The callback completed validation and persisted the credential | Check live capabilities for the current member |
+| Ready | The caller has access and usable tools | Resume the original task |
+| Expired or configuration changed | The attempt cannot continue with its original binding | Start a new sign-in |
+
+Den returns `attemptId` from connect/start. Both the native sheet and organization screen poll `/v1/mcp-connections/:connectionId/connect/attempts/:attemptId`. The status belongs only to its initiating member, even for shared connections. The server rechecks current access. It retains at most eight outcomes per member and connection, deletes them with the connection, and derives expiry from the signed transaction's deadline. Retries get distinct IDs; terminal outcomes cannot be overwritten by callback replay.
+
+Attempt records contain a hash of signed state and safe diagnostic fields, never authorization URLs, codes, tokens or verifiers. The browser callback and native sheet expose the same stage, code, action owner and reference. Provider excerpts go through the existing bounded redaction path. Raw customer logs and provider credentials are not forwarded to the model.
+
+Client registration and account authorization also have different recovery rules. The OAuth SDK clears a rejected automatic client registration on `invalid_client`; `invalid_grant` invalidates tokens while retaining client configuration. Den refreshes the connection after a failed attempt so Edit reflects the current registration. Unrelated name, scope or access edits do not resubmit an automatically registered client as a manually configured one.
+
+An HTTP success from the token endpoint is not treated as authorization: the client reports token exchange completion only after parsing and accepting the response. If the server then challenges that token, the result is `MCP_OAUTH_RESOURCE_REJECTED`, including when an SDK tries to restart interactive OAuth during the callback. The signed-state, issuer, PKCE and credential commit checks remain in force.
+
+Older servers without attempt IDs keep the inventory polling path. Legacy native provider aliases retain their existing status flow; native provider connection rows use attempt status. The anonymous failure scenarios establish current behavior, not the root cause of a particular private deployment.

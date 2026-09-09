@@ -104,6 +104,34 @@ export const connectionReadinessSchema = z.object({
   state: z.enum(["ready", "needs_auth", "blocked", "unavailable"]),
   message: z.string(),
   toolCount: z.number().int().nonnegative(),
+  diagnostic: z.lazy(() => connectionDiagnosticSchema).optional(),
+})
+
+/** Safe human-facing diagnostic fields. OAuth state, codes and tokens are excluded. */
+export const connectionDiagnosticSchema = z.object({
+  referenceId: z.string(),
+  phase: z.string(),
+  category: z.string(),
+  code: z.string(),
+  highestPassed: z.enum(["configured", "reachable", "authorized", "protocol_ready", "catalog_ready", "operation_ready"]),
+  retryable: z.boolean(),
+  actionOwner: z.enum(["openwork", "network_admin", "provider_admin", "organization_admin", "member"]),
+  operatorAction: z.string(),
+  message: z.string(),
+  httpStatus: z.number().int().min(100).max(599).optional(),
+  operationPhase: z.string().optional(),
+  providerCode: z.string().optional(),
+  providerRequestId: z.string().optional(),
+  providerResponseExcerpt: z.string().optional(),
+})
+
+export const connectionAttemptSchema = z.object({
+  id: z.string().uuid(),
+  connectionId: z.string(),
+  state: z.enum(["pending", "authorized", "failed", "expired", "configuration_changed"]),
+  startedAt: z.string().datetime(),
+  expiresAt: z.string().datetime(),
+  diagnostic: connectionDiagnosticSchema.nullable(),
 })
 
 
@@ -132,4 +160,6 @@ export type ConnectionSetup = z.infer<typeof connectionSetupSchema>
 export type ConnectionSetupInput = z.infer<typeof connectionSetupInputSchema>
 export type SetupConnection = z.infer<typeof setupConnectionSchema>
 export type ConnectionReadiness = z.infer<typeof connectionReadinessSchema>
+export type ConnectionDiagnostic = z.infer<typeof connectionDiagnosticSchema>
+export type ConnectionAttempt = z.infer<typeof connectionAttemptSchema>
 export type CreateSetupConnection = z.infer<typeof createSetupConnectionSchema>

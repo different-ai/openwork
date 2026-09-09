@@ -1,3 +1,5 @@
+import { createConnectionAttempt, finishConnectionAttempt, readConnectionAttempt } from "../../capability-sources/connection-attempts.js"
+import { connectionAttemptSchema, connectionDiagnosticSchema } from "@openwork/types/connection-setup"
 import { setExternalToolsSearchCache } from "../../mcp/external-tools-search-cache.js"
 import { canManageMcpConnections } from "../../organization-access.js"
 import { readConnectionSetup } from "../../capability-sources/connection-setup.js"
@@ -655,6 +657,7 @@ const resolveConnectionResponseSchema = z.object({
 const connectStartResponseSchema = z.object({
   status: z.enum(["connected", "needs_auth"]),
   authorizeUrl: z.string().nullable(),
+  attemptId: z.string().uuid().optional(),
 }).meta({ ref: "ExternalMcpConnectStartResponse" })
 
 const externalMcpDiagnosticSchema = z.object({
@@ -1394,7 +1397,9 @@ async function handleExternalMcpOAuthCallback(input: {
         organization_id: statePayload.organizationId,
         ...externalMcpDiagnosticForLog(error, input.requestId, "AUTH_ISSUER_DISCOVERY"),
       })
+      await finishConnectionAttempt(state, diagnostic)
       return mcpOAuthCallbackHtml(connectCallbackPage({
+        diagnostic,
         ok: false,
         name: connection.name,
         message: diagnostic.message,
@@ -1419,7 +1424,9 @@ async function handleExternalMcpOAuthCallback(input: {
       organization_id: statePayload.organizationId,
       ...externalMcpDiagnosticForLog(callbackError, input.requestId, "AUTH_USER_OR_WORKLOAD"),
     })
+    await finishConnectionAttempt(state, callbackError.diagnostic)
     return mcpOAuthCallbackHtml(connectCallbackPage({
+      diagnostic: callbackError.diagnostic,
       ok: false,
       name: connection.name,
       message: callbackError.diagnostic.message,
@@ -1438,6 +1445,7 @@ async function handleExternalMcpOAuthCallback(input: {
         ...externalMcpDiagnosticForLog(error, input.requestId, "AUTH_USER_OR_WORKLOAD"),
       })
     }
+    await finishConnectionAttempt(state, externalMcpOAuthCallbackError(input.requestId, "invalid_request").diagnostic)
     return invalidMcpOAuthCallback("Missing authorization code.")
   }
   try {
@@ -1466,13 +1474,16 @@ async function handleExternalMcpOAuthCallback(input: {
       organization_id: statePayload.organizationId,
       ...externalMcpDiagnosticForLog(error, input.requestId, "AUTH_TOKEN_ACQUISITION"),
     })
+    await finishConnectionAttempt(state, diagnostic)
     return mcpOAuthCallbackHtml(connectCallbackPage({
+      diagnostic,
       ok: false,
       name: connection.name,
       message: diagnostic.message,
       referenceId: diagnostic.referenceId,
     }), 400)
   }
+  await finishConnectionAttempt(state)
   return mcpOAuthCallbackHtml(connectCallbackPage({ ok: true, name: connection.name }))
 }
 
@@ -1976,8 +1987,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         const allowed = tools.filter(tool => !evaluateToolPolicy(connection.toolPolicy, tool.name).blocked)
         if (allowed.length === 0) return reply("blocked", "The connection has no tools available to you. A connection manager can check its permissions.")
         return reply("ready", "Connected and tools are available.", allowed.length)
-      } catch {
-        return reply("unavailable", "Sign-in is saved, but the service's tools could not be loaded. Try checking again.")
+      } catch (error) {
+        const diagnostic = connectionDiagnosticSchema.parse(externalMcpDiagnosticForResponse(error, c.get("requestId"), "MCP_TOOL_DISCOVERY"))
+        return c.json({ connectionId, state: "unavailable" as const, message: "Sign-in is saved, but the service's tools could not be loaded. Try checking again.", toolCount: 0, diagnostic })
       }
     },
   )
@@ -3048,6 +3060,31 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
   )
 
   app.get(
+    "/v1/mcp-connections/:connectionId/connect/attempts/:attemptId",
+    describeRoute({ tags: ["Authentication"], summary: "Read your OAuth connection attempt", responses: {
+      200: jsonResponse("Attempt outcome without OAuth credentials.", connectionAttemptSchema),
+      404: jsonResponse("Attempt not found or no longer accessible.", connectionNotFoundSchema),
+    } }),
+    orgMemberRoute(), resolveMemberTeamsMiddleware,
+    paramValidator(connectionParamsSchema.extend({ attemptId: z.string().uuid() })),
+    async c => {
+      const payload = c.get("organizationContext")
+      c.header("Cache-Control", "no-store")
+      const { connectionId, attemptId } = c.req.valid("param")
+      const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
+      const connection = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: normalizeDenTypeId("externalMcpConnection", connectionId) })
+      if (connection && (canManageMcpConnections(payload) || await memberCanUseExternalMcpConnection({
+        connectionId: connection.id, orgMembershipId: payload.currentMember.id,
+        teamIds: memberTeams.map(team => team.id),
+      }))) {
+        const attempt = await readConnectionAttempt(connection, payload.currentMember.id, attemptId)
+        if (attempt) return c.json(attempt)
+      }
+      return c.json({ error: "connection_not_found", message: "This sign-in attempt is no longer available. Check your access and start again." }, 404)
+    },
+  )
+
+  app.get(
     "/v1/mcp-connections/:connectionId/connect/start",
     describeRoute({
       tags: ["Authentication"],
@@ -3118,7 +3155,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           }
           return c.json({ error: "connection_not_found", message: "This connector does not have an OAuth client configured." }, 404)
         }
-        return c.json({ status: "needs_auth", authorizeUrl: started.authorizeUrl })
+        return c.json({ status: "needs_auth", authorizeUrl: started.authorizeUrl, attemptId: started.attemptId })
       }
 
       let issuerRepairRequiresAdmin = false
@@ -3299,7 +3336,8 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         if (result.status === "connected") {
           return c.json({ status: "connected" as const, authorizeUrl: null })
         }
-        return c.json({ status: "needs_auth" as const, authorizeUrl: result.authorizeUrl })
+        const attemptId = await createConnectionAttempt(connection, started.signedState)
+        return c.json({ status: "needs_auth" as const, authorizeUrl: result.authorizeUrl, attemptId })
       } catch (error) {
         const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "AUTH_RESOURCE_DISCOVERY")
         logger.error("external_mcp_connect_start_oauth_handshake_failed", {

@@ -2333,6 +2333,7 @@ export type ExternalMcpConnectionDeleteByKeyResponse = {
 export type ExternalMcpConnectStartResponse = {
   status: "connected" | "needs_auth";
   authorizeUrl: string | null;
+  attemptId?: string;
 };
 
 export type ExternalMcpOAuthConfigurationRequiredError = {
@@ -14085,6 +14086,22 @@ export type GetV1McpConnectionsByConnectionIdReadinessResponses = {
     state: "ready" | "needs_auth" | "blocked" | "unavailable";
     message: string;
     toolCount: number;
+    diagnostic?: {
+      referenceId: string;
+      phase: string;
+      category: string;
+      code: string;
+      highestPassed: "configured" | "reachable" | "authorized" | "protocol_ready" | "catalog_ready" | "operation_ready";
+      retryable: boolean;
+      actionOwner: "openwork" | "network_admin" | "provider_admin" | "organization_admin" | "member";
+      operatorAction: string;
+      message: string;
+      httpStatus?: number;
+      operationPhase?: string;
+      providerCode?: string;
+      providerRequestId?: string;
+      providerResponseExcerpt?: string;
+    };
   };
 };
 
@@ -14942,6 +14959,61 @@ export type PostV1McpConnectionsByConnectionIdDisconnectMyAccountResponses = {
    */
   200: unknown;
 };
+
+export type GetV1McpConnectionsByConnectionIdConnectAttemptsByAttemptIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+    attemptId: string;
+  };
+  query?: never;
+  url: "/v1/mcp-connections/{connectionId}/connect/attempts/{attemptId}";
+};
+
+export type GetV1McpConnectionsByConnectionIdConnectAttemptsByAttemptIdErrors = {
+  /**
+   * Attempt not found or no longer accessible.
+   */
+  404: ExternalMcpConnectionNotFoundError;
+};
+
+export type GetV1McpConnectionsByConnectionIdConnectAttemptsByAttemptIdError =
+  GetV1McpConnectionsByConnectionIdConnectAttemptsByAttemptIdErrors[keyof GetV1McpConnectionsByConnectionIdConnectAttemptsByAttemptIdErrors];
+
+export type GetV1McpConnectionsByConnectionIdConnectAttemptsByAttemptIdResponses = {
+  /**
+   * Attempt outcome without OAuth credentials.
+   */
+  200: {
+    id: string;
+    connectionId: string;
+    state: "pending" | "authorized" | "failed" | "expired" | "configuration_changed";
+    startedAt: string;
+    expiresAt: string;
+    diagnostic: {
+      referenceId: string;
+      phase: string;
+      category: string;
+      code: string;
+      highestPassed: "configured" | "reachable" | "authorized" | "protocol_ready" | "catalog_ready" | "operation_ready";
+      retryable: boolean;
+      actionOwner: "openwork" | "network_admin" | "provider_admin" | "organization_admin" | "member";
+      operatorAction: string;
+      message: string;
+      httpStatus?: number;
+      operationPhase?: string;
+      providerCode?: string;
+      providerRequestId?: string;
+      providerResponseExcerpt?: string;
+    } | null;
+  };
+};
+
+export type GetV1McpConnectionsByConnectionIdConnectAttemptsByAttemptIdResponse =
+  GetV1McpConnectionsByConnectionIdConnectAttemptsByAttemptIdResponses[keyof GetV1McpConnectionsByConnectionIdConnectAttemptsByAttemptIdResponses];
 
 export type GetV1McpConnectionsByConnectionIdConnectStartData = {
   body?: never;

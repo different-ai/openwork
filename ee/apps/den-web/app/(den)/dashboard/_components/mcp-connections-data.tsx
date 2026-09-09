@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
+import { connectionAttemptSchema } from "@openwork/types/connection-setup";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   type ExternalMcpDiagnostic,
@@ -623,6 +624,7 @@ export type CreateMcpConnectionInput = {
   oauthClient?: {
     clientId: string;
     clientSecret?: string;
+    tokenEndpointAuthMethod?: "client_secret_basic" | "client_secret_post";
   };
   authorizationServerIssuer?: string | null;
   requestedScopes?: string[];
@@ -651,6 +653,7 @@ export type UpdateMcpConnectionInput = {
   oauthClient?: {
     clientId: string;
     clientSecret?: string;
+    tokenEndpointAuthMethod?: "client_secret_basic" | "client_secret_post";
   };
   authorizationServerIssuer?: string | null;
   requestedScopes?: string[];
@@ -878,11 +881,20 @@ export function useReplaceMcpConnectionAccess() {
   });
 }
 
+export function useReadMcpConnectionAttempt() {
+  const { orgId } = useOrgDashboard();
+  return async (connectionId: string, attemptId: string) => {
+    const { response, payload } = await requestJson(`/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/attempts/${encodeURIComponent(attemptId)}`, { headers: getOrgScopeHeaders(requireOrgId(orgId)) });
+    if (!response.ok) throw new Error(getRequestError(payload, response, "The sign-in attempt could not be checked.").message);
+    return connectionAttemptSchema.parse(payload);
+  };
+}
+
 export function useStartMcpConnectionOAuth() {
   const { orgId } = useOrgDashboard();
 
   return useMutation({
-    mutationFn: async (connectionId: string): Promise<{ status: "connected" | "needs_auth"; authorizeUrl: string | null }> => {
+    mutationFn: async (connectionId: string): Promise<{ status: "connected" | "needs_auth"; authorizeUrl: string | null; attemptId?: string }> => {
       const { response, payload } = await requestJson(
         `/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/start`,
         { headers: getOrgScopeHeaders(requireOrgId(orgId)) },
@@ -899,7 +911,7 @@ export function useStartMcpConnectionOAuth() {
         }
         throw new McpOAuthStartError(requestError.message, details);
       }
-      return payload as { status: "connected" | "needs_auth"; authorizeUrl: string | null };
+      return payload as { status: "connected" | "needs_auth"; authorizeUrl: string | null; attemptId?: string };
     },
   });
 }

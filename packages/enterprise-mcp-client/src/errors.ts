@@ -116,6 +116,7 @@ export function isEnterpriseMcpLifecycleDeadline(value: unknown): boolean {
 }
 
 export type EnterpriseMcpOAuthContractErrorCode =
+  | "MCP_OAUTH_RESOURCE_REJECTED"
   | "MCP_OAUTH_AUTHORIZATION_ID_REQUIRED"
   | "MCP_OAUTH_AUTHORIZATION_MISSING"
   | "MCP_OAUTH_AUTHORIZATION_EXPIRED"

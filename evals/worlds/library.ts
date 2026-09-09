@@ -1413,8 +1413,12 @@ export async function nativeConnectionSetup(seed: Seed) {
   const den = await seed.den({ org: { name: `Native Setup ${Date.now()}`, admin: { name: "Setup Admin" }, members: { member: { name: "Setup Member" } } }, mocks: { connector: seed.mock({ tools }) } });
   const proxy = await seed.faultProxy(den);
   await proxy.faults.status("/api/runtime-config", 200, { times: 1000, body: { denApiUrl: proxy.ref.apiUrl } });
-  const setToolsUnavailable = async (unavailable: boolean) => {
-    const response = await fetch(`${den.mocks.connector.url}/admin/tools`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tools, toolsUnavailable: unavailable, requireConsent: true }) });
+  const setOAuthFault = async (fault: "resource_rejected" | "token_rejected" | "grant_rejected" | null) => {
+    const response = await fetch(`${den.mocks.connector.url}/admin/oauth-faults`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tokenExchangeError: fault === "token_rejected" ? "invalid_client" : fault === "grant_rejected" ? "invalid_grant" : null, rejectIssuedTokens: fault === "resource_rejected" }) });
+    if (!response.ok) throw new Error("Could not configure OAuth witness");
+  };
+  const setToolsUnavailable = async (unavailable: boolean, requireConsent = true) => {
+    const response = await fetch(`${den.mocks.connector.url}/admin/tools`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tools, toolsUnavailable: unavailable, requireConsent }) });
     if (!response.ok) throw new Error("Could not configure the MCP witness");
   };
   // The real OS browser opens immediately; require a human approval click so
@@ -1440,7 +1444,7 @@ export async function nativeConnectionSetup(seed: Seed) {
   const memberApp = await desktopFor("member");
   const web = await seed.web({ den, signedInAs: den.admin, headless: true });
   const browserUrls = await captureExternalBrowserUrls(app.handle);
-  return withDispose({ app, memberApp, den, proxy, organizationId, web, browserUrls, setToolsUnavailable, modelId, sessions }, async () => { await browserUrls[Symbol.asyncDispose](); });
+  return withDispose({ app, memberApp, den, proxy, organizationId, web, browserUrls, setToolsUnavailable, setOAuthFault, modelId, sessions }, async () => { await browserUrls[Symbol.asyncDispose](); });
 }
 
 export async function connectorCatalogDiscovery(seed: Seed) {

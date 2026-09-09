@@ -95,6 +95,17 @@ export function ConnectionSetupSheet({ controller }: { controller: Controller })
         {setup?.target ? <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">Connection details</summary><p className="mt-2 break-all">{setup.target.url}</p></details> : null}
         {status ? <div className="flex items-center gap-2 rounded-lg bg-muted/40 p-3" role="status">{phase === "ready" ? <Check className="size-4" /> : <Loader2 className="size-4 animate-spin" />}{status}</div> : null}
         {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+        {controller.diagnostic ? <div className="space-y-2 rounded-lg border p-3 text-sm" data-testid="connection-diagnostic">
+          <p>{controller.diagnostic.operatorAction}</p>
+          <p className="text-xs text-muted-foreground">Action owner: {controller.diagnostic.actionOwner.replaceAll("_", " ")}</p>
+          <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">Sign-in details</summary><dl className="mt-2 space-y-2 break-words">
+            <div><dt>Stage</dt><dd>{controller.diagnostic.phase}</dd></div>
+            <div><dt>Code</dt><dd>{controller.diagnostic.code}</dd></div>
+            <div><dt>Last completed</dt><dd>{controller.diagnostic.highestPassed.replaceAll("_", " ")}</dd></div>
+            <div><dt>Reference</dt><dd className="select-all">{controller.diagnostic.referenceId}</dd></div>
+            {controller.diagnostic.providerResponseExcerpt ? <div><dt>Provider response</dt><dd>{controller.diagnostic.providerResponseExcerpt}</dd></div> : null}
+          </dl></details>
+        </div> : null}
         {phase === "unsupported" ? <><p className="text-sm text-muted-foreground">This OpenWork server doesn't support setup in the app yet. You can finish connecting in organization settings.</p><Button className="w-full" onClick={() => void controller.openSettings()}>Open organization setup</Button></> : null}
         {setup?.message ? <p className="text-sm text-muted-foreground">{setup.message}</p> : null}
         {setup && !setup.target ? <form className="space-y-3" onSubmit={event => { event.preventDefault(); void controller.load(address) }}><Label htmlFor="connection-address">MCP server URL</Label><Input id="connection-address" value={address} onChange={event => setAddress(event.target.value)} placeholder="https://service.example/mcp" /><Button disabled={!address.trim()} type="submit">Check server</Button></form> : null}

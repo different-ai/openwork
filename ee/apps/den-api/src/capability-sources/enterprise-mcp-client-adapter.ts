@@ -110,6 +110,10 @@ function diagnosticSink(tracker: ExternalMcpDiagnosticTracker) {
     // The persistence boundary logs committed invalidations, including SDK
     // paths that do not emit the package event. Do not log them twice here.
     if (event.kind === "request" || event.kind === "credential-invalidation") return
+    if (event.operationPhase === "authorization-callback" && event.requestPhase === "oauth-token-exchange" && event.outcome === "succeeded") {
+      tracker.passed("AUTH_TOKEN_ACQUISITION", "authorized")
+      return
+    }
     const phase = diagnosticPhase(event)
     if (event.outcome === "started") {
       tracker.begin(phase)

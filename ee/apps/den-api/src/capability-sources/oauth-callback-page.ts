@@ -3,13 +3,15 @@
  * connection callbacks and native provider callbacks.
  */
 
+import type { ConnectionDiagnostic } from "@openwork/types/connection-setup"
+
 export function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 }
 
 export function connectCallbackPage(input:
   | { ok: true; name: string }
-  | { ok: false; name: string; message: string; referenceId?: string }): string {
+  | { ok: false; name: string; message: string; referenceId?: string; diagnostic?: ConnectionDiagnostic }): string {
   const title = input.ok ? "You're connected" : "Connection failed"
   const body = input.ok
     ? `<div class="status-row success">
@@ -21,6 +23,7 @@ export function connectCallbackPage(input:
         <span class="status-icon" aria-hidden="true">!</span>
         <span><strong>${escapeHtml(input.name)}</strong><small>${escapeHtml(input.message)}</small></span>
       </div>
+      ${input.diagnostic ? `<p>${escapeHtml(input.diagnostic.operatorAction)}</p><details class="reference"><summary>Connection details</summary><p>Stage: <code>${escapeHtml(input.diagnostic.phase)}</code><br>Code: <code>${escapeHtml(input.diagnostic.code)}</code><br>Action owner: ${escapeHtml(input.diagnostic.actionOwner.replaceAll("_", " "))}<br>Last completed: ${escapeHtml(input.diagnostic.highestPassed.replaceAll("_", " "))}${input.diagnostic.providerResponseExcerpt ? `<br>Provider response: <code>${escapeHtml(input.diagnostic.providerResponseExcerpt)}</code>` : ""}</p></details>` : ""}
       ${input.referenceId ? `<p class="reference">Diagnostic reference: <code>${escapeHtml(input.referenceId)}</code></p>` : ""}
       <p>Return to OpenWork to try connecting again. You can close this window.</p>`
   return `<!doctype html>

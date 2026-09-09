@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util"
 import { and, asc, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,
+  McpConnectionAttemptTable,
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
   ConfigObjectVersionTable,
@@ -1606,6 +1607,7 @@ export async function deleteExternalMcpConnection(input: {
       eq(PluginMcpRequirementBindingTable.organizationId, input.organizationId),
       eq(PluginMcpRequirementBindingTable.externalMcpConnectionId, existing.id),
     ))
+    await tx.delete(McpConnectionAttemptTable).where(eq(McpConnectionAttemptTable.connectionId, existing.id))
     await tx.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, existing.id))
     return true
   })
@@ -1656,6 +1658,7 @@ export async function deleteExternalMcpConnectionIfUnreferenced(input: {
       eq(OrgOAuthClientTable.organizationId, input.organizationId),
       eq(OrgOAuthClientTable.providerId, existing.id),
     ))
+    await tx.delete(McpConnectionAttemptTable).where(eq(McpConnectionAttemptTable.connectionId, existing.id))
     await tx.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, existing.id))
     return true
   })
