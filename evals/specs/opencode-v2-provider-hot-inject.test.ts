@@ -182,7 +182,7 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
     console.info(`[opencode-v2-spec] cold catalog readiness: ${catalogReadinessMs}ms`);
     evidence.recordAssertionEvidence(
       "C1 positive baseline and negative provider absence",
-      `The cold-cache v2 engine listed models after ${catalogReadinessMs}ms while containing neither witness A nor witness B before injection.`,
+      `The freshly booted v2 engine listed models after ${catalogReadinessMs}ms while containing neither witness A nor witness B before injection. The package cache is shared; this is not cold-cache installation proof.`,
       true,
     );
 
