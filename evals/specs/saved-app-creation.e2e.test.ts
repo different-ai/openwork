@@ -403,6 +403,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.see({ text: `Shared 1 app with ${colleague.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
     // Delivery after completion cannot consume the same link again or repeat the share.
     await world.returnVerification(verifiedLink);
+    expect(await probe.hash()).toBe("#/dashboard");
     const stillStale = await seed.api(world.den.admin, `/v1/apps/${appId}/share`, {
       method: "POST", body: JSON.stringify({ email: colleague.email }),
     });
@@ -474,7 +475,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.click("Done");
     await world.refreshFixtureAdmin();
   });
-  evidence.recordAssertionEvidence("Browser return resumes sharing and the fresh session avoids another prompt", "Delivering the real browser return link completed the pending share. Sharing again immediately completed without verification, kept exactly one recipient dashboard entry, and left the unchecked private app inaccessible.", true);
+  evidence.recordAssertionEvidence("Browser return resumes sharing and the fresh session avoids another prompt", "Navigating the real return link in an Electron browser tab exercised main-process interception, native IPC, preload forwarding, and the renderer startup bridge to complete the pending share. Sharing again immediately completed without verification, kept exactly one recipient dashboard entry, and left the unchecked private app inaccessible. OS protocol registration is outside this container journey.", true);
 
   const cleanupCompanion = await seed.api(world.den.admin, `/v1/artifact-views/${companionAppId}/retire`, { method: "POST" });
   expect(cleanupCompanion.response.status, cleanupCompanion.text).toBe(200);

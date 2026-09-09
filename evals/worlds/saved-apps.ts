@@ -153,10 +153,25 @@ export async function savedAppCreation(seed: Seed) {
       den.admin.token = field(result.body, "token");
     },
     async returnVerification(link: string) {
-      // Deliver the browser's real, one-time link through the desktop bridge.
-      await evaluate(app.client, browserScript((link) => {
-        window.dispatchEvent(new CustomEvent("openwork:deep-link", { detail: { urls: [link] } }));
-      }, [link]));
+      // Containers have no OS protocol registration. Navigate the real returned
+      // link in an Electron browser tab, exercising main-process interception,
+      // native IPC, preload forwarding, and the renderer's startup bridge.
+      const opened = await evaluate(app.client, browserScript(async () => {
+        return window.__OPENWORK_ELECTRON__.browser.openUrl("about:blank", "builtin");
+      }, []));
+      const tabId = field(opened, "tab_id");
+      const targetId = field(opened, "target_id");
+      const target = (await listTargets(app.handle.cdpUrl)).find((entry) => entry.id === targetId);
+      if (!target) throw new Error("The native browser return tab was not created");
+      const browser = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
+      try {
+        await browser.send("Page.navigate", { url: link });
+      } finally {
+        browser.close();
+        await evaluate(app.client, browserScript(async (tabId) => {
+          await window.__OPENWORK_ELECTRON__.browser.closeTab(tabId);
+        }, [tabId]));
+      }
     },
     open: (path: string) => go(app, path),
     previewText: async () => String(await inPreview("read")),

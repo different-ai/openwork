@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createDenClient, readDenSettings, writeDenSettings } from "@/app/lib/den";
 import { deepLinkBridgeEvent, type DeepLinkBridgeDetail } from "@/app/lib/deep-link-bridge";
-import { dispatchDenSessionUpdated } from "@/app/lib/den-session-events";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useDenAuth } from "./den-auth-provider";
@@ -67,8 +66,8 @@ export function DenReauthNotice({ onVerified, onCancel }: {
       const verifiedUser = await client.getSession();
       if (verifiedUser.id !== user.id) throw new Error(`Sign in as ${user.email} to confirm this share.`);
       ensureCurrent();
+      // The settings notification refreshes session consumers on the current screen.
       writeDenSettings({ ...settings, authToken: exchange.token }, { persistBootstrap: false });
-      dispatchDenSessionUpdated({ status: "success", baseUrl: settings.baseUrl, token: exchange.token, user: verifiedUser, email: verifiedUser.email });
       // The resumed mutation still enforces freshness and resource permissions on the server.
       await completeRef.current(client);
     } catch (cause) {
