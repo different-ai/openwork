@@ -9,6 +9,9 @@ final class BoundaryTests: XCTestCase {
             ["type": "click", "x": -1, "y": 1],
             ["type": "click", "x": 1, "y": 1, "strict": false],
             ["type": "click", "x": 1],
+            ["type": "move", "x": -1, "y": 1],
+            ["type": "move", "x": Double.nan, "y": 1],
+            ["type": "move", "x": 1, "y": 1, "strict": false],
             ["type": "scroll", "x": 1, "y": 1, "delta_x": 1.5, "delta_y": 1],
             ["type": "key", "key": "command+space"],
             ["type": "key", "key": "paste"],
@@ -18,6 +21,9 @@ final class BoundaryTests: XCTestCase {
             ["type": "shell", "text": "ignored"],
         ]
         for candidate in invalid { XCTAssertThrowsError(try Action(candidate)) }
+        let hover = try Action(["type": "move", "x": 10, "y": 20])
+        XCTAssertEqual(hover.name, "move")
+        XCTAssertTrue(hover.requiresPointer)
         XCTAssertNoThrow(try Action(["type": "set_value", "ref": "e1", "text": ""]))
         XCTAssertNoThrow(try Action(["type": "type", "text": "Hello 👋🏽 café 日本語"]))
         XCTAssertThrowsError(try Arguments(values: ["pid": true]).integer("pid", min: 1, max: 999))
@@ -44,6 +50,7 @@ final class BoundaryTests: XCTestCase {
         let calls: [(String, [String: Any])] = [
             ("computer_observe", ["session_id": "invented"]),
             ("computer_act", ["session_id": "invented", "observation_id": "invented", "request_id": "one", "action": ["type": "click", "x": 10, "y": 20]]),
+            ("computer_act", ["session_id": "invented", "observation_id": "invented", "request_id": "hover", "action": ["type": "move", "x": 10, "y": 20]]),
             ("computer_session_status", ["session_id": "invented"]),
             ("computer_close_session", ["session_id": "invented"]),
         ]

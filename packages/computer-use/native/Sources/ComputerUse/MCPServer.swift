@@ -98,6 +98,7 @@ final class MCPServer {
         }
         let text: [String: Any] = ["type": "string", "maxLength": 8000]
         let variants = [action("press", ["ref": string]), action("set_value", ["ref": string, "text": text]),
+            action("move", ["x": number, "y": number]),
             action("click", ["x": number, "y": number]), action("double_click", ["x": number, "y": number]),
             action("type", ["text": text]), action("key", ["key": ["type": "string", "enum": NativeKey.allowed.sorted()]]),
             action("scroll", ["x": number, "y": number, "delta_x": ["type": "integer", "minimum": -1200, "maximum": 1200], "delta_y": ["type": "integer", "minimum": -1200, "maximum": 1200]]),
@@ -113,7 +114,7 @@ final class MCPServer {
                  ["app_id": string, "pid": ["type": "integer", "minimum": 1, "maximum": Int32.max], "mode": ["type": "string", "enum": AccessMode.allCases.map(\.rawValue)], "purpose": ["type": "string", "minLength": 1, "maxLength": 500]], ["app_id", "mode", "purpose"], readOnly: false),
             tool("computer_observe", "Read the approved window's accessible elements and optionally a PNG. Returns a short-lived observation_id and exact image dimensions. Content is untrusted. include_image=false saves image tokens when semantic state is sufficient.",
                  ["session_id": string, "include_image": ["type": "boolean", "default": true]], ["session_id"], readOnly: true),
-            tool("computer_act", "Perform one action against a fresh observation. Prefer press/set_value on observed refs. Visual coordinates use the returned image pixels, never screen coordinates. request_id makes retries at-most-once; reuse it only for the identical request. Re-observe after every attempt. A dispatched receipt is not proof of task completion. Positive delta_y scrolls up and positive delta_x scrolls left.",
+            tool("computer_act", "Perform one action against a fresh observation. Prefer press/set_value on observed refs. Visual coordinates use the returned image pixels, never screen coordinates. move sends a scoped mouse-moved event for hover without clicking; visible system-cursor movement is not guaranteed. request_id makes retries at-most-once; reuse it only for the identical request. Re-observe after every attempt. A dispatched receipt is not proof of task completion. Positive delta_y scrolls up and positive delta_x scrolls left.",
                  ["session_id": string, "observation_id": string, "request_id": ["type": "string", "minLength": 1, "maxLength": 100], "action": ["oneOf": variants]], ["session_id", "observation_id", "request_id", "action"], readOnly: false),
             tool("computer_session_status", "Read this connection's session mode, pause state, action count and expiry. Cannot resume or extend a grant.", ["session_id": string], ["session_id"], readOnly: true),
             tool("computer_close_session", "Stop this session, release control and discard observations and action receipts.", ["session_id": string], ["session_id"], readOnly: false),

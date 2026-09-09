@@ -163,6 +163,7 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
       ...current.session,
       state: paused ? "paused" : state.state ?? current.session?.state ?? "active",
       purpose: purpose ?? state.purpose ?? current.session?.purpose ?? "",
+      ...(typeof state.app_name === "string" ? { appName: state.app_name } : {}),
       ...(typeof state.window_title === "string" ? { windowTitle: state.window_title } : {}),
       ...(typeof state.phase === "string" ? { phase: state.phase } : paused ? { phase: "waiting-for-person" } : {}),
       ...(Number.isFinite(state.expires_in_seconds) ? { expiresAt: new Date(now() + state.expires_in_seconds * 1000).toISOString() } : {}),

@@ -743,7 +743,11 @@ test("group continuations yield to routing and all foreground speakers, includin
     let preparing = false;
     const setups = [];
     const fixture = nativeFixture(async ({ slug, threadId, input, reply }) => {
-      if (slug === ".coordinator") reply.parts.push({ type: "text", text: JSON.stringify({ speakers: [{ slug: "scout" }, { slug: "editor" }], mode: "sequential" }) });
+      if (slug === ".coordinator") {
+        const message = input.prompt.split("The person's message:").at(-1).split("\nMention hints:")[0];
+        const addressedSlugs = message.includes("@scout") ? ["scout"] : [];
+        reply.parts.push({ type: "text", text: JSON.stringify({ addressedSlugs, speakers: (addressedSlugs.length ? addressedSlugs : ["scout", "editor"]).map((slug) => ({ slug })), mode: "sequential" }) });
+      }
       else if (!child && input.prompt.includes("Delegate the original")) {
         const trusted = await service.context(slug, { sessionID: threadId, messageID: reply.id, callID: reply.parts[0].callId });
         child = await service.request(trusted, "worker", { name: "Group check", goal: "Check result.md" });
@@ -756,7 +760,7 @@ test("group continuations yield to routing and all foreground speakers, includin
     } });
     const groups = createGroupExecution({ directory: home, collaboration: service, clientFor: fixture.clientFor, pollMs: 5,
       coworkerFor: async (slug) => ({ slug, name: slug, role: "Research and architecture", mission: "Deep analysis", model: "test/model" }),
-      coordinator: async () => { routing = true; await routeGate; return { workspaceId: "coordinator" }; },
+      coordinator: async () => { if (child) { routing = true; await routeGate; } return { workspaceId: "coordinator" }; },
       catalogFor: async () => ({ models: [{ id: "test/model", providerId: "test", modelId: "model", variants: [], source: "local", tier: "key", toolCall: true, status: "active", label: "Test", releaseDate: "" }] }),
     });
     try {
@@ -1241,10 +1245,16 @@ test("group retry sends a new follow-up and retains the accepted tool-bearing at
   });
 });
 
-test("general group messages stay within the existing speaker budget including extra parts", async () => {
+test("the backend preserves semantic audiences beyond the general budget and carries the chosen response mode", async () => {
   await withHome(async (home) => {
-    const fixture = nativeFixture(async ({ slug, reply }) => {
-      if (slug === ".coordinator") reply.parts.push({ type: "text", text: JSON.stringify({ speakers: [{ slug: "scout" }, { slug: "editor" }, { slug: "ops" }], followUp: { slug: "scout", brief: "React" }, synthesizer: "editor" }) });
+    const members = ["scout", "editor", "ops", "care"];
+    let selection;
+    const fixture = nativeFixture(async ({ slug, threadId, reply }) => {
+      if (slug === ".coordinator") reply.parts.push({ type: "text", text: JSON.stringify(selection.plan) });
+      else {
+        reply.parts.push({ type: "text", text: `Completed ${selection.id} by ${slug}.` });
+        if (selection.id === "collective" && slug === "scout") fixture.held.add(threadId);
+      }
     });
     const service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5 });
     const groups = createGroupExecution({ directory: home, collaboration: service, clientFor: fixture.clientFor, pollMs: 5,
@@ -1253,12 +1263,52 @@ test("general group messages stay within the existing speaker budget including e
       catalogFor: async () => ({ models: [{ id: "test/model", providerId: "test", modelId: "model", variants: [], source: "local", tier: "key", toolCall: true, status: "active", label: "Test", releaseDate: "" }] }),
     });
     try {
-      const group = await createGroup(home, { name: "Team", participantSlugs: ["scout", "editor", "ops"] });
+      const group = await createGroup(home, { name: "Team", participantSlugs: members });
       await groups.start();
-      await groups.submit(group.id, { clientMessageId: "general-budget", text: "What should we consider?" });
-      await eventually(async () => !(await groups.status(group.id)).active);
-      assert.equal((await getGroup(home, group.id)).turns[0].speakers.length, 3);
-      assert.equal(fixture.requests.filter((request) => request.slug !== ".coordinator").length, 3);
+      // Deterministic routing results test plumbing, not model interpretation of the messages.
+      for (const scenario of [
+        { id: "general", text: "What should we consider?", plan: { addressedSlugs: [], speakers: members.slice(0, 3).map((slug) => ({ slug })), followUp: { slug: "scout", brief: "React" }, synthesizer: "editor" } },
+        { id: "collective", text: "How are you all doing", plan: { addressedSlugs: members, speakers: members.map((slug) => ({ slug })), mode: "parallel" } },
+        { id: "excluded", text: "Everyone except @scout, how are you doing?", plan: { addressedSlugs: members.slice(1), speakers: members.slice(1).map((slug) => ({ slug })), mode: "parallel" } },
+        { id: "single", text: "Editor, just you: how are you doing?", plan: { addressedSlugs: ["editor"], speakers: [{ slug: "editor" }], mode: "parallel" } },
+        { id: "chain", text: "Each of you, build on the previous reply in turn.", plan: { addressedSlugs: members, speakers: members.map((slug) => ({ slug })), mode: "sequential", dependsOn: [["editor", "scout"], ["ops", "editor"], ["care", "ops"]] } },
+      ]) {
+        selection = scenario;
+        const before = fixture.requests.length;
+        await groups.submit(group.id, { clientMessageId: scenario.id, text: scenario.text });
+        if (scenario.id === "collective") {
+          await eventually(() => fixture.requests.slice(before).filter((entry) => entry.slug !== ".coordinator").length === 4);
+          assert.equal(fixture.held.size, 1, "all peers are admitted without waiting for the first reply");
+          fixture.held.clear();
+        }
+        await eventually(async () => !(await groups.status(group.id)).active);
+        const turn = (await getGroup(home, group.id)).turns.at(-1);
+        const expected = scenario.plan.speakers.map((entry) => entry.slug);
+        assert.equal(turn.routedBy, "facilitator");
+        assert.equal(turn.status, "succeeded");
+        assert.deepEqual(turn.speakers.map((entry) => entry.slug), expected);
+        const requests = fixture.requests.slice(before).filter((entry) => entry.slug !== ".coordinator");
+        assert.deepEqual(requests.map((entry) => entry.slug).sort(), [...expected].sort());
+        for (const request of requests) {
+          assert.match(request.prompt, new RegExp(`First-round mode: ${scenario.plan.mode ?? "sequential"}`));
+          for (const slug of expected) assert.ok(request.prompt.includes(`(${slug}): reply`));
+          assert.ok(request.prompt.includes(`(${request.slug}): reply [your step]`));
+          if (scenario.plan.mode === "parallel") assert.doesNotMatch(request.prompt, /Already said in reply to this message:/);
+          if (scenario.id === "chain") {
+            const index = members.indexOf(request.slug);
+            for (const earlier of members.slice(0, index)) assert.ok(request.prompt.includes(`Completed chain by ${earlier}.`));
+            for (const later of members.slice(index)) assert.ok(!request.prompt.includes(`Completed chain by ${later}.`));
+          }
+        }
+        assert.deepEqual((await readGroupTimeline(home, group.id)).filter((entry) => entry.turnId === turn.id && entry.kind === "coworker").map((entry) => entry.slug), expected);
+        if (scenario.id === "collective") {
+          const count = fixture.requests.length;
+          await groups.submit(group.id, { clientMessageId: "resume-collective", text: scenario.text, turnId: turn.id });
+          await eventually(async () => !(await groups.status(group.id)).active);
+          assert.deepEqual((await getGroup(home, group.id)).turns.at(-1).speakers.map((entry) => entry.slug), members, "recovery does not truncate a stored collective plan");
+          assert.equal(fixture.requests.length, count, "completed participants are not replayed");
+        }
+      }
     } finally { await groups.stop(); await service.stop(); }
   });
 });

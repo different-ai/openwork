@@ -1,6 +1,6 @@
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Button, ErrorNote } from "@/ui/kit";
+import { Button, ErrorNote, IconButton } from "@/ui/kit";
 import { BrowserPreview } from "@/ui/browser-preview";
 import { useBrowserViewport, useDiscussionBrowser } from "@/ui/use-discussion-browser";
 
@@ -109,7 +109,21 @@ export function DiscussionBrowser({ slug, threadId, actionsSlot, statusSlot, flo
   </section>;
 
   return <>
-    {actionsSlot ? createPortal(<Button variant="ghost" className="inline-flex items-center justify-start gap-2 rounded-lg px-2 text-xs" aria-label="Browser" title="Browser" aria-expanded={expanded || mode === "floating"} aria-controls="coworker-browser-panel" data-testid="coworker-browser-toggle" disabled={busy || (!viewId && !error)} onClick={() => { if (!viewId) browser.retry(); else void command({ action: "present", mode: mode === "hidden" ? tab ? "floating" : "side" : "hidden" }); }}><BrowserIcon className="size-4 shrink-0" /><span data-tool-label>Browser</span>{handoff ? <span className="size-1.5 shrink-0 rounded-full bg-amber" aria-label="Waiting for you" /> : null}</Button>, actionsSlot) : null}
+    {actionsSlot ? createPortal(
+      <IconButton
+        label="Browser"
+        tooltip={`Browser · ${status}`}
+        tooltipSide="left"
+        className={`window-no-drag relative ${expanded || mode === "floating" ? "bg-white/8 text-snow ring-1 ring-white/10" : ""}`}
+        aria-expanded={expanded || mode === "floating"}
+        aria-controls="coworker-browser-panel"
+        data-testid="coworker-browser-toggle"
+        disabled={busy || (!viewId && !error)}
+        onClick={() => { if (!viewId) browser.retry(); else void command({ action: "present", mode: mode === "hidden" ? tab ? "floating" : "side" : "hidden" }); }}
+      >
+        <BrowserIcon className="size-4 shrink-0" />
+        {handoff ? <span className="absolute right-1 top-1 size-1.5 rounded-full bg-amber" aria-label="Waiting for you" /> : null}
+      </IconButton>, actionsSlot) : null}
     {statusSlot && !full ? createPortal(<>{handoffCard}{error ? <div role="alert"><ErrorNote>{error}</ErrorNote></div> : null}</>, statusSlot) : null}
     {mode === "side" ? viewer : full ? <BrowserModal onExit={() => void command({ action: "exit-fullscreen" })}>{viewer}</BrowserModal> : null}
     {mode === "floating" && tab && floatingSlot && snapshot ? createPortal(<BrowserPreview slot={floatingSlot} position={snapshot.presentation.snap} onSnap={(position) => command({ action: "snap", position })} actions={<>{modes}<Button variant="ghost" className="p-1.5" aria-label="Hide browser preview" disabled={busy} onClick={() => void command({ action: "present", mode: "hidden" })}><BrowserIcon kind="close" className="size-3.5" /></Button></>}>

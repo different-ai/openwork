@@ -59,7 +59,7 @@ test("A saved Coworker discussion controls only an approved disposable window an
   await step("Allow in Coworker's real UI enables only this discussion, without starting native control", async () => {
     await user.click({ testId: "coworker-computer-allow" });
     await user.see({ testId: "coworker-computer-status" }, { text: "Allowed for this discussion", timeoutMs: 20_000 });
-    await user.see({ testId: "coworker-computer-strip" }, { text: /Access allowed/, timeoutMs: 20_000 });
+    await user.notSee({ testId: "coworker-computer-strip" });
     expect(await world.helpers()).toEqual([]);
     expect(await world.fixture.state()).toEqual({ count: 0, otherCount: 0, draft: "Initial draft" });
     await user.press("Escape");
@@ -105,7 +105,7 @@ test("A saved Coworker discussion controls only an approved disposable window an
     expect(await world.fixture.state()).toEqual({ count: 1, otherCount: 0, draft: "Reviewed in Coworker" });
     await world.fixture.pressControl("Continue");
     await waitGate("takeover");
-    await user.see({ testId: "coworker-computer-strip-scope" }, { text: /Workspace window/, timeoutMs: 15_000 });
+    await user.see({ testId: "coworker-computer-session" }, { text: /Workspace window/, timeoutMs: 15_000 });
     expect(world.result("control-open")).toMatchObject({ ok: true, state: "active", mode: "control", window_title: "Workspace window", next: "observe", fresh_observation_required: true });
     expect(await world.fixture.foregroundWindow()).toEqual({ title: "Workspace window" });
     expect(JSON.stringify(world.result("control-before"))).toContain("Reviewed in Coworker");
@@ -142,9 +142,10 @@ test("A saved Coworker discussion controls only an approved disposable window an
   await step("Stop & revoke releases the real helper, denies later tools, and a new saved discussion remains off", async () => {
     await user.press("Escape");
     await user.notSee({ testId: "coworker-computer-popover" });
-    await user.see({ testId: "coworker-computer-strip-scope" }, { text: /Workspace window/, timeoutMs: 15_000 });
-    await user.click({ testId: "coworker-computer-strip-stop" });
+    await user.notSee({ testId: "coworker-computer-strip" });
     await user.click({ testId: "coworker-computer-control" });
+    await user.see({ testId: "coworker-computer-session" }, { text: /Workspace window/, timeoutMs: 15_000 });
+    await user.click({ testId: "coworker-computer-stop" });
     await user.see({ testId: "coworker-computer-status" }, { text: "Off for this discussion", timeoutMs: 20_000 });
     await expect.poll(() => world.helpers(), { timeout: 10_000 }).toEqual([]);
     expect(await world.ui()).toMatchObject({ canStop: false, session: "" });
