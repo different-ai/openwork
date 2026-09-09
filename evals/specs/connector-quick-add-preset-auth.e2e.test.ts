@@ -31,6 +31,9 @@ test("an API-key quick add keeps its key field while a custom OAuth-only server 
     };
   };
 
+  // Den's own discovery disagreed with the preset before the dialog opened;
+  // without that conflict the key field surviving would prove nothing.
+  expect(world.discovered.kind).toBe("oauth");
   await user.navigate(`${world.den.ref.webUrl}/dashboard/mcp-connections?quickAdd=${API_KEY_PRESET_ID}`);
   await user.see({ testId: "add-mcp-connection-dialog" }, { timeoutMs: 90_000 });
   await user.see({ text: `Add ${world.presetName}` });
@@ -48,8 +51,8 @@ test("an API-key quick add keeps its key field while a custom OAuth-only server 
   expect(quickAddOk, JSON.stringify({ alert: quickAdd.alert, keyField: quickAdd.keyField, clientIdField: quickAdd.clientIdField, credentialMode: quickAdd.credentialMode })).toBe(true);
   await user.screenshot();
   evidence.recordAssertionEvidence(
-    "The API-key quick add still asks for the org key after the hosted server's OAuth challenge was discovered",
-    `quickAdd=${API_KEY_PRESET_ID} against ${world.presetUrl}: Add connection enabled once a key was typed; key field present, no OAuth app, client ID, or credential-mode fields`,
+    "The API-key quick add still asks for the org key although Den's discovery classified the server as OAuth",
+    `Den discovery for ${world.presetUrl}: kind=${world.discovered.kind}, registration=${world.discovered.registration}. quickAdd=${API_KEY_PRESET_ID}: Add connection enabled once a key was typed; key field present, no OAuth app, client ID, or credential-mode fields`,
     quickAddOk,
   );
   await user.click({ role: "button", label: "Cancel" });
