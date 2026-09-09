@@ -9,7 +9,7 @@ import {
   stalledRetry,
   threadStatusOf,
 } from "./threads.ts";
-import { fixtureCatalog, fixtureProvider } from "./provider-catalog.fixture.ts";
+import { fixtureCatalog, fixtureModel, fixtureProvider } from "./provider-catalog.fixture.ts";
 
 test("permissions and questions keep the thread waiting for the person", () => {
   const permission = { id: "p1", sessionID: "s1", protocol: "legacy" as const, action: "bash", resources: ["rm -rf build"], canAlways: true };
@@ -58,6 +58,21 @@ test("parseModelPreference accepts provider/model and rejects malformed values",
   assert.equal(parseModelPreference(""), undefined);
   assert.equal(parseModelPreference("anthropic/"), undefined);
   assert.equal(parseModelPreference("/model"), undefined);
+});
+
+test("catalog prices distinguish explicit free from missing, partial or invalid prices", () => {
+  for (const missing of ["none", "cost", "input", "output", "invalid"]) {
+    const model = fixtureModel("openai", "model", { name: "Model" });
+    if (missing === "cost") Reflect.deleteProperty(model, "cost");
+    if (missing === "input" || missing === "output") Reflect.deleteProperty(model.cost, missing);
+    if (missing === "invalid") model.cost.output = Number.NaN;
+    const provider = fixtureProvider({ id: "openai", name: "OpenAI", models: {} });
+    provider.models.model = model;
+    const [option] = connectedModelCatalog(fixtureCatalog({ all: [provider], connected: [provider.id] })).models;
+    assert.ok(option);
+    assert.equal(option.knownPrice, missing === "none", missing);
+    assert.equal(option.progressEligibility?.knownPrice, option.knownPrice, "summary pricing remains a separate eligibility check");
+  }
 });
 
 test("connectedModelCatalog tells account (OpenWork Cloud) providers from this Mac's and lists account models first", () => {

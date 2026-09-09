@@ -139,7 +139,7 @@ export function createBrowserControl({ createPanel, panelOptions, discussionFor,
   }
   function settleHandoff(ownerId) {
     const control = controlFor(ownerId);
-    if (control.handoff?.phase === "pausing" && !control.pending.size && !control.uncertain) {
+    if (control.handoff?.phase === "pausing" && !control.draining && !control.pending.size && !control.uncertain) {
       control.handoff.phase = "ready";
       revision++;
       // Bounds are retained only for this binding, never across discussions.
@@ -256,6 +256,25 @@ export function createBrowserControl({ createPanel, panelOptions, discussionFor,
     return tab;
   }
   return {
+    async revokeOrigin({ slug, threadId, cleanupMs = 4000 }) {
+      const scope = scopes.get(JSON.stringify([slug, threadId]));
+      if (!scope) return true;
+      const control = controlFor(scope.ownerId);
+      control.draining = true;
+      control.epoch = ++controlEpoch;
+      const epoch = control.epoch;
+      control.controller.abort(new Error("Browser controller stopped. Observe afresh; never replay input."));
+      for (const call of control.pending) call.controller?.abort(new Error("Browser controller stopped."));
+      for (const target of targets.values()) if (target.ownerId === scope.ownerId) { target.needsSnapshot = true; invalidate(target); }
+      revision++;
+      const deadline = Date.now() + cleanupMs;
+      while (control.pending.size && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+      if (control.pending.size || control.uncertain || control.epoch !== epoch) return false;
+      control.draining = false;
+      control.controller = new AbortController();
+      settleHandoff(scope.ownerId);
+      return true;
+    },
     async bind({ slug, threadId, viewId }) {
       if (typeof viewId !== "string" || !viewId || viewId.length > 128) throw new Error("A browser view identity is required.");
       detachBinding();
@@ -284,7 +303,7 @@ export function createBrowserControl({ createPanel, panelOptions, discussionFor,
       const target = targetFor(tab);
       const generation = target.generation;
       const current = () => {
-        if (destroyed || binding !== bound || bound.captureEpoch !== captureEpoch || control.handoff || control.epoch !== epoch || control.presentation.mode === "hidden" || activeByOwner[ownerId] !== tabId) return false;
+        if (destroyed || control.draining || binding !== bound || bound.captureEpoch !== captureEpoch || control.handoff || control.epoch !== epoch || control.presentation.mode === "hidden" || activeByOwner[ownerId] !== tabId) return false;
         const fresh = panel.listBrowsers(ownerId).find((item) => item.tabId === tabId && item.targetId === tab.targetId && item.browserUrl === tab.browserUrl);
         observeTarget(target, fresh);
         return !target.closed && target.status === "ready" && target.generation === generation;
@@ -322,7 +341,7 @@ export function createBrowserControl({ createPanel, panelOptions, discussionFor,
         const control = controlFor(ownerId);
         const handoff = control.handoff;
         if (!handoff || handoff.id !== handoffId) throw new Error("Resume requires this discussion's current handoffId.");
-        if (handoff.phase !== "ready" || control.pending.size || control.uncertain) throw new Error("Browser control is still pausing. Resume is unavailable until cancellation settles.");
+        if (control.draining || handoff.phase !== "ready" || control.pending.size || control.uncertain) throw new Error("Browser control is still pausing. Resume is unavailable until cancellation settles.");
         parkNative();
         control.handoff = null;
         control.epoch = ++controlEpoch;
@@ -424,23 +443,24 @@ export function createBrowserControl({ createPanel, panelOptions, discussionFor,
       const responseSignal = AbortSignal.any([call.controller.signal, lifetime.signal, deadline]);
       calls.set(key, call);
       call.result = Promise.resolve().then(async () => {
-        const scope = await scopeFor(slug, context.sessionID);
+        const trusted = await resolveContext(slug, context, { name, args });
+        const scope = await scopeFor(slug, trusted.origin?.threadId ?? context.sessionID);
         if (path.resolve(context.directory) !== scope.directory) throw new Error("The native browser call belongs to another workspace.");
         const control = controlFor(scope.ownerId);
         const epoch = control.epoch;
         const controlSignal = control.controller.signal;
         responseSignal.throwIfAborted();
         if (epoch > admittedEpoch) throw new Error("Browser control changed before admission. Do not replay this call.");
+        if (control.draining) throw new Error("Browser input cleanup has not been confirmed.");
         if (control.handoff) throw new Error("The person has browser control. Only they can Resume in the app.");
         if (!handingOff) {
           call.ownerId = scope.ownerId;
           control.pending.add(call);
         }
-        const trusted = await resolveContext(slug, context, { name, args });
         if (epoch > admittedEpoch) throw new Error("Browser control changed before admission. Do not replay this call.");
         if (!handingOff && control.handoff) throw new Error("The person has browser control. Only they can Resume in the app.");
         const signal = AbortSignal.any([trusted.signal, responseSignal, ...(handingOff ? [] : [controlSignal])]);
-        const check = () => { trusted.assertActive(); signal.throwIfAborted(); if (destroyed || trusted.entry.workspaceId !== scope.workspaceId) throw new Error("The browser execution is no longer available."); };
+        const check = () => { trusted.assertActive(); signal.throwIfAborted(); if (destroyed || control.draining || trusted.entry.workspaceId !== scope.workspaceId) throw new Error("The browser execution is no longer available."); };
         check();
         call.activity = { label: activityLabels[name.slice("coworker_browser_".length)], state: "running" };
         control.activity = call.activity;

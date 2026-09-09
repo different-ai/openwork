@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Button, ErrorNote } from "@/ui/kit";
 import { BrowserPreview } from "@/ui/browser-preview";
@@ -32,13 +32,26 @@ function BrowserModal({ children, onExit }: { children: ReactNode; onExit: () =>
   return createPortal(<dialog ref={dialog} data-testid="coworker-browser-modal" aria-label="Browser full screen" className="fixed inset-0 m-0 h-dvh max-h-none w-dvw max-w-none border-0 bg-panel p-0 text-snow backdrop:bg-black/70" onCancel={(event) => { event.preventDefault(); onExit(); }}>{children}</dialog>, document.body);
 }
 
-export function DiscussionBrowser({ slug, threadId, actionsSlot, statusSlot, floatingSlot, active }: { slug: string; threadId: string; actionsSlot: HTMLElement | null; statusSlot: HTMLElement | null; floatingSlot: HTMLElement | null; active: boolean }) {
+export function DiscussionBrowser({ slug, threadId, actionsSlot, statusSlot, floatingSlot, active, openRequest = 0 }: { slug: string; threadId: string; actionsSlot: HTMLElement | null; statusSlot: HTMLElement | null; floatingSlot: HTMLElement | null; active: boolean; openRequest?: number }) {
   const browser = useDiscussionBrowser(slug, threadId, active);
   const { snapshot, tab, handoff, mode, expanded, image, imageAge, viewId, busy, error, readError, command } = browser;
   const [address, setAddress] = useState("");
   const [newTab, setNewTab] = useState(false);
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
   const addressInput = useRef<HTMLInputElement>(null);
+  const handledOpen = useRef(0);
+  const retriedOpen = useRef(0);
+  const openBeside = useEffectEvent(() => void command({ action: "present", mode: "side" }));
+  const reconnect = useEffectEvent(() => browser.retry());
+  useEffect(() => {
+    if (!active || !openRequest || handledOpen.current === openRequest || busy) return;
+    if (!viewId) {
+      if (readError && retriedOpen.current !== openRequest) { retriedOpen.current = openRequest; reconnect(); }
+      return;
+    }
+    handledOpen.current = openRequest;
+    openBeside();
+  }, [active, openRequest, viewId, busy, readError]);
   const canInteract = handoff?.phase === "ready";
   const full = mode === "fullscreen";
   const stale = imageAge !== null && imageAge > 3_000;
@@ -90,7 +103,7 @@ export function DiscussionBrowser({ slug, threadId, actionsSlot, statusSlot, flo
     {full && handoffCard ? <div className="shrink-0 border-t border-line p-3">{handoffCard}</div> : null}
     {full && error ? <div className="shrink-0 px-3 py-2" role="alert"><ErrorNote>{error}</ErrorNote></div> : null}
     <footer className="flex shrink-0 flex-wrap items-center gap-2 border-t border-line px-3 py-2.5">
-      <div className="min-w-0 flex-1"><p className="truncate text-xs text-snow">{tab ? siteName(tab.url) : "On this computer"}</p><p className="mt-0.5 text-[10px] text-mist">{handoff ? canInteract ? "You have control · Screenshots paused" : "Manual input locked while tools stop" : "Watch only · Local Coworker profile"}</p></div>
+      <div className="min-w-0 flex-1"><p className="truncate text-xs text-snow">{tab ? siteName(tab.url) : "On this computer"}</p><p className="mt-0.5 text-[10px] text-mist">{handoff ? canInteract ? "You have control · Screenshots paused" : "Manual input locked while tools stop" : "Watch only · Shared local Coworker logins"}</p></div>
       {tab && !handoff ? <>{takeOver}<span className={`rounded-md border px-1.5 py-1 text-[9px] ${stale ? "border-amber/25 text-amber" : "border-ready/25 text-ready"}`}>{freshness}</span></> : null}
     </footer>
   </section>;

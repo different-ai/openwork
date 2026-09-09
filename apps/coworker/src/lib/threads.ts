@@ -158,8 +158,10 @@ export type EngineModelOption = {
   status: string;
   /** ISO date when known; newer models are preferred among equals. */
   releaseDate: string;
-  /** What the provider charges per million tokens; 0/0 for a free model. A lane pick never costs more than the standard model. */
+  /** Per-million-token prices; legacy zero defaults are only trusted when knownPrice is true. */
   cost: { input: number; output: number };
+  /** Both prices were explicitly reported as finite, non-negative numbers (including free 0/0). */
+  knownPrice?: boolean;
   /** Separate fail-closed projection: legacy cost/reasoning defaults are NOT evidence. */
   progressEligibility?: {
     transport: "openai" | "openai-compatible" | null;
@@ -270,6 +272,8 @@ export function connectedModelCatalog(
       const modelLabel = model.name?.trim() || modelId;
       const source: ModelSource =
         cloudProviderIds.has(provider.id) || isCloudManagedProviderId(provider.id) ? "cloud" : "local";
+      const knownPrice = typeof model.cost?.input === "number" && Number.isFinite(model.cost.input) && model.cost.input >= 0
+        && typeof model.cost?.output === "number" && Number.isFinite(model.cost.output) && model.cost.output >= 0;
       return {
         id: `${provider.id}/${modelId}`,
         providerId: provider.id,
@@ -289,10 +293,10 @@ export function connectedModelCatalog(
         status: model.status ?? "active",
         releaseDate: model.release_date ?? "",
         cost: { input: model.cost?.input ?? 0, output: model.cost?.output ?? 0 },
+        knownPrice,
         progressEligibility: {
           transport: model.api?.npm === "@ai-sdk/openai" ? "openai" : model.api?.npm === "@ai-sdk/openai-compatible" ? "openai-compatible" : null,
-          knownPrice: typeof model.cost?.input === "number" && Number.isFinite(model.cost.input) && model.cost.input >= 0
-            && typeof model.cost?.output === "number" && Number.isFinite(model.cost.output) && model.cost.output >= 0,
+          knownPrice,
           nonReasoning: model.capabilities?.reasoning === false,
           text: model.capabilities?.input?.text === true && model.capabilities?.output?.text === true,
           active: model.status === "active",

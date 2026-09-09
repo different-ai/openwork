@@ -11,7 +11,8 @@
  * picks the right brain for it from the connected providers: a fast model for a
  * quick exchange, the coworker's standard model for ordinary work, a reasoning
  * model for research, plans, comparisons, drafts, and code. The person's own
- * words ("quickly", "think carefully") win over the shape of the message, and
+ * effort requests ("no need to think", "think carefully") win, but brevity or
+ * speed alone never overrides substantive work. The dial still applies, and
  * assignments use the standard model; Workers resolve their purpose-specific
  * choice (or inherit the standard) separately at creation.
  */
@@ -70,7 +71,7 @@ export function describeModelPick(model: Pick<EngineModelOption, "tier">): strin
       : model.tier === "local-server"
         ? "from a model server on this Mac"
         : "the free model, nothing to set up";
-  return `Chosen for you, ${source}. It stays until you pick one; if it can't answer, the next best takes over once.`;
+  return `Chosen for you, ${source}. It stays until you pick one; if it can't answer, a model from the same provider may take over once at the same or lower known token prices.`;
 }
 
 /**
@@ -125,8 +126,10 @@ export const LANE_WORDS: Record<ModelLane, { doing: string; done: string; via: s
   deep: { doing: "Thinking deeply", done: "Thought deeply", via: "deep think" },
 };
 
-/** The person asked for speed. */
-const QUICK_HINTS = /\b(quick(ly)?|fast|briefly|in (?:one|a) (?:line|sentence|word)|short answer|tl;?dr|just (?:tell|say|give)|yes or no|one[- ]liner|no need to think)\b/i;
+/** Speed or brevity, not permission to skip substantive thinking. */
+const QUICK_HINTS = /\b(quick(ly)?|fast|briefly|in (?:one|a) (?:line|sentence|word)|short answer|tl;?dr|just (?:tell|say|give)|yes or no|one[- ]liner)\b/i;
+/** An explicit effort instruction, unlike a request for concise output. */
+const LIGHT_HINTS = /\bno need to think\b/i;
 /** The person asked for depth. */
 const DEEP_HINTS = /\b(think (?:hard|harder|carefully|deeply|it through|about it)|carefully|thorough(?:ly)?|in depth|deep dive|deeply|rigorous(?:ly)?|comprehensive|exhaustive|step by step|double[- ]check|be (?:very )?precise|take your time|don'?t rush)\b/i;
 /** The shape of substantial work, whatever the person's tone. */
@@ -141,26 +144,23 @@ export const QUICK_MAX_WORDS = 14;
 export const DEEP_MIN_WORDS = 120;
 
 /**
- * Which lane a message belongs in. Explicit words about speed or depth win;
- * then the shape of the ask: a greeting or a one-line question that needs no
- * work is quick, research/plans/comparisons/drafts/code and long or many-part
- * messages are deep, and anything that asks the coworker to *do* something is
- * at least standard.
+ * Explicit thinking instructions win; otherwise complexity comes before speed
+ * or brevity. Greetings and simple questions are quick, substantive or
+ * many-part work is deep, and ordinary work is standard even with a short reply.
  */
 export function classifyRequest(prompt: string): ModelLane {
   const text = String(prompt ?? "").replace(/\s+/g, " ").trim();
   if (!text) return "standard";
-  const deepHint = DEEP_HINTS.test(text);
-  const quickHint = QUICK_HINTS.test(text);
-  if (quickHint && !deepHint) return "quick";
-  if (deepHint) return "deep";
+  if (DEEP_HINTS.test(text)) return "deep";
+  if (LIGHT_HINTS.test(text)) return "quick";
   if (CODE_SHAPE.test(prompt)) return "deep";
   const words = text.split(" ").length;
   const questions = (text.match(/\?/g) ?? []).length;
   const listed = (String(prompt).match(/^\s*(?:[-*•]|\d+[.)])\s+/gm) ?? []).length;
   if (DEEP_SHAPES.test(text) || words > DEEP_MIN_WORDS || questions >= 3 || listed >= 3) return "deep";
-  if (CHATTER.test(text)) return "quick";
-  if (words <= QUICK_MAX_WORDS && questions <= 1 && !WORK_VERBS.test(text) && !/\b(?:why|how)\b/i.test(text)) return "quick";
+  if (WORK_VERBS.test(text)) return "standard";
+  if (CHATTER.test(text) || QUICK_HINTS.test(text)) return "quick";
+  if (words <= QUICK_MAX_WORDS && questions <= 1 && !/\b(?:why|how)\b/i.test(text)) return "quick";
   return "standard";
 }
 
@@ -174,12 +174,13 @@ function usable(model: EngineModelOption, excluded: ReadonlySet<string>): boolea
 }
 
 /**
- * A lane pick never costs more than the standard model. One provider can mix
+ * A lane pick's known token prices never exceed the standard model's. One provider can mix
  * free and paid models (the free provider does: a free standard model beside
  * dozens of paid ones), so "same provider" alone is no promise about the bill.
  */
-export function costsNoMoreThan(candidate: Pick<EngineModelOption, "cost">, standard: Pick<EngineModelOption, "cost">): boolean {
-  return candidate.cost.input <= standard.cost.input && candidate.cost.output <= standard.cost.output;
+export function costsNoMoreThan(candidate: Pick<EngineModelOption, "cost" | "knownPrice">, standard: Pick<EngineModelOption, "cost" | "knownPrice">): boolean {
+  return candidate.knownPrice === true && standard.knownPrice === true
+    && candidate.cost.input <= standard.cost.input && candidate.cost.output <= standard.cost.output;
 }
 
 function newestFirst(left: EngineModelOption, right: EngineModelOption): number {
@@ -193,11 +194,10 @@ function nameOf(model: EngineModelOption): string {
 /**
  * The model for one lane. The coworker's standard model anchors the choice:
  * the standard lane is that model; the quick and deep lanes look only among
- * the same provider's models that cost no more than it (one account, and never
- * a bigger bill than the person already accepted) and fall back to the
- * standard model when nothing better exists there. Every
- * candidate can use tools and is not deprecated. Null only when no connected
- * model can do the job at all.
+ * the same provider's models with known input and output prices no higher than
+ * its own. Unknown prices keep the standard model. Every candidate can use
+ * tools and is not deprecated. An explicit missing, deprecated, tool-less or
+ * excluded standard returns null; only an unspecified standard is recommended.
  */
 export function chooseModelForLane(
   catalog: Pick<EngineModelCatalog, "models">,
@@ -207,9 +207,9 @@ export function chooseModelForLane(
   const excluded = new Set(options.exclude ?? []);
   const candidates = catalog.models.filter((model) => usable(model, excluded));
   if (candidates.length === 0) return null;
-  const standard =
-    candidates.find((model) => model.id === (options.standard ?? "")) ??
-    recommendModel({ models: candidates });
+  const standard = options.standard !== undefined
+    ? candidates.find((model) => model.id === options.standard) ?? null
+    : recommendModel({ models: candidates });
   if (!standard || lane === "standard") return standard;
 
   const siblings = candidates.filter((model) => model.providerId === standard.providerId && model.id !== standard.id && costsNoMoreThan(model, standard));
@@ -237,6 +237,24 @@ export function chooseModelForLane(
   if (named.length > 0) return named[0] ?? standard;
   if (standard.reasoning) return standard;
   return reasoning.sort(newestFirst)[0] ?? standard;
+}
+
+/**
+ * A replacement for an automatic pick, anchored to the original standard BEFORE
+ * exclusions. Never cross providers or exceed either known token price. The
+ * caller owns consent (never replace a person's fixed model) and the one-retry limit.
+ */
+export function chooseFallbackModel(
+  catalog: Pick<EngineModelCatalog, "models">,
+  lane: ModelLane,
+  options: { standard: string; exclude: readonly string[] },
+): EngineModelOption | null {
+  const standard = catalog.models.find((model) => model.id === options.standard);
+  if (!standard || standard.knownPrice !== true) return null;
+  const excluded = new Set(options.exclude);
+  const models = catalog.models.filter((model) => usable(model, excluded)
+    && model.providerId === standard.providerId && costsNoMoreThan(model, standard));
+  return chooseModelForLane({ models }, lane, { standard: usable(standard, excluded) ? standard.id : undefined });
 }
 
 /**

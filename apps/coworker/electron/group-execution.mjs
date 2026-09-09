@@ -86,7 +86,7 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
           }
           executions.add(id);
           const words = request.attempt ? continuationPrompt({ objective: prompt, refs: ["earlier group messages in this native thread"], completedActions: [], resumeInstructions: "Finish only the missing group reply." }, [], "Continue the earlier group request from the work already present in this thread. The person explicitly requested this follow-up.") : prompt;
-          const entry = await collaboration.submit({ id, owner, groupRequestId: request.id, groupReply: { name: participants.find((member) => member.slug === slug).name }, prompt: request.context ? `${request.context}\n\n${words}` : words, timeoutMs: replyTimeoutMs, tools: { coworker_team_refer: false } });
+          const entry = await collaboration.submit({ id, owner, groupRequestId: request.id, requestText: request.text, groupReply: { name: participants.find((member) => member.slug === slug).name }, prompt: request.context ? `${request.context}\n\n${words}` : words, timeoutMs: replyTimeoutMs, tools: { coworker_team_refer: false } });
           return { ...await collaboration.wait(entry.id, signal), executionId: entry.id };
         },
         route: async (input) => {

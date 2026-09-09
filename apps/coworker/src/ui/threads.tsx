@@ -1,6 +1,7 @@
 import { ActionMenu } from "@/ui/kit";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { coworkerBridge, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
 import type { DenSession } from "@/lib/den";
 import {
@@ -38,7 +39,7 @@ import {
   type PendingInteractions,
   type ThreadListItem,
 } from "@/lib/threads";
-import { isRunning, type HeadlessThreadModel, type HeadlessThreadUsage } from "@openwork/headless-threads";
+import { isRunning, toTranscript, type HeadlessThreadModel, type HeadlessThreadUsage } from "@openwork/headless-threads";
 import {
   classifyThreads,
   configureDiscussionStore,
@@ -55,9 +56,10 @@ import { EffortDial } from "@/ui/effort-dial";
 import { ComputerControl } from "@/ui/computer-control";
 import { DiscussionBrowser } from "@/ui/browser-panel";
 import { PopoverDisclosure, TechnicalText } from "@/ui/details-popover";
-import { carryVariant, chooseModelForLane, classifyRequest, describeModelChoice, markAutoPicked, wasAutoPicked, type ModelLane } from "@/lib/model-choice";
+import { carryVariant, chooseFallbackModel, chooseModelForLane, classifyRequest, describeModelChoice, markAutoPicked, wasAutoPicked, type ModelLane } from "@/lib/model-choice";
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
 import { WorkerDecisionCards } from "@/ui/worker-decision";
+import { WorkersPanel } from "@/ui/workers";
 import { coworkerToolName } from "@/lib/coworker-tools";
 import { EXECUTION_KINDS, executionMetadata, executionState, safeWorkLabel, summarizeWorkerReceipt } from "@/lib/work-receipt";
 import { executionProgress, type ExecutionActivity } from "@/lib/progress-activity";
@@ -97,8 +99,10 @@ import {
 import { describeTurnFailure, failureText } from "@/lib/turn-failure";
 import { useComposerDraft } from "@/ui/use-composer-draft";
 import { classifyFailure, retryDelayMs } from "@/lib/turn-retry";
-import { applyStreamEvent, type LiveStream } from "@/lib/live-stream";
+import { applyStreamEvent, type LivePart, type LiveStream } from "@/lib/live-stream";
+import { waitForGroup as waitForObservation } from "@/lib/group-continuity";
 import { useAutoGrow } from "@/ui/use-auto-grow";
+import { JumpToLatest, useConversationScroll } from "@/ui/use-conversation-scroll";
 import { InteractionCard, InteractionCards, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
 import { acknowledgeCoworker, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { InlineLoader } from "@/ui/brand";
@@ -132,6 +136,7 @@ type TranscriptMessage = {
   /** The user message a reply answers; null for user messages and optimistic entries. */
   parentId: string | null;
   text: string;
+  parts: LivePart[];
   /** When the engine recorded the message; null for optimistic entries not yet committed. */
   createdAt: number | null;
   /** When the engine closed a reply; null while it is being written, or when it was cut off. */
@@ -180,7 +185,7 @@ function endedWithoutWords(message: TranscriptMessage): "stopped" | "failed" | n
 
 /** The optimistic user message for a turn the transcript does not carry yet. */
 function optimisticMessage(turn: { messageId: string; prompt: string }): TranscriptMessage {
-  return { id: turn.messageId, role: "user", parentId: null, text: turn.prompt, createdAt: null, completedAt: null, error: null, model: null, usage: null, toolCalls: [] };
+  return { id: turn.messageId, role: "user", parentId: null, text: turn.prompt, parts: [], createdAt: null, completedAt: null, error: null, model: null, usage: null, toolCalls: [] };
 }
 
 const EMPTY_REPLY_MESSAGE = "The model stopped before producing a response.";
@@ -188,6 +193,7 @@ const EMPTY_REPLY_MESSAGE = "The model stopped before producing a response.";
 // allowed to keep working. In particular, a retry reuses its message id and
 // some engine versions do not report that replacement as a fresh settlement.
 const TURN_OBSERVER_SLICE_MS = 5_000;
+const EMPTY_EXECUTIONS: ExecutionActivity[] = [];
 
 /** A reply the engine closed with neither words nor work behind it: the provider went quiet, not an answer. */
 function endedEmpty(message: Pick<TranscriptMessage, "text" | "toolCalls" | "completedAt" | "error">): boolean {
@@ -220,8 +226,6 @@ function newQueuedId(): string {
 
 /** How long a freshly (re)started AI service may stay silent before it is a problem worth naming. */
 const WORKSPACE_WARMUP_MS = 45_000;
-/** Within this many pixels of the bottom the transcript counts as pinned, so streaming words keep the end in view. */
-const LIVE_SCROLL_SLACK_PX = 48;
 
 export const NO_TOOL_MODEL_MESSAGE =
   "No connected AI model can use tools. Connect an AI provider in OpenWork, or choose an AI model in Coworker settings.";
@@ -398,6 +402,8 @@ export function ThreadsPanel({
   // When the workspace first stops answering; cleared by the next successful read.
   const [failingSince, setFailingSince] = useState<number | null>(null);
   const [lastFailureAt, setLastFailureAt] = useState(0);
+  const listingGeneration = useRef(0);
+  const listingActive = useRef(true);
   // The AI service restarts to pick up a new workspace and takes a moment to
   // answer. That is a warm-up, not a problem: show a calm getting-ready state
   // and only speak up when the workspace still does not answer after a while.
@@ -448,7 +454,8 @@ export function ThreadsPanel({
   }, [discussionThreadId, openThreadRequest]);
 
   const refresh = useCallback(async () => {
-    if (!threads) return;
+    if (!threads || !listingActive.current) return;
+    const generation = ++listingGeneration.current;
     try {
       const [all, pending, workers, excluded] = await Promise.all([
         threads.listAllThreads(),
@@ -456,6 +463,7 @@ export function ThreadsPanel({
         coworkerBridge.workers.list(coworker.slug).catch(() => []),
         coworkerBridge.collaboration.excludedThreads(coworker.slug),
       ]);
+      if (generation !== listingGeneration.current) return;
       const workerIds = workers.map((worker) => worker.threadId).filter(Boolean);
       setWorkerThreadIds((current) => (current.length === workerIds.length && current.every((id, index) => id === workerIds[index]) ? current : workerIds));
       setWorkerRecords((current) => (current.length === workers.length && current.every((worker, index) => worker.id === workers[index]?.id && worker.updatedAt === workers[index]?.updatedAt) ? current : workers));
@@ -472,6 +480,7 @@ export function ThreadsPanel({
       setError("");
       setFailingSince(null);
     } catch (cause) {
+      if (generation !== listingGeneration.current) return;
       const now = Date.now();
       setError(cause instanceof Error ? cause.message : String(cause));
       setFailingSince((current) => current ?? now);
@@ -482,11 +491,14 @@ export function ThreadsPanel({
   // Re-read quickly while the workspace is not answering so the view heals as soon as it does.
   const failing = Boolean(error);
   useEffect(() => {
+    listingActive.current = true;
     void refresh();
     if (!threads) return;
     const unsubscribe = threads.subscribe(() => void refresh());
     const timer = window.setInterval(() => void refresh(), failing ? 1_500 : 5_000);
     return () => {
+      listingActive.current = false;
+      listingGeneration.current += 1;
       unsubscribe();
       window.clearInterval(timer);
     };
@@ -796,7 +808,7 @@ function DiscussionWelcome({
     try {
       await onStartDiscussion(text);
       acknowledgeCoworker(coworker.slug);
-      setMessage("");
+      setMessage((current) => current === message ? "" : current);
     } catch (cause) {
       setComposerError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -811,7 +823,7 @@ function DiscussionWelcome({
     setComposerError("");
     try {
       await onCreateAssignment(text, []);
-      setAssignmentText("");
+      setAssignmentText((current) => current === assignmentText ? "" : current);
       setAssignmentMode(false);
       onAssignmentDraftHandled();
     } catch (cause) {
@@ -883,20 +895,21 @@ function DiscussionSwitcher({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+  const edge = useRef<"first" | "last">("first");
 
   useEffect(() => {
     if (!open) return;
+    const items = menuRef.current?.querySelectorAll<HTMLButtonElement>("[role^='menuitem']");
+    (edge.current === "last" ? items?.[items.length - 1] : items?.[0])?.focus({ preventScroll: true });
     const onPointerDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false);
     };
     document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
     };
   }, [open]);
 
@@ -904,15 +917,23 @@ function DiscussionSwitcher({
   const label = discussionLabel(current.title, defaultTitle, currentUsed);
 
   return (
-    <div ref={rootRef} className="relative -ml-2 min-w-0">
+    <div ref={rootRef} className="relative -ml-2 min-w-0" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
       <button
+        ref={triggerRef}
         type="button"
         data-testid="coworker-discussion-switcher"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
         title="Switch discussion"
         className="flex max-w-full items-center gap-1 rounded-md px-2 py-0.5 text-left transition-colors hover:bg-panel hover:text-snow"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => { edge.current = "first"; setOpen((value) => !value); }}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing || (event.key !== "ArrowDown" && event.key !== "ArrowUp")) return;
+          event.preventDefault();
+          edge.current = event.key === "ArrowUp" ? "last" : "first";
+          setOpen(true);
+        }}
       >
         <span className="min-w-0 whitespace-normal text-xs text-mist [overflow-wrap:anywhere]">{label}</span>
         <svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true" className="shrink-0 text-mist">
@@ -922,19 +943,39 @@ function DiscussionSwitcher({
       </button>
       {open ? (
         <div
+          ref={menuRef}
+          id={menuId}
           role="menu"
           aria-label="Discussions"
           data-testid="coworker-discussion-menu"
           className="absolute left-2 top-full z-20 mt-1 w-80 max-w-[70vw] rounded-xl border border-line bg-ink/95 p-1.5 shadow-2xl backdrop-blur"
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === "Escape" || event.key === "Tab") {
+              if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); }
+              triggerRef.current?.focus({ preventScroll: true });
+              setOpen(false);
+              return;
+            }
+            const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("[role^='menuitem']"));
+            const index = items.findIndex((item) => item === document.activeElement);
+            const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : event.key === "ArrowDown" ? (index + 1) % items.length : event.key === "ArrowUp" ? (index - 1 + items.length) % items.length : -1;
+            if (next < 0) return;
+            event.preventDefault();
+            items[next]?.focus({ preventScroll: true });
+            items[next]?.scrollIntoView({ block: "nearest" });
+          }}
         >
           {onNew ? (
             <button
               type="button"
               role="menuitem"
+              tabIndex={-1}
               data-testid="coworker-new-discussion"
               className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-snow transition-colors hover:bg-panel"
               onClick={() => {
                 setOpen(false);
+                triggerRef.current?.focus({ preventScroll: true });
                 onNew();
               }}
             >
@@ -943,20 +984,22 @@ function DiscussionSwitcher({
             </button>
           ) : null}
           <p className="px-2 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Discussions</p>
-          <ul className="max-h-72 overflow-y-auto">
+          <ul role="none" className="max-h-72 overflow-y-auto">
             {listed.map((item) => {
               const active = item.id === current.id;
               const meta = item.status === "busy" ? "Replying" : item.status === "retry" ? "Retrying" : item.updatedAt ? relativeTime(item.updatedAt) : "";
               return (
-                <li key={item.id}>
+                <li key={item.id} role="none">
                   <button
                     type="button"
                     role="menuitemradio"
+                    tabIndex={-1}
                     aria-checked={active}
                     data-thread-id={item.id}
                     className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-panel ${active ? "bg-panel/70" : ""}`}
                     onClick={() => {
                       setOpen(false);
+                      triggerRef.current?.focus({ preventScroll: true });
                       onOpen(item.id);
                     }}
                   >
@@ -1051,6 +1094,20 @@ function ThreadView({
   onOpenSummary?: (kind: SummaryKind) => void;
 }) {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
+  const [transcriptLoaded, setTranscriptLoaded] = useState(false);
+  const [readErrors, setReadErrors] = useState<Record<string, string>>({});
+  const refreshGeneration = useRef(0);
+  const turnRevision = useRef(0);
+  const turnWrites = useRef(0);
+  const viewMounted = useRef(true);
+  const refreshScope = useMemo(() => ({ active: true, reads: new Map<string, { promise: Promise<void>; again?: () => void }>() }), [threads, threadId, coworker.slug]);
+  const refreshReads = refreshScope.reads;
+  const knownMessages = useRef(new Map<string, { role: string; parentId: string | null; ended: boolean }>());
+  const retiredReplies = useRef(new Set<string>());
+  const observedTurn = useRef("");
+  const observedTurnAt = useRef(0);
+  const streamTurn = useRef("");
+  const { scrollRef, contentRef, away, jumpToLatest } = useConversationScroll(`${coworker.slug}:${coworker.createdAt}:${threadId}`, active, transcriptLoaded);
   /** Long replies already reported this mount; the store also refuses a repeat by message id. */
   const longRepliesRecorded = useRef(new Set<string>());
   const recordLongReply = useCallback((messageId: string, chars: number) => {
@@ -1080,13 +1137,11 @@ function ThreadView({
   /** The turn in flight or left unresolved, and the messages waiting as Next — the record turns.json keeps. */
   const [turnState, setTurnState] = useState<ThreadTurnState>(EMPTY_THREAD_TURNS);
   const turnStateRef = useRef<ThreadTurnState>(EMPTY_THREAD_TURNS);
-  /** The person's own messages in this thread: the engine streams their text parts too, and those are never the reply. */
-  const userMessageIdsRef = useRef<Set<string>>(new Set());
   const [turnsLoaded, setTurnsLoaded] = useState(false);
   const [collaborationReceipts, setCollaborationReceipts] = useState<import("@/lib/bridge").CollaborationReceipt[]>([]);
   const [nativeActivity, setNativeActivity] = useState<{ scope: string; executions: ExecutionActivity[] }>({ scope: "", executions: [] });
   const activityScope = `${coworker.slug}:${threadId}`;
-  const executions = nativeActivity.scope === activityScope ? nativeActivity.executions : [];
+  const executions = nativeActivity.scope === activityScope ? nativeActivity.executions : EMPTY_EXECUTIONS;
   useEffect(() => {
     let disposed = false;
     let reading = false;
@@ -1094,10 +1149,17 @@ function ThreadView({
       if (reading) return;
       reading = true;
       try {
-        const executions = await coworkerBridge.turns.activity(coworker.slug, threadId);
-        if (!disposed) setNativeActivity({ scope: activityScope, executions });
+        const executions = await waitForObservation(coworkerBridge.turns.activity(coworker.slug, threadId));
+        if (!disposed) {
+          setNativeActivity({ scope: activityScope, executions });
+          setReadErrors((current) => current.activity ? { ...current, activity: "" } : current);
+        }
       } catch {
-        if (!disposed) setNativeActivity({ scope: activityScope, executions: [] });
+        // An unavailable activity read cannot erase already observed work.
+        if (!disposed) {
+          setNativeActivity((current) => ({ ...current, executions: current.executions.map((entry) => ({ ...entry, available: false })) }));
+          setReadErrors((current) => ({ ...current, activity: "Activity could not be refreshed." }));
+        }
       } finally { reading = false; }
     };
     void read();
@@ -1122,7 +1184,6 @@ function ThreadView({
   /** Re-derive the outcome every second while a turn is unresolved: "still working" and the retry count are live. */
   const [now, setNow] = useState(() => Date.now());
   const [providerRefreshNote, setProviderRefreshNote] = useState("");
-  const endRef = useRef<HTMLDivElement>(null);
   /** The far-off retry already cancelled for this thread (by its scheduled time), and why it stalled. */
   const stallRef = useRef<{ next: number; reason: string } | null>(null);
   const clearStall = () => {
@@ -1158,21 +1219,63 @@ function ThreadView({
   }, [defaultDiscussionTitle, kind, threadId, threads]);
 
   const refresh = useCallback(async () => {
-    try {
-      const [transcript, interactions, savedTurns, work] = await Promise.all([
-        threads.client.exportTranscript(threadId),
-        threads.listThreadInteractions(threadId).catch((): PendingInteractions => ({ permissions: [], questions: [] })),
-        loadThreadTurns(coworker.slug, threadId),
-        coworkerBridge.collaboration.receipts({ slug: coworker.slug, threadId }),
-      ]);
-      setCollaborationReceipts(work);
-      // A read begun before admission can return no pending turn after this
-      // view has submitted one. Never let that stale read erase its ownership.
-      if (!activeTurnRef.current) {
+    if (!viewMounted.current || !refreshScope.active) return;
+    const generation = refreshGeneration.current;
+    const observe = <T,>(name: string, read: () => Promise<T>, apply: (value: T) => void): Promise<void> => {
+      const running = refreshReads.get(name);
+      if (running) { running.again = () => { void observe(name, read, apply); }; return running.promise; }
+      const revision = turnRevision.current;
+      const request = waitForObservation(Promise.resolve().then(read)).then((value) => {
+        if (refreshGeneration.current !== generation || turnRevision.current !== revision) return;
+        apply(value);
+        setReadErrors((current) => current[name] ? { ...current, [name]: "" } : current);
+      }).catch(() => {
+        if (refreshGeneration.current !== generation || turnRevision.current !== revision) return;
+        setReadErrors((current) => ({ ...current, [name]: name === "transcript" ? "Conversation could not be refreshed. Shown messages are kept." : "Some activity could not be refreshed. Shown messages and queued work are kept." }));
+      }).finally(() => {
+        const entry = refreshReads.get(name);
+        if (entry?.promise !== request) return;
+        refreshReads.delete(name);
+        if (generation === refreshGeneration.current) entry.again?.();
+      });
+      refreshReads.set(name, { promise: request });
+      return request;
+    };
+    // Ancillary IPC reads never hold a healthy transcript behind their latency or failure.
+    void observe("receipts", () => coworkerBridge.collaboration.receipts({ slug: coworker.slug, threadId }), setCollaborationReceipts);
+    const knownTurns = turnStateRef.current;
+    const writingTurns = turnWrites.current > 0;
+    void observe("turns", () => loadThreadTurns(coworker.slug, threadId), (savedTurns) => {
+      if (!writingTurns && turnWrites.current === 0 && !activeTurnRef.current) {
         turnStateRef.current = savedTurns;
         setTurnState(savedTurns);
+        if (knownTurns === EMPTY_THREAD_TURNS) setRecovered(savedTurns.pending !== null);
       }
-      setPending(interactions);
+      setTurnsLoaded(true);
+    });
+    void observe("interactions", () => threads.listThreadInteractions(threadId), setPending);
+    return observe("transcript", () => threads.client.getThreadSnapshot(threadId, { signal: AbortSignal.timeout(10_000) }), (snapshot) => {
+      const transcript = toTranscript(snapshot);
+      const nativeMessages = new Map(snapshot.messages.map((message) => [message.id, message]));
+      for (const message of snapshot.messages) knownMessages.current.set(message.id, { role: message.role, parentId: message.parentId, ended: knownMessages.current.get(message.id)?.ended || message.completedAt !== null || message.error !== null });
+      const lastUser = snapshot.messages.findLast((message) => message.role === "user");
+      if (lastUser && (!observedTurn.current || (lastUser.createdAt ?? 0) >= observedTurnAt.current)) {
+        observedTurn.current = lastUser.id;
+        observedTurnAt.current = lastUser.createdAt ?? 0;
+      }
+      const target = activeTurnRef.current?.messageId ?? turnStateRef.current.pending?.messageId ?? observedTurn.current;
+      if (streamTurn.current !== target) { streamTurn.current = target; setLiveStream(null); }
+      setLiveStream((current) => {
+        let next = current;
+        for (const message of snapshot.messages) {
+          if (message.role !== "assistant" || message.parentId !== target || retiredReplies.current.has(message.id)) continue;
+          for (const part of message.parts) {
+            if (part.type !== "text") continue;
+            next = applyStreamEvent(next, { kind: "part", threadId, messageId: message.id, partId: part.id, type: "text", text: part.text ?? "", ended: message.completedAt !== null || message.error !== null, synthetic: part.synthetic, ignored: part.ignored }, threadId);
+          }
+        }
+        return next;
+      });
       const loadedTitle = transcript.title ?? "Work thread";
       titleLoadedRef.current = true;
       setTitle(titleDiscussionAfterFirstMessage(loadedTitle) ?? loadedTitle);
@@ -1186,13 +1289,13 @@ function ThreadView({
         if (!activeTurnRef.current) setFailure(stall);
       }
       setEngineStatus(status);
-      userMessageIdsRef.current = new Set(transcript.messages.filter((message) => message.role === "user").map((message) => message.id));
       setMessages(
         transcript.messages.map((message) => ({
           id: message.id,
           role: message.role,
           parentId: message.parentId,
           text: message.text,
+          parts: (nativeMessages.get(message.id)?.parts ?? []).filter((part) => part.type === "text").map((part) => ({ messageId: message.id, partId: part.id, type: part.synthetic || part.ignored ? "hidden" : "text", text: part.synthetic || part.ignored ? "" : part.text ?? "", ended: message.completedAt !== null || message.error !== null })),
           createdAt: message.createdAt,
           completedAt: message.completedAt,
           error: message.error,
@@ -1211,11 +1314,9 @@ function ThreadView({
           })),
         })),
       );
-      setError("");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }, [threads, threadId, titleDiscussionAfterFirstMessage]);
+      setTranscriptLoaded(true);
+    });
+  }, [coworker.slug, refreshReads, refreshScope, threads, threadId, titleDiscussionAfterFirstMessage]);
 
   useEffect(() => {
     if (kind !== "discussion" || !assignmentDraft) return;
@@ -1230,64 +1331,75 @@ function ThreadView({
   }, [discussionDraft, kind]);
 
   useEffect(() => {
+    viewMounted.current = true;
+    refreshScope.active = true;
+    const generation = ++refreshGeneration.current;
+    const controller = new AbortController();
+    let eventTimer: number | undefined;
     void refresh();
-    const unsubscribe = threads.subscribe(
-      () => void refresh(),
-      (event) => setLiveStream((current) => {
-        // The person's message streams as a text part too; only the coworker's parts are the reply.
-        const pendingId = turnStateRef.current.pending?.messageId;
-        if (event.messageId === pendingId || userMessageIdsRef.current.has(event.messageId)) return current;
-        const next = applyStreamEvent(current, event, threadId);
-        // The first words of the reply on screen: the moment the speed line is measured from.
-        if (pendingId && next && next.type === "text" && next.text.trim()) rememberFirstWords(window.localStorage, pendingId, Date.now());
-        return next;
-      }),
-    );
+    const client = createOpencodeClient({ baseUrl: `${runtime.serverUrl}/workspace/${encodeURIComponent(coworker.workspaceId)}/opencode`, headers: { Authorization: `Bearer ${runtime.ownerToken}` }, redirect: "error" });
+    void (async () => {
+      try {
+        const subscription = await client.event.subscribe(undefined, { signal: controller.signal });
+        for await (const event of subscription.stream) {
+          if (controller.signal.aborted) return;
+          if (event.type === "message.updated") {
+            const info = event.properties.info;
+            if (info.sessionID !== threadId) continue;
+            knownMessages.current.set(info.id, { role: info.role, parentId: info.role === "assistant" ? info.parentID : null, ended: knownMessages.current.get(info.id)?.ended || (info.role === "assistant" && (info.time.completed !== undefined || Boolean(info.error))) });
+            if (info.role === "user" && info.time.created >= observedTurnAt.current) { observedTurn.current = info.id; observedTurnAt.current = info.time.created; }
+          }
+          if (event.type === "message.part.updated" || event.type === "message.part.delta") {
+            const part = event.type === "message.part.updated" ? event.properties.part : event.properties;
+            const target = activeTurnRef.current?.messageId ?? turnStateRef.current.pending?.messageId ?? observedTurn.current;
+            const owner = knownMessages.current.get(part.messageID);
+            if (part.sessionID !== threadId || !target || owner?.role !== "assistant" || owner.parentId !== target || retiredReplies.current.has(part.messageID)) continue;
+            if (streamTurn.current !== target) { streamTurn.current = target; setLiveStream(null); }
+            if (event.type === "message.part.updated") {
+              const part = event.properties.part;
+              if (part.type === "text") setLiveStream((current) => applyStreamEvent(current, { kind: "part", threadId, messageId: part.messageID, partId: part.id, type: part.type, text: part.text, ended: part.time?.end !== undefined, synthetic: part.synthetic, ignored: part.ignored }, threadId));
+            } else if (event.properties.field === "text" && !owner.ended) {
+              const part = event.properties;
+              setLiveStream((current) => applyStreamEvent(current, { kind: "delta", threadId, messageId: part.messageID, partId: part.partID, delta: part.delta }, threadId));
+            }
+          }
+          // Part updates coalesce; status and human decisions still refresh promptly.
+          if (event.type.startsWith("message.")) {
+            if (eventTimer === undefined) eventTimer = window.setTimeout(() => { eventTimer = undefined; void refresh(); }, 600);
+          } else if (event.type.startsWith("session.") || event.type.startsWith("permission.") || event.type.startsWith("question.")) void refresh();
+        }
+      } catch { /* Snapshot polling remains the reconnect path. */ }
+    })();
     const timer = window.setInterval(() => void refresh(), 5_000);
     return () => {
-      unsubscribe();
+      refreshScope.active = false;
+      if (refreshGeneration.current === generation) refreshGeneration.current += 1;
+      refreshReads.clear();
+      controller.abort();
+      window.clearTimeout(eventTimer);
       window.clearInterval(timer);
     };
-  }, [threadId, threads, refresh]);
+  }, [coworker.workspaceId, refresh, refreshReads, refreshScope, runtime.ownerToken, runtime.serverUrl, threadId]);
 
-  useEffect(() => () => {
-    waitControllerRef.current?.abort();
-    if (appRetryTimerRef.current !== null) window.clearTimeout(appRetryTimerRef.current);
-  }, []);
-
-  // What this thread still owes, read back from the coworker home: a turn cut off by a quit or
-  // reload, or messages that waited as Next. Anything pending at this point was not sent by this view.
   useEffect(() => {
-    let cancelled = false;
-    void loadThreadTurns(coworker.slug, threadId)
-      .then((state) => {
-        if (cancelled) return;
-        // A turn sent from this window before the file answered already knows more than the disk did.
-        const known = turnStateRef.current;
-        const merged: ThreadTurnState = known === EMPTY_THREAD_TURNS
-          ? state
-          : { pending: known.pending ?? state.pending, next: [...state.next, ...known.next.filter((item) => !state.next.some((other) => other.id === item.id))] };
-        turnStateRef.current = merged;
-        setTurnState(merged);
-        setRecovered(merged.pending !== null && known.pending === null);
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled) setTurnsLoaded(true);
-      });
+    viewMounted.current = true;
     return () => {
-      cancelled = true;
+      viewMounted.current = false;
+      waitControllerRef.current?.abort();
+      if (appRetryTimerRef.current !== null) window.clearTimeout(appRetryTimerRef.current);
     };
-  }, [coworker.slug, threadId]);
+  }, []);
 
   /** Change the thread's turn record: the cache updates at once, the file follows through the main process. */
   const commitTurnState = useCallback((update: (state: ThreadTurnState) => ThreadTurnState): ThreadTurnState => {
     const previous = turnStateRef.current;
     const next = update(previous);
     if (next === previous) return next;
+    turnRevision.current += 1;
     turnStateRef.current = next;
     setTurnState(next);
-    void saveThreadTurns(coworker.slug, threadId, next, previous).catch((cause) => setError(`Could not keep this turn: ${cause instanceof Error ? cause.message : String(cause)}`));
+    turnWrites.current += 1;
+    void saveThreadTurns(coworker.slug, threadId, next, previous).catch((cause) => setError(`Could not keep this turn: ${cause instanceof Error ? cause.message : String(cause)}`)).finally(() => { turnWrites.current -= 1; });
     return next;
   }, [coworker.slug, threadId]);
 
@@ -1322,17 +1434,9 @@ function ThreadView({
   }, [wordsMove]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length, activeTurn, engineStatus.type, pending.permissions.length, pending.questions.length, turnState.next.length]);
-
-  // Words streaming into the live bubble keep the end in view only while the person is already
-  // there; someone who scrolled up to read is left where they are.
-  const pinnedRef = useRef(true);
-  const liveWordCount = liveStream?.type === "text" ? liveStream.text.length : 0;
-  useEffect(() => {
-    if (liveWordCount === 0 || !pinnedRef.current) return;
-    endRef.current?.scrollIntoView({ block: "end" });
-  }, [liveWordCount]);
+    const pendingId = turnState.pending?.messageId;
+    if (pendingId && liveStream?.type === "text" && liveStream.text.trim()) rememberFirstWords(window.localStorage, pendingId, Date.now());
+  }, [liveStream, turnState.pending?.messageId]);
 
   /**
    * Run one turn to its end: send (or re-send) the message, follow the engine
@@ -1361,21 +1465,20 @@ function ThreadView({
     let continued = false;
     /**
      * When a model the app chose by itself cannot answer, move to the next
-     * choice and try the same message again, once or twice, telling the
+     * choice and try the same message again once, telling the
      * person what happened. In Automatic mode every pick is the app's: a lane
      * pick that fails steps back towards the standard model, and only the
      * standard model failing changes what is saved. A model the person chose
      * is never swapped.
      */
     const fallBack = async (message: string): Promise<boolean> => {
-      if (!(automatic || wasAutoPicked(coworker, turnModelId)) || failedModels.length >= 2) return false;
+      if (!viewMounted.current) return false;
+      if (!(automatic || wasAutoPicked(coworker, turnModelId)) || failedModels.length >= 1) return false;
       if (!describeTurnFailure(message, coworker.name).modelRelated) return false;
       try {
         const excluded = [...failedModels, turnModelId];
         const catalog = await threads.listModelCatalog();
-        const next = automatic
-          ? chooseModelForLane(catalog, turnLane, { standard: coworker.model, exclude: excluded })
-          : recommendModel(catalog, { exclude: excluded });
+        const next = chooseFallbackModel(catalog, turnLane, { standard: coworker.model || turnModelId, exclude: excluded });
         const nextModel = next ? parseModelPreference(next.id) : undefined;
         if (!next || !nextModel) return false;
         markAutoPicked(coworker.slug, next.id);
@@ -1398,6 +1501,7 @@ function ThreadView({
      * message id. Anything hard waits for the person.
      */
     const retryLater = (message: string, retryable: boolean | null): boolean => {
+      if (!viewMounted.current) return false;
       if (classifyFailure(message, retryable) !== "transient") return false;
       const delay = retryDelayMs(attempt + 1);
       if (delay === null) return false;
@@ -1427,9 +1531,13 @@ function ThreadView({
     setFailure("");
     setAppRetry(null);
     setRecovered(false);
+    for (const [id, message] of knownMessages.current) {
+      if (message.role === "assistant" && (message.parentId !== messageId || send.mode === "retry")) retiredReplies.current.add(id);
+    }
+    streamTurn.current = messageId;
     setLiveStream(null);
     setError("");
-    setProviderRefreshNote("");
+    if (send.mode !== "retry" || !send.switchedTo) setProviderRefreshNote("");
     if (resolution?.messageId !== messageId) setResolution(null);
     commitTurnState((state) => beginPending(state, { messageId, prompt, startedAt: Date.now() }));
     onActivityChange({
@@ -1650,7 +1758,8 @@ function ThreadView({
   }, [engineStatus.type, followTurn, pendingTurn, recovered, turnsLoaded]);
 
   // After a model-related failure, find a different connected model that can use tools.
-  const needsModelFallback = failure !== "" || (pendingTurn !== null && replyStateFor(messages, pendingTurn.messageId).state === "error");
+  const pendingReply = useMemo(() => pendingTurn ? replyStateFor(messages, pendingTurn.messageId) : NO_REPLY, [messages, pendingTurn?.messageId]);
+  const needsModelFallback = failure !== "" || pendingReply.state === "error";
   useEffect(() => {
     if (!needsModelFallback) {
       setRecommendedModel(null);
@@ -1681,6 +1790,7 @@ function ThreadView({
   const retryPending = useCallback(async (switched?: { model: HeadlessThreadModel; label: string }, requestedVoice?: VoiceExpectation | null) => {
     const requested = turnStateRef.current.pending;
     if (!requested) return;
+    jumpToLatest();
     // Arm on the person's gesture, before waiting for a stopped attempt to release.
     const voiceIntent = requestedVoice === undefined ? voiceRef.current?.expectReply(requested.messageId) ?? null : requestedVoice;
     // A Retry pressed the moment after Stop waits for the stopped turn to let go rather than being lost.
@@ -1688,7 +1798,7 @@ function ThreadView({
     const turn = turnStateRef.current.pending;
     if (!turn || turn.messageId !== requested.messageId || (voiceIntent && voiceIntent.turnId !== turn.messageId)) { voiceRef.current?.abandonReply(voiceIntent); return; }
     void submitTurn(turn.prompt, turn.messageId, { mode: "retry", attempt: 0, byPerson: true, voice: voiceIntent, ...(switched ? { switchedTo: switched.label } : {}) }, switched?.model);
-  }, [submitTurn, untilTurnReleased]);
+  }, [jumpToLatest, submitTurn, untilTurnReleased]);
 
   /** Switch this coworker to the recommended model and retry the failed message. */
   async function useRecommendedModel() {
@@ -1712,10 +1822,11 @@ function ThreadView({
   useEffect(() => {
     if (!initialTurn || handledInitialTurnRef.current === initialTurn.id) return;
     handledInitialTurnRef.current = initialTurn.id;
+    jumpToLatest();
     voice.stop("");
     void submitTurn(initialTurn.prompt, initialTurn.messageId, { mode: "send" })
       .finally(() => onInitialTurnHandled(initialTurn.id));
-  }, [initialTurn, onInitialTurnHandled, submitTurn]);
+  }, [initialTurn, jumpToLatest, onInitialTurnHandled, submitTurn]);
 
   /** Send what is next in line, one at a time, once nothing is in flight and nothing unresolved holds the queue. */
   const drainNext = useCallback(() => {
@@ -1745,19 +1856,20 @@ function ThreadView({
   }
 
   /** Words that become the person's next message without passing through the field: a pill the person tapped. */
-  function sendText(words: string) {
+  const sendText = useCallback((words: string) => {
     const text = words.trim();
     if (!text) return;
+    jumpToLatest();
     acknowledgeCoworker(coworker.slug);
     if (activeTurnRef.current || turnStateRef.current.pending || appRetry || engineRunning) {
-      voice.expectReply(null);
+      voiceRef.current?.expectReply(null);
       commitTurnState((state) => enqueue(state, { id: newQueuedId(), text, queuedAt: Date.now() }));
       return;
     }
     const messageId = newMessageId();
-    const voiceIntent = voice.expectReply(messageId);
+    const voiceIntent = voiceRef.current?.expectReply(messageId);
     void submitTurn(text, messageId, { mode: "send", voice: voiceIntent });
-  }
+  }, [appRetry, commitTurnState, coworker.slug, engineRunning, jumpToLatest, submitTurn]);
 
   /** Put a waiting message back in the field to change it. */
   function editQueued(id: string) {
@@ -1772,6 +1884,7 @@ function ThreadView({
   async function sendQueuedNow(id: string) {
     const { state, message } = takeQueued(turnStateRef.current, id);
     if (!message) return;
+    jumpToLatest();
     voice.stop("");
     commitTurnState(() => state);
     if (activeTurnRef.current || appRetry || engineRunning) {
@@ -1884,7 +1997,7 @@ function ThreadView({
         ? [...messages, optimisticMessage(optimisticTurn)]
         : messages;
       await onCreateAssignment(outcome, visibleMessages.map(({ role, text }) => ({ role, text })));
-      setAssignmentText("");
+      setAssignmentText((current) => current === assignmentText ? "" : current);
       setAssignmentMode(false);
       onAssignmentDraftHandled?.();
     } catch (cause) {
@@ -1901,7 +2014,7 @@ function ThreadView({
     now,
     turn: pendingTurn ? { ...pendingTurn, recovered } : null,
     engine: engineStatus,
-    reply: pendingTurn ? replyStateFor(messages, pendingTurn.messageId) : NO_REPLY,
+    reply: pendingReply,
     needsYou,
     failure,
     appRetry,
@@ -1922,50 +2035,67 @@ function ThreadView({
   const turnRunning = outcome?.kind === "working" || outcome?.kind === "slow" || outcome?.kind === "retrying";
   // The engine can be busy on a turn this view never sent (a Worker's review, a scheduled run): still working.
   const working = turnRunning || (outcome === null && !needsYou && engineRunning) || (activeTurn !== null && outcome === null);
-  const voiceSettled = engineStatus.type === "idle" && !activeTurn && !appRetry && !working && !needsYou && !error;
+  const voiceSettled = engineStatus.type === "idle" && !activeTurn && !appRetry && !working && !needsYou && !error && !Object.values(readErrors).some(Boolean);
+  const voiceReply = useMemo(() => privateVoiceReply(messages, voiceSettled && !failure && (!outcome || outcome.kind === "replied")), [messages, voiceSettled, failure, outcome?.kind]);
   const voice = useVoice({
     active: active && kind === "discussion" && !assignmentMode && !assignmentBusy,
     scope: `${coworker.slug}:${threadId}`,
     onTranscript: (text) => setReply((draft) => appendVoiceDraft(draft, text)),
-    reply: privateVoiceReply(messages, voiceSettled && !failure && (!outcome || outcome.kind === "replied")),
+    reply: voiceReply,
     endedTurn: voiceSettled ? outcome?.messageId ?? messages.findLast((message) => message.role === "user")?.id : null,
     activation: preparedVoice?.activation,
     onActivationHandled: () => { setReply(reply); onVoicePreparedHandled?.(); },
   });
   voiceRef.current = voice;
-  const timedMessages = messages.map((message) => {
-    const execution = executions.find((entry) => entry.messageId === message.parentId);
+  const executionsByMessage = useMemo(() => new Map(executions.map((entry) => [entry.messageId, entry])), [executions]);
+  const timedMessages = useMemo(() => messages.map((message) => {
+    const execution = message.parentId ? executionsByMessage.get(message.parentId) : undefined;
+    if (!execution || !message.toolCalls.length) return message;
+    const timings = new Map(execution.tools.map((tool) => [tool.partId, tool]));
     return { ...message, toolCalls: message.toolCalls.map((call) => {
-      const timing = execution?.tools.find((tool) => tool.partId === call.partId);
+      const timing = timings.get(call.partId);
       return timing ? { ...call, startedAt: timing.startedAt, completedAt: timing.completedAt } : call;
     }) };
-  });
-  const visibleMessages = pendingTurn && !messages.some((message) => message.id === pendingTurn.messageId)
-    ? [...timedMessages, optimisticMessage(pendingTurn)]
-    : timedMessages;
+  }), [messages, executionsByMessage]);
+  const visibleMessages = useMemo(() => {
+    const visible = [...timedMessages];
+    const ids = new Set(visible.map((message) => message.id));
+    if (pendingTurn && !ids.has(pendingTurn.messageId)) visible.push(optimisticMessage(pendingTurn));
+    // A new assistant message can stream before the first snapshot carries it.
+    for (const part of liveStream?.parts ?? []) {
+      if (part.type !== "text" || ids.has(part.messageId)) continue;
+      ids.add(part.messageId);
+      visible.push({ ...optimisticMessage({ messageId: part.messageId, prompt: "" }), role: "assistant", parentId: streamTurn.current });
+    }
+    return visible;
+  }, [timedMessages, pendingTurn, liveStream]);
+  const messagePositions = useMemo(() => new Map(visibleMessages.map((message, index) => [message.id, index])), [visibleMessages]);
   const lastAssistantIndex = visibleMessages.findLastIndex((message) => message.role === "assistant");
   /** A team tile's pills stay open only until the person writes again. */
   const lastPersonIndex = visibleMessages.findLastIndex((message) => message.role === "user");
   const currentMessageId = activeTurn?.messageId ?? pendingTurn?.messageId ?? executions.find((entry) => entry.state === "running")?.messageId ?? visibleMessages.findLast((message) => message.role === "user")?.id;
-  const currentExecution = executions.find((entry) => entry.messageId === currentMessageId);
-  const currentReplies = visibleMessages.filter((message) => message.role === "assistant" && message.parentId === currentMessageId);
+  const currentExecution = currentMessageId ? executionsByMessage.get(currentMessageId) : undefined;
+  const currentReplies = useMemo(() => visibleMessages.filter((message) => message.role === "assistant" && message.parentId === currentMessageId), [visibleMessages, currentMessageId]);
   const activeReply = currentReplies.at(-1) ?? null;
   const activeCall = currentReplies.flatMap((message) => message.toolCalls).findLast((call) => ["running", "pending"].includes(executionState(call.status)))
     ?? currentExecution?.tools.findLast((call) => ["running", "pending"].includes(executionState(call.status))) ?? null;
   const activeToolLabel = activeCall ? EXECUTION_KINDS[executionMetadata(activeCall).kind] : null;
   const activeStep = activeToolLabel ? { doing: activeToolLabel } : null;
-  const correlatedStream = liveStream?.type === "text" && (currentReplies.some((reply) => reply.id === liveStream.messageId) || currentExecution?.replies.some((reply) => reply.id === liveStream.messageId && reply.parentId === currentMessageId)) ? liveStream : null;
+  const correlatedStream = streamTurn.current === currentMessageId ? liveStream : null;
+  const currentWords = useMemo(() => writingText(correlatedStream, activeReply), [correlatedStream, activeReply]);
+  const streamingMessageIds = useMemo(() => new Set(correlatedStream?.parts.filter((part) => part.type === "text").map((part) => part.messageId)), [correlatedStream]);
+  const blocks = useMemo(() => conversationBlocks(visibleMessages, (message, index) => working && message.role === "assistant" && (index === lastAssistantIndex || streamingMessageIds.has(message.id))), [visibleMessages, working, lastAssistantIndex, streamingMessageIds]);
   // What the coworker is doing this moment comes from what is streaming, not from a label:
   // a reasoning part is thinking, a text part is writing, an unsettled tool call is a tool.
   const phase: LivePhase = livePhase({
     label: activeTurn?.phase === "accepting" ? "Sending" : outcome?.kind === "retrying" ? "Retrying" : "",
     stream: working ? correlatedStream : null,
     activeStep,
-    landedWords: working ? activeReply?.text ?? "" : "",
+    landedWords: working ? currentWords : "",
   });
   const workingLabel = outcome?.kind === "slow" ? "Still working" : phaseWord(phase);
   /** Words of the reply have arrived this turn — streaming now, or landed by an earlier step of the same turn. */
-  const wordsArrived = phase === "writing"
+  const wordsArrived = Boolean(currentWords) || phase === "writing"
     || currentReplies.some((message) => message.text.trim() !== "");
   const progress: ProgressObservation = currentExecution ? {
     ...executionProgress(currentExecution, wordsArrived && phase === "writing"),
@@ -1979,7 +2109,7 @@ function ThreadView({
     failedSteps: currentReplies.flatMap((reply) => reply.toolCalls).filter((call) => executionState(call.status) === "failed").length,
   };
 
-  const readableStatus = outcome && outcome.kind !== "working" && outcome.kind !== "replied"
+  const readableStatus = !transcriptLoaded ? "Loading conversation" : outcome && outcome.kind !== "working" && outcome.kind !== "replied"
     ? outcome.label
     : working
       ? workingLabel
@@ -1988,6 +2118,7 @@ function ThreadView({
   const failed = outcome?.kind === "failed";
 
   useEffect(() => {
+    if (!transcriptLoaded) return;
     if (needsYou) {
       onActivityChange({
         state: "attention",
@@ -2030,14 +2161,16 @@ function ThreadView({
     // already announced itself; clearing here would leave the header on Ready for one frame.
     if (activeTurnRef.current) return;
     onActivityChange(null);
-  }, [activeToolLabel, kind, needsYou, onActivityChange, outcome?.kind, outcome?.label, outcome?.line, pending, threadId, title, working, workingLabel]);
+  }, [activeToolLabel, kind, needsYou, onActivityChange, outcome?.kind, outcome?.label, outcome?.line, pending, threadId, title, transcriptLoaded, working, workingLabel]);
 
   const currentDiscussion: ThreadListItem = discussions.find((item) => item.id === threadId)
     ?? { id: threadId, title, createdAt: 0, updatedAt: 0, status: "idle" };
-  const freshDiscussion = kind === "discussion" && visibleMessages.length === 0 && !working && !needsYou && !error && !outcome;
+  const freshDiscussion = transcriptLoaded && turnsLoaded && kind === "discussion" && visibleMessages.length === 0 && !working && !needsYou && !error && !outcome;
   const composerWorking = turnRunning || activeTurn !== null || (engineRunning && !needsYou);
   const [controlStatusSlot, setControlStatusSlot] = useState<HTMLDivElement | null>(null);
   const [floatingSlot, setFloatingSlot] = useState<HTMLDivElement | null>(null);
+  const [computerOpenRequest, setComputerOpenRequest] = useState(0);
+  const [browserOpenRequest, setBrowserOpenRequest] = useState(0);
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-ink" data-active={active} data-testid={kind === "discussion" ? "coworker-discussion-view" : kind === "worker" ? "coworker-worker-view" : "coworker-assignment-view"}>
@@ -2046,7 +2179,7 @@ function ThreadView({
         slots={headerSlots}
         title={kind === "discussion" ? (
           <DiscussionSwitcher
-            current={{ ...currentDiscussion, title }}
+            current={{ ...currentDiscussion, title: transcriptLoaded ? title : "Loading conversation" }}
             currentUsed={visibleMessages.length > 0}
             discussions={discussions}
             defaultTitle={defaultDiscussionTitle}
@@ -2068,26 +2201,25 @@ function ThreadView({
           </>
         )}
       />
-      {active && kind === "discussion" && browserEligible && headerSlots.tools ? createPortal(<ComputerControl key={`${coworker.slug}:${threadId}`} slug={coworker.slug} threadId={threadId} statusSlot={controlStatusSlot} />, headerSlots.tools) : null}
+      {active && kind === "discussion" && browserEligible && headerSlots.tools ? createPortal(<ComputerControl key={`${coworker.slug}:${threadId}`} slug={coworker.slug} threadId={threadId} statusSlot={controlStatusSlot} openRequest={computerOpenRequest} onOpenRequestHandled={() => setComputerOpenRequest(0)} onBackToConversation={() => voice.fieldRef.current?.focus()} />, headerSlots.tools) : null}
       {/* Progress and problems show inline in the conversation; this keeps the turn state readable to assistive tech and tests. */}
       <div className="@container/discussion min-h-0 min-w-0 flex-1">
       <div className="flex h-full min-h-0 min-w-0 flex-col @min-[760px]/discussion:flex-row">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="coworker-conversation-column">
       <p data-testid="coworker-thread-status" className="sr-only" aria-live="polite" data-state={needsYou ? "needs-you" : working ? "working" : "idle"} data-outcome={outcome?.kind ?? ""}>
-        {kind === "discussion" && !working && !needsYou && !failed && !settledWord ? "Ready" : readableStatus}
+        {transcriptLoaded && kind === "discussion" && !working && !needsYou && !failed && !settledWord ? "Ready" : readableStatus}
       </p>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <div
+        ref={scrollRef}
         className="min-h-0 flex-1 overflow-y-auto px-5 py-5"
-        onScroll={(event) => {
-          const box = event.currentTarget;
-          pinnedRef.current = box.scrollHeight - box.scrollTop - box.clientHeight <= LIVE_SCROLL_SLACK_PX;
-        }}
+        style={{ overflowAnchor: "none" }}
       >
-        <div className="mx-auto max-w-3xl space-y-3">
+        <div ref={contentRef} className="mx-auto max-w-3xl space-y-3">
+          {!transcriptLoaded && !readErrors.transcript ? <p role="status" className="text-xs text-mist">Loading conversation...</p> : null}
           {freshDiscussion ? <QuietEmptyConversation coworker={coworker} proposerName={team?.coworkers.find((member) => member.slug === coworker.suggestedBy?.slug)?.name ?? ""} /> : null}
-          {conversationBlocks(visibleMessages, (message, index) => working && message.role === "assistant" && index === lastAssistantIndex).map((block) => {
-            const retriedWith = block.kind === "message" ? executions.find((entry) => entry.messageId === block.message.id)?.retryLabel : undefined;
+          {blocks.map((block) => {
+            const retriedWith = block.kind === "message" ? executionsByMessage.get(block.message.id)?.retryLabel : undefined;
             if (block.kind === "actions") {
                return <ActionLine key={block.id} review={block.review} calls={block.calls} client={mcpClient} />;
             }
@@ -2098,7 +2230,7 @@ function ThreadView({
               return <QuietLine key={block.message.id} outcome={block.ended} text={block.ended === "stopped" ? "Stopped." : describeTurnFailure(block.message.error ? failureText(block.message.error) : "", coworker.name).headline} />;
             }
             return (
-              <Fragment key={block.message.id}>
+              <div key={block.message.id} data-scroll-anchor={block.message.id}>
                 <TimeLabel label={timeLabelBetween(block.previous?.createdAt, block.message.createdAt)} />
                 <MessageBubble
                   message={block.message}
@@ -2111,15 +2243,15 @@ function ThreadView({
                   turnCalls={block.calls}
                   documents={documents}
                   team={kind === "discussion" ? team : undefined}
-                  laterPersonMessage={visibleMessages.indexOf(block.message) < lastPersonIndex}
+                  laterPersonMessage={(messagePositions.get(block.message.id) ?? -1) < lastPersonIndex}
                   conversation={visibleMessages}
                   onSendReply={sendText}
                   onLongReply={block.message.id === visibleMessages[lastAssistantIndex]?.id ? recordLongReply : undefined}
-                   liveStream={block.active && block.message.id === correlatedStream?.messageId && phase === "writing" ? correlatedStream : null}
-                  sentAt={block.message.role === "assistant" ? visibleMessages.find((entry) => entry.id === block.message.parentId)?.createdAt ?? null : null}
+                  liveStream={block.message.role === "assistant" && block.message.parentId === currentMessageId ? correlatedStream : null}
+                  sentAt={block.message.parentId ? visibleMessages[messagePositions.get(block.message.parentId) ?? -1]?.createdAt ?? null : null}
                 />
                 {retriedWith ? <QuietLine outcome="retried" text={`Retried with ${safeWorkLabel(retriedWith, "the selected model")}`} /> : resolution && block.message.id === resolution.messageId && replyStateFor(visibleMessages, resolution.messageId).state === "complete" ? <QuietLine outcome="retried" text={resolution.note} /> : null}
-              </Fragment>
+              </div>
             );
           })}
           <CollaborationReceipts receipts={collaborationReceipts} />
@@ -2140,7 +2272,7 @@ function ThreadView({
             }}
           />
           {kind === "discussion" ? (
-            <WorkerDecisionCards coworker={coworker} workers={workers} onAnswered={() => onWorkersChanged?.()} />
+            <WorkerDecisionCards coworker={coworker} threadId={threadId} workers={workers} onAnswered={() => onWorkersChanged?.()} />
           ) : null}
           <LiveRowSlot open={working && outcome?.kind !== "retrying" && !["completed", "failed", "cancelled"].includes(progress.status)}>
             {phase === "writing" && !activeReply ? (
@@ -2163,9 +2295,6 @@ function ThreadView({
               onStop={outcome?.kind === "slow" ? () => void stop() : undefined}
             />
           </LiveRowSlot>
-          {visibleMessages.length === 0 && !error && !working && kind !== "discussion" ? (
-            <Empty><InlineLoader label={kind === "worker" ? "Loading the Worker's thread" : "Loading assignment"} /></Empty>
-          ) : null}
           {outcome?.kind === "retrying" || outcome?.kind === "stopped-by-you" || outcome?.kind === "cut-off" ? (
             <QuietLine outcome={outcome.kind} text={outcome.line} choices={outcome.choices} onChoose={chooseTurnAction} />
           ) : null}
@@ -2176,16 +2305,18 @@ function ThreadView({
             <p className="px-1 text-[11px] leading-relaxed text-mist" data-testid="coworker-provider-refresh">{providerRefreshNote}</p>
           ) : null}
           {error ? <ErrorNote>{error}</ErrorNote> : null}
-          <div ref={endRef} />
+          {Object.values(readErrors).some(Boolean) ? <p role="status" className="px-1 text-xs text-mist">{readErrors.transcript || "Some activity could not be refreshed. Shown messages and queued work are kept."} <button type="button" className="underline" onClick={() => void refresh()}>Try again</button></p> : null}
         </div>
       </div>
       {kind === "discussion" ? (
         <div ref={setFloatingSlot} className="pointer-events-none absolute inset-0 overflow-hidden" data-testid="coworker-browser-float-slot" />
       ) : null}
+      {active && transcriptLoaded && away ? <JumpToLatest onClick={jumpToLatest} /> : null}
       </div>
       {kind !== "worker" && turnState.next.length > 0 ? (
         <NextRows items={turnState.next} onEdit={editQueued} onRemove={(id) => commitTurnState((state) => removeQueued(state, id))} onSendNow={(id) => void sendQueuedNow(id)} />
       ) : null}
+      {kind === "discussion" && browserEligible ? <WorkersPanel coworker={coworker} threadId={threadId} compact onOpenComputer={() => setComputerOpenRequest((value) => value + 1)} onOpenBrowser={() => setBrowserOpenRequest((value) => value + 1)} /> : null}
       {kind === "discussion" ? (
         <div ref={setControlStatusSlot} className="shrink-0 space-y-2 px-5 pt-2 empty:hidden" data-testid="coworker-control-status" />
       ) : null}
@@ -2228,7 +2359,7 @@ function ThreadView({
         />
       )}
       </div>
-      {kind === "discussion" && browserEligible ? <DiscussionBrowser key={`${coworker.slug}:${threadId}`} active={active} slug={coworker.slug} threadId={threadId} actionsSlot={headerSlots.tools} statusSlot={controlStatusSlot} floatingSlot={floatingSlot} /> : null}
+      {kind === "discussion" && browserEligible ? <DiscussionBrowser key={`${coworker.slug}:${threadId}`} active={active} slug={coworker.slug} threadId={threadId} actionsSlot={headerSlots.tools} statusSlot={controlStatusSlot} floatingSlot={floatingSlot} openRequest={browserOpenRequest} /> : null}
       </div>
       </div>
     </section>
@@ -2256,7 +2387,7 @@ export function CollaborationReceipts({ receipts }: { receipts: import("@/lib/br
         const label = `${name}: ${dependency.state === "succeeded" ? "received" : dependency.state === "failed" ? "failed" : dependency.state === "cancelled" ? "cancelled" : dependency.state === "waiting-person" ? "needs your input" : "pending"}`;
         return dependency.groupId ? <button key={dependency.id} type="button" className="underline underline-offset-2" onClick={() => window.dispatchEvent(new CustomEvent("coworker:open-group", { detail: dependency.groupId }))}>{label}</button> : <span key={dependency.id}>{label}</span>;
       })}
-      {!["succeeded", "failed", "cancelled"].includes(receipt.state) ? <button type="button" className="underline underline-offset-2" onClick={() => void act(() => coworkerBridge.collaboration.cancel(receipt.id))}>Stop follow-up</button> : null}
+      {!["succeeded", "failed", "cancelled"].includes(receipt.state) ? <button type="button" className="underline underline-offset-2" title="Stop this task, its delegated work, and its automatic follow-up" onClick={() => void act(() => coworkerBridge.collaboration.cancel(receipt.id))}>Stop task</button> : null}
       {receipt.state === "failed" ? <button type="button" className="underline underline-offset-2" onClick={() => void act(() => coworkerBridge.collaboration.retry(receipt.id))}>Continue with available results</button> : null}
     </div>)}
     {error ? <p role="alert" className="text-xs text-mist">{error}</p> : null}
@@ -2284,8 +2415,7 @@ export function conversationBlocks(
   let calls: TranscriptToolCall[] = [];
   let pendingId = "";
   const flush = () => {
-    if (!review && calls.length === 0) return;
-    blocks.push({ kind: "actions", id: `actions-${pendingId}`, review, calls });
+    if (review || calls.length > 0) blocks.push({ kind: "actions", id: `actions-${pendingId}`, review, calls });
     review = null;
     calls = [];
   };
@@ -2294,6 +2424,9 @@ export function conversationBlocks(
   const bubbles = messages.filter((message, index) =>
     message.role === "assistant" ? Boolean(message.text) || isActive(message, index) : !reviewTurn(message) && !continuation(message),
   );
+  const bubblePositions = new Map(bubbles.map((message, index) => [message.id, index]));
+  const lastReplies = new Map<string, number>();
+  messages.forEach((message, index) => { if (message.role === "assistant" && message.parentId) lastReplies.set(message.parentId, index); });
   messages.forEach((message, index) => {
     if (continuation(message)) return;
     const active = isActive(message, index);
@@ -2305,8 +2438,8 @@ export function conversationBlocks(
     }
     if (message.role === "assistant") {
       if (!pendingId) pendingId = message.id;
-      if (message.toolCalls.length > 0) calls = [...calls, ...message.toolCalls];
-      const superseded = message.parentId !== null && messages.slice(index + 1).some((later) => later.role === "assistant" && later.parentId === message.parentId);
+      calls.push(...message.toolCalls);
+      const superseded = message.parentId !== null && lastReplies.get(message.parentId) !== index;
       const ended = active || superseded ? null : endedWithoutWords(message);
       if (ended) {
         // Whatever it thought or did before it ended stays on its own line; the ending is one more.
@@ -2321,7 +2454,7 @@ export function conversationBlocks(
     const turnCalls = message.role === "assistant" ? calls : [];
     flush();
     pendingId = "";
-    const position = bubbles.indexOf(message);
+    const position = bubblePositions.get(message.id) ?? -1;
     const previous = position > 0 ? bubbles[position - 1] : undefined;
     const next = position >= 0 ? bubbles[position + 1] : undefined;
     blocks.push({
@@ -2339,7 +2472,7 @@ export function conversationBlocks(
 }
 
 /** One small centered line between bubbles: observed work and Worker reports. */
-function ActionLine({ review, calls, client }: { review: WorkerReview | null; calls: TranscriptToolCall[]; client: CoworkerMcpClient }) {
+const ActionLine = memo(function ActionLine({ review, calls, client }: { review: WorkerReview | null; calls: TranscriptToolCall[]; client: CoworkerMcpClient }) {
   return (
     <div className="flex justify-center py-0.5" data-testid="coworker-action-line">
       <div className="flex max-w-[80%] flex-wrap items-start justify-center gap-x-4 gap-y-1">
@@ -2348,7 +2481,7 @@ function ActionLine({ review, calls, client }: { review: WorkerReview | null; ca
       </div>
     </div>
   );
-}
+});
 
 const REVIEW_KIND_WORDS = { finding: "reported", decision: "needs a decision", done: "finished", failed: "didn't finish" } as const;
 
@@ -2373,7 +2506,7 @@ function TimeLabel({ label }: { label: string | null }) {
   return <p className="pb-1 pt-2 text-center text-[11px] font-medium text-mist/80" data-testid="coworker-time-label">{label}</p>;
 }
 
-function MessageBubble({
+const MessageBubble = memo(function MessageBubble({
   message,
   coworker,
   mcpClient,
@@ -2499,8 +2632,8 @@ function MessageBubble({
   const teamCards = team ? teamCardsFromCalls(turnCalls) : [];
   // While this reply is being written, its words come from the stream before they land: the
   // bubble is the live view, in the same place and shape it keeps once the text has landed.
-  const liveWords = active && liveStream ? writingText(liveStream, message) : "";
-  const live = liveWords.length > message.text.length;
+  const liveWords = liveStream ? writingText(liveStream, message) : message.text;
+  const live = liveWords !== message.text;
   const answeredBy = message.model ? `Answered by ${message.model.providerId}/${message.model.modelId}` : "";
   const tooltip = [answeredBy, speed].filter(Boolean).join(" · ");
   return (
@@ -2550,7 +2683,7 @@ function MessageBubble({
       ) : null}
     </article>
   );
-}
+});
 
 /**
  * A reply's words. A finished reply that runs long with no document behind it
@@ -2967,7 +3100,7 @@ function DiscussionComposer({
   const stopping = working && !assignmentMode && !value.trim() && Boolean(onStop);
   const submitLabel = busy ? "Working…" : assignmentMode ? "Create assignment" : working ? "Next" : "Send";
   return (
-    <div className="bg-ink px-5 pb-2 pt-2" data-testid="coworker-composer" data-working={working ? "true" : "false"}>
+    <div className="shrink-0 bg-ink px-5 pb-2 pt-2" data-testid="coworker-composer" data-working={working ? "true" : "false"}>
       <div className="mx-auto max-w-3xl">
         {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
         {assignmentMode ? (
@@ -2986,7 +3119,7 @@ function DiscussionComposer({
             value={value}
             onChange={(event) => assignmentMode ? onAssignmentChange(event.target.value) : onMessageChange(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+              if (event.key !== "Enter" || event.repeat || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
               event.preventDefault();
               if (canSubmit) submit();
             }}
@@ -3144,7 +3277,7 @@ function MessageComposer({
             value={value}
             onChange={(event) => onChange(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+              if (event.key !== "Enter" || event.repeat || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
               event.preventDefault();
               if (canSubmit) onSubmit();
             }}

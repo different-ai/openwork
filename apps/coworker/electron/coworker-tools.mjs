@@ -66,14 +66,15 @@ export function toolCatalog() {
     },
     {
       name: "document_update",
-      description: "Update one of my documents. Send either a whole new body or a patch that replaces one ## section by its heading (add the section when it is new). Refresh summary and highlights whenever the body changes. Ask first if the document was edited by the person.",
+      description: "Update one of my documents with a whole body or one ## section patch. Body changes require both refreshed summary and highlights, unless metadataUnchanged is true after reviewing their accuracy. Ask first if the document was edited by the person.",
       inputSchema: {
         type: "object",
         properties: {
           id: DOCUMENT_ID_SCHEMA,
           title: { type: "string" },
-          summary: { type: "string", description: "The refreshed one-sentence summary." },
-          highlights: { type: "array", items: { type: "string" }, maxItems: 5 },
+          summary: { type: "string", description: "Refreshed one-sentence summary. Required with body changes unless metadataUnchanged is true." },
+          highlights: { type: "array", items: { type: "string" }, maxItems: 5, description: "Refreshed takeaways. Required with body changes unless metadataUnchanged is true." },
+          metadataUnchanged: { type: "boolean", description: "True asserts I reviewed the resulting document and the retained summary and highlights still accurately describe it. Never use to skip review." },
           body: { type: "string", description: "The whole new Markdown body. Omit when sending a patch." },
           patch: {
             type: "object",
@@ -220,6 +221,7 @@ export function createToolHandlers({ coworkersDir, onChange = () => undefined })
         ...(typeof args.title === "string" ? { title: args.title } : {}),
         ...(typeof args.summary === "string" ? { summary: args.summary } : {}),
         ...(args.highlights !== undefined ? { highlights: args.highlights } : {}),
+        ...(args.metadataUnchanged === true ? { metadataUnchanged: true } : {}),
         ...(patch ? { patch } : typeof args.body === "string" ? { body: args.body } : {}),
       });
       if (!updated.changed) {

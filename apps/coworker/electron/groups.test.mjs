@@ -6,7 +6,7 @@ import test from "node:test";
 import { createCollaboration, nativeMessageId } from "./collaboration.mjs";
 import { createGroupExecution, repairGroupSelection } from "./group-execution.mjs";
 import { withInteractiveQuestionDefault } from "./collaboration-plugin.mjs";
-import { createWorker, nextWorkerState, parseWorkerReport, updateWorker } from "./workers.mjs";
+import { createWorker, getWorker, nextWorkerState, parseWorkerReport, prepareWorkerTurn, queueWorkerSteer, updateWorker } from "./workers.mjs";
 import { createCoworkerThreads } from "../src/lib/threads.ts";
 import {
   INTERRUPTED_TURN_MESSAGE,
@@ -315,6 +315,35 @@ test("fresh admission waits through an idle unfinished placeholder", async () =>
   });
 });
 
+test("only explicit private requests may ask for Worker control and cancellation invalidates authority before persistence", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture();
+    const invalidated = [];
+    const service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5,
+      spawn: async (_slug, input) => ({ id: input.id, status: "paused" }), cancelWorker: async () => {}, invalidateWorker: (slug, id) => invalidated.push({ slug, id }),
+    });
+    try {
+      const owner = { kind: "private", slug: "scout", threadId: "origin", conversationId: "origin" };
+      const entry = await service.submit({ owner, messageId: "control-request", prompt: "Review this draft", track: true });
+      const input = { name: "Review", goal: "Review draft", control: "browser" };
+      for (const patch of [{ personRequest: false }, { continuation: true }, { owner: { ...owner, kind: "group" } }, { owner: { ...owner, kind: "assignment" } }]) await assert.rejects(service.request({ entry: { ...entry, ...patch }, callId: "not-allowed" }, "worker", input), /explicit person request/);
+      await assert.rejects(service.request({ entry, callId: "thinker" }, "worker", { ...input, purpose: "thinking" }), /delivery Worker/);
+      const requested = await service.request({ entry, callId: "approved-request" }, "worker", input);
+      const worker = { slug: "scout", id: requested.structured.worker.id, spawnedFromThreadId: "origin", control: { surface: "browser" } };
+      await eventually(async () => (await service.read((state) => state.tasks[requested.structured.collaboration.id])).state === "waiting");
+      const permission = await service.workerControlTask(worker);
+      permission.assertActive();
+      await assert.rejects(service.workerControlTask({ ...worker, spawnedFromThreadId: "other" }), /original Worker control/);
+      await mkdir(path.join(home, ".collaboration", "state.json.tmp"));
+      const cancelling = service.cancel(entry.id);
+      assert.deepEqual(invalidated, [{ slug: "scout", id: worker.id }]);
+      assert.throws(permission.assertActive, /stopped/);
+      await assert.rejects(cancelling);
+      assert.equal(fixture.requests.some((request) => request.prompt.startsWith("Continue the original task")), false);
+    } finally { await service.stop(); }
+  });
+});
+
 test("a focused consultation and a Worker resume the immutable private origin exactly once", async () => {
   await withHome(async (home) => {
     let service;
@@ -442,7 +471,9 @@ test("one thinking brief permits a bounded delivery handoff, and unavailable Wor
 test("completion before yield, restart delivery, and cancellation do not duplicate or resurrect a continuation", async () => {
   await withHome(async (home) => {
     const fixture = nativeFixture();
-    const options = { directory: home, clientFor: fixture.clientFor, pollMs: 5, consult: async () => { throw new Error("Not used"); }, spawn: async () => { throw new Error("Not used"); }, cancelWorker: async () => {} };
+    const stopped = [];
+    let cleanupFails = false;
+    const options = { directory: home, clientFor: fixture.clientFor, pollMs: 5, consult: async () => { throw new Error("Not used"); }, spawn: async () => { throw new Error("Not used"); }, cancelWorker: async (_slug, id) => { stopped.push(id); if (cleanupFails) throw new Error("Native cleanup unavailable"); } };
     let service = createCollaboration(options);
     const owner = { slug: "scout", threadId: "ses_origin", conversationId: "ses_origin", kind: "private" };
     const root = await service.submit({ owner, messageId: "msg_root", prompt: "Finish the original work" });
@@ -457,11 +488,96 @@ test("completion before yield, restart delivery, and cancellation do not duplica
       assert.equal(fixture.requests.filter((request) => request.prompt.startsWith("Continue the original task")).length, 1);
       const next = await service.submit({ owner: { ...owner, threadId: "ses_cancel", conversationId: "ses_cancel" }, messageId: "msg_cancel", prompt: "Cancelled work" });
       const child = await service.request({ entry: next, callId: "cancel-child" }, "worker", { name: "Cancelled child", goal: "Check" });
+      cleanupFails = true;
+      await assert.rejects(service.cancel(next.id), /could not be confirmed/);
+      cleanupFails = false;
       await service.cancel(next.id);
+      assert.deepEqual(stopped, [child.structured.worker.id, child.structured.worker.id], "repeat Stop repairs cleanup even after the collaboration is terminal");
       await service.completeWorker({ id: child.structured.worker.id, slug: "scout", status: "finished" }, [{ kind: "finding", text: "LATE RESULT" }]);
       await new Promise((resolve) => setTimeout(resolve, 30));
       assert.equal((await service.receipts({ slug: "scout", threadId: "ses_cancel" }))[0].state, "cancelled");
       assert.equal(fixture.requests.some((request) => request.threadId === "ses_cancel" && request.prompt.includes("LATE RESULT")), false);
+    } finally { await service.stop(); }
+  });
+});
+
+test("Workers stay requested until parent success and return corrections or exhausted work honestly once", async () => {
+  await withHome(async (home) => {
+    let service;
+    let requested;
+    const spawned = [];
+    const turns = [];
+    const fixture = nativeFixture(async ({ slug, threadId, input, reply }) => {
+      if (!input.prompt.startsWith("Original: ")) return;
+      const context = await service.context(slug, { sessionID: threadId, messageID: reply.id, callID: reply.parts[0].callId });
+      requested = await service.request(context, "worker", { name: input.prompt.slice(10), goal: "Produce result.md covering source A and the accepted corrections." });
+      fixture.held.add(threadId);
+      if (input.prompt.endsWith("parent failure")) reply.error = { message: "The foreground reply failed." };
+    });
+    service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5, cancelWorker: async () => {}, spawn: async (slug, input) => {
+      assert.equal(await service.read((state) => state.executions[state.tasks[state.tasks[requested.structured.collaboration.id].parentId].executionId].state), "succeeded");
+      spawned.push(input.name);
+      const expired = input.name === "expired before admission";
+      const lifespan = expired ? { kind: "until", at: Date.now() - 1 } : { kind: "turns", max: input.name === "correction remaining" ? 2 : 1 };
+      let worker = await createWorker(home, slug, { ...input, lifespan, spawnedBy: "coworker" }, { now: Date.now() - 1000 });
+      for (let turn = 0; turn < 2; turn++) {
+        if (!expired) {
+          const prepared = await prepareWorkerTurn(home, slug, worker.id, "Scout");
+          turns.push(prepared.pendingTurn);
+          if (turn === 0 && input.name.startsWith("correction")) await queueWorkerSteer(home, slug, worker.id, "Include source C in result.md.", "person");
+          if (turn === 1) {
+            assert.match(prepared.pendingTurn.prompt, /Include source C in result.md/);
+            assert.notEqual(prepared.pendingTurn.messageId, turns.at(-2).messageId);
+          }
+        }
+        let step;
+        worker = await updateWorker(home, slug, worker.id, (current) => {
+          step = nextWorkerState(current, { kind: "settled", report: expired ? { kind: "none", text: "" } : { kind: input.name === "delivery exhausted" ? "finding" : "done", text: turn === 0 ? "Only source A is in result.md." : "Sources A and C are in result.md." } });
+          return { ...step.patch, pendingTurn: null };
+        });
+        await service.completeWorker(worker, step.events);
+        if (step.schedule === "stop") {
+          await service.completeWorker(worker, step.events);
+          break;
+        }
+      }
+      return worker;
+    } });
+    try {
+      const owner = { slug: "scout", threadId: "ses_worker_outcome", conversationId: "ses_worker_outcome", kind: "private" };
+      for (const name of ["correction remaining", "correction exhausted", "delivery exhausted", "expired before admission", "parent failure"]) {
+        requested = null;
+        const before = spawned.length;
+        const root = await service.submit({ owner, prompt: `Original: ${name}`, messageId: nativeMessageId(), track: true });
+        await eventually(() => requested && fixture.held.has(owner.threadId));
+        assert.equal(requested.structured.worker.action, "requested");
+        assert.equal(requested.structured.collaboration.state, "requested");
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        assert.equal(spawned.length, before, "no child spawns while the foreground reply is active");
+        fixture.held.delete(owner.threadId);
+        await eventually(async () => ["failed", "succeeded"].includes((await service.read((state) => state.tasks[root.taskId])).state));
+        const child = await service.read((state) => state.tasks[requested.structured.collaboration.id]);
+        const followups = fixture.requests.filter((request) => request.prompt.startsWith("Continue the original task") && request.prompt.includes(`Objective: Original: ${name}`));
+        if (name === "parent failure") {
+          assert.equal(spawned.length, before, "the deliberate parent-success gate is retained");
+          assert.equal(followups.length, 0);
+          continue;
+        }
+        assert.equal(spawned.length, before + 1);
+        assert.equal(followups.length, 1);
+        const worker = await getWorker(home, "scout", child.workerId);
+        assert.equal(child.state, name === "correction remaining" ? "succeeded" : "failed");
+        assert.equal(worker.status, name === "correction remaining" ? "finished" : "failed");
+        assert.equal(child.reportKind, name === "delivery exhausted" ? "finding" : name === "expired before admission" ? "none" : "done");
+        if (name !== "correction remaining") assert.match(child.error, /^Incomplete:/);
+        if (name === "correction exhausted") {
+          assert.equal(child.unresolvedSteers[0].text, "Include source C in result.md.");
+          assert.match(followups[0].prompt, /accepted correction still unresolved/);
+        }
+        if (name === "correction remaining") assert.match(child.result, /Sources A and C/);
+        assert.match(followups[0].prompt, /Inspect the returned result and referenced artifacts against the original acceptance criteria/);
+        assert.match(followups[0].prompt, /spent lifespan is not completion/);
+      }
     } finally { await service.stop(); }
   });
 });
@@ -538,6 +654,71 @@ test("backend Next drains without a view and results queue behind a foreground r
       await eventually(() => fixture.requests.some((request) => request.prompt === "Still drains"));
       await eventually(async () => (await service.threadState(owner.slug, owner.threadId)).pending === null);
     } finally { await service.stop(); }
+  });
+});
+
+test("group continuations yield to routing and all foreground speakers, including a request arriving during setup", async () => {
+  await withHome(async (home) => {
+    let service;
+    let child;
+    let routing = false;
+    let releaseRoute;
+    const routeGate = new Promise((resolve) => { releaseRoute = resolve; });
+    let releaseSetup;
+    const setupGate = new Promise((resolve) => { releaseSetup = resolve; });
+    let holdSetup = false;
+    let preparing = false;
+    const setups = [];
+    const fixture = nativeFixture(async ({ slug, threadId, input, reply }) => {
+      if (slug === ".coordinator") reply.parts.push({ type: "text", text: JSON.stringify({ speakers: [{ slug: "scout" }, { slug: "editor" }], mode: "sequential" }) });
+      else if (!child && input.prompt.includes("Delegate the original")) {
+        const trusted = await service.context(slug, { sessionID: threadId, messageID: reply.id, callID: reply.parts[0].callId });
+        child = await service.request(trusted, "worker", { name: "Group check", goal: "Check result.md" });
+      } else if (slug === "editor") fixture.held.add(threadId);
+    });
+    service = createCollaboration({ directory: home, pollMs: 5, spawn: async (_slug, input) => ({ id: input.id, status: "running" }), cancelWorker: async () => {}, clientFor: async (slug, options = {}) => {
+      setups.push({ slug, ...options });
+      if (holdSetup && options.kind === "review") { preparing = true; await setupGate; }
+      return fixture.clientFor(slug);
+    } });
+    const groups = createGroupExecution({ directory: home, collaboration: service, clientFor: fixture.clientFor, pollMs: 5,
+      coworkerFor: async (slug) => ({ slug, name: slug, role: "Research and architecture", mission: "Deep analysis", model: "test/model" }),
+      coordinator: async () => { routing = true; await routeGate; return { workspaceId: "coordinator" }; },
+      catalogFor: async () => ({ models: [{ id: "test/model", providerId: "test", modelId: "model", variants: [], source: "local", tier: "key", toolCall: true, status: "active", label: "Test", releaseDate: "" }] }),
+    });
+    try {
+      const group = await createGroup(home, { name: "Pair", participantSlugs: ["scout", "editor"] });
+      await groups.start();
+      await groups.submit(group.id, { clientMessageId: "origin", text: "@scout Delegate the original", context: "Wrapper: investigate every role thoroughly." });
+      await eventually(async () => child && !(await groups.status(group.id)).active);
+      await groups.submit(group.id, { clientMessageId: "human-next", text: "Hello" });
+      await eventually(() => routing);
+      await service.completeWorker({ slug: "scout", id: child.structured.worker.id, status: "finished" }, [{ kind: "finding", report: "done", text: "Group result.md is ready" }]);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assert.equal(setups.some((entry) => entry.kind === "review"), false, "queued routing wins before continuation setup");
+      releaseRoute();
+      await eventually(() => fixture.requests.some((entry) => entry.slug === "editor" && fixture.held.has(entry.threadId)));
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assert.equal(setups.some((entry) => entry.kind === "review"), false, "another speaker keeps the foreground turn ahead");
+      assert.ok(setups.some((entry) => entry.slug === "editor" && entry.requestText === "Hello"), "effort receives the raw request, not role or prompt wrappers");
+      fixture.held.clear();
+      await eventually(async () => (await service.receipts({ groupId: group.id }))[0]?.state === "succeeded");
+      assert.equal(setups.find((entry) => entry.kind === "review").requestText, "@scout Delegate the original");
+      const origin = await service.read((state) => state.tasks[state.tasks[child.structured.collaboration.id].parentId]);
+      holdSetup = true;
+      const worker = { id: "wrk_groupsecond", slug: "scout", name: "Another result", goal: "Finish the group task", status: "finished" };
+      await service.attachWorker(worker, origin.owner);
+      await service.completeWorker(worker, [{ kind: "finding", report: "done", text: "Second result.md" }]);
+      await eventually(() => preparing);
+      await groups.submit(group.id, { clientMessageId: "during-setup", text: "@scout Please read the correction" });
+      holdSetup = false;
+      releaseSetup();
+      await eventually(async () => (await service.receipts({ groupId: group.id })).every((receipt) => receipt.state === "succeeded"));
+      const correction = fixture.requests.findIndex((entry) => entry.prompt.includes("Please read the correction"));
+      const followup = fixture.requests.findIndex((entry) => entry.prompt.includes("Second result.md"));
+      assert.ok(correction >= 0 && followup > correction, "the final admission check lets the human turn overtake prepared continuation setup");
+      assert.equal(fixture.requests.filter((entry) => entry.prompt.includes("Second result.md")).length, 1);
+    } finally { releaseRoute(); releaseSetup(); groups.stop(); await service.stop(); }
   });
 });
 

@@ -81,7 +81,7 @@ async function bounded(promise, ms) {
  * Failed connect must confirm it left no session, or throw AggregateError when
  * setup AND revocation failed without a usable handle. No remote provisioning.
  * Deliberately conservative: one controller across all targets, not one per OS. */
-export function createComputerControl({ adapters, adapter, discussionFor, resolveContext, cleanupMs = 3000, operationMs = 120_000, pollMs = 750, now = Date.now }) {
+export function createComputerControl({ adapters, adapter, discussionFor, resolveContext, onRevoke = () => {}, cleanupMs = 3000, operationMs = 120_000, pollMs = 750, now = Date.now }) {
   if (adapters && adapter) throw new Error("Provide adapters or adapter, not both.");
   const configured = adapters ?? (adapter ? [adapter] : []);
   if (!Array.isArray(configured) || !configured.length) throw new Error("At least one trusted computer adapter is required.");
@@ -108,6 +108,10 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
   let closed = false;
   let resetting = 0;
   let epoch = 0;
+  function disable(grant) {
+    grant.enabled = false; grant.revision++;
+    onRevoke({ slug: grant.slug, threadId: grant.threadId, surface: "computer" });
+  }
   const serial = (work) => {
     const result = tail.then(work);
     tail = result.then(() => undefined, () => undefined);
@@ -124,7 +128,7 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
     const key = keyFor(slug, threadId);
     let grant = grants.get(key);
     if (grant && (grant.workspaceId !== scope.workspaceId || grant.directory !== scope.directory)) {
-      grant.enabled = false; grant.revision++;
+      disable(grant);
       if (lease?.grant === grant) await cleanup(lease);
       throw new Error("This discussion's original workspace changed. Computer control was revoked.");
     }
@@ -168,8 +172,7 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
   }
   function nativeStopped(current, result) {
     if (stateOf(result)?.code !== "session_unavailable") return false;
-    if (current.grant.enabled) current.grant.revision++;
-    current.grant.enabled = false;
+    disable(current.grant);
     current.nativeStopped = true;
     return true;
   }
@@ -220,7 +223,7 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
             current.session = { ...current.session, state: "unavailable", reason: stateOf(result)?.message ?? "Native status is unavailable." };
           } else updateSession(current, result);
         } catch {
-          grant.enabled = false; grant.revision++;
+          disable(grant);
           await cleanup(current);
         }
       });
@@ -242,12 +245,25 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
     };
   }
   const api = {
+    async delegationScope({ slug, threadId }) {
+      const grant = await grantFor(slug, threadId);
+      if (lease || !grant.enabled) throw new Error("Allow computer access in the original discussion and finish its current native session before approving this Worker.");
+      const revision = grant.revision;
+      const assertActive = () => {
+        if (closed || resetting || !grant.enabled || grant.revision !== revision) throw new Error("The originating discussion's computer permission or target changed.");
+      };
+      const status = await readiness(grant.adapter);
+      assertActive();
+      if (status.readiness !== "ready") throw new Error(status.detail);
+      return { targetId: grant.targetId, revision, assertActive };
+    },
     async snapshot({ slug, threadId }) { return view(await grantFor(slug, threadId), true); },
     async configure({ slug, threadId, expectedRevision, enabled, targetId }) {
       if (typeof enabled !== "boolean" || !targets.has(targetId)) throw new Error("Choose a known computer and an explicit enable setting.");
       const grant = await grantFor(slug, threadId);
       const revision = revise(grant, expectedRevision);
       grant.enabled = false;
+      onRevoke({ slug, threadId, surface: "computer" });
       if (lease?.grant === grant) await cleanup(lease);
       if (grant.revision !== revision || closed || resetting) throw new Error("Computer configuration was stopped before it finished.");
       if (lease?.grant === grant) return view(grant);
@@ -267,6 +283,7 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
       const grant = grants.get(keyFor(slug, threadId)) ?? await grantFor(slug, threadId);
       revise(grant, expectedRevision);
       grant.enabled = false;
+      onRevoke({ slug, threadId, surface: "computer" });
       if (lease?.grant === grant) await cleanup(lease);
       return view(grant);
     },
@@ -289,16 +306,17 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
         if (cancelledCalls.size >= 4096) throw new Error("The computer cancellation limit was reached. Stop control in the native panel.");
         cancelledCalls.add(key);
         const grant = call?.grant ?? grants.get(keyFor(slug, context.sessionID));
-        if (grant) { grant.enabled = false; grant.revision++; }
+        if (grant) disable(grant);
         if (lease && lease.grant === grant) await cleanup(lease);
         return failure("cancelled", "Computer control stopped.");
       }
       if (cancelledCalls.has(key)) throw new Error("This native computer call was cancelled before admission.");
-      const grant = await grantFor(slug, context.sessionID);
+      const trusted = await resolveContext(slug, context, { name, args });
+      const originThreadId = trusted.origin?.threadId ?? context.sessionID;
+      const grant = await grantFor(slug, originThreadId);
       if (path.resolve(context.directory) !== path.resolve(grant.directory)) throw new Error("This native call belongs to another workspace.");
       const revision = grant.revision;
       const selectedAdapter = grant.adapter;
-      const trusted = await resolveContext(slug, context, { name, args });
       const check = () => {
         trusted.assertActive();
         if (closed || resetting || cancelledCalls.has(key) || !grant.enabled || grant.adapter !== selectedAdapter || grant.revision !== revision || trusted.entry.workspaceId !== grant.workspaceId) throw new Error("Computer control is disabled, revoked, or belongs to another workspace.");
@@ -319,13 +337,13 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
         check();
         const fresh = await resolveContext(slug, context, { name, args });
         fresh.assertActive(); check();
-        await discussionFor(slug, context.sessionID).then((scope) => { if (scope.workspaceId !== grant.workspaceId || scope.directory !== grant.directory) throw new Error("The original discussion workspace is unavailable."); });
+        await discussionFor(slug, originThreadId).then((scope) => { if (scope.workspaceId !== grant.workspaceId || scope.directory !== grant.directory) throw new Error("The original discussion workspace is unavailable."); });
         check();
         if (lease && (lease.grant !== grant || lease.adapter !== selectedAdapter || lease.closing || lease.executionId !== trusted.entry.id)) throw new Error("Another discussion or an earlier turn still owns this computer.");
         lease ??= { grant, adapter: selectedAdapter, executionId: trusted.entry.id, messageId: trusted.entry.messageId, controller: new AbortController(), sessionId: null, session: null, busy: false };
         const current = lease;
         current.busy = true;
-        const abort = () => { grant.enabled = false; grant.revision++; void cleanup(current); };
+        const abort = () => { disable(grant); void cleanup(current); };
         trusted.signal.addEventListener("abort", abort, { once: true });
         const signal = AbortSignal.any([trusted.signal, current.controller.signal, AbortSignal.timeout(operationMs)]);
         let nativeResult;
@@ -389,7 +407,7 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
         try {
           const result = await bounded(current.work, operationMs);
           if (name === "coworker_computer_close" || current.nativeStopped || current.handoffFailed || (name === "coworker_computer_open" && result.isError)) {
-            if (name !== "coworker_computer_close") { grant.enabled = false; grant.revision++; }
+            if (name !== "coworker_computer_close") disable(grant);
             if (stateOf(result)?.ok === true && name === "coworker_computer_close") current.sessionId = null;
             await cleanup(current);
           }
@@ -398,7 +416,7 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
           if (current.closing && name !== "coworker_computer_act" && name !== "coworker_computer_close") return failure("revoked", "Computer control stopped before this result could be delivered.");
           return result;
         } catch (error) {
-          grant.enabled = false; grant.revision++;
+          disable(grant);
           await cleanup(current);
           const interrupted = failure(handoff ? "handoff_interrupted" : name === "coworker_computer_act" ? "dispatch_uncertain" : "operation_interrupted", `${error.message} Do not replay this call; inspect the native computer controls before continuing.`);
           return nativeResult && (name === "coworker_computer_act" || nativeResult.isError) ? withHandoff(nativeResult, interrupted) : interrupted;
@@ -419,11 +437,11 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
       // Handoffs wait inside their tool, never by borrowing the next turn.
       // An idle lease is revoked here; a later turn needs new native approval.
       if (lease?.executionId !== entry.id) return;
-      if (entry.state === "cancelled" && lease.grant.enabled) { lease.grant.enabled = false; lease.grant.revision++; }
+      if (entry.state === "cancelled" && lease.grant.enabled) disable(lease.grant);
       if (!await cleanup(lease)) throw new Error(COMPUTER_STOP_GUIDANCE);
     },
     async revoke({ slug, threadId } = {}) {
-      for (const grant of grants.values()) if ((!slug || grant.slug === slug) && (!threadId || grant.threadId === threadId)) { grant.enabled = false; grant.revision++; }
+      for (const grant of grants.values()) if ((!slug || grant.slug === slug) && (!threadId || grant.threadId === threadId)) disable(grant);
       if (lease && (!slug || lease.grant.slug === slug) && (!threadId || lease.grant.threadId === threadId)) return cleanup(lease);
       return true;
     },
