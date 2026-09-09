@@ -137,11 +137,6 @@ export type AdminOverviewResponse = {
   generatedAt: string;
 };
 
-export type ScimManagementForbiddenError = {
-  error: "forbidden";
-  message: string;
-};
-
 export type OpaqueObject = {
   [key: string]: unknown;
 };
@@ -167,80 +162,6 @@ export type LoginOptionsBotVerificationFailedError = {
 
 export type LoginOptionsRateLimitedError = {
   error: "rate_limited";
-  message: string;
-};
-
-export type AuthLoginLockedError = {
-  error: "login_locked";
-  message: string;
-};
-
-export type AuthPasswordScreeningUnavailableError = {
-  error: "password_screening_unavailable";
-  message: string;
-};
-
-export type DesktopHandoffGrantResponse = {
-  grant: string;
-  expiresAt: string;
-  openworkUrl: string;
-  returnUrl?: string;
-};
-
-export type DesktopHandoffInvalidReturnUrlError = {
-  error: "invalid_return_url";
-  message: string;
-};
-
-export type DesktopHandoffCreateBadRequest = InvalidRequestError | DesktopHandoffInvalidReturnUrlError;
-
-export type DesktopHandoffGrantCreateBody = {
-  /**
-   * Optional continuation hint for handoff clients.
-   */
-  next?: string;
-  /**
-   * The registered OpenWork desktop URL scheme.
-   */
-  desktopScheme?: "openwork";
-  /**
-   * Optional HTTPS OpenWork Cloud web return URL. Accepted only for multi-organization Cloud instances after server-side origin validation.
-   */
-  returnUrl?: string;
-};
-
-export type DesktopHandoffStatusResponse = {
-  status: "pending" | "consumed" | "unknown";
-};
-
-export type DesktopHandoffRateLimitedError = {
-  error: "rate_limited";
-  message: string;
-};
-
-export type DesktopHandoffExchangeResponse = {
-  token: string;
-  user: {
-    /**
-     * Den TypeID with 'usr_' prefix and a 26-character base32 suffix.
-     */
-    id: string;
-    email: string;
-    name: string | null;
-  };
-  organization: {
-    /**
-     * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
-     */
-    id: string;
-    slug: string;
-    name: string;
-  } | null;
-  connectEnabled: boolean | null;
-};
-
-export type DesktopHandoffGrantNotFoundError = {
-  error: "grant_not_found";
   message: string;
 };
 
@@ -356,14 +277,6 @@ export type UpdateCurrentUserProfileResponse = {
   };
 };
 
-export type ActiveOrganizationResponse = {
-  /**
-   * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
-   */
-  activeOrgId: string;
-  activeOrgSlug: string | null;
-};
-
 export type CurrentUserDesktopConfigResponse = {
   allowCustomProviders?: boolean;
   allowZenModel?: boolean;
@@ -422,11 +335,6 @@ export type OrganizationResponse = {
   organization: {
     [key: string]: unknown;
   } | null;
-};
-
-export type SingleOrgModeError = {
-  error: "single_org_mode";
-  message: string;
 };
 
 export type InvitationPreviewResponse = {
@@ -504,31 +412,6 @@ export type UpdateOrganizationBadRequest = InvalidRequestError | InvalidEmailDom
 export type EnterprisePlanRequiredError = {
   error: "enterprise_plan_required";
   feature: string;
-  message: string;
-};
-
-export type SingleOrgSsoStatusResponse = {
-  configured: boolean;
-  organizationSlug: string;
-  signInPath: string;
-  signInUrl: string;
-};
-
-export type ResolveOrganizationSsoByEmailResponse =
-  | {
-      requireSso: true;
-      method: "sso";
-      organizationSlug: string;
-      signInPath: string;
-      signInUrl: string;
-    }
-  | {
-      requireSso: false;
-      method: "google" | "password" | "signup";
-    };
-
-export type BotVerificationFailedError = {
-  error: "bot_verification_failed";
   message: string;
 };
 
@@ -642,31 +525,6 @@ export type CreateOrganizationApiKeyResponse = {
 
 export type CreateOrganizationApiKeyRequest = {
   name: string;
-};
-
-export type OrganizationApiKeyNotFoundError = {
-  error: "api_key_not_found";
-};
-
-export type OrgStripeBillingResponse = {
-  [key: string]: unknown;
-};
-
-export type OpenWorkWebUnavailableError = {
-  error: "openwork_web_not_available";
-  message: string;
-};
-
-export type OrgStripeCheckoutResponse = {
-  url: string;
-};
-
-export type OrgStripePortalResponse = {
-  url: string;
-};
-
-export type OrgStripeCheckoutSyncResponse = {
-  synced: boolean;
 };
 
 export type ManagedBrandAssetUploadResponse = {
@@ -1884,16 +1742,6 @@ export type Microsoft365TeamsMessageResponse = {
 
 export type Microsoft365TeamsMessageBody = {
   content: string;
-};
-
-export type ExternalMcpClientMetadata = {
-  client_id: string;
-  client_name: "OpenWork";
-  application_type: "web";
-  redirect_uris: [string];
-  grant_types: ["authorization_code", "refresh_token"];
-  response_types: ["code"];
-  token_endpoint_auth_method: "none";
 };
 
 export type ExternalMcpRequirementsDiscovery = {
@@ -3882,11 +3730,6 @@ export type PluginArchGithubWebhookUnauthorizedResponse = {
   error: "invalid signature";
 };
 
-export type StripeWebhookResponse = {
-  received: true;
-  type: string;
-};
-
 export type WorkerHeartbeatResponse = {
   ok: true;
   workerId: string;
@@ -3894,11 +3737,6 @@ export type WorkerHeartbeatResponse = {
   openSessionCount: number | null;
   lastHeartbeatAt: string;
   lastActiveAt: string | null;
-};
-
-export type WorkerBillingRetiredError = {
-  error: "worker_billing_retired";
-  message: string;
 };
 
 export type WorkerInstance = {
@@ -4121,22 +3959,6 @@ export type TelemetryAnalyticsResponse = {
       manual: number;
     };
   };
-};
-
-export type OpenApiDocument = {
-  openapi: string;
-  info: {
-    title: string;
-    version: string;
-    [key: string]: unknown;
-  };
-  paths: {
-    [key: string]: unknown;
-  };
-  components?: {
-    [key: string]: unknown;
-  };
-  [key: string]: unknown;
 };
 
 export type GetHealthData = {
