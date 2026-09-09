@@ -23,7 +23,7 @@ test("archiving exits only the viewed conversation, and working sessions require
   }
 
   async function send(target: typeof a1, text: string, expectedRequests?: number) {
-    console.info("[archive send:before]", JSON.stringify({ target, diagnostics: await world.diagnostics(), facts: await world.facts() }));
+    const before = { target, diagnostics: await world.diagnostics(), facts: await world.facts() };
     try {
       expect(await probe.hash()).toBe(route(target));
       await probe.eventually(() => world.surfaceReady(target.sessionId), { within: 30_000, label: "composer snapshot belongs to the mounted send target" });
@@ -38,10 +38,9 @@ test("archiving exits only the viewed conversation, and working sessions require
         });
       }
     } catch (error) {
+      console.info("[archive send:failure]", JSON.stringify({ before, diagnostics: await world.diagnostics(), facts: await world.facts(), provider: await world.requests() }));
       await user.screenshot();
       throw error;
-    } finally {
-      console.info("[archive send:after]", JSON.stringify({ target, diagnostics: await world.diagnostics(), facts: await world.facts(), provider: await world.requests() }));
     }
   }
 
@@ -331,7 +330,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     });
     expect(await probe.hash()).toBe(settingsHash);
     expect(await world.requests()).toHaveLength(3);
-    await user.click({ role: "button", label: "Close settings" });
+    await user.click({ role: "button", label: "Back to app" });
     await open(a2);
   });
 
@@ -358,7 +357,7 @@ test("archiving exits only the viewed conversation, and working sessions require
       until: facts => facts.sessions.find(session => session.sessionId === a2.sessionId)?.archived === false,
     });
     expect(await probe.hash()).toBe(settingsHash);
-    await user.click({ role: "button", label: "Close settings" });
+    await user.click({ role: "button", label: "Back to app" });
     await open(a2);
     expect(await world.requests()).toHaveLength(3);
   });
