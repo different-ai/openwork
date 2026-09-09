@@ -55,6 +55,8 @@ export interface CoworkerOptions {
 
 export interface CoworkerHandle extends AttachedSurface {
   workspaceRoot: string;
+  /** Reconnect after a product-owned relaunch; never starts another app. */
+  reconnect(): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -85,8 +87,14 @@ export async function coworker(options: CoworkerOptions = {}): Promise<CoworkerH
     };
     return {
       handle: attached.handle,
-      client: attached.client,
+      get client() { return attached!.client; },
+      set client(client) { attached!.client = client; },
       workspaceRoot: host.workspaceRoot,
+      async reconnect() {
+        await attached?.stop();
+        attached = await attachSurface(handle, { timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS });
+        await waitForCoworkerReadiness(attached, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+      },
       stop,
       [Symbol.asyncDispose]: () => stop().catch((error: unknown) => {
         console.warn(`[openwork/evals] Coworker cleanup failed: ${messageText(error)}`);

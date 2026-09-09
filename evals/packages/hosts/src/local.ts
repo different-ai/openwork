@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { constants, existsSync, openSync } from "node:fs";
 import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { allocateFreePort, allocateFreePorts, listTargets, waitForCdp } from "@openwork/cdp";
 import {
   desktopBootstrapPath,
@@ -868,7 +868,11 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
         });
         log(`Starting local Electron surface ${name} from packaged binary ${packagedBinary} (CDP :${cdpPort})...`);
         // An installed artifact must not resolve assets from the checkout's cwd.
-        spawned = spawnDetached(packagedBinary, [], { cwd: profileRoot, env, logPath });
+        const entry = opts.env?.OPENWORK_EVAL_ELECTRON_ENTRY;
+        if (entry && (!isAbsolute(entry) || !resolve(entry).startsWith(`${resolve(options.repoRoot)}/`))) {
+          throw new Error("A source Electron entry must be inside this host's worktree.");
+        }
+        spawned = spawnDetached(packagedBinary, entry ? [entry] : [], { cwd: profileRoot, env, logPath });
       } else {
         log(`Starting local Electron surface ${name} (Vite :${port}, CDP :${cdpPort})...`);
         spawned = spawnDetached(pnpmCommand(), [opts.devCommand ?? "dev:electron"], { cwd: options.repoRoot, env, logPath });

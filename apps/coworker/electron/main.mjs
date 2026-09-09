@@ -20,7 +20,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { BrowserWindow, Menu, app, dialog, ipcMain, nativeTheme, shell, systemPreferences } from "electron";
 import { createVoice, installVoicePermissions } from "./voice.mjs";
 import { bindWindowAppearance, windowMaterial } from "./window-appearance.mjs";
-import { openworkConfigDir } from "@openwork/paths";
+import { globalOpencodeConfigDir, openworkConfigDir } from "@openwork/paths";
 import { createHeadlessThreadClient, isRunning, toTranscript } from "@openwork/headless-threads";
 import { createCollaboration, collaborationId, withAbort } from "./collaboration.mjs";
 import { readExecutionActivity } from "../src/lib/progress-activity.ts";
@@ -119,8 +119,10 @@ import {
   openAiCompatibleProviderConfig,
 } from "./local-providers.mjs";
 import { resolveBundledOpencodeBinary, resolveUserDataDir } from "./runtime-paths.mjs";
+import { assertMaintenanceSender, assertResetConfirmation, createMaintenance, createMaintenanceAdmission, resolveMaintenanceHistoryDb, validateMaintenancePaths } from "./maintenance.mjs";
+import { captureMaintenanceProcesses, prepareMaintenanceHandoff, readMaintenanceStartup } from "./maintenance-handoff.mjs";
 import { noteProgress, readChanges, trackChange, undoChange, writeTrackedFile } from "./self-memory.mjs";
-import { SETTINGS_FILE, readSettings, scheduleGuardrails, updateSettings } from "./settings.mjs";
+import { SETTINGS_FILE, normalizeSettings, readSettings, scheduleGuardrails, updateSettings } from "./settings.mjs";
 import {
   RECOVERED_STATUS,
   THINKING_TURN_BUDGET,
@@ -156,6 +158,14 @@ const isDev = !app.isPackaged || process.env.OPENWORK_DEV_MODE === "1";
 
 const APP_NAME = "Open Coworker";
 const APP_IDENTIFIER = isDev ? "com.differentai.opencoworker.dev" : "com.differentai.opencoworker";
+const userDataDir = resolveUserDataDir({ env: process.env, appDataDir: app.getPath("appData"), appIdentifier: APP_IDENTIFIER });
+// This must precede the first await and app.setPath: a competing launch may
+// not select the old profile while its post-exit helper is moving it.
+const maintenanceNotice = readMaintenanceStartup(userDataDir, { consume: false });
+if (maintenanceNotice?.blocked) {
+  dialog.showErrorBox("Fresh start needs attention", maintenanceNotice.message);
+  app.exit(0);
+}
 const DEFAULT_SERVER_PORT = 8790;
 const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 const HOSTED_DEN_APEX_HOST = "openworklabs.com";
@@ -197,7 +207,7 @@ if (process.platform === "win32") {
 }
 app.setPath(
   "userData",
-  resolveUserDataDir({ env: process.env, appDataDir: app.getPath("appData"), appIdentifier: APP_IDENTIFIER }),
+  userDataDir,
 );
 
 const coworkersDir = process.env.COWORKER_HOME_DIR?.trim() || defaultCoworkersDir();
@@ -213,6 +223,11 @@ process.env.OPENWORK_ENV_STORE ||= path.join(path.dirname(serverConfigPath), "co
 // process must not hide the tool; workspace permission rules still govern it.
 process.env.OPENCODE_ENABLE_QUESTION_TOOL = "true";
 const settingsPath = path.join(path.dirname(serverConfigPath), SETTINGS_FILE);
+const maintenanceAdmission = createMaintenanceAdmission();
+const responsibilityAbort = new AbortController();
+let responsibilityCleanupError;
+let resetExitReady = false;
+let resetInProgress = false;
 
 /**
  * Deep links use the app's own scheme so a Den handoff never lands in the
@@ -231,6 +246,8 @@ let serverHandle = null;
 let ownerToken = "";
 let engineError = "";
 let startingServer = null;
+let engineHistoryDb = null;
+let engineHistoryError = "The AI service has not resolved its history database yet. Wait for startup and retry.";
 let localResponsibilitiesTimer = null;
 /** `slug:id` of every run executing in this process — responsibility runs and Worker turns alike. */
 const activeLocalRuns = new Set();
@@ -239,7 +256,9 @@ const queuedLocalRuns = [];
 /** Admission decisions run one at a time so two requests can never both take the last slot. */
 let localRunAdmission = Promise.resolve();
 function admitLocalRun(decide) {
-  const next = localRunAdmission.then(decide, decide);
+  if (maintenanceAdmission.closed) return Promise.resolve();
+  const admitted = () => maintenanceAdmission.closed ? undefined : decide();
+  const next = localRunAdmission.then(admitted, admitted);
   localRunAdmission = next.then(() => undefined, () => undefined);
   return next;
 }
@@ -417,6 +436,7 @@ async function issueOwnerToken(baseUrl, hostToken) {
 }
 
 async function startPlatformServer() {
+  maintenanceAdmission.assertOpen();
   const { startEmbeddedServer } = await import(pathToFileURL(embeddedServerPath()).href);
   const tokens = await loadOrCreateTokens();
   await mkdir(coworkersDir, { recursive: true });
@@ -427,8 +447,24 @@ async function startPlatformServer() {
   // the very first boot (mirrors the OpenWork desktop's embedded-server use).
   const seedWorkspaces = existsSync(serverConfigPath) ? [] : coworkers.map((coworker) => coworker.path);
 
-  const startOnce = async (manageOpencode) =>
-    startEmbeddedServer({
+  const binary = resolveOpencodeBin();
+  const startOnce = async (manageOpencode) => {
+    if (manageOpencode) {
+      try {
+        const bundled = !process.env.OPENWORK_OPENCODE_BIN?.trim() && binary === resolveBundledOpencodeBinary({ appRoot: path.resolve(__dirname, ".."), resourcesPath: process.resourcesPath });
+        engineHistoryDb = resolveMaintenanceHistoryDb({ env: process.env,
+          dataDirectory: path.join(process.env.XDG_DATA_HOME?.trim() || path.join(homedir(), ".local", "share"), "opencode"),
+          bundled, version: bundled ? await readSidecarVersion(path.join(path.dirname(binary), "versions.json")) : "",
+        });
+        // Pin the resolved file in the owned engine's actual launch environment.
+        process.env.OPENCODE_DB = engineHistoryDb;
+        engineHistoryError = "";
+      } catch (error) {
+        engineHistoryDb = null;
+        engineHistoryError = error.message;
+      }
+    }
+    return startEmbeddedServer({
       host: "127.0.0.1",
       port: DEFAULT_SERVER_PORT,
       corsOrigins: ["*"],
@@ -438,17 +474,19 @@ async function startPlatformServer() {
       token: tokens.clientToken,
       hostToken: tokens.hostToken,
       manageOpencode,
-      opencodeBin: manageOpencode ? resolveOpencodeBin() : undefined,
+      opencodeBin: manageOpencode ? binary : undefined,
     });
+  };
 
   engineError = "";
   try {
-    await prepareEngineSdkOnce(resolveOpencodeBin());
+    await prepareEngineSdkOnce(binary);
     serverHandle = await startOnce(true);
   } catch (error) {
     // Missing/broken engine binary must not take the whole product down:
     // fall back to a server without a managed engine and surface the reason.
     engineError = error instanceof Error ? error.message : String(error);
+    maintenanceAdmission.assertOpen();
     serverHandle = await startOnce(false);
   }
   ownerToken = await resolveOwnerToken(serverHandle.url, tokens);
@@ -531,6 +569,7 @@ function configuredDenApiBase() {
 }
 
 async function ensurePlatformServer() {
+  maintenanceAdmission.assertOpen();
   if (serverHandle) return serverHandle;
   startingServer ??= startPlatformServer().finally(() => {
     startingServer = null;
@@ -539,6 +578,7 @@ async function ensurePlatformServer() {
 }
 
 async function restartPlatformServer() {
+  maintenanceAdmission.assertOpen();
   if (!await workerControls.reset()) throw new Error("Worker control cleanup could not be confirmed. Revoke it before restarting.");
   const reset = await computerControl.reset(false, async () => {
     // Keep computer admission closed for the entire stop-and-start, including
@@ -579,6 +619,7 @@ function forwardedDeepLinks(argv) {
 }
 
 function queueDeepLinks(urls) {
+  if (maintenanceAdmission.closed) return;
   const next = urls.filter(Boolean);
   if (next.length === 0) return;
   pendingDeepLinks.push(...next);
@@ -662,6 +703,7 @@ async function executeLocalResponsibility(
   id,
   { trigger = "manual", runId = "", resumeThreadId = "", resumeReason = "", onStarted = () => undefined } = {},
 ) {
+  const signal = responsibilityAbort.signal;
   const key = `${slug}:${id}`;
   try {
     // The coworker or responsibility can disappear between the due check and
@@ -693,20 +735,23 @@ async function executeLocalResponsibility(
         defaultModel: await localRunModel(coworker, "assignment-run"),
       });
       let acceptance;
+      signal.throwIfAborted();
       if (threadId) {
-        acceptance = await client.sendTurn(threadId, { prompt: RESUME_PROMPT(started.name, resumeReason), tools: COMPUTER_DENY });
+        acceptance = await client.sendTurn(threadId, { prompt: RESUME_PROMPT(started.name, resumeReason), tools: COMPUTER_DENY, signal });
       } else {
-        const thread = await client.createThread({ title: started.name });
+        const thread = await client.createThread({ title: started.name, signal });
         threadId = thread.id;
         await attachLocalResponsibilityThread(coworkersDir, slug, id, activeRunId, threadId);
-        acceptance = await client.sendTurn(threadId, { prompt: started.instructions, tools: COMPUTER_DENY });
+        signal.throwIfAborted();
+        acceptance = await client.sendTurn(threadId, { prompt: started.instructions, tools: COMPUTER_DENY, signal });
       }
       const result = await client.waitForThread(threadId, {
+        signal,
         timeoutMs: 60 * 60_000,
         pollIntervalMs: 1_000,
         ...(acceptance ? { since: acceptance } : {}),
       });
-      if (result.outcome === "timeout") await client.abortThread(threadId);
+      if (result.outcome === "timeout" || signal.aborted) await client.abortThread(threadId);
       const reply = toTranscript(result.snapshot).messages.filter((message) => message.role === "assistant").at(-1);
       const succeeded = result.outcome === "settled" && !result.terminalError && typeof reply?.completedAt === "number";
       await finishLocalResponsibilityRun(coworkersDir, slug, id, activeRunId, {
@@ -717,7 +762,7 @@ async function executeLocalResponsibility(
         summary: await readRunSummary(client, threadId),
       });
     } catch (error) {
-      if (client && threadId) await client.abortThread(threadId).catch(() => undefined);
+      if (client && threadId) await client.abortThread(threadId).catch((cleanupError) => { responsibilityCleanupError = cleanupError; });
       await finishLocalResponsibilityRun(coworkersDir, slug, id, activeRunId, {
         status: "failed",
         error: error instanceof Error ? error.message : String(error),
@@ -736,7 +781,7 @@ async function parallelRunLimit() {
 /** Launch a run and resolve once its record exists (or it could not start); the run itself continues detached. */
 function launchLocalRun(slug, id, options) {
   return new Promise((resolve) => {
-    void executeLocalResponsibility(slug, id, { ...options, onStarted: resolve });
+    void maintenanceAdmission.run(() => executeLocalResponsibility(slug, id, { ...options, onStarted: resolve })).catch(resolve);
   });
 }
 
@@ -844,9 +889,9 @@ const WORKER_TURN_TIMEOUT_MS = 60 * 60_000;
 
 const collaboration = createCollaboration({
   directory: coworkersDir,
-  clientFor: collaborationClient,
-  consult: (task) => groupExecution.consultation(task),
-  spawn: (slug, input) => spawnWorker(slug, input, "coworker"),
+  clientFor: (slug, options) => maintenanceAdmission.run(() => collaborationClient(slug, options)),
+  consult: (task) => maintenanceAdmission.run(() => groupExecution.consultation(task)),
+  spawn: (slug, input) => maintenanceAdmission.run(() => spawnWorker(slug, input, "coworker")),
   cancelWorker: async (slug, id) => {
     // A requested child may never have spawned. Late spawn acknowledgements
     // re-enter this callback after the record exists and repair cleanup then.
@@ -855,16 +900,16 @@ const collaboration = createCollaboration({
   },
   invalidateWorker: (slug, id) => { void workerControls.revokeId(slug, id); },
   onExecutionEnd: (entry) => computerControl.endTurn(entry),
-  publish: async (task) => {
+  publish: (task) => maintenanceAdmission.run(async () => {
     if (!task.groupId) return;
     await appendGroupEvent(coworkersDir, task.groupId, { id: `evt_${collaborationId(task.id, "answer").slice(5)}`, kind: task.state === "succeeded" ? "coworker" : "status", slug: task.to, threadId: task.owner.threadId, status: task.state, text: task.state === "succeeded" ? task.result : `${task.label}: ${task.error || "The request stopped."}` });
-  },
-  publishExecution: async (entry) => {
+  }),
+  publishExecution: (entry) => maintenanceAdmission.run(async () => {
     const task = await collaboration.read((state) => state.tasks[entry.taskId]);
     if (entry.owner.groupId && task.kind !== "consultation") await appendGroupEvent(coworkersDir, entry.owner.groupId, { id: `evt_${collaborationId(entry.id, "follow-up").slice(5)}`, kind: entry.state === "succeeded" ? "coworker" : "status", slug: entry.owner.slug, threadId: entry.owner.threadId, turnId: entry.owner.turnId, status: entry.state, text: entry.state === "succeeded" ? entry.result : `The follow-up could not finish: ${entry.error}` });
     const children = await collaboration.read((state) => state.tasks[entry.taskId].dependencies.map((id) => state.tasks[id]));
     for (const child of children.filter((task) => task.kind === "worker")) await appendWorkerEvent(coworkersDir, child.origin.slug, child.workerId, { id: `evt_${collaborationId(entry.id, child.id, "review").slice(5)}`, kind: "review", reviewThreadId: entry.owner.threadId, text: entry.state === "succeeded" ? "The coworker reviewed this in the original conversation." : "The follow-up did not finish. Its receipt is in the original conversation.", ...(entry.state === "succeeded" ? {} : { error: entry.error }) });
-  },
+  }),
 });
 const computerControl = createComputerControl({
   adapters: [createLocalComputerAdapter()],
@@ -885,7 +930,7 @@ const browserControl = createBrowserControl({
         ? fileURLToPath(new URL("./browser-content-preload.cjs", import.meta.url))
         : fileURLToPath(import.meta.resolve("@openwork/browser-tabs/preload")),
     openExternal: async () => { throw new Error("Browser requests stay in the embedded Coworker browser."); },
-    runDetachedTask: (_label, task) => { void Promise.resolve().then(task).catch(() => console.warn("[open-coworker] Browser navigation could not finish.")); },
+    runDetachedTask: (_label, task) => { void maintenanceAdmission.run(task).catch(() => console.warn("[open-coworker] Browser navigation could not finish.")); },
   },
   discussionFor: computerDiscussion,
   resolveContext: (slug, context, expected) => resolveControlContext(slug, context, expected, "browser"),
@@ -920,7 +965,7 @@ const groupExecution = createGroupExecution({
   directory: coworkersDir,
   collaboration,
   coworkerFor: (slug) => getCoworker(coworkersDir, slug),
-  coordinator: () => ensureCoordinatorWorkspace(),
+  coordinator: () => maintenanceAdmission.run(ensureCoordinatorWorkspace),
   catalogFor: async (workspace, signal) => {
     const handle = await ensurePlatformServer();
     const response = await fetch(`${handle.url}/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode/provider`, { headers: { Authorization: `Bearer ${ownerToken}` }, signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]) });
@@ -930,7 +975,7 @@ const groupExecution = createGroupExecution({
     // connected-provider set so routing cannot select an unavailable provider.
     return connectedModelCatalog(result);
   },
-  clientFor: collaborationClient,
+  clientFor: (slug, options) => maintenanceAdmission.run(() => collaborationClient(slug, options)),
 });
 
 const groupDocumentTools = new Set(groupDocumentToolCatalog().map((tool) => tool.name));
@@ -941,6 +986,7 @@ const groupDocuments = createGroupDocumentService({
 });
 
 async function collaborationClient(slug, { kind = "reply", requestText, signal } = {}) {
+  maintenanceAdmission.assertOpen();
   const coworker = slug === ".coordinator" ? await ensureCoordinatorWorkspace() : await getCoworker(coworkersDir, slug);
   const handle = await ensurePlatformServer();
   if (!handle.managedOpencode || !coworker.workspaceId) throw new Error("The AI service is not ready. Your work has been kept.");
@@ -1153,7 +1199,7 @@ function admitWorkerTurn(slug, id) {
 /** Resolve once the turn is recorded as running (or could not start); the turn itself continues detached. */
 function launchWorkerTurn(slug, id) {
   return new Promise((resolve) => {
-    void executeWorkerTurn(slug, id, { onStarted: resolve });
+    void maintenanceAdmission.run(() => executeWorkerTurn(slug, id, { onStarted: resolve })).catch(resolve);
   });
 }
 
@@ -1483,7 +1529,8 @@ async function runDueLocalResponsibilities() {
 function startLocalResponsibilitiesScheduler() {
   if (localResponsibilitiesTimer) return;
   const check = () => {
-    void runDueLocalResponsibilities().catch((error) => {
+    if (maintenanceAdmission.closed) return;
+    void maintenanceAdmission.run(runDueLocalResponsibilities).catch((error) => {
       console.warn("[open-coworker] local responsibilities check failed", error);
     });
   };
@@ -1602,6 +1649,7 @@ function coworkerToolToken(slug) {
 }
 
 async function ensureToolsServer() {
+  maintenanceAdmission.assertOpen();
   if (toolsServer) return toolsServer;
   const workerHandlers = createWorkerToolHandlers({
     coworkersDir,
@@ -1617,8 +1665,9 @@ async function ensureToolsServer() {
   // Documents, Workers, assignments, and memory share one server: each goes through the same
   // functions the panel views use, so the run limit, the guardrails, and the records agree.
   startingToolsServer ??= createCoworkerToolsServer({
-    resolveSlug: (token) => toolTokenSlugs.get(token) ?? null,
-    onContextTool: async (slug, { name, args, context, cancel }) => {
+    resolveSlug: (token) => maintenanceAdmission.closed ? null : toolTokenSlugs.get(token) ?? null,
+    onContextTool: (slug, input) => maintenanceAdmission.run(async () => {
+      const { name, args, context, cancel } = input;
       if (Object.hasOwn(COMPUTER_TOOLS, name)) return computerControl.execute(slug, { name, args, context, cancel });
       if (Object.hasOwn(BROWSER_TOOLS, name)) return browserControl.execute(slug, { name, args, context, cancel });
       if (groupDocumentTools.has(name)) return groupDocuments.executeNative(slug, { name, args, context });
@@ -1650,8 +1699,8 @@ async function ensureToolsServer() {
         return result;
       }
       throw new Error("Unknown collaboration tool.");
-    },
-    handlers: {
+    }),
+    handlers: Object.fromEntries(Object.entries({
       ...createToolHandlers({ coworkersDir }),
       ...workerHandlers,
       ...createAssignmentToolHandlers({
@@ -1663,7 +1712,7 @@ async function ensureToolsServer() {
       }),
       ...createSelfToolHandlers({ coworkersDir }),
       ...createTeamToolHandlers({ coworkersDir }),
-    },
+    }).map(([name, handler]) => [name, (...args) => maintenanceAdmission.run(() => handler(...args))])),
     tools: [...toolCatalog(), ...workerToolCatalog().filter((tool) => tool.name !== "worker_spawn" && !WORKER_MANAGEMENT.includes(tool.name)), ...assignmentToolCatalog(), ...selfToolCatalog(), ...teamToolCatalog()],
     // One line naming the server; the rules for each tool family are in the coworker's contract, said once.
     instructions: DEFAULT_INSTRUCTIONS,
@@ -1699,12 +1748,12 @@ async function registerCoworkerTools(coworker) {
 function prepareCoworker(coworker) {
   if (!contractsRepaired.has(coworker.slug)) {
     contractsRepaired.add(coworker.slug);
-    void repairCoworkerContract(coworkersDir, coworker.slug).catch((error) => {
+    void maintenanceAdmission.run(() => repairCoworkerContract(coworkersDir, coworker.slug)).catch((error) => {
       console.warn(`[open-coworker] could not repair the contract for ${coworker.slug}`, error);
     });
   }
   if (coworker.workspaceId && !toolsRegistered.has(coworker.slug) && !toolsRegistering.has(coworker.slug)) {
-    const registration = registerCoworkerTools(coworker)
+    const registration = maintenanceAdmission.run(() => registerCoworkerTools(coworker))
       .catch((error) => {
         console.warn(`[open-coworker] could not register the document tools for ${coworker.slug}`, error);
       })
@@ -2045,20 +2094,18 @@ async function startProviderSignIn(providerId, methodIndex) {
   const controller = new AbortController();
   const attempt = { id: attemptId, providerId: trimmedId, state: "waiting", error: "", modelCount: 0, controller };
   signInAttempts.set(attemptId, attempt);
-  void engineRequest("POST", `/provider/${encodeURIComponent(trimmedId)}/oauth/callback`, { method: chosen.index }, {
+  void maintenanceAdmission.run(() => engineRequest("POST", `/provider/${encodeURIComponent(trimmedId)}/oauth/callback`, { method: chosen.index }, {
     signal: AbortSignal.any([controller.signal, AbortSignal.timeout(SIGN_IN_WAIT_MS)]),
-  })
-    .then(async () => {
-      await reloadEngine();
-      attempt.modelCount = await waitForProvider(trimmedId, true);
-      attempt.state = attempt.modelCount > 0 ? "connected" : "failed";
-      attempt.error = attempt.modelCount > 0 ? "" : "The sign-in finished, but no models became available.";
-    })
-    .catch((error) => {
-      if (controller.signal.aborted) return;
-      attempt.state = "failed";
-      attempt.error = plainSignInError(error);
-    });
+  }).then(async () => {
+    await reloadEngine();
+    attempt.modelCount = await waitForProvider(trimmedId, true);
+    attempt.state = attempt.modelCount > 0 ? "connected" : "failed";
+    attempt.error = attempt.modelCount > 0 ? "" : "The sign-in finished, but no models became available.";
+  })).catch((error) => {
+    if (controller.signal.aborted) return;
+    attempt.state = "failed";
+    attempt.error = plainSignInError(error);
+  });
   return {
     attemptId,
     providerId: trimmedId,
@@ -2633,6 +2680,131 @@ const commands = {
   },
 };
 
+function maintenanceScope() {
+  if (!engineHistoryDb) throw new Error(engineHistoryError);
+  const home = homedir();
+  const data = process.env.XDG_DATA_HOME?.trim() || path.join(home, ".local", "share");
+  return {
+    userData: app.getPath("userData"), coworkers: coworkersDir, serverConfig: serverConfigPath,
+    runtimeDb: process.env.OPENWORK_RUNTIME_DB, envStore: process.env.OPENWORK_ENV_STORE, settings: settingsPath,
+    historyDb: engineHistoryDb, isDev,
+    defaults: {
+      userData: path.join(app.getPath("appData"), "com.differentai.opencoworker"),
+      devUserData: path.join(app.getPath("appData"), "com.differentai.opencoworker.dev"),
+      coworkers: defaultCoworkersDir(), serverConfig: path.join(openworkConfigDir(), "coworker-server.json"),
+    },
+    protectedPaths: [home, app.getPath("appData"), openworkConfigDir(), app.getAppPath(), process.execPath,
+      path.join(app.getPath("appData"), "com.differentai.opencoworker.dev"),
+      path.join(app.getPath("appData"), "com.differentai.openwork"),
+      path.join(app.getPath("appData"), "com.differentai.openwork.dev"),
+      path.join(data, "opencode"), path.join(home, ".config", "opencode"), globalOpencodeConfigDir(),
+      ...(process.env.OPENCODE_CONFIG_DIR ? [path.resolve(process.env.OPENCODE_CONFIG_DIR)] : [])],
+    allowedParents: [home, app.getPath("appData"), openworkConfigDir()],
+  };
+}
+
+const maintenance = createMaintenance({
+  admission: maintenanceAdmission,
+  paths: () => validateMaintenancePaths(maintenanceScope()),
+  coworkerCount: async () => (await listCoworkers(coworkersDir)).length + (await listRetiredCoworkers(coworkersDir)).length,
+  restoreDefaults: async () => {
+    const next = await updateSettings(settingsPath, normalizeSettings({}));
+    progressSummaries.configure(next);
+    return next;
+  },
+});
+
+async function stopForMaintenance() {
+  if (localResponsibilitiesTimer) clearInterval(localResponsibilitiesTimer);
+  localResponsibilitiesTimer = null;
+  progressSummaries.stop();
+  voice.reset();
+  for (const attempt of signInAttempts.values()) attempt.controller.abort();
+  responsibilityAbort.abort(new Error("Fresh start is stopping local work."));
+  queuedLocalRuns.length = 0;
+  for (const run of liveWorkerTurns.values()) run.controller.abort(new Error("Fresh start is stopping Workers."));
+  const groupStop = groupExecution.stop();
+  const collaborationStop = collaboration.stop({ requireConfirmed: true });
+  const draining = Promise.all([groupStop, collaborationStop, localRunAdmission]);
+  void draining.catch(() => {});
+  const controls = await workerControls.reset(true);
+  const computer = await computerControl.reset(true);
+  if (!controls || !computer.confirmed) throw new Error("Control cleanup could not be confirmed. No reset was performed.");
+  await browserControl.shutdown();
+  await withAbort(draining, AbortSignal.timeout(30_000));
+  await maintenanceAdmission.drain();
+  if (startingServer || startingToolsServer || activeLocalRuns.size || responsibilityCleanupError || [...liveWorkerTurns.values()].some((run) => run.cleanupError)) throw new Error("Local execution cleanup is unconfirmed. No reset was performed.");
+  if (!serverHandle?.managedOpencode) throw new Error("The managed AI service's ownership could not be confirmed. Restart it before Fresh start.");
+  if (toolsServer) await withAbort(toolsServer.stop(), AbortSignal.timeout(10_000));
+  toolsServer = null;
+  const previous = serverHandle;
+  await withAbort(previous.stop(), AbortSignal.timeout(30_000));
+  if (previous.managedOpencode.isAlive()) throw new Error("The AI service is still running. No reset was performed.");
+  serverHandle = null;
+  ownerToken = "";
+  denSession = null;
+  // Chromium remains alive here. The helper, not this process, owns the
+  // subsequent backup/reset after all captured application PIDs have exited.
+}
+
+let resetHandoff;
+let resetReceiptTimer;
+commands["maintenance.preview"] = () => maintenance.preview();
+commands["maintenance.restoreDefaults"] = () => maintenance.restoreDefaults();
+commands["maintenance.factoryReset"] = async (input) => {
+  assertResetConfirmation(input);
+  if (resetInProgress) throw new Error("Fresh start is already in progress.");
+  maintenanceAdmission.assertOpen();
+  resetInProgress = true;
+  let handoff;
+  try {
+    const previousProcesses = captureMaintenanceProcesses(app.getAppMetrics().map((metric) => metric.pid));
+    handoff = await prepareMaintenanceHandoff({ input, scope: maintenanceScope(),
+      helperPath: fileURLToPath(new URL("./maintenance-helper.mjs", import.meta.url)),
+      args: process.argv.slice(1),
+    });
+    maintenanceAdmission.close();
+    await stopForMaintenance();
+    resetHandoff = { handoff, previousProcesses, consumed: false };
+    // A renderer crash before acknowledging cannot arm an unattended reset.
+    resetReceiptTimer = setTimeout(() => {
+      if (!resetHandoff || resetHandoff.consumed) return;
+      void handoff.cancel().then(() => {
+        resetHandoff = null;
+        resetInProgress = false;
+        dialog.showErrorBox("Fresh start was not started", "The handoff could not be acknowledged. Nothing was erased. Quit and reopen Open Coworker before retrying.");
+      }).catch(() => dialog.showErrorBox("Fresh start cancellation needs attention", "Cancellation could not be confirmed. Keep this app open; ordinary quit remains blocked to protect your data."));
+    }, 30_000);
+    return { phase: "handoff", backupDirectory: handoff.backupDirectory, handoffId: handoff.ticket };
+  } catch (error) {
+    await handoff?.cancel();
+    resetInProgress = false;
+    throw error;
+  }
+};
+commands["maintenance.handoffReceived"] = async ({ handoffId }) => {
+  const pending = resetHandoff;
+  if (!pending || pending.consumed || pending.handoff.ticket !== handoffId) throw new Error("This Fresh start handoff is not current.");
+  pending.consumed = true;
+  clearTimeout(resetReceiptTimer);
+  try {
+    await pending.handoff.arm([...pending.previousProcesses, ...captureMaintenanceProcesses(app.getAppMetrics().map((metric) => metric.pid).filter((pid) => pid !== pending.handoff.pid))]);
+    await pending.handoff.commit();
+    console.info("[fresh-start] Native handoff committed; closing previous app.");
+    resetExitReady = true;
+    // This separate IPC call proves the renderer received the HANDOFF receipt.
+    // No completed-backup claim is made before exiting the old application.
+    setImmediate(() => app.exit(0));
+    return { acknowledged: true };
+  } catch (error) {
+    await pending.handoff.cancel();
+    resetHandoff = null;
+    resetInProgress = false;
+    dialog.showErrorBox("Fresh start was not started", "The native helper could not confirm the handoff. Nothing was erased. Quit and reopen Open Coworker before retrying.");
+    throw error;
+  }
+};
+
 function registerIpc() {
   ipcMain.handle("coworker:invoke", async (event, request) => {
     if (event.senderFrame !== event.sender.mainFrame) {
@@ -2650,7 +2822,10 @@ function registerIpc() {
       return { ok: false, error: `Unknown Open Coworker command: ${command}` };
     }
     try {
-      const result = await handler(request?.payload ?? {});
+      if (command.startsWith("maintenance.")) assertMaintenanceSender(event, mainWindow?.webContents, rendererUrl());
+      const result = ["maintenance.factoryReset", "maintenance.handoffReceived"].includes(command)
+        ? await handler(request?.payload ?? {})
+        : await maintenanceAdmission.run(() => handler(request?.payload ?? {}));
       return { ok: true, result };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -2676,6 +2851,7 @@ function rendererUrl() {
 }
 
 async function createMainWindow() {
+  maintenanceAdmission.assertOpen();
   const initialMaterial = windowMaterial(nativeTheme);
   const macWindowChrome = process.platform === "darwin"
     ? {
@@ -2747,11 +2923,13 @@ if (!singleInstanceLock) {
   if (protocolRegistered) app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
 
   app.on("second-instance", (_event, argv) => {
+    if (maintenanceAdmission.closed) return;
     void focusMainWindow().then(() => queueDeepLinks(forwardedDeepLinks(argv)));
   });
 
   app.on("open-url", (event, url) => {
     event.preventDefault();
+    if (maintenanceAdmission.closed) return;
     void app.whenReady()
       .then(() => focusMainWindow())
       .then(() => queueDeepLinks([url]));
@@ -2763,18 +2941,33 @@ if (!singleInstanceLock) {
     if (process.platform === "darwin" && existsSync(APP_ICON_PATH)) app.dock.setIcon(APP_ICON_PATH);
     installApplicationMenu();
     registerIpc();
+    if (maintenanceNotice && (maintenanceNotice.phase !== "completed" || maintenanceNotice.relaunchFailed)) {
+      await dialog.showMessageBox({ type: maintenanceNotice.phase === "completed" ? "info" : "warning",
+        title: maintenanceNotice.phase === "completed" ? "Fresh start complete" : "Fresh start did not finish",
+        message: maintenanceNotice.phase === "completed" ? "Your previous local setup was saved in recovery. Open Coworker is ready for a fresh start."
+          : "Fresh start stopped safely. Your previous local setup was kept or restored. No cloud records or provider credentials were reset.",
+        detail: [maintenanceNotice.relaunchFailed ? "Automatic reopening failed. This launch is reading the saved result." : "",
+          maintenanceNotice.backupPath ? `Recovery directory: ${maintenanceNotice.backupPath}` : "No completed recovery copy was recorded."].filter(Boolean).join("\n"), buttons: ["Continue"],
+      });
+      readMaintenanceStartup(userDataDir);
+    }
     // Start the platform in the background; the renderer gates on runtime.info.
-    void ensurePlatformServer().then(async () => {
+    void maintenanceAdmission.run(async () => {
+      await ensurePlatformServer();
+      maintenanceAdmission.assertOpen();
       await groupExecution.start();
       await collaboration.start();
       progressSummaries.start();
       // Ordinary initialization, never triggered by a progress note or activity read.
-      void ensureCoordinatorWorkspace().catch(() => {});
+      void maintenanceAdmission.run(ensureCoordinatorWorkspace).catch(() => {});
     }).catch((error) => {
       engineError = error instanceof Error ? error.message : String(error);
     });
     startLocalResponsibilitiesScheduler();
     await createMainWindow();
+    // A verified reset returns directly to onboarding. Acknowledge only after
+    // its replacement window exists; failures still require the native notice.
+    if (maintenanceNotice?.phase === "completed" && !maintenanceNotice.relaunchFailed) readMaintenanceStartup(userDataDir);
     queueDeepLinks(forwardedDeepLinks(process.argv));
     app.on("activate", () => {
       if (!mainWindow) void createMainWindow();
@@ -2789,6 +2982,11 @@ if (!singleInstanceLock) {
   let quitReady = false;
   app.on("before-quit", (event) => {
     voice.reset();
+    if (resetExitReady) return;
+    if (resetInProgress && !quitReady) {
+      event.preventDefault();
+      return;
+    }
     if (quitReady) return;
     event.preventDefault();
     if (quitting) return;
@@ -2804,7 +3002,7 @@ if (!singleInstanceLock) {
       }
       progressSummaries.stop();
       browserControl.destroy();
-      groupExecution.stop();
+      await groupExecution.stop();
       if (localResponsibilitiesTimer) {
         clearInterval(localResponsibilitiesTimer);
         localResponsibilitiesTimer = null;

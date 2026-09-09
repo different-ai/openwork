@@ -55,6 +55,11 @@ function buildElectron() {
     "--external:opencode-chrome-devtools",
     `--outfile=${resolve(packagedElectronRoot, "main.mjs")}`,
   ], coworkerRoot);
+  run(pnpmCommand, [
+    "exec", "esbuild", resolve(coworkerRoot, "electron", "maintenance-helper.mjs"),
+    "--bundle", "--platform=node", "--format=esm", "--target=node22",
+    `--outfile=${resolve(packagedElectronRoot, "maintenance-helper.mjs")}`,
+  ], coworkerRoot);
   copyFileSync(
     resolve(coworkerRoot, "electron", "preload.mjs"),
     resolve(packagedElectronRoot, "preload.mjs"),
