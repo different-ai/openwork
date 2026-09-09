@@ -14,7 +14,7 @@ const NATIVE_PHASE_LABELS: Record<string, string> = {
 };
 
 /** Mounted only for a real private discussion, keyed by slug and native thread id. */
-export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; threadId: string; statusSlot?: HTMLElement | null }) {
+export function ComputerControl({ slug, threadId, statusSlot, openRequest = 0, onOpenRequestHandled, onBackToConversation }: { slug: string; threadId: string; statusSlot?: HTMLElement | null; openRequest?: number; onOpenRequestHandled?: () => void; onBackToConversation?: () => void }) {
   const [open, setOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
@@ -28,6 +28,11 @@ export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; 
   const reading = useRef<number | null>(null);
   const changing = useRef(false);
   const id = useId();
+  const openSetup = useEffectEvent(() => {
+    if (document.activeElement instanceof HTMLButtonElement) setAnchor(document.activeElement);
+    setOpen(false); setSetupOpen(true); onOpenRequestHandled?.();
+  });
+  useEffect(() => { if (openRequest) openSetup(); }, [openRequest]);
 
   async function refresh() {
     if (changing.current || reading.current === request.current) return;
@@ -137,7 +142,7 @@ export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; 
         type="button"
         variant="ghost"
         className="window-no-drag inline-flex shrink-0 items-center justify-start gap-2 rounded-lg px-2 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60"
-        title="Computer control"
+        title="Mac apps: permissions, discussion allowance, then native window approval"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
@@ -150,7 +155,7 @@ export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; 
       >
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" className="size-4 shrink-0" aria-hidden="true"><rect x="2" y="3" width="16" height="11" rx="2" /><path d="M10 14v3M6 17h8" /></svg>
         <span data-tool-label>Computer</span>
-        {readError || actionError ? <AlertIcon className="size-3 text-amber" /> : snapshot?.cleanupPending ? <span className="text-amber">Pending</span> : snapshot?.enabled ? <span className="text-ready">On</span> : null}
+        {readError || actionError ? <AlertIcon className="size-3 text-amber" /> : snapshot?.cleanupPending ? <span className="text-amber">Pending</span> : snapshot?.enabled ? <span className="text-ready">On</span> : snapshot ? <span data-tool-label className="text-[10px] text-mist">{snapshot.readiness === "setup-required" ? "Set up" : "Off"}</span> : null}
       </Button>
       {statusSlot && canStop ? createPortal(
         <section aria-label="Computer activity" data-testid="coworker-computer-strip" className="window-no-drag w-full space-y-2 rounded-xl border border-line bg-panel px-3 py-2.5 text-xs leading-relaxed text-mist [overflow-wrap:anywhere]">
@@ -161,7 +166,7 @@ export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; 
                 <span role="status" data-testid="coworker-computer-strip-phase" className={readError || snapshot?.cleanupPending || session?.state === "unavailable" ? "text-amber" : "text-ready"}>{readError ? "Last known: " : ""}{phase}</span>
               </div>
               {approvedScope ? <p data-testid="coworker-computer-strip-scope" className="text-snow">Approved app/window: {approvedScope}</p> : null}
-              <p>Take over and Continue are in the native task panel.</p>
+              <p>Take over and Continue are in the native task panel. Human input pauses foreground control; no live video is shown here.</p>
             </div>
             <Button type="button" variant="danger" className="shrink-0 text-xs" disabled={busy !== null} aria-busy={busy === "stop"} data-testid="coworker-computer-strip-stop" onClick={() => void act("stop")}>Stop &amp; revoke</Button>
           </div>
@@ -172,6 +177,7 @@ export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; 
       ) : null}
       {open && anchor ? (
         <ComputerControlPopover anchor={anchor} id={id} onClose={() => setOpen(false)}>
+          <p>Use <strong className="font-medium text-snow">Browser</strong> for websites in Coworker. Computer use works in apps on <strong className="font-medium text-snow">this Mac</strong>, not a separate remote desktop.</p>
           {readError ? <div role="alert" data-testid="coworker-computer-read-error"><ErrorNote>{snapshot ? "Updates unavailable. Last known state is shown; a connection failure does not confirm a stop. " : "Computer control is unavailable. "}{readError}</ErrorNote></div> : null}
           {actionError ? <div role="alert" data-testid="coworker-computer-action-error"><ErrorNote>{actionError}</ErrorNote></div> : null}
           <div className="space-y-1.5">
@@ -199,10 +205,11 @@ export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; 
           </dl>
           {snapshot?.detail ? <p>{snapshot.detail}</p> : null}
           {snapshot?.cleanupPending ? <p className="text-amber" data-testid="coworker-computer-cleanup-pending">Native cleanup is still pending. A stop is not yet confirmed.</p> : null}
+          {!canStop ? <p>1. Grant macOS permissions. 2. Allow this discussion. 3. Approve the native app/window when a task requests it.</p> : null}
           <div className="flex flex-wrap gap-2">
-            {!snapshot?.enabled ? <Button type="button" variant="primary" className="text-xs" disabled={!canAllow || busy !== null} aria-busy={busy === "allow"} data-testid="coworker-computer-allow" onClick={() => void act("allow")}>Allow for this discussion</Button> : null}
-            {snapshot?.targetId === "this-mac" ? <Button type="button" className="text-xs" data-testid="coworker-computer-setup" onClick={() => { setOpen(false); setSetupOpen(true); }}>{snapshot.readiness === "setup-required" ? "Set up permissions" : "Setup & permissions"}</Button> : null}
-            <Button type="button" variant="danger" className="text-xs" disabled={!canStop || busy !== null} aria-busy={busy === "stop"} data-testid="coworker-computer-stop" onClick={() => void act("stop")}>Stop &amp; revoke</Button>
+            {!canStop && snapshot?.readiness === "ready" ? <Button type="button" variant="primary" className="text-xs" disabled={!canAllow || busy !== null} aria-busy={busy === "allow"} data-testid="coworker-computer-allow" onClick={() => void act("allow")}>Allow for this discussion</Button> : null}
+            {snapshot?.targetId === "this-mac" ? <Button type="button" variant={!canStop && snapshot.readiness === "setup-required" ? "primary" : "ghost"} className="text-xs" disabled={busy !== null} data-testid="coworker-computer-setup" onClick={() => { setOpen(false); setSetupOpen(true); }}>{snapshot.readiness === "setup-required" ? "Set up permissions" : "Setup & permissions"}</Button> : null}
+            {canStop ? <Button type="button" variant="danger" className="text-xs" disabled={busy !== null} aria-busy={busy === "stop"} data-testid="coworker-computer-stop" onClick={() => void act("stop")}>Stop &amp; revoke</Button> : null}
             <Button type="button" variant="ghost" className="text-xs" disabled={refreshing || busy !== null} aria-busy={refreshing} data-testid="coworker-computer-refresh" onClick={() => void refresh()}>Check status</Button>
           </div>
           {snapshot?.session ? (
@@ -220,7 +227,7 @@ export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; 
               <p>Session state describes computer access, not task completion.</p>
             </section>
           ) : null}
-          <p>Off by default for each discussion. Allowing access does not start work or bypass native app/window approval. Setup never grants access.</p>
+          <p>Off by default for each discussion. Allowing access does not start work or bypass native app/window approval. A Worker also needs your separate task approval. Setup never grants access.</p>
           <p><span className="font-medium text-snow">Take over</span> / <span className="font-medium text-snow">Continue</span> are in the native task panel. Leaving this discussion does not stop work.</p>
         </ComputerControlPopover>
       ) : null}
@@ -237,6 +244,7 @@ export function ComputerControl({ slug, threadId, statusSlot }: { slug: string; 
         onAllow={() => void act("allow")}
         onStop={() => void act("stop")}
         onClose={() => { setSetupOpen(false); anchor?.focus(); }}
+        onBackToConversation={onBackToConversation}
       /> : null}
     </>
   );

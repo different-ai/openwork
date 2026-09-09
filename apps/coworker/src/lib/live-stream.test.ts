@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ANSWER_STREAMING_MIN_CHARS, answerStreaming, applyStreamEvent, type LiveStream } from "./live-stream.ts";
+import { ANSWER_STREAMING_MIN_CHARS, answerStreaming, applyStreamEvent, type LivePart, type LiveStream, type StreamEvent } from "./live-stream.ts";
+import { livePhase, writingText } from "./live-phase.ts";
 import { changeGroupSends, groupConversationRows, groupMessageKey, groupReplyParts, groupSends, mergeGroupReplyParts, reconcileGroupActivity, runGroupAction, submitGroupSend, type GroupActionAttempt, type GroupSend } from "./group-continuity.ts";
 import type { GroupTimelineEvent } from "./bridge.ts";
 import { executionProgress, type ExecutionActivity } from "./progress-activity.ts";
@@ -11,39 +12,47 @@ const THREAD = "ses_1";
 
 test("a part is announced, its words arrive as deltas, and its end carries the whole text", () => {
   let stream: LiveStream | null = null;
-  stream = applyStreamEvent(stream, { kind: "part", threadId: THREAD, messageId: "msg_a", partId: "prt_1", type: "reasoning", text: "", ended: false }, THREAD);
-  assert.deepEqual(stream, { messageId: "msg_a", partId: "prt_1", type: "reasoning", text: "", ended: false });
+  stream = applyStreamEvent(stream, { kind: "part", threadId: THREAD, messageId: "msg_a", partId: "prt_1", type: "text", text: "", ended: false }, THREAD);
+  assert.equal(stream?.type, "text");
   stream = applyStreamEvent(stream, { kind: "delta", threadId: THREAD, messageId: "msg_a", partId: "prt_1", delta: "First the " }, THREAD);
   stream = applyStreamEvent(stream, { kind: "delta", threadId: THREAD, messageId: "msg_a", partId: "prt_1", delta: "sources" }, THREAD);
   assert.equal(stream?.text, "First the sources");
   assert.equal(stream?.ended, false);
-  stream = applyStreamEvent(stream, { kind: "part", threadId: THREAD, messageId: "msg_a", partId: "prt_1", type: "reasoning", text: "First the sources, then the plan.", ended: true }, THREAD);
-  assert.deepEqual(stream, { messageId: "msg_a", partId: "prt_1", type: "reasoning", text: "First the sources, then the plan.", ended: true });
+  stream = applyStreamEvent(stream, { kind: "part", threadId: THREAD, messageId: "msg_a", partId: "prt_1", type: "text", text: "First the sources, then the plan.", ended: true }, THREAD);
+  assert.equal(writingText(stream, null), "First the sources, then the plan.");
+  assert.equal(stream?.ended, true);
+  assert.equal(applyStreamEvent(stream, { kind: "delta", threadId: THREAD, messageId: "msg_a", partId: "prt_1", delta: "late" }, THREAD), stream);
 });
 
-test("words that arrive before their part is announced still count, and the announcement then names them", () => {
+test("unannounced, reasoning, synthetic and ignored parts never become visible through deltas", () => {
   let stream = applyStreamEvent(null, { kind: "delta", threadId: THREAD, messageId: "msg_a", partId: "prt_2", delta: "Hello" }, THREAD);
-  assert.deepEqual(stream, { messageId: "msg_a", partId: "prt_2", type: "", text: "Hello", ended: false });
-  stream = applyStreamEvent(stream, { kind: "part", threadId: THREAD, messageId: "msg_a", partId: "prt_2", type: "text", text: "", ended: false }, THREAD);
-  assert.equal(stream?.type, "text");
-  assert.equal(stream?.text, "Hello", "an announcement with no words yet keeps the words already streamed");
+  assert.equal(stream, null);
+  for (const [index, flags] of [{ type: "reasoning" }, { type: "text", synthetic: true }, { type: "text", ignored: true }].entries()) {
+    const partId = `hidden_${index}`;
+    stream = applyStreamEvent(stream, { kind: "part", threadId: THREAD, messageId: "msg_a", partId, text: "Private", ended: false, ...flags }, THREAD);
+    const before = stream;
+    stream = applyStreamEvent(stream, { kind: "delta", threadId: THREAD, messageId: "msg_a", partId, delta: " details" }, THREAD);
+    assert.equal(stream, before);
+    assert.equal(writingText(stream, null), "");
+    assert.equal(JSON.stringify(stream).includes("Private"), false);
+  }
 });
 
-test("a new part supersedes the one before it; other threads, tool parts, and stale endings change nothing", () => {
-  const thinking: LiveStream = { messageId: "msg_a", partId: "prt_1", type: "reasoning", text: "thinking", ended: true };
-  const writing = applyStreamEvent(thinking, { kind: "part", threadId: THREAD, messageId: "msg_a", partId: "prt_2", type: "text", text: "", ended: false }, THREAD);
+test("new parts preserve earlier words, while foreign threads and stale deltas cannot replace them", () => {
+  const first = applyStreamEvent(null, { kind: "part", threadId: THREAD, messageId: "msg_a", partId: "prt_1", type: "text", text: "First paragraph. ", ended: false }, THREAD);
+  const writing = applyStreamEvent(first, { kind: "part", threadId: THREAD, messageId: "msg_a", partId: "prt_2", type: "text", text: "Second paragraph.", ended: false }, THREAD);
   assert.equal(writing?.partId, "prt_2");
   assert.equal(applyStreamEvent(writing, { kind: "delta", threadId: "ses_other", messageId: "msg_a", partId: "prt_2", delta: "x" }, THREAD), writing);
-  assert.equal(applyStreamEvent(writing, { kind: "part", threadId: THREAD, messageId: "msg_a", partId: "prt_3", type: "tool", text: "", ended: false }, THREAD), writing);
-  // The earlier reasoning part ending late does not take the live words away.
-  assert.equal(applyStreamEvent(writing, { kind: "part", threadId: THREAD, messageId: "msg_a", partId: "prt_1", type: "reasoning", text: "thinking more", ended: true }, THREAD), writing);
+  assert.equal(applyStreamEvent(writing, { kind: "delta", threadId: THREAD, messageId: "msg_a", partId: "prt_1", delta: "stale" }, THREAD), writing);
   assert.equal(applyStreamEvent(writing, { kind: "delta", threadId: THREAD, messageId: "msg_a", partId: "prt_2", delta: "" }, THREAD), writing);
+  assert.equal(writingText(writing, null), "First paragraph. Second paragraph.");
 });
 
 test("the answer's words show without a tap only while the engine streams the text part itself with a few words in it", () => {
-  const base: LiveStream = { messageId: "msg_a", partId: "prt_1", type: "text", text: "Short version: an API wins", ended: false };
+  const part: LivePart = { messageId: "msg_a", partId: "prt_1", type: "text", text: "Short version: an API wins", ended: false };
+  const base: LiveStream = { ...part, parts: [part] };
   assert.equal(answerStreaming(base), true);
-  // Thinking and unnamed parts stay behind a tap; a closed part belongs to the transcript now.
+  // Reasoning and unnamed parts are never answer text.
   assert.equal(answerStreaming({ ...base, type: "reasoning" }), false);
   assert.equal(answerStreaming({ ...base, type: "" }), false);
   assert.equal(answerStreaming({ ...base, ended: true }), false);
@@ -53,6 +62,29 @@ test("the answer's words show without a tap only while the engine streams the te
   assert.equal(answerStreaming({ ...base, text: "x".repeat(ANSWER_STREAMING_MIN_CHARS) }), true);
   assert.equal(answerStreaming(null), false);
   assert.equal(answerStreaming(undefined), false);
+});
+
+test("landed and live text reconcile by ordered message/part identity, not total length", () => {
+  const first: LivePart = { messageId: "msg_a", partId: "prt_1", type: "text", text: "A long opening paragraph already landed. ", ended: true };
+  const second: LivePart = { ...first, partId: "prt_2", text: "New", ended: false };
+  let stream = applyStreamEvent(null, { kind: "part", threadId: THREAD, ...second }, THREAD);
+  stream = applyStreamEvent(stream, { kind: "delta", threadId: THREAD, messageId: "msg_a", partId: "prt_2", delta: " words." }, THREAD);
+  const reply = { id: "msg_a", text: first.text.trim(), parts: [first, { ...second, text: "" }] };
+  assert.equal(writingText(stream, reply), "A long opening paragraph already landed. New words.");
+  assert.equal(writingText(stream, { ...reply, parts: [first, { ...second, text: "New" }] }), "A long opening paragraph already landed. New words.", "a trailing snapshot cannot roll back a part");
+  stream = applyStreamEvent(stream, { kind: "part", threadId: THREAD, messageId: "msg_b", partId: "prt_3", type: "text", text: "Another reply.", ended: false }, THREAD);
+  assert.equal(writingText(stream, reply), "A long opening paragraph already landed. New words.", "another assistant message is not appended to this bubble");
+  assert.equal(writingText(stream, { ...reply, parts: [first, { ...second, text: "Final.", ended: true }] }), "A long opening paragraph already landed. Final.");
+  assert.equal(writingText(stream, { ...reply, parts: [first, { ...second, type: "hidden", text: "" }] }), first.text.trim(), "hidden snapshot parts override buffered words");
+  assert.equal(livePhase({ label: "", stream, activeStep: null, landedWords: reply.text }), "writing");
+});
+
+test("hidden reclassification removes buffered text and cannot be reopened by stale announcements", () => {
+  const event: StreamEvent = { kind: "part", threadId: THREAD, messageId: "msg_a", partId: "prt_1", type: "text", text: "Visible once", ended: false };
+  let stream = applyStreamEvent(null, event, THREAD);
+  stream = applyStreamEvent(stream, { ...event, ignored: true }, THREAD);
+  assert.equal(writingText(stream, null), "");
+  assert.equal(applyStreamEvent(stream, event, THREAD), stream);
 });
 
 test("group parts keep final text and timed-out actions reject superseded callbacks", async (context) => {

@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   carryVariant,
+  chooseFallbackModel,
   chooseModelForLane,
+  classifyRequest,
   clearAutoPicked,
   costsNoMoreThan,
   markAutoPicked,
@@ -26,7 +28,7 @@ test("the model mode a stored record means: explicit wins, otherwise one model e
 test("a lane pick never costs more than the standard model: on a provider that mixes free and paid models the free standard stays among the free", () => {
   const model = (id: string, extra: Partial<EngineModelOption>): EngineModelOption => ({
     id, providerId: id.split("/")[0] ?? "", providerLabel: "OpenCode", modelId: id.split("/")[1] ?? "", modelLabel: id.split("/")[1] ?? "", label: id, description: "", family: "",
-    variants: [], isProviderDefault: false, source: "local", tier: "free", toolCall: true, reasoning: true, status: "active", releaseDate: "2026-01-01", cost: { input: 0, output: 0 }, ...extra,
+    variants: [], isProviderDefault: false, source: "local", tier: "free", toolCall: true, reasoning: true, status: "active", releaseDate: "2026-01-01", cost: { input: 0, output: 0 }, knownPrice: true, ...extra,
   });
   const catalog = { models: [
     model("opencode/big-pickle", { reasoning: true }),
@@ -37,8 +39,11 @@ test("a lane pick never costs more than the standard model: on a provider that m
   ] };
   assert.equal(chooseModelForLane(catalog, "quick", { standard: "opencode/big-pickle" })?.id, "opencode/ling-2.6-flash-free", "the free fast sibling, never the paid haiku");
   assert.equal(chooseModelForLane(catalog, "deep", { standard: "opencode/big-pickle" })?.id, "opencode/big-pickle", "no free deep sibling: the standard model stays; never opus or pro");
-  assert.equal(costsNoMoreThan({ cost: { input: 0, output: 0 } }, { cost: { input: 0, output: 0 } }), true);
-  assert.equal(costsNoMoreThan({ cost: { input: 0.05, output: 0 } }, { cost: { input: 0, output: 0 } }), false);
+  const free = { cost: { input: 0, output: 0 }, knownPrice: true };
+  assert.equal(costsNoMoreThan(free, free), true);
+  assert.equal(costsNoMoreThan({ cost: { input: 0, output: 0 } }, free), false, "zero without provenance is not free");
+  assert.equal(costsNoMoreThan({ cost: { input: 0.05, output: 0 }, knownPrice: true }, free), false);
+  assert.equal(costsNoMoreThan({ cost: { input: 0, output: 0.05 }, knownPrice: true }, free), false);
   // A paid standard may still step down to cheaper siblings.
   assert.equal(chooseModelForLane(catalog, "quick", { standard: "opencode/claude-opus-4-8" })?.id, "opencode/claude-3-5-haiku");
 });
@@ -67,17 +72,18 @@ function catalog() {
   }));
 }
 
-test("chooseModelForLane honours exclusions and falls back through the standard model to the recommendation", () => {
+test("chooseModelForLane honours exclusions without replacing an explicit missing or unusable anchor", () => {
   const models = catalog();
   // The fast pick failed: the next fast one, then the standard model itself — never another provider's model for a quick reply.
   assert.equal(chooseModelForLane(models, "quick", { standard: "openai/gpt-5", exclude: ["openai/gpt-5-mini"] })?.id, "openai/gpt-5-nano");
   assert.equal(chooseModelForLane(models, "quick", { standard: "openai/gpt-5", exclude: ["openai/gpt-5-mini", "openai/gpt-5-nano"] })?.id, "openai/gpt-5");
   assert.equal(chooseModelForLane(models, "deep", { standard: "openai/gpt-5", exclude: ["openai/gpt-5-pro"] })?.id, "openai/gpt-5", "a reasoning standard model keeps the deep lane when its bigger sibling is out");
-  // The standard model itself is excluded: the recommendation anchors the lanes instead.
-  const anchored = chooseModelForLane(models, "standard", { standard: "openai/gpt-5", exclude: ["openai/gpt-5"] });
-  assert.ok(anchored && anchored.id !== "openai/gpt-5" && anchored.toolCall);
-  // Unknown standard (a model that left the catalog) behaves the same way.
-  assert.ok(chooseModelForLane(models, "deep", { standard: "gone/away" }));
+  for (const standard of ["openai/gpt-5", "gone/away", "openai/gpt-4o-mini", "openai/gpt-chat", ""]) {
+    for (const lane of ["quick", "standard", "deep"] as const) {
+      assert.equal(chooseModelForLane(models, lane, { standard, exclude: ["openai/gpt-5"] }), null, standard);
+    }
+  }
+  assert.equal(chooseModelForLane(models, "standard")?.id, "openai/gpt-5", "recommend only when no anchor is specified");
   // Nothing usable at all.
   assert.equal(chooseModelForLane({ models: [] }, "quick", { standard: "openai/gpt-5" }), null);
   const chatOnly = connectedModelCatalog(fixtureCatalog({
@@ -85,6 +91,52 @@ test("chooseModelForLane honours exclusions and falls back through the standard 
     all: [fixtureProvider({ id: "openai", name: "OpenAI", source: "env", env: [], options: {}, models: { "gpt-chat": { name: "GPT Chat", capabilities: { toolcall: false } } } })],
   }));
   assert.equal(chooseModelForLane(chatOnly, "standard", {}), null);
+});
+
+test("fallback keeps the original provider and both known price caps before excluding failed models", () => {
+  const models = catalog();
+  const standard = models.models.find((model) => model.id === "openai/gpt-5");
+  const mini = models.models.find((model) => model.id === "openai/gpt-5-mini");
+  assert.ok(standard && mini);
+  const options = { standard: standard.id, exclude: [standard.id] };
+  assert.equal(chooseFallbackModel(models, "quick", options)?.id, mini.id, "explicit free-to-free is allowed");
+  for (const model of models.models) {
+    if (model.providerId === standard.providerId && model !== standard) model.cost = { input: 1, output: 1 };
+  }
+  assert.equal(chooseFallbackModel(models, "quick", options), null, "never free-to-paid or to another provider's free model");
+  assert.equal(chooseFallbackModel(models, "deep", { ...options, standard: "gone/away" }), null);
+  standard.knownPrice = false;
+  assert.equal(chooseFallbackModel(models, "standard", options), null, "no original price means no fallback");
+  assert.equal(chooseModelForLane(models, "deep", { standard: standard.id })?.id, standard.id, "unknown prices keep the anchor");
+  standard.knownPrice = true;
+  standard.cost = { input: 2, output: 8 };
+  mini.cost = { input: 2, output: 4 };
+  for (const model of models.models) {
+    if (model.modelId === "gpt-5-nano") model.cost = { input: 3, output: 1 };
+    if (model.modelId === "gpt-5-pro") model.cost = { input: 1, output: 9 };
+  }
+  for (const lane of ["quick", "standard", "deep"] as const) {
+    assert.equal(chooseFallbackModel(models, lane, options)?.id, mini.id, "equal input, lower output; reject either higher price");
+  }
+  mini.cost = { input: 0, output: 0 };
+  delete mini.knownPrice;
+  assert.equal(chooseFallbackModel(models, "quick", options), null, "missing candidate price is not a free replacement");
+  assert.equal(chooseModelForLane(models, "quick", { standard: standard.id })?.id, standard.id);
+});
+
+test("concise or fast output does not make substantive work shallow; explicit thinking instructions still win", () => {
+  for (const prompt of [
+    "Quickly audit authentication; give a short answer.",
+    "TLDR: research the migration trade-offs.",
+    "Briefly implement a fix for this race condition.",
+    "One-liner please: ```ts\nconst answer = broken();\n```",
+    "Think carefully about the time, but reply briefly.",
+  ]) assert.equal(classifyRequest(prompt), "deep", prompt);
+  assert.equal(classifyRequest("hello!"), "quick");
+  assert.equal(classifyRequest("Summarize yesterday's notes."), "standard");
+  assert.equal(classifyRequest("Quickly summarize yesterday's notes in one sentence."), "standard");
+  assert.equal(classifyRequest("Audit these files; no need to think."), "quick");
+  assert.equal(classifyRequest("No need to think, but double-check the audit carefully."), "deep");
 });
 
 test("the person's thinking effort stays across a model change only when the new model offers it", () => {

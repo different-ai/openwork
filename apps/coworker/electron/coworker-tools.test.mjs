@@ -6,7 +6,9 @@ import { test } from "node:test";
 import {
   createCoworkerToolsServer,
   createToolHandlers,
+  handleMcpMessage,
 } from "./coworker-tools.mjs";
+import { listRevisions, readDocument, updateDocument } from "./documents.mjs";
 
 const SLUG = "nova";
 const TOKEN = "nova-token";
@@ -120,6 +122,7 @@ test("authenticated document dispatch persists once and rejects invalid actions"
     const updated = await call(server, "document_update", {
       id: "launch-plan",
       summary: "Ship onboarding by mid-Q3.",
+      highlights: ["Week one and two"],
       patch: { heading: "Timeline", content: "Week one and two." },
     });
     assert.equal(updated.isError, false);
@@ -154,4 +157,50 @@ test("authenticated document dispatch persists once and rejects invalid actions"
   } finally {
     await server.stop();
   }
+});
+
+test("document metadata validation keeps body edits accurate without refusing person saves", { timeout: 5_000 }, async (t) => {
+  const dir = await home(t);
+  const handlers = createToolHandlers({ coworkersDir: dir });
+  const dispatch = async (name, args) => (await handleMcpMessage({
+    jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args },
+  }, { slug: SLUG, handlers })).result;
+  await dispatch("document_create", {
+    title: "Launch plan", summary: "Ship on Monday.", highlights: ["Monday launch"], body: "## Timeline\n\nShip on Monday.\n",
+  });
+  for (const input of [
+    { body: "Ship on Tuesday.\n" },
+    { patch: { heading: "Timeline", content: "Ship on Tuesday." }, summary: "Ship on Tuesday." },
+    { body: "Ship on Tuesday.\n", highlights: ["Tuesday launch"] },
+    { body: "Ship on Tuesday.\n", metadataUnchanged: "true" },
+  ]) {
+    const rejected = await dispatch("document_update", { id: "launch-plan", ...input });
+    assert.equal(rejected.isError, true);
+    assert.match(rejected.content[0].text, /both refreshed summary and highlights.*metadataUnchanged: true/);
+  }
+  assert.equal((await readDocument(dir, SLUG, "launch-plan")).body, "## Timeline\n\nShip on Monday.\n");
+  assert.deepEqual(await listRevisions(dir, SLUG, "launch-plan"), []);
+
+  const refreshed = await dispatch("document_update", {
+    id: "launch-plan", patch: { heading: "Timeline", content: "Ship on Tuesday." },
+    summary: "Ship on Tuesday.", highlights: ["Tuesday launch"],
+  });
+  assert.equal(refreshed.isError, false);
+  assert.equal(refreshed.structuredContent.document.summary, "Ship on Tuesday.");
+  assert.deepEqual(refreshed.structuredContent.document.highlights, ["Tuesday launch"]);
+  const copyEdit = await dispatch("document_update", {
+    id: "launch-plan", body: "## Timeline\n\nLaunch on Tuesday.\n", metadataUnchanged: true,
+  });
+  assert.equal(copyEdit.isError, false);
+  assert.equal(copyEdit.structuredContent.document.revision, 3);
+  const unchanged = await dispatch("document_update", { id: "launch-plan", body: "## Timeline\n\nLaunch on Tuesday.\n" });
+  assert.equal(unchanged.structuredContent.document.action, "unchanged");
+  const person = await updateDocument(dir, SLUG, "launch-plan", { body: "My revised draft.\n" }, { by: "person" });
+  assert.equal(person.revision, 4);
+  assert.equal(person.updatedBy, "person");
+  const saved = await readDocument(dir, SLUG, "launch-plan");
+  assert.equal(saved.body, person.body);
+  assert.equal(saved.summary, "Ship on Tuesday.");
+  assert.deepEqual(saved.highlights, ["Tuesday launch"]);
+  assert.match(await readFile(path.join(dir, SLUG, "documents", "index.md"), "utf8"), /Ship on Tuesday\..*edited by the person/);
 });

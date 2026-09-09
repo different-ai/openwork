@@ -23,11 +23,20 @@ export type WorkerSummary = {
   /** Records predating purpose-specific models remain delivery Workers on the owner model. */
   purpose?: WorkerPurpose;
   modelSnapshot?: WorkerModelSnapshot | null;
+  /** Requested task access; only explicit person approval grants control. */
+  control?: {
+    surface: "browser" | "computer";
+    state: "needs-approval" | "approved" | "revoked";
+    revision: number;
+    detail: string;
+  };
   /** The Worker's native thread; empty until its first turn was accepted. */
   threadId: string;
   spawnedBy: "coworker" | "person";
   spawnedFromThreadId: string;
   status: WorkerStatus;
+  /** Backend Stop/cleanup is still unconfirmed, independently of terminal metadata. */
+  cleanupPending?: boolean;
   /** Why a waiting Worker waits: for a free turn on this Mac, or for a decision. */
   waitingFor: "" | "turn" | "decision";
   lifespan: WorkerLifespan;
@@ -70,7 +79,9 @@ export function workerNameFromTitle(title: string): string {
 }
 
 /** The status dot beside a Worker row, in the tones the rest of the app uses. */
-export function workerTone(worker: Pick<WorkerSummary, "status" | "waitingFor">): "spark" | "mint" | "amber" | "rose" | "mist" {
+export function workerTone(worker: Pick<WorkerSummary, "status" | "waitingFor" | "control" | "cleanupPending">): "spark" | "mint" | "amber" | "rose" | "mist" {
+  if (worker.cleanupPending) return "amber";
+  if (isLiveWorker(worker) && worker.control && worker.control.state !== "approved") return "amber";
   switch (worker.status) {
     case "running":
     case "starting":
@@ -94,7 +105,7 @@ export function describeWorkerEvent(event: WorkerEvent, coworkerName: string): {
       if (event.report === "done") return { label: "Done", text: event.text, quiet: false };
       return { label: "Finding", text: event.text, quiet: false };
     case "steer":
-      return { label: event.by === "coworker" ? `Steered by ${coworkerName}` : "Steered by you", text: event.text, quiet: true };
+      return { label: event.by === "coworker" ? `Steering queued by ${coworkerName}` : "Steering queued by you", text: event.text, quiet: true };
     case "review":
       return { label: "", text: event.error ? `${coworkerName} could not review this yet` : `${coworkerName} reviewed this`, quiet: true };
     case "status":
@@ -153,7 +164,10 @@ export function describeLifespan(lifespan: WorkerLifespan, now = Date.now()): st
 }
 
 /** The status words shared with responsibilities, plus the two states only Workers have. */
-export function describeWorkerStatus(worker: Pick<WorkerSummary, "status" | "waitingFor">): string {
+export function describeWorkerStatus(worker: Pick<WorkerSummary, "status" | "waitingFor" | "control" | "cleanupPending">): string {
+  if (worker.cleanupPending) return "Stop not confirmed";
+  if (isLiveWorker(worker) && worker.control?.state === "needs-approval") return "Paused for your approval";
+  if (isLiveWorker(worker) && worker.control?.state === "revoked") return "Control revoked";
   switch (worker.status) {
     case "starting":
       return "Starting";

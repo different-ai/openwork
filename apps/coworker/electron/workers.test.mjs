@@ -1,15 +1,25 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
+import { build } from "esbuild";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import ts from "typescript";
 import { createCoworker, getCoworker, updateCoworker } from "./coworkers.mjs";
 import { createCoworkerToolsServer, handleMcpMessage } from "./coworker-tools.mjs";
+import { assertControlOrigin, assertWorkerSupervisor, createWorkerControls, WORKER_MANAGEMENT } from "./worker-controls.mjs";
+import { createHeadlessThreadClient } from "@openwork/headless-threads";
+import { createCollaboration, withAbort } from "./collaboration.mjs";
 import {
   DEFAULT_TURN_BUDGET,
   MAX_LIVE_WORKERS,
   WORKERS_REGISTRY_FILE,
   appendWorkerEvent,
+  abortWorkerThread,
   createReviewScheduler,
   createWorker,
   createWorkerToolHandlers,
@@ -34,6 +44,7 @@ import {
   workerToolCatalog,
   workerTurnOutcome,
   workerTurnTools,
+  withWorkerCancellation,
 } from "./workers.mjs";
 
 const roots = [];
@@ -50,6 +61,199 @@ after(async () => {
 });
 
 const NOW = Date.UTC(2026, 8, 2, 15, 0);
+
+async function controlFixture(surface = "browser", overrides = {}) {
+  const directory = await fixture();
+  const worker = await createWorker(directory, "scout", { name: "Review", goal: "Review the supplied draft", spawnedBy: "person", spawnedFromThreadId: "origin", control: surface, lifespan: { kind: "turns", max: 3 } });
+  const liveRuns = new Map();
+  const drains = [];
+  let active = true;
+  const options = {
+    discussionFor: async (slug, threadId) => { assert.equal(slug, "scout"); assert.equal(threadId, "origin"); return { workspaceId: "workspace", directory: "/workspace/scout" }; },
+    taskFor: async () => ({ assertActive: () => { if (!active) throw new Error("Origin cancelled"); } }),
+    readWorker: (slug, id) => getWorker(directory, slug, id), updateWorker: (slug, id, patch) => updateWorker(directory, slug, id, patch), liveRuns,
+    stopNative: abortWorkerThread,
+    browser: { revokeOrigin: async (scope) => { drains.push(scope); return true; } },
+    computer: { delegationScope: async () => ({ assertActive() {} }), endTurn: async (entry) => { drains.push(entry); } },
+    ...overrides,
+  };
+  const controls = createWorkerControls(options);
+  const read = async () => controls.summary(await getWorker(directory, "scout", worker.id));
+  const approve = async () => controls.approve(await read(), (await read()).control.revision);
+  async function start() {
+    const next = await prepareWorkerTurn(directory, "scout", worker.id, "Scout");
+    await updateWorker(directory, "scout", worker.id, { threadId: "worker-session" });
+    const name = surface === "browser" ? "coworker_browser_tabs" : "coworker_computer_discover";
+    const context = { sessionID: "worker-session", messageID: "assistant", callID: "call", directory: "/workspace/scout" };
+    const snapshot = { threadId: "worker-session", directory: context.directory, messages: [
+      { id: next.pendingTurn.messageId, role: "user", parts: [{ type: "text", text: next.pendingTurn.prompt }] },
+      { id: "assistant", role: "assistant", parentId: next.pendingTurn.messageId, completedAt: null, parts: [{ type: "tool", tool: name, callId: "call", toolStatus: "running", toolInput: {} }] },
+    ] };
+    const run = { active: true, controller: new AbortController(), entry: { id: "worker-execution", state: "running", sentAt: 1, workspaceId: "workspace", owner: { slug: "scout", kind: "worker", threadId: context.sessionID, conversationId: context.sessionID }, messageId: next.pendingTurn.messageId }, client: { getThreadSnapshot: async () => snapshot, abortThread: async () => ({ accepted: true }), waitUntilIdle: async () => ({ outcome: "settled" }) } };
+    liveRuns.set(`scout:${worker.id}`, run);
+    await controls.admit(next, run);
+    return { run, snapshot, context, expected: { name, args: {} } };
+  }
+  return { directory, worker, controls, options, read, approve, start, liveRuns, drains, cancelOrigin: () => { active = false; } };
+}
+
+test("control requests persist paused, grants do not survive restart, and one origin has one controller", async () => {
+  const f = await controlFixture();
+  assert.equal((await f.read()).status, "paused");
+  assert.equal((await f.read()).control.state, "needs-approval");
+  assert.equal(f.controls.allowed(await f.read()), false);
+  const before = await f.read();
+  await assert.rejects(f.controls.approve(before, before.control.revision - 1), /Refresh/);
+  const approved = await f.approve();
+  assert.equal(approved.control.state, "approved");
+  assert.equal(approved.status, "waiting");
+  assert.equal(f.controls.allowed(approved), true);
+  assert.throws(() => f.controls.assertAvailable("scout", "origin", "computer"), /Worker owns/);
+  assert.doesNotThrow(() => f.controls.assertAvailable("scout", "other", "browser"));
+  const sibling = await createWorker(f.directory, "scout", { name: "Other", goal: "Other goal", control: "computer", spawnedBy: "person", spawnedFromThreadId: "origin" });
+  await assert.rejects(f.controls.approve(sibling, f.controls.summary(sibling).control.revision), /Worker owns/);
+  const restarted = createWorkerControls(f.options);
+  assert.equal(restarted.summary(await getWorker(f.directory, "scout", f.worker.id)).control.state, "needs-approval");
+  assert.equal(restarted.allowed(await getWorker(f.directory, "scout", f.worker.id)), false);
+  await f.controls.reset(true); await restarted.reset(true);
+});
+
+test("Worker control validates its actual native principal, exact call and origin without impersonating the discussion", async () => {
+  for (const surface of ["browser", "computer"]) {
+    const f = await controlFixture(surface);
+    await f.approve();
+    const { run, snapshot, context, expected } = await f.start();
+    const trusted = await f.controls.resolve("scout", context, expected, surface);
+    assert.equal(trusted.entry.owner.kind, "worker");
+    assert.equal(trusted.entry.owner.threadId, "worker-session");
+    assert.equal(trusted.origin.threadId, "origin");
+    assert.equal(trusted.signal, run.controller.signal);
+    for (const patch of [{ messageID: "other" }, { callID: "other" }, { directory: "/another" }]) await assert.rejects(f.controls.resolve("scout", { ...context, ...patch }, expected, surface), /exact running native/);
+    await assert.rejects(f.controls.resolve("scout", context, { ...expected, args: { forged: true } }, surface), /exact running native/);
+    await assert.rejects(f.controls.resolve("scout", context, expected, surface === "browser" ? "computer" : "browser"), /no active control/);
+    assert.equal(await f.controls.resolve("other", context, expected, surface), null);
+    snapshot.messages[1].completedAt = 10;
+    await assert.rejects(f.controls.resolve("scout", context, expected, surface), /exact running native/);
+    snapshot.messages[1].completedAt = null;
+    f.cancelOrigin();
+    assert.throws(trusted.assertActive, /Origin cancelled/);
+    await f.controls.reset(true);
+  }
+});
+
+test("revocation aborts before failed persistence, blocks successors through drain, and stale cleanup cannot stop a successor", async () => {
+  const f = await controlFixture();
+  await f.approve();
+  const { run, context, expected } = await f.start();
+  const release = Promise.withResolvers();
+  const idle = Promise.withResolvers();
+  const idleEntered = Promise.withResolvers();
+  run.client.waitUntilIdle = async () => { idleEntered.resolve(); return idle.promise; };
+  let waiting = true;
+  f.options.browser.revokeOrigin = async (scope) => { f.drains.push(scope); if (waiting) await release.promise; return true; };
+  const revision = (await f.read()).control.revision;
+  const stopping = f.controls.revokeKnown("scout", f.worker.id, revision);
+  assert.equal(run.controller.signal.aborted, true);
+  assert.equal((await f.read()).control.state, "revoked");
+  assert.equal((await f.read()).cleanupPending, true);
+  await assert.rejects(f.controls.resolve("scout", context, expected, "browser"), /no active control/);
+  assert.throws(() => f.controls.assertAvailable("scout", "origin"), /Worker owns/);
+  waiting = false; release.resolve();
+  await idleEntered.promise;
+  assert.throws(() => f.controls.assertAvailable("scout", "origin"), /Worker owns/, "abort acknowledgement is not native idle");
+  idle.resolve({ outcome: "settled" });
+  assert.equal(await stopping, true);
+  assert.throws(() => f.controls.assertAvailable("scout", "origin"), /Worker owns/, "the old native run still holds its reservation");
+  f.liveRuns.clear(); f.controls.releaseRun(run);
+  assert.equal((await f.read()).cleanupPending, false);
+  const sibling = await createWorker(f.directory, "scout", { name: "Next", goal: "Next goal", control: "browser", spawnedBy: "person", spawnedFromThreadId: "origin" });
+  await f.controls.approve(sibling, f.controls.summary(sibling).control.revision);
+  const count = f.drains.length;
+  await f.controls.endRun(run);
+  assert.equal(f.drains.length, count, "old cleanup must not touch the newly approved browser controller");
+  await f.controls.reset(true);
+
+  const broken = await controlFixture("browser", { updateWorker: async () => { throw new Error("disk unavailable"); } });
+  await assert.rejects(broken.approve(), /disk unavailable/);
+  assert.equal((await broken.read()).control.state, "revoked");
+  assert.match((await broken.read()).control.detail, /could not be updated/);
+  assert.equal(broken.controls.allowed(await broken.read()), false);
+  await broken.controls.reset(true);
+});
+
+test("approval races, permission changes, expiry and uncertain cleanup fail closed", async () => {
+  const setup = Promise.withResolvers();
+  const entered = Promise.withResolvers();
+  const f = await controlFixture("browser", { discussionFor: () => { entered.resolve(); return setup.promise; } });
+  const approving = f.approve();
+  await entered.promise;
+  const stopping = f.controls.revokeKnown("scout", f.worker.id, (await f.read()).control.revision);
+  setup.resolve({ workspaceId: "workspace", directory: "/workspace/scout" });
+  await assert.rejects(approving, /revoked/); await stopping;
+  assert.equal((await f.read()).control.state, "revoked");
+  await f.controls.reset(true);
+
+  let permission = true;
+  let cleanup = true;
+  let clock = NOW;
+  const native = await controlFixture("computer", { now: () => clock, computer: {
+    delegationScope: async () => { if (!permission) throw new Error("Discussion opt-in is off"); return { assertActive: () => { if (!permission) throw new Error("Permission changed"); } }; },
+    endTurn: async () => { if (!cleanup) throw new Error("Native release unknown"); },
+  } });
+  await native.approve(); const { run } = await native.start();
+  run.client.waitUntilIdle = async () => ({ outcome: "timeout" });
+  permission = false; cleanup = false;
+  assert.equal(native.controls.allowed(await native.read()), false);
+  assert.equal(await native.controls.revokeId("scout", native.worker.id), false);
+  assert.match((await native.read()).control.detail, /unconfirmed/);
+  assert.equal((await native.read()).cleanupPending, true);
+  native.liveRuns.clear(); native.controls.releaseRun(run);
+  await assert.rejects(native.approve(), /stopping/);
+  cleanup = true;
+  assert.equal(await native.controls.revokeId("scout", native.worker.id), false, "drained input cannot stand in for native idle");
+  run.client.waitUntilIdle = async () => ({ outcome: "settled" });
+  assert.equal(await native.controls.revokeId("scout", native.worker.id), true);
+  permission = true; await native.approve();
+  clock += 15 * 60_000;
+  assert.equal((await native.read()).control.state, "revoked");
+  await native.controls.reset(true);
+});
+
+test("control management is native-origin scoped; queued steering survives Done and interrupted approval", async () => {
+  const f = await controlFixture();
+  const owner = { owner: { kind: "private", slug: "scout", threadId: "origin", conversationId: "origin" }, personRequest: true, continuation: false };
+  assert.doesNotThrow(() => assertWorkerSupervisor(owner, f.worker));
+  for (const patch of [{ continuation: true }, { personRequest: false }, { owner: { ...owner.owner, kind: "group" } }, { owner: { ...owner.owner, threadId: "other", conversationId: "other" } }]) assert.throws(() => assertWorkerSupervisor({ ...owner, ...patch }, f.worker), /private|originating/);
+  assert.throws(() => assertControlOrigin({ ...owner, owner: { ...owner.owner, kind: "worker" } }), /private/);
+  let managed = 0;
+  const handlers = createWorkerToolHandlers({ coworkersDir: f.directory, steer: async () => { managed++; return f.worker; }, pause: async () => { managed++; return f.worker; }, resume: async () => { managed++; return f.worker; }, cancel: async () => { managed++; return f.worker; } });
+  for (const name of WORKER_MANAGEMENT) await assert.rejects(handlers[name]("scout", { id: f.worker.id, text: "Correction" }), /context-bound/);
+  assert.equal(managed, 0);
+  await handlers.worker_steer("scout", { id: f.worker.id, text: "Correction" }, { entry: owner, assertActive() {} });
+  assert.equal(managed, 1);
+  await f.approve();
+  await queueWorkerSteer(f.directory, "scout", f.worker.id, "First correction", "person");
+  const admitted = await prepareWorkerTurn(f.directory, "scout", f.worker.id, "Scout");
+  assert.equal(admitted.pendingTurn.steers.length, 1);
+  await queueWorkerSteer(f.directory, "scout", f.worker.id, "New correction before Done", "coworker");
+  const latest = await getWorker(f.directory, "scout", f.worker.id);
+  const step = nextWorkerState(latest, { kind: "settled", report: { kind: "done", text: "Draft ready" } }, { hasPendingSteer: true });
+  assert.equal(step.patch.status, "waiting"); assert.equal(step.schedule, "continue");
+  await f.controls.revoke(latest);
+  const reapproved = await f.approve();
+  assert.equal(reapproved.pendingTurn, null);
+  assert.deepEqual(reapproved.pendingSteers.map((steer) => steer.text), ["First correction", "New correction before Done"]);
+  const next = await prepareWorkerTurn(f.directory, "scout", f.worker.id, "Scout");
+  assert.notEqual(next.pendingTurn.messageId, admitted.pendingTurn.messageId);
+  assert.match(next.pendingTurn.prompt, /Never replay uncertain actions/);
+  const spent = nextWorkerState({ ...latest, lifespan: { kind: "turns", max: 1, used: 0 } }, { kind: "settled", report: { kind: "done", text: "Done" } }, { hasPendingSteer: true });
+  assert.equal(spent.patch.status, "failed"); assert.match(spent.patch.error, /accepted correction still unresolved/);
+  assert.match((await readWorkerEvents(f.directory, "scout", f.worker.id))[0].text, /Queued for the next step/);
+  for (const name of ["coworker_browser_open", "coworker_computer_open", "coworker_worker_spawn", "question"]) assert.equal(workerTurnTools()[name], false);
+  assert.equal(workerTurnTools("browser").coworker_browser_open, true);
+  assert.equal(workerTurnTools("browser").coworker_computer_open, false);
+  await f.controls.reset(true);
+});
 
 test("a lifespan is always bounded by default and validated when chosen", () => {
   assert.deepEqual(normalizeLifespan(undefined, { now: NOW }), { kind: "turns", max: DEFAULT_TURN_BUDGET, used: 0 });
@@ -209,12 +413,13 @@ test("a settled turn decides whether the worker continues, holds, or stops", () 
 
   const spent = nextWorkerState({ ...base, lifespan: { kind: "turns", max: 3, used: 2 } }, { kind: "settled", report: { kind: "finding", text: "Last step." } }, { now: NOW });
   assert.equal(spent.schedule, "stop");
-  assert.equal(spent.patch.status, "finished");
+  assert.equal(spent.patch.status, "failed");
+  assert.match(spent.patch.error, /^Incomplete:/);
   assert.deepEqual(spent.events.map((event) => event.kind), ["finding", "status"]);
   assert.match(spent.events[1].text, /lifespan/);
 
   const deadline = nextWorkerState({ ...base, lifespan: { kind: "until", at: NOW - 1 } }, { kind: "settled", report: { kind: "finding", text: "x" } }, { now: NOW });
-  assert.equal(deadline.patch.status, "finished");
+  assert.equal(deadline.patch.status, "failed");
   const thinker = { ...base, purpose: "thinking", lifespan: { kind: "turns", max: 2, used: 1 } };
   for (const reply of ["", "## Finding\nStill comparing workspace/brief.md", "## Done", "## Done\n**Decision:**\n**Constraints:**\n**Acceptance criteria:**\n**Open risks:**"]) {
     const incomplete = nextWorkerState(thinker, { kind: "settled", report: parseWorkerReport(reply) }, { now: NOW });
@@ -305,7 +510,7 @@ test("steering and an admitted turn survive rereads, while pause and stop win se
   const [, settled] = await Promise.all([
     updateWorker(coworkersDir, "scout", worker.id, { status: "paused" }),
     updateWorker(coworkersDir, "scout", worker.id, (current) => {
-      step = nextWorkerState(current, { kind: "settled", report: { kind: "finding", text: "Sources compared." } });
+      step = nextWorkerState(current, { kind: "settled", report: { kind: "done", text: "Sources compared; see brief.md." } });
       return { ...step.patch, pendingTurn: null };
     }),
   ]);
@@ -315,6 +520,8 @@ test("steering and an admitted turn survive rereads, while pause and stop win se
   assert.equal(settled.pendingSteers.length, 1);
   await updateWorker(coworkersDir, "scout", worker.id, { status: "waiting", waitingFor: "turn" });
   const continued = await prepareWorkerTurn(coworkersDir, "scout", worker.id, "Scout");
+  assert.match(continued.pendingTurn.prompt, /Include source C next/);
+  assert.equal(continued.pendingSteers.length, 0);
   assert.deepEqual(continued.pendingTurn.model, modelSnapshot, "the next turn uses the same model and effort after settings edits");
   await updateWorker(coworkersDir, "scout", worker.id, { status: "cancelled", pendingSteers: [] });
   assert.equal((await prepareWorkerTurn(coworkersDir, "scout", worker.id, "Scout")).status, "cancelled");
@@ -327,6 +534,101 @@ test("steering and an admitted turn survive rereads, while pause and stop win se
   assert.equal(oldTurn.purpose, "delivery");
   assert.equal(oldTurn.modelSnapshot, null);
   assert.equal(Object.hasOwn(oldTurn.pendingTurn, "model"), false, "legacy Workers retain the existing owner-model path");
+});
+
+test("Stop attempts native abort across rejected writes and repairs terminal metadata without hiding unconfirmed cleanup", async () => {
+  // The renderer typecheck excludes this JS entry point; resolve its bindings without booting Electron.
+  const entry = fileURLToPath(new URL("./main.mjs", import.meta.url));
+  const program = ts.createProgram([entry], { allowJs: true, checkJs: true, noEmit: true, skipLibCheck: true, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, target: ts.ScriptTarget.ESNext });
+  const unbound = program.getSemanticDiagnostics(program.getSourceFile(entry)).filter((diagnostic) => diagnostic.code === 2304 || diagnostic.code === 2552);
+  assert.deepEqual(unbound.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")), [], "native Stop must not call an unbound runtime identifier");
+  const coworkersDir = await fixture();
+  const worker = await createWorker(coworkersDir, "scout", { name: "Stop check", goal: "Check once.", spawnedBy: "person" });
+  const require = createRequire(import.meta.url);
+  const compiled = await build({
+    entryPoints: [fileURLToPath(new URL("../src/ui/worker-detail.tsx", import.meta.url))],
+    bundle: true, write: false, platform: "node", format: "esm", logLevel: "silent",
+    plugins: [{ name: "shared-react-runtime", setup(plugin) {
+      plugin.onResolve({ filter: /^react(?:-dom)?(?:\/|$)/ }, ({ path: name }) => ({ path: pathToFileURL(require.resolve(name)).href, external: true }));
+    } }],
+  });
+  const { WorkerDetail } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString("base64")}`);
+  const coworker = await getCoworker(coworkersDir, "scout");
+  const liveRuns = new Map();
+  const controls = createWorkerControls({ liveRuns });
+  const reread = async () => controls.summary(await getWorker(coworkersDir, "scout", worker.id));
+  // Each render starts with fresh component state, like reopening a collapsed row.
+  const freshDetail = async () => renderToStaticMarkup(createElement(WorkerDetail, { coworker, initialWorker: await reread(), onChanged() {} }));
+  await updateWorker(coworkersDir, "scout", worker.id, { status: "running", threadId: "ses_stop" });
+  const service = createCollaboration({ directory: coworkersDir, pollMs: 60_000 });
+  await service.attachWorker(worker, { slug: "scout", threadId: "ses_origin", conversationId: "ses_origin", kind: "private" });
+  const requests = [];
+  let mode = "idle";
+  let clock = 0;
+  const client = createHeadlessThreadClient({ baseUrl: "http://worker.invalid", workspaceId: "workspace_scout", now: () => clock, sleep: async (ms) => { clock += ms; }, fetch: async (request) => {
+    const route = new URL(request).pathname;
+    requests.push(route);
+    if (route.endsWith("/abort")) return mode === "reject" ? Response.json({ message: "Abort unavailable" }, { status: 503 }) : Response.json(false);
+    if (route.endsWith("/status")) return Response.json({ ses_stop: { type: mode === "busy" ? "busy" : "idle" } });
+    if (route.endsWith("/message") || route.endsWith("/todo")) return Response.json([]);
+    assert.ok(route.endsWith("/session/ses_stop"));
+    return Response.json({ id: "ses_stop" });
+  } });
+  const findings = path.join(coworkersDir, "scout", "workers", worker.id, "findings.jsonl");
+  const blockedWrite = path.join(coworkersDir, ".collaboration", "state.json.tmp");
+  const handlers = createWorkerToolHandlers({ coworkersDir, cancel: async (slug, id) => {
+    controls.startStop(slug, id);
+    const stopped = await withWorkerCancellation(async () => {
+      const stopped = await updateWorker(coworkersDir, slug, id, { status: "cancelled" });
+      await service.completeWorker(stopped, []);
+      await appendWorkerEvent(coworkersDir, slug, id, { id: "evt_stop", kind: "status", text: "Stopped" });
+      return stopped;
+    }, () => {
+      const signal = AbortSignal.timeout(1000);
+      return withAbort(abortWorkerThread(client, "ses_stop", signal), signal);
+    });
+    controls.finishStop(slug, id);
+    return controls.summary(stopped);
+  } });
+  try {
+    await mkdir(blockedWrite);
+    await assert.rejects(handlers.worker_cancel("scout", { id: worker.id }), /EISDIR/);
+    assert.equal(requests.filter((route) => route.endsWith("/abort")).length, 1);
+    assert.equal((await getWorker(coworkersDir, "scout", worker.id)).status, "cancelled");
+    assert.equal((await reread()).cleanupPending, true);
+    for (let reopen = 0; reopen < 2; reopen++) {
+      const html = await freshDetail();
+      assert.match(html, /data-testid="worker-stop"[^>]*>Retry Stop<\/button>/);
+      assert.match(html, /Stop not confirmed/);
+    }
+    await rm(blockedWrite, { recursive: true });
+    await rm(findings);
+    await mkdir(findings);
+    mode = "reject";
+    await assert.rejects(handlers.worker_cancel("scout", { id: worker.id }), (error) => {
+      assert.match(error.message, /could not be confirmed/);
+      assert.match(error.errors[0].message, /Abort unavailable/);
+      assert.match(error.errors[1].message, /EISDIR/);
+      return true;
+    });
+    await rm(findings, { recursive: true });
+    mode = "busy";
+    await assert.rejects(handlers.worker_cancel("scout", { id: worker.id }), /could not be confirmed/);
+    assert.equal((await reread()).cleanupPending, true);
+    assert.match(await freshDetail(), />Retry Stop<\/button>/);
+    mode = "idle";
+    const repaired = await handlers.worker_cancel("scout", { id: worker.id });
+    assert.equal(repaired.structured.worker.action, "stopped");
+    assert.equal(requests.filter((route) => route.endsWith("/abort")).length, 4, "every Stop retries native cleanup even after the metadata is terminal");
+    assert.equal((await readWorkerEvents(coworkersDir, "scout", worker.id)).length, 1);
+    assert.equal((await reread()).cleanupPending, false);
+    assert.doesNotMatch(await freshDetail(), /data-testid="worker-stop"/);
+    // Native cleanup can fail without a person having clicked Stop yet.
+    liveRuns.set(`scout:${worker.id}`, { controller: new AbortController(), cleanupError: new Error("Native cleanup unconfirmed") });
+    assert.equal((await reread()).cleanupPending, true);
+    assert.match(await freshDetail(), />Retry Stop<\/button>/);
+    liveRuns.clear();
+  } finally { await service.stop(); }
 });
 
 test("reviews run at once for the first finding, batch inside the window, and retry once after a failure", async () => {
@@ -500,8 +802,8 @@ test("the coworker starts, lists, steers, reads, and stops Workers through its o
     assert.equal((await getWorker(coworkersDir, "scout", id)).status, "cancelled");
 
     const again = await call("worker_cancel", { id, reason: "Twice" });
-    assert.match(again.content[0].text, /had already stopped; nothing to stop\./);
-    assert.equal(calls.filter((entry) => entry[0] === "cancel").length, 1);
+    assert.match(again.content[0].text, /^Stopped "Market scan"/);
+    assert.equal(calls.filter((entry) => entry[0] === "cancel").length, 2);
 
     const bad = await call("worker_steer", { id: "nope", text: "x" });
     assert.equal(bad.isError, true);

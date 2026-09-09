@@ -18,13 +18,14 @@ export default async ({ directory }) => {
   const execute = (name) => async (args, context) => {
     const key = JSON.stringify([context.sessionID, "coworker_" + name, args]);
     const queue = calls.get(key) || [];
-    const callID = context.callID || queue.shift();
+    const hooked = queue.shift();
+    const callID = context.callID || hooked;
     if (!queue.length) calls.delete(key);
     if (!callID) throw new Error("The engine did not provide a trusted tool-call identity.");
     const config = JSON.parse(await readFile(path.join(directory, ".opencode", "coworker-context.json"), "utf8"));
     const response = await fetch(config.url, {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + config.token },
-      body: JSON.stringify({ name, args, context: { sessionID: context.sessionID, messageID: context.messageID, callID } }),
+      body: JSON.stringify({ name, args, context: { sessionID: context.sessionID, messageID: context.messageID, callID, directory: context.directory || directory } }),
       signal: AbortSignal.any([context.abort, AbortSignal.timeout(20000)]),
     });
     const result = await response.json();
@@ -33,7 +34,7 @@ export default async ({ directory }) => {
     return result.text;
   };
   return { "tool.execute.before": async (input, output) => {
-    if (!["coworker_team_consult", "coworker_worker_spawn"].includes(input.tool)) return;
+    if (!["coworker_team_consult", "coworker_worker_spawn", "coworker_worker_steer", "coworker_worker_pause", "coworker_worker_resume", "coworker_worker_cancel"].includes(input.tool)) return;
     const key = JSON.stringify([input.sessionID, input.tool, output.args]);
     calls.set(key, [...(calls.get(key) || []), input.callID]);
   }, tool: {
@@ -43,8 +44,12 @@ export default async ({ directory }) => {
     }),
     coworker_worker_spawn: tool({
       description: "Start a Worker for one bounded goal beyond this reply. Record the original objective and how to use its result, then acknowledge and END this turn. The app delivers a follow-up here when the Worker finishes; never poll or wait in this turn. Use an assignment for scheduled work. Workers cannot start Workers.",
-      args: { name: tool.schema.string().min(1).max(80), goal: tool.schema.string().min(1).max(4000), purpose: tool.schema.enum(["thinking", "delivery"]).optional().describe("Thinking brief or delivery work; default delivery. Follow the Workers contract; uses the person's corresponding model setting."), lifespan: tool.schema.object({ kind: tool.schema.enum(["turns", "until"]), turns: tool.schema.number().int().min(1).max(100).optional(), until: tool.schema.string().optional() }).optional(), continuation }, execute: execute("worker_spawn"),
+      args: { name: tool.schema.string().min(1).max(80), goal: tool.schema.string().min(1).max(4000), purpose: tool.schema.enum(["thinking", "delivery"]).optional().describe("Thinking brief or delivery work; default delivery. Follow the Workers contract; uses the person's corresponding model setting."), control: tool.schema.enum(["browser", "computer"]).optional().describe("Request one control surface from THIS saved private discussion for this delivery goal. The Worker waits without executing until the person approves it. Computer also needs discussion opt-in and fresh native window consent. Never inherited by automatic follow-ups."), lifespan: tool.schema.object({ kind: tool.schema.enum(["turns", "until"]), turns: tool.schema.number().int().min(1).max(100).optional(), until: tool.schema.string().optional() }).optional(), continuation }, execute: execute("worker_spawn"),
     }),
+    coworker_worker_steer: tool({ description: "Queue a correction for a Worker's next bounded step. For control work, use only its original private discussion and stay within the approved goal/surface. This does not interrupt the current step, grant permissions or resume human takeover. Pause/stop instead if input must stop now.", args: { id: tool.schema.string(), text: tool.schema.string().min(1).max(4000) }, execute: execute("worker_steer") }),
+    coworker_worker_pause: tool({ description: "Pause a Worker when asked. Ordinary Workers finish their step; control Workers stop input immediately and need new person approval to continue.", args: { id: tool.schema.string() }, execute: execute("worker_pause") }),
+    coworker_worker_resume: tool({ description: "Resume an ordinary paused Worker when asked. Cannot restore control approval: the person must approve a control Worker in its original discussion.", args: { id: tool.schema.string() }, execute: execute("worker_resume") }),
+    coworker_worker_cancel: tool({ description: "Stop a Worker permanently when done or asked. Control work stops input before record updates; uncertain cleanup remains blocked. Never stop a person-started Worker unless asked.", args: { id: tool.schema.string(), reason: tool.schema.string().max(1000).optional() }, execute: execute("worker_cancel") }),
   } };
 };
 `;

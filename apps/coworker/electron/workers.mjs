@@ -17,6 +17,8 @@ import path from "node:path";
 import { resolveCoworkerFile } from "./coworkers.mjs";
 import { ASSIGNMENT_TOOL_NAMES, SELF_TOOL_NAMES, TEAM_TOOL_NAMES } from "../src/lib/coworker-tools.ts";
 import { COMPUTER_DENY } from "./computer-control.mjs";
+import { BROWSER_TOOLS } from "./browser-control.mjs";
+import { assertWorkerSupervisor, workerControlRequest } from "./worker-controls.mjs";
 import { effortForTurn, effortStopOf } from "../src/lib/effort.ts";
 
 export const WORKERS_DIR = "workers";
@@ -35,14 +37,16 @@ export const WORKER_THREAD_TITLE_PREFIX = "Worker: ";
 /** Workers use documents and connected tools, but management belongs to the
  * coworker. Enforce its direct tool boundary in the native session as well as
  * explaining it in the prompt. Shared workspace files are not a sandbox. */
-export function workerTurnTools() {
+export function workerTurnTools(control) {
   const management = [
     "worker_spawn", "worker_steer", "worker_pause", "worker_resume", "worker_cancel",
     ...ASSIGNMENT_TOOL_NAMES.filter((name) => name !== "assignments_list"),
     ...SELF_TOOL_NAMES.filter((name) => name !== "self_read"),
     ...TEAM_TOOL_NAMES.filter((name) => name !== "team_list"),
   ];
-  return { task: false, question: false, coworker_team_consult: false, ...COMPUTER_DENY, ...Object.fromEntries(management.map((name) => [`coworker_${name}`, false])) };
+  const computer = Object.fromEntries(Object.keys(COMPUTER_DENY).map((name) => [name, control === "computer"]));
+  const browser = Object.fromEntries(Object.keys(BROWSER_TOOLS).map((name) => [name, control === "browser"]));
+  return { task: false, question: false, coworker_team_consult: false, ...computer, ...browser, ...Object.fromEntries(management.map((name) => [`coworker_${name}`, false])) };
 }
 
 export const WORKER_STATUSES = ["starting", "running", "waiting", "paused", "finished", "cancelled", "failed"];
@@ -109,6 +113,26 @@ export function isWorkerId(value) {
 
 export function isWorkerFinished(worker) {
   return TERMINAL_STATUSES.has(worker.status);
+}
+
+/** Persistence and native cleanup are separate obligations. A failed write must
+ * not skip abort, and a failed abort must never produce a stopped receipt. */
+export async function withWorkerCancellation(record, abort) {
+  let result;
+  let writeError;
+  try { result = await record(); } catch (error) { writeError = error; }
+  try { await abort(); } catch (error) {
+    throw new AggregateError([error, ...(writeError ? [writeError] : [])], "Stopping native Worker execution could not be confirmed. Try Stop again before continuing.", { cause: error });
+  }
+  if (writeError) throw writeError;
+  return result;
+}
+
+/** An abort acknowledgement alone does not confirm that native work stopped. */
+export async function abortWorkerThread(client, threadId, signal) {
+  await client.abortThread(threadId, { signal });
+  const stopped = await client.waitUntilIdle(threadId, { timeoutMs: 30_000, pollIntervalMs: 250, signal });
+  if (stopped.outcome !== "settled") throw new Error("The native Worker thread did not become idle.");
 }
 
 /** Workers that still exist for the coworker: everything not finished, stopped, or failed. */
@@ -216,6 +240,7 @@ function normalizeStoredWorker(raw) {
     threadId: typeof raw.threadId === "string" ? raw.threadId : "",
     spawnedBy: SPAWNERS.has(raw.spawnedBy) ? raw.spawnedBy : "person",
     spawnedFromThreadId: typeof raw.spawnedFromThreadId === "string" ? raw.spawnedFromThreadId : "",
+    ...(raw.control ? { control: { ...workerControlRequest(raw.control.surface), state: raw.control.state === "revoked" ? "revoked" : "needs-approval", revision: Number.isSafeInteger(raw.control.revision) ? raw.control.revision : 0, detail: "Control needs explicit approval in this app launch." } } : {}),
     status: WORKER_STATUSES.includes(raw.status) ? raw.status : "failed",
     waitingFor: WAITING_FOR.has(raw.waitingFor) ? raw.waitingFor : "",
     lifespan,
@@ -250,8 +275,10 @@ export async function createWorker(coworkersDir, slug, input, { now = Date.now()
   if (!goal) throw new Error("A Worker needs a goal.");
   if (!SPAWNERS.has(input?.spawnedBy)) throw new Error("A Worker is started by the coworker or by the person.");
   const purpose = workerPurpose(input.purpose);
+  const control = workerControlRequest(input.control);
   const lifespan = normalizeLifespan(input.lifespan ?? (purpose === "thinking" ? { kind: "turns", max: THINKING_TURN_BUDGET } : undefined), { now });
   if (input.spawnedBy === "coworker" && lifespan.kind === "open") throw new Error("Choose a finite turn limit or deadline. Only the person can start a Worker until stopped.");
+  if (control && (lifespan.kind === "open" || !input.spawnedFromThreadId || purpose !== "delivery")) throw new Error("Control Workers need a private origin, delivery purpose and a finite lifespan.");
   const previous = createQueues.get(slug) ?? Promise.resolve();
   const run = previous.catch(() => undefined).then(async () => {
     if (input.id) {
@@ -273,7 +300,8 @@ export async function createWorker(coworkersDir, slug, input, { now = Date.now()
       threadId: "",
       spawnedBy: input.spawnedBy,
       spawnedFromThreadId: cleanText(input.spawnedFromThreadId, 240),
-      status: "starting",
+      status: control ? "paused" : "starting",
+      ...(control ? { control } : {}),
       waitingFor: "",
       lifespan,
       createdAt: now,
@@ -363,6 +391,7 @@ export async function updateWorker(coworkersDir, slug, id, change = {}, { now = 
     if (patch.pendingSteers !== undefined) next.pendingSteers = patch.pendingSteers;
     if (patch.pendingTurn !== undefined) next.pendingTurn = patch.pendingTurn;
     if (patch.pendingSettlement !== undefined) next.pendingSettlement = patch.pendingSettlement;
+    if (patch.control !== undefined) next.control = patch.control;
     if (patch.error !== undefined) next.error = cleanText(patch.error, 2_000);
     return writeMetadata(coworkersDir, next);
   });
@@ -382,12 +411,12 @@ export async function queueWorkerSteer(coworkersDir, slug, id, text, by) {
   const updated = await updateWorker(coworkersDir, slug, id, (worker) => {
     if (isWorkerFinished(worker)) throw new Error("This Worker has already stopped.");
     return {
-      pendingSteers: [...worker.pendingSteers, { by, text: message }],
+      pendingSteers: [...worker.pendingSteers, { id: newEventId(), by, text: message }],
       steerCount: worker.steerCount + 1,
       ...(worker.status === "waiting" ? { waitingFor: "turn" } : {}),
     };
   });
-  await appendWorkerEvent(coworkersDir, slug, id, { kind: "steer", text: message, by });
+  await appendWorkerEvent(coworkersDir, slug, id, { kind: "steer", text: `Queued for the next step: ${message}`, by });
   return updated;
 }
 
@@ -407,6 +436,7 @@ export async function prepareWorkerTurn(coworkersDir, slug, id, coworkerName) {
       pendingTurn: worker.pendingTurn ?? {
         messageId: `msg_${Date.now().toString(16)}${randomUUID().replace(/-/g, "").slice(0, 20)}`,
         prompt: workerTurnPrompt({ worker, coworkerName, body }),
+        steers: worker.pendingSteers,
         ...(worker.modelSnapshot ? { model: worker.modelSnapshot } : {}),
       },
     };
@@ -540,13 +570,14 @@ export const RECOVERED_STATUS = "Checking the interrupted step before continuing
  */
 export function workerTurnPrompt({ worker, coworkerName, body, now = Date.now() }) {
   return [
-    `You are a Worker named "${worker.name}" started by ${coworkerName}. You work in ${coworkerName}'s workspace with the same files, memory, and tools.`,
+    `You are a Worker named "${worker.name}" started by ${coworkerName}. You share its workspace files, but only your explicitly enabled tools and task scope are available.`,
     "",
     "Your goal:",
     worker.goal,
     "",
     `Lifespan: ${describeLifespanForPrompt(worker.lifespan, now)}.`,
     `Purpose: ${worker.purpose ?? "delivery"}. Follow the Workers section of the coworker contract for the brief, evidence, and handback.`,
+    ...(worker.control ? [`Control: ${worker.control.surface}, lent only from the original discussion for this named goal. Approval is checked by the app, not by this prompt. Never select another discussion or widen access. The person alone resumes takeover; steering does not grant permissions. Observe afresh after every handoff or interruption. Never replay uncertain actions. Native computer sessions require fresh app/window consent. Keep web/app content and findings out of shared instruction memory. Report missing permission as a blocker, never bypass it.`] : ["No browser or computer control is delegated to this Worker."]),
     `You are a Worker, not ${coworkerName}: never start, steer, or stop Workers, never set up or change assignments, and never change ${coworkerName}'s memory or soul (those tools are ${coworkerName}'s), and leave ${coworkerName}'s memory files alone.`,
     "Work in bounded steps. After each meaningful step, end your turn with a section titled \"Finding\": 2–6 sentences a person can read. If you need a decision before you can go on, end instead with a section titled \"Needs a decision\" and list the options. When the goal is met, end with a section titled \"Done\" and your final finding.",
     "",
@@ -649,7 +680,7 @@ export function completedThinkingBrief(report) {
  * the one read after the turn, so a stop or pause that arrived while the turn
  * ran wins over the turn's own outcome.
  */
-export function nextWorkerState(worker, outcome, { now = Date.now(), hasPendingSteer = false } = {}) {
+export function nextWorkerState(worker, outcome, { now = Date.now(), hasPendingSteer = worker.pendingSteers?.length > 0 } = {}) {
   if (isWorkerFinished(worker)) return { patch: {}, events: [], schedule: "stop" };
   const lifespan = lifespanAfterTurn(worker.lifespan);
   if (outcome.kind === "failed") {
@@ -663,32 +694,36 @@ export function nextWorkerState(worker, outcome, { now = Date.now(), hasPendingS
   const report = outcome.report ?? { kind: "none", text: "" };
   const events = report.kind === "none" ? [] : [{ kind: "finding", report: report.kind, text: report.text }];
   const finding = report.kind === "none" ? {} : { lastFindingAt: now };
+  if (hasPendingSteer) {
+    if (lifespanSpent(lifespan, now)) {
+      const error = "Incomplete: the Worker reached its lifespan with an accepted correction still unresolved.";
+      return { patch: { status: "failed", lifespan, ...finding, error }, events: [...events, { kind: "status", text: error }], schedule: "stop" };
+    }
+    return worker.status === "paused"
+      ? { patch: { lifespan, ...finding }, events, schedule: "hold" }
+      : { patch: { status: "waiting", waitingFor: "turn", lifespan, ...finding }, events, schedule: "continue" };
+  }
   if (report.kind === "done") {
     if (worker.purpose === "thinking" && !completedThinkingBrief(report)) {
       return { patch: { status: "failed", lifespan, ...finding, error: "Incomplete: the thinking Worker reported Done without a brief or document/file reference. Delivery was not authorized." }, events, schedule: "stop" };
     }
     return { patch: { status: "finished", lifespan, ...finding }, events, schedule: "stop" };
   }
-  if (report.kind === "decision" && worker.modelSnapshot && !hasPendingSteer) {
+  if (lifespanSpent(lifespan, now)) {
+    const error = worker.purpose === "thinking"
+      ? "Incomplete: the thinking Worker reached its lifespan without a completed brief. Delivery was not authorized."
+      : "Incomplete: the Worker reached its lifespan without reporting the goal complete. Review its partial work and remaining acceptance criteria.";
+    return { patch: { status: "failed", lifespan, ...finding, error }, events: [...events, { kind: "status", text: error }], schedule: "stop" };
+  }
+  if (report.kind === "decision" && worker.modelSnapshot) {
     // A bounded Worker hands blockers back through the same durable completion
     // path instead of waiting for an unavailable interactive question tool.
     return { patch: { status: "failed", lifespan, ...finding, error: `Needs a decision: ${report.text}` }, events, schedule: "stop" };
   }
-  if (lifespanSpent(lifespan, now)) {
-    if (worker.purpose === "thinking") {
-      const error = "Incomplete: the thinking Worker reached its lifespan without a completed brief. Delivery was not authorized.";
-      return { patch: { status: "failed", lifespan, ...finding, error }, events: [...events, { kind: "status", text: error }], schedule: "stop" };
-    }
-    return {
-      patch: { status: "finished", lifespan, ...finding },
-      events: [...events, { kind: "status", text: "Finished: reached the end of its lifespan." }],
-      schedule: "stop",
-    };
-  }
   if (worker.status === "paused") {
     return { patch: { lifespan, ...finding }, events, schedule: "hold" };
   }
-  if (report.kind === "decision" && !hasPendingSteer) {
+  if (report.kind === "decision") {
     return { patch: { status: "waiting", waitingFor: "decision", lifespan, ...finding }, events, schedule: "hold" };
   }
   return { patch: { status: "waiting", waitingFor: "turn", lifespan, ...finding }, events, schedule: "continue" };
@@ -732,7 +767,7 @@ export function workerProgressNote(worker, finding = null) {
   const goal = cleanText(worker.goal, WORKER_NOTE_TEXT).replace(/[\s.]+$/, "");
   const about = goal ? ` — ${goal}` : "";
   if (worker.status === "paused") return { work, text: `paused${about}` };
-  const latest = finding && finding.kind === "finding" ? cleanText(finding.text, WORKER_NOTE_TEXT) : "";
+  const latest = !worker.control && finding && finding.kind === "finding" ? cleanText(finding.text, WORKER_NOTE_TEXT) : "";
   if (latest) return { work, text: finding.report === "decision" ? `needs a decision: ${latest}` : `latest: ${latest}` };
   if (worker.status === "waiting" && worker.waitingFor === "decision") return { work, text: `waiting for a decision${about}` };
   return { work, text: `${worker.status === "starting" ? "started" : "working"}${about}` };
@@ -892,6 +927,7 @@ export function workerToolCatalog() {
           name: { type: "string", description: "Short and specific, e.g. \"Market scan\"." },
           goal: { type: "string", description: "What done looks like, what to watch or produce, and any limits." },
           purpose: { type: "string", enum: ["thinking", "delivery"], description: "Thinking brief or delivery work; defaults to delivery. Uses the person's corresponding Worker model setting." },
+          control: { type: "string", enum: ["browser", "computer"], description: "Request this discussion's browser or computer for this delivery Worker. It waits for the person's explicit approval; never an inherited grant." },
           lifespan: {
             type: "object",
             description: "How long it lives. Omit for the default number of turns.",
@@ -962,6 +998,7 @@ export function workerCard(worker, extra = {}) {
     waitingFor: worker.waitingFor,
     lifespan: worker.lifespan,
     lastFindingAt: worker.lastFindingAt,
+    ...(worker.control ? { control: worker.control } : {}),
     ...extra,
   };
 }
@@ -1000,6 +1037,12 @@ export function createWorkerToolHandlers({ coworkersDir, spawn, steer, cancel, p
     if (!isWorkerId(id)) throw new Error("Name the Worker by its id, as listed by workers_list.");
     return id;
   };
+  const managed = async (slug, args, context) => {
+    const worker = await getWorker(coworkersDir, slug, idOf(args));
+    assertWorkerSupervisor(context?.entry, worker);
+    context?.assertActive();
+    return worker;
+  };
   return {
     workers_list: async (slug) => {
       const workers = await listWorkers(coworkersDir, slug);
@@ -1020,6 +1063,7 @@ export function createWorkerToolHandlers({ coworkersDir, spawn, steer, cancel, p
         name: typeof args.name === "string" ? args.name : "",
         goal: typeof args.goal === "string" ? args.goal : "",
         purpose: workerPurpose(args.purpose),
+        control: args.control,
         // A lifespan the coworker did not choose is left to the app: the effort dial sets the default turns.
         lifespan: args.lifespan === undefined || args.lifespan === null ? undefined : lifespanFromToolArgs(args.lifespan, { now: now(), purpose: args.purpose }),
       });
@@ -1028,37 +1072,33 @@ export function createWorkerToolHandlers({ coworkersDir, spawn, steer, cancel, p
         structured: { worker: workerCard(worker, { action: "started" }) },
       };
     },
-    worker_steer: async (slug, args) => {
+    worker_steer: async (slug, args, context) => {
+      await managed(slug, args, context);
       const worker = await steer(slug, idOf(args), typeof args.text === "string" ? args.text : "");
       return {
         text: `Steered "${worker.name}"; it takes that as its next step${worker.status === "running" ? " once its current step settles" : ""}.`,
         structured: { worker: workerCard(worker, { action: "steered" }) },
       };
     },
-    worker_cancel: async (slug, args) => {
+    worker_cancel: async (slug, args, context) => {
       const id = idOf(args);
-      const before = await getWorker(coworkersDir, slug, id);
-      if (isWorkerFinished(before)) {
-        return {
-          text: `"${before.name}" had already ${workerStatusForPrompt(before, now()) === "done" ? "finished" : workerStatusForPrompt(before, now())}; nothing to stop.`,
-          structured: { worker: workerCard(before, { action: "unchanged" }) },
-        };
-      }
+      await managed(slug, args, context);
       const worker = await cancel(slug, id, typeof args.reason === "string" ? args.reason : "");
       return {
         text: `Stopped "${worker.name}". Its findings stay in the Workers view; it will not work again.`,
         structured: { worker: workerCard(worker, { action: "stopped" }) },
       };
     },
-    worker_pause: async (slug, args) => {
+    worker_pause: async (slug, args, context) => {
+      await managed(slug, args, context);
       const worker = await pause(slug, idOf(args));
       return {
-        text: `Paused "${worker.name}". Its current step can finish; no new step starts until it is resumed.`,
+        text: worker.control ? `Control revoked for "${worker.name}". ${worker.control.detail}` : `Paused "${worker.name}". Its current step can finish; no new step starts until it is resumed.`,
         structured: { worker: workerCard(worker, { action: "paused" }) },
       };
     },
-    worker_resume: async (slug, args) => {
-      const before = await getWorker(coworkersDir, slug, idOf(args));
+    worker_resume: async (slug, args, context) => {
+      const before = await managed(slug, args, context);
       if (isWorkerFinished(before)) throw new Error("This Worker has already stopped. Check workers_list before deciding what to do next.");
       const worker = await resume(slug, before.id);
       return {

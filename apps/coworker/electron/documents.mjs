@@ -38,6 +38,7 @@ export const DOCUMENT_STATUSES = new Set(["active", "aside", "archived"]);
 const UPDATED_BY = new Set(["coworker", "person"]);
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const RESERVED_IDS = new Set(["index"]);
+const writes = new Map();
 
 /** The one-line reason a body was refused, phrased for the coworker. */
 const SECRET_PATTERNS = [
@@ -85,7 +86,15 @@ export function documentIdFor(title) {
 function coworkerRoot(coworkersDir, slug) {
   const cleaned = String(slug ?? "").trim();
   if (!/^[a-z0-9][a-z0-9-]*$/.test(cleaned)) throw new Error(`Invalid coworker slug: ${slug}`);
-  return path.join(coworkersDir, cleaned);
+  return path.resolve(coworkersDir, cleaned);
+}
+
+// One desktop process owns mutations. Hold the queue through history and index
+// writes; callers inside it use the unlocked helpers, never another public writer.
+async function serial(root, run) {
+  const pending = (writes.get(root) ?? Promise.resolve()).catch(() => undefined).then(run);
+  writes.set(root, pending);
+  try { return await pending; } finally { if (writes.get(root) === pending) writes.delete(root); }
 }
 
 function documentPath(root, id) {
@@ -305,35 +314,42 @@ async function keepRevision(root, document) {
  */
 export async function createDocument(coworkersDir, slug, input, { now = Date.now(), by = "coworker" } = {}) {
   const root = coworkerRoot(coworkersDir, slug);
-  const title = cleanText(input?.title, 120);
-  if (!title) throw new Error("A document needs a title.");
-  const body = String(input?.body ?? "");
-  const secret = findSecretLike(`${title}\n${input?.summary ?? ""}\n${normalizeHighlights(input?.highlights).join("\n")}\n${body}`);
-  if (secret) throw new Error(secret);
-  const id = await uniqueId(root, title);
-  const document = {
-    id,
-    title,
-    summary: cleanText(input?.summary, 240),
-    highlights: normalizeHighlights(input?.highlights),
-    status: "active",
-    createdAt: now,
-    updatedAt: now,
-    updatedBy: UPDATED_BY.has(by) ? by : "coworker",
-    revision: 1,
-    body: withoutLeadingTitle(body, title),
-  };
-  await writeAtomic(documentPath(root, id), serializeDocument(document));
-  await writeDocumentsIndex(coworkersDir, slug);
-  return document;
+  return serial(root, async () => {
+    const title = cleanText(input?.title, 120);
+    if (!title) throw new Error("A document needs a title.");
+    const body = String(input?.body ?? "");
+    const secret = findSecretLike(`${title}\n${input?.summary ?? ""}\n${normalizeHighlights(input?.highlights).join("\n")}\n${body}`);
+    if (secret) throw new Error(secret);
+    const id = await uniqueId(root, title);
+    const document = {
+      id,
+      title,
+      summary: cleanText(input?.summary, 240),
+      highlights: normalizeHighlights(input?.highlights),
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+      updatedBy: UPDATED_BY.has(by) ? by : "coworker",
+      revision: 1,
+      body: withoutLeadingTitle(body, title),
+    };
+    await writeAtomic(documentPath(root, id), serializeDocument(document));
+    await writeIndex(coworkersDir, slug);
+    return document;
+  });
 }
 
 /**
- * Update a document: a whole new body, or one `##` section by heading. Summary
- * and highlights refresh when given. Every update is a new revision; the one
- * it replaces goes to history.
+ * Update a document: a whole new body, or one `##` section by heading. Coworker
+ * body edits require summary and highlights, or metadataUnchanged: true asserting
+ * the retained metadata still describes the result. Person edits retain omitted
+ * metadata without certifying its accuracy. Changed content gets a new revision.
  */
 export async function updateDocument(coworkersDir, slug, id, input, { now = Date.now(), by = "coworker" } = {}) {
+  return serial(coworkerRoot(coworkersDir, slug), () => updateDocumentFile(coworkersDir, slug, id, input, { now, by }));
+}
+
+async function updateDocumentFile(coworkersDir, slug, id, input, { now, by }) {
   const root = coworkerRoot(coworkersDir, slug);
   const current = await readDocumentFile(root, id);
   if (current.status === "archived") throw new Error(`"${current.title}" is archived. Only the person can bring it back.`);
@@ -360,12 +376,16 @@ export async function updateDocument(coworkersDir, slug, id, input, { now = Date
   };
   const secret = findSecretLike(`${next.title}\n${next.summary}\n${next.highlights.join("\n")}\n${next.body}`);
   if (secret) throw new Error(secret);
+  if (next.updatedBy === "coworker" && next.body !== current.body && input?.metadataUnchanged !== true
+    && (typeof input?.summary !== "string" || !Array.isArray(input?.highlights) || input.highlights.some((item) => typeof item !== "string"))) {
+    throw new Error("When changing a document body or section, send both refreshed summary and highlights, or metadataUnchanged: true to assert you reviewed the resulting document and the retained summary and highlights are still accurate.");
+  }
   const unchanged = next.body === current.body && next.summary === current.summary && next.title === current.title
     && next.highlights.join("\n") === current.highlights.join("\n");
   if (unchanged) return { ...current, section, sectionAction: "unchanged", changed: false };
   await keepRevision(root, current);
   await writeAtomic(documentPath(root, id), serializeDocument(next));
-  await writeDocumentsIndex(coworkersDir, slug);
+  await writeIndex(coworkersDir, slug);
   return { ...next, section, sectionAction, changed: true };
 }
 
@@ -390,16 +410,18 @@ export async function listRevisions(coworkersDir, slug, id) {
 
 /** Bring an earlier revision back as a new revision by the person; nothing in history is lost. */
 export async function restoreRevision(coworkersDir, slug, id, revision, { now = Date.now() } = {}) {
-  const wanted = Number(revision);
-  const earlier = (await listRevisions(coworkersDir, slug, id)).find((entry) => entry.revision === wanted);
-  if (!earlier) throw new Error(`Revision ${revision} of "${id}" is not in the history any more.`);
-  return updateDocument(
-    coworkersDir,
-    slug,
-    id,
-    { title: earlier.title, summary: earlier.summary, highlights: earlier.highlights, body: earlier.body },
-    { now, by: "person" },
-  );
+  return serial(coworkerRoot(coworkersDir, slug), async () => {
+    const wanted = Number(revision);
+    const earlier = (await listRevisions(coworkersDir, slug, id)).find((entry) => entry.revision === wanted);
+    if (!earlier) throw new Error(`Revision ${revision} of "${id}" is not in the history any more.`);
+    return updateDocumentFile(
+      coworkersDir,
+      slug,
+      id,
+      { title: earlier.title, summary: earlier.summary, highlights: earlier.highlights, body: earlier.body },
+      { now, by: "person" },
+    );
+  });
 }
 
 async function setStatus(root, id, status, now) {
@@ -418,41 +440,43 @@ async function setStatus(root, id, status, now) {
  */
 export async function setContext(coworkersDir, slug, input, { now = Date.now() } = {}) {
   const root = coworkerRoot(coworkersDir, slug);
-  const active = normalizeIdList(input?.active);
-  const aside = normalizeIdList(input?.aside);
-  const both = active.filter((id) => aside.includes(id));
-  if (both.length > 0) throw new Error(`A document cannot be both active and put aside: ${both.join(", ")}.`);
-  const known = new Map((await listDocuments(coworkersDir, slug)).map((document) => [document.id, document]));
-  const unknown = [];
-  const changed = [];
-  const skippedArchived = [];
-  for (const [ids, status] of [[active, "active"], [aside, "aside"]]) {
-    for (const id of ids) {
-      const document = known.get(id);
-      if (!document) {
-        unknown.push(id);
-        continue;
-      }
-      if (document.status === "archived") {
-        skippedArchived.push(id);
-        continue;
-      }
-      if (document.status !== status) {
-        const updated = await setStatus(root, id, status, now);
-        changed.push({ id, title: updated.title, status });
+  return serial(root, async () => {
+    const active = normalizeIdList(input?.active);
+    const aside = normalizeIdList(input?.aside);
+    const both = active.filter((id) => aside.includes(id));
+    if (both.length > 0) throw new Error(`A document cannot be both active and put aside: ${both.join(", ")}.`);
+    const known = new Map((await listDocuments(coworkersDir, slug)).map((document) => [document.id, document]));
+    const unknown = [];
+    const changed = [];
+    const skippedArchived = [];
+    for (const [ids, status] of [[active, "active"], [aside, "aside"]]) {
+      for (const id of ids) {
+        const document = known.get(id);
+        if (!document) {
+          unknown.push(id);
+          continue;
+        }
+        if (document.status === "archived") {
+          skippedArchived.push(id);
+          continue;
+        }
+        if (document.status !== status) {
+          const updated = await setStatus(root, id, status, now);
+          changed.push({ id, title: updated.title, status });
+        }
       }
     }
-  }
-  await writeDocumentsIndex(coworkersDir, slug);
-  const documents = await listDocuments(coworkersDir, slug);
-  const activeCount = documents.filter((document) => document.status === "active").length;
-  return {
-    changed,
-    unknown,
-    skippedArchived,
-    activeCount,
-    overTarget: activeCount > ACTIVE_SET_TARGET,
-  };
+    await writeIndex(coworkersDir, slug);
+    const documents = await listDocuments(coworkersDir, slug);
+    const activeCount = documents.filter((document) => document.status === "active").length;
+    return {
+      changed,
+      unknown,
+      skippedArchived,
+      activeCount,
+      overTarget: activeCount > ACTIVE_SET_TARGET,
+    };
+  });
 }
 
 function normalizeIdList(value) {
@@ -462,19 +486,18 @@ function normalizeIdList(value) {
 
 /** Person-only: put a document away for good (still on disk, listed behind the Archived link). */
 export async function archiveDocument(coworkersDir, slug, id, { now = Date.now() } = {}) {
-  const root = coworkerRoot(coworkersDir, slug);
-  const updated = await setStatus(root, id, "archived", now);
-  await writeDocumentsIndex(coworkersDir, slug);
-  return updated;
+  return setDocumentStatus(coworkersDir, slug, id, "archived", { now });
 }
 
 /** Person-only: make a document active or put it aside from the Documents view. */
 export async function setDocumentStatus(coworkersDir, slug, id, status, { now = Date.now() } = {}) {
   if (!DOCUMENT_STATUSES.has(status)) throw new Error(`Unknown document status: ${status}`);
   const root = coworkerRoot(coworkersDir, slug);
-  const updated = await setStatus(root, id, status, now);
-  await writeDocumentsIndex(coworkersDir, slug);
-  return updated;
+  return serial(root, async () => {
+    const updated = await setStatus(root, id, status, now);
+    await writeIndex(coworkersDir, slug);
+    return updated;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -514,6 +537,10 @@ export function documentsIndexTemplate() {
 
 /** Regenerate `documents/index.md` from the files on disk and the style log. */
 export async function writeDocumentsIndex(coworkersDir, slug) {
+  return serial(coworkerRoot(coworkersDir, slug), () => writeIndex(coworkersDir, slug));
+}
+
+async function writeIndex(coworkersDir, slug) {
   const root = coworkerRoot(coworkersDir, slug);
   const documents = await listDocuments(coworkersDir, slug);
   const reminder = styleReminder(await readStyleEvents(coworkersDir, slug));
@@ -523,8 +550,10 @@ export async function writeDocumentsIndex(coworkersDir, slug) {
 /** Create `documents/` and its index when a coworker home lacks them; existing files are left alone. */
 export async function ensureDocumentsHome(coworkersDir, slug) {
   const root = coworkerRoot(coworkersDir, slug);
-  await mkdir(path.join(root, DOCUMENTS_DIR), { recursive: true });
-  if (!(await pathExists(path.join(root, DOCUMENTS_INDEX_FILE)))) await writeDocumentsIndex(coworkersDir, slug);
+  return serial(root, async () => {
+    await mkdir(path.join(root, DOCUMENTS_DIR), { recursive: true });
+    if (!(await pathExists(path.join(root, DOCUMENTS_INDEX_FILE)))) await writeIndex(coworkersDir, slug);
+  });
 }
 
 /** Style events, oldest first: `{ at, kind: "long-reply" | "document", messageId?, chars? }`. */
@@ -555,21 +584,23 @@ export async function readStyleEvents(coworkersDir, slug) {
  * the reminder). The same message is never recorded twice; the log stays short.
  */
 export async function recordStyleEvent(coworkersDir, slug, event, { now = Date.now() } = {}) {
-  const kind = event?.kind === "document" ? "document" : "long-reply";
-  const messageId = String(event?.messageId ?? "").trim();
-  const events = await readStyleEvents(coworkersDir, slug);
-  if (messageId && events.some((entry) => entry.messageId === messageId)) return { recorded: false, events };
-  const entry = {
-    at: now,
-    kind,
-    ...(messageId ? { messageId } : {}),
-    ...(Number.isFinite(event?.chars) ? { chars: Math.round(event.chars) } : {}),
-  };
-  const next = [...events, entry].slice(-STYLE_LOG_LIMIT);
   const root = coworkerRoot(coworkersDir, slug);
-  await writeAtomic(path.join(root, STYLE_LOG_FILE), `${next.map((item) => JSON.stringify(item)).join("\n")}\n`);
-  await writeDocumentsIndex(coworkersDir, slug);
-  return { recorded: true, events: next };
+  return serial(root, async () => {
+    const kind = event?.kind === "document" ? "document" : "long-reply";
+    const messageId = String(event?.messageId ?? "").trim();
+    const events = await readStyleEvents(coworkersDir, slug);
+    if (messageId && events.some((entry) => entry.messageId === messageId)) return { recorded: false, events };
+    const entry = {
+      at: now,
+      kind,
+      ...(messageId ? { messageId } : {}),
+      ...(Number.isFinite(event?.chars) ? { chars: Math.round(event.chars) } : {}),
+    };
+    const next = [...events, entry].slice(-STYLE_LOG_LIMIT);
+    await writeAtomic(path.join(root, STYLE_LOG_FILE), `${next.map((item) => JSON.stringify(item)).join("\n")}\n`);
+    await writeIndex(coworkersDir, slug);
+    return { recorded: true, events: next };
+  });
 }
 
 /** One line for the index while the newest style event is a long reply; empty otherwise. */

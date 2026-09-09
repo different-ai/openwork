@@ -1,5 +1,5 @@
 import { useComposerDraft } from "@/ui/use-composer-draft";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type ReactNode } from "react";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { coworkerBridge, type CollaborationReceipt, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type GroupInteraction, type GroupTimelineEvent, type RuntimeInfo } from "@/lib/bridge";
 import { assignmentPrompt, assignmentTitle, timeLabelBetween, type DiscussionMessage } from "@/lib/conversation";
@@ -34,6 +34,7 @@ import { InteractionCard, InteractionCards, LETTERS, OptionRow, typingInField } 
 import { ActionMenu, Button, ErrorNote, PlusIcon } from "@/ui/kit";
 import { CollaborationReceipts, SendButton, SummaryLine } from "@/ui/threads";
 import { useAutoGrow } from "@/ui/use-auto-grow";
+import { JumpToLatest, useConversationScroll } from "@/ui/use-conversation-scroll";
 import { appendVoiceDraft, groupVoiceReply, type VoiceExpectation } from "@/lib/voice";
 import { useVoice } from "@/ui/use-voice";
 import { VoicePanel, VoiceToggle } from "@/ui/voice";
@@ -115,7 +116,7 @@ function useGroupHoldings(members: readonly CoworkerSummary[], runtime: RuntimeI
 }
 
 /** One admitted native execution. Closing this observer only disconnects its event stream. */
-function GroupExecutionRow({ activity, coworker, runtime, unavailable, waiting }: { activity: ExecutionActivity; coworker: CoworkerSummary; runtime: RuntimeInfo; unavailable: boolean; waiting: boolean }) {
+const GroupExecutionRow = memo(function GroupExecutionRow({ activity, coworker, runtime, unavailable, waiting }: { activity: ExecutionActivity; coworker: CoworkerSummary; runtime: RuntimeInfo; unavailable: boolean; waiting: boolean }) {
   const currentRef = useRef(activity);
   currentRef.current = activity;
   const [streamed, setStreamed] = useState<GroupReplyPart[]>([]);
@@ -171,7 +172,7 @@ function GroupExecutionRow({ activity, coworker, runtime, unavailable, waiting }
     messageId = part.messageId;
   }
   const progress = executionProgress({ ...activity, ...(waiting ? { state: "waiting-person" } : {}), ...(unavailable ? { available: false } : {}) }, Boolean(text.trim()));
-  return <div className="min-w-0" data-testid="group-working" data-phase={activity.state} data-execution-id={activity.executionId} data-message-id={activity.messageId} data-thread-id={activity.threadId} data-speaker={activity.slug}>
+  return <div className="min-w-0" data-scroll-anchor={`execution:${activity.executionId}`} data-testid="group-working" data-phase={activity.state} data-execution-id={activity.executionId} data-message-id={activity.messageId} data-thread-id={activity.threadId} data-speaker={activity.slug}>
     <p className="mb-1 px-2 text-[11px] font-medium text-mist [overflow-wrap:anywhere]" data-testid="group-speaker-name">{coworker.name}</p>
     {text ? <div className="flex min-w-0 items-end gap-2" data-message-role="assistant" data-live="true">
       <span className="shrink-0"><CoworkerAvatar identity={coworker.slug} animated={false} motion="quiet" gaze={false} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={24} /></span>
@@ -179,7 +180,7 @@ function GroupExecutionRow({ activity, coworker, runtime, unavailable, waiting }
     </div> : null}
     <LiveRow coworker={coworker} progress={progress} phase={progress.status === "streaming" ? "writing" : "thinking"} wordsArrived={Boolean(text)} />
   </div>;
-}
+});
 
 /**
  * A group chat: the person and several coworkers in one conversation. Each
@@ -257,7 +258,7 @@ function GroupChatView({
   const [mention, setMention] = useState<{ start: number; query: string; index: number } | null>(null);
   /** The composer turned towards an assignment: what someone should own, then who. */
   const [assignmentMode, setAssignmentMode] = useState(false);
-  const [assignment, setAssignment] = useState("");
+  const [assignment, setAssignment] = useComposerDraft(`group:${group.id}:assignment`);
   const [pendingAssignment, setPendingAssignment] = useState<{ outcome: string; suggested: string } | null>(null);
   const [assignmentBusy, setAssignmentBusy] = useState("");
   const assignmentInFlight = useRef(false);
@@ -270,12 +271,11 @@ function GroupChatView({
   coworkersRef.current = coworkers;
   const eventsRef = useRef(events);
   eventsRef.current = events;
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const followBottom = useRef(true);
+  const { scrollRef, contentRef, away, jumpToLatest } = useConversationScroll(`group:${group.id}`, active && !pendingAssignment, observed.groupId === group.id);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const changedRef = useRef(onGroupChanged);
   changedRef.current = onGroupChanged;
-  useAutoGrow(composerRef, message);
+  useAutoGrow(composerRef, assignmentMode ? assignment : message);
 
   const members = useMemo(
     () => group.participantSlugs.map((slug) => coworkers.find((coworker) => coworker.slug === slug)).filter((member): member is CoworkerSummary => Boolean(member)),
@@ -349,21 +349,6 @@ function GroupChatView({
     onActivityLine(group.id, presentation.line, presentation.activeSlugs);
   }, [events, executions, interactions, group.id, group.turns, observed.groupId, live, liveTurn, loaded, receiptsLoaded, activityError, nameFor, onActivityLine]);
 
-  useEffect(() => {
-    const scroller = scrollRef.current;
-    const content = scroller?.firstElementChild;
-    if (!scroller || !content || !active || pendingAssignment) return;
-    const follow = () => { if (followBottom.current) scroller.scrollTo({ top: scroller.scrollHeight }); };
-    follow();
-    const observer = new ResizeObserver(follow);
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, [active, pendingAssignment]);
-
-  useEffect(() => {
-    if (loaded && active && !assignmentChoiceRef.current) composerRef.current?.focus();
-  }, [loaded, group.id, active]);
-
   useLayoutEffect(() => {
     if (!active || !pendingAssignment) return;
     assignmentChoiceRef.current?.scrollIntoView({ block: "nearest", behavior: "instant" });
@@ -401,6 +386,7 @@ function GroupChatView({
   function resume(turn: CoworkerGroupTurn, only?: string): void {
     const existing = groupSends(group.id).find((item) => item.turnId === turn.id);
     if (existing && existing.state !== "failed" && existing.state !== "uncertain") return;
+    jumpToLatest();
     setVoiceBaseline({ clientMessageId: turn.clientMessageId, updatedAt: turn.updatedAt, eventIds: events.filter((event) => event.turnId === turn.id).map((event) => event.id) });
     const voiceIntent = voice.expectReply(turn.clientMessageId);
     errorRevision.current += 1;
@@ -474,7 +460,6 @@ function GroupChatView({
       return;
     }
     setMessage("");
-    followBottom.current = true;
     setMention(null);
     const revision = ++errorRevision.current;
     setError("");
@@ -490,6 +475,7 @@ function GroupChatView({
   }
 
   function sendVoicedMessage(text: string, clientMessageId: string): void {
+    jumpToLatest();
     setVoiceBaseline(null);
     startTurn(text, clientMessageId, undefined, voice.expectReply(clientMessageId));
   }
@@ -534,7 +520,7 @@ function GroupChatView({
       // Completion must not pull typing out of a document or another surface.
       if (activeRef.current && assignmentChoiceRef.current?.contains(document.activeElement)) composerRef.current?.focus({ preventScroll: true });
       setPendingAssignment(null);
-      setAssignment("");
+      setAssignment((current) => current.trim() === outcome ? "" : current);
       setAssignmentMode(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -559,7 +545,7 @@ function GroupChatView({
   useEffect(() => {
     if (!active || !pendingAssignment) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat || assignmentInFlight.current || typingInField(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.isComposing || event.repeat || assignmentInFlight.current || typingInField(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
       if (!(event.target instanceof Node) || !assignmentChoiceRef.current?.contains(event.target)) return;
       if (event.key === "Escape") {
         event.preventDefault();
@@ -601,14 +587,13 @@ function GroupChatView({
     setMention(null);
     const position = mention.start + option.handle.length + 2;
     requestAnimationFrame(() => {
-      field?.focus();
-      field?.setSelectionRange(position, position);
+      if (activeRef.current && document.activeElement === field) field?.setSelectionRange(position, position);
     });
   }
 
   const latestTurn = group.turns.at(-1) ?? null;
   const voiceTurn = !live && !activityError && latestTurn && (!voiceBaseline || latestTurn.clientMessageId !== voiceBaseline.clientMessageId || latestTurn.updatedAt > voiceBaseline.updatedAt) ? latestTurn : null;
-  const spokenReply = groupVoiceReply(voiceTurn, events, nameFor, voiceBaseline?.eventIds);
+  const spokenReply = useMemo(() => groupVoiceReply(voiceTurn, events, nameFor, voiceBaseline?.eventIds), [voiceTurn, events, nameFor, voiceBaseline?.eventIds]);
   const voice = useVoice({
     active: active && !assignmentMode && !sharedDocument,
     scope: `group:${group.id}`,
@@ -622,10 +607,10 @@ function GroupChatView({
   const unfinished = recoverable ? unfinishedSpeakers(recoverable) : [];
   const showContinue = recoverable && !(unfinished.length === 1 && unfinished[0]?.status === "failed");
   const waiting = receipts.some((receipt) => ["waiting", "waiting-person", "resumption-queued"].includes(receipt.state));
-  const presentation = describeGroupPresentation({ events, executions, interactions, active: live, turn: liveTurn, nameFor, unavailable: Boolean(activityError) || !loaded });
+  const presentation = useMemo(() => describeGroupPresentation({ events, executions, interactions, active: live, turn: liveTurn, nameFor, unavailable: Boolean(activityError) || !loaded }), [events, executions, interactions, live, liveTurn, nameFor, activityError, loaded]);
   const statusLine = activityError ? "Reconnecting to activity" : localSends.some((item) => item.state === "uncertain") ? "Checking message confirmation" : sending ? "Sending…" : interactions.length || executions.length || live ? presentation.line : waiting ? "Waiting for requested work" : !loaded || !receiptsLoaded || observed.groupId !== group.id ? "Checking activity" : localSends.some((item) => item.state === "accepted") ? "Message accepted" : "Ready";
   const activeSlugs = presentation.activeSlugs;
-  const rows = groupConversationRows(events, executions, localSends);
+  const rows = useMemo(() => groupConversationRows(events, executions, localSends), [events, executions, localSends]);
 
   return (
     <div className="glass-main flex h-full min-w-0 flex-1" data-testid="group-chat" data-group-id={group.id} data-live={live ? "true" : "false"}>
@@ -669,8 +654,9 @@ function GroupChatView({
           {statusLine}
         </span>
       </header>
-      <div ref={scrollRef} onScroll={(event) => { const node = event.currentTarget; followBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-        <div className="mx-auto max-w-3xl space-y-3">
+      <div className="relative flex min-h-0 flex-1 flex-col">
+      <div ref={scrollRef} style={{ overflowAnchor: "none" }} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+        <div ref={contentRef} className="mx-auto max-w-3xl space-y-3">
           {introduction}
           {observed.groupId !== group.id && !activityError ? <p role="status" className="text-xs text-mist">Loading conversation…</p> : null}
           {loaded && observed.groupId === group.id && rows.length === 0 && !introduction ? (
@@ -730,7 +716,7 @@ function GroupChatView({
             if (event.kind === "user") {
               const queued = queue.some((item) => item.clientMessageId === event.clientMessageId);
               return (
-                <div key={key} data-client-message-id={event.clientMessageId} data-delivery-state={delivery?.state ?? "recorded"}>
+                <div key={key} data-scroll-anchor={key} data-client-message-id={event.clientMessageId} data-delivery-state={delivery?.state ?? "recorded"}>
                   {label ? <p className="pb-1 pt-2 text-center text-[11px] font-medium text-mist/80" data-testid="group-time-label">{label}</p> : null}
                   <div className={`flex justify-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-continued={continued ? "true" : "false"}>
                     <div className={`bubble bubble-user max-w-[72%] whitespace-pre-wrap ${tail ? "bubble-tail-right" : ""}`} title={timeLabel(event.at)}>
@@ -749,7 +735,7 @@ function GroupChatView({
             // In a group, each reply is signed: a small avatar at the tail and the name once per run.
             const speaker = coworkers.find((coworker) => coworker.slug === event.slug);
             return (
-              <div key={key} data-execution-id={event.executionId}>
+              <div key={key} data-scroll-anchor={key} data-execution-id={event.executionId}>
                 {label ? <p className="pb-1 pt-2 text-center text-[11px] font-medium text-mist/80" data-testid="group-time-label">{label}</p> : null}
                 <div className={`flex items-end gap-2 ${continued ? "-mt-1.5" : ""}`} data-message-role="assistant" data-speaker={event.slug} data-continued={continued ? "true" : "false"}>
                   <span className="w-6 shrink-0">
@@ -814,6 +800,8 @@ function GroupChatView({
           {activityError ? <ErrorNote>{activityError}</ErrorNote> : null}
         </div>
       </div>
+      {active && away && !pendingAssignment ? <JumpToLatest onClick={jumpToLatest} /> : null}
+      </div>
       <div className="px-5 pb-4 pt-2" data-testid="coworker-composer">
         <div className="mx-auto max-w-3xl">
           {assignmentMode ? (
@@ -868,8 +856,10 @@ function GroupChatView({
                 }}
                 onClick={(event) => !assignmentMode && updateMention(event.currentTarget.value, event.currentTarget.selectionStart ?? 0)}
                 onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+                  if (event.key === "Enter" && event.shiftKey) return;
                   if (assignmentMode) {
-                    if (event.key === "Enter" && !event.repeat && !event.shiftKey && !event.nativeEvent.isComposing) {
+                    if (event.key === "Enter" && !event.repeat) {
                       event.preventDefault();
                       proposeAssignment();
                     }
@@ -882,7 +872,7 @@ function GroupChatView({
                       setMention({ ...mention, index: (mention.index + step + mentionOptions.length) % mentionOptions.length });
                       return;
                     }
-                    if (event.key === "Enter" || event.key === "Tab") {
+                    if (!event.shiftKey && (event.key === "Enter" || event.key === "Tab")) {
                       event.preventDefault();
                       const option = mentionOptions[mention.index] ?? mentionOptions[0];
                       if (option) insertMention(option);
@@ -894,7 +884,7 @@ function GroupChatView({
                       return;
                     }
                   }
-                  if (event.key === "Enter" && !event.repeat && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  if (event.key === "Enter" && !event.repeat) {
                     event.preventDefault();
                     send();
                   }
