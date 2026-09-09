@@ -169,6 +169,7 @@ export async function teamAccess(seed: Seed) {
  * requests caused by each evaluation. */
 export async function managedPolicyRecovery(seed: Seed) {
   const den = await seed.den({
+    mocks: { witness: mcpMock({ allowUnauthenticatedMcp: true }) },
     org: {
       name: `Managed policy recovery ${Date.now()}`,
       admin: { name: "Policy Recovery Admin" },
@@ -179,13 +180,56 @@ export async function managedPolicyRecovery(seed: Seed) {
   if (!member) throw new Error("Missing policy recovery member session");
   const org = await seed.api(member, "/v1/org");
   const organization = isRecord(org.body) && isRecord(org.body.organization) ? org.body.organization : null;
-  if (!org.response.ok || typeof organization?.id !== "string") throw new Error("Missing policy recovery organization ID");
+  const currentMember = isRecord(org.body) && isRecord(org.body.currentMember) ? org.body.currentMember : null;
+  if (!org.response.ok || typeof organization?.id !== "string" || typeof currentMember?.id !== "string") {
+    throw new Error("Missing policy recovery organization or member ID");
+  }
+
+  const modelId = "assigned-policy-retry-proof";
+  const created = await seed.api(den.admin, "/v1/llm-providers", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Assigned policy recovery model",
+      source: "custom",
+      customConfig: {
+        id: "assigned-policy-recovery-provider",
+        name: "Assigned policy recovery model",
+        npm: "@ai-sdk/openai-compatible",
+        options: { baseURL: `${den.mocks.witness.url}/v1` },
+        env: ["ASSIGNED_POLICY_RECOVERY_API_KEY"],
+        models: [{ id: modelId, name: "Assigned policy recovery model" }],
+      },
+      apiKey: "sk-openwork-assigned-policy-recovery-eval-only",
+      allMembers: false,
+      memberIds: [currentMember.id],
+      teamIds: [],
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const llmProvider = isRecord(created.body) && isRecord(created.body.llmProvider) ? created.body.llmProvider : null;
+  if (created.response.status !== 201 || typeof llmProvider?.id !== "string" || !/^lpr_/.test(llmProvider.id)) {
+    throw new Error(`Assigned organization model setup failed: HTTP ${created.response.status}`);
+  }
+  const providerId = llmProvider.id;
+  const manageable = await seed.api(den.admin, "/v1/llm-providers?scope=manageable", { signal: AbortSignal.timeout(30_000) });
+  const providers = isRecord(manageable.body) && Array.isArray(manageable.body.llmProviders)
+    ? manageable.body.llmProviders.filter(isRecord)
+    : [];
+  const provider = providers.find((entry) => entry.id === providerId);
+  const access = provider && isRecord(provider.access) ? provider.access : null;
+  const memberAccess = access && Array.isArray(access.members)
+    ? access.members.filter(isRecord).find((entry) => entry.orgMembershipId === currentMember.id)
+    : null;
+  if (!manageable.response.ok || typeof memberAccess?.id !== "string") {
+    throw new Error(`Assigned organization model access lookup failed: HTTP ${manageable.response.status}`);
+  }
+  const accessId = memberAccess.id;
 
   const stored = await readDefaultDesktopPolicy(seed, den.admin);
   if (!isRecord(stored.policy) || typeof stored.id !== "string" || typeof stored.policyName !== "string") {
     throw new Error("Missing default policy for recovery proof");
   }
-  const allowedPolicy = { ...stored.policy, allowZenModel: true };
+  const allowedPolicy = { ...stored.policy, allowCustomProviders: false, allowZenModel: true };
   const updateBuiltInModel = async (allowed: boolean) => seed.api(den.admin, `/v1/desktop-policies/${stored.id}`, {
     method: "PATCH",
     body: JSON.stringify({ policyName: stored.policyName, policy: { ...allowedPolicy, allowZenModel: allowed } }),
@@ -211,6 +255,7 @@ export async function managedPolicyRecovery(seed: Seed) {
     XDG_DATA_HOME: join(home, ".local", "share"),
     XDG_CACHE_HOME: join(home, ".cache"),
     XDG_STATE_HOME: join(home, ".local", "state"),
+    OPENWORK_CLOUD_PROVIDER_SYNC_INTERVAL_MS: "3600000",
     OPENWORK_MANAGE_OPENCODE: "0",
   }, token, workspace, () => {});
   try {
@@ -237,10 +282,40 @@ export async function managedPolicyRecovery(seed: Seed) {
       body: { baseUrl: proxy.ref.webUrl, token: member.token, orgId: organization.id },
     });
     if (session.status !== 204) throw new Error(`Setting the policy recovery Den session failed: HTTP ${session.status} ${JSON.stringify(session.body)}`);
+    const readProviderState = async () => {
+      const runtime = await request("/runtime-config/providers", { host: true });
+      const status = await request("/cloud-provider-sync/status");
+      return { runtime, status };
+    };
+    const syncProviders = async () => {
+      const run = await request("/cloud-provider-sync/run", { method: "POST", host: true, body: { reason: "managed-policy-recovery" } });
+      const { runtime, status } = await readProviderState();
+      return { run, runtime, status };
+    };
+    const memberCatalog = async () => {
+      const result = await seed.api(member, "/v1/llm-providers", { signal: AbortSignal.timeout(30_000) });
+      const items = isRecord(result.body) && Array.isArray(result.body.llmProviders)
+        ? result.body.llmProviders.filter(isRecord)
+        : [];
+      return { status: result.response.status, providers: items };
+    };
+    const revokeProviderAccess = async () => {
+      const result = await seed.api(den.admin, `/v1/llm-providers/${encodeURIComponent(providerId)}/access/${encodeURIComponent(accessId)}`, {
+        method: "DELETE",
+        signal: AbortSignal.timeout(30_000),
+      });
+      return result.response.status;
+    };
     let disposed = false;
     return {
       den,
       proxy,
+      providerId,
+      modelId,
+      memberCatalog,
+      readProviderState,
+      revokeProviderAccess,
+      syncProviders,
       updateBuiltInModel,
       evaluate: (body: Record<string, unknown>) => request("/managed-policy/evaluate", { method: "POST", body }),
       async [Symbol.asyncDispose]() {

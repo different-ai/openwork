@@ -334,19 +334,84 @@ test(recoveryJourney, { timeout: 300_000 }, async ({ world: selectedWorld, step,
   const world = selectedWorld.recovery;
   if (!world) throw new Error("Expected the managed-policy recovery world");
   const policyPath = "/v1/me/desktop-config";
+  const catalogPath = "/v1/llm-providers";
   const builtInModel = { action: "model", input: { providerID: "opencode", id: "policy-retry-proof" } };
+  const assignedModel = { action: "model", input: { providerID: world.providerId, id: world.modelId } };
   const code = (body: unknown) => isRecord(body) && typeof body.code === "string" ? body.code : null;
-  const faultedEvaluation = async (statusCode: number, times: number, body?: unknown) => {
+  const runtimeProvider = (body: unknown) => {
+    const providers = isRecord(body) && isRecord(body.provider) ? body.provider : null;
+    const provider = providers?.[world.providerId];
+    return isRecord(provider) ? provider : null;
+  };
+  const statusProvider = (body: unknown) => isRecord(body) && Array.isArray(body.providers)
+    ? body.providers.filter(isRecord).find((provider) => provider.cloudProviderId === world.providerId) ?? null
+    : null;
+  const waitForRequests = async (start: number, path: string, expected: number) => {
+    const deadline = Date.now() + 5_000;
+    while (true) {
+      const requests = (await world.proxy.requestLog()).slice(start).filter((request) => request.path === path);
+      if (requests.length >= expected || Date.now() >= deadline) return requests;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
+  const faultedEvaluation = async (
+    path: string,
+    evaluation: Record<string, unknown>,
+    statusCode: number,
+    times: number,
+    body?: unknown,
+  ) => {
     await world.proxy.faults.clear();
     const start = (await world.proxy.requestLog()).length;
-    await world.proxy.faults.status(policyPath, statusCode, { times, body });
-    const result = await world.evaluate(builtInModel);
-    const requests = (await world.proxy.requestLog()).slice(start).filter((request) => request.path === policyPath);
+    await world.proxy.faults.status(path, statusCode, { times, body });
+    const result = await world.evaluate(evaluation);
+    const requests = await waitForRequests(start, path, statusCode === 503 ? 2 : 1);
     return { result, requests };
   };
+  const latencyEvaluation = async (path: string, evaluation: Record<string, unknown>, times: number) => {
+    await world.proxy.faults.clear();
+    await world.proxy.faults.latency(path, 3_000, { times });
+    const startedAt = performance.now();
+    const result = await world.evaluate(evaluation);
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    // Aborted requests are not completed-response log entries. Give every
+    // three-second latency handler a bounded drain window, then prove that a
+    // fault-free evaluation is healthy before starting the next case.
+    await new Promise((resolve) => setTimeout(resolve, 3_250));
+    await world.proxy.faults.clear();
+    const healthy = await world.evaluate(evaluation);
+    return { result, healthy, elapsedMs };
+  };
 
-  await step("one transient response retries once and applies the live allow", async () => {
-    const recovered = await faultedEvaluation(503, 1);
+  await step("the assigned model is materialized and allowed while custom providers are disabled", async () => {
+    const synced = await world.syncProviders();
+    const provider = runtimeProvider(synced.runtime.body);
+    const models = provider && isRecord(provider.models) ? provider.models : null;
+    const status = statusProvider(synced.status.body);
+    const statusModels = status && Array.isArray(status.modelIds) ? status.modelIds : [];
+    const catalog = await world.memberCatalog();
+    const catalogIds = catalog.providers.flatMap((item) => typeof item.id === "string" ? [item.id] : []);
+    const allowed = await world.evaluate(assignedModel);
+    expect(world.providerId).toMatch(/^lpr_/);
+    expect(synced.run.status).toBe(200);
+    expect(synced.runtime.status).toBe(200);
+    expect(synced.status.status).toBe(200);
+    expect(models).not.toBeNull();
+    expect(models && Object.hasOwn(models, world.modelId)).toBe(true);
+    expect(statusModels).toContain(world.modelId);
+    expect(catalog.status).toBe(200);
+    expect(catalogIds).toContain(world.providerId);
+    expect(allowed.status).toBe(200);
+    evidence.recordAssertionEvidence(
+      "A directly assigned lpr_ model is materialized and passes live catalog authorization when custom providers are disabled",
+      JSON.stringify({ providerId: world.providerId, modelId: world.modelId, syncHttp: synced.run.status, runtimeHttp: synced.runtime.status, syncStatusHttp: synced.status.status, statusModels, catalogIds, evaluation: allowed }),
+      /^lpr_/.test(world.providerId) && Boolean(models && Object.hasOwn(models, world.modelId))
+        && statusModels.includes(world.modelId) && catalogIds.includes(world.providerId) && allowed.status === 200,
+    );
+  });
+
+  await step("one transient policy response retries once and applies the live allow", async () => {
+    const recovered = await faultedEvaluation(policyPath, builtInModel, 503, 1);
     expect(recovered.result.status).toBe(200);
     expect(recovered.requests).toMatchObject([
       { status: 503, faulted: true },
@@ -354,15 +419,15 @@ test(recoveryJourney, { timeout: 300_000 }, async ({ world: selectedWorld, step,
     ]);
     expect(recovered.requests).toHaveLength(2);
     evidence.recordAssertionEvidence(
-      "A transient Den failure retries exactly once and the real OpenWork server applies the live allow",
+      "A transient Den policy failure retries exactly once and the real OpenWork server applies the live allow",
       JSON.stringify(recovered),
       recovered.result.status === 200 && recovered.requests.length === 2
         && recovered.requests[0]?.status === 503 && recovered.requests[1]?.status === 200,
     );
   });
 
-  await step("persistent and non-retryable verification failures stay closed", async () => {
-    const outage = await faultedEvaluation(503, 2);
+  await step("persistent and non-retryable policy verification failures stay closed", async () => {
+    const outage = await faultedEvaluation(policyPath, builtInModel, 503, 2);
     expect(outage.result.status).toBe(403);
     expect(code(outage.result.body)).toBe("policy_unavailable");
     expect(outage.requests).toHaveLength(2);
@@ -375,7 +440,7 @@ test(recoveryJourney, { timeout: 300_000 }, async ({ world: selectedWorld, step,
       { name: "rate limited", status: 429 },
       { name: "invalid schema", status: 200, body: { allowZenModel: "invalid" } },
     ]) {
-      const observed = await faultedEvaluation(fault.status, 2, fault.body);
+      const observed = await faultedEvaluation(policyPath, builtInModel, fault.status, 2, fault.body);
       expect(observed.result.status, fault.name).toBe(403);
       expect(code(observed.result.body), fault.name).toBe("policy_unavailable");
       expect(observed.requests, fault.name).toHaveLength(1);
@@ -389,10 +454,118 @@ test(recoveryJourney, { timeout: 300_000 }, async ({ world: selectedWorld, step,
     );
   });
 
+  await step("assigned-model catalog verification has the same bounded retry and fail-closed behavior", async () => {
+    const recovered = await faultedEvaluation(catalogPath, assignedModel, 503, 1);
+    expect(recovered.result.status).toBe(200);
+    expect(recovered.requests).toMatchObject([
+      { status: 503, faulted: true },
+      { status: 200, faulted: false },
+    ]);
+    expect(recovered.requests).toHaveLength(2);
+
+    const outage = await faultedEvaluation(catalogPath, assignedModel, 503, 2);
+    expect(outage.result.status).toBe(403);
+    expect(code(outage.result.body)).toBe("policy_unavailable");
+    expect(outage.requests).toHaveLength(2);
+    expect(outage.requests.map((request) => request.status)).toEqual([503, 503]);
+
+    const nonRetryable = [];
+    for (const fault of [
+      { name: "unauthenticated", status: 401 },
+      { name: "forbidden", status: 403 },
+      { name: "rate limited", status: 429 },
+      { name: "invalid schema", status: 200, body: { llmProviders: "invalid" } },
+    ]) {
+      const observed = await faultedEvaluation(catalogPath, assignedModel, fault.status, 2, fault.body);
+      expect(observed.result.status, fault.name).toBe(403);
+      expect(code(observed.result.body), fault.name).toBe("policy_unavailable");
+      expect(observed.requests, fault.name).toHaveLength(1);
+      nonRetryable.push({ fault: fault.name, ...observed });
+    }
+    evidence.recordAssertionEvidence(
+      "Assigned-model catalog verification recovers from one 503, then fails closed after exactly two persistent attempts or one non-retryable response",
+      JSON.stringify({ recovered, outage, nonRetryable }),
+      recovered.result.status === 200 && recovered.requests.map((request) => request.status).join(",") === "503,200"
+        && outage.result.status === 403 && code(outage.result.body) === "policy_unavailable" && outage.requests.length === 2
+        && nonRetryable.every((item) => item.result.status === 403 && code(item.result.body) === "policy_unavailable" && item.requests.length === 1),
+    );
+  });
+
+  await step("single policy and assigned-model catalog timeouts recover while repeated timeouts exhaust within the shared deadline", async () => {
+    const policyRecovered = await latencyEvaluation(policyPath, builtInModel, 1);
+    const policyExhausted = await latencyEvaluation(policyPath, builtInModel, 2);
+    const catalogRecovered = await latencyEvaluation(catalogPath, assignedModel, 1);
+    const catalogExhausted = await latencyEvaluation(catalogPath, assignedModel, 2);
+    for (const { name, observed } of [
+      { name: "policy recovery", observed: policyRecovered },
+      { name: "catalog recovery", observed: catalogRecovered },
+    ]) {
+      expect(observed.result.status, name).toBe(200);
+      expect(observed.healthy.status, `${name} healthy follow-up`).toBe(200);
+      expect(observed.elapsedMs, name).toBeGreaterThan(2_000);
+      expect(observed.elapsedMs, name).toBeLessThan(8_000);
+    }
+    for (const { name, observed } of [
+      { name: "policy exhaustion", observed: policyExhausted },
+      { name: "catalog exhaustion", observed: catalogExhausted },
+    ]) {
+      expect(observed.result.status, name).toBe(403);
+      expect(code(observed.result.body), name).toBe("policy_unavailable");
+      expect(observed.healthy.status, `${name} healthy follow-up`).toBe(200);
+      expect(observed.elapsedMs, name).toBeGreaterThan(4_000);
+      expect(observed.elapsedMs, name).toBeLessThan(8_000);
+    }
+    evidence.recordAssertionEvidence(
+      "One policy or assigned-model catalog transport timeout recovers after two seconds, repeated timeouts fail closed after four seconds, and every response arrives before eight seconds with a healthy fault-free follow-up",
+      JSON.stringify({ policyRecovered, policyExhausted, catalogRecovered, catalogExhausted }),
+      policyRecovered.result.status === 200 && catalogRecovered.result.status === 200
+        && code(policyExhausted.result.body) === "policy_unavailable" && code(catalogExhausted.result.body) === "policy_unavailable"
+        && policyRecovered.elapsedMs > 2_000 && catalogRecovered.elapsedMs > 2_000
+        && policyExhausted.elapsedMs > 4_000 && catalogExhausted.elapsedMs > 4_000
+        && [policyRecovered, policyExhausted, catalogRecovered, catalogExhausted]
+          .every((item) => item.elapsedMs < 8_000 && item.healthy.status === 200),
+    );
+  });
+
+  await step("revoked catalog access overrides a stale materialized model until the next sync removes it", async () => {
+    await world.proxy.faults.clear();
+    expect(await world.revokeProviderAccess()).toBe(204);
+    const catalog = await world.memberCatalog();
+    const catalogIds = catalog.providers.flatMap((item) => typeof item.id === "string" ? [item.id] : []);
+    expect(catalog.status).toBe(200);
+    expect(catalogIds).not.toContain(world.providerId);
+
+    const stale = await world.readProviderState();
+    const staleProvider = runtimeProvider(stale.runtime.body);
+    const staleModels = staleProvider && isRecord(staleProvider.models) ? staleProvider.models : null;
+    expect(staleModels && Object.hasOwn(staleModels, world.modelId)).toBe(true);
+    expect(statusProvider(stale.status.body)).not.toBeNull();
+
+    const denied = await faultedEvaluation(catalogPath, assignedModel, 503, 1);
+    expect(denied.result.status).toBe(403);
+    expect(code(denied.result.body)).toBe("organization_model_denied");
+    expect(code(denied.result.body)).not.toBe("organization_policy_denied");
+    expect(denied.requests).toHaveLength(2);
+    expect(denied.requests.map((request) => request.status)).toEqual([503, 200]);
+
+    await world.proxy.faults.clear();
+    const synced = await world.syncProviders();
+    expect(synced.run.status).toBe(200);
+    expect(runtimeProvider(synced.runtime.body)).toBeNull();
+    expect(statusProvider(synced.status.body)).toBeNull();
+    evidence.recordAssertionEvidence(
+      "A revoked direct assignment is denied as organization_model_denied even while runtime config is stale, then a fresh sync removes it",
+      JSON.stringify({ providerId: world.providerId, modelId: world.modelId, memberCatalogIds: catalogIds, staleRuntimeModel: Boolean(staleModels && Object.hasOwn(staleModels, world.modelId)), denial: denied, removedFromRuntime: runtimeProvider(synced.runtime.body) === null, removedFromSyncStatus: statusProvider(synced.status.body) === null }),
+      !catalogIds.includes(world.providerId) && Boolean(staleModels && Object.hasOwn(staleModels, world.modelId))
+        && denied.result.status === 403 && code(denied.result.body) === "organization_model_denied"
+        && denied.requests.length === 2 && runtimeProvider(synced.runtime.body) === null && statusProvider(synced.status.body) === null,
+    );
+  });
+
   await step("a retry reads and applies a fresh denial instead of the prior allow", async () => {
     const updated = await world.updateBuiltInModel(false);
     expect(updated.response.ok).toBe(true);
-    const denied = await faultedEvaluation(503, 1);
+    const denied = await faultedEvaluation(policyPath, builtInModel, 503, 1);
     expect(denied.result.status).toBe(403);
     expect(code(denied.result.body)).toBe("organization_policy_denied");
     expect(denied.requests).toHaveLength(2);
