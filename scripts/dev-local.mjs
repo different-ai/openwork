@@ -172,6 +172,17 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 async function main() {
+  let databaseEndpoint
+  try {
+    databaseEndpoint = parseUrlEndpoint(databaseUrl, "3306")
+    if (new URL(databaseUrl).protocol !== "mysql:") throw new Error()
+  } catch {
+    throw new Error("DATABASE_URL must be a valid local MySQL URL (value withheld).")
+  }
+  if (!["localhost", "127.0.0.1", "[::1]", "::1"].includes(databaseEndpoint.host)) {
+    throw new Error("dev:web-local only migrates loopback MySQL databases. Remote databases require a separately reviewed migration procedure.")
+  }
+  if (databaseEndpoint.host === "[::1]") databaseEndpoint.host = "::1"
   for (const [name, port] of [["den-web", webPort], ["den-api", apiPort], ["gateway", gatewayPort]]) {
     const available = await canListenOnPort(Number(port))
     if (!available) {
@@ -179,7 +190,7 @@ async function main() {
     }
   }
 
-  const { host, port } = parseUrlEndpoint(databaseUrl, "3306")
+  const { host, port } = databaseEndpoint
   const mysqlAvailable = await canReachTcp(host, port)
 
   if (!mysqlAvailable) {
@@ -208,8 +219,12 @@ async function main() {
     console.log(`[den] Using existing Redis at ${redis.host}:${redis.port}`)
   }
 
-  console.log("[den] Syncing Den schema...")
-  await run("bash", ["-c", "pnpm --filter @openwork-ee/den-db build && pnpm --filter @openwork-ee/den-db exec node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts --force"], {
+  console.log("[den] Building Den database package...")
+  await run("pnpm", ["--filter", "@openwork-ee/den-db", "build"], {
+    env: { ...process.env, DATABASE_URL: databaseUrl },
+  })
+  console.log("[den] Applying ordered local migrations before starting services...")
+  await run("pnpm", ["--filter", "@openwork-ee/den-db", "db:migrate:local"], {
     env: {
       ...process.env,
       DATABASE_URL: databaseUrl,
