@@ -41,13 +41,14 @@ function fakeUpdaterHarness({ version, platform, manualNativeStaging }) {
   const feeds = [];
   const downloadFeeds = [];
   let nativeFeed = "";
-  const nativeUpdater = new EventEmitter();
-  nativeUpdater.getFeedURL = () => nativeFeed;
-  nativeUpdater.checkForUpdates = () => {
-    calls.push("nativeCheck");
-    nativeUpdater.emit("checking-for-update");
-    if (!manualNativeStaging) finishNativeStage();
-  };
+  const nativeUpdater = Object.assign(new EventEmitter(), {
+    getFeedURL: () => nativeFeed,
+    checkForUpdates: () => {
+      calls.push("nativeCheck");
+      nativeUpdater.emit("checking-for-update");
+      if (!manualNativeStaging) finishNativeStage();
+    },
+  });
   function finishNativeStage(updateUrl = `${nativeFeed}/update.zip`) {
     nativeUpdater.emit("update-downloaded", {}, "", "", new Date(), updateUrl);
   }
@@ -79,6 +80,9 @@ function fakeUpdaterHarness({ version, platform, manualNativeStaging }) {
   return { updater, listeners, calls, feeds, downloadFeeds, nativeUpdater, finishNativeStage };
 }
 
+/**
+ * @param {{ version: string, platform?: string, manualNativeStaging?: boolean, nativeStagingTimeoutMs?: number }} options
+ */
 async function registerFakeUpdaterIpc({ version, platform = "linux", manualNativeStaging = false, nativeStagingTimeoutMs }) {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "openwork-updater-test-"));
   const handlers = new Map();
