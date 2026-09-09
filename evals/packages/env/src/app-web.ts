@@ -6,7 +6,15 @@ import { fileURLToPath } from "node:url";
 import { waitUntilInteractive } from "@openwork/behaviors";
 import { navigate } from "@openwork/cdp";
 import type { AttachedSurface } from "@openwork/cdp";
-import { chrome, defaultDaytonaExec, execInSandbox, startMockOnSandbox } from "@openwork/hosts";
+import {
+  chrome,
+  defaultDaytonaExec,
+  execInSandbox,
+  prepareSandboxRepo,
+  readSandboxRepoSourceReceipt,
+  startMockOnSandbox,
+} from "@openwork/hosts";
+import type { SandboxRepoSourceReceipt } from "@openwork/hosts";
 import { launchHeadlessWeb, resolveHeadlessWorldRuntimePaths } from "@openwork/world";
 import { resolveEvalEngine } from "./eval-engine.ts";
 import type { MockBoot, MockHandle } from "./mock.ts";
@@ -30,6 +38,8 @@ export interface AppWeb extends AttachedSurface {
   openworkUrl: string;
   workspaceRoot: string;
   mocks: Record<string, MockHandle>;
+  actualSourceSha: string | null;
+  source: SandboxRepoSourceReceipt | null;
 }
 
 interface AppWebRuntime {
@@ -37,6 +47,7 @@ interface AppWebRuntime {
   openworkUrl: string;
   runtimeDirectory: string;
   fixtureRoot: string;
+  source: SandboxRepoSourceReceipt | null;
   stop(): Promise<void>;
 }
 
@@ -99,7 +110,7 @@ function safeWorldSegment(value: string): string {
 
 function attachAppWebMetadata(
   surface: AttachedSurface,
-  metadata: Pick<AppWeb, "webUrl" | "openworkUrl" | "workspaceRoot" | "mocks">,
+  metadata: Pick<AppWeb, "webUrl" | "openworkUrl" | "workspaceRoot" | "mocks" | "actualSourceSha" | "source">,
   stop: () => Promise<void>,
 ): asserts surface is AppWeb {
   Object.assign(surface, metadata);
@@ -187,6 +198,7 @@ async function startLocalRuntime(worldName: string, workspaceRoot: string): Prom
       openworkUrl: runtime.manifest.openworkUrl,
       runtimeDirectory,
       fixtureRoot,
+      source: null,
       stop: () => runtime.stop(),
     };
   } catch (error) {
@@ -284,7 +296,12 @@ await stopHeadlessRuntime(manifest);
 await Promise.all(input.remove.map((path) => rm(path, { recursive: true, force: true })));
 `;
 
-async function startRemoteRuntime(sandbox: string, worldName: string, workspaceRoot: string): Promise<AppWebRuntime> {
+async function startRemoteRuntime(
+  sandbox: string,
+  worldName: string,
+  workspaceRoot: string,
+  source: SandboxRepoSourceReceipt,
+): Promise<AppWebRuntime> {
   const fixtureRoot = `/tmp/openwork-eval-app-web-${worldName}`;
   const runtimeDirectory = posix.join(REMOTE_REPO_ROOT, "tmp", "worlds", "runtime", worldName);
   const launchModulePath = `/tmp/${worldName}-launch.mjs`;
@@ -310,6 +327,7 @@ async function startRemoteRuntime(sandbox: string, worldName: string, workspaceR
     openworkUrl: receipt.openworkUrl,
     runtimeDirectory,
     fixtureRoot,
+    source,
     stop: async () => {
       await runRemoteModule(sandbox, stopModulePath, REMOTE_STOP_SOURCE, {
         runtimeManifestPath: receipt.runtimeManifestPath,
@@ -399,8 +417,21 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
   let runtime: AppWebRuntime | null = null;
   let browser: AttachedSurface | null = null;
   let mocks: Record<string, MockHandle> = {};
+  let source: SandboxRepoSourceReceipt | null = null;
   try {
     if (remote) {
+      const repoSource = options.place.denBase();
+      if (repoSource.kind !== "daytona") throw new Error("Daytona app-web placement did not expose a source ref.");
+      const preparedSandbox = process.env.OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX?.trim();
+      if (preparedSandbox) {
+        // A supplied/borrowed room bypasses DaytonaPlacementHost provisioning,
+        // so enforce its checkout before Chrome or either app process starts.
+        source = await prepareSandboxRepo({
+          sandbox: preparedSandbox,
+          ref: repoSource.ref,
+          log: (line) => console.error(`[openwork/testkit] ${line}`),
+        });
+      }
       browser = await chrome({
         name: worldName,
         host: options.place.host(),
@@ -411,8 +442,22 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
       if (browser.handle.hostKind !== "daytona" || !sandbox) {
         throw new Error("Daytona app-web Chrome did not expose its owning sandbox.");
       }
+      if (preparedSandbox && sandbox !== preparedSandbox) {
+        throw new Error(`Daytona app-web prepared sandbox mismatch: guarded ${preparedSandbox}, Chrome owns ${sandbox}.`);
+      }
+      // Newly provisioned placements prepare source before spawning Chrome and
+      // persist this receipt. Supplied placements use the in-memory receipt
+      // from the preboot gate above.
+      source ??= await readSandboxRepoSourceReceipt({ sandbox, expectedRef: repoSource.ref });
+      browser.handle.meta = {
+        ...browser.handle.meta,
+        requestedSourceRef: source.requestedRef,
+        expectedSourceSha: source.expectedSha,
+        actualSourceSha: source.actualSha,
+        sourcePreparedFingerprint: source.preparedFingerprint,
+      };
       mocks = await bootRemoteMocks(sandbox, options.mocks ?? {});
-      runtime = await startRemoteRuntime(sandbox, worldName, workspaceRoot);
+      runtime = await startRemoteRuntime(sandbox, worldName, workspaceRoot, source);
       await navigate(browser.client, runtime.webUrl);
     } else {
       mocks = await bootLocalMocks(options.place, options.mocks ?? {});
@@ -438,6 +483,8 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
       openworkUrl: runtime.openworkUrl,
       workspaceRoot,
       mocks,
+      actualSourceSha: runtime.source?.actualSha ?? null,
+      source: runtime.source,
     }, stop);
     return browser;
   } catch (error) {

@@ -19,6 +19,8 @@ const READINESS_POLL_INTERVAL_MS = 5_000;
 const HTTPS_URL = /https:\/\/[^\s"'<>)]+/;
 const DEN_WEB_PORT = 3005;
 const DEN_API_PORT = 8788;
+const SANDBOX_SOURCE_RECEIPT_PATH = "/workspace/.openwork-daytona/source-receipt.json";
+const SANDBOX_PREPARED_FINGERPRINT_PATH = "/workspace/.openwork-daytona/source-prepared.sha256";
 
 export interface ProvisionExecOptions {
   exec?: DaytonaExec;
@@ -43,6 +45,22 @@ export interface DesktopSandboxOptions {
 export interface DesktopSandbox {
   sandbox: string;
   created: boolean;
+  source: SandboxRepoSourceReceipt;
+}
+
+export interface SandboxRepoSourceReceipt {
+  requestedRef: string;
+  expectedSha: string;
+  actualSha: string;
+  preparedFingerprint: string;
+  dependenciesInstalled: boolean;
+  verifiedAt: string;
+}
+
+export interface PrepareSandboxRepoOptions extends ProvisionExecOptions {
+  sandbox: string;
+  ref: string;
+  log?: (line: string) => void;
 }
 
 export interface DenSandboxOptions {
@@ -225,6 +243,183 @@ function lastNonemptyLine(text: string): string {
   return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1) ?? "";
 }
 
+function parseFullGitSha(value: string, context: string): string {
+  const sha = lastNonemptyLine(value);
+  if (!/^[0-9a-f]{40,64}$/.test(sha)) {
+    throw new Error(`${context}: expected a full immutable git SHA, received ${JSON.stringify(sha)}.`);
+  }
+  return sha;
+}
+
+function parseSandboxRepoSourceReceipt(content: string, expectedRef?: string): SandboxRepoSourceReceipt {
+  let value: unknown;
+  try {
+    value = JSON.parse(content);
+  } catch (error) {
+    throw new Error(`Sandbox source receipt is not valid JSON: ${messageText(error)}.`);
+  }
+  if (!isRecord(value)
+    || typeof value.requestedRef !== "string"
+    || typeof value.expectedSha !== "string"
+    || typeof value.actualSha !== "string"
+    || typeof value.preparedFingerprint !== "string"
+    || typeof value.dependenciesInstalled !== "boolean"
+    || typeof value.verifiedAt !== "string") {
+    throw new Error("Sandbox source receipt is missing required provenance fields.");
+  }
+  const requestedRef = assertSafeRef(value.requestedRef);
+  if (expectedRef !== undefined && requestedRef !== assertSafeRef(expectedRef)) {
+    throw new Error(`Sandbox source receipt requested ref mismatch: expected ${expectedRef}, received ${requestedRef}.`);
+  }
+  const expectedSha = parseFullGitSha(value.expectedSha, "Sandbox source receipt expected SHA");
+  const actualSha = parseFullGitSha(value.actualSha, "Sandbox source receipt actual SHA");
+  if (actualSha !== expectedSha) {
+    throw new Error(`Sandbox source receipt mismatch: expected ${expectedSha}, received ${actualSha}.`);
+  }
+  if (!/^[0-9a-f]{64}$/.test(value.preparedFingerprint)) {
+    throw new Error("Sandbox source receipt has an invalid prepared fingerprint.");
+  }
+  return {
+    requestedRef,
+    expectedSha,
+    actualSha,
+    preparedFingerprint: value.preparedFingerprint,
+    dependenciesInstalled: value.dependenciesInstalled,
+    verifiedAt: value.verifiedAt,
+  };
+}
+
+async function sandboxHeadAfterCleanGate(exec: DaytonaExec, sandbox: string, context: string): Promise<string> {
+  const result = await execInSandbox(
+    exec,
+    sandbox,
+    "set -e; cd /workspace; dirty=\"$(git status --porcelain=v1 --untracked-files=all -- . \":(exclude).openwork-daytona\" \":(exclude).openwork-daytona/**\")\"; if [ -n \"$dirty\" ]; then echo \"Refusing source preparation because /workspace is dirty:\" >&2; echo \"$dirty\" >&2; exit 42; fi; git rev-parse --verify HEAD",
+    { timeoutMs: 30_000, context },
+  );
+  return parseFullGitSha(result.stdout, context);
+}
+
+/**
+ * Resolve and prepare one immutable checkout before any process may consume it.
+ * The gate refuses dirty source, never resets files, and records the exact HEAD
+ * that a later app launcher is allowed to use.
+ */
+export async function prepareSandboxRepo(options: PrepareSandboxRepoOptions): Promise<SandboxRepoSourceReceipt> {
+  const exec = options.exec ?? defaultDaytonaExec;
+  const log = options.log ?? console.error;
+  const ref = assertSafeRef(options.ref);
+
+  const initialSha = await timedStep(log, "source clean gate", () => sandboxHeadAfterCleanGate(
+    exec,
+    options.sandbox,
+    `source clean gate for ${options.sandbox}`,
+  ));
+  const immutableRef = /^[0-9a-f]{7,64}$/.test(ref);
+  const expectedResult = await timedStep(log, "source resolve gate", () => execInSandbox(
+    exec,
+    options.sandbox,
+    immutableRef
+      ? `set -e; cd /workspace; git fetch --quiet --no-tags origin \"${ref}\" 2>/dev/null || git fetch --quiet --no-tags origin; git rev-parse --verify \"${ref}^{commit}\"`
+      : `set -e; cd /workspace; git fetch --quiet --no-tags origin \"${ref}\"; git rev-parse --verify FETCH_HEAD^{commit}`,
+    { timeoutMs: 120_000, context: `source resolve gate for ${options.sandbox}` },
+  ));
+  const expectedSha = parseFullGitSha(expectedResult.stdout, `Source resolve gate for ${options.sandbox}`);
+
+  if (initialSha !== expectedSha) {
+    await timedStep(log, "source checkout gate", () => execInSandbox(
+      exec,
+      options.sandbox,
+      `set -e; cd /workspace; git checkout --detach \"${expectedSha}\"`,
+      { timeoutMs: 120_000, context: `source checkout gate for ${options.sandbox}` },
+    ));
+  }
+
+  let actualSha = await timedStep(log, "source verification gate", () => sandboxHeadAfterCleanGate(
+    exec,
+    options.sandbox,
+    `source verification gate for ${options.sandbox}`,
+  ));
+  if (actualSha !== expectedSha) {
+    throw new Error(`Source verification gate failed for ${options.sandbox}: expected ${expectedSha}, received ${actualSha}.`);
+  }
+
+  const dependencyResult = await execInSandbox(
+    exec,
+    options.sandbox,
+    "set -e; cd /workspace; git ls-tree -r --full-tree HEAD -- package.json \"*/package.json\" pnpm-lock.yaml pnpm-workspace.yaml .npmrc pnpmfile.cjs patches | sha256sum | cut -d \" \" -f 1",
+    { timeoutMs: 30_000, context: `source dependency fingerprint for ${options.sandbox}` },
+  );
+  const dependencyFingerprint = lastNonemptyLine(dependencyResult.stdout);
+  if (!/^[0-9a-f]{64}$/.test(dependencyFingerprint)) {
+    throw new Error(`Source dependency fingerprint failed for ${options.sandbox}: received ${JSON.stringify(dependencyFingerprint)}.`);
+  }
+  const preparedFingerprint = createHash("sha256")
+    .update(`${actualSha}\n${dependencyFingerprint}\n`)
+    .digest("hex");
+  const preparedResult = await execInSandbox(
+    exec,
+    options.sandbox,
+    `if [ -d /workspace/node_modules ] && [ -f ${SANDBOX_PREPARED_FINGERPRINT_PATH} ] && [ \"$(cat ${SANDBOX_PREPARED_FINGERPRINT_PATH})\" = \"${preparedFingerprint}\" ]; then echo SOURCE_PREPARED; else echo SOURCE_STALE; fi`,
+    { timeoutMs: 30_000, context: `source prepared fingerprint gate for ${options.sandbox}` },
+  );
+  const dependenciesInstalled = lastNonemptyLine(preparedResult.stdout) !== "SOURCE_PREPARED";
+  if (dependenciesInstalled) {
+    await timedStep(log, "source dependency install gate", () => execInSandbox(
+      exec,
+      options.sandbox,
+      "set -e; cd /workspace; pnpm install --frozen-lockfile --store-dir /workspace/.openwork-daytona/pnpm-store",
+      { timeoutMs: INSTALL_TIMEOUT_MS, context: `source dependency install gate for ${options.sandbox}` },
+    ));
+    await execInSandbox(
+      exec,
+      options.sandbox,
+      `mkdir -p /workspace/.openwork-daytona; printf %s ${preparedFingerprint} > ${SANDBOX_PREPARED_FINGERPRINT_PATH}`,
+      { timeoutMs: 30_000, context: `source prepared fingerprint write for ${options.sandbox}` },
+    );
+  }
+
+  actualSha = await timedStep(log, "source post-prepare gate", () => sandboxHeadAfterCleanGate(
+    exec,
+    options.sandbox,
+    `source post-prepare gate for ${options.sandbox}`,
+  ));
+  if (actualSha !== expectedSha) {
+    throw new Error(`Source post-prepare gate failed for ${options.sandbox}: expected ${expectedSha}, received ${actualSha}.`);
+  }
+
+  const receipt: SandboxRepoSourceReceipt = {
+    requestedRef: ref,
+    expectedSha,
+    actualSha,
+    preparedFingerprint,
+    dependenciesInstalled,
+    verifiedAt: new Date().toISOString(),
+  };
+  const encodedReceipt = Buffer.from(`${JSON.stringify(receipt, null, 2)}\n`, "utf8").toString("base64");
+  await execInSandbox(
+    exec,
+    options.sandbox,
+    `mkdir -p /workspace/.openwork-daytona; printf %s ${encodedReceipt} | base64 -d > ${SANDBOX_SOURCE_RECEIPT_PATH}`,
+    { timeoutMs: 30_000, context: `source receipt write for ${options.sandbox}` },
+  );
+  log(`==> source verified ${actualSha}`);
+  return receipt;
+}
+
+export async function readSandboxRepoSourceReceipt(options: {
+  sandbox: string;
+  expectedRef?: string;
+  exec?: DaytonaExec;
+}): Promise<SandboxRepoSourceReceipt> {
+  const result = await execInSandbox(
+    options.exec ?? defaultDaytonaExec,
+    options.sandbox,
+    `cat ${SANDBOX_SOURCE_RECEIPT_PATH}`,
+    { timeoutMs: 30_000, context: `source receipt read for ${options.sandbox}` },
+  );
+  return parseSandboxRepoSourceReceipt(result.stdout, options.expectedRef);
+}
+
 export async function provisionDesktopSandbox(options: DesktopSandboxOptions & ProvisionExecOptions): Promise<DesktopSandbox> {
   const exec = options.exec ?? defaultDaytonaExec;
   const log = options.log ?? console.error;
@@ -262,34 +457,7 @@ export async function provisionDesktopSandbox(options: DesktopSandboxOptions & P
     await waitForExecReady(exec, sandbox);
   });
 
-  await timedStep(log, "checkout gate", async () => {
-    const result = await execInSandbox(
-      exec,
-      sandbox,
-      // Check out the REQUESTED ref, not FETCH_HEAD: a raw-sha fetch was
-      // observed leaving FETCH_HEAD stale, silently running the wrong code —
-      // and servers may refuse raw-sha fetches outright, so fall back to a
-      // full fetch and prefer the remote-tracking ref over any stale local.
-      `set -e; cd /workspace; git fetch origin "${ref}" 2>/dev/null || git fetch origin; git checkout --detach "origin/${ref}" 2>/dev/null || git checkout --detach "${ref}" 2>/dev/null || git checkout --detach FETCH_HEAD; git rev-parse --short=12 HEAD`,
-      { timeoutMs: 120_000, context: `checkout gate for ${sandbox}` },
-    );
-    const sha = lastNonemptyLine(result.stdout);
-    if (!sha) throw new Error(`Checkout gate failed for ${sandbox}: git did not print a resolved sha. Output tail: ${outputTail(result)}`);
-    const wantsSha = /^[0-9a-f]{7,40}$/.test(ref);
-    if (wantsSha && !sha.startsWith(ref.slice(0, 12)) && !ref.startsWith(sha)) {
-      throw new Error(`Checkout gate failed for ${sandbox}: asked for ${ref} but HEAD is ${sha}.`);
-    }
-    log(`==> checkout resolved ${sha}`);
-  });
-
-  await timedStep(log, "install gate", async () => {
-    await execInSandbox(
-      exec,
-      sandbox,
-      "cd /workspace; pnpm install --frozen-lockfile --store-dir /workspace/.openwork-daytona/pnpm-store",
-      { timeoutMs: INSTALL_TIMEOUT_MS, context: `install gate for ${sandbox}` },
-    );
-  });
+  const source = await prepareSandboxRepo({ sandbox, ref, exec, log });
 
   await timedStep(log, "cleanup and disk gate", async () => {
     const result = await execInSandbox(
@@ -464,7 +632,7 @@ echo detached`;
     throw new Error(`Vite prewarm gate timed out after ${VITE_PREWARM_TIMEOUT_MS}ms waiting for ${phase} in ${sandbox}. Last readiness error: ${last}. Log tail:\n${outputTail(viteLog)}`);
   });
 
-  return { sandbox, created: !reused };
+  return { sandbox, created: !reused, source };
 }
 
 interface LocalProcessResult {
