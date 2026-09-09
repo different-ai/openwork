@@ -77,9 +77,10 @@ prints `placement: <daytona|local> (<reason>)` for the placement asserted in the
 runtime environment. `--local` and `--daytona` override inherited placement;
 transport, engine, and surface selectors are never inferred as source opt-ins.
 
-Registered mixed-surface cases can select their engine and surface without raw
-environment variables. `--surface web` requires a registered `--case`; use
-`pnpm evals:e2e --list` to see exact case names and copyable commands.
+Registered cases can select their engine and surface without raw environment
+variables. `--case` uses the surface default in the catalog; `CONT-01` and
+`SWITCH-10` default to web. `--surface` is optional disambiguation, though the
+copyable examples remain explicit. Use `pnpm evals:e2e --list` to see them.
 
 ```bash
 pnpm evals:e2e streamed-markdown-answer --local --engine v2 --surface web --case CONT-01
@@ -451,10 +452,11 @@ Without a placement flag, the CLI uses Daytona when `daytona snapshot list`
 succeeds and local otherwise, then prints the placement and reason. `--daytona`
 requires Daytona; `--local` forces local.
 
-Use `--engine v1|v2` for a named spec. For registered web cases, combine it with
-`--surface web --case <prefix>` as shown above. With no new selection flags,
-the legacy environment-driven behavior is unchanged. The test-evidence header
-records the selected engine.
+Use `--engine v1|v2` for a named spec. A registered `--case` uses its catalog
+surface default; pass `--surface web|electron` to disambiguate explicitly as in
+the recommended examples above. Files run without `--case` retain their legacy
+environment-driven behavior. The test-evidence header records the selected
+engine.
 
 Use direct CDP tools only to explore or debug. Convert repeatable coverage into
 a testkit test.

@@ -54,20 +54,22 @@ test('changed additional journey joins critical selection; manual filters work f
   assert.equal(selectJourneys(entries, { only: 'does-not-exist' }).length, 0);
 });
 
-test('registered case metadata names exact files and supported execution axes', async () => {
+test('registered case metadata names exact files, supported execution axes, and defaults', async () => {
   const entries = await catalog();
-  assert.deepEqual(registeredCases.map(({ spec, id, engines, surfaces }) => ({ spec, id, engines, surfaces })), [
+  assert.deepEqual(registeredCases.map(({ spec, id, engines, surfaces, defaultSurface }) => ({ spec, id, engines, surfaces, defaultSurface })), [
     {
       spec: 'streamed-markdown-answer.e2e.test.ts',
       id: 'CONT-01',
       engines: ['v1', 'v2'],
       surfaces: ['web', 'electron'],
+      defaultSurface: 'web',
     },
     {
       spec: 'live-tool-visible-after-session-switch.e2e.test.ts',
       id: 'SWITCH-10',
       engines: ['v1', 'v2'],
       surfaces: ['web'],
+      defaultSurface: 'web',
     },
   ]);
   for (const registered of registeredCases) {

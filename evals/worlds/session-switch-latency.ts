@@ -1,5 +1,5 @@
 import { addInitScript, browserScript, evaluate, setViewport } from "@openwork/cdp";
-import { resolveEvalEngine, SkipError, type Place, type Seed } from "@openwork/env";
+import { resolveEvalEngine, type Place, type Seed } from "@openwork/env";
 import { configureProvider } from "./chat.ts";
 
 const WIDTH = 1280;
@@ -122,11 +122,13 @@ function requestedPlacement(place: Place): Place["kind"] {
 }
 
 export async function sessionSwitchLatency(seed: Seed, context: { place: Place }) {
-  const requestedSurface = process.env.OPENWORK_EVAL_APP_SURFACE?.trim() || "electron";
+  const requestedSurface = process.env.OPENWORK_EVAL_APP_SURFACE?.trim() || "web";
   if (requestedSurface !== "electron" && requestedSurface !== "web") {
     throw new Error(`OPENWORK_EVAL_APP_SURFACE must be web or electron; received ${JSON.stringify(requestedSurface)}.`);
   }
-  if (requestedSurface !== "web") throw new SkipError("app-web session-switch latency contract (OPENWORK_EVAL_APP_SURFACE=web)");
+  if (requestedSurface !== "web") {
+    throw new Error(`The session-switch latency contract does not support surface ${requestedSurface}; expected web.`);
+  }
   const declaredPlacement = requestedPlacement(context.place);
 
   const engine = resolveEvalEngine();

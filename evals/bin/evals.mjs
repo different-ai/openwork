@@ -24,7 +24,7 @@ Run E2E tests:
   --daytona          Require Daytona (fails if the CLI is not authenticated)
   --den <url>        Set OPENWORK_EVAL_DEN_API_URL=<url>
   --engine <v1|v2>   Select the app chat engine for a named test
-  --surface <value>  Select web or electron (web requires --case)
+  --surface <value>  Override a registered case's default surface
   --case <prefix>    Run one registered case by its exact prefix
 
 Without a placement flag, Daytona is used when the daytona CLI is authenticated, otherwise local.
@@ -321,7 +321,9 @@ export function resolveExecutionSelection(options, resolved, env = process.env) 
   }
 
   const engine = options.engine ?? (selectedCase ? (env.OPENWORK_EVAL_ENGINE || "v1").toLowerCase() : undefined);
-  const surface = options.surface ?? (selectedCase ? (env.OPENWORK_EVAL_APP_SURFACE || "electron").toLowerCase() : undefined);
+  const surface = options.surface ?? (selectedCase
+    ? (env.OPENWORK_EVAL_APP_SURFACE?.trim() || selectedCase.defaultSurface).toLowerCase()
+    : undefined);
   if (selectedCase && !["v1", "v2"].includes(engine)) {
     throw new Error(`Invalid effective engine ${JSON.stringify(engine)}; expected v1 or v2.`);
   }

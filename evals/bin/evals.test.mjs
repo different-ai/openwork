@@ -100,13 +100,39 @@ test("registered cases validate file and effective engine/surface before placeme
     /belongs to live-tool-visible-after-session-switch/,
   );
   assert.throws(
-    () => resolveExecutionSelection(parseArgs(["live-tool-visible-after-session-switch", "--case", "SWITCH-10"]), [switched], { OPENWORK_EVAL_APP_SURFACE: "electron" }),
+    () => resolveExecutionSelection(parseArgs(["live-tool-visible-after-session-switch", "--surface", "electron", "--case", "SWITCH-10"]), [switched], {}),
     /does not support surface electron/,
   );
   assert.throws(
     () => resolveExecutionSelection(parseArgs(["streamed-markdown-answer", "--case", "CONT-01"]), [markdown], { OPENWORK_EVAL_ENGINE: "future" }),
     /Invalid effective engine/,
   );
+});
+
+test("registered cases use their web default after an inherited canonical surface", () => {
+  const markdown = "/repo/streamed-markdown-answer.e2e.test.ts";
+  const switched = "/repo/live-tool-visible-after-session-switch.e2e.test.ts";
+  const defaultMarkdown = resolveExecutionSelection(
+    parseArgs(["streamed-markdown-answer", "--case", "CONT-01"]),
+    [markdown],
+    {},
+  );
+  const defaultSwitched = resolveExecutionSelection(
+    parseArgs(["live-tool-visible-after-session-switch", "--case", "SWITCH-10"]),
+    [switched],
+    {},
+  );
+  const inheritedElectron = resolveExecutionSelection(
+    parseArgs(["streamed-markdown-answer", "--case", "CONT-01"]),
+    [markdown],
+    { OPENWORK_EVAL_APP_SURFACE: "electron" },
+  );
+
+  assert.equal(defaultMarkdown.surface, "web");
+  assert.equal(defaultMarkdown.env.OPENWORK_EVAL_APP_SURFACE, "web");
+  assert.equal(defaultSwitched.surface, "web");
+  assert.equal(defaultSwitched.env.OPENWORK_EVAL_APP_SURFACE, "web");
+  assert.equal(inheritedElectron.surface, "electron");
 });
 
 test("selection flags override inherited values without mutating the caller environment", () => {

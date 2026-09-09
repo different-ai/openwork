@@ -13,10 +13,10 @@ const definitions = {
   'cross-server-handoff-atomic-commit.e2e.test.ts': { name: 'Switch servers and recover enrollment', critical: true, placement: 'local' },
   'workspace-new-task-hit-target.e2e.test.ts': { name: 'Keep new tasks and sends instantly responsive', placement: 'local' },
   'streamed-markdown-answer.e2e.test.ts': {
-    cases: [{ id: 'CONT-01', engines: ['v1', 'v2'], surfaces: ['web', 'electron'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2', surface: 'web' } }],
+    cases: [{ id: 'CONT-01', engines: ['v1', 'v2'], surfaces: ['web', 'electron'], defaultSurface: 'web', optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2', surface: 'web' } }],
   },
   'live-tool-visible-after-session-switch.e2e.test.ts': {
-    cases: [{ id: 'SWITCH-10', engines: ['v1', 'v2'], surfaces: ['web'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--daytona', engine: 'v1', surface: 'web' } }],
+    cases: [{ id: 'SWITCH-10', engines: ['v1', 'v2'], surfaces: ['web'], defaultSurface: 'web', optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--daytona', engine: 'v1', surface: 'web' } }],
   },
 };
 

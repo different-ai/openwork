@@ -32,7 +32,7 @@ export const streamedContinuityChunks = [
 ];
 
 function requestedSurface(): "electron" | "web" {
-  const value = process.env.OPENWORK_EVAL_APP_SURFACE?.trim() || "electron";
+  const value = process.env.OPENWORK_EVAL_APP_SURFACE?.trim() || "web";
   if (value !== "electron" && value !== "web") {
     throw new Error(`OPENWORK_EVAL_APP_SURFACE must be web or electron; received ${JSON.stringify(value)}.`);
   }
