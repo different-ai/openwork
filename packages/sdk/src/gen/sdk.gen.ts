@@ -3449,6 +3449,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List dashboards
+   *
+   * Lists every dashboard in the organization, ordered by name, with its ordered MCP App elements. Workspace owners and admins only; members read the dashboards granted to them through GET /v1/me/dashboards.
    */
   public getV1Dashboards<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1DashboardsResponses, GetV1DashboardsErrors, ThrowOnError>({
@@ -3459,6 +3461,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create dashboard
+   *
+   * Creates an organization-owned dashboard: a named, ordered list of up to 50 MCP App elements, each pointing at a ui:// resource served by a connected MCP server. Nobody sees the dashboard until access is granted through POST /v1/dashboards/{dashboardId}/access.
    */
   public postV1Dashboards<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3492,6 +3496,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete dashboard
+   *
+   * Soft-deletes the dashboard so it disappears from admin lists and from every member's granted dashboards. Its access grants are kept but stop applying; there is no restore.
    */
   public deleteV1DashboardsByDashboardId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3513,6 +3519,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Get dashboard
+   *
+   * Returns one dashboard with its ordered MCP App elements. Deleted dashboards answer 404.
    */
   public getV1DashboardsByDashboardId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3534,6 +3542,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update dashboard
+   *
+   * Partially updates a dashboard. Send name, elements, or both; when elements is present it replaces the whole ordered element list.
    */
   public patchV1DashboardsByDashboardId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3573,6 +3583,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List dashboard access grants
+   *
+   * Lists every access grant on the dashboard, oldest first, including revoked grants (removedAt set). Each grant targets exactly one member, one team, or the whole organization.
    */
   public getV1DashboardsByDashboardIdAccess<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3639,6 +3651,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Revoke dashboard access
+   *
+   * Revokes one access grant by setting removedAt; the grant row is kept so regranting the same subject reactivates it. Revoking an already revoked grant answers 204 again.
    */
   public deleteV1DashboardsByDashboardIdAccessByGrantId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3671,6 +3685,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List dashboards granted to the current member
+   *
+   * Returns the dashboards the signed-in member can see: granted directly, through one of their teams, or org-wide, deduplicated and ordered by name. The desktop MCP Apps dashboard renders these as read-only tiles.
    */
   public getV1MeDashboards<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1MeDashboardsResponses, GetV1MeDashboardsErrors, ThrowOnError>({
@@ -3778,6 +3794,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete desktop policy
+   *
+   * Soft-deletes a custom desktop policy, disables it, and releases its stable externalKey for reuse. The default policy cannot be deleted (400 default_policy_required).
    */
   public deleteV1DesktopPoliciesByDesktopPolicyId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3822,6 +3840,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update desktop policy
+   *
+   * Rewrites one desktop policy. The full write body is required: the policy document is replaced (access, execution, and onboarding prompts omitted from it are carried over from the stored document) and the member, team, and role assignments are replaced with the ones sent. The default policy keeps its name, priority, and assignments and cannot be disabled (400 default_policy_required).
    */
   public patchV1DesktopPoliciesByDesktopPolicyId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3871,6 +3891,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List desktop policies
+   *
+   * Returns the organization's desktop policies, default policy first and then by name, each with its member, team, and role assignments, alongside the definitions catalog describing every setting a policy document can control. Workspace owners and admins can read; writes require super-admin.
    */
   public getV1DesktopPolicies<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<
@@ -3882,6 +3904,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create desktop policy
+   *
+   * Creates a desktop policy from a policy document plus optional priority, enabled flag, and assignments to members, teams, or roles (owner, admin, member). Requires the Enterprise plan; referenced members and teams must belong to the organization.
    */
   public postV1DesktopPolicies<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4015,6 +4039,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read the OpenWork Models task analytics choice
+   *
+   * Returns the organization's task analytics state for OpenWork Models: whether the feature is available and the organization has an active Models subscription, whether collection is enabled and when it was consented to, and whether export to a configured Langfuse host is on. Any member can read it.
    */
   public getV1InferenceAnalyticsSettings<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1InferenceAnalyticsSettingsResponses, unknown, ThrowOnError>({
@@ -4025,6 +4051,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Choose whether to collect task analytics included with OpenWork Models
+   *
+   * Turns task analytics collection on or off for the organization. Workspace owners and admins only. Enabling requires the feature, an active OpenWork Models subscription, and consentVersion 1 (403 models_analytics_unavailable otherwise); repeating an already enabled choice keeps the original consent time as the collection cutoff, and disabling also switches export off.
    */
   public patchV1InferenceAnalyticsSettings<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4117,6 +4145,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read task activity collected after the analytics choice
+   *
+   * Returns the task analytics events recorded for the organization over the last `days` days (default 30, max 90), newest first, 200 per page with a `next` cursor made of before + beforeId. Filter by memberId, taskId, or sessionId. Workspace owners and admins only; answers 403 models_analytics_unavailable while collection is disabled.
    */
   public getV1InferenceAnalyticsActivity<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -4153,6 +4183,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read provider-reported consumption for OpenWork Models
+   *
+   * Aggregates provider-reported OpenWork Models calls per model, provider, member, and day over the last `days` days (default 30, max 90): call counts, failed and incomplete calls, input, output, and cache-read tokens, and cost in USD. Optionally filter by memberId. Workspace owners and admins only; answers 403 models_analytics_unavailable while collection is disabled and 400 narrow_date_range when the range would produce more than 10,000 groups.
    */
   public getV1InferenceAnalyticsConsumption<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -4440,6 +4472,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Cancel an organization SSO authentication test
+   *
+   * Marks the caller's in-flight SSO test intent as cancelled so it can no longer be started or completed. Only the administrator who created the intent can cancel it; unknown or foreign intents are ignored and still answer 204.
    */
   public postV1SsoTestByIntentIdCancel<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4461,6 +4495,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Enable the tested organization SSO configuration
+   *
+   * Switches the organization's SSO connection to enabled once its domain is verified and the current configuration revision has a successful test. Any other state, including a configuration edited after its last test, answers 409 with an explanatory message. Requires the Enterprise plan; the change is recorded in the organization audit log.
    */
   public postV1SsoEnable<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).post<PostV1SsoEnableResponses, PostV1SsoEnableErrors, ThrowOnError>({
@@ -4471,6 +4507,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Disable organization SSO
+   *
+   * Switches the organization's SSO connection to disabled while keeping its provider configuration, so it can be tested and enabled again later. Answers 404 when the organization has no SSO connection; the change is recorded in the organization audit log.
    */
   public postV1SsoDisable<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).post<PostV1SsoDisableResponses, PostV1SsoDisableErrors, ThrowOnError>({
@@ -5185,6 +5223,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete the calling member's LLM provider credential
+   *
+   * Removes the calling member's own stored credential on a granted per-member provider. Answers 200 even when no credential was stored. A credential an admin has blocked is admin-owned and cannot be removed by the member (409 credential_blocked).
    */
   public deleteV1LlmProvidersByLlmProviderIdMyCredential<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5323,6 +5363,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Block one member's LLM provider credential
+   *
+   * Admin-only. Marks one member's credential on the provider as blocked: it is no longer used for inference and the member can neither delete nor overwrite it. Storing a new credential for that member through the admin PUT endpoint is the unblock path.
    */
   public postV1LlmProvidersByLlmProviderIdMemberCredentialsByOrgMembershipIdBlock<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7753,6 +7795,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Get the tool policy for an External MCP Connection
+   *
+   * Returns the admin-managed tool policy for one connection: whether every tool is disabled, the individual tool names that are disabled, and who last changed it. Disabled tools are hidden from capability search and Code Mode and refused when called. Workspace owners and admins only.
    */
   public getV1McpConnectionsByConnectionIdToolPolicy<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7774,6 +7818,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update the tool policy for an External MCP Connection
+   *
+   * Replaces the connection's tool policy with the full desired state: allDisabled plus the complete list of disabled tool names (duplicates are collapsed). The policy takes effect immediately for capability search, Code Mode, and tool execution and records the calling admin as its author.
    */
   public putV1McpConnectionsByConnectionIdToolPolicy<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7960,6 +8006,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Remove an External MCP Connection
+   *
+   * Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. Workspace owners and super-admins can remove any connection; other members only the connections they created. Session callers must have signed in within the last 15 minutes (403 reauth); API-key callers are exempt.
    */
   public deleteV1McpConnectionsByConnectionId<ThrowOnError extends boolean = false>(
     parameters: {
