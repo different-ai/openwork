@@ -1039,7 +1039,7 @@ The chart deploys only the control plane; the worker image must be present in a 
 
 When `workers.kubernetes.rbac.create: true` the chart renders, in the worker namespace only:
 
-- a Role granting get/list/create/update/patch/delete on `apps/deployments`, get/list/create/delete on core `services`, `secrets`, and `persistentvolumeclaims`, get/list on `pods`, and get on `pods/log`
+- a Role granting get/create/patch/delete on `apps/deployments`, get/create/delete on core `services`, `secrets`, and `persistentvolumeclaims`, get/list on `pods` (get covers the `pods/log` subresource reads used for health-timeout diagnostics), and get on `pods/log`
 - a RoleBinding binding that Role to the `den-api` ServiceAccount
 
 Nothing cluster-scoped is rendered, and worker pods run with `automountServiceAccountToken: false`.

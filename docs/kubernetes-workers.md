@@ -65,10 +65,12 @@ The chart then renders: the `den-api` ServiceAccount, the worker Namespace, and 
 
 | Resources | Verbs |
 | --- | --- |
-| `apps/deployments` | get, list, create, update, patch, delete |
-| `services`, `secrets`, `persistentvolumeclaims` | get, list, create, delete |
+| `apps/deployments` | get, create, patch, delete |
+| `services`, `secrets`, `persistentvolumeclaims` | get, create, delete |
 | `pods` | get, list |
 | `pods/log` | get |
+
+`pods get` is required because den-api reads the `pods/log` subresource (health-timeout diagnostics) in addition to listing pods by label selector.
 
 All rules apply to the worker namespace only.
 

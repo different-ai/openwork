@@ -70,6 +70,26 @@ test("witness applies strategic merge patches and records them", async () => {
   assert.equal(witness.containerEnv(WORKER_ID.replace(/_/g, "-"))?.length, 1);
 });
 
+test("witness rejects non strategic-merge PATCH content types with 415", async () => {
+  await using witness = await startMockKubernetesApiserver();
+  await fetch(`${witness.url}/apis/apps/v1/namespaces/openwork-workers/deployments`, {
+    method: "POST", body: JSON.stringify(deploymentManifest()),
+  });
+  const wrongType = await fetch(`${witness.url}/apis/apps/v1/namespaces/openwork-workers/deployments/${WORKER_ID.replace(/_/g, "-")}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ spec: { replicas: 0 } }),
+  });
+  assert.equal(wrongType.status, 415);
+  assert.equal((await wrongType.json()).reason, "UnsupportedMediaType");
+  // The rejected patch must not have been applied.
+  assert.equal(witness.replicasOf(WORKER_ID.replace(/_/g, "-")), 1);
+  assert.equal(witness.patches.length, 0);
+  // The rejected request is still recorded, with its content type.
+  const patchRequest = witness.requests.find((request) => request.method === "PATCH");
+  assert.equal(patchRequest?.contentType, "application/json");
+});
+
 test("witness lists pods by label selector and serves health readiness", async () => {
   await using witness = await startMockKubernetesApiserver();
   await fetch(`${witness.url}/apis/apps/v1/namespaces/openwork-workers/deployments`, {

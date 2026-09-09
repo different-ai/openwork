@@ -102,6 +102,9 @@ app.kubernetes.io/component: {{ .component }}
 {{- fail "workers.kubernetes.serviceAccount.name is required when workers.kubernetes.serviceAccount.create=false and config.provisioner.mode=kubernetes" -}}
 {{- end -}}
 {{- end -}}
+{{- if not .Values.config.kubernetes.workerImage -}}
+{{- fail "config.kubernetes.workerImage is required when config.provisioner.mode=kubernetes" -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 

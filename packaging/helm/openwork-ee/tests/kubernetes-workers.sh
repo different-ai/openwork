@@ -122,6 +122,7 @@ config:
     mode: kubernetes
   kubernetes:
     workerNamespace: "my-workers"
+    workerImage: "registry.example/openwork-microsandbox:test"
 workers:
   kubernetes:
     createNamespace: false
@@ -145,5 +146,14 @@ if helm template openwork-ee "$chart_dir" \
   exit 1
 fi
 grep -q "serviceAccount.name is required" "$tmp_dir/invalid.err"
+
+# Kubernetes mode without a worker image fails at render time.
+if helm template openwork-ee "$chart_dir" \
+    --set config.provisioner.mode=kubernetes \
+    > "$tmp_dir/invalid-image.yaml" 2> "$tmp_dir/invalid-image.err"; then
+  printf 'Expected chart render to fail when config.kubernetes.workerImage is empty\n' >&2
+  exit 1
+fi
+grep -q "config.kubernetes.workerImage is required" "$tmp_dir/invalid-image.err"
 
 printf 'kubernetes-workers chart checks passed\n'

@@ -72,7 +72,7 @@ export async function startMockKubernetesApiserver() {
   const pvcs = new Map<string, Record<string, unknown>>();
   const patches: Array<{ kind: MockKubernetesObjectKind; name: string; patch: Record<string, unknown>; at: number }> = [];
   const deletes: Array<{ kind: MockKubernetesObjectKind; name: string; at: number }> = [];
-  const requests: Array<{ method: string; path: string; at: number }> = [];
+  const requests: Array<{ method: string; path: string; at: number; contentType?: string }> = [];
   const unexpected: string[] = [];
   let healthy = false;
   let url = "";
@@ -107,7 +107,13 @@ export async function startMockKubernetesApiserver() {
   async function handle(request: IncomingMessage, response: ServerResponse) {
     const method = request.method ?? "GET";
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
-    requests.push({ method, path, at: Date.now() });
+    const rawContentType = request.headers["content-type"];
+    const contentType = method === "PATCH"
+      ? typeof rawContentType === "string"
+        ? rawContentType
+        : ""
+      : undefined;
+    requests.push({ method, path, at: Date.now(), ...(contentType !== undefined ? { contentType } : {}) });
 
     // Worker-pod health probes arrive here through the eval fetch shim (the
     // in-cluster service DNS name is rewritten to the witness base URL).
@@ -138,6 +144,9 @@ export async function startMockKubernetesApiserver() {
         return existing ? json(response, 200, existing) : json(response, 404, { message: "not found", reason: "NotFound", code: 404 });
       }
       if (method === "PATCH" && existing) {
+        if (contentType !== "application/strategic-merge-patch+json") {
+          return json(response, 415, { message: `PATCH requires Content-Type application/strategic-merge-patch+json, got: ${contentType || "<none>"}`, reason: "UnsupportedMediaType", code: 415 });
+        }
         const patch = await body(request);
         const merged = strategicMerge(existing, patch);
         deployments.set(name, merged);

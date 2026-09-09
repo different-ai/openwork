@@ -35,10 +35,10 @@ metadata:
 rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "create", "update", "patch", "delete"]
+    verbs: ["get", "create", "patch", "delete"]
   - apiGroups: [""]
     resources: ["services", "secrets", "persistentvolumeclaims"]
-    verbs: ["get", "list", "create", "delete"]
+    verbs: ["get", "create", "delete"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
