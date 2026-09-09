@@ -461,6 +461,7 @@ function SessionHoverQuickActions({
           size="icon"
           className="size-5 text-muted-foreground hover:bg-transparent hover:text-foreground"
           aria-label={isArchived ? t("session_management.unarchive_session") : t("session_management.archive_session")}
+          data-testid={`session-archive-${sessionId}`}
           disabled={Boolean(ctx.archiveDisabledReason)}
           title={ctx.archiveDisabledReason}
           onClick={(event) => {
@@ -2190,6 +2191,7 @@ function SessionMenuItem({
             render={<button type="button" />}
             isActive={isSelected}
             data-session-tab-id={session.id}
+            data-testid={`sidebar-session-${session.id}`}
             data-session-tab-active={isSelected ? "true" : undefined}
             onClick={openSession}
             onPointerEnter={handlePointerEnter}

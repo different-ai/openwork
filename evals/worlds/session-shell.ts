@@ -1,10 +1,10 @@
-import { allocateFreePort, browserScript, clickAt, evaluate, hoverAt, reload, type Point, type Surface, typeText } from "@openwork/cdp";
+import { allocateFreePort, browserScript, clickAt, evaluate, hoverAt, reload, type Point, type Surface, typeText, waitForLocated } from "@openwork/cdp";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
 import { engineSessionProbe, observeSidebarExpansion, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
 import { resolveEvalEngine, SkipError } from "@openwork/env";
 import type { Place, Seed } from "@openwork/env";
-import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
+import { daytonaSandbox, desktop as launchDesktop, startMockOnSandbox } from "@openwork/hosts";
 import { startMockMcp } from "@openwork/labs";
 
 const stormProviderId = "active-session-storm-mock";
@@ -502,10 +502,9 @@ async function configureWorkspaceProvider(
   },
 ): Promise<void> {
   // TODO(primitive): seed.configureWorkspaceProvider should configure and reload a workspace model without raw renderer evaluation.
-  const result = await seed.evalIn(app, browserScript(async (workspaceIdsJson, smallModel, allowTools, providerId, modelId, modelName, baseUrl, defaultModel) => {
+  const result = await seed.evalIn(app, browserScript(async (workspaceIds, smallModel, allowTools, providerId, modelId, modelName, baseUrl, defaultModel) => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
-    const workspaceIds = JSON.parse(workspaceIdsJson);
     const root = String(info.baseUrl).replace(/\/+$/, "");
     const headers = {
       Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
@@ -513,7 +512,8 @@ async function configureWorkspaceProvider(
     };
     const outcomes = [];
     for (const workspaceId of workspaceIds) {
-      const opencode: { provider: Record<string, unknown>; small_model?: string; permission?: unknown } = {
+      const opencode: { model: string; provider: Record<string, unknown>; small_model?: string; permission?: unknown } = {
+        model: defaultModel,
         provider: {
           [providerId]: {
             npm: "@ai-sdk/openai-compatible",
@@ -556,7 +556,7 @@ async function configureWorkspaceProvider(
     for (const workspaceId of workspaceIds) localStorage.removeItem("openwork.sessionModels." + workspaceId);
     return { outcomes };
   }, [
-      JSON.stringify(workspaceIds),
+      [...workspaceIds],
       options.smallModel ?? null,
       options.allowTools ?? false,
       options.providerId,
@@ -1398,6 +1398,424 @@ export async function commandPaletteSearch(seed: Seed) {
   return oneWorkspace(seed, `command-palette-search-${Date.now()}`);
 }
 
+type ArchiveFault = "none" | "false" | "error" | "timeout" | "unconfirmed" | "hold" | "retry" | "permission" | "question" | "prompt_error" | "hold_prompt" | "accepted_command" | "hold_archive";
+type ArchiveRequest = {
+  path: string; sessionId: string; action: string; messageID: string | null; result: string | number | null;
+  command?: { name: string; arguments: string; model: string | null; agent: string | null };
+  responseBody?: string;
+  dispatchError?: string;
+};
+
+declare global {
+  interface Window {
+    __archiveAvailabilityRequests: { method: string; path: string }[];
+    __archiveNetwork: {
+      mode: ArchiveFault;
+      sessionId: string;
+      workspaceId: string;
+      requests: ArchiveRequest[];
+      original: typeof fetch;
+      release: (() => void | Promise<void>) | null;
+    };
+  }
+}
+
+export async function archiveActiveSessions(seed: Seed, { place }: { place: Place }) {
+  if (resolveEvalEngine() !== "v1") throw new SkipError("Active archive requires v1; session-archive-undo covers v2 unavailability.");
+  await using resources = new AsyncDisposableStack();
+  const providerId = "session-archive-mock";
+  const modelId = "mock-agent-workload-model";
+  const app = await seed.desktop({ name: "session-archive-button", model: `${providerId}/${modelId}` });
+  const definition = seed.mock({ agentWorkloads: [{ promptMarker: "session-archive", matchAll: true, finalReply: "Archive fixture reply.", steps: [] }] });
+  const sandbox = app.handle.sandboxId;
+  const booted = app.handle.hostKind === "daytona"
+    ? await (async () => {
+      if (!sandbox || !definition.connect) throw new Error("Archive mock requires its desktop sandbox and mock adapter.");
+      const remote = await startMockOnSandbox({ sandbox, port: definition.daytonaPort });
+      return definition.connect(remote.url);
+    })()
+    : await definition.boot(place);
+  const mock = resources.use(booted.handle);
+  const setHeld = async (held: boolean) => {
+    const response = await fetch(`${mock.url}/admin/agent-hold`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ held }), signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`Archive mock hold failed: HTTP ${response.status}`);
+  };
+  await setHeld(true);
+  const stamp = `${Date.now()}-${process.pid}`;
+  const workspaceA = await seed.workspace(app, `/tmp/openwork-session-archive-${stamp}-a`);
+  const workspaceBName = `openwork-session-archive-${stamp}-b`;
+  const workspaceB = await additionalWorkspace(seed, app, `/tmp/${workspaceBName}`);
+  await configureWorkspaceProvider(seed, app, [workspaceA.workspaceId, workspaceB.workspaceId], {
+    providerId, modelId, modelName: "Archive fixture model", baseUrl: `${mock.url}/v1`, allowTools: true,
+  });
+  // OpenWork's runtime config drops command/model keys. In v1.18.18 the native
+  // workspace PATCH also writes config.json, which its project loader ignores.
+  // Use the native global config in this desktop's isolated profile instead.
+  const commandSetup = await seed.evalIn(app, browserScript(async (workspaceId, model) => {
+    const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    if (!info.running || !info.baseUrl) throw new Error("Archive engine is unavailable");
+    const base = `${info.baseUrl.replace(/\/+$/, "")}/workspace/${workspaceId}/opencode`;
+    const headers = { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken), "Content-Type": "application/json" };
+    const read = async () => {
+      const [configResponse, commandsResponse] = await Promise.all(["config", "command"].map(endpoint =>
+        fetch(`${base}/${endpoint}`, { headers, signal: AbortSignal.timeout(15000) })));
+      if (!configResponse.ok || !commandsResponse.ok) throw new Error(`Archive command inventory failed: config=${configResponse.status}, commands=${commandsResponse.status}`);
+      const config: { model?: string; small_model?: string; default_agent?: string } = await configResponse.json();
+      const commands: { name: string; template: string; model?: string; agent?: string }[] = await commandsResponse.json();
+      const command = commands.find(command => command.name === "archive-witness");
+      return { model: config.model ?? null, smallModel: config.small_model ?? null, agent: config.default_agent ?? null,
+        command: command ? { name: command.name, template: command.template, model: command.model ?? null, agent: command.agent ?? null } : null,
+        commandNames: commands.map(command => command.name).sort() };
+    };
+    const before = await read();
+    const response = await fetch(`${base}/global/config`, {
+      method: "PATCH", headers, signal: AbortSignal.timeout(30000),
+      body: JSON.stringify({ model, small_model: model, command: { "archive-witness": { template: "Archive command witness task." } } }),
+    });
+    if (!response.ok) throw new Error(`Archive native command configuration failed: ${response.status} ${(await response.text()).slice(0, 2000)}`);
+    // Global config invalidates instances asynchronously; observe actual engine
+    // readiness before creating sessions or submitting any held command.
+    const deadline = Date.now() + 30_000;
+    let after = await read();
+    while (after.model !== model || after.smallModel !== model || after.command?.template !== "Archive command witness task.") {
+      if (Date.now() >= deadline) throw new Error(`Archive command is not ready: ${JSON.stringify({ after, before })}`);
+      await new Promise(resolve => setTimeout(resolve, 250));
+      after = await read();
+    }
+    return { before, after };
+  }, [workspaceA.workspaceId, `${providerId}/${modelId}`]), { timeoutMs: 90_000 });
+  // Seed each owning engine once; UI task creation can race route changes and create extra sessions.
+  async function createSession(workspaceId: string, title: string, parentID?: string): Promise<ShellSession & { workspaceId: string }> {
+    const result = await seed.evalIn(app, browserScript(async (workspaceId, title, parentID) => {
+      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+      if (!info.running || !info.baseUrl) throw new Error("Archive engine is unavailable");
+      const response = await fetch(info.baseUrl.replace(/\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session", {
+        method: "POST", headers: { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken), "Content-Type": "application/json" },
+        body: JSON.stringify(parentID ? { title, parentID } : { title }), signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok) throw new Error("Could not seed " + title + " in " + workspaceId + ": " + response.status);
+      const session = await response.json();
+      return { sessionId: session.id, title: session.title };
+    }, [workspaceId, title, parentID]), { timeoutMs: 20_000 });
+    if (!isRecord(result) || typeof result.sessionId !== "string" || !result.sessionId || typeof result.title !== "string") {
+      throw new Error(`Missing archive session ${title}: ${JSON.stringify(result)}`);
+    }
+    return { sessionId: result.sessionId, title: result.title, workspaceId };
+  }
+  const a1 = await createSession(workspaceA.workspaceId, "Chat A");
+  const a2 = await createSession(workspaceA.workspaceId, "Archive idle neighbor");
+  const b1 = await createSession(workspaceB.workspaceId, "Archive other workspace");
+  const child = await createSession(workspaceA.workspaceId, "Archive child task", a1.sessionId);
+  // Never reuse synthetic retry/approval state as a real-run target.
+  const faultCandidate = await createSession(workspaceA.workspaceId, "Archive fault isolation");
+
+  const previousTimeOrigin = await seed.evalIn(app, () => performance.timeOrigin);
+  if (typeof previousTimeOrigin !== "number") throw new Error("Archive document time origin was unavailable.");
+  await seed.evalIn(app, browserScript((workspaceId) => {
+    history.replaceState(history.state, "", "#/workspace/" + encodeURIComponent(workspaceId) + "/session");
+    location.reload();
+    return true;
+  }, [workspaceB.workspaceId]));
+  // Expansion is not persisted: let B render after reload, then leave both groups open on A's start route.
+  for (const phase of [
+    { workspaceId: workspaceB.workspaceId, sessions: [b1] },
+    { workspaceId: workspaceA.workspaceId, sessions: [a1, a2, b1, faultCandidate] },
+  ]) {
+    if (phase.workspaceId === workspaceA.workspaceId) {
+      await seed.evalIn(app, browserScript((workspaceId) => {
+        location.hash = "/workspace/" + encodeURIComponent(workspaceId) + "/session";
+        return true;
+      }, [workspaceA.workspaceId]));
+    }
+    const deadline = Date.now() + 60_000;
+    let ready = false;
+    let lastState: unknown = null;
+    while (Date.now() < deadline) {
+      lastState = await seed.evalIn(app, browserScript((previousTimeOrigin, workspaceId, sessions) => {
+        const route = window.__openwork?.slice?.("route");
+        const rows = sessions.map((session) => {
+          const row = document.querySelector('[data-sidebar-workspace-id="' + session.workspaceId + '"] [data-sidebar-session-id="' + session.sessionId + '"]');
+          return {
+            sessionId: session.sessionId,
+            loaded: route?.sessionsByWorkspaceId?.[session.workspaceId]?.some(item => item.id === session.sessionId) === true,
+            visible: Boolean(row?.getClientRects().length),
+          };
+        });
+        return {
+          hash: location.hash, selectedWorkspaceId: route?.selectedWorkspaceId, rows,
+          ready: performance.timeOrigin !== previousTimeOrigin && Boolean(window.__openworkControl)
+            && route?.selectedWorkspaceId === workspaceId
+            && !route.workspaces.find(workspace => workspace.id === workspaceId)?.loading
+            && location.hash === "#/workspace/" + encodeURIComponent(workspaceId) + "/session"
+            && rows.every(row => row.loaded && row.visible),
+        };
+      }, [previousTimeOrigin, phase.workspaceId, phase.sessions]), {
+        timeoutMs: Math.min(5_000, Math.max(1, deadline - Date.now())),
+      }).catch((error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }));
+      if (isRecord(lastState) && lastState.ready === true) {
+        ready = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, Math.min(250, Math.max(0, deadline - Date.now()))));
+    }
+    if (!ready) throw new Error(`Archive workspace ${phase.workspaceId} route and sidebar did not become ready: ${JSON.stringify(lastState)}`);
+  }
+
+  // Faults live at the HTTP boundary, not in product stores or archive code.
+  // The local desktop's loopback OpenCode requests use the renderer fetch.
+  await seed.evalIn(app, () => {
+    const original = window.fetch.bind(window);
+    const state: Window["__archiveNetwork"] = { mode: "none", sessionId: "", workspaceId: "", requests: [], release: null, original };
+    window.__archiveNetwork = state;
+    window.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      const match = url.pathname.match(/\/session\/([^/]+)\/(abort|prompt_async|command|shell)$/);
+      const metadata = request.method === "PATCH" ? url.pathname.match(/\/session\/([^/]+)$/) : null;
+      const record: ArchiveRequest | null = match && request.method === "POST"
+        ? { path: url.pathname, sessionId: match[1], action: match[2], messageID: null, result: null }
+        : metadata ? { path: url.pathname, sessionId: metadata[1], action: "metadata", messageID: null, result: null } : null;
+      if (record && ["prompt_async", "command"].includes(record.action)) {
+        const body: unknown = await request.clone().json();
+        if (body && typeof body === "object" && "messageID" in body && typeof body.messageID === "string") record.messageID = body.messageID;
+        if (record.action === "command" && body && typeof body === "object" && "command" in body && typeof body.command === "string"
+          && "arguments" in body && typeof body.arguments === "string") {
+          record.command = { name: body.command, arguments: body.arguments,
+            model: "model" in body && typeof body.model === "string" ? body.model : null,
+            agent: "agent" in body && typeof body.agent === "string" ? body.agent : null };
+        }
+      }
+      if (record) state.requests.push(record);
+      const owner = url.pathname.startsWith("/workspace/" + encodeURIComponent(state.workspaceId) + "/opencode/");
+      const target = owner && record?.sessionId === state.sessionId;
+      if (record?.action === "metadata" && target && state.mode === "hold_archive") {
+        await new Promise<void>(resolve => { state.release = resolve; });
+        state.release = null;
+      }
+      if (record?.action === "command" && target && state.mode === "accepted_command") {
+        record.result = "accepted, not dispatched";
+        const admitted = new Request(request, { signal: new AbortController().signal });
+        state.release = async () => {
+          state.release = null;
+          try {
+            const response = await original(admitted);
+            record.result = response.status;
+            record.responseBody = (await response.text()).slice(0, 2000);
+            if (!response.ok) throw new Error("Admitted command dispatch failed: " + response.status + " " + record.responseBody);
+          } catch (error) {
+            record.dispatchError = error instanceof Error ? error.message : String(error);
+            throw error;
+          }
+        };
+        return Response.json({ ok: true, accepted: true });
+      }
+      if (record?.action === "prompt_async" && target && state.mode === "prompt_error") {
+        record.result = 400;
+        return Response.json({ error: "Injected send failure" }, { status: 400 });
+      }
+      if (record?.action === "prompt_async" && target && state.mode === "hold_prompt") {
+        await new Promise<void>(resolve => { state.release = resolve; });
+        state.release = null;
+        record.result = 400;
+        return Response.json({ error: "Injected delayed queue send failure" }, { status: 400 });
+      }
+      if (record?.action === "abort" && target && ["false", "error", "timeout", "unconfirmed", "hold"].includes(state.mode)) {
+        const mode = state.mode;
+        if (mode === "hold" || mode === "timeout") {
+          await new Promise<void>((resolve, reject) => {
+            const abort = () => { state.release = null; record.result = "cancelled"; reject(request.signal.reason); };
+            state.release = () => {
+              request.signal.removeEventListener("abort", abort);
+              state.release = null;
+              if (state.mode === "hold") state.mode = "none";
+              resolve();
+            };
+            if (request.signal.aborted) abort();
+            else request.signal.addEventListener("abort", abort, { once: true });
+          });
+        } else {
+          record.result = mode;
+          if (mode === "error") throw new TypeError("Injected abort connection failure");
+          return Response.json(mode === "unconfirmed");
+        }
+      }
+      const response = await original(request);
+      if (record) record.result = response.status;
+      // Merge only the owning endpoint's target. All unrelated statuses and
+      // approvals remain authoritative, including concurrently running sessions.
+      const { mode, sessionId, workspaceId } = state;
+      const owningResponse = url.pathname.startsWith("/workspace/" + encodeURIComponent(workspaceId) + "/opencode/");
+      const stillArmed = () => state.mode === mode && state.sessionId === sessionId && state.workspaceId === workspaceId;
+      if (owningResponse && response.ok && mode === "retry" && url.pathname.endsWith("/session/status")) {
+        const statuses: Record<string, unknown> = await response.clone().json();
+        if (!stillArmed()) return response;
+        return Response.json({ ...statuses, [sessionId]: { type: "retry", attempt: 1, message: "Retrying", next: Date.now() + 60000 } });
+      }
+      if (owningResponse && response.ok && (mode === "permission" || mode === "question") && url.pathname.endsWith("/opencode/" + mode)) {
+        const requests: unknown[] = await response.clone().json();
+        if (!stillArmed()) return response;
+        return Response.json([...requests, { id: "archive-pending-request", sessionID: sessionId,
+          permission: "bash", patterns: ["*"], metadata: {}, always: [],
+          questions: [{ question: "Continue?", header: "Continue", options: [{ label: "Yes", description: "Continue" }] }],
+        }]);
+      }
+      return response;
+    };
+    return true;
+  });
+
+  async function networkFault(mode: ArchiveFault, sessionId: string) {
+    const target = [a1, a2, b1, child, faultCandidate].find(session => session.sessionId === sessionId);
+    if (!target) throw new Error("Archive fault target has no known workspace owner");
+    await seed.evalIn(app, browserScript((mode, sessionId, workspaceId) => {
+      if (window.__archiveNetwork.release) throw new Error("Release the previous archive fault before replacing it");
+      window.__archiveNetwork.mode = mode;
+      window.__archiveNetwork.sessionId = sessionId;
+      window.__archiveNetwork.workspaceId = workspaceId;
+      return true;
+    }, [mode, sessionId, target.workspaceId]));
+  }
+
+  async function facts() {
+    const result = await seed.evalIn(app, browserScript(async (workspaceIds) => {
+      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+      if (!info.running || !info.baseUrl) throw new Error("Archive engine is unavailable");
+      const headers = { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken) };
+      const sessions = [];
+      // Assertions use real engine facts, never our injected fault response.
+      const read = window.__archiveNetwork.original;
+      for (const workspaceId of workspaceIds) {
+        const base = info.baseUrl.replace(/\/+$/, "") + "/workspace/" + workspaceId + "/opencode";
+        const [list, statuses] = await Promise.all([
+          read(base + "/session?limit=200", { headers, signal: AbortSignal.timeout(10000) }).then(r => { if (!r.ok) throw new Error("Session list: " + r.status); return r.json(); }),
+          read(base + "/session/status", { headers, signal: AbortSignal.timeout(10000) }).then(r => { if (!r.ok) throw new Error("Session status: " + r.status); return r.json(); }),
+        ]);
+        for (const session of list) sessions.push({ workspaceId, sessionId: session.id,
+          archived: (session.time?.archived ?? 0) > 0, status: statuses[session.id]?.type ?? "idle" });
+      }
+      return {
+        sessions,
+        requests: window.__archiveNetwork.requests,
+        surfaces: [...document.querySelectorAll("[data-session-surface-id]")].map(el => el.getAttribute("data-session-surface-id")),
+        activeRows: [...document.querySelectorAll("[data-sidebar-workspace-id] [data-sidebar-session-id]")].map(el => el.getAttribute("data-sidebar-session-id")),
+        tabs: window.__openworkControl.context().conversations.tabs.map(tab => tab.sessionId),
+        memory: JSON.parse(localStorage.getItem("openwork.react.sessionByWorkspace") ?? "{}"),
+      };
+    }, [[workspaceA.workspaceId, workspaceB.workspaceId]]), { timeoutMs: 30_000 });
+    if (!isRecord(result) || !Array.isArray(result.sessions) || !Array.isArray(result.requests)
+      || !Array.isArray(result.surfaces) || !Array.isArray(result.activeRows) || !Array.isArray(result.tabs) || !isRecord(result.memory)) {
+      throw new Error(`Malformed archive facts: ${JSON.stringify(result)}`);
+    }
+    const sessions = result.sessions.map((entry) => {
+      if (!isRecord(entry) || typeof entry.workspaceId !== "string" || typeof entry.sessionId !== "string"
+        || typeof entry.archived !== "boolean" || typeof entry.status !== "string") throw new Error("Malformed archive session");
+      return { workspaceId: entry.workspaceId, sessionId: entry.sessionId, archived: entry.archived, status: entry.status };
+    });
+    const requests = result.requests.map((entry) => {
+      if (!isRecord(entry) || typeof entry.path !== "string" || typeof entry.sessionId !== "string"
+        || typeof entry.action !== "string") throw new Error("Malformed archive request");
+      return { path: entry.path, sessionId: entry.sessionId, action: entry.action, result: entry.result, messageID: entry.messageID,
+        command: entry.command, responseBody: entry.responseBody, dispatchError: entry.dispatchError };
+    });
+    return { sessions, requests, surfaces: result.surfaces, activeRows: result.activeRows, tabs: result.tabs, memory: result.memory };
+  }
+
+  const paletteShortcut = await seed.evalIn(app, () => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "Meta+K" : "Control+K");
+  const lifetime = resources.move();
+  return {
+    app,
+    workspaceA,
+    workspaceB,
+    a1,
+    a2,
+    b1,
+    child,
+    faultCandidate,
+    workspaceBName,
+    commandSetup,
+    paletteShortcut,
+    facts,
+    networkFault,
+    faultObservation: () => seed.evalIn(app, browserScript(async (workspaceIds) => {
+      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+      if (!info.running || !info.baseUrl) throw new Error("Archive engine is unavailable");
+      const root = info.baseUrl.replace(/\/+$/, "");
+      const results = [];
+      for (const workspaceId of workspaceIds) {
+        for (const endpoint of ["session/status", "permission", "question"]) {
+          const url = `${root}/workspace/${workspaceId}/opencode/${endpoint}`;
+          const options = { headers: { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken) }, signal: AbortSignal.timeout(10000) };
+          const [actual, observed] = await Promise.all([window.__archiveNetwork.original(url, options), fetch(url, options)]);
+          if (!actual.ok || !observed.ok) throw new Error(`Fault observation failed for ${endpoint}`);
+          results.push({ workspaceId, endpoint, actual: await actual.json(), observed: await observed.json() });
+        }
+      }
+      return results;
+    }, [[workspaceA.workspaceId, workspaceB.workspaceId]]), { timeoutMs: 30_000 }),
+    diagnostics: () => seed.evalIn(app, () => ({
+      hash: location.hash,
+      fault: { mode: window.__archiveNetwork.mode, sessionId: window.__archiveNetwork.sessionId, workspaceId: window.__archiveNetwork.workspaceId, held: window.__archiveNetwork.release !== null },
+      composer: window.__openwork?.slice("composer"),
+      events: window.__openwork?.events(80),
+      drafts: localStorage.getItem("openwork.session-drafts.v2"),
+      surfaces: [...document.querySelectorAll<HTMLElement>("[data-session-surface-id]")].map(surface => ({
+        sessionId: surface.dataset.sessionSurfaceId,
+        text: surface.innerText.slice(-6000),
+        draft: surface.querySelector<HTMLElement>('[data-lexical-editor="true"]')?.innerText,
+      })),
+      actions: window.__openworkControl.listActions().filter(action => action.id.startsWith("composer.")).map(action => ({ id: action.id, disabled: action.disabled })),
+      requests: window.__archiveNetwork.requests,
+    })),
+    surfaceReady: (sessionId: string) => seed.evalIn(app, browserScript((sessionId) => {
+      const surface = document.querySelector<HTMLElement>(`[data-session-surface-id="${sessionId}"]`);
+      const snapshot = window.__openwork?.slice("composer")?.snapshotQuery;
+      return Boolean(surface?.getClientRects().length && surface.querySelector('[data-lexical-editor="true"][contenteditable="true"]'))
+        && snapshot?.intendedSessionId === sessionId && snapshot.currentSnapshotId === sessionId;
+    }, [sessionId])),
+    undoToastSettled: () => seed.evalIn(app, () => {
+      const toast = document.querySelector("[data-undo-toast]")?.closest("[data-sonner-toast]");
+      return toast instanceof HTMLElement && toast.dataset.mounted === "true"
+        && toast.getAnimations({ subtree: true }).every(animation => animation.playState !== "running");
+    }),
+    dispatchUnrelatedPrompt: (session: { workspaceId: string; sessionId: string }) => seed.evalIn(app, browserScript(async (session, providerID, modelID) => {
+      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+      if (!info.running || !info.baseUrl) throw new Error("Archive engine is unavailable");
+      const response = await fetch(`${info.baseUrl.replace(/\/+$/, "")}/workspace/${session.workspaceId}/opencode/session/${session.sessionId}/prompt_async`, {
+        method: "POST", headers: { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ model: { providerID, modelID }, parts: [{ type: "text", text: "An independently submitted task, not the accepted command." }] }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok) throw new Error("Independent prompt rejected: " + response.status);
+      return true;
+    }, [session, providerId, modelId]), { timeoutMs: 20_000 }),
+    releaseAbort: () => seed.evalIn(app, async () => {
+      if (!window.__archiveNetwork.release) throw new Error("No pending archive request to release");
+      await window.__archiveNetwork.release();
+      return true;
+    }, { timeoutMs: 30_000 }),
+    requests: async () => (await mock.agentRequests()).filter(request => request.kind !== "utility"),
+    releaseRun: () => setHeld(false),
+    holdRun: () => setHeld(true),
+    transcript: (session: { workspaceId: string; sessionId: string }) => seed.evalIn(app, browserScript(async (workspaceId, sessionId) => {
+      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+      if (!info.running || !info.baseUrl) throw new Error("Archive engine is unavailable");
+      const response = await window.__archiveNetwork.original(info.baseUrl.replace(/\/+$/, "") + "/workspace/" + workspaceId + "/opencode/session/" + sessionId + "/message", {
+        headers: { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken) }, signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok) throw new Error("Could not read transcript: " + response.status);
+      const messages: { info: { id: string; sessionID: string; role: string; parentID?: string; time: { completed?: number }; finish?: string; error?: unknown }; parts: { type: string; text?: string; state?: { status: string } }[] }[] = await response.json();
+      return messages.map(({ info, parts }) => ({ id: info.id, sessionId: info.sessionID, role: info.role, parentID: info.parentID ?? null,
+        completed: info.time.completed ?? null, finish: info.finish ?? null, error: info.error ?? null,
+        pendingTools: parts.some(p => p.type === "tool" && (p.state?.status === "pending" || p.state?.status === "running")),
+        text: parts.filter(p => p.type === "text").map(p => p.text).join("\n") }));
+    }, [session.workspaceId, session.sessionId]), { timeoutMs: 20_000 }),
+    async [Symbol.asyncDispose]() { await lifetime.disposeAsync(); },
+  };
+}
+
 export async function archiveSessions(seed: Seed) {
   const engine = resolveEvalEngine();
   const app = await seed.desktop({ name: "session-archive-undo" });
@@ -1405,6 +1823,20 @@ export async function archiveSessions(seed: Seed) {
   const workspace = await seed.workspace(app, workspacePath);
   const [candidate, neighbor] = await seed.sessions(app, ["Archive candidate", "Archive neighbor"]);
   if (!candidate || !neighbor) throw new Error("Archive world did not create both sessions.");
+  await seed.evalIn(app, browserScript((workspaceId) => {
+    const original = window.fetch.bind(window);
+    window.__archiveAvailabilityRequests = [];
+    window.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const path = new URL(request.url).pathname;
+      if (path.startsWith(`/workspace/${workspaceId}/`)
+        && ((request.method === "POST" && /\/(abort|interrupt)$/.test(path)) || (request.method === "PATCH" && /\/session\/[^/]+$/.test(path)))) {
+        window.__archiveAvailabilityRequests.push({ method: request.method, path });
+      }
+      return original(request);
+    };
+    return true;
+  }, [workspace.workspaceId]));
 
   /**
    * OpenCode's own `time.archived` stamp per session id (0 when active), read
@@ -1439,27 +1871,29 @@ export async function archiveSessions(seed: Seed) {
     return stamps;
   }
 
-  /** Which rows the workspace's own session tree shows, and whether the global Archived section exists. */
+  /** Active rows, the global Archived section, and the candidate's own archive button. */
   // TODO(primitive): probe.sidebar should expose the workspace tree and the Archived section.
-  async function sidebar(): Promise<{ active: string[]; archivedSection: boolean; archiveMenuDisabled: boolean }> {
-    const value = await seed.evalIn(app, browserScript((workspaceId) => {
+  async function sidebar(): Promise<{ active: string[]; archivedSection: boolean; archiveButtonDisabled: boolean | null; archiveButtonTitle: string | null }> {
+    const value = await seed.evalIn(app, browserScript((workspaceId, candidateId) => {
       const tree = document.querySelector<HTMLElement>('[data-sidebar-workspace-id="' + workspaceId + '"]');
+      const button = tree?.querySelector<HTMLButtonElement>(`[data-sidebar-session-id="${candidateId}"] button[data-testid="session-archive-${candidateId}"]`);
       return {
         active: [...(tree?.querySelectorAll<HTMLElement>("[data-sidebar-session-id]") ?? [])]
           .map((row) => row.getAttribute("data-sidebar-session-id")),
         archivedSection: Boolean(document.querySelector<HTMLElement>("[data-global-archived-sessions]")),
-        archiveMenuDisabled: [...document.querySelectorAll<HTMLElement>('[role="menuitem"][aria-disabled="true"]')]
-          .some((item) => item.textContent?.trim() === "Archive session"),
+        archiveButtonDisabled: button?.disabled ?? null,
+        archiveButtonTitle: button?.title ?? null,
       };
-    }, [workspace.workspaceId]));
+    }, [workspace.workspaceId, candidate.sessionId]));
     if (!isRecord(value)
       || !Array.isArray(value.active)
       || !value.active.every((sessionId) => typeof sessionId === "string")
       || typeof value.archivedSection !== "boolean"
-      || typeof value.archiveMenuDisabled !== "boolean") {
+      || (value.archiveButtonDisabled !== null && typeof value.archiveButtonDisabled !== "boolean")
+      || (value.archiveButtonTitle !== null && typeof value.archiveButtonTitle !== "string")) {
       throw new Error(`Sidebar archive facts were malformed: ${JSON.stringify(value)}`);
     }
-    return { active: value.active, archivedSection: value.archivedSection, archiveMenuDisabled: value.archiveMenuDisabled };
+    return { active: value.active, archivedSection: value.archivedSection, archiveButtonDisabled: value.archiveButtonDisabled, archiveButtonTitle: value.archiveButtonTitle };
   }
 
   /** True once the undo pill is on screen and its slide-in has finished, i.e. when a person would reach for it. */
@@ -1475,7 +1909,14 @@ export async function archiveSessions(seed: Seed) {
     return value === true;
   }
 
-  return { app, engine, workspace, workspacePath, candidate, neighbor, archivedAt, sidebar, undoToastSettled };
+  return { app, engine, workspace, workspacePath, candidate, neighbor, archivedAt, sidebar, undoToastSettled,
+    hoverArchiveButton: async () => {
+      // Disabled buttons reject pointer hits; hover their visible bounds without clicking.
+      const button = await waitForLocated(app, { testId: `session-archive-${candidate.sessionId}` }, { timeoutMs: 10_000 });
+      await hoverAt(app, button.center);
+    },
+    mutationRequests: () => seed.evalIn(app, () => window.__archiveAvailabilityRequests),
+  };
 }
 
 export async function responsiveSessions(seed: Seed) {

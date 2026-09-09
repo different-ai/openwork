@@ -80,6 +80,8 @@ let agentWorkloads = [];
 let agentRequiredHeader = null;
 const agentReplyGates = new Map();
 const AGENT_REPLY_GATE_TIMEOUT_MS = 60_000;
+let agentRepliesHeld = false;
+const heldAgentReplies = new Set();
 let configuredTools = [];
 
 const gmailThreadId = "thread-q3-launch";
@@ -256,13 +258,15 @@ function validateAgentWorkloads(value) {
       return { tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom,
         allowUnadvertisedTool: step.allowUnadvertisedTool === true };
     });
+    if (workload.matchAll !== undefined && typeof workload.matchAll !== "boolean")
+      throw new Error(`agent workload ${promptMarker} matchAll must be a boolean`);
     const finalReplyDelayMs = workload.finalReplyDelayMs ?? 0;
     if (!Number.isInteger(finalReplyDelayMs) || finalReplyDelayMs < 0 || finalReplyDelayMs > 10000)
       throw new Error("finalReplyDelayMs must be between 0 and 10000");
     const rateLimitAttempts = workload.rateLimitAttempts ?? 0;
     if (!Number.isInteger(rateLimitAttempts) || rateLimitAttempts < 0 || rateLimitAttempts > 3)
       throw new Error("rateLimitAttempts must be between 0 and 3");
-    return { promptMarker, finalReply, finalReplyFrom: workload.finalReplyFrom, finalReplyChunkSize, finalReplyChunks,
+    return { promptMarker, matchAll: workload.matchAll === true, finalReply, finalReplyFrom: workload.finalReplyFrom, finalReplyChunkSize, finalReplyChunks,
       finalReplyInitiallyReleasedChunks, finalReplyDelayMs, finalReasoning: workload.finalReasoning, steps,
       latestUserTurn: workload.latestUserTurn === true, rateLimitAttempts };
   });
@@ -415,23 +419,34 @@ function skillCatalogArguments(messages, skillName) {
 
 }
 
-function agentStream(res, model, chunks) {
+function agentStream(res, model, chunks, hold = false) {
   res.writeHead(200, {
     "access-control-allow-origin": "*",
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
     connection: "keep-alive",
   });
-  let delayMs = 150;
-  for (const chunk of chunks) {
+  const send = () => {
+    heldAgentReplies.delete(send);
+    if (res.destroyed) return;
+    let delayMs = 150;
+    for (const chunk of hold ? chunks.slice(1) : chunks) {
+      setTimeout(() => {
+        if (!res.destroyed && !res.writableEnded) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      }, delayMs);
+      delayMs += 150;
+    }
     setTimeout(() => {
-      if (!res.writableEnded) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      if (!res.destroyed && !res.writableEnded) res.end("data: [DONE]\n\n");
     }, delayMs);
-    delayMs += 150;
+  };
+  if (hold) {
+    res.write(`data: ${JSON.stringify(chunks[0])}\n\n`);
+    heldAgentReplies.add(send);
+    res.once("close", () => heldAgentReplies.delete(send));
+  } else {
+    send();
   }
-  setTimeout(() => {
-    if (!res.writableEnded) res.end("data: [DONE]\n\n");
-  }, delayMs);
 }
 
 function agentChunk(model, delta, finishReason = null) {
@@ -533,7 +548,7 @@ async function handleAgentCompletion(req, res, entry) {
   const latestUserIndex = messages.findLastIndex((message) => message?.role === "user");
   const latestUserText = latestUserIndex < 0 ? "" : agentContentText(messages[latestUserIndex]);
   const matched = agentWorkloads.filter((workload) =>
-    (workload.latestUserTurn ? latestUserText : conversationText).includes(workload.promptMarker));
+    workload.matchAll || (workload.latestUserTurn ? latestUserText : conversationText).includes(workload.promptMarker));
   const matchedMarkers = matched.map((workload) => workload.promptMarker);
   const workload = matched[0];
   const scopedMessages = workload?.latestUserTurn ? messages.slice(latestUserIndex + 1) : messages;
@@ -578,7 +593,7 @@ async function handleAgentCompletion(req, res, entry) {
         ...(workload.finalReasoning ? [agentChunk(model, { reasoning_content: workload.finalReasoning })] : []),
         ...finalReplyChunks({ ...workload, finalReply }).map((content) => agentChunk(model, { content })),
         agentChunk(model, {}, "stop"),
-      ]);
+      ], agentRepliesHeld);
     }
     return;
   }
@@ -1244,6 +1259,15 @@ const server = http.createServer(async (req, res) => {
       }
       configuredTools = body.tools;
       json(res, 200, { configured: configuredTools.length });
+      return;
+    }
+
+    if (url.pathname === "/admin/agent-hold" && req.method === "POST") {
+      const body = await readJson(req);
+      if (typeof body?.held !== "boolean") throw new Error("held must be a boolean");
+      agentRepliesHeld = body.held;
+      if (!agentRepliesHeld) for (const send of [...heldAgentReplies]) send();
+      json(res, 200, { held: agentRepliesHeld, pending: heldAgentReplies.size });
       return;
     }
 

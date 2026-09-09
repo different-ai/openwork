@@ -3,11 +3,13 @@ import { expect, mock, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createRequire } from "node:module";
-import { act, useState } from "react";
+import { act, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
+import { MemoryRouter } from "react-router";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
+import type { NativeContextMenuRequest } from "../src/app/lib/desktop-types";
 import type { ComposerAttachment, ComposerDraft } from "../src/app/types";
 import type { CloudMcpSubmissionResult } from "../src/react-app/domains/connections/cloud-mcp-submit-readiness";
 import type {
@@ -75,7 +77,7 @@ async function waitFor(predicate: () => boolean, label: string) {
   throw new Error(`Timed out waiting for ${label}`);
 }
 
-test("composer focus, pending stops, and optimistic sends preserve drafts through snapshots and first-message handoff", async () => {
+test("composer focus, shared Restore, pending stops, and optimistic sends preserve drafts through snapshots and first-message handoff", async () => {
   const require = createRequire(import.meta.url);
   // Bun's isolated test loader cycles Lexical's ESM entries; use their real CJS entries before the app imports the editor.
   for (const moduleId of [
@@ -98,6 +100,7 @@ test("composer focus, pending stops, and optimistic sends preserve drafts throug
     { getReactQueryClient },
     { LocalProvider },
     { ShellConfigProvider },
+    { PlatformProvider, createDefaultPlatform },
   ] = await Promise.all([
     import("../src/app/lib/openwork-server"),
     import("../src/react-app/domains/connections/cloud-mcp-submit-readiness"),
@@ -105,6 +108,7 @@ test("composer focus, pending stops, and optimistic sends preserve drafts throug
     import("../src/react-app/infra/query-client"),
     import("../src/react-app/kernel/local-provider"),
     import("../src/react-app/shell/shell-config"),
+    import("../src/react-app/kernel/platform"),
   ]);
   const registeredDom = typeof globalThis.window === "undefined" || typeof globalThis.document === "undefined";
   if (registeredDom) GlobalRegistrator.register({ url: "http://localhost/" });
@@ -118,11 +122,13 @@ test("composer focus, pending stops, and optimistic sends preserve drafts throug
   Object.defineProperty(document, "compatMode", { configurable: true, value: "CSS1Compat" });
   let acceptedMessageId: string | null = null;
   const acceptanceRequests: Request[] = [];
+  const restoreRequests: Request[] = [];
   const nativePromptTexts: string[] = [];
   const nativeMessages: { id: string; role: "user"; text: string }[] = [];
   const fetchStub = async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     const path = new URL(request.url).pathname;
+    if (request.method === "PATCH" && path.endsWith(`/session/${sessionId}`)) restoreRequests.push(request);
     if (path === `/opencode2/api/session/${sessionId}/prompt`) {
       const body: unknown = await request.json();
       if (!body || typeof body !== "object" || !("text" in body) || typeof body.text !== "string") throw new Error("Expected a native text prompt");
@@ -142,6 +148,7 @@ test("composer focus, pending stops, and optimistic sends preserve drafts throug
   Object.defineProperty(window, "fetch", { configurable: true, value: fetchStub });
   window.localStorage.setItem("openwork.shell-config", JSON.stringify({ starterCards: false }));
   let fetchedSnapshot = createSnapshot({ type: "busy" }, 1);
+  let snapshotRead: Promise<OpenworkSessionSnapshot> | null = null;
   const otherSessionId = `${sessionId}-other`;
   const otherSnapshot = createSnapshot({ type: "busy" }, 1, otherSessionId);
   const interruptionModule = await import("../src/app/lib/opencode-interruption");
@@ -154,10 +161,11 @@ test("composer focus, pending stops, and optimistic sends preserve drafts throug
   mock.module("@/components/model-select", () => ({ ModelSelect: () => null }));
   mock.module("@/react-app/domains/session/surface/composer/workspace-run-mode-menu", () => ({ WorkspaceRunModeMenu: () => null }));
   mock.module("@/app/lib/opencode-session-native", () => ({
-    composeNativeSessionSnapshot: async (_target: unknown, id: string) => id === otherSessionId ? otherSnapshot : fetchedSnapshot,
+    composeNativeSessionSnapshot: async (_target: unknown, id: string) => id === otherSessionId ? otherSnapshot : snapshotRead ?? fetchedSnapshot,
   }));
   const { SessionSurface } = await import("../src/react-app/domains/session/surface/session-surface");
   const { snapshotKey, transcriptKey } = await import("../src/react-app/domains/session/sync/session-sync");
+  const { useSessionArchive } = await import("../src/react-app/domains/session/sidebar/use-session-archive");
   const { getQueuedDrainState, resetQueuedDrainForTests } = await import("../src/react-app/domains/session/surface/queued-drain-machine");
   const queryClient = getReactQueryClient();
   queryClient.clear();
@@ -176,12 +184,67 @@ test("composer focus, pending stops, and optimistic sends preserve drafts throug
   const sentDrafts: ComposerDraft[] = [];
   let prepareSubmission: ((text?: string) => void) | undefined;
   const revokePreview = spyOn(URL, "revokeObjectURL");
+  const copyText = spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+  const forkAtMessage = mock(() => {});
+  const revertToMessage = mock(async () => {});
+  const nativeMenuRequests: NativeContextMenuRequest[] = [];
+  let nativeMenuSelection: string | null = null;
+  const platform = {
+    ...createDefaultPlatform(),
+    showContextMenu: async (request: NativeContextMenuRequest) => {
+      nativeMenuRequests.push(request);
+      return nativeMenuSelection;
+    },
+  };
+  const openMessageMenu = async (selection: string | null = null) => {
+    nativeMenuSelection = selection;
+    const trigger = container.querySelector<HTMLElement>('[data-message-id="existing-user-message"] [data-slot="context-menu-trigger"]');
+    if (!trigger) throw new Error("Expected the user message context-menu trigger");
+    const requestCount = nativeMenuRequests.length;
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+    expect(nativeMenuRequests).toHaveLength(requestCount + 1);
+    return nativeMenuRequests.at(-1)?.items;
+  };
+  const routeWorkspaceId = `rem_${workspaceId}`;
+  let restoreShared = async () => false;
+  let updateRouteArchived = (_archived: boolean) => {};
+  function ArchiveOwner({ children }: { children: (archived: boolean) => ReactNode }) {
+    const [archived, setArchived] = useState(false);
+    updateRouteArchived = setArchived;
+    const { archiveSession } = useSessionArchive({
+      workspaces: [{
+        id: routeWorkspaceId, name: "Focus continuity", displayNameResolved: "Focus continuity",
+        path: "/tmp/project-focus-continuity", preset: "starter", workspaceType: "remote",
+      }],
+      sessionsByWorkspaceId: { [routeWorkspaceId]: [fetchedSnapshot.session] },
+      endpointForWorkspace: () => ({
+        workspaceId, baseUrl: "http://127.0.0.1:1", token: "test-token", isRemote: true,
+        client, mountedBaseUrl: "http://127.0.0.1:1", opencodeBaseUrl: "http://127.0.0.1:1/opencode",
+      }),
+      selectedWorkspaceId: routeWorkspaceId, selectedSessionId: sessionId, draftScope: "local",
+      navigateToWorkspaceSession: () => { throw new Error("Shared Restore must not navigate"); },
+      reloadWorkspaceSessions: async () => {},
+      onArchivedChange: (workspace, id, value) => {
+        expect(workspace).toBe(routeWorkspaceId);
+        expect(id).toBe(sessionId);
+        setArchived(value);
+      },
+    });
+    restoreShared = () => archiveSession(sessionId, false);
+    return children(archived);
+  }
 
   const renderSurface = (opencodeBaseUrl = "http://127.0.0.1:1/opencode", activeSessionId = sessionId) => root.render(
+    <PlatformProvider value={platform}>
+      <MemoryRouter>
         <QueryClientProvider client={queryClient}>
           <LocalProvider>
             <ShellConfigProvider>
+              <ArchiveOwner>{archived => (
               <SessionSurface
+                archived={archived}
                 client={client}
                 workspaceId={workspaceId}
                 workspaceRoot="/tmp/project-focus-continuity"
@@ -197,6 +260,8 @@ test("composer focus, pending stops, and optimistic sends preserve drafts throug
                 selectedModel={{ providerID: "test", modelID: "test-model" }}
                 onModelPickerOpenChange={() => {}}
                 onModelChange={() => {}}
+                onForkAtMessage={forkAtMessage}
+                onRevertToMessage={revertToMessage}
                 onSendDraft={(value, _sessionId, onPrepared) => {
                   sentDrafts.push(value);
                   prepareSubmission = onPrepared;
@@ -221,10 +286,13 @@ test("composer focus, pending stops, and optimistic sends preserve drafts throug
                 isSandboxWorkspace={false}
                 providerConnectedCount={1}
               />
+              )}</ArchiveOwner>
             </ShellConfigProvider>
           </LocalProvider>
-        </QueryClientProvider>,
-      );
+        </QueryClientProvider>
+      </MemoryRouter>
+    </PlatformProvider>,
+  );
   const renderSession = (activeSessionId = sessionId) => renderSurface(undefined, activeSessionId);
   try {
     await act(async () => renderSurface());
@@ -239,7 +307,7 @@ test("composer focus, pending stops, and optimistic sends preserve drafts throug
       () => container.querySelector('[data-lexical-editor="true"]')?.textContent === draft,
       "the draft to reach Lexical",
     );
-    const editor = container.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]');
+    let editor = container.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]');
     if (!editor) throw new Error("Expected the Lexical editor");
     editor.focus();
     expect(document.activeElement).toBe(editor);
@@ -266,7 +334,7 @@ test("composer focus, pending stops, and optimistic sends preserve drafts throug
     expect(interrupt).toHaveBeenCalledTimes(1);
     expect(interrupt.mock.calls[0]).toEqual([
       "http://127.0.0.1:1/opencode", expect.anything(), sessionId, "/tmp/project-focus-continuity",
-      { admissionUnknown: false, onStopped: expect.any(Function) },
+      { admissionUnknown: false, admissionMessageID: undefined, onStopped: expect.any(Function) },
     ]);
     expectStopping();
     await act(async () => { escape(); });
@@ -365,6 +433,76 @@ test("composer focus, pending stops, and optimistic sends preserve drafts throug
     expect(container.querySelector('[data-lexical-editor="true"]')).toBe(editor);
     expect(document.activeElement).toBe(editor);
     expect(editor.textContent).toBe(draft);
+
+    const key = snapshotKey(workspaceId, sessionId);
+    const routeKey = snapshotKey(routeWorkspaceId, sessionId);
+    const unrelatedKey = snapshotKey("unrelated-runtime", sessionId);
+    const archivedSnapshot = createSnapshot({ type: "idle" }, 3);
+    archivedSnapshot.session.time.archived = 3;
+    await act(async () => {
+      fetchedSnapshot = archivedSnapshot;
+      queryClient.setQueryData(key, archivedSnapshot);
+      queryClient.setQueryData(routeKey, archivedSnapshot);
+      queryClient.setQueryData(unrelatedKey, archivedSnapshot);
+    });
+    // A fresh external archive must still lock a surface whose route metadata
+    // says false; replacing the OR with props precedence would break this.
+    await waitFor(() => container.querySelector('[data-testid="archived-session"]') !== null, "the externally archived transcript");
+    expect(container.querySelector('[contenteditable="true"][data-lexical-editor="true"]')).toBeNull();
+    expect(await openMessageMenu()).toEqual([
+      { type: "item", id: "edit", label: "Edit message", enabled: false },
+      { type: "item", id: "copy", label: "Copy", enabled: true },
+      { type: "item", id: "branch", label: "Branch in new chat", enabled: true },
+      { type: "item", id: "revert", label: "Revert", enabled: false },
+    ]);
+    await openMessageMenu("edit");
+    await openMessageMenu("revert");
+    expect(useComposerStateStore.getState().sessions[sessionId]?.draft).toBe(draft);
+    expect(revertToMessage).not.toHaveBeenCalled();
+    await openMessageMenu("copy");
+    expect(copyText).toHaveBeenCalledWith("Keep this session mounted.");
+    await openMessageMenu("branch");
+    expect(forkAtMessage).toHaveBeenCalledWith(null, sessionId);
+    const retainedMessages = queryClient.getQueryData<OpenworkSessionSnapshot>(key)?.messages;
+    await act(async () => updateRouteArchived(true));
+
+    const staleRead = Promise.withResolvers<OpenworkSessionSnapshot>();
+    snapshotRead = staleRead.promise;
+    let staleRefresh: Promise<void> = Promise.resolve();
+    await act(async () => { staleRefresh = queryClient.refetchQueries({ queryKey: key, exact: true }); });
+    expect(queryClient.getQueryState(key)?.fetchStatus).toBe("fetching");
+    const freshRead = Promise.withResolvers<OpenworkSessionSnapshot>();
+    snapshotRead = freshRead.promise;
+    fetchedSnapshot = createSnapshot({ type: "idle" }, 4);
+    await act(async () => { expect(await restoreShared()).toBe(true); });
+    await waitFor(() => container.querySelector('[contenteditable="true"][data-lexical-editor="true"]') !== null, "shared Restore to enable the composer before refetch completes");
+    expect(queryClient.getQueryState(key)?.fetchStatus).toBe("fetching");
+    expect(container.querySelector('[data-testid="archived-session"]')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]')?.disabled).toBe(false);
+    expect(queryClient.getQueryData<OpenworkSessionSnapshot>(key)?.session.time.archived).toBe(0);
+    expect(queryClient.getQueryData<OpenworkSessionSnapshot>(routeKey)?.session.time.archived).toBe(0);
+    expect(queryClient.getQueryData(unrelatedKey)).toBe(archivedSnapshot);
+    expect(queryClient.getQueryData<OpenworkSessionSnapshot>(key)?.messages).toBe(retainedMessages);
+    expect(restoreRequests).toHaveLength(1);
+    expect(await restoreRequests[0]?.json()).toMatchObject({ time: { archived: 0 } });
+    expect(sentDrafts).toHaveLength(0);
+    await act(async () => {
+      staleRead.resolve(archivedSnapshot);
+      await staleRefresh;
+    });
+    expect(queryClient.getQueryData<OpenworkSessionSnapshot>(key)?.session.time.archived).toBe(0);
+    expect(container.querySelector('[data-testid="archived-session"]')).toBeNull();
+    await act(async () => { freshRead.resolve(fetchedSnapshot); snapshotRead = null; });
+    await waitFor(() => queryClient.getQueryState(key)?.fetchStatus === "idle", "the restored authoritative snapshot");
+    editor = container.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]');
+    if (!editor) throw new Error("Shared Restore did not recreate the editor");
+    expect(editor.textContent).toBe(draft);
+    expect(await openMessageMenu()).toEqual([
+      { type: "item", id: "edit", label: "Edit message", enabled: true },
+      { type: "item", id: "copy", label: "Copy", enabled: true },
+      { type: "item", id: "branch", label: "Branch in new chat", enabled: true },
+      { type: "item", id: "revert", label: "Revert", enabled: true },
+    ]);
 
     const send = () => {
       const button = container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]');

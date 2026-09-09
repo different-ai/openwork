@@ -37,6 +37,8 @@ export interface MockAgentWorkload {
   /** Chat Completions: match the latest user message and count only its tool rounds. */
   latestUserTurn?: boolean;
   promptMarker: string;
+  /** A dedicated mock may answer every main turn without changing user prompts. */
+  matchAll?: boolean;
   finalReply: string;
   /** Derive the final reply from the real tool result or model system instructions. */
   finalReplyFrom?: "last-tool-text" | "system-text";

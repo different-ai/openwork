@@ -1941,6 +1941,19 @@ export function applySessionRevert(workspaceId: string, session: Session) {
   void queryClient.invalidateQueries({ queryKey: snapshotKey(workspaceId, session.id) });
 }
 
+/** Apply confirmed archive metadata for every caller, not only the transcript's Restore button. */
+export async function applySessionArchived(workspaceId: string, sessionId: string, archived: boolean) {
+  const queryClient = getReactQueryClient();
+  const queryKey = snapshotKey(workspaceId, sessionId);
+  // An older in-flight snapshot must not put the archived flag back after Restore.
+  await queryClient.cancelQueries({ queryKey, exact: true });
+  queryClient.setQueryData<OpenworkSessionSnapshot>(queryKey, current => current ? {
+    ...current,
+    session: { ...current.session, time: { ...current.session.time, archived: archived ? Date.now() : 0 } },
+  } : current);
+  void queryClient.invalidateQueries({ queryKey, exact: true });
+}
+
 /** Clear a server-confirmed revert cursor without discarding cached history. */
 export function applySessionUnrevert(workspaceId: string, sessionId: string) {
   const queryClient = getReactQueryClient();

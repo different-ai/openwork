@@ -8,7 +8,6 @@ import {
   useState,
 } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { Archive, ArchiveRestore } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
@@ -19,8 +18,9 @@ import { downloadTextAsFile } from "@/app/lib/download";
 import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
 import { createClient, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl, v2PromptText, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
-import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
+import { abortSessionSafe, forkSession, listCommands, revertSession, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
 import { getNativeSessionMessages } from "@/app/lib/opencode-session-native";
+import { sendSessionCommand, sessionWorkHeld } from "@/app/lib/opencode-interruption";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
 import {
@@ -248,6 +248,7 @@ import {
 } from "./cloud-workspace-status";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
+import { useSessionArchive } from "@/react-app/domains/session/sidebar/use-session-archive";
 import { openComposerConfigure, isLibraryAgent, type ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import {
   globalExtensionsRoute,
@@ -1343,7 +1344,10 @@ export function SessionRoute() {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
         const generation = getQueuedSendGeneration(targetSessionId);
-        const assertCurrent = () => assertQueuedSendCurrent(targetSessionId, generation);
+        const assertCurrent = () => {
+          assertQueuedSendCurrent(targetSessionId, generation);
+          if (sessionWorkHeld(opencodeBaseUrl, targetSessionId)) throw new Error("This conversation is being archived.");
+        };
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!text && draft.attachments.length === 0) {
           return { outcome: "cancelled", reason: "context_changed" };
@@ -1364,6 +1368,11 @@ export function SessionRoute() {
           // message, including tasks that do not use connected services.
           skipGate: true,
           send: async () => {
+            assertCurrent();
+            if (unwrap(await opencodeClient.session.get({ sessionID: targetSessionId })).time.archived) {
+              throw new Error("This session is archived. Restore it before sending.");
+            }
+            assertCurrent();
             await sendWithRevertRollback({
               assertCurrent,
               revertMessageId: draft.revertMessageId,
@@ -1377,6 +1386,7 @@ export function SessionRoute() {
                 applySessionRevert(selectedWorkspaceId, reverted);
               },
               prompt: async () => {
+                assertCurrent();
                 captureAnalyticsEvent("task_message_sent", {
                   mode: draft.mode ?? "prompt",
                   is_command: Boolean(draft.command),
@@ -1419,7 +1429,7 @@ export function SessionRoute() {
 
                 if (draft.command) {
                   onPrepared?.();
-                  const result = await opencodeClient.session.command({
+                  const result = await sendSessionCommand(opencodeBaseUrl, opencodeClient, {
                     sessionID: targetSessionId,
                     messageID: draft.messageId,
                     command: draft.command.name,
@@ -1700,7 +1710,10 @@ export function SessionRoute() {
       onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || session.sessionId;
         const generation = getQueuedSendGeneration(targetSessionId);
-        const assertCurrent = () => assertQueuedSendCurrent(targetSessionId, generation);
+        const assertCurrent = () => {
+          assertQueuedSendCurrent(targetSessionId, generation);
+          if (sessionWorkHeld(endpoint.opencodeBaseUrl, targetSessionId)) throw new Error("This conversation is being archived.");
+        };
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!targetSessionId || (!text && draft.attachments.length === 0)) {
           return { outcome: "cancelled", reason: "context_changed" };
@@ -1711,6 +1724,11 @@ export function SessionRoute() {
         return submitWithCloudMcpReadiness({
           skipGate: true,
           send: async () => {
+            assertCurrent();
+            if (unwrap(await workspaceOpencodeClient.session.get({ sessionID: targetSessionId })).time.archived) {
+              throw new Error("This session is archived. Restore it before sending.");
+            }
+            assertCurrent();
             await sendWithRevertRollback({
               assertCurrent,
               revertMessageId: draft.revertMessageId,
@@ -1724,6 +1742,7 @@ export function SessionRoute() {
                 applySessionRevert(endpoint.workspaceId, reverted);
               },
               prompt: async () => {
+                assertCurrent();
                 captureAnalyticsEvent("task_message_sent", {
                   mode: draft.mode ?? "prompt",
                   is_command: Boolean(draft.command),
@@ -1754,7 +1773,7 @@ export function SessionRoute() {
                 }
                 if (draft.command) {
                   onPrepared?.();
-                  const result = await workspaceOpencodeClient.session.command({
+                  const result = await sendSessionCommand(endpoint.opencodeBaseUrl, workspaceOpencodeClient, {
                     sessionID: targetSessionId,
                     messageID: draft.messageId,
                     command: draft.command.name,
@@ -2428,6 +2447,29 @@ export function SessionRoute() {
     modelPicker.setOpen(true);
   }, [selectedSessionId]);
 
+  const { archiveSession, archiveDialog } = useSessionArchive({
+    workspaces,
+    sessionsByWorkspaceId,
+    endpointForWorkspace,
+    selectedWorkspaceId,
+    selectedSessionId,
+    navigateToWorkspaceSession,
+    reloadWorkspaceSessions,
+    draftScope: sessionDraftScope,
+    onArchivedChange: (workspaceId, sessionId, archived) => {
+      setSessionsByWorkspaceId(current => {
+        const sessions = current[workspaceId];
+        if (!sessions) return current;
+        return { ...current, [workspaceId]: sessions.map(session => session.id === sessionId
+          ? { ...session, time: { ...session.time, archived: archived ? Date.now() : 0 } }
+          : session) };
+      });
+    },
+  });
+  const handleArchiveSession = async (sessionId: string, archived: boolean) => {
+    await archiveSession(sessionId, archived);
+  };
+
   useSessionControlActions({
     workspaces,
     sessionsByWorkspaceId,
@@ -2444,6 +2486,7 @@ export function SessionRoute() {
     createTaskInWorkspace: handleCreateTaskInWorkspace,
     openModelPicker: openModelPickerForControl,
     refreshRouteState,
+    archiveSession,
   });
 
   const seedUnavailableModelControlAction = useMemo<OpenworkControlAction | null>(() => {
@@ -2960,59 +3003,6 @@ export function SessionRoute() {
     setWorkspaces((current) => orderRouteWorkspaces(current, nextOrderIds));
   }, []);
 
-  const handleArchiveSession = useCallback(
-    async (sessionId: string, archived: boolean) => {
-      if (!opencodeClient) return;
-      // The sidebar lists sessions from every workspace, so resolve the
-      // session's owning workspace instead of assuming the selected one —
-      // session.update needs the directory the session actually lives in.
-      const ownerWorkspace = workspaceSessionGroups.find((group) =>
-        group.sessions.some((session) => session?.id === sessionId),
-      )?.workspace;
-      const apply = async (nextArchived: boolean) => {
-        try {
-          await setSessionArchived(
-            opencodeClient,
-            sessionId,
-            nextArchived,
-            ownerWorkspace?.path || selectedWorkspaceRoot || undefined,
-          );
-          if (ownerWorkspace) await reloadWorkspaceSessions(ownerWorkspace.id);
-          await refreshRouteState();
-          return true;
-        } catch (error) {
-          console.error("[session-route] archive session failed", error);
-          toast.error(
-            nextArchived
-              ? t("session_management.archive_failed")
-              : t("session_management.unarchive_failed"),
-            { description: describeRouteError(error) },
-          );
-          return false;
-        }
-      };
-      if (!(await apply(archived))) return;
-      // Archiving is easy to hit by accident from the row's hover actions, so
-      // confirm it quietly with a way back. Undo reuses the same owner
-      // workspace and does not announce itself again.
-      toast.undo(
-        archived
-          ? t("session_management.session_archived")
-          : t("session_management.session_unarchived"),
-        {
-          id: `session-archive:${sessionId}`,
-          icon: archived ? Archive : ArchiveRestore,
-          undo: { label: t("common.undo"), onClick: () => void apply(!archived) },
-          view: ownerWorkspace
-            ? { label: t("common.view"), onClick: () => navigateToWorkspaceSession(ownerWorkspace.id, sessionId) }
-            : undefined,
-          closeLabel: t("common.close"),
-        },
-      );
-    },
-    [navigateToWorkspaceSession, opencodeClient, refreshRouteState, reloadWorkspaceSessions, selectedWorkspaceRoot, workspaceSessionGroups],
-  );
-
   const handleCreateWorkspace = useCallback(async (
     preset: WorkspacePreset,
     folder: string | null,
@@ -3427,7 +3417,7 @@ export function SessionRoute() {
           const remembered = readLastSessionFor(workspaceId);
           if (remembered && remembered !== selectedSessionId) {
             const known = sessionsByWorkspaceId[workspaceId];
-            if (known?.some((session) => session?.id === remembered)) {
+            if (known?.some((session) => session?.id === remembered && !session.time.archived)) {
               navigateToWorkspaceSession(workspaceId, remembered);
             } else {
               navigateToWorkspaceSession(workspaceId);
@@ -3774,6 +3764,7 @@ export function SessionRoute() {
       selectedAgent={selectedAgent}
       onSelectAgent={setSelectedAgent}
     />
+    {archiveDialog}
     <SessionSearchDialog
       open={sessionSearchOpen}
       onClose={() => setSessionSearchOpen(false)}

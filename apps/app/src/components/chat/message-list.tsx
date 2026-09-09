@@ -683,7 +683,7 @@ function renderUserTextWithSkillChips(text: string, highlightQuery: string | und
 
 const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
-    const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery } = useMessageList()
+    const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
     const { onOpenTarget } = useOpenTargets()
     const openLink = (event: React.MouseEvent) => {
       if (!onOpenTarget || !(event.target instanceof Element)) return
@@ -701,12 +701,12 @@ const UserMessage = React.memo(
     const hasContent = inlineParts.length > 0
     const menuActions: MenuAction[] = []
     if (messageText) menuActions.push(
-      { type: "item", id: "edit", label: "Edit message", icon: <Pencil className="size-4" />, onSelect: () => onEditUserMessage(message.id, messageText) },
+      { type: "item", id: "edit", label: "Edit message", icon: <Pencil className="size-4" />, disabled: readOnly, onSelect: () => onEditUserMessage(message.id, messageText) },
       { type: "item", id: "copy", label: "Copy", icon: <Copy className="size-4" />, onSelect: () => navigator.clipboard.writeText(messageText) },
     )
     menuActions.push(
       { type: "item", id: "branch", label: "Branch in new chat", icon: <Split className="size-4 rotate-90" />, onSelect: () => onForkAtMessage(message.id) },
-      { type: "item", id: "revert", label: "Revert", icon: <Undo2 className="size-4" />, onSelect: () => onRevertToUserMessage(message.id) },
+      { type: "item", id: "revert", label: "Revert", icon: <Undo2 className="size-4" />, disabled: readOnly, onSelect: () => onRevertToUserMessage(message.id) },
     )
 
     return (
@@ -768,6 +768,7 @@ const UserMessage = React.memo(
                           variant="ghost"
                           size="icon"
                           aria-label="Edit message"
+                          disabled={readOnly}
                           onClick={() => onEditUserMessage(message.id, messageText)}
                         >
                           <Pencil />
@@ -789,6 +790,7 @@ const UserMessage = React.memo(
                         variant="ghost"
                         size="icon"
                         aria-label="Revert"
+                        disabled={readOnly}
                         onClick={() => onRevertToUserMessage(message.id)}
                       >
                         <Undo2 />
@@ -1203,7 +1205,7 @@ function MessageGroup({
   isLastGroup,
   isStreaming,
 }: AssistantMessageGroupProps) {
-  const { onRevertToUserMessage, onForkAtMessage, showThinking } = useMessageList()
+  const { onRevertToUserMessage, onForkAtMessage, showThinking, readOnly } = useMessageList()
   const lastItem = items[items.length - 1]
   // Branch/revert must target a real server-side message id. Synthetic
   // client-side messages (e.g. session errors) don't exist on the server and
@@ -1390,6 +1392,7 @@ function MessageGroup({
                     variant="ghost"
                     size="icon"
                     aria-label="Revert"
+                    disabled={readOnly}
                     onClick={() => onRevertToUserMessage(lastRealItem.message.id)}
                   >
                     <Undo2 />
