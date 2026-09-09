@@ -16,6 +16,7 @@ import { ensureOrganizationAdmin, orgAccessFailureStatus, type OrgRouteVariables
 export function registerModelsAnalyticsRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get("/v1/inference/analytics/settings", describeRoute({
     tags: ["Inference"], summary: "Read the OpenWork Models task analytics choice",
+    description: "Returns the organization's task analytics state for OpenWork Models: whether the feature is available and the organization has an active Models subscription, whether collection is enabled and when it was consented to, and whether export to a configured Langfuse host is on. Any member can read it.",
     responses: { 200: jsonResponse("Task analytics settings", modelsAnalyticsSettingsSchema) },
   }), orgMemberRoute(), async (c) => {
     const context = c.get("organizationContext")
@@ -24,6 +25,7 @@ export function registerModelsAnalyticsRoutes<T extends { Variables: OrgRouteVar
 
   app.patch("/v1/inference/analytics/settings", describeRoute({
     tags: ["Inference"], summary: "Choose whether to collect task analytics included with OpenWork Models",
+    description: "Turns task analytics collection on or off for the organization. Workspace owners and admins only. Enabling requires the feature, an active OpenWork Models subscription, and consentVersion 1 (403 models_analytics_unavailable otherwise); repeating an already enabled choice keeps the original consent time as the collection cutoff, and disabling also switches export off.",
     responses: { 200: jsonResponse("Updated task analytics choice", modelsAnalyticsSettingsSchema) },
   }), orgRoleRoute(["admin"]), jsonValidator(modelsAnalyticsChoiceSchema), async (c) => {
     const permission = ensureOrganizationAdmin(c, "Only workspace admins can change task analytics.")
@@ -75,6 +77,7 @@ export function registerModelsAnalyticsRoutes<T extends { Variables: OrgRouteVar
 
   app.get("/v1/inference/analytics/activity", describeRoute({
     tags: ["Inference"], summary: "Read task activity collected after the analytics choice",
+    description: "Returns the task analytics events recorded for the organization over the last `days` days (default 30, max 90), newest first, 200 per page with a `next` cursor made of before + beforeId. Filter by memberId, taskId, or sessionId. Workspace owners and admins only; answers 403 models_analytics_unavailable while collection is disabled.",
     responses: { 200: jsonResponse("Task activity", modelsAnalyticsActivitySchema) },
   }), orgRoleRoute(["admin"]), queryValidator(modelsAnalyticsQuerySchema), async (c) => {
     const orgId = c.get("organizationContext").organization.id
@@ -96,6 +99,7 @@ export function registerModelsAnalyticsRoutes<T extends { Variables: OrgRouteVar
 
   app.get("/v1/inference/analytics/consumption", describeRoute({
     tags: ["Inference"], summary: "Read provider-reported consumption for OpenWork Models",
+    description: "Aggregates provider-reported OpenWork Models calls per model, provider, member, and day over the last `days` days (default 30, max 90): call counts, failed and incomplete calls, input, output, and cache-read tokens, and cost in USD. Optionally filter by memberId. Workspace owners and admins only; answers 403 models_analytics_unavailable while collection is disabled and 400 narrow_date_range when the range would produce more than 10,000 groups.",
     responses: { 200: jsonResponse("Model consumption", modelsConsumptionSchema) },
   }), orgRoleRoute(["admin"]), queryValidator(modelsAnalyticsQuerySchema), async (c) => {
     const orgId = c.get("organizationContext").organization.id
