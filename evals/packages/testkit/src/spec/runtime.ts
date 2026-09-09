@@ -36,6 +36,7 @@ import {
 import type { Located, Surface, Target } from "@openwork/cdp";
 import {
   app as startApp,
+  appWeb as startAppWeb,
   faultProxy as startFaultProxy,
   mcpMock,
   server,
@@ -65,6 +66,7 @@ import type {
   Probe,
   ProbeEvalOptions,
   Seed,
+  SeedAppWebOptions,
   SeedDesktopOptions,
   SeedWebOptions,
   SeeOptions,
@@ -467,6 +469,17 @@ export class SeedChannel implements Seed {
       }));
       if (options.workspacePath) await this.workspace(app, options.workspacePath);
       return app;
+    });
+  }
+
+  appWeb(options: SeedAppWebOptions) {
+    const requestedSurface = process.env.OPENWORK_EVAL_APP_SURFACE;
+    if (requestedSurface !== undefined && requestedSurface.trim() !== "web") {
+      throw new Error(`seed.appWeb() requires OPENWORK_EVAL_APP_SURFACE=web when a surface is explicitly requested; received ${JSON.stringify(requestedSurface)}.`);
+    }
+    return this.#runtime.call("seed", "appWeb", `appWeb(${this.#runtime.place.kind})`, null, async () => {
+      const web = await startAppWeb({ ...options, place: this.#runtime.place });
+      return this.#runtime.stack.use(web);
     });
   }
 

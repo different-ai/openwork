@@ -1,4 +1,4 @@
-import { browserScript, reattachSurface } from "@openwork/cdp";
+import { browserScript, reattachSurface, type Surface } from "@openwork/cdp";
 import { spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -90,7 +90,7 @@ function sendStream(response: ServerResponse, chunks: unknown[], intervalMs = 0)
 
 export async function configureProvider(
   seed: Seed,
-  app: Awaited<ReturnType<Seed["desktop"]>>,
+  app: Surface,
   workspaceId: string,
   providerId: string,
   modelId: string,
@@ -195,7 +195,7 @@ export async function arrangeControl(
 
 async function seedSessionRetry(
   seed: Seed,
-  app: Awaited<ReturnType<Seed["desktop"]>>,
+  app: Surface,
   options: { title?: string } = {},
 ): Promise<{ sessionId: string; title: string }> {
   const deadline = Date.now() + 60_000;

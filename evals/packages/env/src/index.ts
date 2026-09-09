@@ -5,6 +5,7 @@ export * from "./needs.ts";
 export * from "./mock.ts";
 export * from "./den.ts";
 export * from "./desktop-app.ts";
+export * from "./app-web.ts";
 export * from "./kind-stack.ts";
 export * from "./kind-server.ts";
 export * from "./faults.ts";

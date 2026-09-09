@@ -12,7 +12,17 @@ const definitions = {
   'desktop-policy-restricted-mode.e2e.test.ts': { name: 'Apply organization and team permissions', critical: true },
   'cross-server-handoff-atomic-commit.e2e.test.ts': { name: 'Switch servers and recover enrollment', critical: true, placement: 'local' },
   'workspace-new-task-hit-target.e2e.test.ts': { name: 'Keep new tasks and sends instantly responsive', placement: 'local' },
+  'streamed-markdown-answer.e2e.test.ts': {
+    cases: [{ id: 'CONT-01', engines: ['v1', 'v2'], surfaces: ['web', 'electron'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2', surface: 'web' } }],
+  },
+  'live-tool-visible-after-session-switch.e2e.test.ts': {
+    cases: [{ id: 'SWITCH-10', engines: ['v1', 'v2'], surfaces: ['web'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--daytona', engine: 'v1', surface: 'web' } }],
+  },
 };
+
+export const registeredCases = Object.freeze(Object.entries(definitions).flatMap(([spec, definition]) =>
+  (definition.cases ?? []).map(value => Object.freeze({ spec, ...value }))
+));
 
 export async function catalog(root = new URL('../specs/', import.meta.url)) {
   const files = (await readdir(root)).filter(file => file.endsWith('.e2e.test.ts')).sort();

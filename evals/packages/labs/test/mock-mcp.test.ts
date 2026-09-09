@@ -49,6 +49,17 @@ function completionBody(marker: string, completedTools: number): Record<string, 
   };
 }
 
+async function pollUntil<T>(read: () => Promise<T>, accept: (value: T) => boolean): Promise<T> {
+  const deadline = Date.now() + 5_000;
+  let value = await read();
+  while (!accept(value) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    value = await read();
+  }
+  assert.equal(accept(value), true);
+  return value;
+}
+
 test("scripts and records deterministic OpenAI-compatible agent tool rounds", async () => {
   const marker = "agent-workload-unit-marker";
   await using mock = await startMockMcp({
@@ -92,6 +103,62 @@ test("scripts and records deterministic OpenAI-compatible agent tool rounds", as
   assert.deepEqual(requests.map((request) => request.kind), ["tool", "tool", "final"]);
   assert.deepEqual(requests.map((request) => request.completedTools), [0, 1, 2]);
   assert.deepEqual(requests.map((request) => request.matchedMarkers), [[marker], [marker], [marker]]);
+});
+
+test("gated agent replies bind hermetically and clear waiters when the client disconnects", async () => {
+  const marker = "agent-gate-unit-marker";
+  const chunks = ["chunk-one", "chunk-two", "chunk-three"];
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    isolatedProcessEnv: true,
+    agentWorkloads: [{
+      promptMarker: marker,
+      finalReply: chunks.join(""),
+      finalReplyChunks: chunks,
+      finalReplyInitiallyReleasedChunks: 1,
+      steps: [],
+    }],
+  });
+  const health = JSON.parse(await (await fetch(`${mock.url}/health`)).text());
+  assert.equal(health.host, "127.0.0.1");
+
+  const controller = new AbortController();
+  const response = await fetch(`${mock.url}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(completionBody(marker, 0)),
+    signal: controller.signal,
+  });
+  assert.equal(response.status, 200);
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Gated completion returned no response body");
+  const decoder = new TextDecoder();
+  let text = "";
+  while (!text.includes(chunks[0])) {
+    const item = await reader.read();
+    if (item.done) throw new Error("Gated completion ended before its initial chunk");
+    text += decoder.decode(item.value, { stream: true });
+  }
+  const firstHold = await pollUntil(
+    () => mock.agentReplyState(marker),
+    (state) => state.deliveredChunks === 1 && state.waiting === 1,
+  );
+  assert.equal(firstHold.complete, false);
+  await mock.releaseAgentReply(marker);
+  const secondHold = await pollUntil(
+    () => mock.agentReplyState(marker),
+    (state) => state.deliveredChunks === 2 && state.waiting === 1,
+  );
+  assert.equal(secondHold.prefix, chunks.slice(0, 2).join(""));
+
+  controller.abort();
+  await reader.read().catch(() => undefined);
+  const aborted = await pollUntil(
+    () => mock.agentReplyState(marker),
+    (state) => state.aborted && state.waiting === 0,
+  );
+  assert.equal(aborted.complete, false);
+  assert.equal(aborted.timedOut, false);
 });
 
 test("unadvertised calls require an explicit adversarial workload", async () => {

@@ -4,6 +4,7 @@ import type { AttachedSurface, Surface } from "@openwork/cdp";
 import type { StartMockMcpOptions } from "@openwork/labs";
 import type { DaytonaExec, DesktopHandle } from "@openwork/hosts";
 import type { App } from "./desktop-app.ts";
+import type { AppWeb, SeedAppWebOptions } from "./app-web.ts";
 import type { Den, ServerOptions } from "./den.ts";
 import type { FaultProxy } from "./faults.ts";
 import type { MockBoot } from "./mock.ts";
@@ -93,6 +94,7 @@ export interface SeedDenLink extends AsyncDisposable {
 export interface Seed {
   den(options?: Omit<ServerOptions, "place">): Promise<Den>;
   desktop(options?: SeedDesktopOptions): Promise<App | DesktopHandle>;
+  appWeb(options: SeedAppWebOptions): Promise<AppWeb>;
   web(options: SeedWebOptions): Promise<AttachedSurface>;
   /** Ensure a selected workspace; create:true explicitly creates another workspace. */
   workspace(app: Surface, path?: string, options?: { create?: boolean }): Promise<{ workspaceId: string; route: string }>;

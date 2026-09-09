@@ -6,6 +6,7 @@ import {
   desktopSandboxName,
   encodeDenExtraEnv,
   parseConnectorE2eTestEnv,
+  prepareSandboxRepo,
   provisionDesktopSandbox,
   renderConnectorE2eTestEnv,
   serverSandboxName,
@@ -19,6 +20,9 @@ interface ExecCall {
   args: string[];
   opts?: { input?: string; timeoutMs?: number };
 }
+
+const SOURCE_SHA = "a".repeat(40);
+const DEPENDENCY_FINGERPRINT = "b".repeat(64);
 
 function desktopFake(diskUse = "40%"):
   { exec: DaytonaExec; calls: ExecCall[] } {
@@ -34,7 +38,11 @@ function desktopFake(diskUse = "40%"):
     if (args[0] !== "exec") return { stdout: "", stderr: "", code: 0 };
 
     const script = args[3] ?? "";
-    if (script.includes("git rev-parse")) return { stdout: "abc1234\n", stderr: "", code: 0 };
+    if (script.includes("git status") || script.includes("git fetch")) {
+      return { stdout: `${SOURCE_SHA}\n`, stderr: "", code: 0 };
+    }
+    if (script.includes("git ls-tree")) return { stdout: `${DEPENDENCY_FINGERPRINT}\n`, stderr: "", code: 0 };
+    if (script.includes("SOURCE_PREPARED")) return { stdout: "SOURCE_STALE\n", stderr: "", code: 0 };
     if (script.includes("df -P")) {
       return { stdout: `/dev/root 100 40 60 ${diskUse} /workspace\n`, stderr: "", code: 0 };
     }
@@ -110,12 +118,119 @@ test("provisionDesktopSandbox reuses a sandbox and keeps every remote command in
 
   assert.equal(result.sandbox, "existing-a");
   assert.equal(result.created, false);
+  assert.equal(result.source.actualSha, SOURCE_SHA);
   assert.deepEqual(calls[0]?.args, ["sandbox", "start", "existing-a"]);
   assert.equal(calls.filter((call) => call.args[0] === "create").length, 0);
   assert.equal(calls.filter((call) => call.args[0] === "snapshot").length, 0);
   const lastFirstBootCall = calls.findLastIndex((call) => call.args[3]?.includes("/tmp/warmup-profile"));
   assert(lastFirstBootCall >= 0);
+  const sourceReceiptCall = calls.findIndex((call) => call.args[3]?.includes("source-receipt.json"));
+  assert(sourceReceiptCall >= 0 && sourceReceiptCall < lastFirstBootCall, "source receipt must be verified before any app warmup starts");
   assertRemoteCommandsAreSingleArgument(calls);
+});
+
+test("prepareSandboxRepo updates a wrong HEAD and verifies it before caller launch", async () => {
+  const oldSha = "c".repeat(40);
+  const expectedSha = "d".repeat(40);
+  let actualSha = oldSha;
+  const events: string[] = [];
+  const calls: ExecCall[] = [];
+  const exec: DaytonaExec = async (args, opts) => {
+    calls.push({ args: [...args], opts });
+    const script = args[3] ?? "";
+    if (script.includes("git status")) {
+      events.push("verify");
+      return { stdout: `${actualSha}\n`, stderr: "", code: 0 };
+    }
+    if (script.includes("git fetch")) {
+      events.push("resolve");
+      return { stdout: `${expectedSha}\n`, stderr: "", code: 0 };
+    }
+    if (script.includes("git checkout --detach")) {
+      events.push("checkout");
+      actualSha = expectedSha;
+      return { stdout: "", stderr: "", code: 0 };
+    }
+    if (script.includes("git ls-tree")) {
+      events.push("fingerprint");
+      return { stdout: `${DEPENDENCY_FINGERPRINT}\n`, stderr: "", code: 0 };
+    }
+    if (script.includes("SOURCE_PREPARED")) return { stdout: "SOURCE_STALE\n", stderr: "", code: 0 };
+    if (script.includes("pnpm install --frozen-lockfile")) {
+      events.push("install");
+      return { stdout: "", stderr: "", code: 0 };
+    }
+    if (script.includes("source-receipt.json")) events.push("receipt");
+    return { stdout: "", stderr: "", code: 0 };
+  };
+
+  const receipt = await prepareSandboxRepo({ sandbox: "prepared-a", ref: expectedSha, exec, log: () => undefined });
+  events.push("launch");
+
+  assert.equal(receipt.expectedSha, expectedSha);
+  assert.equal(receipt.actualSha, expectedSha);
+  assert.equal(receipt.dependenciesInstalled, true);
+  assert.deepEqual(events, ["verify", "resolve", "checkout", "verify", "fingerprint", "install", "verify", "receipt", "launch"]);
+  const resolveCall = calls.find((call) => call.args[3]?.includes("git fetch"));
+  assert(resolveCall?.args[3]?.includes(`${expectedSha}^{commit}`));
+  assert(!resolveCall?.args[3]?.includes("FETCH_HEAD"), "an immutable requested SHA must not resolve through stale FETCH_HEAD");
+  assert(calls.some((call) => call.args[3]?.includes(`git checkout --detach \"${expectedSha}\"`)));
+  assertRemoteCommandsAreSingleArgument(calls);
+});
+
+test("prepareSandboxRepo fails closed on dirty source before fetch or checkout", async () => {
+  const calls: ExecCall[] = [];
+  const exec: DaytonaExec = async (args, opts) => {
+    calls.push({ args: [...args], opts });
+    return { stdout: "", stderr: "Refusing source preparation because /workspace is dirty:\n M package.json\n", code: 42 };
+  };
+
+  await assert.rejects(
+    prepareSandboxRepo({ sandbox: "dirty-a", ref: SOURCE_SHA, exec, log: () => undefined }),
+    /workspace is dirty/,
+  );
+  assert.equal(calls.length, 1);
+  assert(!calls[0]?.args[3]?.includes("git fetch"));
+});
+
+test("prepareSandboxRepo skips checkout and install when source is already prepared", async () => {
+  const calls: ExecCall[] = [];
+  const exec: DaytonaExec = async (args, opts) => {
+    calls.push({ args: [...args], opts });
+    const script = args[3] ?? "";
+    if (script.includes("git status") || script.includes("git fetch")) {
+      return { stdout: `${SOURCE_SHA}\n`, stderr: "", code: 0 };
+    }
+    if (script.includes("git ls-tree")) return { stdout: `${DEPENDENCY_FINGERPRINT}\n`, stderr: "", code: 0 };
+    if (script.includes("SOURCE_PREPARED")) return { stdout: "SOURCE_PREPARED\n", stderr: "", code: 0 };
+    return { stdout: "", stderr: "", code: 0 };
+  };
+
+  const receipt = await prepareSandboxRepo({ sandbox: "prepared-a", ref: SOURCE_SHA, exec, log: () => undefined });
+
+  assert.equal(receipt.dependenciesInstalled, false);
+  assert(!calls.some((call) => call.args[3]?.includes("git checkout --detach")));
+  assert(!calls.some((call) => call.args[3]?.includes("pnpm install")));
+});
+
+test("prepareSandboxRepo rejects a post-checkout source mismatch before install", async () => {
+  const oldSha = "e".repeat(40);
+  const expectedSha = "f".repeat(40);
+  const calls: ExecCall[] = [];
+  const exec: DaytonaExec = async (args, opts) => {
+    calls.push({ args: [...args], opts });
+    const script = args[3] ?? "";
+    if (script.includes("git status")) return { stdout: `${oldSha}\n`, stderr: "", code: 0 };
+    if (script.includes("git fetch")) return { stdout: `${expectedSha}\n`, stderr: "", code: 0 };
+    return { stdout: "", stderr: "", code: 0 };
+  };
+
+  await assert.rejects(
+    prepareSandboxRepo({ sandbox: "mismatch-a", ref: expectedSha, exec, log: () => undefined }),
+    new RegExp(`expected ${expectedSha}, received ${oldSha}`),
+  );
+  assert(calls.some((call) => call.args[3]?.includes("git checkout --detach")));
+  assert(!calls.some((call) => call.args[3]?.includes("pnpm install")));
 });
 
 test("provisionDesktopSandbox resolves the snapshot id and creates with connector flags", async () => {

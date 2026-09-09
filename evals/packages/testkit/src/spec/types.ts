@@ -129,4 +129,4 @@ export interface SpecWorldOptions {
   adapters?: SpecAdapters;
 }
 
-export type { OrgConnectionInput, Seed, SeedDesktopOptions, SeedWebOptions } from "@openwork/env";
+export type { OrgConnectionInput, Seed, SeedAppWebOptions, SeedDesktopOptions, SeedWebOptions } from "@openwork/env";
