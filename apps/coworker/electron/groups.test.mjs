@@ -465,7 +465,7 @@ test("a focused consultation and a Worker resume the immutable private origin ex
       assert.equal(events.filter((event) => event.slug === "editor").length, 1);
       assert.ok((await service.excludedThreads("editor")).includes(question.threadId));
       await assert.rejects(service.registerOwner({ slug: "editor", threadId: question.threadId, conversationId: question.threadId, kind: "private" }), /another conversation/);
-    } finally { groups.stop(); await service.stop(); }
+    } finally { await groups.stop(); await service.stop(); }
   });
 });
 
@@ -699,7 +699,7 @@ test("the backend group runner cancels every parallel native speaker", async () 
       assert.equal(handedOff.timeline.filter((event) => event.kind === "coworker" && event.slug === "editor").length, 1);
       assert.equal(handedOff.executions.some((entry) => entry.messageId === editor.messageId), false, "publication between activity and timeline reads must not duplicate the reply");
       assert.deepEqual((await getGroup(home, group.id)).turns[1].speakers.map((speaker) => speaker.status), ["stopped", "succeeded"]);
-    } finally { groups.stop(); await service.stop(); }
+    } finally { await groups.stop(); await service.stop(); }
   });
 });
 
@@ -791,7 +791,7 @@ test("group continuations yield to routing and all foreground speakers, includin
       const followup = fixture.requests.findIndex((entry) => entry.prompt.includes("Second result.md"));
       assert.ok(correction >= 0 && followup > correction, "the final admission check lets the human turn overtake prepared continuation setup");
       assert.equal(fixture.requests.filter((entry) => entry.prompt.includes("Second result.md")).length, 1);
-    } finally { releaseRoute(); releaseSetup(); groups.stop(); await service.stop(); }
+    } finally { releaseRoute(); releaseSetup(); await groups.stop(); await service.stop(); }
   });
 });
 
@@ -936,7 +936,10 @@ test("a recovered group question observes the same admission; cancel and expired
       const reply = fixture.histories.get(owner.threadId).at(-1);
       const question = { id: "question_a", sessionID: owner.threadId, questions: [{ header: "Choose", question: "Which?", options: [{ label: "A", description: "One" }], custom: false, multiple: false }], tool: { messageID: reply.id, callID: reply.parts[0].callId } };
       // Simulate a crash while the native producer is still waiting, not a second send.
+      // A stopped service is sealed; seed recovery through a separate fixture store.
+      service = createCollaboration(options);
       await service.change((state) => { Object.assign(state.executions[root.id], { state: "waiting-person", personDeadline: clock + 1000, remainingMs: 2000, interactions: { permissions: [], questions: [{ id: question.id }] } }); state.tasks[root.taskId].state = "waiting-person"; });
+      await service.stop();
       fixture.held.add(owner.threadId);
       fixture.interactions.set(owner.threadId, { permissions: [], questions: [question] });
       service = createCollaboration(options);
@@ -1192,8 +1195,9 @@ test("group retry sends a new follow-up and retains the accepted tool-bearing at
       await repeatAccepted();
       const delivered = (await readGroupTimeline(home, group.id)).find((event) => event.kind === "coworker");
       for (const crash of ["before-append", "before-receipt"]) {
-        groups.stop();
+        await groups.stop();
         await service.stop();
+        service = createCollaboration(options);
         await service.change((state) => {
           state.executions[delivered.executionId].groupReply.published = false;
           if (crash === "before-append") {
@@ -1201,6 +1205,7 @@ test("group retry sends a new follow-up and retains the accepted tool-bearing at
             state.groups[group.id].queue.push({ id: "explicit-follow-up", text: failed.prompt, turnId: failed.id, attempt: 1 });
           }
         });
+        await service.stop();
         await updateGroupTurn(home, group.id, failed.id, { speaker: { slug: "scout", status: "stopped" } });
         const events = await readGroupTimeline(home, group.id);
         // The second window also covers a pre-upgrade event lacking execution correlation.
@@ -1232,7 +1237,7 @@ test("group retry sends a new follow-up and retains the accepted tool-bearing at
       await assert.rejects(groups.submit(group.id, followUp), /cancelled/);
       assert.equal(await service.read((state) => state.groups[group.id].retryCounts[failed.id]), 2);
       assert.equal(fixture.requests.length, 2);
-    } finally { groups.stop(); await service.stop(); }
+    } finally { await groups.stop(); await service.stop(); }
   });
 });
 
@@ -1254,7 +1259,7 @@ test("general group messages stay within the existing speaker budget including e
       await eventually(async () => !(await groups.status(group.id)).active);
       assert.equal((await getGroup(home, group.id)).turns[0].speakers.length, 3);
       assert.equal(fixture.requests.filter((request) => request.slug !== ".coordinator").length, 3);
-    } finally { groups.stop(); await service.stop(); }
+    } finally { await groups.stop(); await service.stop(); }
   });
 });
 

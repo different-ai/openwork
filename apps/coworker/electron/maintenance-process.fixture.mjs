@@ -1,7 +1,7 @@
 // Disposable child-process witness for maintenance.test.mjs. Not bundled.
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { access, writeFile } from "node:fs/promises";
+import { access, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { captureMaintenanceProcesses, prepareMaintenanceHandoff, readMaintenanceStartup, runMaintenanceHelper } from "./maintenance-handoff.mjs";
@@ -19,7 +19,8 @@ if (role === "writer") {
 } else if (role === "relaunch") {
   const notice = readMaintenanceStartup(profile);
   const marker = process.env.COWORKER_TEST_INHERITED;
-  await writeFile(path.join(root, "relaunched.json"), JSON.stringify({ notice, marker, runAsNode: process.env.ELECTRON_RUN_AS_NODE ?? null, args: process.argv.slice(2) }));
+  await writeFile(path.join(root, "relaunched.json.tmp"), JSON.stringify({ notice, marker, runAsNode: process.env.ELECTRON_RUN_AS_NODE ?? null, args: process.argv.slice(2) }));
+  await rename(path.join(root, "relaunched.json.tmp"), path.join(root, "relaunched.json"));
 } else if (role === "parent" && process.connected) {
   const [request] = await once(process, "message");
   const writer = spawn(process.execPath, [self, "writer", request.root, request.scope.userData], { stdio: ["ignore", "ignore", "ignore", "ipc"], detached: true });
