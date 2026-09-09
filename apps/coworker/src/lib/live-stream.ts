@@ -1,56 +1,56 @@
-/**
- * The words a reply is made of while they are still arriving.
- *
- * The engine writes a text or reasoning part to the thread only once that part
- * has ended; while it streams, the words travel as events. This keeps the one
- * part streaming right now for a thread, so a person who taps the live row can
- * glimpse the end of it. It is a buffer, not a record: a poll of the thread
- * still owns everything that has landed.
- */
-export type LiveStream = {
-  messageId: string;
-  partId: string;
-  /** `text`, `reasoning`, or empty until the engine has named the part. */
-  type: string;
-  text: string;
-  /** The engine closed the part; the thread carries it now. */
-  ended: boolean;
-};
+/** Visible reply parts in native ID order. Hidden parts keep only a tombstone. */
+export type LivePart = { messageId: string; partId: string; type: string; text: string; ended: boolean };
+export type LiveStream = LivePart & { parts: LivePart[] };
 
 export type StreamEvent =
   | { kind: "delta"; threadId: string; messageId: string; partId: string; delta: string }
-  | { kind: "part"; threadId: string; messageId: string; partId: string; type: string; text: string; ended: boolean };
+  | { kind: "part"; threadId: string; messageId: string; partId: string; type: string; text: string; ended: boolean; synthetic?: boolean; ignored?: boolean };
 
-const WORD_PARTS = new Set(["text", "reasoning"]);
-
-/** Enough of the answer to be worth showing; a lone word or a stray space is not. */
 export const ANSWER_STREAMING_MIN_CHARS = 12;
 
-/**
- * Whether the words arriving right now are the answer itself — not thinking,
- * not a tool step — so the live row can show them without a tap. The part
- * must be named `text` by the engine, still open, and carry a few words.
- */
 export function answerStreaming(stream: LiveStream | null | undefined): boolean {
-  if (!stream || stream.ended || stream.type !== "text") return false;
-  return stream.text.trim().length >= ANSWER_STREAMING_MIN_CHARS;
+  return Boolean(stream && !stream.ended && stream.type === "text" && stream.text.trim().length >= ANSWER_STREAMING_MIN_CHARS);
 }
 
-/** Fold one engine event into the stream for one thread; events for other threads or for tool parts change nothing. */
+/** The caller verifies assistant/turn ownership. Deltas cannot establish visibility. */
 export function applyStreamEvent(current: LiveStream | null, event: StreamEvent, threadId: string): LiveStream | null {
   if (event.threadId !== threadId) return current;
+  const parts = current?.parts ?? [];
+  const index = parts.findIndex((part) => part.messageId === event.messageId && part.partId === event.partId);
+  const before = parts[index];
+  let next: LivePart;
   if (event.kind === "delta") {
-    if (!event.delta) return current;
-    if (current && current.partId === event.partId) return { ...current, text: current.text + event.delta, ended: false };
-    // A part the engine has not announced yet (or a newer one than the one we held): start with its words.
-    return { messageId: event.messageId, partId: event.partId, type: "", text: event.delta, ended: false };
+    if (!before || before.type !== "text" || before.ended || !event.delta || (current && (event.messageId < current.messageId || (event.messageId === current.messageId && event.partId < current.partId)))) return current;
+    next = { ...before, text: before.text + event.delta };
+  } else {
+    const hidden = event.synthetic || event.ignored || event.type !== "text";
+    if (before?.type === "hidden") return current;
+    if (!hidden && before?.ended) return current;
+    const text = hidden ? "" : !event.ended && before?.text.startsWith(event.text) ? before.text : event.text;
+    next = { messageId: event.messageId, partId: event.partId, type: hidden ? "hidden" : "text", text, ended: hidden || event.ended };
+    if (before && before.text === next.text && before.type === next.type && before.ended === next.ended) return current;
   }
-  if (!WORD_PARTS.has(event.type)) return current;
-  if (current && current.partId === event.partId) {
-    // The announcement names the part; a later update carries its whole text once it ended.
-    return { ...current, type: event.type, text: event.ended || event.text.length >= current.text.length ? event.text || current.text : current.text, ended: event.ended };
+  const ordered = [...parts];
+  if (index < 0) {
+    ordered.push(next);
+    ordered.sort((a, b) => a.messageId.localeCompare(b.messageId) || a.partId.localeCompare(b.partId));
+  } else ordered[index] = next;
+  const latest = ordered.findLast((part) => part.type === "text") ?? next;
+  return { ...latest, parts: ordered };
+}
+
+/** Reconcile prefixes only within one identity, never against a whole transcript's length. */
+export function replyText(stream: LiveStream | null, reply: { id: string; text: string; parts: readonly LivePart[] } | null): string {
+  const parts = new Map<string, LivePart>();
+  for (const part of stream?.parts ?? []) {
+    if (!reply || part.messageId === reply.id) parts.set(`${part.messageId}:${part.partId}`, part);
   }
-  // A new part starting supersedes whatever streamed before it; a stale update of an older part does not.
-  if (current && !current.ended && event.ended) return current;
-  return { messageId: event.messageId, partId: event.partId, type: event.type, text: event.text, ended: event.ended };
+  for (const part of reply?.parts ?? []) {
+    const key = `${part.messageId}:${part.partId}`;
+    const before = parts.get(key);
+    if (before?.type === "hidden" || (part.type !== "hidden" && before && !part.ended && (before.ended || before.text.startsWith(part.text)))) continue;
+    parts.set(key, part);
+  }
+  if (!parts.size) return reply?.text ?? "";
+  return [...parts.values()].sort((a, b) => a.messageId.localeCompare(b.messageId) || a.partId.localeCompare(b.partId)).filter((part) => part.type === "text").map((part) => part.text).join("").trim();
 }

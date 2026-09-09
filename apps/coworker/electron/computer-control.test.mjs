@@ -42,6 +42,7 @@ function fixture(overrides = {}) {
     readiness: async () => ({ readiness: "ready", detail: "Native service ready.", permissions: { accessibility: true, screenRecording: true } }), setup: async () => { setups++; },
     connect: async () => { connects++; if (overrides.connect) await overrides.connect(); return transport; } };
   const broker = createComputerControl({ adapters: [adapter, ...(overrides.adapters ?? [])], cleanupMs: 20, operationMs: overrides.operationMs ?? 1000, pollMs: 2,
+    onRevoke: overrides.onRevoke,
     discussionFor: async (slug, threadId) => {
       await overrides.discussionFor?.();
       if (!discussions.get(`${slug}:${threadId}`)) throw new Error("Not a saved private discussion.");
@@ -50,7 +51,7 @@ function fixture(overrides = {}) {
     resolveContext: async (slug, context) => {
       const assertActive = () => { if (!active || controller.signal.aborted) throw new Error("Native call stopped."); };
       assertActive();
-      return { entry: { id: executionId ?? `execution-${slug}-${context.sessionID}`, messageId, workspaceId: `workspace-${slug}` }, signal: controller.signal, assertActive };
+      return { entry: { id: executionId ?? `execution-${slug}-${context.sessionID}`, messageId, workspaceId: `workspace-${slug}` }, ...(context.sessionID === "worker" && overrides.delegatedOrigin ? { origin: { threadId: overrides.delegatedOrigin } } : {}), signal: controller.signal, assertActive };
     },
   });
   const scope = { slug: "scout", threadId: "one" };
@@ -91,6 +92,33 @@ test("saved discussion membership wins over the selected tab; all non-private wo
   ]) assert.throws(() => assertPrivateComputerDiscussion({ ...scope, ...patch }), /actual saved private/);
   assert.deepEqual(Object.keys(COMPUTER_DENY), Object.keys(COMPUTER_TOOLS));
   assert.ok(Object.values(COMPUTER_DENY).every((enabled) => enabled === false));
+});
+
+test("delegated computer control requires origin opt-in, cannot transfer a session and uses fresh Worker execution leases", async () => {
+  const revoked = [];
+  const f = fixture({ delegatedOrigin: "one", onRevoke: (scope) => revoked.push(scope) });
+  await assert.rejects(f.broker.delegationScope(f.scope), /Allow computer access/);
+  await f.enable();
+  const pin = await f.broker.delegationScope(f.scope);
+  assert.equal(pin.targetId, "this-mac"); pin.assertActive();
+  await f.execute("open", openArgs);
+  await assert.rejects(f.broker.delegationScope(f.scope), /finish its current native session/);
+  await assert.rejects(f.execute("open", openArgs, { slug: "scout", threadId: "worker" }), /earlier turn still owns/);
+  await f.broker.endTurn({ id: "execution-scout-one", state: "succeeded" });
+  assert.equal(f.counts().closes, 1);
+  const worker = { slug: "scout", threadId: "worker" };
+  await f.execute("open", openArgs, worker);
+  assert.equal(f.counts().connects, 2);
+  assert.equal(f.sent.filter((item) => item.name === "computer_open_session").length, 2);
+  await f.broker.endTurn({ id: "execution-scout-worker", state: "succeeded" });
+  f.setExecution("worker-next", "worker-next-message");
+  const stale = payload(await f.execute("act", { observation_id: "old", action: { type: "press", ref: "old" } }, worker));
+  assert.equal(stale.ok, false); assert.match(stale.message, /approved app session/);
+  assert.equal(f.sent.some((item) => item.name === "computer_act"), false);
+  await f.broker.stop({ ...f.scope, expectedRevision: (await f.snapshot()).revision });
+  assert.throws(pin.assertActive, /permission or target changed/);
+  assert.ok(revoked.some((scope) => scope.threadId === "one" && scope.surface === "computer"));
+  await f.broker.reset(true);
 });
 
 test("native context must match the exact active tool, input, workspace, message and user execution", () => {

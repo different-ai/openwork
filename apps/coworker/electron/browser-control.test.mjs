@@ -80,7 +80,7 @@ function fixture(options = {}) {
     }),
     resolveContext: async (slug, context, expected) => {
       requests.push({ slug, context, expected });
-      return { entry: { id: options.executionId ?? `execution-${slug}-${context.sessionID}`, workspaceId: `workspace-${slug}` }, signal: controller.signal, assertActive() { controller.signal.throwIfAborted(); } };
+      return { entry: { id: options.executionId ?? `execution-${slug}-${context.sessionID}`, workspaceId: `workspace-${slug}` }, ...(context.sessionID === "worker" && options.delegatedOrigin ? { origin: { threadId: options.delegatedOrigin } } : {}), signal: controller.signal, assertActive() { controller.signal.throwIfAborted(); options.assertActive?.(context); } };
     },
     checkPolicy: async (input) => { policies.push(input); if (options.denied) throw new Error("Policy denied."); await options.policy?.(); },
     runTool: async (name, args, context) => { dispatched.push({ name, args, context }); return options.runTool ? options.runTool(name, args, context) : "Page receipt"; },
@@ -113,6 +113,50 @@ test("browser authority is the exact running native tool and person-request disc
     (v) => { v.snapshot.messages[1].completedAt = 10; },
     (v) => { v.snapshot.messages[1].parts[0].toolStatus = "completed"; },
   ]) { const input = nativeContext(); change(input); assert.throws(() => assertBrowserToolContext(input), /exact running tool/); }
+});
+
+test("a validated Worker borrows only its original discussion browser, preserves its principal and invalidates receipts on release", async () => {
+  const f = fixture({ delegatedOrigin: "one" });
+  const tab = await f.open();
+  const other = await f.open("scout", "two");
+  const workerCall = (name, args) => f.execute(f.call(name, args, "scout", "worker"));
+  assert.deepEqual(JSON.parse(await workerCall("tabs", {})).map((item) => item.tab_id), [tab.tab_id]);
+  await assert.rejects(workerCall("snapshot", other), /Only this browser tool|not owned/);
+  await assert.rejects(workerCall("snapshot", { browser_url: other.browser_url, target_id: other.target_id }), /not owned/);
+  const handle = { browser_url: tab.browser_url, target_id: tab.target_id };
+  const { snapshot_id } = JSON.parse(await workerCall("snapshot", handle));
+  assert.equal(f.dispatched.at(-1).context.sessionID, "worker");
+  assert.equal(await f.broker.revokeOrigin({ slug: "scout", threadId: "one" }), true);
+  await assert.rejects(workerCall("click", { ...handle, snapshot_id, uid: 1 }), /stale/);
+  assert.equal(f.tabs.length, 2);
+  assert.ok(JSON.parse(await workerCall("snapshot", handle)).snapshot_id);
+  f.broker.destroy();
+});
+
+test("delegated browser revoke aborts real pending dispatch, blocks cleanup successors and preserves human-only takeover", async () => {
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const f = fixture({ delegatedOrigin: "one", runTool: async (name, _args, context) => {
+    if (name === "browser_eval") { entered.resolve(context.abort); await release.promise; context.abort.throwIfAborted(); }
+    return "Read";
+  } });
+  await f.broker.bind({ slug: "scout", threadId: "one", viewId: "view" });
+  const tab = await f.open();
+  const handle = { browser_url: tab.browser_url, target_id: tab.target_id };
+  const action = f.call("eval", { ...handle, expression: "document.title" }, "scout", "worker");
+  const work = assert.rejects(f.execute(action), /stopped/);
+  const signal = await entered.promise;
+  assert.equal(await f.broker.revokeOrigin({ slug: "scout", threadId: "one", cleanupMs: 10 }), false);
+  assert.equal(signal.aborted, true);
+  await assert.rejects(f.execute(f.call("tabs", {}, "scout", "worker")), /cleanup/);
+  release.resolve(); await work;
+  assert.equal(await f.broker.revokeOrigin({ slug: "scout", threadId: "one" }), true);
+  await f.broker.command({ viewId: "view", action: "takeover", tabId: tab.tab_id });
+  assert.equal(await f.broker.revokeOrigin({ slug: "scout", threadId: "one" }), true);
+  await assert.rejects(f.execute(f.call("tabs", {}, "scout", "worker")), /person has browser control/);
+  assert.equal(f.broker.read({ viewId: "view" }).control.state, "human");
+  assert.equal(f.dispatched.filter((item) => item.name === "browser_eval").length, 1);
+  f.broker.destroy();
 });
 
 test("page URLs reject app/control origins, non-web protocols and URL credentials", () => {

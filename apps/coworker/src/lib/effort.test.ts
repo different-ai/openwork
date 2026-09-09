@@ -3,9 +3,12 @@ import { test } from "node:test";
 import {
   EFFORT_STOPS,
   effortForTurn,
+  laneWithPreference,
+  replyKindForLane,
   variantForLevel,
   workerTurnsFor,
 } from "./effort.ts";
+import { classifyRequest } from "./model-choice.ts";
 
 const SIX = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -18,6 +21,11 @@ test("a level snaps to the nearest effort the model offers, ties go lower, and a
 });
 
 test("the effort a turn is sent with: an exact effort the person fixed wins when offered, otherwise the dial through the kind", () => {
+  const lane = classifyRequest("Quick audit; keep the answer short.");
+  const kind = replyKindForLane(laneWithPreference(lane, "balanced"));
+  assert.equal(effortForTurn({ kind, stop: "balanced", fixedVariant: "", variants: SIX }), "high", "a short audit still gets deep effort");
+  assert.equal(laneWithPreference(lane, "light"), "standard", "the explicit dial still nudges the lane");
+  assert.equal(effortForTurn({ kind, stop: "all-in", fixedVariant: "low", variants: SIX }), "low", "a fixed effort still overrides deep work");
   assert.equal(effortForTurn({ kind: "worker-turn", stop: "balanced", fixedVariant: "", variants: SIX }), "high");
   assert.equal(effortForTurn({ kind: "worker-turn", stop: "all-in", fixedVariant: "", variants: SIX }), "max");
   assert.equal(effortForTurn({ kind: "reply", stop: "all-in", fixedVariant: "low", variants: SIX }), "low", "the person's exact effort wins over the dial");

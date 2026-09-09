@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, stat, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -29,12 +29,14 @@ import {
   setDocumentStatus,
   styleReminder,
   updateDocument,
+  writeDocumentsIndex,
 } from "./documents.mjs";
 
 const SLUG = "nova";
 
-async function home() {
+async function home(t) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "coworker-documents-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
   await mkdir(path.join(dir, SLUG, "memory"), { recursive: true });
   await writeFile(path.join(dir, SLUG, "coworker.md"), "---\nname: Nova\n---\n", "utf8");
   return dir;
@@ -133,8 +135,8 @@ test("the no-secrets check names what it saw and lets ordinary text through", ()
   assert.equal(findSecretLike("The token bucket algorithm limits requests."), "");
 });
 
-test("create, update by body or section, revisions, restore, and the always-loaded index", async () => {
-  const dir = await home();
+test("create, update by body or section, revisions, restore, and the always-loaded index", async (t) => {
+  const dir = await home(t);
   let now = 1_700_000_000_000;
   const created = await createDocument(dir, SLUG, {
     title: "Launch plan",
@@ -160,6 +162,7 @@ test("create, update by body or section, revisions, restore, and the always-load
   now += 60_000;
   const patched = await updateDocument(dir, SLUG, "launch-plan", {
     summary: "Ship onboarding by mid-Q3.",
+    highlights: ["Three phases", "Two owners", "Risk: vendor delay"],
     patch: { heading: "Timeline", content: "Week one: research.\nWeek two: build." },
   }, { now });
   assert.equal(patched.revision, 2);
@@ -177,7 +180,9 @@ test("create, update by body or section, revisions, restore, and the always-load
 
   for (let step = 0; step < 6; step += 1) {
     now += 60_000;
-    await updateDocument(dir, SLUG, "launch-plan", { body: `## Timeline\n\nStep ${step}.\n` }, { now });
+    await updateDocument(dir, SLUG, "launch-plan", {
+      body: `## Timeline\n\nStep ${step}.\n`, summary: `Step ${step}.`, highlights: [`Step ${step}`],
+    }, { now });
   }
   const current = await readDocument(dir, SLUG, "launch-plan");
   assert.equal(current.revision, 8);
@@ -204,8 +209,91 @@ test("create, update by body or section, revisions, restore, and the always-load
   assert.ok(names.every((name) => !name.endsWith(".tmp")), names.join(","));
 });
 
-test("context_set puts documents aside and back, reports unknown ids, and leaves archived ones to the person", async () => {
-  const dir = await home();
+test("concurrent creates keep distinct documents and release a rejected allocation", { timeout: 5_000 }, async (t) => {
+  const dir = await home(t);
+  const [first, rejected, second] = await Promise.allSettled([
+    createDocument(dir, SLUG, { title: "Plan", summary: "First plan.", body: "First.\n" }),
+    createDocument(dir, SLUG, { title: "" }),
+    createDocument(dir, SLUG, { title: "Plan", summary: "Second plan.", body: "Second.\n" }),
+  ]);
+  assert.equal(first.status, "fulfilled");
+  assert.equal(rejected.status, "rejected");
+  assert.match(rejected.reason.message, /needs a title/);
+  assert.equal(second.status, "fulfilled");
+  assert.deepEqual([first.value.id, second.value.id], ["plan", "plan-2"]);
+  assert.equal((await readDocument(dir, SLUG, first.value.id)).body, "First.\n");
+  assert.equal((await readDocument(dir, SLUG, second.value.id)).body, "Second.\n");
+  const listed = await listDocuments(dir, SLUG);
+  assert.equal(listed.length, 2);
+  assert.equal(await readFile(path.join(dir, SLUG, "documents", "index.md"), "utf8"), renderDocumentsIndex(listed));
+});
+
+test("concurrent coworker and person patches preserve each edit and the last five revisions", { timeout: 5_000 }, async (t) => {
+  const dir = await home(t);
+  await createDocument(dir, SLUG, { title: "Notes", summary: "Research notes.", highlights: ["Research in progress"], body: "Introduction.\n" });
+  const updates = await Promise.all(Array.from({ length: 7 }, (_, index) => updateDocument(dir, SLUG, "notes", {
+    patch: { heading: `Topic ${index}`, content: `Finding ${index}.` }, metadataUnchanged: true,
+  }, { by: index % 2 ? "person" : "coworker" })));
+  assert.deepEqual(updates.map((document) => document.revision), [2, 3, 4, 5, 6, 7, 8]);
+  const current = await readDocument(dir, SLUG, "notes");
+  assert.equal(current.body, updates[6].body);
+  assert.equal(listSections(current.body).length, 7);
+  const history = await listRevisions(dir, SLUG, "notes");
+  assert.deepEqual(history.map((document) => document.revision), [7, 6, 5, 4, 3]);
+  for (const revision of history) {
+    assert.equal(revision.body, updates[revision.revision - 2].body);
+    assert.equal(revision.updatedBy, updates[revision.revision - 2].updatedBy);
+    assert.equal(listSections(revision.body).length, revision.revision - 1);
+  }
+});
+
+test("concurrent status, context, restore and index writers do not overwrite document edits", { timeout: 5_000 }, async (t) => {
+  const dir = await home(t);
+  await createDocument(dir, SLUG, { title: "Notes", body: "Original.\n" });
+  const outcomes = await Promise.allSettled([
+    updateDocument(dir, SLUG, "notes", { body: "Person edit.\n" }, { by: "person" }),
+    setContext(dir, SLUG, { aside: ["notes"] }),
+    archiveDocument(dir, SLUG, "notes"),
+    setContext(dir, SLUG, { active: ["notes"] }),
+    updateDocument(dir, SLUG, "notes", { body: "Must stay archived.\n", metadataUnchanged: true }),
+    setDocumentStatus(dir, SLUG, "notes", "active"),
+    restoreRevision(dir, SLUG, "notes", 1),
+    recordStyleEvent(dir, SLUG, { kind: "long-reply", messageId: "first" }),
+    writeDocumentsIndex(dir, SLUG),
+    recordStyleEvent(dir, SLUG, { kind: "document", messageId: "second" }),
+  ]);
+  assert.deepEqual(outcomes.map((outcome) => outcome.status), ["fulfilled", "fulfilled", "fulfilled", "fulfilled", "rejected", "fulfilled", "fulfilled", "fulfilled", "fulfilled", "fulfilled"]);
+  assert.deepEqual(outcomes[3].value.skippedArchived, ["notes"]);
+  assert.match(outcomes[4].reason.message, /archived/);
+  const current = await readDocument(dir, SLUG, "notes");
+  assert.equal(current.status, "active");
+  assert.equal(current.revision, 3);
+  assert.equal(current.body, "Original.\n");
+  assert.deepEqual((await listRevisions(dir, SLUG, "notes")).map(({ revision, body }) => ({ revision, body })), [
+    { revision: 2, body: "Person edit.\n" }, { revision: 1, body: "Original.\n" },
+  ]);
+  assert.deepEqual((await readStyleEvents(dir, SLUG)).map((event) => event.messageId), ["first", "second"]);
+  assert.equal(await readFile(path.join(dir, SLUG, "documents", "index.md"), "utf8"), renderDocumentsIndex(await listDocuments(dir, SLUG)));
+});
+
+test("a rejected history write releases the mutation queue without replacing the body", { timeout: 5_000 }, async (t) => {
+  const dir = await home(t);
+  await createDocument(dir, SLUG, { title: "Notes", body: "Original.\n" });
+  const history = path.join(dir, SLUG, "documents", ".history");
+  await writeFile(history, "Not a directory.");
+  const [failed, next] = await Promise.allSettled([
+    updateDocument(dir, SLUG, "notes", { body: "Changed.\n", metadataUnchanged: true }),
+    createDocument(dir, SLUG, { title: "Next", body: "Accepted.\n" }),
+  ]);
+  assert.equal(failed.status, "rejected");
+  assert.equal(next.status, "fulfilled");
+  assert.equal((await readDocument(dir, SLUG, "notes")).body, "Original.\n");
+  await rm(history);
+  assert.equal((await updateDocument(dir, SLUG, "notes", { body: "Changed.\n", metadataUnchanged: true })).revision, 2);
+});
+
+test("context_set puts documents aside and back, reports unknown ids, and leaves archived ones to the person", async (t) => {
+  const dir = await home(t);
   for (const title of ["Alpha", "Beta", "Gamma"]) await createDocument(dir, SLUG, { title, summary: `${title} summary` });
   const first = await setContext(dir, SLUG, { active: ["alpha"], aside: ["beta", "missing"] });
   assert.deepEqual(first.changed, [{ id: "beta", title: "Beta", status: "aside" }]);
@@ -230,7 +318,7 @@ test("context_set puts documents aside and back, reports unknown ids, and leaves
   assert.equal(crowded.overTarget, true);
 });
 
-test("the index renders active lines, the put-aside note, and the style reminder; the log stays bounded", async () => {
+test("the index renders active lines, the put-aside note, and the style reminder; the log stays bounded", async (t) => {
   const empty = renderDocumentsIndex([]);
   assert.ok(empty.includes("(none yet)"));
   const rendered = renderDocumentsIndex([
@@ -243,7 +331,7 @@ test("the index renders active lines, the put-aside note, and the style reminder
   assert.ok(rendered.includes("Put aside (1): b."));
   assert.ok(rendered.endsWith("## Reminder\n\nKeep it short.\n"));
 
-  const dir = await home();
+  const dir = await home(t);
   await ensureDocumentsHome(dir, SLUG);
   assert.ok((await stat(path.join(dir, SLUG, "documents", "index.md"))).isFile());
   const recorded = await recordStyleEvent(dir, SLUG, { kind: "long-reply", messageId: "msg_1", chars: 1500 }, { now: 5 });
@@ -260,8 +348,8 @@ test("the index renders active lines, the put-aside note, and the style reminder
   assert.equal((await readStyleEvents(dir, SLUG)).length, 20);
 });
 
-test("a body that carries a secret is refused with a sentence, on create and on update", async () => {
-  const dir = await home();
+test("a body that carries a secret is refused with a sentence, on create and on update", async (t) => {
+  const dir = await home(t);
   await assert.rejects(createDocument(dir, SLUG, { title: "Keys", body: "token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh12" }), /GitHub token/);
   await createDocument(dir, SLUG, { title: "Notes", body: "Clean." });
   await assert.rejects(updateDocument(dir, SLUG, "notes", { body: "-----BEGIN PRIVATE KEY-----" }), /private key/);

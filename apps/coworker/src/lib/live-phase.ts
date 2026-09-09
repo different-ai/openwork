@@ -9,7 +9,7 @@
  * Pure, so the typing bubble, the tool chip, the live bubble, the header word,
  * and the rail line all read one rule and agree.
  */
-import type { LiveStream } from "./live-stream.ts";
+import { replyText, type LivePart, type LiveStream } from "./live-stream.ts";
 
 export type LivePhase = "sending" | "retrying" | "tool" | "thinking" | "writing";
 
@@ -49,15 +49,9 @@ export function thinkingText(stream: LiveStream | null, reply: ReplyShape | null
   return reply?.reasoning ?? "";
 }
 
-/**
- * The words for the live bubble: the text part streaming now when it is longer
- * than what has landed, else the landed text. The visible words never get
- * shorter — a poll that trails the stream by a moment must not pull them back.
- */
-export function writingText(stream: LiveStream | null, reply: ReplyShape | null): string {
-  const landed = reply?.text ?? "";
-  if (stream && stream.type === "text" && stream.text.length > landed.length) return stream.text;
-  return landed;
+/** The bubble combines the same ordered visible parts as the native transcript. */
+export function writingText(stream: LiveStream | null, reply: { id: string; text: string; parts: readonly LivePart[] } | null): string {
+  return replyText(stream, reply);
 }
 
 /**

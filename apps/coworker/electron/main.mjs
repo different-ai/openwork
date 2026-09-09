@@ -77,7 +77,8 @@ import {
   updateDocument,
 } from "./documents.mjs";
 import { ensureCoordinatorHome, updateCoordinator } from "./coordinator.mjs";
-import { effortForTurn, effortStopOf, workerTurnsFor } from "../src/lib/effort.ts";
+import { effortForTurn, effortStopOf, replyKindForLane, workerTurnsFor } from "../src/lib/effort.ts";
+import { classifyRequest } from "../src/lib/model-choice.ts";
 import {
   appendGroupEvent,
   archiveGroup,
@@ -145,7 +146,10 @@ import {
   workerToolCatalog,
   workerTurnTools,
   workerTurnOutcome,
+  withWorkerCancellation,
+  abortWorkerThread,
 } from "./workers.mjs";
+import { assertControlOrigin, assertWorkerSupervisor, assertWorkerToolContext, createWorkerControls, WORKER_MANAGEMENT, workerControlRequest } from "./worker-controls.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged || process.env.OPENWORK_DEV_MODE === "1";
@@ -535,6 +539,7 @@ async function ensurePlatformServer() {
 }
 
 async function restartPlatformServer() {
+  if (!await workerControls.reset()) throw new Error("Worker control cleanup could not be confirmed. Revoke it before restarting.");
   const reset = await computerControl.reset(false, async () => {
     // Keep computer admission closed for the entire stop-and-start, including
     // UI requests arriving while the replacement engine is booting.
@@ -614,7 +619,7 @@ async function modelVariantsFor(coworker) {
  * effort the person fixed wins. When the model's efforts cannot be read, the
  * fixed effort is passed as it is and the dial stays out of it.
  */
-async function localRunModel(coworker, kind = "assignment-run") {
+async function localRunModel(coworker, kind = "assignment-run", requestText) {
   const preference = String(coworker?.model ?? "").trim();
   const separator = preference.indexOf("/");
   if (separator <= 0 || separator === preference.length - 1) return undefined;
@@ -622,7 +627,7 @@ async function localRunModel(coworker, kind = "assignment-run") {
   const variants = await modelVariantsFor(coworker);
   const variant = variants === null
     ? fixedVariant
-    : effortForTurn({ kind, stop: effortStopOf(coworker?.effortPreference), fixedVariant, variants });
+    : effortForTurn({ kind: typeof requestText === "string" ? replyKindForLane(classifyRequest(requestText)) : kind, stop: effortStopOf(coworker?.effortPreference), fixedVariant, variants });
   return {
     providerId: preference.slice(0, separator),
     modelId: preference.slice(separator + 1),
@@ -831,7 +836,7 @@ function localRunStatus(limit) {
 // responsibility run and releases it when it settles; every finding wakes the
 // coworker in its open discussion. Records live in `electron/workers.mjs`.
 
-/** Worker turns in flight in this process: `slug:wrk_…` → controller that cancels the wait. */
+/** Worker turns in flight, including the native cleanup barrier used by Stop. */
 const liveWorkerTurns = new Map();
 let workersRecovered = false;
 let workersRecovering = false;
@@ -842,7 +847,13 @@ const collaboration = createCollaboration({
   clientFor: collaborationClient,
   consult: (task) => groupExecution.consultation(task),
   spawn: (slug, input) => spawnWorker(slug, input, "coworker"),
-  cancelWorker: (slug, id) => cancelWorker(slug, id, "The originating task stopped.", "person"),
+  cancelWorker: async (slug, id) => {
+    // A requested child may never have spawned. Late spawn acknowledgements
+    // re-enter this callback after the record exists and repair cleanup then.
+    const worker = await getWorker(coworkersDir, slug, id).catch((error) => { if (error.code !== "ENOENT") throw error; return null; });
+    if (worker || liveWorkerTurns.has(workerKey(slug, id))) return cancelWorker(slug, id, "The originating task stopped.", "person");
+  },
+  invalidateWorker: (slug, id) => { void workerControls.revokeId(slug, id); },
   onExecutionEnd: (entry) => computerControl.endTurn(entry),
   publish: async (task) => {
     if (!task.groupId) return;
@@ -858,7 +869,8 @@ const collaboration = createCollaboration({
 const computerControl = createComputerControl({
   adapters: [createLocalComputerAdapter()],
   discussionFor: computerDiscussion,
-  resolveContext: (slug, context, expected) => collaboration.context(slug, context, expected),
+  resolveContext: (slug, context, expected) => resolveControlContext(slug, context, expected, "computer"),
+  onRevoke: (scope) => { void workerControls.revokeOrigin(scope); },
 });
 let browserTools;
 const browserControl = createBrowserControl({
@@ -876,7 +888,7 @@ const browserControl = createBrowserControl({
     runDetachedTask: (_label, task) => { void Promise.resolve().then(task).catch(() => console.warn("[open-coworker] Browser navigation could not finish.")); },
   },
   discussionFor: computerDiscussion,
-  resolveContext: (slug, context, expected) => collaboration.context(slug, context, expected, assertBrowserToolContext),
+  resolveContext: (slug, context, expected) => resolveControlContext(slug, context, expected, "browser"),
   checkPolicy: (input) => checkBrowserPolicy(serverHandle, input),
   runTool: async (name, args, context) => {
     if (!context?.sessionID || !context.messageID || !context.callID || !context.directory || !(context.abort instanceof AbortSignal)) throw new Error("Browser tools require the validated native origin and cancellation signal.");
@@ -887,6 +899,23 @@ const browserControl = createBrowserControl({
     return tools.tool[name].execute(args, context);
   },
 });
+const workerControls = createWorkerControls({
+  discussionFor: computerDiscussion,
+  taskFor: (worker) => collaboration.workerControlTask(worker),
+  readWorker: (slug, id) => getWorker(coworkersDir, slug, id),
+  updateWorker: (slug, id, patch) => updateWorker(coworkersDir, slug, id, patch),
+  liveRuns: liveWorkerTurns, browser: browserControl, computer: computerControl,
+  stopNative: abortWorkerThread,
+});
+
+async function resolveControlContext(slug, context, expected, surface) {
+  const delegated = await workerControls.resolve(slug, context, expected, surface);
+  if (delegated) return delegated;
+  const trusted = await collaboration.context(slug, context, expected, surface === "browser" ? assertBrowserToolContext : undefined);
+  const assertActive = () => { trusted.assertActive(); workerControls.assertAvailable(slug, context.sessionID, surface); };
+  assertActive();
+  return { ...trusted, assertActive };
+}
 const groupExecution = createGroupExecution({
   directory: coworkersDir,
   collaboration,
@@ -911,7 +940,7 @@ const groupDocuments = createGroupDocumentService({
   resolveContext: (slug, context, expected) => collaboration.context(slug, context, expected, assertGroupDocumentToolContext),
 });
 
-async function collaborationClient(slug, { kind = "reply", signal } = {}) {
+async function collaborationClient(slug, { kind = "reply", requestText, signal } = {}) {
   const coworker = slug === ".coordinator" ? await ensureCoordinatorWorkspace() : await getCoworker(coworkersDir, slug);
   const handle = await ensurePlatformServer();
   if (!handle.managedOpencode || !coworker.workspaceId) throw new Error("The AI service is not ready. Your work has been kept.");
@@ -921,7 +950,7 @@ async function collaborationClient(slug, { kind = "reply", signal } = {}) {
     if (!toolsRegistered.has(slug)) await registerCoworkerTools(coworker);
   }
   signal?.throwIfAborted();
-  const client = createHeadlessThreadClient({ baseUrl: handle.url, workspaceId: coworker.workspaceId, token: ownerToken, defaultModel: await localRunModel(coworker, kind) });
+  const client = createHeadlessThreadClient({ baseUrl: handle.url, workspaceId: coworker.workspaceId, token: ownerToken, defaultModel: await localRunModel(coworker, kind, requestText) });
   const interactions = createCoworkerThreads({ serverUrl: handle.url, workspaceId: coworker.workspaceId, token: ownerToken });
   client.workspaceId = coworker.workspaceId;
   client.pendingInteractions = interactions.listThreadInteractions;
@@ -1067,11 +1096,17 @@ async function syncWorkerNote(slug, worker, finding = null) {
 }
 
 async function spawnWorker(slug, input, spawnedBy) {
+  if (input.control !== undefined) {
+    workerControlRequest(input.control);
+    await computerDiscussion(slug, input.spawnedFromThreadId);
+    if (input.purpose === "thinking" || input.lifespan?.kind === "open") throw new Error("Control needs a bounded delivery Worker.");
+  }
   if (input.id) {
     const existing = await getWorker(coworkersDir, slug, input.id).catch((error) => { if (error.code !== "ENOENT") throw error; return null; });
     if (existing) {
-      if (!isWorkerFinished(existing)) void admitWorkerTurn(slug, existing.id);
-      return existing;
+      if (isWorkerFinished(existing)) await collaboration.completeWorker(existing, existing.pendingSettlement?.events ?? await readWorkerEvents(coworkersDir, slug, existing.id));
+      else void admitWorkerTurn(slug, existing.id);
+      return workerControls.summary(existing);
     }
   }
   const coworker = await getCoworker(coworkersDir, slug);
@@ -1093,16 +1128,16 @@ async function spawnWorker(slug, input, spawnedBy) {
   if (!worker.spawnedFromThreadId) await appendWorkerEvent(coworkersDir, slug, worker.id, { id: `evt_${collaborationId(worker.id, "origin-missing").slice(5)}`, kind: "status", text: "No originating conversation was recorded. Findings remain here; no private conversation will receive an automatic follow-up." });
   await syncWorkerNote(slug, worker);
   if (!isWorkerFinished(worker)) void admitWorkerTurn(slug, worker.id);
-  return worker;
+  return workerControls.summary(worker);
 }
 
 /** Take a slot for the Worker's next turn now, or wait in line with the other runs on this Mac. */
 function admitWorkerTurn(slug, id) {
   return admitLocalRun(async () => {
     const key = workerKey(slug, id);
-    if (activeLocalRuns.has(key) || isQueued(key)) return;
+    if (activeLocalRuns.has(key) || isQueued(key) || liveWorkerTurns.has(key)) return;
     const worker = await getWorker(coworkersDir, slug, id).catch(() => null);
-    if (!worker || isWorkerFinished(worker) || worker.status === "paused" || (worker.waitingFor === "decision" && worker.pendingSteers.length === 0)) return;
+    if (!worker || isWorkerFinished(worker) || worker.status === "paused" || !workerControls.allowed(worker) || (worker.waitingFor === "decision" && worker.pendingSteers.length === 0)) return;
     const limit = await parallelRunLimit();
     if (activeLocalRuns.size >= limit) {
       queuedLocalRuns.push({ key, slug, id, runId: "", launch: () => launchWorkerTurn(slug, id) });
@@ -1124,26 +1159,25 @@ function launchWorkerTurn(slug, id) {
 
 async function executeWorkerTurn(slug, id, { onStarted }) {
   const key = workerKey(slug, id);
+  if (liveWorkerTurns.has(key)) { activeLocalRuns.delete(key); onStarted(); return; }
+  const controller = new AbortController();
+  let release;
+  const run = { controller, active: false, entry: null, client: null, threadId: "", done: new Promise((resolve) => { release = resolve; }), cleanupError: null };
+  liveWorkerTurns.set(key, run);
   let continueAfter = false;
   try {
     let worker;
     let coworker;
     try {
       worker = await getWorker(coworkersDir, slug, id);
+      run.threadId = worker.threadId;
       coworker = await getCoworker(coworkersDir, slug);
-      if (isWorkerFinished(worker) || worker.status === "paused") {
+      if (isWorkerFinished(worker) || worker.status === "paused" || !workerControls.allowed(worker)) {
         onStarted();
         return;
       }
-      if (lifespanSpent(worker.lifespan)) {
-        if (worker.purpose === "thinking") {
-          await settleWorkerTurn(slug, id, { kind: "settled", report: { kind: "none", text: "" } });
-          onStarted();
-          return;
-        }
-        const finished = await updateWorker(coworkersDir, slug, id, { status: "finished" });
-        await appendWorkerEvent(coworkersDir, slug, id, { kind: "status", text: "Finished: reached the end of its lifespan." });
-        await syncWorkerNote(slug, finished);
+      if (lifespanSpent(worker.lifespan) && !worker.pendingTurn) {
+        await settleWorkerTurn(slug, id, { kind: "settled", report: { kind: "none", text: "" } });
         onStarted();
         return;
       }
@@ -1158,29 +1192,55 @@ async function executeWorkerTurn(slug, id, { onStarted }) {
       return;
     }
     onStarted();
-    const controller = new AbortController();
-    liveWorkerTurns.set(key, controller);
+    run.entry = { id: `worker:${id}:${worker.pendingTurn.messageId}`, owner: { kind: "worker", slug, threadId: worker.threadId, conversationId: worker.threadId }, messageId: worker.pendingTurn.messageId, workspaceId: coworker.workspaceId, state: "running", sentAt: Date.now() };
     let client;
     let threadId = worker.threadId;
+    const settle = async (outcome) => {
+      run.entry.state = outcome.kind === "failed" ? "failed" : "succeeded";
+      if (!await workerControls.endRun(run)) {
+        run.cleanupError = new Error("Worker control cleanup could not be confirmed. Try Stop again before continuing.");
+        return false;
+      }
+      return settleWorkerTurn(slug, id, outcome);
+    };
     try {
       client = await readyWorkerClient(coworker, worker);
+      run.client = client;
+      controller.signal.throwIfAborted();
       // Accepted recovery only observes the old turn, even if access was since
       // revoked. Every new send validates the pinned choice before any inference.
       const present = threadId && (await client.getThreadSnapshot(threadId, { signal: controller.signal })).messages.some((message) => message.id === worker.pendingTurn.messageId && message.role === "user");
+      if (!present && lifespanSpent(worker.lifespan)) {
+        await settle({ kind: "settled", report: { kind: "none", text: "" } });
+        return;
+      }
       if (worker.modelSnapshot && !present) resolveWorkerModel(coworker, worker.purpose, (await workerModelProviders(coworker)).providers, worker.modelSnapshot);
+      controller.signal.throwIfAborted();
       if (!threadId) {
         // Link an empty thread before admitting work. A quit or stop during
         // creation cannot leave an executing thread without a Worker record.
         const thread = await client.createThread({ title: workerThreadTitle(worker.name), signal: controller.signal });
         threadId = thread.id;
+        run.threadId = threadId;
         await registerWorkerThread(coworkersDir, slug, threadId);
         await updateWorker(coworkersDir, slug, id, { threadId });
       }
-      if (isWorkerFinished(await getWorker(coworkersDir, slug, id))) {
+      if (isWorkerFinished(await getWorker(coworkersDir, slug, id)) || !workerControls.allowed(worker) || controller.signal.aborted) {
         controller.abort();
         return;
       }
-      const acceptance = await client.sendTurn(threadId, { ...worker.pendingTurn, tools: workerTurnTools(), signal: controller.signal });
+      if (!present && lifespanSpent(worker.lifespan)) {
+        await settle({ kind: "settled", report: { kind: "none", text: "" } });
+        return;
+      }
+      run.entry.owner.threadId = threadId; run.entry.owner.conversationId = threadId;
+      await workerControls.admit(worker, run);
+      controller.signal.throwIfAborted();
+      run.active = true;
+      const acceptance = await client.sendTurn(threadId, { ...worker.pendingTurn, tools: workerTurnTools(run.control?.surface), signal: controller.signal });
+      for (const [index, steer] of (worker.pendingTurn.steers ?? []).entries()) {
+        await appendWorkerEvent(coworkersDir, slug, id, { id: `evt_${collaborationId(id, worker.pendingTurn.messageId, "steer-applied", steer.id ?? index).slice(5)}`, kind: "status", by: steer.by, turnId: worker.pendingTurn.messageId, text: `Applied to admitted step: ${steer.text}` });
+      }
       // A recovered turn was already admitted before this process started.
       // If its engine is idle, reconcile the saved reply (including a partial
       // reply left by a crash) without resending it or awaiting new completion.
@@ -1188,7 +1248,7 @@ async function executeWorkerTurn(slug, id, { onStarted }) {
         const snapshot = await client.getThreadSnapshot(threadId, { signal: controller.signal });
         if (!isRunning(snapshot.status)) {
           const transcript = toTranscript(snapshot);
-          continueAfter = await settleWorkerTurn(slug, id, workerTurnOutcome({ outcome: "settled", terminalError: transcript.terminalError }, transcript, worker.pendingTurn.messageId));
+          continueAfter = await settle(workerTurnOutcome({ outcome: "settled", terminalError: transcript.terminalError }, transcript, worker.pendingTurn.messageId));
           return;
         }
       }
@@ -1200,27 +1260,46 @@ async function executeWorkerTurn(slug, id, { onStarted }) {
       });
       // Stopped while it ran: the stop already recorded itself.
       if (controller.signal.aborted) return;
-      if (result.outcome === "timeout") await client.abortThread(threadId);
+      if (result.outcome === "timeout") {
+        const signal = AbortSignal.timeout(30_000);
+        await withAbort(abortWorkerThread(client, threadId, signal), signal);
+      }
       const outcome = result.outcome === "timeout" && lifespanSpent(worker.lifespan)
           ? { kind: "settled", report: { kind: "none", text: "" } }
           : workerTurnOutcome(result, toTranscript(result.snapshot), worker.pendingTurn.messageId);
-      continueAfter = await settleWorkerTurn(slug, id, outcome);
+      continueAfter = await settle(outcome);
     } catch (error) {
       if (!controller.signal.aborted) {
-        if (client && threadId) await client.abortThread(threadId).catch(() => undefined);
-        continueAfter = await settleWorkerTurn(slug, id, { kind: "failed", error: error instanceof Error ? error.message : String(error) });
+        if (client && threadId) {
+          const signal = AbortSignal.timeout(30_000);
+          try { await withAbort(abortWorkerThread(client, threadId, signal), signal); }
+          catch (cleanupError) { run.cleanupError = cleanupError; }
+        }
+        const failure = error instanceof Error ? error.message : String(error);
+        continueAfter = await settle({ kind: "failed", error: `${failure}${run.cleanupError ? " Native cleanup could not be confirmed. Try Stop again before continuing." : ""}` });
       }
     } finally {
+      run.active = false;
+      if (run.control) {
+        const cleaned = controller.signal.aborted ? await workerControls.revokeId(slug, id) : await workerControls.endRun(run);
+        if (!cleaned) run.cleanupError = new Error("Worker control cleanup could not be confirmed.");
+      }
       // Cancelling the HTTP wait alone does not stop native execution. This
       // also covers Stop arriving while the first thread was being created.
-      if (controller.signal.aborted && client && threadId) await client.abortThread(threadId).catch(() => undefined);
-      liveWorkerTurns.delete(key);
+      if (controller.signal.aborted && client && threadId) {
+        const signal = AbortSignal.timeout(30_000);
+        try { await withAbort(abortWorkerThread(client, threadId, signal), signal); }
+        catch (error) { run.cleanupError = error; console.warn("[open-coworker] Worker native cleanup is unconfirmed; use Stop to retry."); }
+      }
     }
   } finally {
+    release();
+    if (!run.cleanupError && liveWorkerTurns.get(key) === run) liveWorkerTurns.delete(key);
+    workerControls.releaseRun(run);
     activeLocalRuns.delete(key);
     // Runs already in line go first; this Worker's next turn asks for a slot after them.
     void drainLocalRunQueue();
-    if (continueAfter) void admitWorkerTurn(slug, id);
+    if (continueAfter && !run.cleanupError) void admitWorkerTurn(slug, id);
   }
 }
 
@@ -1239,6 +1318,7 @@ async function settleWorkerTurn(slug, id, outcome) {
   }
   // The durable settlement is replayable until both the continuation obligation
   // and legacy finding projections are recorded. Only then clear the admitted turn.
+  if (isWorkerFinished(updated) && !await workerControls.revoke(updated)) throw new Error("Worker control cleanup could not be confirmed before completion.");
   await collaboration.completeWorker(updated, step.events);
   if (updated.status === "cancelled") {
     await updateWorker(coworkersDir, slug, id, { pendingTurn: null, pendingSettlement: null });
@@ -1266,27 +1346,46 @@ async function steerWorker(slug, id, text, by) {
 
 async function cancelWorker(slug, id, reason, by) {
   const key = workerKey(slug, id);
-  const worker = await getWorker(coworkersDir, slug, id);
-  if (isWorkerFinished(worker)) return worker;
+  const stoppingControl = workerControls.revokeId(slug, id);
   removeQueuedRun(key);
-  const updated = await updateWorker(coworkersDir, slug, id, { status: "cancelled", pendingSteers: [], pendingTurn: null });
-  await collaboration.completeWorker(updated, []);
-  const why = String(reason ?? "").trim();
-  await appendWorkerEvent(coworkersDir, slug, id, { kind: "status", text: why ? `Stopped: ${why}` : "Stopped", by });
-  await syncWorkerNote(slug, updated);
-  const controller = liveWorkerTurns.get(key);
-  if (controller) {
-    controller.abort();
-    if (worker.threadId) {
-      const coworker = await getCoworker(coworkersDir, slug).catch(() => null);
-      if (coworker) await readyWorkerClient(coworker, worker).then((client) => client.abortThread(worker.threadId)).catch(() => undefined);
+  const run = liveWorkerTurns.get(key);
+  run?.controller.abort(new Error("Worker stopped."));
+  const updated = await withWorkerCancellation(async () => {
+    const updated = await updateWorker(coworkersDir, slug, id, (current) => isWorkerFinished(current) ? null : { status: "cancelled", pendingSteers: [], pendingTurn: null });
+    await collaboration.completeWorker(updated, []);
+    const why = String(reason ?? "").trim();
+    await appendWorkerEvent(coworkersDir, slug, id, { id: `evt_${collaborationId(id, "stop").slice(5)}`, kind: "status", text: why ? `Stopped: ${why}` : "Stopped", by });
+    await syncWorkerNote(slug, updated);
+    return updated;
+  }, async () => {
+    await stoppingControl;
+    const signal = AbortSignal.timeout(30_000);
+    // Wait for any first-thread creation to finish linking before confirming Stop.
+    // The producer also attempts abort in its finally block, independently of writes.
+    if (run) await withAbort(run.done, signal);
+    const worker = run?.threadId && run.client ? null : await withAbort(getWorker(coworkersDir, slug, id), signal);
+    const threadId = run?.threadId || worker?.threadId;
+    if (threadId) {
+      const client = run?.client ?? await withAbort(readyWorkerClient(await withAbort(getCoworker(coworkersDir, slug), signal), worker), signal);
+      await withAbort(abortWorkerThread(client, threadId, signal), signal);
     }
-  }
-  return updated;
+    if (!await workerControls.revokeId(slug, id)) throw new Error("Worker control cleanup is still unconfirmed.");
+    if (liveWorkerTurns.get(key) === run) liveWorkerTurns.delete(key);
+    if (run) { run.cleanupError = null; workerControls.releaseRun(run); }
+  });
+  return workerControls.summary(updated);
 }
 
 async function pauseWorker(slug, id, by = "person") {
+  const stopping = workerControls.revokeId(slug, id);
   const worker = await getWorker(coworkersDir, slug, id);
+  if (worker.control) {
+    await stopping;
+    if (!await workerControls.revoke(worker)) throw new Error("Worker control cleanup could not be confirmed. Try Stop again before continuing.");
+    const updated = await getWorker(coworkersDir, slug, id);
+    await appendWorkerEvent(coworkersDir, slug, id, { kind: "status", text: "Control revoked and Worker paused. A new approval is required.", by });
+    return workerControls.summary(updated);
+  }
   if (isWorkerFinished(worker)) throw new Error("This Worker has already stopped.");
   if (worker.status === "paused") return worker;
   removeQueuedRun(workerKey(slug, id));
@@ -1302,6 +1401,7 @@ async function pauseWorker(slug, id, by = "person") {
 
 async function resumeWorker(slug, id, by = "person") {
   const worker = await getWorker(coworkersDir, slug, id);
+  if (worker.control) throw new Error("Review this Worker and choose Approve control in its original discussion. Resume cannot grant control.");
   if (worker.status !== "paused") return worker;
   const updated = await updateWorker(coworkersDir, slug, id, { status: "waiting", waitingFor: "turn" });
   await appendWorkerEvent(coworkersDir, slug, id, { kind: "status", text: "Resumed", by });
@@ -1331,6 +1431,10 @@ async function recoverInterruptedWorkers() {
       }
       if (worker.pendingSettlement) await settleWorkerTurn(coworker.slug, worker.id, { kind: "failed", error: "Interrupted settlement" });
       else if (isWorkerFinished(worker)) await collaboration.completeWorker(worker, await readWorkerEvents(coworkersDir, coworker.slug, worker.id));
+      if (worker.control && !isWorkerFinished(worker)) {
+        await updateWorker(coworkersDir, coworker.slug, worker.id, { status: "paused", waitingFor: "" });
+        continue;
+      }
       if (isWorkerFinished(worker) || worker.status === "paused" || activeLocalRuns.has(key) || isQueued(key)) continue;
       if (worker.status === "waiting" && worker.waitingFor === "decision") continue;
       if (worker.status === "running" || worker.status === "starting") {
@@ -1497,6 +1601,15 @@ function coworkerToolToken(slug) {
 
 async function ensureToolsServer() {
   if (toolsServer) return toolsServer;
+  const workerHandlers = createWorkerToolHandlers({
+    coworkersDir,
+    spawn: () => { throw new Error("Starting a Worker requires its conversation-aware tool."); },
+    steer: (slug, id, text) => steerWorker(slug, id, text, "coworker"),
+    cancel: (slug, id, reason) => cancelWorker(slug, id, reason, "coworker"),
+    pause: (slug, id) => pauseWorker(slug, id, "coworker"),
+    resume: (slug, id) => resumeWorker(slug, id, "coworker"),
+  });
+  const managementCalls = new Map();
   // Documents and Workers share one server: starting, steering, and stopping a Worker go
   // through the same functions the Workers view uses, so the run limit and records agree.
   // Documents, Workers, assignments, and memory share one server: each goes through the same
@@ -1507,25 +1620,38 @@ async function ensureToolsServer() {
       if (Object.hasOwn(COMPUTER_TOOLS, name)) return computerControl.execute(slug, { name, args, context, cancel });
       if (Object.hasOwn(BROWSER_TOOLS, name)) return browserControl.execute(slug, { name, args, context, cancel });
       if (groupDocumentTools.has(name)) return groupDocuments.executeNative(slug, { name, args, context });
-      const trusted = await collaboration.context(slug, context);
+      const workerTool = name === "worker_spawn" || WORKER_MANAGEMENT.includes(name);
+      const trusted = workerTool
+        ? await collaboration.context(slug, context, { name: `coworker_${name}`, args }, assertWorkerToolContext)
+        : await collaboration.context(slug, context);
       if (name === "team_consult") {
         const target = (await listCoworkers(coworkersDir)).find((coworker) => coworker.slug === args.to || coworker.name.toLowerCase() === String(args.to).toLowerCase());
         if (!target) throw new Error("Choose a teammate from the team roster.");
         return collaboration.request(trusted, "consultation", { ...args, to: target.slug });
       }
-      if (name === "worker_spawn") return collaboration.request(trusted, "worker", { ...args, lifespan: args.lifespan ? lifespanFromToolArgs(args.lifespan, { purpose: args.purpose }) : undefined });
+      if (name === "worker_spawn") {
+        if (args.control !== undefined) { assertControlOrigin(trusted.entry); await computerDiscussion(slug, trusted.entry.owner.threadId); trusted.assertActive(); }
+        return collaboration.request(trusted, "worker", { ...args, lifespan: args.lifespan ? lifespanFromToolArgs(args.lifespan, { purpose: args.purpose }) : undefined });
+      }
+      if (WORKER_MANAGEMENT.includes(name)) {
+        const worker = await getWorker(coworkersDir, slug, args.id);
+        if (worker.control) {
+          assertWorkerSupervisor(trusted.entry, worker);
+          await computerDiscussion(slug, worker.spawnedFromThreadId);
+        }
+        trusted.assertActive();
+        const key = JSON.stringify([slug, context.sessionID, context.messageID, context.callID]);
+        if (managementCalls.has(key)) return managementCalls.get(key);
+        if (managementCalls.size >= 4096) throw new Error("This app launch reached its Worker management receipt limit.");
+        const result = workerHandlers[name](slug, args, trusted);
+        managementCalls.set(key, result);
+        return result;
+      }
       throw new Error("Unknown collaboration tool.");
     },
     handlers: {
       ...createToolHandlers({ coworkersDir }),
-      ...createWorkerToolHandlers({
-        coworkersDir,
-        spawn: () => { throw new Error("Starting a Worker requires the conversation-aware Worker tool. Try again after the workspace is ready."); },
-        steer: (slug, id, text) => steerWorker(slug, id, text, "coworker"),
-        cancel: (slug, id, reason) => cancelWorker(slug, id, reason, "coworker"),
-        pause: (slug, id) => pauseWorker(slug, id, "coworker"),
-        resume: (slug, id) => resumeWorker(slug, id, "coworker"),
-      }),
+      ...workerHandlers,
       ...createAssignmentToolHandlers({
         coworkersDir,
         settings: () => readSettings(settingsPath),
@@ -1536,7 +1662,7 @@ async function ensureToolsServer() {
       ...createSelfToolHandlers({ coworkersDir }),
       ...createTeamToolHandlers({ coworkersDir }),
     },
-    tools: [...toolCatalog(), ...workerToolCatalog().filter((tool) => tool.name !== "worker_spawn"), ...assignmentToolCatalog(), ...selfToolCatalog(), ...teamToolCatalog()],
+    tools: [...toolCatalog(), ...workerToolCatalog().filter((tool) => tool.name !== "worker_spawn" && !WORKER_MANAGEMENT.includes(tool.name)), ...assignmentToolCatalog(), ...selfToolCatalog(), ...teamToolCatalog()],
     // One line naming the server; the rules for each tool family are in the coworker's contract, said once.
     instructions: DEFAULT_INSTRUCTIONS,
     version: app.getVersion(),
@@ -2425,10 +2551,22 @@ const commands = {
   "localResponsibilities.status": async () => localRunStatus(await parallelRunLimit()),
   // Workers: long-lived sub-agents in the coworker's workspace. The person starts,
   // steers, pauses, and stops them here; the coworker does the same through its tools.
-  "workers.list": async ({ slug }) => listWorkers(coworkersDir, slug),
-  "workers.get": async ({ slug, id }) => getWorker(coworkersDir, slug, id),
-  "workers.spawn": async ({ slug, name, goal, purpose, lifespan, spawnedFromThreadId }) =>
-    spawnWorker(slug, { name, goal, purpose, lifespan, spawnedFromThreadId }, "person"),
+  "workers.list": async ({ slug }) => (await listWorkers(coworkersDir, slug)).map((worker) => workerControls.summary(worker)),
+  "workers.get": async ({ slug, id }) => workerControls.summary(await getWorker(coworkersDir, slug, id)),
+  "workers.spawn": async ({ slug, name, goal, purpose, lifespan, spawnedFromThreadId, control }) =>
+    spawnWorker(slug, { name, goal, purpose, lifespan, spawnedFromThreadId, control }, "person"),
+  "workers.approveControl": async ({ slug, id, expectedRevision }) => {
+    const updated = await workerControls.approve(await getWorker(coworkersDir, slug, id), expectedRevision);
+    void admitWorkerTurn(slug, id);
+    return updated;
+  },
+  "workers.revokeControl": async ({ slug, id, expectedRevision }) => {
+    const stopping = workerControls.revokeKnown(slug, id, expectedRevision);
+    if (stopping) await stopping;
+    const worker = await getWorker(coworkersDir, slug, id);
+    if (!stopping) await workerControls.revoke(worker, expectedRevision);
+    return workerControls.summary(await getWorker(coworkersDir, slug, id));
+  },
   "workers.steer": async ({ slug, id, text }) => steerWorker(slug, id, text, "person"),
   "workers.cancel": async ({ slug, id, reason }) => cancelWorker(slug, id, reason, "person"),
   "workers.pause": async ({ slug, id }) => pauseWorker(slug, id),
@@ -2499,7 +2637,7 @@ function registerIpc() {
       return { ok: false, error: "Open Coworker commands are only available to the main app frame." };
     }
     const command = typeof request?.command === "string" ? request.command : "";
-    if ((command.startsWith("voice.") || command.startsWith("computer.") || command.startsWith("browser.") || command.startsWith("groups.documents.")) && !trustedComputerSender(event, mainWindow?.webContents, rendererUrl())) {
+    if ((command.startsWith("voice.") || command.startsWith("computer.") || command.startsWith("browser.") || command.startsWith("workers.") || command.startsWith("groups.documents.")) && !trustedComputerSender(event, mainWindow?.webContents, rendererUrl())) {
       return { ok: false, error: "Native controls require the trusted Open Coworker window and renderer URL." };
     }
     if (command === "voice.microphone" && request?.userGesture !== true) {
@@ -2654,6 +2792,7 @@ if (!singleInstanceLock) {
     if (quitting) return;
     quitting = true;
     void (async () => {
+      await workerControls.reset(true);
       const stopped = await computerControl.reset(true);
       if (!stopped.confirmed) {
         const options = { type: "warning", title: "Computer control may still be active", message: COMPUTER_STOP_GUIDANCE,

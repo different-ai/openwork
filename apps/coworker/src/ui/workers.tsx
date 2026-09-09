@@ -1,106 +1,106 @@
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerSummary } from "@/lib/bridge";
 import { relativeTime } from "@/lib/activity-summary";
 import { workerTurnsFor } from "@/lib/effort";
 import {
   describeLifespan,
-  describeWorkerEvent,
   describeWorkerStatus,
   isLiveWorker,
   lifespanFromChoice,
   workerTone,
   type LifespanChoice,
-  type WorkerEvent,
   type WorkerSummary,
   type WorkerPurpose,
 } from "@/lib/workers";
 import { Button, ErrorNote, StatusDot, inputClass } from "@/ui/kit";
+import { WorkerDetail } from "@/ui/worker-detail";
 
-/** Findings shown newest first; older ones stay in the file. */
-const TIMELINE_LIMIT = 40;
-
-/**
- * The Workers level of Activity: what a coworker's Workers are doing, one flat
- * row each, opening into the findings they posted and the few things a person
- * does with a Worker — steer it, pause or resume it, stop it, or open its own
- * work. Starting one here is the same as asking the coworker to; both land in
- * the same list. Assignments have their own level beside this one.
- */
-export function WorkersPanel({
-  coworker,
-  onOpenThread,
-}: {
+type WorkersPanelProps = {
   coworker: CoworkerSummary;
-  /** Show a Worker's own work in the main column. */
-  onOpenThread: (threadId: string) => void;
-}) {
+  threadId?: string;
+  compact?: boolean;
+  onOpenThread?: (threadId: string) => void;
+  onOpenComputer?: () => void;
+  onOpenBrowser?: () => void;
+};
+
+/** The shelf and Activity share controls, but never borrow another discussion's tasks. */
+export function WorkersPanel({ coworker, threadId = coworker.conversationThreadId, ...props }: WorkersPanelProps) {
+  return <WorkerList key={`${coworker.slug}:${threadId}`} coworker={coworker} threadId={threadId} {...props} />;
+}
+
+function WorkerList({ coworker, threadId, compact = false, onOpenThread, onOpenComputer, onOpenBrowser }: WorkersPanelProps & { threadId: string }) {
   const [workers, setWorkers] = useState<WorkerSummary[] | null>(null);
   const [expandedId, setExpandedId] = useState("");
   const [creating, setCreating] = useState(false);
+  const [open, setOpen] = useState(true);
   const [error, setError] = useState("");
+  const request = useRef(0);
+  const reading = useRef(false);
   const live = (workers ?? []).some(isLiveWorker);
 
-  useEffect(() => {
-    let cancelled = false;
-    const load = () =>
-      coworkerBridge.workers
-        .list(coworker.slug)
-        .then((items) => {
-          if (!cancelled) setWorkers(items);
-        })
-        .catch((cause: unknown) => {
-          if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
-        });
-    void load();
-    // While a Worker is going, the list follows it closely; otherwise it idles.
-    const timer = window.setInterval(() => void load(), live ? 2_000 : 6_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [coworker.slug, live]);
-
-  useEffect(() => {
-    setExpandedId("");
-    setCreating(false);
-    setError("");
-  }, [coworker.slug]);
-
   async function refresh(): Promise<void> {
+    if (reading.current) return;
+    reading.current = true;
+    const version = ++request.current;
     try {
-      setWorkers(await coworkerBridge.workers.list(coworker.slug));
+      const items = await coworkerBridge.workers.list(coworker.slug);
+      if (version !== request.current) return;
+      setWorkers(items.filter((worker) => worker.slug === coworker.slug && worker.spawnedFromThreadId === threadId));
       setError("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
+      if (version === request.current) setError(`Task updates unavailable. Last known tasks are kept. ${cause instanceof Error ? cause.message : String(cause)}`);
+    } finally { reading.current = false; }
+  }
+  const readLatest = useEffectEvent(refresh);
+  useEffect(() => {
+    void readLatest();
+    const timer = window.setInterval(() => void readLatest(), live ? 2_000 : 6_000);
+    return () => {
+      request.current += 1;
+      window.clearInterval(timer);
+    };
+  }, [live]);
+
+  function changed(worker: WorkerSummary) {
+    if (worker.slug !== coworker.slug || worker.spawnedFromThreadId !== threadId) return;
+    // A list read begun before a confirmed action must not overwrite that action.
+    request.current += 1;
+    setWorkers((current) => current?.some((item) => item.id === worker.id) ? current.map((item) => item.id === worker.id ? worker : item) : [worker, ...(current ?? [])]);
   }
 
   const items = workers ?? [];
+  const needsApproval = items.filter((worker) => isLiveWorker(worker) && worker.control?.state === "needs-approval").length;
+  if (compact && items.length === 0 && !error && !creating) return null;
 
   return (
-    <div className="flex min-h-full flex-col gap-5" data-testid="coworker-workers">
-      <section aria-label="Workers">
-        <div className="mb-1 flex items-center justify-between px-1">
-          <h3 className="text-[11px] font-semibold text-mist">Workers</h3>
+    <div className={compact ? "mx-5 mt-2 flex max-h-[32dvh] min-h-0 shrink flex-col rounded-xl border border-line bg-panel/60 px-3 py-1" : "flex min-h-full flex-col gap-5"} data-testid={compact ? "coworker-worker-shelf" : "coworker-workers"} data-origin-thread={threadId}>
+      <section className={compact ? "flex min-h-0 flex-col" : ""} aria-label={compact ? "Work beside this conversation" : "Workers in this discussion"}>
+        <div className="mb-1 flex shrink-0 items-center justify-between px-1">
+          {compact ? <button type="button" className="min-w-0 py-2 text-left text-xs text-snow focus-visible:outline-spark" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+            Work beside chat · {items.length}{needsApproval > 0 ? <span className="ml-2 text-amber">{needsApproval} needs approval</span> : null}<span aria-hidden="true" className="ml-2 text-mist">{open ? "−" : "+"}</span>
+          </button> : <h3 className="text-[11px] font-semibold text-mist">Workers in this discussion</h3>}
           {!creating ? (
-            <Button variant="ghost" className="px-2 text-xs" onClick={() => setCreating(true)} data-testid="new-worker-button">New Worker</Button>
+            <Button variant="ghost" className="shrink-0 px-2 text-xs" onClick={() => { setCreating(true); setOpen(true); }} data-testid="new-worker-button">New Worker</Button>
           ) : null}
         </div>
-        {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
+        {error ? <div className="mb-2"><p role="alert" className="text-xs text-amber">{error}</p><Button variant="ghost" className="text-xs" onClick={() => void refresh()}>Check tasks</Button></div> : null}
+        <div hidden={!open} className={compact ? "min-h-0 overflow-y-auto overscroll-contain" : ""}>
         {creating ? (
           <NewWorker
             coworker={coworker}
+            threadId={threadId}
             onCancel={() => setCreating(false)}
             onCreated={async (worker) => {
+              changed(worker);
               setCreating(false);
               setExpandedId(worker.id);
-              await refresh();
             }}
           />
         ) : null}
         {workers !== null && items.length === 0 && !creating ? (
           <p className="px-1 py-2 text-xs leading-relaxed text-mist" data-testid="workers-empty">
-            No Workers running. Ask {coworker.name} to start one, or start one here.
+            No Workers in this discussion. Ask {coworker.name} to delegate a task, or start one here.
           </p>
         ) : null}
         {items.length > 0 ? (
@@ -125,136 +125,23 @@ export function WorkersPanel({
                         {isLiveWorker(worker) ? ` · ${describeLifespan(worker.lifespan)}` : ""}
                         {worker.lastFindingAt ? ` · Last update ${relativeTime(worker.lastFindingAt) || "now"} ago` : ""}
                       </span>
-                      <span className="mt-0.5 block truncate text-[11px] text-mist" data-testid="worker-model">
+                      {worker.control ? <span className={`mt-0.5 block text-[11px] ${worker.control.state === "approved" ? "text-mist" : "text-amber"}`}>{worker.control.surface === "browser" ? "Discussion browser" : "This Mac"} · {worker.control.state === "approved" ? "Task access approved" : worker.control.state === "revoked" ? "Access revoked" : "Review access request"}</span> : null}
+                      {!compact ? <span className="mt-0.5 block truncate text-[11px] text-mist" data-testid="worker-model">
                         {worker.purpose === "thinking" ? "Deep thinking" : "Delivery"} · {worker.modelSnapshot ? `${worker.modelSnapshot.providerId}/${worker.modelSnapshot.modelId} · ${worker.modelSnapshot.variant || "model default"} effort` : "Coworker model (legacy)"}
-                      </span>
+                      </span> : null}
                     </span>
                     <span className="shrink-0 text-mist" aria-hidden="true">{expanded ? "▾" : "›"}</span>
                   </button>
                   {expanded ? (
-                    <WorkerDetail coworker={coworker} worker={worker} onChanged={refresh} onOpenThread={onOpenThread} />
+                    <WorkerDetail key={worker.id} coworker={coworker} initialWorker={worker} onChanged={changed} onOpenThread={onOpenThread} onOpenComputer={onOpenComputer} onOpenBrowser={onOpenBrowser} />
                   ) : null}
                 </li>
               );
             })}
           </ul>
         ) : null}
+        </div>
       </section>
-    </div>
-  );
-}
-
-/** What one Worker has said and done, newest first, with the few actions a person takes. */
-function WorkerDetail({
-  coworker,
-  worker,
-  onChanged,
-  onOpenThread,
-}: {
-  coworker: CoworkerSummary;
-  worker: WorkerSummary;
-  onChanged: () => Promise<void>;
-  onOpenThread: (threadId: string) => void;
-}) {
-  const [events, setEvents] = useState<WorkerEvent[]>([]);
-  const [steer, setSteer] = useState("");
-  const [busy, setBusy] = useState("");
-  const [error, setError] = useState("");
-  const alive = isLiveWorker(worker);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = () =>
-      coworkerBridge.workers
-        .findings(coworker.slug, worker.id, TIMELINE_LIMIT)
-        .then((items) => {
-          if (!cancelled) setEvents(items);
-        })
-        .catch(() => undefined);
-    void load();
-    const timer = window.setInterval(() => void load(), alive ? 2_000 : 10_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [alive, coworker.slug, worker.id, worker.updatedAt]);
-
-  async function act(label: string, action: () => Promise<unknown>): Promise<void> {
-    setBusy(label);
-    setError("");
-    try {
-      await action();
-      await onChanged();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy("");
-    }
-  }
-
-  const newestFirst = [...events].reverse();
-
-  return (
-    <div className="border-t border-line/70 px-1 py-3 text-[11px] leading-relaxed" data-testid="worker-detail">
-      {worker.modelSnapshot ? <p className="mb-2 break-words text-mist">Saved model: {worker.modelSnapshot.providerId}/{worker.modelSnapshot.modelId}. Effort: {worker.modelSnapshot.variant || "model default"}. Settings changes do not alter this Worker.</p> : null}
-      {alive ? (
-        <form
-          className="flex items-center gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const text = steer.trim();
-            if (!text) return;
-            void act("steer", async () => {
-              await coworkerBridge.workers.steer(coworker.slug, worker.id, text);
-              setSteer("");
-            });
-          }}
-        >
-          <input
-            className={`${inputClass} py-1.5 text-xs`}
-            placeholder={worker.status === "waiting" && worker.waitingFor === "decision" ? "Your decision…" : `Steer ${worker.name}…`}
-            aria-label={`Steer ${worker.name}`}
-            value={steer}
-            onChange={(event) => setSteer(event.target.value)}
-            data-testid="worker-steer-input"
-          />
-          <Button variant="primary" className="shrink-0 text-xs" type="submit" disabled={!steer.trim() || busy === "steer"} aria-busy={busy === "steer"} data-testid="worker-steer-send">
-            Steer
-          </Button>
-        </form>
-      ) : null}
-      <div className="mt-2 flex flex-wrap items-center gap-1">
-        {alive && worker.status !== "paused" ? (
-          <Button variant="ghost" className="px-2 text-xs" disabled={busy !== ""} onClick={() => void act("pause", () => coworkerBridge.workers.pause(coworker.slug, worker.id))} data-testid="worker-pause">Pause</Button>
-        ) : null}
-        {worker.status === "paused" ? (
-          <Button variant="ghost" className="px-2 text-xs" disabled={busy !== ""} onClick={() => void act("resume", () => coworkerBridge.workers.resume(coworker.slug, worker.id))} data-testid="worker-resume">Resume</Button>
-        ) : null}
-        {alive ? (
-          <Button variant="ghost" className="px-2 text-xs text-rose" disabled={busy !== ""} onClick={() => void act("stop", () => coworkerBridge.workers.cancel(coworker.slug, worker.id))} data-testid="worker-stop">Stop</Button>
-        ) : null}
-        {worker.threadId ? (
-          <Button variant="ghost" className="px-2 text-xs" onClick={() => onOpenThread(worker.threadId)} data-testid="worker-open-work">Open its work</Button>
-        ) : null}
-        <span className="ml-auto text-mist/80">
-          {worker.spawnedBy === "coworker" ? `Started by ${coworker.name}` : "Started by you"} · {relativeTime(worker.createdAt) || "now"} ago
-        </span>
-      </div>
-      {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
-      {worker.error && worker.status === "failed" ? <p className="mt-2 text-rose" data-testid="worker-error">{worker.error}</p> : null}
-      <ol className="mt-3 space-y-2 border-l border-line pl-3" data-testid="worker-timeline">
-        {newestFirst.length === 0 ? <li className="text-mist">Nothing reported yet.</li> : null}
-        {newestFirst.map((event) => {
-          const line = describeWorkerEvent(event, coworker.name);
-          return (
-            <li key={event.id} data-testid="worker-event" data-kind={event.kind} className={line.quiet ? "text-mist" : "text-snow/90"}>
-              <span className="mr-2 text-mist/70" title={new Date(event.at).toLocaleString()}>{relativeTime(event.at) || "now"}</span>
-              {line.label ? <span className={`mr-1 font-semibold ${line.label === "Needs a decision" ? "text-amber" : line.quiet ? "text-mist" : "text-snow"}`}>{line.label}</span> : null}
-              <span className="whitespace-pre-wrap">{line.text}</span>
-            </li>
-          );
-        })}
-      </ol>
     </div>
   );
 }
@@ -262,23 +149,30 @@ function WorkerDetail({
 /** A person can explicitly choose until stopped; defaults always have a turn limit. */
 function NewWorker({
   coworker,
+  threadId,
   onCancel,
   onCreated,
 }: {
   coworker: CoworkerSummary;
+  threadId: string;
   onCancel: () => void;
   onCreated: (worker: WorkerSummary) => Promise<void>;
 }) {
   const [name, setName] = useState("");
   const [goal, setGoal] = useState("");
   const [purpose, setPurpose] = useState<WorkerPurpose>("delivery");
+  const [control, setControl] = useState<"" | "browser" | "computer">("");
   const [kind, setKind] = useState<LifespanChoice["kind"]>("turns");
   const [turns, setTurns] = useState(String(workerTurnsFor(coworker.effortPreference)));
   const [until, setUntil] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const request = useRef(0);
+  const starting = useRef(false);
+  useEffect(() => () => { request.current += 1; }, []);
 
   async function start(): Promise<void> {
+    if (starting.current) return;
     const choice: LifespanChoice = kind === "turns" ? { kind, turns } : kind === "until" ? { kind, at: until } : { kind };
     const resolved = lifespanFromChoice(choice);
     if ("error" in resolved) {
@@ -293,6 +187,8 @@ function NewWorker({
       setError("Say what the Worker should work toward.");
       return;
     }
+    starting.current = true;
+    const version = ++request.current;
     setBusy(true);
     setError("");
     try {
@@ -301,13 +197,15 @@ function NewWorker({
         goal: goal.trim(),
         purpose,
         lifespan: resolved.lifespan,
-        spawnedFromThreadId: coworker.conversationThreadId,
+        spawnedFromThreadId: threadId,
+        ...(threadId && control ? { control } : {}),
       });
+      if (version !== request.current) return;
       await onCreated(worker);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (version === request.current) setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setBusy(false);
+      if (version === request.current) { starting.current = false; setBusy(false); }
     }
   }
 
@@ -335,6 +233,18 @@ function NewWorker({
         onChange={(event) => setGoal(event.target.value)}
         data-testid="new-worker-goal"
       />
+      {threadId ? <label className="block space-y-1.5 text-xs text-mist">
+        <span>Browser or Mac app access</span>
+        <select className={`${inputClass} bg-panel text-xs`} aria-label="Worker control request" data-testid="new-worker-control" disabled={busy} value={control} onChange={(event) => {
+          const value = event.target.value;
+          if (value === "" || value === "browser" || value === "computer") setControl(value);
+        }}>
+          <option value="">None requested</option>
+          <option value="browser">Request this discussion's browser</option>
+          <option value="computer">Request Mac app control</option>
+        </select>
+        {control ? <span className="block text-[11px]">{control === "browser" ? "Uses existing discussion tabs and Coworker's shared local logins, not a separate account." : "Uses this Mac, not a remote computer. Requires discussion allowance and native app/window approval."} Creating the Worker only requests access. It stays paused until you review and approve the named task.</span> : <span className="block text-[11px]">Existing files and connected tools stay available. No browser or computer permission is granted here.</span>}
+      </label> : null}
       <div className="grid grid-cols-3 rounded-lg border border-line bg-panel/60 p-0.5" role="radiogroup" aria-label="How long it works">
         <button type="button" role="radio" aria-checked={kind === "turns"} className={choiceClass(kind === "turns")} onClick={() => setKind("turns")}>Number of turns</button>
         <button type="button" role="radio" aria-checked={kind === "until"} className={choiceClass(kind === "until")} onClick={() => setKind("until")}>Until a time</button>
@@ -356,7 +266,7 @@ function NewWorker({
       {kind === "open" ? <p className="text-[11px] text-mist">It keeps working until you or {coworker.name} stop it.</p> : null}
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       <Button variant="primary" className="w-full text-xs" disabled={busy} aria-busy={busy} onClick={() => void start()} data-testid="new-worker-start">
-        {busy ? "Starting…" : "Start Worker"}
+        {busy ? "Creating..." : control ? "Create Worker for review" : "Start Worker"}
       </Button>
     </div>
   );

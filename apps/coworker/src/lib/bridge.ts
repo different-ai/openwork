@@ -613,14 +613,16 @@ export const coworkerBridge = {
   /**
    * Workers: long-lived sub-agents in the coworker's own workspace. Their turns
    * share this Mac's parallel-run limit with responsibilities, and every
-   * finding wakes the coworker in its open discussion.
+   * completion returns to the originating discussion.
    */
   workers: {
     list: (slug: string) => invoke<WorkerSummary[]>("workers.list", { slug }),
     get: (slug: string, id: string) => invoke<WorkerSummary>("workers.get", { slug, id }),
     /** A missing lifespan means the default turn budget; a Worker is never unbounded by accident. */
-    spawn: (slug: string, input: { name: string; goal: string; purpose?: import("./workers.ts").WorkerPurpose; lifespan?: WorkerLifespan; spawnedFromThreadId?: string }) =>
+    spawn: (slug: string, input: { name: string; goal: string; purpose?: import("./workers.ts").WorkerPurpose; lifespan?: WorkerLifespan; spawnedFromThreadId?: string; control?: "browser" | "computer" }) =>
       invoke<WorkerSummary>("workers.spawn", { slug, ...input }),
+    approveControl: (input: { slug: string; id: string; expectedRevision: number }) => invoke<WorkerSummary>("workers.approveControl", input),
+    revokeControl: (input: { slug: string; id: string; expectedRevision: number }) => invoke<WorkerSummary>("workers.revokeControl", input),
     /** Arrives as the Worker's next turn; if one is in flight, it waits for it. */
     steer: (slug: string, id: string, text: string) => invoke<WorkerSummary>("workers.steer", { slug, id, text }),
     cancel: (slug: string, id: string, reason?: string) => invoke<WorkerSummary>("workers.cancel", { slug, id, reason }),
