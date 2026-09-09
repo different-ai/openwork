@@ -36,7 +36,7 @@ export function GroupFaces({ active, header = false, animated }: { active?: Stoc
 
 const GROUP_REPLIES: Record<StockCoworkerId, string> = {
   scout: "The clearest angle is time back for the work you care about. Lead with a useful first draft, then show how people can shape it with their coworker.",
-  editor: "I’d open with: ‘Your work. Better together.’ Then show a quick check-in turning into a draft you can use.",
+  editor: "I’d open with: ‘Your AI team. Built to work together.’ Then show a quick check-in turning into a draft you can use.",
   ops: "I’ll turn that into a simple handoff: finish the draft, review the walkthrough, then invite the first users. You choose when we’re ready to share.",
 };
 

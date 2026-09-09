@@ -7,6 +7,7 @@ const paths: { path: string; priority: number }[] = [
   { path: "/glm-5.2", priority: 0.8 },
   { path: "/connect", priority: 0.8 },
   { path: "/coworker", priority: 0.8 },
+  { path: "/coworker/download", priority: 0.7 },
   { path: "/cloud", priority: 0.8 },
   { path: "/dashboard", priority: 0.8 },
   { path: "/download", priority: 0.7 },
