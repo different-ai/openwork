@@ -908,7 +908,7 @@ export function createReviewScheduler({
 // `coworker_<tool>`. The bearer token names the coworker, so no tool takes a
 // coworker from the model; the Worker id is the only handle it passes.
 
-const WORKER_ID_SCHEMA = { type: "string", description: "The Worker id, as listed by workers_list or returned when it was started." };
+const WORKER_ID_SCHEMA = { type: "string", description: "Worker ID from workers_list or start." };
 
 /** What the coworker can do with its Workers, in its own plain words. */
 export function workerToolCatalog() {
