@@ -26,7 +26,7 @@ import type {
   EnterpriseMcpRequestPhase,
   EnterpriseMcpReadResourceInput,
 } from "./contracts.js"
-import { EnterpriseMcpClientError, EnterpriseMcpLifecycleDeadlineError, EnterpriseMcpToolResultError } from "./errors.js"
+import { EnterpriseMcpClientError, EnterpriseMcpOAuthContractError, EnterpriseMcpLifecycleDeadlineError, EnterpriseMcpToolResultError } from "./errors.js"
 import { EnterpriseMcpOAuthProvider } from "./oauth-provider.js"
 import { createEnterpriseMcpRequestObserver, type EnterpriseMcpRequestObserver } from "./request-observer.js"
 import { createEnterpriseMcpTokenResponseCompat } from "./token-response-compat.js"
@@ -542,6 +542,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
           try {
             await session.transport.finishAuth(code, input.responseIssuer)
             exchangedTokens = true
+            emitDiagnostic({ kind: "operation", connectionId: input.connection.id, operationPhase: "authorization-callback", requestPhase: "oauth-token-exchange", outcome: "succeeded" })
             await connectWithProtocolNegotiation({
               session,
               connectionId: input.connection.id,
@@ -578,6 +579,13 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
                   "Post-authorization validation failed and the exchanged credentials could not be invalidated.",
                 ),
               })
+            }
+            const failure = session.observer.lastRequestFailure()
+            if (exchangedTokens && failure && isMcpResourceRequest(failure.requestPhase)
+              && (failure.httpStatus === 401 || failure.httpStatus === 403 && (failure.bearerChallenge || failure.insufficientScope))) {
+              // A second OAuth challenge after successful exchange is a resource
+              // rejection, even if the SDK then tries to start interactive OAuth.
+              throw new EnterpriseMcpOAuthContractError("MCP_OAUTH_RESOURCE_REJECTED", "The provider issued tokens, but the MCP server rejected them.")
             }
             throw error
           } finally {

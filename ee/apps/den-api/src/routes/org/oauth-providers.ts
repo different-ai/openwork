@@ -22,6 +22,8 @@ import {
   resolvePublicOrigin,
   verifyOAuthStateToken,
 } from "../../capability-sources/generic-oauth.js"
+import { createConnectionAttempt, finishConnectionAttempt } from "../../capability-sources/connection-attempts.js"
+import { externalMcpDiagnosticForResponse, externalMcpOAuthCallbackError } from "../../capability-sources/external-mcp-diagnostics.js"
 import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
 import { revokeAccountsBeforeOAuthClientIdentityChange } from "../../capability-sources/oauth-client-rotation.js"
 import {
@@ -177,7 +179,7 @@ export async function beginNativeProviderConnect(input: OrgIds & {
   credentialProviderId: string
   request: Request
   teamIds: DenTypeId<"team">[]
-}): Promise<{ authorizeUrl: string } | { error: "client_not_configured" | "client_configuration_invalid" | "forbidden"; message?: string }> {
+}): Promise<{ authorizeUrl: string; attemptId?: string } | { error: "client_not_configured" | "client_configuration_invalid" | "forbidden"; message?: string }> {
   // The literal registry key is the legacy no-row alias and intentionally
   // remains implicitly org-wide. Connector rows always require a grant.
   if (input.credentialProviderId !== input.provider.providerId) {
@@ -229,7 +231,11 @@ export async function beginNativeProviderConnect(input: OrgIds & {
     providerId: input.credentialProviderId,
     pendingCodeVerifier: verifier,
   })
-  return { authorizeUrl }
+  const connection = input.credentialProviderId === input.provider.providerId ? null : await getExternalMcpConnection({
+    organizationId: input.organizationId, connectionId: normalizeDenTypeId("externalMcpConnection", input.credentialProviderId),
+  })
+  const attemptId = connection ? await createConnectionAttempt(connection, state) : undefined
+  return { authorizeUrl, attemptId }
 }
 
 async function resolveNativeProviderCredential(input: {
@@ -581,8 +587,8 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       const url = new URL(c.req.url)
       const code = url.searchParams.get("code")
       const state = url.searchParams.get("state")
-      if (!code || !state) {
-        return c.json({ error: "invalid_request", message: "Missing code or state." }, 400)
+      if (!state) {
+        return c.json({ error: "invalid_request", message: "Missing state." }, 400)
       }
 
       const statePayload = verifyOAuthStateToken({ token: state, secret: env.betterAuthSecret })
@@ -607,6 +613,12 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ error: "invalid_request", message: "Invalid or expired state." }, 400)
       }
       const credentialProviderId = resolved.credentialProviderId
+      const providerError = url.searchParams.get("error")
+      if (providerError || !code) {
+        const diagnostic = externalMcpOAuthCallbackError(c.get("requestId"), providerError ?? "invalid_request").diagnostic
+        await finishConnectionAttempt(state, diagnostic)
+        return c.html(connectCallbackPage({ ok: false, name: provider.displayName, message: diagnostic.message, referenceId: diagnostic.referenceId, diagnostic }), 400)
+      }
 
       const client = await getOrgOAuthClient(statePayload.organizationId, credentialProviderId)
       const pending = await getConnectedAccount({
@@ -615,6 +627,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         providerId: credentialProviderId,
       })
       if (!client || !pending?.pendingCodeVerifier) {
+        await finishConnectionAttempt(state, externalMcpOAuthCallbackError(c.get("requestId"), "invalid_request").diagnostic)
         return c.json({ error: "invalid_request", message: "No pending connection for this state." }, 400)
       }
 
@@ -648,6 +661,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           pendingCodeVerifier: null,
         })
         if (!saved) {
+          await finishConnectionAttempt(state, externalMcpOAuthCallbackError(c.get("requestId"), "invalid_request").diagnostic)
           return c.html(connectCallbackPage({
             ok: false,
             name: provider.displayName,
@@ -657,6 +671,8 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       } catch (error) {
         const requestId = c.get("requestId")
         if (error instanceof OAuthTokenExchangeError) {
+          const diagnostic = { ...externalMcpDiagnosticForResponse(error, requestId, "AUTH_TOKEN_ACQUISITION"), code: error.code, message: error.message }
+          await finishConnectionAttempt(state, diagnostic)
           console.error("native_oauth_connect_callback_token_exchange_failed", {
             requestId,
             organizationId: statePayload.organizationId,
@@ -670,9 +686,12 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
             name: provider.displayName,
             message: error.message,
             referenceId: requestId,
+            diagnostic,
           }), 400)
         }
 
+        const diagnostic = externalMcpDiagnosticForResponse(error, requestId, "AUTH_TOKEN_ACQUISITION")
+        await finishConnectionAttempt(state, diagnostic)
         console.error("native_oauth_connect_callback_failed", {
           requestId,
           organizationId: statePayload.organizationId,
@@ -689,6 +708,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         }), 400)
       }
 
+      await finishConnectionAttempt(state)
       return c.html(connectCallbackPage({ ok: true, name: provider.displayName }))
     },
   )

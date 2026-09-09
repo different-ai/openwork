@@ -58,6 +58,8 @@ let agentRequiredHeader = null;
 let configuredTools = [];
 let toolsUnavailable = false;
 let requireConsent = false;
+let tokenExchangeError = null;
+let rejectIssuedTokens = false;
 
 const gmailThreadId = "thread-q3-launch";
 
@@ -692,6 +694,10 @@ async function issueToken(req, res, entry) {
   const form = await readForm(req);
   const grantType = form.grant_type || "authorization_code";
   if (entry) entry.grantType = grantType;
+  if (grantType === "authorization_code" && tokenExchangeError) {
+    json(res, 400, { error: tokenExchangeError, error_description: "The test OAuth client was rejected. client_secret=fixture-secret-must-not-leak" });
+    return;
+  }
   const respond = async (status, body) => {
     if (grantType === "refresh_token" && holdRefreshResponses) {
       const id = ++nextRefreshResponseId;
@@ -755,6 +761,7 @@ async function issueToken(req, res, entry) {
   tokens.add(accessToken);
   const refreshToken = `mock-refresh-${randomUUID()}`;
   refreshTokens.add(refreshToken);
+  if (entry) entry.tokenIssued = true;
   await respond(200, {
     access_token: accessToken,
     refresh_token: refreshToken,
@@ -766,6 +773,7 @@ async function issueToken(req, res, entry) {
 
 function isAuthorized(req) {
   if (allowUnauthenticatedMcp) return true;
+  if (rejectIssuedTokens) return false;
   const token = bearerToken(req);
   return Boolean(token && tokens.has(token));
 }
@@ -1080,6 +1088,18 @@ const server = http.createServer(async (req, res) => {
       toolsUnavailable = body.toolsUnavailable === true;
       requireConsent = body.requireConsent === true;
       json(res, 200, { configured: configuredTools.length });
+      return;
+    }
+
+    if (url.pathname === "/admin/oauth-faults" && req.method === "POST") {
+      const body = await readJson(req);
+      if (body.tokenExchangeError != null && !["invalid_client", "invalid_grant"].includes(body.tokenExchangeError)) {
+        json(res, 400, { error: "Unsupported OAuth fault" });
+        return;
+      }
+      tokenExchangeError = body.tokenExchangeError ?? null;
+      rejectIssuedTokens = body.rejectIssuedTokens === true;
+      json(res, 200, { configured: true });
       return;
     }
 

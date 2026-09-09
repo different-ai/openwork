@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { z } from "zod"
-import type { ConnectionSetup, CreateSetupConnection, SetupConnection } from "@openwork/types/connection-setup"
+import type { ConnectionDiagnostic, ConnectionSetup, CreateSetupConnection, SetupConnection } from "@openwork/types/connection-setup"
 import { createDenClient, DenApiError, readDenSettings } from "@/app/lib/den"
 import { openDesktopUrl } from "@/app/lib/desktop"
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events"
@@ -18,6 +18,7 @@ export function useConnectionSetup(input: {
   const [setup, setSetup] = useState<ConnectionSetup | null>(null)
   const [connection, setConnection] = useState<SetupConnection | null>(null)
   const [phase, setPhase] = useState<SetupPhase>("idle")
+  const [diagnostic, setDiagnostic] = useState<ConnectionDiagnostic | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null)
   const [query, setQuery] = useState("")
@@ -68,7 +69,7 @@ export function useConnectionSetup(input: {
     setQuery(target)
     setSetup(null)
     setConnection(null)
-    setError(null)
+    setError(null); setDiagnostic(null)
     setPhase("loading")
     setAuthorizeUrl(null)
     busy.current = false
@@ -85,7 +86,7 @@ export function useConnectionSetup(input: {
     } catch (cause) {
       if (generation.current !== loadGeneration) return
       if (cause instanceof DenApiError && (cause.status === 404 || cause.status === 405)) {
-        setError(null)
+        setError(null); setDiagnostic(null)
         setPhase("unsupported")
         return
       }
@@ -101,11 +102,12 @@ export function useConnectionSetup(input: {
     if (result.state !== "ready") {
       if (result.state === "needs_auth") setConnection(value => value ? { ...value, connectedForMe: false } : value)
       setError(result.message)
+      setDiagnostic(result.diagnostic ?? null)
       setPhase(result.state === "needs_auth" ? "sign_in" : result.state === "blocked" ? "blocked" : "failed")
       return
     }
     clearCloudInventoryCache()
-    setError(null)
+    setError(null); setDiagnostic(null)
     setPhase("ready")
     setReadyTargets(targets => new Set([...targets, ctx.target]))
     const key = `${ctx.orgId}:${entry.id}`
@@ -139,11 +141,26 @@ export function useConnectionSetup(input: {
     while (current(ctx) && Date.now() < deadline) {
       await new Promise(resolve => window.setTimeout(resolve, 2_000))
       if (!current(ctx)) return
-      const inventory = await ctx.client.listMcpConnections(ctx.orgId).catch(() => null)
-      if (!inventory) continue
-      if (!current(ctx)) return
-      const account = inventory.find(item => item.id === entry.id)
-      if (account?.connectedForMe && !account.needsReconnect) {
+      let authorized = false
+      if (started.attemptId) {
+        const attempt = await ctx.client.readConnectionAttempt(ctx.orgId, entry.id, started.attemptId)
+        if (!current(ctx)) return
+        if (attempt.state === "failed" || attempt.state === "expired" || attempt.state === "configuration_changed") {
+          setAuthorizeUrl(null)
+          setDiagnostic(attempt.diagnostic)
+          setError(attempt.diagnostic?.message ?? (attempt.state === "expired" ? "This sign-in request expired. Sign in again." : "The connection changed during sign-in. Reopen setup and try again."))
+          setPhase("failed")
+          return
+        }
+        authorized = attempt.state === "authorized"
+      } else {
+        // Compatibility with servers that predate attempt outcomes.
+        const inventory = await ctx.client.listMcpConnections(ctx.orgId).catch(() => null)
+        if (!current(ctx)) return
+        const account = inventory?.find(item => item.id === entry.id)
+        authorized = Boolean(account?.connectedForMe && !account.needsReconnect)
+      }
+      if (authorized) {
         const connected = { ...entry, connectedForMe: true, needsReconnect: false }
         setConnection(connected)
         setAuthorizeUrl(null)
@@ -157,7 +174,7 @@ export function useConnectionSetup(input: {
     const ctx = active.current
     if (!ctx || !current(ctx) || busy.current) return
     busy.current = true
-    setError(null)
+    setError(null); setDiagnostic(null)
     try {
       let selected = connection
       if (!selected) {
@@ -195,7 +212,7 @@ export function useConnectionSetup(input: {
     const ctx = active.current
     if (!ctx || !current(ctx) || busy.current || !connection || !setup?.canManage || !setup.target) return
     busy.current = true
-    setError(null)
+    setError(null); setDiagnostic(null)
     setPhase("checking")
     try {
       await ctx.client.replaceSetupCredentials(ctx.orgId, connection, setup.target.kind, credentials)
@@ -219,7 +236,7 @@ export function useConnectionSetup(input: {
     active.current = { ...ctx, generation: ++generation.current }
     busy.current = false
     setPhase("sign_in")
-    setError(null)
+    setError(null); setDiagnostic(null)
     setAuthorizeUrl(null)
   }
 
@@ -236,9 +253,9 @@ export function useConnectionSetup(input: {
     ctx.attempt.connectionId = entry.id
     localStorage.setItem(ctx.storageKey, JSON.stringify(ctx.attempt))
     setConnection(entry)
-    setError(null)
+    setError(null); setDiagnostic(null)
     setPhase("sign_in")
   }
 
-  return { open, setOpen, setup, connection, phase, error, query, readyTargets, authorizeUrl, load, submit, select, replaceCredentials, stopWaiting, openSettings }
+  return { open, setOpen, setup, connection, phase, error, diagnostic, query, readyTargets, authorizeUrl, load, submit, select, replaceCredentials, stopWaiting, openSettings }
 }

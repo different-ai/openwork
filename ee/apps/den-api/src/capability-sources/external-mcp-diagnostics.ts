@@ -234,7 +234,7 @@ function isOAuthTokenPhase(phase: ExternalMcpDiagnosticPhase): boolean {
 function isProviderTokenErrorExcerpt(excerpt: string): boolean {
   try {
     const parsed: unknown = JSON.parse(excerpt)
-    return isRecord(parsed) && parsed.ok === false && typeof parsed.error === "string"
+    return isRecord(parsed) && typeof parsed.error === "string"
   } catch {
     return false
   }
@@ -831,6 +831,7 @@ function safeBaseMessageFor(input: {
       ? "The provider did not grant authorization for this MCP connection."
       : "The provider rejected the authorization request before issuing a code."
   }
+  if (input.code === "MCP_OAUTH_RESOURCE_REJECTED") return "Sign-in issued a token, but the MCP server rejected it."
   if (input.phase === "AUTH_RESOURCE_VALIDATION") {
     return "The MCP resource rejected the supplied authorization."
   }
@@ -1027,6 +1028,10 @@ function httpClassification(input: {
 }
 
 function classifyByCode(code: string): Classification | null {
+  if (code === "MCP_OAUTH_RESOURCE_REJECTED") {
+    return { phase: "AUTH_RESOURCE_VALIDATION", category: "oauth_resource_rejected", code, retryable: false, actionOwner: "provider_admin",
+      operatorAction: "Verify the MCP server accepts this issuer, token audience, tenant and granted scopes, then sign in again." }
+  }
   if (code === "MCP_OAUTH_AUTHORIZATION_ID_REQUIRED") {
     return {
       phase: "CONFIGURATION",
@@ -1276,7 +1281,7 @@ function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase
   const name = errorName(error)
   if (name === "InvalidClientError" || name === "UnauthorizedClientError" || name === "InvalidClientMetadataError") {
     return {
-      phase: "AUTH_CLIENT_REGISTRATION",
+      phase: isOAuthTokenPhase(fallbackPhase) ? fallbackPhase : "AUTH_CLIENT_REGISTRATION",
       category: "oauth_client_registration",
       code: "MCP_OAUTH_CLIENT_REJECTED",
       retryable: false,
@@ -1898,19 +1903,27 @@ async function responseTextExcerptWithinLimit(response: Response, limit: number)
   }
 }
 
-async function providerResponseExcerpts(response: Response): Promise<{
+async function providerResponseExcerpts(response: Response, oauthTokenResponse = false): Promise<{
   memberExcerpt?: string
+  oauthErrorCode?: string
   log: ProviderResponseLog
 } | null> {
   try {
-    const text = await responseTextExcerptWithinLimit(
-      response.clone(),
-      EXTERNAL_MCP_PROVIDER_RESPONSE_EXCERPT_CHARS,
-    )
+    const text = oauthTokenResponse
+      ? await responseTextWithinLimit(response.clone(), 64 * 1024)
+      : await responseTextExcerptWithinLimit(response.clone(), EXTERNAL_MCP_PROVIDER_RESPONSE_EXCERPT_CHARS)
     if (text === null) return null
     const memberExcerpt = structuredProviderResponseExcerpt(text)
+    let oauthErrorCode: string | undefined
+    if (oauthTokenResponse) {
+      try {
+        const parsed: unknown = JSON.parse(text)
+        if (isRecord(parsed) && typeof parsed.error === "string" && Object.hasOwn(OAUTH_CALLBACK_ERROR_NAMES, parsed.error)) oauthErrorCode = parsed.error
+      } catch { /* Keep the safe HTTP classification for non-JSON responses. */ }
+    }
     return {
       ...(memberExcerpt ? { memberExcerpt } : {}),
+      ...(oauthErrorCode ? { oauthErrorCode } : {}),
       log: {
         contentType: providerResponseContentType(
           (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim().toLowerCase() ?? "",
@@ -2052,8 +2065,14 @@ export function createExternalMcpDiagnosticFetch(input: {
       }
       input.tracker.recordHttpStatus(response.status)
       input.tracker.recordProviderRequestId(response.headers)
+      let oauthFailure: Classification | null = null
       if (!response.ok || (response.ok && isOAuthTokenPhase(phase) && contentType === "application/json")) {
-        const excerpts = await providerResponseExcerpts(response)
+        const excerpts = await providerResponseExcerpts(response, isOAuthTokenPhase(phase))
+        if (excerpts?.oauthErrorCode) {
+          const providerError = new Error("The provider rejected OAuth token exchange.")
+          providerError.name = OAUTH_CALLBACK_ERROR_NAMES[excerpts.oauthErrorCode]!
+          oauthFailure = { ...classifyError(providerError, phase), phase, providerCode: excerpts.oauthErrorCode }
+        }
         if (excerpts && (!response.ok || (excerpts.memberExcerpt && isProviderTokenErrorExcerpt(excerpts.memberExcerpt)))) {
           input.tracker.recordProviderResponseExcerpt({
             ...excerpts,
@@ -2067,7 +2086,7 @@ export function createExternalMcpDiagnosticFetch(input: {
         && response.status === 401
         && !hasAuthorization
         && /\bbearer\b/i.test(challenge)
-      const classification = unauthenticatedChallenge
+      const classification = oauthFailure ?? (unauthenticatedChallenge
         ? null
         : httpClassification({
             phase,
@@ -2077,7 +2096,7 @@ export function createExternalMcpDiagnosticFetch(input: {
             insufficientScope: /\binsufficient_scope\b/i.test(challenge),
             hasSession: Boolean(requestHeader(init, "mcp-session-id")),
             contentType,
-          })
+          }))
       input.tracker.passed(phase, "reachable")
       if (classification) {
         input.tracker.failed(classification.phase, {
@@ -2123,6 +2142,8 @@ export function externalMcpDiagnosticForResponse(error: unknown, referenceId: st
 const OAUTH_CALLBACK_ERROR_NAMES: Record<string, string> = {
   access_denied: "AccessDeniedError",
   invalid_client: "InvalidClientError",
+  invalid_grant: "InvalidGrantError",
+  unsupported_grant_type: "UnsupportedGrantTypeError",
   invalid_request: "InvalidRequestError",
   invalid_scope: "InvalidScopeError",
   invalid_target: "InvalidTargetError",

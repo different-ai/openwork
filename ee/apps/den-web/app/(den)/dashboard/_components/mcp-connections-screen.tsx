@@ -67,6 +67,7 @@ import {
   useReviewMcpIssuer,
   useSaveNativeProviderClient,
   useStartMcpConnectionOAuth,
+  useReadMcpConnectionAttempt,
   useUpdateMcpConnection,
 } from "./mcp-connections-data";
 import {
@@ -264,6 +265,8 @@ export function McpConnectionsScreen() {
   const createNativeConnection = useCreateNativeProviderConnection();
   const updateConnection = useUpdateMcpConnection();
   const startOAuth = useStartMcpConnectionOAuth();
+  const readAttempt = useReadMcpConnectionAttempt();
+  const pollingGeneration = useRef(0);
   const disconnectConnection = useDisconnectMcpConnection();
   const deleteConnection = useDeleteMcpConnection();
   const saveNativeClient = useSaveNativeProviderClient();
@@ -395,10 +398,13 @@ export function McpConnectionsScreen() {
   }, [presets, searchParams]);
 
   useEffect(() => {
+    stopPolling();
+    setConnectionActionError(null);
     return () => {
+      pollingGeneration.current += 1;
       if (pollTimer.current) clearInterval(pollTimer.current);
     };
-  }, []);
+  }, [orgContext?.organization.id]);
 
   const legacyGoogleConnection = usableConnections.find((connection) => connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID);
   const listedConnections = legacyGoogleConnection && !connections.some((connection) => connection.id === legacyGoogleConnection.id)
@@ -406,6 +412,7 @@ export function McpConnectionsScreen() {
     : connections;
 
   function stopPolling() {
+    pollingGeneration.current += 1;
     if (pollTimer.current) {
       clearInterval(pollTimer.current);
       pollTimer.current = null;
@@ -413,24 +420,57 @@ export function McpConnectionsScreen() {
     setPollingConnectionId(null);
   }
 
-  function pollUntilConnected(connectionId: string) {
+  function pollUntilConnected(connectionId: string, attemptId?: string) {
+    stopPolling();
+    const generation = pollingGeneration.current;
     setPollingConnectionId(connectionId);
     const startedAt = Date.now();
+    let checking = false;
     pollTimer.current = setInterval(async () => {
-      const result = await refetch();
-      const connection = result.data?.find((entry) => entry.id === connectionId);
-      if (connection?.connected || Date.now() - startedAt > OAUTH_POLL_TIMEOUT_MS) {
+      if (checking) return;
+      checking = true;
+      try {
+        if (attemptId) {
+          const attempt = await readAttempt(connectionId, attemptId);
+          if (generation !== pollingGeneration.current) return;
+          if (attempt.state === "authorized") { stopPolling(); void refetch(); return; }
+          if (attempt.state !== "pending") {
+            stopPolling();
+            const d = attempt.diagnostic;
+            // Discovery can register a client even when account sign-in fails.
+            // Refresh it before offering repair, while retaining this outcome.
+            const terminalGeneration = pollingGeneration.current;
+            await refetch().catch(() => undefined);
+            if (terminalGeneration !== pollingGeneration.current) return;
+            setConnectionActionError({ connectionId, message: d ? `${d.message} ${d.operatorAction} Stage: ${d.phase}. Code: ${d.code}. Reference: ${d.referenceId}.` : "This sign-in request expired or the connection changed. Start Connect again." });
+            return;
+          }
+        } else {
+          const result = await refetch();
+          if (generation !== pollingGeneration.current) return;
+          if (result.data?.find(entry => entry.id === connectionId)?.connectedForMe) { stopPolling(); return; }
+        }
+        if (Date.now() - startedAt > OAUTH_POLL_TIMEOUT_MS) {
+          stopPolling();
+          setConnectionActionError({ connectionId, message: "Sign-in has not finished. Complete it in the provider window or start Connect again." });
+        }
+      } catch (error) {
+        if (generation !== pollingGeneration.current) return;
         stopPolling();
-      }
+        setConnectionActionError({ connectionId, message: error instanceof Error ? error.message : "Sign-in status could not be checked." });
+      } finally { checking = false; }
     }, OAUTH_POLL_INTERVAL_MS);
   }
 
   async function handleConnectOAuth(connectionId: string, pendingAuthorizationWindow?: Window) {
+    stopPolling();
+    const generation = pollingGeneration.current;
     setConnectionActionError(null);
     let authorizationWindow: Window | null = pendingAuthorizationWindow ?? null;
     try {
       authorizationWindow = authorizationWindow ?? openMcpAuthorizationWindow();
       const result = await startOAuth.mutateAsync(connectionId);
+      if (generation !== pollingGeneration.current) { authorizationWindow.close(); return; }
       if (result.status === "connected") {
         authorizationWindow.close();
         void refetch();
@@ -438,8 +478,9 @@ export function McpConnectionsScreen() {
       }
       if (!result.authorizeUrl) throw new Error("The MCP provider did not return an authorization URL.");
       authorizationWindow.location.href = safeMcpAuthorizationUrl(result.authorizeUrl);
-      pollUntilConnected(connectionId);
+      pollUntilConnected(connectionId, result.attemptId);
     } catch (connectError) {
+      if (generation !== pollingGeneration.current) { authorizationWindow?.close(); return; }
       const message = connectError instanceof Error ? connectError.message : "Failed to connect the MCP server.";
       showMcpAuthorizationError(authorizationWindow, {
         message,
@@ -1948,6 +1989,7 @@ function EditConnectionDialog({
   const [oauthClientId, setOAuthClientId] = useState("");
   const [oauthClientSecret, setOAuthClientSecret] = useState("");
   const [requestedScopesText, setRequestedScopesText] = useState("");
+  const [clientAuthMethod, setClientAuthMethod] = useState<"client_secret_basic" | "client_secret_post" | undefined>();
   const [accessMode, setAccessMode] = useState<AddConnectionAccessMode>("everyone");
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
@@ -1965,6 +2007,7 @@ function EditConnectionDialog({
     setOAuthClientId(connection.oauthClientId ?? "");
     setOAuthClientSecret("");
     setRequestedScopesText((connection.requestedScopes ?? []).join(" "));
+    setClientAuthMethod(undefined);
     setAccessMode(mcpAccessMode(connection.access));
     setSelectedTeamIds(connection.access?.teamIds ?? []);
     setSelectedMemberIds(connection.access?.memberIds ?? []);
@@ -2014,6 +2057,10 @@ function EditConnectionDialog({
     const trimmedApiKey = apiKey.trim();
     const trimmedClientId = oauthClientId.trim();
     const trimmedClientSecret = oauthClientSecret.trim();
+    // Displaying an automatically registered ID must not convert its registration
+    // when someone edits only the name, scopes or access.
+    const clientSettingsChanged = identityChanged || trimmedClientId !== (connection.oauthClientId ?? "")
+      || Boolean(trimmedClientSecret) || clientAuthMethod !== undefined;
     const requestedScopes = [...new Set(requestedScopesText.split(/[\s,]+/).map((scope) => scope.trim()).filter(Boolean))];
     const input: UpdateMcpConnectionInput = {
       connectionId: connection.id,
@@ -2024,11 +2071,12 @@ function EditConnectionDialog({
       credentialMode: proposedCredentialMode,
       exposeDirectly,
       ...(!marketplaceManaged && authType === "apikey" && trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
-      ...(authType === "oauth" && showOAuthClient && trimmedClientId
+      ...(authType === "oauth" && showOAuthClient && trimmedClientId && clientSettingsChanged
         ? {
           oauthClient: {
             clientId: trimmedClientId,
             ...(trimmedClientSecret ? { clientSecret: trimmedClientSecret } : {}),
+            ...(clientAuthMethod ? { tokenEndpointAuthMethod: clientAuthMethod } : {}),
           },
         }
         : {}),
@@ -2143,7 +2191,11 @@ function EditConnectionDialog({
                   OAuth setup
                 </Link>
               </div>
-              <p className="mt-1 text-[12px] leading-5 text-gray-500">Add the provider credentials here. The saved client secret remains hidden.</p>
+              <p className="mt-1 text-[12px] leading-5 text-gray-500">{connection.oauthRegistrationSource === "dynamic" ? "OpenWork registered this client automatically with the provider." : connection.oauthRegistrationSource === "client-metadata" ? "This provider uses OpenWork's published client metadata." : connection.oauthRegistrationSource === "pre-registered" ? "This connection uses a provider app configured by your organization." : "Add the client details from your provider's OAuth app."} A saved client ID does not confirm sign-in or tool access.</p>
+              <label className="mt-3 block text-[12px] font-medium text-gray-700" htmlFor="edit-client-auth-method">Client authentication</label>
+              <select id="edit-client-auth-method" className="mt-1 w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={clientAuthMethod ?? ""} onChange={event => setClientAuthMethod(event.target.value === "client_secret_basic" || event.target.value === "client_secret_post" ? event.target.value : undefined)}>
+                <option value="">Keep current method</option><option value="client_secret_basic">Client secret in Authorization header</option><option value="client_secret_post">Client secret in request body</option>
+              </select>
               <div className="mt-3 space-y-3">
                 <div>
                   <label className="mb-1.5 block text-[12px] font-medium text-gray-700">

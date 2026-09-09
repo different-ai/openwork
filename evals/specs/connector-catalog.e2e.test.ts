@@ -70,8 +70,34 @@ test("a real model guides native setup, resumes with usable tools, and respects 
     expect(saved[0]?.connectedForMe).toBe(false);
     connectionId = String(saved[0]?.id);
     expect(prompt).not.toContain(connectionId);
+    const failureScenarios: Array<"token_rejected" | "resource_rejected"> = ["token_rejected", "resource_rejected"];
+    for (const fault of failureScenarios) {
+      await world.setOAuthFault(fault);
+      const opened = await world.browserUrls.opened();
+      const failureUrl = opened.at(-1);
+      if (!failureUrl) throw new Error("Missing provider handoff");
+      await user.on(world.web).navigate(failureUrl);
+      await user.on(world.web).click({ role: "button", label: "Approve OpenWork" });
+      await user.on(world.web).see({ text: "Connection failed" }, { timeoutMs: 30_000 });
+      await appUser.see({ testId: "connection-diagnostic" }, { timeoutMs: 30_000 });
+      await appUser.click({ text: "Sign-in details" });
+      const expectedCode = fault === "token_rejected" ? "MCP_OAUTH_CLIENT_REJECTED" : "MCP_OAUTH_RESOURCE_REJECTED";
+      await appUser.see({ text: expectedCode });
+      await appUser.notSee({ text: "Ready to use" });
+      await appUser.notSee({ text: "Finish sign-in in your browser" });
+      expect((await inventory())[0]?.connectedForMe).toBe(false);
+      expect(await probe.toolCalls(world.den.mocks.connector, { name: "read_connection_status", atLeast: 0, timeoutMs: 1000 })).toHaveLength(0);
+      await appUser.screenshot();
+      await user.on(world.web).screenshot();
+      evidence.recordAssertionEvidence(`The task displays ${fault} from the exact browser sign-in`, `The real-model task stayed open and showed ${expectedCode} within 30 seconds of provider consent, with no Ready state, saved credential or business tool execution. Browser and app displayed the failure without waiting for the three-minute timeout.`, true);
+      await world.setOAuthFault(null);
+      await appUser.click({ role: "button", label: "Sign in" });
+      await probe.eventually(async () => (await world.browserUrls.opened()).length, { within: 30_000, label: "retry sign-in", until: value => value === opened.length + 1 });
+    }
+    const recoveryUrl = (await world.browserUrls.opened()).at(-1);
+    if (!recoveryUrl) throw new Error("Missing recovery handoff");
     // Capture and use the exact OS handoff; only the provider approval is in the browser.
-    await user.on(world.web).navigate(url);
+    await user.on(world.web).navigate(recoveryUrl);
     await user.on(world.web).click({ role: "button", label: "Approve OpenWork" });
     await user.on(world.web).see({ text: "You're connected" }, { timeoutMs: 30_000 });
     await appUser.see({ text: "Ready to use" }, { timeoutMs: 90_000 });
@@ -126,7 +152,7 @@ test("a real model guides native setup, resumes with usable tools, and respects 
     await world.setToolsUnavailable(false);
     await appUser.click({ role: "button", label: "Check connection" });
     await appUser.see({ text: "Ready to use" }, { timeoutMs: 90_000 });
-    expect(await world.browserUrls.opened()).toHaveLength(2);
+    expect(await world.browserUrls.opened()).toHaveLength(4);
     expect(await inventory()).toHaveLength(1);
     await appUser.screenshot();
     await appUser.click({ role: "button", label: "Back to task" });
@@ -163,12 +189,57 @@ test("a real model guides native setup, resumes with usable tools, and respects 
     await appUser.notSee({ role: "button", label: "Save and sign in" });
     await appUser.screenshot();
     await appUser.click({ role: "button", label: "Open organization setup" });
-    await probe.eventually(async () => (await world.browserUrls.opened()).length, { within: 30_000, label: "organization setup browser handoff", until: value => value === 3 });
-    const opened = (await world.browserUrls.opened())[2];
+    await probe.eventually(async () => (await world.browserUrls.opened()).length, { within: 30_000, label: "organization setup browser handoff", until: value => value === 5 });
+    const opened = (await world.browserUrls.opened())[4];
     expect(opened).toBe(new URL("/dashboard/mcp-connections", world.proxy.ref.webUrl).toString());
     expect((await world.proxy.requestLog()).some(request => request.faulted && request.path.startsWith("/api/den/v1/mcp-connections/setup") && request.status === 404)).toBe(true);
     expect(await inventory()).toHaveLength(1);
     evidence.recordAssertionEvidence("An unsupported Den server keeps a usable setup path", "A transport proxy returned the older-server 404 for native setup. The real model's catalog showed the compatibility explanation and opened only the configured Den organization's setup URL, with no new connection created. This simulates the missing endpoint; it does not boot a historical Den release.", true);
+  });
+  await step("Den settings display the same terminal OAuth failure", async () => {
+    await world.setToolsUnavailable(false, false);
+    // A rejected grant retains client registration; an invalid client clears it.
+    await world.setOAuthFault("grant_rejected");
+    const denUser = user.on(world.web);
+    await denUser.navigate(new URL("/dashboard/mcp-connections", world.den.ref.webUrl).toString());
+    await denUser.click({ role: "button", label: "Advanced setup" });
+    await denUser.type({ placeholder: "notion" }, "Den Diagnostic Service", { replace: true });
+    await denUser.type({ placeholder: "https://mcp.example.com/mcp" }, endpoint, { replace: true });
+    await probe.eventually(() => probe.on(world.web).eval(() => Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid="add-mcp-connection-dialog"] button')).some(button => button.textContent?.trim() === "Add connection" && !button.disabled)), { within: 45_000, label: "Den requirements allow creation", until: ready => ready });
+    // Discovery adds scope fields and moves the account controls. Select only
+    // after it settles, then prove the intended account mode before saving.
+    await denUser.click({ role: "button", label: "One org account" });
+    await probe.eventually(() => probe.on(world.web).eval(() => Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid="add-mcp-connection-dialog"] button')).some(button => button.textContent?.trim() === "One org account" && button.getAttribute("aria-pressed") === "true")), { within: 5_000, label: "Den selects a shared account", until: selected => selected });
+    // Shared-account creation starts OAuth through the same human click.
+    await denUser.click({ role: "button", label: "Add connection" });
+    await denUser.see({ text: "Den Diagnostic Service" }, { timeoutMs: 60_000 });
+    expect((await inventory()).find(row => row.name === "Den Diagnostic Service")?.credentialMode).toBe("shared");
+    await denUser.see({ text: /MCP_OAUTH_INVALID_GRANT/ }, { timeoutMs: 45_000 });
+    await denUser.see({ text: /AUTH_TOKEN_ACQUISITION/ });
+    await denUser.notSee({ text: "Waiting for authorization…" });
+    const after = await inventory();
+    const id = after.find(row => row.name === "Den Diagnostic Service")?.id;
+    expect(typeof id).toBe("string");
+    expect(after.find(row => row.id === id)?.connected).toBe(false);
+    expect(after.find(row => row.id === connectionId)?.connectedForMe).toBe(true);
+    await denUser.screenshot();
+    await denUser.click({ role: "button", label: "More actions for Den Diagnostic Service" });
+    await denUser.click({ role: "menuitem", label: "Edit Den Diagnostic Service" });
+    await denUser.see({ text: /A saved client ID does not confirm sign-in or tool access\./ });
+    await denUser.see({ text: "Client authentication" });
+    await denUser.screenshot();
+    const registration = after.find(row => row.id === id)?.oauthRegistrationSource;
+    expect(["dynamic", "client-metadata"]).toContain(registration);
+    await denUser.type({ testId: "edit-mcp-name" }, "Renamed Diagnostic Service", { replace: true });
+    await denUser.click({ role: "button", label: "Save changes" });
+    await probe.eventually(() => probe.on(world.web).dom('[data-testid="edit-mcp-connection-dialog"]'), { within: 30_000, label: "Den saves and closes the edit dialog", until: state => state.elements.length === 0 });
+    await denUser.notSee({ testId: "edit-mcp-connection-dialog" });
+    const renamed = (await inventory()).find(row => row.id === id);
+    expect(renamed?.name).toBe("Renamed Diagnostic Service");
+    expect(renamed?.oauthRegistrationSource).toBe(registration);
+    expect(renamed?.oauthClientId).toBe(after.find(row => row.id === id)?.oauthClientId);
+    evidence.recordAssertionEvidence("Den and the task share OAuth outcomes while configuration stays separate", "A real Den Add connection click saved a shared connection and started OAuth against the controlled provider's automatic consent fixture, showing MCP_OAUTH_INVALID_GRANT at AUTH_TOKEN_ACQUISITION within 45 seconds. The failed shared connection stayed disconnected while the original member connection stayed connected. Edit explained that a saved client ID is not proof of sign-in and exposed client authentication settings. Saving a name-only edit preserved the automatically registered client ID and registration method.", true);
+    await world.setOAuthFault(null);
   });
   } catch (error) {
     const connections = await inventory().catch(() => []);

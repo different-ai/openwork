@@ -249,6 +249,8 @@ import type {
   GetV1MarketplacesByMarketplaceIdResponses,
   GetV1MarketplacesErrors,
   GetV1MarketplacesResponses,
+  GetV1McpConnectionsByConnectionIdConnectAttemptsByAttemptIdErrors,
+  GetV1McpConnectionsByConnectionIdConnectAttemptsByAttemptIdResponses,
   GetV1McpConnectionsByConnectionIdConnectCallbackErrors,
   GetV1McpConnectionsByConnectionIdConnectCallbackResponses,
   GetV1McpConnectionsByConnectionIdConnectStartErrors,
@@ -6884,6 +6886,38 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/mcp-connections/{connectionId}/disconnect-my-account",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Read your OAuth connection attempt
+   */
+  public getV1McpConnectionsByConnectionIdConnectAttemptsByAttemptId<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+      attemptId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "connectionId" },
+            { in: "path", key: "attemptId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      GetV1McpConnectionsByConnectionIdConnectAttemptsByAttemptIdResponses,
+      GetV1McpConnectionsByConnectionIdConnectAttemptsByAttemptIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/mcp-connections/{connectionId}/connect/attempts/{attemptId}",
       ...options,
       ...params,
     });

@@ -2,7 +2,7 @@ import {
   normalizeDesktopConfig,
   type DesktopConfig as SharedDesktopConfig,
 } from "@openwork/types/den/desktop-policies";
-import { connectionSetupSchema, connectionReadinessSchema, type ConnectionSetupInput, type CreateSetupConnection } from "@openwork/types/connection-setup";
+import { connectionSetupSchema, connectionReadinessSchema, connectionAttemptSchema, type ConnectionSetupInput, type CreateSetupConnection } from "@openwork/types/connection-setup";
 import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
   AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER,
@@ -371,6 +371,7 @@ export type DenExternalMcpPreset = {
 export type DenMcpConnectionConnectStart = {
   status: "connected" | "needs_auth";
   authorizeUrl: string | null;
+  attemptId?: string;
 };
 
 export type DenOrgLlmProviderConnection = DenOrgLlmProvider & {
@@ -2185,6 +2186,7 @@ function getDenMcpConnectionConnectStart(payload: unknown): DenMcpConnectionConn
   return {
     status: payload.status,
     authorizeUrl: typeof payload.authorizeUrl === "string" ? payload.authorizeUrl : null,
+    ...(typeof payload.attemptId === "string" ? { attemptId: payload.attemptId } : {}),
   };
 }
 
@@ -3470,6 +3472,12 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
     async checkConnectionReadiness(orgId: string, connectionId: string) {
       return connectionReadinessSchema.parse(await requestJson<unknown>(baseUrls, `/v1/mcp-connections/${encodeURIComponent(connectionId)}/readiness`, {
         method: "GET", token, organizationId: orgId, timeoutMs: 120_000,
+      }));
+    },
+
+    async readConnectionAttempt(orgId: string, connectionId: string, attemptId: string) {
+      return connectionAttemptSchema.parse(await requestJson<unknown>(baseUrls, `/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/attempts/${encodeURIComponent(attemptId)}`, {
+        method: "GET", token, organizationId: orgId,
       }));
     },
 

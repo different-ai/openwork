@@ -194,4 +194,65 @@ test("gateway discovery stays quiet until connection setup is explicitly request
   expect(record(afterRetry.body).state, JSON.stringify(afterRetry.body)).toBe("ready");
   evidence.recordAssertionEvidence("Restarted OAuth completes with the provider's latest consent transaction", "Two sign-in starts followed by an explicit provider approval completed the Den callback and made the same connection ready.", true);
 
+  for (const fault of ["resource_rejected", "token_rejected", "grant_rejected"]) {
+    const configured = await fetch(`${den.mocks.connector.url}/admin/oauth-faults`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tokenExchangeError: fault === "token_rejected" ? "invalid_client" : fault === "grant_rejected" ? "invalid_grant" : null, rejectIssuedTokens: fault === "resource_rejected" }) });
+    expect(configured.status).toBe(200);
+    const failedConnection = await denFetch(den.admin, "/v1/mcp-connections", { method: "POST", headers, body: JSON.stringify({ name: `OAuth ${fault}`, url: den.mocks.connector.mcpUrl, authType: "oauth", credentialMode: "shared", access: { orgWide: true } }) });
+    expect(failedConnection.response.status, failedConnection.text).toBe(200);
+    const failedId = record(failedConnection.body).id;
+    const beforeRequests = rows(record(await (await fetch(`${den.mocks.connector.url}/requests`)).json()).requests).length;
+    const started = await denFetch(den.admin, `/v1/mcp-connections/${String(failedId)}/connect/start`, { headers });
+    expect(started.response.status, started.text).toBe(200);
+    const registered = rows(record((await denFetch(den.admin, "/v1/mcp-connections?scope=manageable", { headers })).body).connections).find(connection => connection.id === failedId);
+    expect(typeof registered?.oauthClientId).toBe("string");
+    const attemptId = record(started.body).attemptId;
+    expect(typeof attemptId).toBe("string");
+    const attemptPath = `/v1/mcp-connections/${String(failedId)}/connect/attempts/${String(attemptId)}`;
+    const pending = await denFetch(den.admin, attemptPath, { headers });
+    expect(record(pending.body).state).toBe("pending");
+    expect(record(pending.body).diagnostic).toBeNull();
+    // Even an org-wide shared connection does not expose another member's sign-in.
+    expect((await denFetch(member, attemptPath, { headers: memberHeaders })).response.status).toBe(404);
+    const authorization = record(started.body).authorizeUrl;
+    if (typeof authorization !== "string") throw new Error("Missing fault scenario authorization URL");
+    const redirect = await fetch(authorization, { redirect: "manual" });
+    expect(redirect.status).toBe(302);
+    const location = redirect.headers.get("location");
+    if (!location) throw new Error("Missing fault scenario callback");
+    const completed = await fetch(location);
+    const html = await completed.text();
+    expect(completed.status).toBe(400);
+    const code = fault === "resource_rejected" ? "MCP_OAUTH_RESOURCE_REJECTED" : fault === "grant_rejected" ? "MCP_OAUTH_INVALID_GRANT" : "MCP_OAUTH_CLIENT_REJECTED";
+    expect(html).toContain(code);
+    expect(html).not.toContain("MCP_OAUTH_AUTHORIZATION_ID_REQUIRED");
+    expect(html).not.toContain("fixture-secret-must-not-leak");
+    const requests = rows(record(await (await fetch(`${den.mocks.connector.url}/requests`)).json()).requests).slice(beforeRequests);
+    expect(requests.some(request => request.tokenIssued === true)).toBe(fault === "resource_rejected");
+    const outcome = await denFetch(den.admin, attemptPath, { headers });
+    expect(record(outcome.body).state).toBe("failed");
+    const diagnostic = record(record(outcome.body).diagnostic);
+    expect(diagnostic.code).toBe(code);
+    expect(diagnostic.phase).toBe(fault === "resource_rejected" ? "AUTH_RESOURCE_VALIDATION" : "AUTH_TOKEN_ACQUISITION");
+    if (fault === "resource_rejected") expect(diagnostic.highestPassed).toBe("authorized");
+    expect(JSON.stringify(outcome.body)).not.toMatch(/fixture-secret-must-not-leak|access_token|code_verifier|stateHash|identityBinding/);
+    expect(html).toContain(String(diagnostic.referenceId));
+    const failedState = rows(record((await denFetch(den.admin, "/v1/mcp-connections?scope=manageable", { headers })).body).connections).find(connection => connection.id === failedId);
+    if (fault === "token_rejected") expect(failedState?.oauthClientId).toBeNull();
+    if (fault === "grant_rejected") {
+      expect(failedState?.oauthClientId).toBe(registered?.oauthClientId);
+      expect(failedState?.oauthRegistrationSource).toBe(registered?.oauthRegistrationSource);
+    }
+    // Replay cannot change a terminal outcome; a retry has its own pending row.
+    await fetch(location);
+    expect((await denFetch(den.admin, attemptPath, { headers })).body).toEqual(outcome.body);
+    const retry = await denFetch(den.admin, `/v1/mcp-connections/${String(failedId)}/connect/start`, { headers });
+    expect(record(retry.body).attemptId).not.toBe(attemptId);
+    const retryPath = `/v1/mcp-connections/${String(failedId)}/connect/attempts/${String(record(retry.body).attemptId)}`;
+    expect(record((await denFetch(den.admin, retryPath, { headers })).body).state).toBe("pending");
+    expect((await denFetch(den.admin, attemptPath, { headers })).body).toEqual(outcome.body);
+    const current = await denFetch(den.admin, "/v1/mcp-connections?scope=manageable", { headers });
+    expect(rows(record(current.body).connections).find(connection => connection.id === failedId)?.connected).toBe(false);
+    evidence.recordAssertionEvidence(`OAuth ${fault} reports the causal stage without exposing credentials`, `The controlled callback failed with ${code}; token issuance matched the injected failure and the connection stayed disconnected.${fault === "token_rejected" ? " The rejected automatic client registration was cleared." : fault === "grant_rejected" ? " The rejected grant preserved the registered client ID and registration method." : ""} The app status endpoint returned the same reference and causal stage, omitted secrets, and denied a different member. Replay did not mutate its terminal outcome; retry created an independent pending attempt. The callback did not misreport a missing authorization transaction.`, true);
+  }
+
 });
