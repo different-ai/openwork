@@ -1839,6 +1839,11 @@ export type ExternalMcpRequirementsDiscovery = {
   }>;
 };
 
+export type ExternalMcpConnectionNotFoundError = {
+  error: "connection_not_found";
+  message: string;
+};
+
 export type ExternalMcpRequirementsDiscoveryFailedError = {
   error: "requirements_discovery_failed";
   message: string;
@@ -1855,11 +1860,6 @@ export type ExternalMcpIssuerReviewResponse = {
   issuerChanged?: boolean;
   reconnectionRequired?: boolean;
   updatedAt?: string;
-};
-
-export type ExternalMcpConnectionNotFoundError = {
-  error: "connection_not_found";
-  message: string;
 };
 
 export type ExternalMcpConnectionConflictError = {
@@ -12792,7 +12792,7 @@ export type PostV1OauthProvidersByProviderIdClientErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can configure an OAuth client.
+   * Connection management permission and a fresh session are required.
    */
   403: ForbiddenError;
   /**
@@ -13972,6 +13972,125 @@ export type PostV1CapabilitiesMicrosoft365TeamsChatsByChatIdMessagesResponses = 
 export type PostV1CapabilitiesMicrosoft365TeamsChatsByChatIdMessagesResponse =
   PostV1CapabilitiesMicrosoft365TeamsChatsByChatIdMessagesResponses[keyof PostV1CapabilitiesMicrosoft365TeamsChatsByChatIdMessagesResponses];
 
+export type PostV1McpConnectionsSetupData = {
+  body: {
+    query: string;
+    connectionId?: string;
+    externalKey?: string;
+    resumeOnly?: boolean;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/mcp-connections/setup";
+};
+
+export type PostV1McpConnectionsSetupErrors = {
+  /**
+   * Invalid target.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+};
+
+export type PostV1McpConnectionsSetupError = PostV1McpConnectionsSetupErrors[keyof PostV1McpConnectionsSetupErrors];
+
+export type PostV1McpConnectionsSetupResponses = {
+  /**
+   * Setup requirements.
+   */
+  200: {
+    version: 1;
+    organizationId: string;
+    memberId: string;
+    canManage: boolean;
+    members?: Array<{
+      id: string;
+      name: string;
+    }>;
+    teams?: Array<{
+      id: string;
+      name: string;
+    }>;
+    target: {
+      name: string;
+      url: string;
+      kind: "external_mcp" | "native_provider";
+      nativeProviderKey?: string;
+      authType: "oauth" | "apikey" | "none";
+      requiresOAuthClient: boolean;
+      callbackUrl: string;
+      requiresTenant: boolean;
+      features: Array<{
+        id: string;
+        label: string;
+        selected: boolean;
+      }>;
+    } | null;
+    connections: Array<{
+      id: string;
+      name: string;
+      url: string;
+      authType: "oauth" | "apikey" | "none";
+      credentialMode: "shared" | "per_member";
+      connectedForMe: boolean;
+      needsReconnect: boolean;
+      canUse: boolean;
+      updatedAt: string;
+      access: {
+        orgWide: boolean;
+        memberIds: Array<string>;
+        teamIds: Array<string>;
+      } | null;
+      externalAccountId: string | null;
+    }>;
+    requirements: ExternalMcpRequirementsDiscovery | null;
+    message: string | null;
+  };
+};
+
+export type PostV1McpConnectionsSetupResponse =
+  PostV1McpConnectionsSetupResponses[keyof PostV1McpConnectionsSetupResponses];
+
+export type GetV1McpConnectionsByConnectionIdReadinessData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/mcp-connections/{connectionId}/readiness";
+};
+
+export type GetV1McpConnectionsByConnectionIdReadinessErrors = {
+  /**
+   * Connection not found.
+   */
+  404: ExternalMcpConnectionNotFoundError;
+};
+
+export type GetV1McpConnectionsByConnectionIdReadinessError =
+  GetV1McpConnectionsByConnectionIdReadinessErrors[keyof GetV1McpConnectionsByConnectionIdReadinessErrors];
+
+export type GetV1McpConnectionsByConnectionIdReadinessResponses = {
+  /**
+   * Connection readiness.
+   */
+  200: {
+    connectionId: string;
+    state: "ready" | "needs_auth" | "blocked" | "unavailable";
+    message: string;
+    toolCount: number;
+  };
+};
+
+export type GetV1McpConnectionsByConnectionIdReadinessResponse =
+  GetV1McpConnectionsByConnectionIdReadinessResponses[keyof GetV1McpConnectionsByConnectionIdReadinessResponses];
+
 export type PostV1McpConnectionsDiscoverData = {
   body: ExternalMcpRequirementsDiscoveryInput;
   path?: never;
@@ -14159,12 +14278,18 @@ export type PostV1McpConnectionsData = {
   body:
     | {
         kind: "native_provider";
+        /**
+         * Client-chosen stable identifier, unique per organization. Immutable.
+         */
+        externalKey?: string;
         nativeProviderKey: string;
         name: string;
+        access?: ExternalMcpConnectionAccessInput;
         oauthClient: {
           clientId: string;
           clientSecret?: string;
           features?: Array<string>;
+          tenantId?: string;
         };
       }
     | {

@@ -1,3 +1,4 @@
+import { canManageMcpConnections } from "../../organization-access.js"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -44,7 +45,7 @@ import { getExternalMcpConnection, listUsableNativeProviderConnections } from ".
 import { resolveDefaultNativeProviderCredentialId, resolveManageableNativeProviderCredentialId } from "../../capability-sources/native-provider-connections.js"
 import { listTeamsForMember } from "../../orgs.js"
 import type { MemberTeamSummary } from "../../orgs.js"
-import { CONNECTIONS_READ_SESSION_MAX_AGE_MS, ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
+import { CONNECTIONS_READ_SESSION_MAX_AGE_MS, ensureOrganizationAdmin, orgAccessFailureStatus, hasFreshPrivilegedSession, getFreshPrivilegedSessionRequiredResponse } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const providerParamsSchema = z.object({
@@ -302,12 +303,12 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Save an org's OAuth client for a provider",
-      description: "Admin-only. Lets an org bring its own OAuth app (client id + secret) for a native provider such as google-workspace, instead of relying on an OpenWork-owned client.",
+      description: "Connection managers can configure the organization's OAuth app (client id + secret) for a native provider such as google-workspace.",
       responses: {
         200: jsonResponse("OAuth client saved.", clientConfigResponseSchema),
         400: jsonResponse("The request body or providerId was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can configure an OAuth client.", forbiddenSchema),
+        403: jsonResponse("Connection management permission and a fresh session are required.", forbiddenSchema),
         404: jsonResponse("Unknown providerId.", oauthNotFoundSchema),
       },
     }),
@@ -316,8 +317,8 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
     jsonValidator(saveClientBodySchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      const admin = ensureOrganizationAdmin(c, "Only workspace owners and admins can configure an OAuth client.")
-      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+      if (!canManageMcpConnections(payload)) return c.json({ error: "forbidden", message: "Connection management permission is required to configure an OAuth client." }, 403)
+      if (!c.get("apiKey") && !hasFreshPrivilegedSession({ session: c.get("session") })) return c.json(getFreshPrivilegedSessionRequiredResponse(), 403)
 
       const { providerId } = c.req.valid("param")
       const resolved = await resolveNativeProviderCredential({

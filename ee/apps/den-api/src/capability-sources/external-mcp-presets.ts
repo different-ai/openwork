@@ -35,6 +35,13 @@ export const externalMcpPresetListResponseSchema = z.object({
 
 export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
   {
+    presetId: "resend",
+    displayName: "Resend",
+    description: "Email, contacts, domains, and broadcasts.",
+    url: "https://mcp.resend.com/mcp",
+    authType: "oauth",
+  },
+  {
     presetId: "notion",
     displayName: "Notion",
     description: "Pages, databases, and project docs in sync.",

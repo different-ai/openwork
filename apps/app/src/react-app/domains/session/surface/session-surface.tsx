@@ -124,6 +124,9 @@ import {
 } from "./composer-state-store";
 import { MessageList } from "@/components/chat/message-list";
 import { MessageListProvider, type DispatchAction } from "@/components/chat/message-list-provider";
+import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
+import { useConnectionSetup } from "@/react-app/domains/connections/use-connection-setup";
+import { ConnectionSetupSheet } from "@/react-app/domains/connections/connection-setup-sheet";
 import type {
   ChatToolReconnectAction,
   ChatToolReconnectProgress,
@@ -2882,6 +2885,31 @@ export function SessionSurface(props: SessionSurfaceProps) {
     });
   }, [props.sessionId, props.workspaceId]);
 
+  const handleConnectionReady = useCallback(async (connection: { id: string; name: string }) => {
+    const identity = readDenSettings();
+    await listMcp();
+    const currentIdentity = readDenSettings();
+    if (activeSessionOwnerRef.current !== sessionOwner || identity.baseUrl !== currentIdentity.baseUrl
+      || identity.activeOrgId !== currentIdentity.activeOrgId || identity.authToken !== currentIdentity.authToken) {
+      throw new Error("Connection is ready. Return to the task to continue.");
+    }
+    const messageID = createPromptMessageID();
+    dispatchQueuedDrain(props.sessionId, { type: "user_retry" });
+    if (!claimQueuedSend(props.sessionId, messageID, true)) throw new Error("Connection is ready. Send a message to continue your task.");
+    const text = `I finished setting up ${connection.name}. Continue my previous request using the newly available connection. Search for its capabilities again before using them.`;
+    const result = await sendDraft({ messageId: messageID, mode: "prompt", parts: [{ type: "text", text }], attachments: [], text }, messageID);
+    if (result.outcome !== "sent" && result.outcome !== "accepted") throw new Error("Connection is ready. Check the task before sending another message.");
+  }, [listMcp, props.sessionId, sendDraft, sessionOwner]);
+
+  // Message groups can remount when streaming finishes or the transcript folds.
+  // Keep the human's setup and credentials owned by the task, above those groups.
+  const denAuth = useDenAuth();
+  const connectionSetup = useConnectionSetup({
+    principalId: denAuth.verifiedIdentity?.principalId,
+    scopeId: sessionOwner,
+    onReady: handleConnectionReady,
+  });
+
   const handleMcpRetry = useCallback(async (action: ChatToolReconnectAction) => {
     const prompt = `The ${action.connectionName} connection is restored. Search for the capability again and retry the previous request. Before repeating any write action, confirm it did not already complete.`;
     await typeComposerText(prompt);
@@ -3134,6 +3162,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onMcpReconnect={handleMcpReconnect}
                       onMcpReopenAuthorization={handleMcpReopenAuthorization}
                       onMcpRetry={handleMcpRetry}
+                      onConnectionSetup={connectionSetup.load}
+                      readyConnectionTargets={connectionSetup.readyTargets}
                     >
                       <MessageList
                         messages={renderedMessages}
@@ -3325,6 +3355,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       </div>
       {/* Error display moved inline into the session conversation area */}
       {props.developerMode ? <SessionDebugPanel model={model} snapshot={snapshot} /> : null}
+      <ConnectionSetupSheet controller={connectionSetup} />
     </div>
     </DevProfiler>
   );

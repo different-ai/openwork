@@ -256,6 +256,8 @@ import type {
   GetV1McpConnectionsByConnectionIdErrors,
   GetV1McpConnectionsByConnectionIdMcpAppsErrors,
   GetV1McpConnectionsByConnectionIdMcpAppsResponses,
+  GetV1McpConnectionsByConnectionIdReadinessErrors,
+  GetV1McpConnectionsByConnectionIdReadinessResponses,
   GetV1McpConnectionsByConnectionIdResponses,
   GetV1McpConnectionsByConnectionIdToolPolicyErrors,
   GetV1McpConnectionsByConnectionIdToolPolicyResponses,
@@ -563,6 +565,8 @@ import type {
   PostV1McpConnectionsResolveErrors,
   PostV1McpConnectionsResolveResponses,
   PostV1McpConnectionsResponses,
+  PostV1McpConnectionsSetupErrors,
+  PostV1McpConnectionsSetupResponses,
   PostV1McpTokenErrors,
   PostV1McpTokenResponses,
   PostV1MembersByMemberIdRoleErrors,
@@ -5358,7 +5362,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Save an org's OAuth client for a provider
    *
-   * Admin-only. Lets an org bring its own OAuth app (client id + secret) for a native provider such as google-workspace, instead of relying on an OpenWork-owned client.
+   * Connection managers can configure the organization's OAuth app (client id + secret) for a native provider such as google-workspace.
    */
   public postV1OauthProvidersByProviderIdClient<ThrowOnError extends boolean = false>(
     parameters: {
@@ -6226,6 +6230,72 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * Read native connection setup requirements
+   *
+   * Read-only human-session setup state, including permitted actions and existing accessible accounts. Does not create connections or start OAuth.
+   */
+  public postV1McpConnectionsSetup<ThrowOnError extends boolean = false>(
+    parameters?: {
+      query?: string;
+      connectionId?: string;
+      externalKey?: string;
+      resumeOnly?: boolean;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "query" },
+            { in: "body", key: "connectionId" },
+            { in: "body", key: "externalKey" },
+            { in: "body", key: "resumeOnly" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1McpConnectionsSetupResponses,
+      PostV1McpConnectionsSetupErrors,
+      ThrowOnError
+    >({
+      url: "/v1/mcp-connections/setup",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Verify a connection for the signed-in member
+   *
+   * Checks access and live provider capabilities without executing business tools. A saved credential alone never reports ready.
+   */
+  public getV1McpConnectionsByConnectionIdReadiness<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "connectionId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1McpConnectionsByConnectionIdReadinessResponses,
+      GetV1McpConnectionsByConnectionIdReadinessErrors,
+      ThrowOnError
+    >({
+      url: "/v1/mcp-connections/{connectionId}/readiness",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
    * Discover external MCP connection requirements
    *
    * Admin-only, side-effect-free requirements discovery. It performs no client registration, credential write, or connection creation.
@@ -6365,12 +6435,18 @@ export class DenClient extends HeyApiClient {
       body:
         | {
             kind: "native_provider";
+            /**
+             * Client-chosen stable identifier, unique per organization. Immutable.
+             */
+            externalKey?: string;
             nativeProviderKey: string;
             name: string;
+            access?: ExternalMcpConnectionAccessInput;
             oauthClient: {
               clientId: string;
               clientSecret?: string;
               features?: Array<string>;
+              tenantId?: string;
             };
           }
         | {

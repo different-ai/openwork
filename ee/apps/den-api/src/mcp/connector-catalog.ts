@@ -22,6 +22,16 @@ export function connectorCatalogForQuery(query: string, showAll = false): Connec
   ]
   const normalized = ` ${query.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `
   const selectedIds = entries.filter(entry => [entry.id, entry.name].some(value => normalized.includes(` ${value.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `))).map(entry => entry.id)
+  const candidate = query.match(/https?:\/\/[^\s<>"']+/)?.[0]
+  if (candidate && !showAll) {
+    try {
+      const url = new URL(candidate)
+      if (!url.username && !url.password && !url.hash && !entries.some(entry => entry.serviceUrl === url.toString())) {
+        entries.push({ id: "custom-mcp", name: url.hostname, description: "Set up this MCP server in OpenWork.", serviceUrl: url.toString(), setup: "oauth", setupUrl: openworkOrganizationConnectionsUrl() })
+        selectedIds.push("custom-mcp")
+      }
+    } catch { /* Requirements discovery owns malformed server addresses. */ }
+  }
   if (!showAll && selectedIds.length === 0 && !/\b(connectors?|integrations?|quick adds?|quick connect)\b/.test(normalized)) return null
   return connectorCatalogSchema.parse({ version: 1, entries, selectedIds: showAll ? [] : selectedIds })
 }

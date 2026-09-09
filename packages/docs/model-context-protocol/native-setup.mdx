@@ -1,0 +1,47 @@
+---
+title: Native connection setup
+description: How OpenWork connects a service from a task and verifies access.
+---
+
+
+A request such as “connect Resend” should lead to a setup card in the task. An authorized person can configure the service, connect an account, verify usable tools, and continue the original request. Provider consent still opens in the browser; organization settings do not interrupt the native flow.
+
+## Ownership
+
+| Surface | Responsibility |
+| --- | --- |
+| Agent | Discover the requested service through `search_capabilities` with explicit connect intent. Describe the result without collecting credentials or claiming setup succeeded. |
+| Chat catalog | Render the structured result and open the native setup sheet on a human click. Preserve a compact status in the task. |
+| Native sheet | Use the signed-in human's Den session. Collect credentials in masked fields; select account mode and people/team access. |
+| Den | Resolve existing connections and requirements, enforce permissions, save configuration and credentials, perform OAuth, and verify readiness. |
+| Worker | Preserve structured MCP results. After readiness, the existing task send path asks the model to search again and continue. |
+| External service | Supply MCP discovery and tools, or native provider OAuth and API endpoints. Authenticate the account and enforce its own permissions. |
+
+## Flow and states
+
+1. The model searches for the requested service. Ordinary discovery remains quiet; explicit setup produces a catalog suggestion. Resend is a curated OAuth preset. A supplied custom MCP URL also gets a suggestion.
+2. A click reads `/v1/mcp-connections/setup`. This checks the current organization and member, matches existing accessible connections, and discovers requirements for custom endpoints. It does not register OAuth clients or create credentials.
+3. An admin or a custom role with `mcp_connections.manage` sees configuration. Other members can sign in to an existing granted connection; otherwise they see a concrete access explanation.
+4. Save uses the existing connection create API. Account mode defaults to a separate account per person for OAuth. Access defaults to the current person, with explicit people, teams, and organization options.
+5. API keys stay in authenticated human requests. OAuth opens the provider's authorization URL and waits for that member's account. Google Workspace and Microsoft 365 use their existing native provider routes and callback contracts.
+6. `/v1/mcp-connections/:connectionId/readiness` checks the caller's access and live capabilities. External MCPs must return at least one permitted tool. Native providers must have the selected scopes and a valid account. A saved credential alone is insufficient.
+7. Readiness refreshes cloud inventory and resumes the same task through the normal submission path. The composer draft and attachments are preserved. An unavailable service stays visibly distinct from a ready connection.
+
+A non-secret attempt key and connection ID allow reopening a saved setup. Recovery by key selects only that attempt. Users can stop waiting and retry sign-in. Managers can replace an API key or repair OAuth app details through the existing edit routes, preserving the connection identity. Organization, principal, or task changes invalidate asynchronous setup work.
+
+The task surface owns the sheet and its readiness state. Streaming or regrouping chat messages can replace a catalog card without discarding an open form or a completed connection check.
+
+## Boundaries
+
+- Credentials and OAuth authorization URLs are excluded from the structured setup result seen by the model. No credential is placed in task continuation text.
+- Permission to configure a service does not itself grant access to its tools. Readiness enforces the member's connection grants.
+- The first implementation uses the native OpenWork app surface. Other MCP clients retain links to Den setup.
+- When an older Den server returns 404 or 405 for native setup, the sheet offers its existing organization setup page. App and server releases can be deployed independently.
+- Provider app registration may still require action in the provider's console. The sheet supplies the required callback and fields; it does not claim to create a provider app automatically.
+- Local stdio servers continue to use the existing workspace-local setup path.
+
+## Evidence journeys
+
+`connector-catalog.e2e.test.ts` uses a real OpenAI model and separate admin/member desktops. The controlled MCP service records actual authenticated tool calls. Screenshots cover discovery, configuration, pending OAuth, ready/continued task, denied member access, service failure/recovery, and native provider client setup.
+
+`connector-search-intent.test.ts` checks the gateway's quiet discovery behavior, delegated permission and revocation, exact attempt recovery, duplicate prevention, API-key repair, and external/native OAuth app repair at live Den boundaries. Provider fixtures are explicitly synthetic; model decisions and app interactions are real.
