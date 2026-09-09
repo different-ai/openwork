@@ -25,8 +25,9 @@ export function DenReauthNotice({ onVerified, onCancel }: {
 
   const url = new URL("/reauth/desktop", settings.baseUrl);
   url.searchParams.set("nonce", nonce);
-  // Identity hints stay in the browser, outside server request logs and referrers.
-  url.hash = new URLSearchParams({ userId: user?.id ?? "", email: user?.email ?? "" }).toString();
+  // Keep the opaque account reference out of requests; the browser gets the
+  // email from its own matching session or asks the user to enter it.
+  url.hash = new URLSearchParams({ userId: user?.id ?? "" }).toString();
 
   useEffect(() => {
     active.current = true;

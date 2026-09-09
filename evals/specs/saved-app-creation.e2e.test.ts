@@ -372,7 +372,8 @@ test("create, preview, save and reopen an app without changing already-open resu
     if (!nonce) throw new Error("Missing verification nonce");
     expect(new URL(verificationUrl).searchParams.has("email")).toBe(false);
     expect(new URL(verificationUrl).searchParams.has("userId")).toBe(false);
-    expect(new URLSearchParams(new URL(verificationUrl).hash.slice(1)).get("email")).toBe(world.den.admin.email);
+    expect(new URLSearchParams(new URL(verificationUrl).hash.slice(1)).has("email")).toBe(false);
+    expect(verificationUrl).not.toContain(encodeURIComponent(world.den.admin.email));
     const wrongGrant = await seed.api(colleague, "/v1/auth/desktop-handoff", { method: "POST", body: "{}" });
     expect(wrongGrant.response.status, wrongGrant.text).toBe(200);
     const wrongLink = `openwork://den-reauth?nonce=${nonce}&grant=${field(wrongGrant.body, "grant")}`;
@@ -385,6 +386,8 @@ test("create, preview, save and reopen an app without changing already-open resu
     const webProbe = probe.on(world.web);
     // Follow the address offered by the app; authentication and the returned grant are real.
     await webUser.navigate(verificationUrl);
+    await webUser.type({ label: "OpenWork email" }, world.den.admin.email);
+    await webUser.click("Continue");
     await webUser.see({ text: "Confirm your identity to share apps" }, { timeoutMs: 90_000 });
     await webUser.type({ label: "Password" }, "wrong-password");
     await webUser.click("Verify password");
