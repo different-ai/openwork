@@ -2,8 +2,9 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { denFetch } from "@openwork/behaviors";
+import { createNativeConnector, denFetch, readUsableConnection } from "@openwork/behaviors";
 import { queryDenDatabase } from "@openwork/env";
+import { startMockGoogle } from "@openwork/labs";
 import { eventually, mcpMock, needs, server, test } from "@openwork/testkit";
 import { bootServer, isRecord, stopChild } from "../worlds/openwork-server-cli.ts";
 
@@ -213,6 +214,94 @@ for (const issuerSupport of [true, false, undefined]) {
     }
   });
 }
+
+test("Den native OAuth callbacks publish member completion timestamps", { timeout: 300_000 }, async ({ place, evidence }) => {
+  needs({ commands: ["bun"], placement: "local" });
+  const email = "native-oauth-completion@example.test";
+  // This fixture issues email-bearing ID tokens for both providers, so the
+  // Microsoft callback resolves identity without fetching Graph userinfo.
+  await using provider = await startMockGoogle({ accounts: [email], port: 0 });
+  await using den = await server({
+    place, web: false,
+    org: { name: `Native OAuth Completion ${Date.now()}`, members: { teammate: {}, observer: {} } },
+    env: {
+      DEN_MICROSOFT_OAUTH_AUTHORIZE_URL: `${provider.authorizeUrl}?tenantId={tenantId}`,
+      DEN_MICROSOFT_OAUTH_TOKEN_URL: `${provider.tokenUrl}?tenantId={tenantId}`,
+      DEN_GOOGLE_OAUTH_AUTHORIZE_URL: provider.authorizeUrl,
+      DEN_GOOGLE_OAUTH_TOKEN_URL: provider.tokenUrl,
+      DEN_GOOGLE_OAUTH_USERINFO_URL: provider.userinfoUrl,
+      DEN_GOOGLE_API_BASE_URL: provider.apiUrl,
+    },
+  });
+  const member = den.members.teammate;
+  const headers = { authorization: `Bearer ${member.token}` };
+  for (const providerKey of ["microsoft-365", "google-workspace"]) {
+    const connection = await createNativeConnector(den.admin, {
+      providerKey, name: `${providerKey} completion`,
+      clientId: "mock-native-client", clientSecret: "mock-native-secret", features: [],
+    });
+    if (providerKey === "microsoft-365") {
+      const configured = await denFetch(den.admin, `/v1/oauth-providers/${connection.id}/client`, {
+        method: "POST", headers: { authorization: `Bearer ${den.admin.token}` },
+        body: JSON.stringify({ tenantId: "12345678-1234-1234-1234-123456789abc" }),
+      });
+      expect(configured.response.status, configured.text).toBe(200);
+    }
+    const disconnected = { ...connection, connectedForMe: false, connectedAt: null };
+    expect(await readUsableConnection(den.members.observer, connection.id)).toEqual(disconnected);
+    let connectedAt: string | null = null;
+    for (const phase of ["first connect", "reconnect"]) {
+      const before = { ...connection, connectedForMe: connectedAt !== null, connectedAt };
+      expect(await readUsableConnection(member, connection.id)).toEqual(before);
+      const started = await denFetch(member, `/v1/mcp-connections/${connection.id}/connect/start`, { headers });
+      expect(started.response.status, started.text).toBe(200);
+      expect(started.body).toMatchObject({ status: "needs_auth" });
+      if (!isRecord(started.body) || typeof started.body.authorizeUrl !== "string") throw new Error("Native authorization URL missing");
+      const authorize = new URL(started.body.authorizeUrl);
+      expect(`${authorize.origin}${authorize.pathname}`).toBe(provider.authorizeUrl);
+      if (providerKey === "microsoft-365") expect(authorize.searchParams.get("tenantId")).toBe("12345678-1234-1234-1234-123456789abc");
+      expect(authorize.searchParams.get("redirect_uri")).toBe(`${den.ref.apiUrl}/v1/oauth-providers/${providerKey}/connect/callback`);
+      expect(await readUsableConnection(member, connection.id)).toEqual(before);
+      expect(await readUsableConnection(den.members.observer, connection.id)).toEqual(disconnected);
+      evidence.recordAssertionEvidence(`${providerKey} ${phase} waits for callback completion`, "Starting pending authorization preserved the exact member connection state and timestamp; another member remained disconnected with a null timestamp.", true);
+
+      const redirect = await fetch(authorize, { redirect: "manual", signal: AbortSignal.timeout(15_000) });
+      let callback: URL | undefined;
+      if (providerKey === "google-workspace") {
+        expect(redirect.status).toBe(200);
+        await provider.chooseAccount(email, { timeoutMs: 30_000 });
+      } else {
+        expect(redirect.status).toBe(302);
+        const location = redirect.headers.get("location");
+        if (!location) throw new Error("Native callback redirect missing");
+        callback = new URL(location);
+        expect(`${callback.origin}${callback.pathname}`).toBe(authorize.searchParams.get("redirect_uri"));
+        const completed = await fetch(callback, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+        expect(completed.status, await completed.text()).toBe(200);
+      }
+      const connected = await readUsableConnection(member, connection.id);
+      expect(connected).toEqual({ ...connection, connectedForMe: true, connectedAt: expect.any(String) });
+      if (!connected?.connectedAt) throw new Error("Native completion timestamp missing");
+      expect(Date.parse(connected.connectedAt)).not.toBeNaN();
+      expect(connected.connectedAt).not.toBe(connectedAt);
+      connectedAt = connected.connectedAt;
+      const status = await denFetch(member, `/v1/oauth-providers/${connection.id}/status`, { headers });
+      expect(status.response.status, status.text).toBe(200);
+      expect(status.body).toMatchObject({ providerId: connection.id, connected: true, externalAccountId: email });
+      expect(await readUsableConnection(member, connection.id)).toEqual(connected);
+      expect(await readUsableConnection(den.members.observer, connection.id)).toEqual(disconnected);
+      evidence.recordAssertionEvidence(`${providerKey} ${phase} publishes a stable member completion timestamp`, "The exact native connection row became connected with a valid non-null timestamp different from its previous value. Repeated reads preserved it and the expected account identity; another member remained disconnected with a null timestamp.", true);
+
+      if (callback) {
+        const replay = await fetch(callback, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+        expect(replay.status).toBe(400);
+        expect(await readUsableConnection(member, connection.id)).toEqual(connected);
+        expect(await readUsableConnection(den.members.observer, connection.id)).toEqual(disconnected);
+        evidence.recordAssertionEvidence(`Microsoft 365 ${phase} rejects callback replay without changing completion`, "Replaying the successful callback returned HTTP 400 and left the member completion timestamp and the other member's disconnected state unchanged.", true);
+      }
+    }
+  }
+});
 
 // Rows isolated in July kept their admin-registered client, so the provider
 // still receives that client's shared redirect while Den signed a per-connection
