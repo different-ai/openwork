@@ -26,7 +26,9 @@ import { executionProgress, type ExecutionActivity } from "@/lib/progress-activi
 import { describeGroupPresentation } from "@/lib/group-presentation";
 import { changeGroupSends, groupConversationRows, groupMessageKey, groupReplyParts, groupSends, mergeGroupReplyParts, reconcileGroupActivity, runGroupAction, submitGroupSend, subscribeGroupSends, waitForGroup, type GroupActionAttempt, type GroupReplyPart, type GroupSend } from "@/lib/group-continuity";
 import { PROGRESS_LIMITS } from "@/lib/progress-config";
+import { safeLiveMarkdown } from "@/lib/live-phase";
 import { LiveRow } from "@/ui/live-row";
+import { Markdown } from "@/ui/markdown";
 import { acknowledgeCoworker, CoworkerAvatar, GroupAvatars } from "@/ui/coworker-avatar";
 import { InteractionCard, InteractionCards, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
 import { ActionMenu, Button, ErrorNote, PlusIcon } from "@/ui/kit";
@@ -173,7 +175,7 @@ function GroupExecutionRow({ activity, coworker, runtime, unavailable, waiting }
     <p className="mb-1 px-2 text-[11px] font-medium text-mist [overflow-wrap:anywhere]" data-testid="group-speaker-name">{coworker.name}</p>
     {text ? <div className="flex min-w-0 items-end gap-2" data-message-role="assistant" data-live="true">
       <span className="shrink-0"><CoworkerAvatar identity={coworker.slug} animated={false} motion="quiet" gaze={false} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={24} /></span>
-      <div className="bubble bubble-coworker bubble-tail-left min-w-0 max-w-[76%] whitespace-pre-wrap [overflow-wrap:anywhere]" data-testid="group-live-reply">{text}</div>
+      <div className="bubble bubble-coworker bubble-tail-left min-w-0 max-w-[76%] [overflow-wrap:anywhere]" data-testid="group-live-reply"><Markdown text={safeLiveMarkdown(text)} className="overflow-x-auto" /></div>
     </div> : null}
     <LiveRow coworker={coworker} progress={progress} phase={progress.status === "streaming" ? "writing" : "thinking"} wordsArrived={Boolean(text)} />
   </div>;
@@ -753,10 +755,10 @@ function GroupChatView({
                   <span className="w-6 shrink-0">
                     {tail && speaker ? <CoworkerAvatar identity={speaker.slug} animated={false} motion="quiet" gaze={false} color={speaker.avatarColor} glasses={speaker.avatarGlasses} name={speaker.name} size={24} /> : null}
                   </span>
-                  <div className="max-w-[76%]">
+                  <div className="min-w-0 max-w-[76%]">
                     {!continued ? <p className="mb-0.5 px-2 text-[11px] font-medium text-mist" data-testid="group-speaker-name">{nameFor(event.slug ?? "")}</p> : null}
-                    <div className={`bubble bubble-coworker whitespace-pre-wrap ${tail ? "bubble-tail-left" : ""}`} title={timeLabel(event.at)}>
-                      {event.text}
+                    <div className={`bubble bubble-coworker [overflow-wrap:anywhere] ${tail ? "bubble-tail-left" : ""}`} title={timeLabel(event.at)}>
+                      <Markdown text={event.text} className="overflow-x-auto" />
                     </div>
                   </div>
                 </div>
