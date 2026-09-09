@@ -1,6 +1,16 @@
 import { expect } from "vitest";
 import { eventually, observeTranscript, readTranscriptMessages, spec } from "@openwork/testkit";
 import { streamedMarkdown, streamedMarkdownMarker, streamedMarkdownReasoning, streamedToolHistory } from "../worlds/chat.ts";
+import {
+  chatStreamContinuity,
+  streamedContinuityBullets,
+  streamedContinuityChunks,
+  streamedContinuityMarker,
+  streamedContinuityPartialFifth,
+  streamedContinuityPartialSeventh,
+  streamedContinuityPartialThird,
+  streamedContinuityPrompt,
+} from "../worlds/chat-stream-continuity.ts";
 
 const test = spec.world(streamedMarkdown, { timeout: 420_000 });
 const prompt = `Write the streamed markdown answer. ${streamedMarkdownMarker}`;
@@ -153,6 +163,255 @@ test("a streaming answer renders as markdown block by block and settles to the s
     await user.see({ text: streamedMarkdownReasoning });
     expect(occurrences(await probe.text(), streamedMarkdownReasoning)).toBe(1);
     expectSettledDocument(await probe.text());
+  });
+});
+
+const continuityTest = spec.world(chatStreamContinuity, { timeout: 420_000 });
+const normalizedLines = (text: string) => text.split("\n").map((line) => line.trim()).filter(Boolean).join("\n");
+const partialThirdPrefix = [streamedContinuityBullets[0], streamedContinuityBullets[1], streamedContinuityPartialThird].join("\n");
+const partialFifthPrefix = [...streamedContinuityBullets.slice(0, 4), streamedContinuityPartialFifth].join("\n");
+const partialSeventhPrefix = [...streamedContinuityBullets.slice(0, 6), streamedContinuityPartialSeventh].join("\n");
+const completeContinuityAnswer = streamedContinuityBullets.join("\n");
+
+continuityTest("CONT-01 restores the exact cumulative prefix while one answer streams across conversation switches", async ({ world, user, probe, step, evidence }) => {
+  const assistantText = async () => {
+    const messages = await readTranscriptMessages(probe, "assistant");
+    return { messages, text: normalizedLines(messages.join("\n")) };
+  };
+  const expectOneUserAdmission = async () => {
+    const messages = await readTranscriptMessages(probe, "user");
+    expect(messages).toHaveLength(1);
+    expect(occurrences(messages[0] ?? "", streamedContinuityPrompt)).toBe(1);
+  };
+  const select = async (target: { sessionId: string; title: string }) => {
+    await user.click({ text: target.title });
+    return probe.eventually(() => world.continuity.surfaceState("primary"), {
+      within: 15_000,
+      intervalMs: 100,
+      label: `visible conversation ${target.title}`,
+      until: (state) => state.sessionId === target.sessionId,
+    });
+  };
+  const waitForEngineHttpPrefix = (prefix: string, forbidden: string) => probe.eventually(
+    () => world.engineHttpEvents(),
+    {
+      within: 15_000,
+      intervalMs: 25,
+      label: "real app engine HTTP stream received the exact released prefix",
+      until: (state) => state.streams > 0 && state.text.includes(prefix) && !state.text.includes(forbidden),
+    },
+  );
+  const promptPosts = async () => (await world.engineHttpEvents()).promptPosts[world.session.sessionId] ?? 0;
+  const observeWarmReturn = async (
+    exact: string,
+    forbidden: string,
+    options: { allowInitialCatchup?: boolean; required?: string[] } = {},
+  ) => {
+    await using observer = await world.continuity.observeSurface({
+      sessionId: world.session.sessionId,
+      pane: "primary",
+      role: "assistant",
+      exact,
+      allowInitialCatchup: options.allowInitialCatchup,
+      required: options.required,
+      forbidden: [forbidden],
+    });
+    await user.click({ text: world.session.title });
+    const state = await probe.eventually(() => observer.read(), {
+      within: 1_500,
+      intervalMs: 25,
+      label: "exact cached prefix on warm conversation return",
+      until: (value) => value.satisfiedAtMs !== null,
+    });
+    expect(state.text).toBe(exact);
+    if (state.violations.length > 0) {
+      evidence.recordAssertionEvidence(
+        "Warm return transition diagnostics",
+        JSON.stringify({ firstViolation: state.firstViolation, transitionSamples: state.transitionSamples }),
+        false,
+      );
+    }
+    expect(state.violations).toEqual([]);
+    if (state.satisfiedAtMs === null) throw new Error("Warm return never rendered the authoritative prefix.");
+    expect(state.actionCaptured).toBe(true);
+    if (state.satisfiedAfterActionMs === null) throw new Error("Warm return did not retain the sidebar click timestamp.");
+    expect(state.satisfiedAfterActionMs).toBeLessThan(500);
+    const retained = await probe.eventually(() => observer.read(), {
+      within: 500,
+      intervalMs: 16,
+      label: "exact returned prefix remains stable after catch-up",
+      until: (value) => value.frames >= state.frames + 2,
+    });
+    expect(retained.text).toBe(exact);
+    expect(retained.violations).toEqual([]);
+    return state.satisfiedAfterActionMs;
+  };
+  for (const bullet of streamedContinuityBullets) expect(streamedContinuityPrompt).not.toContain(bullet);
+
+  await step("the selected engine runs in the requested real app surface without substituting fixtures", async () => {
+    const facts = await world.runtimeFacts();
+    expect(facts.surface).toBe(world.surface);
+    expect(facts.healthStatus).toBe(200);
+    expect(facts.engineStatus).toBe(200);
+    expect(facts.engineChatRouting).toBe(world.engine === "v2");
+    expect(facts.nativeStatus).toBe(200);
+    expect(facts.tokenPresent).toBe(true);
+    expect(facts.serverPortPresent).toBe(true);
+    if (world.engine === "v2") {
+      expect(facts.engineRunning).toBe(true);
+      expect(facts.syntheticModelInNativeResponse).toBe(true);
+    }
+    if (world.surface === "web") {
+      expect(facts.electronBridge).toBe(false);
+      expect(facts.origin).toBe(facts.expectedOrigin);
+      expect(facts.browser).toMatch(/Chrome\//);
+    } else {
+      expect(facts.electronBridge).toBe(true);
+    }
+    evidence.recordAssertionEvidence(
+      "Continuity surface and engine fixture are real and selected",
+      `${facts.surface}; ${world.engine}; ${facts.browser}; native ${facts.nativeStatus}; no Electron bridge=${String(!facts.electronBridge)}`,
+      true,
+    );
+  });
+
+  await step("one real send admits once and renders only the initially released first bullet", async () => {
+    await user.type("composer", streamedContinuityPrompt);
+    await user.click("Run task");
+    await user.see({ text: streamedContinuityPrompt }, { timeoutMs: 2_000 });
+    const gate = await probe.eventually(() => world.replyState(), {
+      within: 90_000,
+      intervalMs: 100,
+      label: "provider held after the first exact chunk",
+      until: (state) => state.deliveredChunks === 1,
+    });
+    expect(gate.prefix).toBe(streamedContinuityChunks[0]);
+    const rendered = await probe.eventually(assistantText, {
+      within: 5_000,
+      intervalMs: 50,
+      label: "only bullet one is rendered",
+      until: (value) => value.messages.length === 1 && value.text === streamedContinuityBullets[0],
+    });
+    expect(rendered.text).toBe(streamedContinuityBullets[0]);
+    await expectOneUserAdmission();
+    expect(await promptPosts()).toBe(1);
+    expect(await world.providerFinalRequests()).toHaveLength(1);
+  });
+
+  await step("B remains empty while bullet two and partial bullet three advance only in A", async () => {
+    await select(world.neighbor);
+    expect(await readTranscriptMessages(probe, "user")).toEqual([]);
+    expect(await readTranscriptMessages(probe, "assistant")).toEqual([]);
+    await world.releaseReply(2);
+    const gate = await probe.eventually(() => world.replyState(), {
+      within: 15_000,
+      intervalMs: 50,
+      label: "provider released bullet two and partial bullet three",
+      until: (state) => state.deliveredChunks === 3,
+    });
+    expect(gate.prefix).toBe(streamedContinuityChunks.slice(0, 3).join(""));
+    await waitForEngineHttpPrefix(streamedContinuityPartialThird, streamedContinuityBullets[2]);
+    expect(await promptPosts()).toBe(1);
+    expect(await world.providerFinalRequests()).toHaveLength(1);
+    const b = await world.readNative(world.neighbor.sessionId);
+    expect(b.status).toBe(200);
+    expect(b.text).not.toContain(streamedContinuityPrompt);
+    for (const bullet of streamedContinuityBullets) expect(b.text).not.toContain(bullet);
+  });
+
+  const firstReturnMs = await step("returning while bullet three is partial commits the exact full prefix in under 500ms", async () => {
+    return observeWarmReturn(partialThirdPrefix, streamedContinuityBullets[2], {
+      allowInitialCatchup: true,
+      required: [streamedContinuityBullets[0]],
+    });
+  });
+
+  await step("the same answer completes bullet three, then reaches a second mid-part switch", async () => {
+    await world.releaseReply();
+    const firstCumulativeGate = await probe.eventually(() => world.replyState(), {
+      within: 15_000,
+      intervalMs: 50,
+      label: "engine provider HTTP stream reached partial bullet five",
+      until: (state) => state.deliveredChunks === 4,
+    });
+    expect(firstCumulativeGate.prefix).toBe(streamedContinuityChunks.slice(0, 4).join(""));
+    await waitForEngineHttpPrefix(streamedContinuityPartialFifth, streamedContinuityBullets[4]);
+    const rendered = await probe.eventually(assistantText, {
+      within: 5_000,
+      intervalMs: 50,
+      label: "cumulative answer through partial bullet five",
+      until: (value) => value.messages.length === 1 && value.text === partialFifthPrefix,
+    });
+    expect(rendered.text).toBe(partialFifthPrefix);
+    await select(world.neighbor);
+    expect(await readTranscriptMessages(probe, "assistant")).toEqual([]);
+    await world.releaseReply();
+    const gate = await probe.eventually(() => world.replyState(), {
+      within: 15_000,
+      intervalMs: 50,
+      label: "second offscreen cumulative release",
+      until: (state) => state.deliveredChunks === 5,
+    });
+    expect(gate.prefix).toBe(streamedContinuityChunks.slice(0, 5).join(""));
+    await waitForEngineHttpPrefix(streamedContinuityPartialSeventh, streamedContinuityBullets[6]);
+    expect(await promptPosts()).toBe(1);
+    expect(await world.providerFinalRequests()).toHaveLength(1);
+  });
+
+  const secondReturnMs = await step("a repeated middle-of-part return restores the newer cumulative prefix without replay", async () => {
+    return observeWarmReturn(partialSeventhPrefix, streamedContinuityBullets[6], {
+      allowInitialCatchup: true,
+      required: [...streamedContinuityBullets.slice(0, 4), streamedContinuityPartialFifth],
+    });
+  });
+
+  await step("the held answer finishes all ten unique bullets exactly once and leaves B unmodified", async () => {
+    await world.releaseReply();
+    await user.see({ text: streamedContinuityBullets[9] }, { timeoutMs: 30_000 });
+    await user.see("Run task", { timeoutMs: 30_000 });
+    const gate = await probe.eventually(() => world.replyState(), {
+      within: 15_000,
+      intervalMs: 50,
+      label: "provider completed the exact controlled reply",
+      until: (state) => state.complete,
+    });
+    expect(gate.prefix).toBe(streamedContinuityChunks.join(""));
+    const assistant = await assistantText();
+    expect(assistant.messages).toHaveLength(1);
+    expect(assistant.text).toBe(completeContinuityAnswer);
+    for (const bullet of streamedContinuityBullets) expect(occurrences(assistant.text, bullet)).toBe(1);
+    await expectOneUserAdmission();
+    expect(await promptPosts()).toBe(1);
+    const providerRequests = await world.providerFinalRequests();
+    expect(providerRequests).toHaveLength(1);
+    expect(providerRequests[0]).toMatchObject({ promptMarker: streamedContinuityMarker, kind: "final" });
+    const a = await world.readNative(world.session.sessionId);
+    expect(a.status).toBe(200);
+    expect(occurrences(a.text, streamedContinuityPrompt)).toBe(1);
+    for (const bullet of streamedContinuityBullets) expect(occurrences(a.text, bullet)).toBe(1);
+    const b = await world.readNative(world.neighbor.sessionId);
+    expect(b.status).toBe(200);
+    expect(b.text).not.toContain(streamedContinuityPrompt);
+    for (const bullet of streamedContinuityBullets) expect(b.text).not.toContain(bullet);
+  });
+
+  await step("reload recovers the exact completed answer without another admission", async () => {
+    await user.reload();
+    await user.see({ text: streamedContinuityBullets[9] }, { timeoutMs: 60_000 });
+    await user.see("Run task", { timeoutMs: 30_000 });
+    const assistant = await assistantText();
+    expect(assistant.messages).toHaveLength(1);
+    expect(assistant.text).toBe(completeContinuityAnswer);
+    await expectOneUserAdmission();
+    expect(await promptPosts()).toBe(0);
+    expect(await world.providerFinalRequests()).toHaveLength(1);
+    const b = await world.readNative(world.neighbor.sessionId);
+    expect(b.text).not.toContain(streamedContinuityPrompt);
+    evidence.recordAssertionEvidence(
+      "CONT-01 exact held-prefix continuity",
+      `Exact 10-bullet answer once; click-to-prefix ${Math.round(firstReturnMs)}ms/${Math.round(secondReturnMs)}ms; one native prompt POST before reload and zero after; one final provider request; B empty.`,
+      true,
+    );
   });
 });
 
