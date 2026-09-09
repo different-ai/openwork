@@ -21,6 +21,7 @@ const cliPath = join(repoRoot, ".github", "scripts", "warden-review.mjs");
 
 export type WardenFixture =
   | "advisory"
+  | "consolidated"
   | "mixed"
   | "missing-trigger"
   | "partial"
@@ -118,6 +119,13 @@ function nativeRaw(
       skill("confidentiality-review"),
       skill("desktop-den-sync-review", [finding("SYNC-ADVISORY", "medium", "medium")]),
       skill("spec-provenance-review", [finding("PROV-ADVISORY", "medium", "medium")]),
+    ];
+  } else if (fixture === "consolidated") {
+    const shared = finding("SHARED-NATIVE-ID", "medium", "low");
+    skills = [
+      skill("diff-security-review", [shared]),
+      skill("confidentiality-review"),
+      skill("spec-provenance-review", [shared]),
     ];
   } else if (fixture === "mixed") {
     skills = [

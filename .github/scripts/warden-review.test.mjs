@@ -470,6 +470,47 @@ const clearanceWorkflow = readFileSync(
   new URL("../workflows/warden-clearance.yml", import.meta.url),
   "utf8",
 );
+const wardenWorkflow = readFileSync(
+  new URL("../workflows/warden.yml", import.meta.url),
+  "utf8",
+);
+
+test("analysis workflow executes only the immutable base helper", () => {
+  const fetchStep = wardenWorkflow.slice(
+    wardenWorkflow.indexOf("- name: Fetch trusted review helper"),
+    wardenWorkflow.indexOf("- name: Prepare review receipt"),
+  );
+  const prepareStep = wardenWorkflow.slice(
+    wardenWorkflow.indexOf("- name: Prepare review receipt"),
+    wardenWorkflow.indexOf("- name: Report"),
+  );
+  assert.match(wardenWorkflow, /persist-credentials: false/);
+  assert.match(fetchStep, /BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
+  assert.match(fetchStep,
+    /repos\/\$GITHUB_REPOSITORY\/contents\/\.github\/scripts\/warden-review\.mjs\?ref=\$BASE_SHA/);
+  assert.match(fetchStep, /helper="\$RUNNER_TEMP\/warden-review-base\.mjs"/);
+  assert.match(fetchStep, /actual_blob="\$\(git hash-object --no-filters "\$partial"\)"/);
+  assert.match(fetchStep, /WARDEN_OPENAI_API_KEY: ""/);
+  assert.match(prepareStep, /if: steps\.trusted-helper\.outputs\.available == 'true'/);
+  assert.match(prepareStep, /node "\$TRUSTED_HELPER" prepare/);
+  assert.match(prepareStep, /rm -f "\$receipt"/);
+  assert.doesNotMatch(wardenWorkflow, /node \.github\/scripts\/warden-review\.mjs prepare/);
+});
+
+test("analysis workflow bootstrap 404 never falls back or uploads a receipt", () => {
+  const missingBase = wardenWorkflow.slice(
+    wardenWorkflow.indexOf('if [ "$http_status" = "404" ]'),
+    wardenWorkflow.indexOf('if [ "$api_exit" -ne 0 ]'),
+  );
+  const uploadStep = wardenWorkflow.slice(
+    wardenWorkflow.indexOf("- name: Upload sanitized review receipt"),
+  );
+  assert.match(missingBase, /available=false/);
+  assert.match(missingBase, /exit 0/);
+  assert.match(missingBase, /cannot emit a clearance receipt/);
+  assert.doesNotMatch(missingBase, /TRUSTED_HELPER|node|cp |mv /);
+  assert.match(uploadStep, /if: steps\.prepare\.outputs\.completed == 'true'/);
+});
 
 test("clearance workflow isolates the untrusted receipt from the trusted checkout", () => {
   assert.match(clearanceWorkflow,

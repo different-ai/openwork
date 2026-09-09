@@ -371,6 +371,79 @@ test("A contributor can publish and safely refresh a Warden PR review report", {
     true,
   );
 
+  const consolidated = await world.prepare("consolidated", {
+    headSha: world.heads.second,
+    runId: "123468",
+  });
+  expect(consolidated.result.code).toBe(0);
+  expect(consolidated.receipt).toMatchObject({
+    findings_count: 2,
+    high_count: 0,
+    blocking_count: 1,
+    security_count: 1,
+    sync_blocking_count: 0,
+    sync_advisory_count: 0,
+    review_complete: true,
+    needs_recheck: [],
+    coverage: {
+      skills: [
+        { name: "diff-security-review", status: "reported" },
+        { name: "confidentiality-review", status: "reported" },
+        { name: "spec-provenance-review", status: "reported" },
+      ],
+    },
+    findings: [{
+      id: "SHARED-NATIVE-ID",
+      severity: "medium",
+      skills: ["diff-security-review", "spec-provenance-review"],
+      disposition: "blocker",
+    }],
+  });
+  expect(consolidated.receipt?.findings).toHaveLength(1);
+  expect(consolidated.receipt?.verdict).toBe("blocked");
+
+  world.setPullHead(world.heads.second);
+  world.seedRun(consolidated, 14);
+  const humanCommentsBefore = world.comments().filter((comment) => comment.user.type === "User");
+  const consolidatedWriteCount = world.writes().length;
+  const consolidatedPublish = await world.publish(consolidated);
+  const consolidatedJson = record(consolidatedPublish.json, "consolidated publish output");
+  const consolidatedSummaries = world.comments().filter((comment) =>
+    comment.user.login === "github-actions[bot]" && comment.body.includes("openwork:warden-review-summary"),
+  );
+  expect(consolidatedPublish.code).toBe(0);
+  expect(consolidatedSummaries).toHaveLength(1);
+  const consolidatedBody = consolidatedSummaries[0]?.body;
+  if (!consolidatedBody) throw new Error("Missing consolidated Warden summary.");
+  const blockersStart = consolidatedBody.indexOf("### Blockers\n");
+  const advisoriesStart = consolidatedBody.indexOf("\n\n### Advisories");
+  const needsRecheckStart = consolidatedBody.indexOf("\n\n### Needs recheck");
+  expect(blockersStart).toBeGreaterThanOrEqual(0);
+  expect(advisoriesStart).toBeGreaterThan(blockersStart);
+  expect(needsRecheckStart).toBeGreaterThan(advisoriesStart);
+  const blockerSection = consolidatedBody.slice(blockersStart, advisoriesStart);
+  const advisorySection = consolidatedBody.slice(advisoriesStart, needsRecheckStart);
+  expect(consolidatedBody).toContain("Native findings: **2**");
+  expect(consolidatedBody.match(/<code>SHARED-NATIVE-ID<\/code>/g)).toHaveLength(1);
+  expect(blockerSection).toContain("<code>SHARED-NATIVE-ID</code> · medium · diff-security-review, spec-provenance-review");
+  expect(advisorySection).not.toContain("SHARED-NATIVE-ID");
+  expect(consolidatedJson.metrics).toMatchObject({ currentObservedThreads: 101 });
+  expect(world.comments().filter((comment) => comment.user.type === "User")).toEqual(humanCommentsBefore);
+  expect(world.writes()).toHaveLength(consolidatedWriteCount + 1);
+  expect(world.writes().at(-1)).toMatchObject({
+    method: "PATCH",
+    path: `/repos/openworklabs/openwork/issues/comments/${consolidatedSummaries[0]?.id}`,
+    authorization: "Bearer test-token",
+  });
+  expect(world.reviewMutations()).toEqual([]);
+  expect(consolidatedJson.status).toBe("published");
+  expect(consolidatedJson.verdict).toBe("blocked");
+  evidence.recordAssertionEvidence(
+    "One native ID shared by security and provenance remains one blocking report entry",
+    "Two identical native records retained raw count 2 while consolidating to one rendered ID with both skill attributions. Security policy won over provenance advisory policy: the ID appeared once under Blockers and never under Advisories, while generic human comments and all review/thread mutation surfaces remained untouched.",
+    true,
+  );
+
   evidence.recordAssertionEvidence(
     "Proof scope is the reporter HTTP contract and classification lifecycle",
     "This hermetic journey executes the production Warden CLI against a deterministic GitHub HTTP witness. It does not claim native upstream model precision, real GitHub merge-button behavior, or any provider write.",

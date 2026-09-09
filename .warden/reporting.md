@@ -9,15 +9,22 @@ source, review-thread mutation, or immutable event ledger.
 ## Data flow and authority
 
 1. `.github/workflows/warden.yml` runs pinned Warden `0.43.0` analyze mode.
-2. Before Warden report mode overwrites the analyze output, `prepare` validates
-   the analyzer document against trusted workflow metadata and writes
-   `warden-summary.json`. A non-empty replay roster is required, both mandatory
-   security triggers must have successful reports, and replay reports must
-   reconcile one-for-one with the native top-level reports. Multiple successful
-   triggers may report the same skill; receipt coverage names remain unique.
+2. Before Warden report mode overwrites the analyze output, the workflow fetches
+   `warden-review.mjs` from the immutable pull-request base SHA through GitHub's
+   authenticated Contents API. It validates the SHA syntax, requires regular
+   file metadata, verifies the downloaded bytes against GitHub's blob SHA, and
+   runs only that read-only `RUNNER_TEMP` copy. Checkout credentials are not
+   persisted, and the fetch and `prepare` steps do not receive the model API
+   key. The pull request's checked-out helper is never executed.
+3. `prepare` validates the analyzer document against trusted workflow metadata
+   and writes `warden-summary.json` only after removing any checked-out file at
+   that path. A non-empty replay roster is required, both mandatory security
+   triggers must have successful reports, and replay reports must reconcile
+   one-for-one with the native top-level reports. Multiple successful triggers
+   may report the same skill; receipt coverage names remain unique.
    Partial-analysis fields are read from this pre-report output. Missing or
    contradictory reports are unknown/incomplete, never inferred as zero.
-3. `warden-clearance.yml` checks out the immutable `github.workflow_sha`,
+4. `warden-clearance.yml` checks out the immutable `github.workflow_sha`,
    downloads the receipt into a dedicated `RUNNER_TEMP` directory outside the
    trusted checkout, rejects anything except one regular, non-symlink
    `warden-summary.json`, binds it to the outer workflow-run repository, ID,
@@ -25,7 +32,7 @@ source, review-thread mutation, or immutable event ledger.
    Publication validates the open, unmerged current PR head/base and completed
    producer run before writing one ordinary `github-actions[bot]` issue comment,
    and repeats the PR check immediately before that write.
-4. The receipt and comment are display data, not approval authority. The
+5. The receipt and comment are display data, not approval authority. The
    clearance workflow separately preserves the same-repository, current-head,
    and review-machinery guards. The GitHub App can approve only when
    `review_complete` is true, `verdict` is `clear`, and the recomputed blocking
@@ -39,6 +46,22 @@ Security and confidentiality findings block at every severity and confidence.
 Desktop↔Den sync findings block unless their severity is `medium` or `low`.
 Provenance findings are advisory. Optional path-scoped skills are reported only
 when Warden emitted them; their absence is not presented as completed coverage.
+
+## Trusted-helper bootstrap
+
+The first pull request that introduces the helper can have a base SHA where the
+known path does not exist. Only an exact GitHub API `404` is treated as this
+bootstrap case: native Warden report mode still runs, but `prepare` is skipped
+and no `warden-summary` artifact is uploaded. The existing clearance consumer
+may therefore fail because its expected artifact is absent; that is an honest
+incomplete result and requires independent review, not a fallback to pull-
+request-controlled code. Every non-404 fetch failure, malformed response, or
+blob-integrity mismatch fails closed.
+
+After the helper lands on the protected base branch, rerun or synchronize a
+subsequent pull request against that base. Hosted proof still must show that the
+trusted-base helper produced the receipt and that the normal clearance flow
+consumed it; the bootstrap run alone cannot provide that deployment proof.
 
 ## Sanitized receipt
 
