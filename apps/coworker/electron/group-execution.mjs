@@ -1,6 +1,6 @@
 import { createGroup, getGroup, listGroups, beginGroupTurn, updateGroup, updateGroupTurn, appendGroupEvent, readGroupTimeline, groupEventId, groupReplyEvent } from "./groups.mjs";
 import { collaborationId, continuationPrompt, withAbort } from "./collaboration.mjs";
-import { runGroupTurn, resumeGroupTurn, fallbackPlan, parseMentions, MAX_SPEAKERS_PER_TURN } from "../src/lib/groups.ts";
+import { runGroupTurn, resumeGroupTurn, fallbackPlan } from "../src/lib/groups.ts";
 import { facilitatorPrompt, earlierSpeakerOrders, routeWithFacilitator, facilitatorModels } from "../src/lib/facilitator.ts";
 
 /** The window only submits requests and reads projections. All group execution
@@ -69,15 +69,13 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
       if (group.archivedAt !== null) throw new Error("The group is archived.");
       const participants = await withAbort(Promise.all(group.participantSlugs.map(coworkerFor)), setupSignal);
       const timeline = await withAbort(readGroupTimeline(directory, groupId), setupSignal);
-      const mentions = parseMentions(request.text, participants);
-      const boundedSpeakers = (speakers) => !mentions.everyone && !mentions.slugs.length ? speakers.slice(0, MAX_SPEAKERS_PER_TURN) : speakers;
       const deps = {
         begin: async (input) => {
           const begun = await beginGroupTurn(directory, groupId, input);
           await collaboration.change((state) => { const current = state.groups[groupId]?.queue.find((entry) => entry.id === request.id); if (current) current.turnId = begun.turn.id; });
           return begun;
         },
-        record: (turnId, patch) => updateGroupTurn(directory, groupId, turnId, patch.speakers ? { ...patch, speakers: boundedSpeakers(patch.speakers) } : patch),
+        record: (turnId, patch) => updateGroupTurn(directory, groupId, turnId, patch),
         append: async (event) => event.executionId
           ? publishReply(await collaboration.read((state) => state.executions[event.executionId]))
           : appendGroupEvent(directory, groupId, { ...event, id: groupEventId(event) }),
@@ -100,7 +98,6 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
           return { ...await collaboration.wait(entry.id, signal), executionId: entry.id };
         },
         route: async (input) => {
-          if (!input.mentions.everyone && input.mentions.slugs.length === 1) return null;
           const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(45_000)]);
           const ready = await withAbort(coordinator(signal), signal);
           const current = await getGroup(directory, groupId);
@@ -132,7 +129,6 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
         await collaboration.change((state) => { const current = state.groups[groupId]?.queue.find((entry) => entry.id === request.id); if (current) current.turnId = existing.id; });
         await appendGroupEvent(directory, groupId, { id: `evt_${existing.id}_user`, kind: "user", text: existing.prompt, turnId: existing.id, clientMessageId: existing.clientMessageId });
         let turn = existing;
-        if (boundedSpeakers(turn.speakers).length !== turn.speakers.length) turn = await updateGroupTurn(directory, groupId, turn.id, { speakers: boundedSpeakers(turn.speakers) });
         if (!turn.speakers.length) turn = await updateGroupTurn(directory, groupId, turn.id, { speakers: fallbackPlan(request.text, participants, timeline).speakers, mode: "sequential" });
         await resumeGroupTurn({ group, participants, turn, events: timeline, only: request.only, deps, signal: controller.signal });
       } else {

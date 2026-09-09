@@ -37,20 +37,30 @@ test("a facilitator answer is accepted only when it names known members once, ho
     mode: "sequential",
     dependsOn: [["scout", "editor"]],
     followUp: { slug: "editor", brief: "Fold in the sources." },
-    synthesizer: "ops",
+    synthesizer: null,
     routedBy: "facilitator",
   });
   assert.throws(() => validateRoutingPlan({ speakers: [] }, { participants: team, mentions: nobody }), /did not match the shape/);
   assert.throws(() => validateRoutingPlan({ speakers: [{ slug: "nova" }] }, { participants: team, mentions: nobody }), /not members of the group: nova/);
   assert.throws(() => validateRoutingPlan({ speakers: [{ slug: "scout" }, { slug: "scout" }] }, { participants: team, mentions: nobody }), /listed twice/);
   assert.throws(() => validateRoutingPlan({ speakers: [{ slug: "scout" }, { slug: "editor" }, { slug: "ops" }, { slug: "care" }] }, { participants: [...team, { ...ops, slug: "care", name: "Care" }], mentions: nobody }), /at most 3/);
-  assert.throws(() => validateRoutingPlan({ speakers: [{ slug: "scout" }] }, { participants: team, mentions: { everyone: true, slugs: [] } }), /every member must speak/);
-  assert.throws(() => validateRoutingPlan({ speakers: [{ slug: "scout" }] }, { participants: team, mentions: { everyone: false, slugs: ["editor"] } }), /named editor, so the speakers must be exactly those/);
+  assert.throws(() => validateRoutingPlan({ speakers: [{ slug: "scout" }] }, { participants: team, mentions: { everyone: true, slugs: [] } }), /every invited member must speak/);
+  assert.throws(() => validateRoutingPlan({ speakers: [{ slug: "scout" }] }, { participants: team, mentions: { everyone: false, slugs: ["editor"] } }), /addressed coworkers are editor/);
   assert.deepEqual(validateRoutingPlan({ speakers: [{ slug: "editor" }, { slug: "scout" }] }, { participants: team, mentions: { everyone: false, slugs: ["scout", "editor"] } }).speakers.map((speaker) => speaker.slug), ["editor", "scout"], "several mentions keep the set and let the facilitator order");
   assert.throws(() => validateRoutingPlan({ speakers: [{ slug: "scout" }, { slug: "editor" }], dependsOn: [["scout", "editor"]] }, { participants: team, mentions: nobody }), /earlier speaker must come before/);
   assert.throws(() => validateRoutingPlan({ speakers: [{ slug: "scout" }], dependsOn: [["scout", "ops"]] }, { participants: team, mentions: nobody }), /not among the speakers/);
   assert.throws(() => validateRoutingPlan({ speakers: [{ slug: "scout" }], followUp: { slug: "nova" } }, { participants: team, mentions: nobody }), /followUp names nova/);
   assert.throws(() => validateRoutingPlan({ speakers: [{ slug: "scout" }], synthesizer: "nova" }, { participants: team, mentions: nobody }), /synthesizer names nova/);
+  const largerTeam = [...team, { ...ops, slug: "care", name: "Care" }];
+  const addressedSlugs = largerTeam.map((member) => member.slug);
+  assert.equal(validateRoutingPlan({ addressedSlugs, speakers: addressedSlugs.map((slug) => ({ slug })), mode: "parallel" }, { participants: largerTeam, mentions: nobody }).speakers.length, 4, "a semantic collective audience is not capped at three");
+  assert.throws(() => validateRoutingPlan({ addressedSlugs, speakers: [{ slug: "scout" }] }, { participants: largerTeam, mentions: nobody }), /every invited member must speak/, "one response cannot satisfy the collective audience");
+  assert.throws(() => validateRoutingPlan({ addressedSlugs: ["stranger"], speakers: [{ slug: "scout" }] }, { participants: team, mentions: nobody }), /known members/);
+  const exceptScout = { addressedSlugs: ["editor", "ops"], speakers: [{ slug: "editor" }, { slug: "ops" }] };
+  assert.deepEqual(validateRoutingPlan(exceptScout, { participants: team, mentions: { everyone: true, slugs: ["scout"] } }).speakers.map((speaker) => speaker.slug), ["editor", "ops"], "an interpreted exclusion overrides the literal @everyone hint");
+  assert.throws(() => validateRoutingPlan({ ...exceptScout, followUp: { slug: "scout" } }, { participants: team, mentions: nobody }), /addressed audience/);
+  assert.throws(() => validateRoutingPlan({ ...exceptScout, synthesizer: "scout" }, { participants: team, mentions: nobody }), /addressed audience/);
+  assert.throws(() => validateRoutingPlan({ addressedSlugs: ["editor"], speakers: [{ slug: "editor" }, { slug: "scout" }] }, { participants: team, mentions: nobody }), /nobody else/, "a semantic single addressee cannot expand to the team");
   assert.deepEqual(extractJson('Sure.\n```json\n{"speakers":[{"slug":"scout"}]}\n```'), { speakers: [{ slug: "scout" }] });
   assert.throws(() => extractJson("I would pick Scout."), /no JSON object/);
   assert.throws(() => extractJson("{not json}"), /not valid JSON/);

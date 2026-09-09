@@ -3,8 +3,9 @@ import type { CoworkerGroupSummary, CoworkerSummary, RuntimeInfo } from "@/lib/b
 import { describeRailLine } from "@/lib/rail-status";
 import type { DenSession } from "@/lib/den";
 import type { CoworkerActivity } from "@/lib/threads";
+import { CoworkerMark } from "@/ui/brand";
 import { CoworkerAvatar, GroupAvatars } from "@/ui/coworker-avatar";
-import { Button, IconButton, PlusIcon, SearchIcon, SlidersIcon, StatusDot } from "@/ui/kit";
+import { Button, IconButton, PlusIcon, SearchIcon, SlidersIcon, StatusDot, Tooltip } from "@/ui/kit";
 import type { ResizablePanel } from "@/ui/use-resizable-panel";
 
 /** Identity keeps its personality; execution status only describes observed work. */
@@ -58,7 +59,6 @@ export function CoworkerRail({
   selectedGroupId = "",
   onSelectGroup,
   onNewGroup,
-  onDiscussionToolsSlot,
 }: {
   coworkers: CoworkerSummary[];
   runtime: RuntimeInfo;
@@ -78,7 +78,6 @@ export function CoworkerRail({
   selectedGroupId?: string;
   onSelectGroup?: (id: string) => void;
   onNewGroup?: () => void;
-  onDiscussionToolsSlot: (element: HTMLDivElement | null) => void;
 }) {
   const bySlug = new Map(coworkers.map((coworker) => [coworker.slug, coworker]));
   const membersOf = (group: CoworkerGroupSummary) => group.participantSlugs.map((slug) => bySlug.get(slug)).filter((member): member is CoworkerSummary => Boolean(member));
@@ -98,9 +97,13 @@ export function CoworkerRail({
   );
   const collapsed = panel.collapsed;
   const peeked = peek ? coworkers.find((coworker) => coworker.slug === peek.slug) : undefined;
-  const accountLabel = session?.orgName || session?.userEmail
-    || (coworkers.length === 0 ? "Setup in progress" : runtime.engineManaged ? "Local mode" : "AI unavailable");
-  const accountDot = coworkers.length === 0 ? "bg-mist" : runtime.engineManaged ? "bg-mint" : "bg-rose";
+  const accountName = session ? session.userName.trim() || session.userEmail.trim() || "Your account" : "Open Coworker";
+  const accountLabel = session
+    ? session.orgName.trim() || "OpenWork account"
+    : coworkers.length === 0 ? "Setup in progress" : runtime.engineManaged ? "Local mode" : "AI unavailable";
+  const accountInitials = (session?.userName.trim() || session?.userEmail.trim() || "OpenWork")
+    .split(/\s+/).slice(0, 2).map((part) => Array.from(part)[0]).join("").toLocaleUpperCase();
+  const accountDescription = `${accountName} · ${accountLabel} · Account and settings`;
 
   return (
     <aside
@@ -196,12 +199,6 @@ export function CoworkerRail({
               );
             })}
           </nav>
-          <div className="window-no-drag flex flex-col items-center border-t border-line px-2 py-2">
-            <IconButton label={`OpenWork · ${accountLabel}`} className="relative" onClick={onOpenOpenWork}>
-              <SlidersIcon className="size-3.5" />
-              <span aria-hidden="true" className={`absolute right-1 top-1 size-1.5 rounded-full ${accountDot}`} />
-            </IconButton>
-          </div>
           {peek && peeked ? (
             <div
               role="tooltip"
@@ -339,32 +336,35 @@ export function CoworkerRail({
               </>
             ) : null}
           </nav>
-          <div className="window-no-drag border-t border-line px-2 py-2">
-            <button
-              type="button"
-              className="group flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left transition-colors hover:bg-white/5"
-              onClick={onOpenOpenWork}
-              title="OpenWork account and settings"
-            >
-              <span className="relative flex size-7 shrink-0 items-center justify-center rounded-lg border border-line bg-ink">
-                <span className={`size-1.5 rounded-full ${accountDot}`} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[11px] font-semibold text-snow">OpenWork</span>
-                <span className="block truncate text-[10px] text-mist">{accountLabel}</span>
-              </span>
-              <SlidersIcon className="size-3.5 shrink-0 text-mist transition-colors group-hover:text-snow" />
-            </button>
-          </div>
         </>
       )}
-      <div
-        ref={onDiscussionToolsSlot}
-        role="group"
-        aria-label="Discussion tools"
-        data-testid="coworker-discussion-tools"
-        className={`window-no-drag order-last flex shrink-0 flex-col gap-1 border-t border-line p-2 empty:hidden ${collapsed ? "items-center [&_[data-tool-label]]:hidden [&>button]:justify-center" : "[&>button]:w-full"}`}
-      />
+      <div className="window-no-drag shrink-0 border-t border-line/60 p-2">
+        <Tooltip content={collapsed ? accountDescription : ""} side="right">
+          <button
+            type="button"
+            data-testid="coworker-profile-button"
+            aria-label={`OpenWork account and settings · ${accountName} · ${accountLabel}`}
+            title={collapsed ? undefined : "OpenWork account and settings"}
+            onClick={onOpenOpenWork}
+            className={`group flex min-h-14 items-center gap-3 rounded-xl border border-transparent bg-white/[0.025] p-2 text-left transition-colors hover:border-white/8 hover:bg-white/5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${collapsed ? "mx-auto w-14 justify-center" : "w-full"}`}
+          >
+            <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-spark/25 to-spark/5 text-xs font-semibold text-snow ring-1 ring-inset ring-spark/20">
+              {session ? accountInitials : <CoworkerMark size={27} tile={false} />}
+            </span>
+            {!collapsed ? (
+              <>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-semibold leading-4 text-snow">{accountName}</span>
+                  <span className="mt-0.5 block truncate text-[11px] leading-4 text-mist">{accountLabel}</span>
+                </span>
+                <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-lg text-mist transition-colors group-hover:bg-white/5 group-hover:text-snow group-focus-visible:text-snow">
+                  <SlidersIcon className="size-4" />
+                </span>
+              </>
+            ) : null}
+          </button>
+        </Tooltip>
+      </div>
       <div
         {...panel.separatorProps}
         aria-label="Resize team rail"
