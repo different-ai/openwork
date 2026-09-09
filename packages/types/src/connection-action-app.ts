@@ -3,11 +3,11 @@ import { z } from "zod"
 const idSchema = z.string().trim().min(1).max(160)
 
 export const connectionActionAppSchemaVersion = "1" as const
-export const connectionActionAppResourceUri = "ui://openwork/connection-action/v1/view.html"
-export const connectionActionToolName = "connection_action"
+// Persisted conversations may still contain this retired resource; never embed it.
+export const legacyConnectionActionAppResourceUri = "ui://openwork/connection-action/v1/view.html"
 
 /**
- * Data contract for the first-party connection-action MCP App: one live
+ * Data contract for the native connection card: one live
  * status report for one Connect connection, including the exact human action
  * (sign in, admin setup, provider fix) that unblocks it. `connected` is the
  * healthy probe result; the other states mirror the gateway's

@@ -30,7 +30,7 @@ import {
   SEARCH_CAPABILITIES_TOOL_NAME,
   type CapabilityMatch,
 } from "./search.js"
-import { probeExternalConnectionStatus, resolveMcpMemberIdentity } from "./external-capabilities.js"
+import { resolveMcpMemberIdentity } from "./external-capabilities.js"
 import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, parseMarketplaceCapabilityName, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { automationService } from "../automations/service.js"
@@ -88,12 +88,9 @@ import {
 } from "./connect-mcp-server-index.js"
 import { registerAgentSkillCreatedApp } from "./skill-created-app.js"
 import {
-  connectedConnectionActionPayload,
   connectionActionSearchCard,
   connectionActionPayloadSchema,
-  connectionActionPayloadFromStatus,
-  registerAgentConnectionActionApp,
-} from "./connection-action-app.js"
+} from "./connection-action.js"
 import { registerAgentPluginFlowApp } from "./plugin-flow-app.js"
 import {
   createConfigObjectVersion,
@@ -245,13 +242,12 @@ export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T
   const result = {
     matches,
     ...(hint ? { hint } : {}),
-    ...(card ? { connectionAction: card.connectionAction } : {}),
+    ...(card ? { connectionAction: card } : {}),
     ...(connectorCatalog ? { connectorCatalog } : {}),
   }
   return {
     content: textContent(JSON.stringify(result, null, 2)),
     structuredContent: result,
-    ...(card ? { _meta: card.meta } : {}),
   }
 }
 
@@ -729,26 +725,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             return { ok: false, error: error.error, message: error.message }
           }
           throw error
-        }
-      },
-    })
-
-    registerAgentConnectionActionApp({
-      server,
-      probe: async ({ connectionId }) => {
-        const probe = await probeExternalConnectionStatus({
-          organizationId: principal.organizationId,
-          member: memberIdentity,
-          connectionId,
-        })
-        if (!probe.ok) {
-          return { ok: false, error: probe.error, message: probe.message }
-        }
-        return {
-          ok: true,
-          payload: probe.connected
-            ? connectedConnectionActionPayload({ connectionId: probe.connection.id, connectionName: probe.connection.name })
-            : connectionActionPayloadFromStatus(probe.status),
         }
       },
     })

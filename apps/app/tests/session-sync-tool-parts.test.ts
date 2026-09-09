@@ -224,7 +224,7 @@ describe("tool part mapper", () => {
     });
   });
 
-  test("recovers a connection-action MCP App from an errored capability result", () => {
+  test("recovers native connection status without an app launch from an errored capability result", () => {
     const error = JSON.stringify({
       error: "needs_connection",
       message: "Connect Acme Tracker.",
@@ -243,7 +243,9 @@ describe("tool part mapper", () => {
       },
     });
 
-    expect(parseDynamicToolUIPart(writeToolPart("error", {}, {}, error))).toMatchObject({
+    const parsed = parseDynamicToolUIPart(writeToolPart("error", {}, {}, error));
+    expect(parsed?.callProviderMetadata?.openwork?.mcpResult).not.toHaveProperty("_meta");
+    expect(parsed).toMatchObject({
       state: "output-error",
       callProviderMetadata: {
         openwork: {
@@ -252,13 +254,6 @@ describe("tool part mapper", () => {
               schemaVersion: "1",
               connectionId: "emc_acme",
               state: "needs_connection",
-            },
-            _meta: {
-              "openwork/mcpApp": {
-                toolName: "connection_action",
-                resourceUri: "ui://openwork/connection-action/v1/view.html",
-                arguments: { connectionId: "emc_acme" },
-              },
             },
           },
         },

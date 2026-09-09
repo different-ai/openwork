@@ -32,11 +32,9 @@ import {
 } from "./codemode-namespaces.js"
 import {
   connectedConnectionActionPayload,
-  connectionActionErrorCard,
-  connectionActionLaunch,
   connectionActionPayloadFromStatus,
   connectionActionTextFallback,
-} from "./connection-action-app.js"
+} from "./connection-action.js"
 import {
   buildExternalCapabilityName,
   executeExternalCapability,
@@ -282,12 +280,10 @@ export function externalCapabilityErrorToolResult(
       content: textContent(JSON.stringify(payload)),
     }
   }
-  const card = connectionActionErrorCard(result.connectionStatus)
   return {
     isError: true,
     content: textContent(JSON.stringify(payload)),
-    structuredContent: card.structuredContent,
-    _meta: card.meta,
+    structuredContent: connectionActionPayloadFromStatus(result.connectionStatus),
   }
 }
 
@@ -573,7 +569,6 @@ const externalMcpSource: CapabilitySource = {
       return {
         content: textContent(connectionActionTextFallback(payload)),
         structuredContent: { ...payload },
-        _meta: { "openwork/mcpApp": connectionActionLaunch(payload) },
       }
     }
     const result = await executeExternalCapability({

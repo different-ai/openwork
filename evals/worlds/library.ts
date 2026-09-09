@@ -940,7 +940,6 @@ async function reloadConfiguredApp(app: import("@openwork/cdp").Surface): Promis
   throw new Error("The configured desktop control did not return after reload.");
 }
 
-export const connectionActionResourceUri = "ui://openwork/connection-action/v1/view.html";
 export const connectionActionReply = "Connect your Notion account to continue.";
 export const ordinaryDiscoveryPrompt = "Create a dashboard using my notes.";
 export const ordinaryDiscoveryReply = "I found the available capabilities for the dashboard.";
@@ -1011,7 +1010,7 @@ export async function connectionActionMcpApp(seed: Seed) {
   });
   await reloadConfiguredApp(app);
   await seed.session(app);
-  return { app, den, connection, organizationId, mcpSession: { ...den.admin, token: mcpToken } };
+  return { app, den, connection, organizationId, mcpSession: { ...den.admin, token: mcpToken }, appHostSession: { ...den.admin, token: appHostToken } };
 }
 
 export const skillCreatedResourceUri = "ui://openwork/skill-created/v1/view.html";

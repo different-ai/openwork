@@ -4,11 +4,42 @@ import { connectionActionMcpApp, connectionActionPrompt, connectionActionReply, 
 
 const test = spec.world(connectionActionMcpApp, { timeout: 600_000 });
 
+function record(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Expected an object");
+  return value;
+}
+
 for (const entry of [
   { name: "connection search", prompt: connectionActionPrompt, tools: ["search_capabilities"] },
   { name: "connection status execution", prompt: connectionStatusPrompt, tools: ["search_capabilities", "execute_capability"] },
 ]) {
 test(`desktop connects through ${entry.name} with one native card and confirms authorization in chat`, async ({ world, agent, user, probe, evidence }) => {
+  let requestId = 0;
+  async function gateway(method: string, params: Record<string, unknown> = {}) {
+    const response = await fetch(`${world.den.ref.apiUrl}/mcp/agent`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${world.appHostSession.token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: ++requestId, method, params }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    expect(response.status).toBe(200);
+    const raw = await response.text();
+    const line = raw.split("\n").find(value => value.startsWith("data:"));
+    return record(JSON.parse(line ? line.slice(5) : raw));
+  }
+  const tools = record((await gateway("tools/list")).result).tools;
+  expect(Array.isArray(tools)).toBe(true);
+  expect(tools).toEqual(expect.arrayContaining([expect.objectContaining({ name: "execute_capability" })]));
+  expect(tools).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "connection_action" })]));
+  const legacyUri = "ui://openwork/connection-action/v1/view.html";
+  const resources = record((await gateway("resources/list")).result).resources;
+  expect(Array.isArray(resources)).toBe(true);
+  expect(resources).not.toEqual(expect.arrayContaining([expect.objectContaining({ uri: legacyUri })]));
+  const retiredResource = await gateway("resources/read", { uri: legacyUri });
+  expect(retiredResource.error).toBeDefined();
+  expect(retiredResource.result).toBeUndefined();
+  evidence.recordAssertionEvidence("The gateway no longer exposes the legacy connection app", "App-host tools include execute_capability but omit connection_action; resources omit the retired URI and a direct read returns an error without HTML", true);
+
   await agent.send(ordinaryDiscoveryPrompt);
   await user.see({ text: ordinaryDiscoveryReply }, { timeoutMs: 120_000 });
   await user.notSee({ testId: "desktop-connection-card" });

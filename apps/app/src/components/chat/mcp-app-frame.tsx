@@ -6,7 +6,7 @@ import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/
 import type { McpUiStyles, McpUiStyleVariableKey } from "@modelcontextprotocol/ext-apps"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 
-import { connectionActionAppResourceUri, connectorCatalogSchema } from "@openwork/types/connection-action-app"
+import { legacyConnectionActionAppResourceUri, connectorCatalogSchema } from "@openwork/types/connection-action-app"
 import { ConnectorCatalogCard } from "./connector-catalog"
 import { ConnectionCard } from "./connection-card"
 import { connectionCardPayloadFromChatToolResult, reconnectActionFromChatToolResult } from "@/components/tools/error-attribution"
@@ -588,7 +588,7 @@ export function McpAppFrame({ part }: { part: DynamicToolUIPart }) {
   // Never route an unsupported connection response back into the old iframe.
   const launch = gatewayMcpAppLaunch(result?._meta)
   if (part.toolName === "openwork-cloud_connection_action"
-    || (part.toolName.startsWith("openwork-cloud_") && !launch?.connectionId && launch?.resourceUri === connectionActionAppResourceUri)) return null
+    || (part.toolName.startsWith("openwork-cloud_") && !launch?.connectionId && launch?.resourceUri === legacyConnectionActionAppResourceUri)) return null
   return <EmbeddedMcpAppFrame part={part} />
 }
 
