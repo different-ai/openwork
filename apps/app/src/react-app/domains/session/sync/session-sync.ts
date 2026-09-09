@@ -116,6 +116,7 @@ type DeltaFlushScheduler = (
 const idleStatus: SessionStatus = { type: "idle" };
 const syncs = new Map<string, SyncEntry>();
 const sessionSnapshotFetchStarts = new WeakMap<OpenworkSessionSnapshot, number>();
+const todoSnapshotFirstSeen = new WeakMap<OpenworkSessionSnapshot, number>();
 const workspaceSyncDisposeGraceMs = 2_000;
 const retainedSessionTtlMs = 10 * 60_000;
 const idleRetainedSessionTtlMs = 10_000;
@@ -1765,6 +1766,25 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
   const queryClient = getReactQueryClient();
   const key = transcriptKey(workspaceId, snapshot.session.id);
   const incoming = snapshotToUIMessages(snapshot);
+  // Commit against the old text before merging a cumulative snapshot, never
+  // append those same queued bytes to the snapshot afterwards.
+  for (const entry of syncs.values()) {
+    if (entry.input.workspaceId !== workspaceId) continue;
+    flushSessionDeltas(entry, workspaceId, snapshot.session.id);
+    for (const message of incoming) {
+      for (const part of message.parts) {
+        if (part.type !== "text" && part.type !== "reasoning") continue;
+        const partId = getPartMetadataId(part);
+        if (!partId) continue;
+        const pending = entry.pendingDeltas.get(partId);
+        if (!pending || pending.messageId !== message.id) continue;
+        // Early deltas and the declaration are cumulative views, as with
+        // message.part.updated. Unrepresented parts remain pending.
+        if (pending.text.length > part.text.length) part.text = pending.text;
+        entry.pendingDeltas.delete(partId);
+      }
+    }
+  }
   const existing = queryClient.getQueryData<UIMessage[]>(key);
 
   const snapshotStartedAt = sessionSnapshotFetchStarts.get(snapshot);
@@ -1806,7 +1826,15 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
     snapshot.session.revert?.messageID ?? null,
   ));
 
-  queryClient.setQueryData(todoKey(workspaceId, snapshot.session.id), snapshot.todos);
+  const todosKey = todoKey(workspaceId, snapshot.session.id);
+  // Remember first observation for unmarked snapshots too, so reselecting a
+  // cached object never makes it newer than a subsequent todo.updated event.
+  const todosStartedAt = snapshotStartedAt ?? todoSnapshotFirstSeen.get(snapshot) ?? Date.now();
+  todoSnapshotFirstSeen.set(snapshot, todosStartedAt);
+  const todosState = queryClient.getQueryState(todosKey);
+  if (!todosState || todosStartedAt > todosState.dataUpdatedAt) {
+    queryClient.setQueryData(todosKey, snapshot.todos, { updatedAt: todosStartedAt });
+  }
   useSessionActivityStore.getState().observeTranscript(workspaceId, snapshot.session.id,
     queryClient.getQueryData<UIMessage[]>(key) ?? [], true);
 }
