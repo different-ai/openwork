@@ -35,4 +35,4 @@ Then: `write-a-spec` → `run-tests` → `diagnose-a-red-run` when red → `publ
 
 ## Verification
 
-Read the full diff yourself and rerun the executor's narrowest check. Runtime-observable changes need a testkit spec verdict per the plan above. Docs, types-only, and inert `.opencode/` config skip runtime proof — say so explicitly.
+Read the full diff yourself and rerun the executor's narrowest check. Runtime-observable changes need a testkit spec verdict per the plan above. Docs, types-only, and inert `.opencode/` config skip runtime proof — say so explicitly. After journey checks, one owner follows `.warden/README.md` for the full final local Warden review; scoped runs are diagnostic only.

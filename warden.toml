@@ -7,6 +7,7 @@ version = 1
 # Clearance itself is granted by .github/workflows/warden-clearance.yml.
 
 [defaults]
+defaultBranch = "dev"
 reportOn = "low"
 ignorePaths = [
   "**/node_modules/**",
@@ -32,9 +33,11 @@ type = "pull_request"
 # Omitting draft matches both draft and ready PRs.
 actions = ["opened", "synchronize", "reopened", "ready_for_review"]
 
-# Lets developers run `warden` locally on uncommitted changes before pushing.
+# Local bare mode reviews committed branch changes; `--staged` is diagnostic.
 [[skills.triggers]]
 type = "local"
+failOn = "info"
+minConfidence = "low"
 
 # Public repo: customer/prospect/partner identities must never land in the
 # tree (see AGENTS.md, Confidentiality).
@@ -47,6 +50,8 @@ actions = ["opened", "synchronize", "reopened", "ready_for_review"]
 
 [[skills.triggers]]
 type = "local"
+failOn = "info"
+minConfidence = "low"
 
 [[skills]]
 name = "spec-provenance-review"
@@ -59,6 +64,7 @@ actions = ["opened", "synchronize", "reopened", "ready_for_review"]
 
 [[skills.triggers]]
 type = "local"
+failOn = "off"
 
 [[skills]]
 name = "desktop-den-sync-review"
@@ -76,3 +82,5 @@ actions = ["opened", "synchronize", "reopened", "ready_for_review"]
 
 [[skills.triggers]]
 type = "local"
+failOn = "high"
+minConfidence = "low"
