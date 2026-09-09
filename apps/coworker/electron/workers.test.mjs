@@ -2,12 +2,18 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
+import { build } from "esbuild";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import ts from "typescript";
 import { createCoworker, getCoworker, updateCoworker } from "./coworkers.mjs";
 import { createCoworkerToolsServer, handleMcpMessage } from "./coworker-tools.mjs";
 import { assertControlOrigin, assertWorkerSupervisor, createWorkerControls, WORKER_MANAGEMENT } from "./worker-controls.mjs";
 import { createHeadlessThreadClient } from "@openwork/headless-threads";
-import { createCollaboration } from "./collaboration.mjs";
+import { createCollaboration, withAbort } from "./collaboration.mjs";
 import {
   DEFAULT_TURN_BUDGET,
   MAX_LIVE_WORKERS,
@@ -149,6 +155,7 @@ test("revocation aborts before failed persistence, blocks successors through dra
   const stopping = f.controls.revokeKnown("scout", f.worker.id, revision);
   assert.equal(run.controller.signal.aborted, true);
   assert.equal((await f.read()).control.state, "revoked");
+  assert.equal((await f.read()).cleanupPending, true);
   await assert.rejects(f.controls.resolve("scout", context, expected, "browser"), /no active control/);
   assert.throws(() => f.controls.assertAvailable("scout", "origin"), /Worker owns/);
   waiting = false; release.resolve();
@@ -158,6 +165,7 @@ test("revocation aborts before failed persistence, blocks successors through dra
   assert.equal(await stopping, true);
   assert.throws(() => f.controls.assertAvailable("scout", "origin"), /Worker owns/, "the old native run still holds its reservation");
   f.liveRuns.clear(); f.controls.releaseRun(run);
+  assert.equal((await f.read()).cleanupPending, false);
   const sibling = await createWorker(f.directory, "scout", { name: "Next", goal: "Next goal", control: "browser", spawnedBy: "person", spawnedFromThreadId: "origin" });
   await f.controls.approve(sibling, f.controls.summary(sibling).control.revision);
   const count = f.drains.length;
@@ -198,6 +206,7 @@ test("approval races, permission changes, expiry and uncertain cleanup fail clos
   assert.equal(native.controls.allowed(await native.read()), false);
   assert.equal(await native.controls.revokeId("scout", native.worker.id), false);
   assert.match((await native.read()).control.detail, /unconfirmed/);
+  assert.equal((await native.read()).cleanupPending, true);
   native.liveRuns.clear(); native.controls.releaseRun(run);
   await assert.rejects(native.approve(), /stopping/);
   cleanup = true;
@@ -528,8 +537,28 @@ test("steering and an admitted turn survive rereads, while pause and stop win se
 });
 
 test("Stop attempts native abort across rejected writes and repairs terminal metadata without hiding unconfirmed cleanup", async () => {
+  // The renderer typecheck excludes this JS entry point; resolve its bindings without booting Electron.
+  const entry = fileURLToPath(new URL("./main.mjs", import.meta.url));
+  const program = ts.createProgram([entry], { allowJs: true, checkJs: true, noEmit: true, skipLibCheck: true, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, target: ts.ScriptTarget.ESNext });
+  const unbound = program.getSemanticDiagnostics(program.getSourceFile(entry)).filter((diagnostic) => diagnostic.code === 2304 || diagnostic.code === 2552);
+  assert.deepEqual(unbound.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")), [], "native Stop must not call an unbound runtime identifier");
   const coworkersDir = await fixture();
   const worker = await createWorker(coworkersDir, "scout", { name: "Stop check", goal: "Check once.", spawnedBy: "person" });
+  const require = createRequire(import.meta.url);
+  const compiled = await build({
+    entryPoints: [fileURLToPath(new URL("../src/ui/worker-detail.tsx", import.meta.url))],
+    bundle: true, write: false, platform: "node", format: "esm", logLevel: "silent",
+    plugins: [{ name: "shared-react-runtime", setup(plugin) {
+      plugin.onResolve({ filter: /^react(?:-dom)?(?:\/|$)/ }, ({ path: name }) => ({ path: pathToFileURL(require.resolve(name)).href, external: true }));
+    } }],
+  });
+  const { WorkerDetail } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString("base64")}`);
+  const coworker = await getCoworker(coworkersDir, "scout");
+  const liveRuns = new Map();
+  const controls = createWorkerControls({ liveRuns });
+  const reread = async () => controls.summary(await getWorker(coworkersDir, "scout", worker.id));
+  // Each render starts with fresh component state, like reopening a collapsed row.
+  const freshDetail = async () => renderToStaticMarkup(createElement(WorkerDetail, { coworker, initialWorker: await reread(), onChanged() {} }));
   await updateWorker(coworkersDir, "scout", worker.id, { status: "running", threadId: "ses_stop" });
   const service = createCollaboration({ directory: coworkersDir, pollMs: 60_000 });
   await service.attachWorker(worker, { slug: "scout", threadId: "ses_origin", conversationId: "ses_origin", kind: "private" });
@@ -547,17 +576,31 @@ test("Stop attempts native abort across rejected writes and repairs terminal met
   } });
   const findings = path.join(coworkersDir, "scout", "workers", worker.id, "findings.jsonl");
   const blockedWrite = path.join(coworkersDir, ".collaboration", "state.json.tmp");
-  const handlers = createWorkerToolHandlers({ coworkersDir, cancel: (slug, id) => withWorkerCancellation(async () => {
-    const stopped = await updateWorker(coworkersDir, slug, id, { status: "cancelled" });
-    await service.completeWorker(stopped, []);
-    await appendWorkerEvent(coworkersDir, slug, id, { id: "evt_stop", kind: "status", text: "Stopped" });
-    return stopped;
-  }, () => abortWorkerThread(client, "ses_stop", AbortSignal.timeout(1000))) });
+  const handlers = createWorkerToolHandlers({ coworkersDir, cancel: async (slug, id) => {
+    controls.startStop(slug, id);
+    const stopped = await withWorkerCancellation(async () => {
+      const stopped = await updateWorker(coworkersDir, slug, id, { status: "cancelled" });
+      await service.completeWorker(stopped, []);
+      await appendWorkerEvent(coworkersDir, slug, id, { id: "evt_stop", kind: "status", text: "Stopped" });
+      return stopped;
+    }, () => {
+      const signal = AbortSignal.timeout(1000);
+      return withAbort(abortWorkerThread(client, "ses_stop", signal), signal);
+    });
+    controls.finishStop(slug, id);
+    return controls.summary(stopped);
+  } });
   try {
     await mkdir(blockedWrite);
     await assert.rejects(handlers.worker_cancel("scout", { id: worker.id }), /EISDIR/);
     assert.equal(requests.filter((route) => route.endsWith("/abort")).length, 1);
     assert.equal((await getWorker(coworkersDir, "scout", worker.id)).status, "cancelled");
+    assert.equal((await reread()).cleanupPending, true);
+    for (let reopen = 0; reopen < 2; reopen++) {
+      const html = await freshDetail();
+      assert.match(html, /data-testid="worker-stop"[^>]*>Retry Stop<\/button>/);
+      assert.match(html, /Stop not confirmed/);
+    }
     await rm(blockedWrite, { recursive: true });
     await rm(findings);
     await mkdir(findings);
@@ -571,11 +614,20 @@ test("Stop attempts native abort across rejected writes and repairs terminal met
     await rm(findings, { recursive: true });
     mode = "busy";
     await assert.rejects(handlers.worker_cancel("scout", { id: worker.id }), /could not be confirmed/);
+    assert.equal((await reread()).cleanupPending, true);
+    assert.match(await freshDetail(), />Retry Stop<\/button>/);
     mode = "idle";
     const repaired = await handlers.worker_cancel("scout", { id: worker.id });
     assert.equal(repaired.structured.worker.action, "stopped");
     assert.equal(requests.filter((route) => route.endsWith("/abort")).length, 4, "every Stop retries native cleanup even after the metadata is terminal");
     assert.equal((await readWorkerEvents(coworkersDir, "scout", worker.id)).length, 1);
+    assert.equal((await reread()).cleanupPending, false);
+    assert.doesNotMatch(await freshDetail(), /data-testid="worker-stop"/);
+    // Native cleanup can fail without a person having clicked Stop yet.
+    liveRuns.set(`scout:${worker.id}`, { controller: new AbortController(), cleanupError: new Error("Native cleanup unconfirmed") });
+    assert.equal((await reread()).cleanupPending, true);
+    assert.match(await freshDetail(), />Retry Stop<\/button>/);
+    liveRuns.clear();
   } finally { await service.stop(); }
 });
 

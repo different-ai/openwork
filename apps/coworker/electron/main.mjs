@@ -22,7 +22,7 @@ import { createVoice, installVoicePermissions } from "./voice.mjs";
 import { bindWindowAppearance, windowMaterial } from "./window-appearance.mjs";
 import { openworkConfigDir } from "@openwork/paths";
 import { createHeadlessThreadClient, isRunning, toTranscript } from "@openwork/headless-threads";
-import { createCollaboration, collaborationId } from "./collaboration.mjs";
+import { createCollaboration, collaborationId, withAbort } from "./collaboration.mjs";
 import { readExecutionActivity } from "../src/lib/progress-activity.ts";
 import { PROGRESS_LIMITS } from "../src/lib/progress-config.ts";
 import { createGroupExecution, repairGroupSelection } from "./group-execution.mjs";
@@ -1346,6 +1346,7 @@ async function steerWorker(slug, id, text, by) {
 
 async function cancelWorker(slug, id, reason, by) {
   const key = workerKey(slug, id);
+  workerControls.startStop(slug, id);
   const stoppingControl = workerControls.revokeId(slug, id);
   removeQueuedRun(key);
   const run = liveWorkerTurns.get(key);
@@ -1373,6 +1374,7 @@ async function cancelWorker(slug, id, reason, by) {
     if (liveWorkerTurns.get(key) === run) liveWorkerTurns.delete(key);
     if (run) { run.cleanupError = null; workerControls.releaseRun(run); }
   });
+  workerControls.finishStop(slug, id);
   return workerControls.summary(updated);
 }
 

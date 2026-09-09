@@ -35,6 +35,8 @@ export type WorkerSummary = {
   spawnedBy: "coworker" | "person";
   spawnedFromThreadId: string;
   status: WorkerStatus;
+  /** Backend Stop/cleanup is still unconfirmed, independently of terminal metadata. */
+  cleanupPending?: boolean;
   /** Why a waiting Worker waits: for a free turn on this Mac, or for a decision. */
   waitingFor: "" | "turn" | "decision";
   lifespan: WorkerLifespan;
@@ -77,7 +79,8 @@ export function workerNameFromTitle(title: string): string {
 }
 
 /** The status dot beside a Worker row, in the tones the rest of the app uses. */
-export function workerTone(worker: Pick<WorkerSummary, "status" | "waitingFor" | "control">): "spark" | "mint" | "amber" | "rose" | "mist" {
+export function workerTone(worker: Pick<WorkerSummary, "status" | "waitingFor" | "control" | "cleanupPending">): "spark" | "mint" | "amber" | "rose" | "mist" {
+  if (worker.cleanupPending) return "amber";
   if (isLiveWorker(worker) && worker.control && worker.control.state !== "approved") return "amber";
   switch (worker.status) {
     case "running":
@@ -161,7 +164,8 @@ export function describeLifespan(lifespan: WorkerLifespan, now = Date.now()): st
 }
 
 /** The status words shared with responsibilities, plus the two states only Workers have. */
-export function describeWorkerStatus(worker: Pick<WorkerSummary, "status" | "waitingFor" | "control">): string {
+export function describeWorkerStatus(worker: Pick<WorkerSummary, "status" | "waitingFor" | "control" | "cleanupPending">): string {
+  if (worker.cleanupPending) return "Stop not confirmed";
   if (isLiveWorker(worker) && worker.control?.state === "needs-approval") return "Paused for your approval";
   if (isLiveWorker(worker) && worker.control?.state === "revoked") return "Control revoked";
   switch (worker.status) {
