@@ -376,8 +376,6 @@ test("create, preview, save and reopen an app without changing already-open resu
     const wrongGrant = await seed.api(colleague, "/v1/auth/desktop-handoff", { method: "POST", body: "{}" });
     expect(wrongGrant.response.status, wrongGrant.text).toBe(200);
     const wrongLink = `openwork://den-reauth?nonce=${nonce}&grant=${field(wrongGrant.body, "grant")}`;
-    await world.returnVerification(wrongLink.replace(nonce, "unrelated-check"));
-    await user.see({ text: "Confirm your identity to share apps" });
     await user.type({ label: "Or paste your verification link" }, wrongLink);
     await user.click("Confirm and share");
     await user.see({ text: `Sign in as ${world.den.admin.email} to confirm this share.` });
@@ -397,6 +395,13 @@ test("create, preview, save and reopen an app without changing already-open resu
     await webUser.see({ text: "Return to OpenWork to finish sharing" }, { timeoutMs: 60_000 });
     const verifiedLink = await webProbe.eval(() => document.querySelector<HTMLInputElement>('[aria-label="Verification link"]')?.value);
     if (typeof verifiedLink !== "string") throw new Error("Browser did not provide a verification link");
+    // Use a fresh grant for the correct account so only attempt binding can
+    // reject this return. The original link must remain usable afterward.
+    const unrelatedLink = new URL(verifiedLink);
+    unrelatedLink.searchParams.set("nonce", "unrelated-check");
+    await world.returnVerification(unrelatedLink.toString());
+    await user.see({ text: "Confirm your identity to share apps" });
+    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
     await webUser.screenshot();
     await user.type({ label: "Or paste your verification link" }, verifiedLink, { replace: true });
     await user.click("Confirm and share");
