@@ -960,14 +960,17 @@ export async function connectionActionMcpApp(seed: Seed) {
     mocks: {
       connector: seed.mock({ agentWorkloads: [{
         promptMarker: ordinaryDiscoveryPrompt,
+        latestUserTurn: true,
         finalReply: ordinaryDiscoveryReply,
         steps: [{ tool: "search_capabilities", arguments: { query: "Notion", type: "mcp" } }],
       }, {
         promptMarker: connectionActionPrompt,
+        latestUserTurn: true,
         finalReply: connectionActionReply,
         steps: [{ tool: "search_capabilities", arguments: { query: "Notion", type: "mcp", intent: "connect" } }],
       }, {
         promptMarker: connectionStatusPrompt,
+        latestUserTurn: true,
         finalReply: connectionActionReply,
         steps: [
           { tool: "search_capabilities", arguments: { query: "Notion", type: "mcp", limit: 1 } },
