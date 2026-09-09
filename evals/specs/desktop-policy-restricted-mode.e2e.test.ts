@@ -94,10 +94,7 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
     await member.user.see({ text: "Library" }, { timeoutMs: 90_000 });
     await member.user.notSee(manageExtensionsNotice);
     await member.user.click({ role: "button", label: /^MCPs$/ });
-    await member.user.click({ role: "button", label: /^Add$/ });
-    await member.user.see({ text: "Workspace MCP" });
-    await member.user.click({ text: "Workspace MCP" });
-    await member.user.click({ role: "button", label: "Continue" });
+    await member.user.click({ role: "button", label: "Add workspace MCP" });
     await member.user.see({ text: "Add workspace MCP" });
     await member.user.see({ role: "textbox", label: "App name" });
     const localMcpFormText = await member.probe.text();
@@ -296,24 +293,21 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
       label: "built-in extensions notice",
       until: (shown) => shown,
     });
+    await member.user.click({ role: "button", label: /^MCPs$/ });
+    await member.user.notSee({ role: "button", label: "Add workspace MCP" });
+    const mcpFilterText = await member.probe.text();
+    expect(mcpFilterText).not.toContain("Add workspace MCP");
     await member.user.click({ role: "button", label: /^All$/ });
     await member.user.click({ role: "button", label: /^Add$/ });
     await member.user.see({ testId: "library-add-choices" });
-    await member.user.see({ text: "Organization MCP" });
-    await member.user.notSee({ text: "Workspace MCP" });
+    await member.user.see({ text: "Connection" });
+    await member.user.notSee({ text: "Local MCP" });
     const choicesText = await member.probe.text();
-    expect(choicesText).not.toContain("Workspace MCP");
-    await member.user.click({ text: "Organization MCP" });
-    await member.user.click({ role: "button", label: "Continue" });
-    await member.user.see({ text: "Add an MCP server" });
-    await member.user.see({ text: "Saved to your organization Library as a remote MCP connection." });
-    await member.user.notSee({ text: "Add workspace MCP" });
-    const restrictedMcpText = `${choicesText}\n${await member.probe.text()}`;
-    expect(restrictedMcpText).not.toContain("Workspace MCP");
+    expect(choicesText).not.toContain("Local MCP");
+    const restrictedMcpText = `${mcpFilterText}\n${choicesText}`;
     expect(restrictedMcpText).not.toContain("Add workspace MCP");
     await member.user.press("Escape");
-    await member.user.notSee({ text: "Add an MCP server" });
-    await member.user.click({ role: "button", label: /^All$/ });
+    await member.user.notSee({ testId: "library-add-choices" });
     return { libraryHashAfter: await member.probe.hash(), builtInNoticeShown, restrictedMcpText };
   });
   expect(libraryHashAfter).toContain("/extensions");
@@ -323,9 +317,9 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
     "A notice says built-in OpenWork extensions are disabled by your organization",
   ]);
   evidence.recordAssertionEvidence(
-    "The Library removes the local workspace MCP add path while the organization MCP add form remains reachable",
-    `hash=${libraryHashAfter}; manage-extensions notice visible; builtInNotice=${builtInNoticeShown}; add choices and organization form=${restrictedMcpText}`,
-    libraryHashAfter.includes("/extensions") && builtInNoticeShown && restrictedMcpText.includes("Saved to your organization Library as a remote MCP connection.") && !restrictedMcpText.includes("Workspace MCP") && !restrictedMcpText.includes("Add workspace MCP"),
+    "The Library removes local MCP creation while retaining Connection as a separate picker choice",
+    `hash=${libraryHashAfter}; manage-extensions notice visible; builtInNotice=${builtInNoticeShown}; MCP filter and All picker=${restrictedMcpText}`,
+    libraryHashAfter.includes("/extensions") && builtInNoticeShown && restrictedMcpText.includes("Connection") && !restrictedMcpText.includes("Local MCP") && !restrictedMcpText.includes("Add workspace MCP"),
   );
 
 });
@@ -799,25 +793,22 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     await member.user.click("Library");
     await member.user.see(manageExtensionsNotice, { timeoutMs: 90_000 });
     await member.user.see({ text: /Need an MCP server or skill/ });
+    await member.user.click({ role: "button", label: /^MCPs$/ });
+    await member.user.notSee({ role: "button", label: "Add workspace MCP" });
+    const mcpFilterText = await member.probe.text();
+    expect(mcpFilterText).not.toContain("Add workspace MCP");
     await member.user.click({ role: "button", label: /^All$/ });
     await member.user.click({ role: "button", label: /^Add$/ });
     await member.user.see({ testId: "library-add-choices" });
-    await member.user.see({ text: "Organization MCP" });
-    await member.user.notSee({ text: "Workspace MCP" });
+    await member.user.see({ text: "Connection" });
+    await member.user.notSee({ text: "Local MCP" });
     const choicesText = await member.probe.text();
-    expect(choicesText).not.toContain("Workspace MCP");
-    await member.user.click({ text: "Organization MCP" });
-    await member.user.click({ role: "button", label: "Continue" });
-    await member.user.see({ text: "Add an MCP server" });
-    await member.user.see({ text: "Saved to your organization Library as a remote MCP connection." });
-    await member.user.notSee({ text: "Add workspace MCP" });
-    const mcpText = `${choicesText}\n${await member.probe.text()}`;
-    expect(mcpText).not.toContain("Workspace MCP");
+    expect(choicesText).not.toContain("Local MCP");
+    const mcpText = `${mcpFilterText}\n${choicesText}`;
     expect(mcpText).not.toContain("Add workspace MCP");
     await member.user.press("Escape");
-    await member.user.notSee({ text: "Add an MCP server" });
-    evidence.recordAssertionEvidence("Blocked local tool management removes the workspace MCP add path while the organization MCP add form remains reachable", mcpText, mcpText.includes("Saved to your organization Library as a remote MCP connection.") && !mcpText.includes("Workspace MCP") && !mcpText.includes("Add workspace MCP"));
-    await member.user.click({ role: "button", label: /^All$/ });
+    await member.user.notSee({ testId: "library-add-choices" });
+    evidence.recordAssertionEvidence("Blocked local tool management removes local MCP creation while retaining Connection as a separate picker choice", mcpText, mcpText.includes("Connection") && !mcpText.includes("Local MCP") && !mcpText.includes("Add workspace MCP"));
     const libraryText = await member.probe.text();
     evidence.recordAssertionEvidence("The locked desktop hides Settings, redirects forbidden routes, and explains how to get an MCP server", JSON.stringify({ redirected, forbiddenRoute, permissionsText, menuText, libraryText }), redirected.includes("/settings/cloud-account") && forbiddenRoute.includes("/settings/cloud-account") && count(permissionsText, "Blocked") === lockedKeys.length && libraryText.includes("Need an MCP server or skill"));
     await member.user.looks(["The Library shows organization restrictions and guidance for requesting an MCP server or skill"]);
@@ -887,31 +878,28 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     expect(count(permissionsText, "Allowed")).toBe(lockedKeys.length - 1);
     evidence.recordAssertionEvidence("The Custom account permissions tab shows Settings Allowed and tools Blocked", permissionsText, count(permissionsText, "Blocked") === 1 && count(permissionsText, "Allowed") === lockedKeys.length - 1);
     await member.user.looks(["The dedicated App permissions tab shows Change app settings Allowed and Add tools, skills & MCP servers Blocked, without a policy banner"]);
-    // Wait for the Library data, then open Add from the current view. Changing
-    // its inventory filter navigates again and is unrelated to this assertion.
+    // Wait for the Library data before checking its filtered and All add controls.
     await member.user.click({ role: "button", label: "Back to app" });
     await member.user.click("Library");
     await member.user.see(manageExtensionsNotice, { timeoutMs: 90_000 });
     await member.user.see({ text: world.pluginName }, { timeoutMs: 90_000 });
     await member.user.see({ text: "No MCP servers configured yet." }, { timeoutMs: 90_000 });
+    await member.user.click({ role: "button", label: /^MCPs$/ });
+    await member.user.notSee({ role: "button", label: "Add workspace MCP" });
+    const mcpFilterText = await member.probe.text();
+    expect(mcpFilterText).not.toContain("Add workspace MCP");
+    await member.user.click({ role: "button", label: /^All$/ });
     await member.user.click({ role: "button", label: /^Add$/ });
     await member.user.see({ testId: "library-add-choices" });
-    await member.user.see({ text: "Organization MCP" });
-    await member.user.notSee({ text: "Workspace MCP" });
+    await member.user.see({ text: "Connection" });
+    await member.user.notSee({ text: "Local MCP" });
     const choicesText = await member.probe.text();
-    expect(choicesText).not.toContain("Workspace MCP");
-    await member.user.click({ text: "Organization MCP" });
-    await member.user.click({ role: "button", label: "Continue" });
-    await member.user.see({ text: "Add an MCP server" });
-    await member.user.see({ text: "Saved to your organization Library as a remote MCP connection." });
-    await member.user.notSee({ text: "Add workspace MCP" });
-    const mcpText = `${choicesText}\n${await member.probe.text()}`;
-    expect(mcpText).not.toContain("Workspace MCP");
+    expect(choicesText).not.toContain("Local MCP");
+    const mcpText = `${mcpFilterText}\n${choicesText}`;
     expect(mcpText).not.toContain("Add workspace MCP");
     await member.user.press("Escape");
-    await member.user.notSee({ text: "Add an MCP server" });
-    evidence.recordAssertionEvidence("Blocked local tool management removes the workspace MCP add path while the organization MCP add form remains reachable", mcpText, mcpText.includes("Saved to your organization Library as a remote MCP connection.") && !mcpText.includes("Workspace MCP") && !mcpText.includes("Add workspace MCP"));
-    await member.user.click({ role: "button", label: /^All$/ });
+    await member.user.notSee({ testId: "library-add-choices" });
+    evidence.recordAssertionEvidence("Blocked local tool management removes local MCP creation while retaining Connection as a separate picker choice", mcpText, mcpText.includes("Connection") && !mcpText.includes("Local MCP") && !mcpText.includes("Add workspace MCP"));
     await admin.user.looks(["Tools and connections is Admin managed while AI setup and Settings, workspaces and updates are Allowed"]);
   });
 
