@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
-import { mcpMock, needs, server, test } from "@openwork/testkit";
+import { eventually, mcpMock, needs, server, test } from "@openwork/testkit";
 import { bootServer, isRecord, stopChild } from "../worlds/openwork-server-cli.ts";
 
 for (const issuerSupport of [true, false, undefined]) {
@@ -105,10 +105,11 @@ for (const issuerSupport of [true, false, undefined]) {
     if (!isRecord(metadata)) throw new Error("Provider metadata missing");
     expect(metadata.authorization_response_iss_parameter_supported).toBe(issuerSupport);
     const headers = { authorization: `Bearer ${den.admin.token}` };
+    const credentialMode = issuerSupport === true ? "per_member" : "shared";
     for (const mode of issuerSupport === true ? ["mismatch", "valid"] : ["valid"]) {
       const created = await denFetch(den.admin, "/v1/mcp-connections", {
         method: "POST", headers,
-        body: JSON.stringify({ name: `Issuer ${mode}`, url: provider.mcpUrl, authType: "oauth", credentialMode: "shared", access: { orgWide: true } }),
+        body: JSON.stringify({ name: `Issuer ${mode}`, url: provider.mcpUrl, authType: "oauth", credentialMode, access: { orgWide: true } }),
       });
       expect(created.response.status, created.text).toBe(200);
       if (!isRecord(created.body) || typeof created.body.id !== "string") throw new Error("Connection id missing");
@@ -148,6 +149,65 @@ for (const issuerSupport of [true, false, undefined]) {
         expect(reused.body).toMatchObject({ status: "connected", authorizeUrl: null });
         expect((await provider.requests()).filter((entry) => entry.path === "/token").length).toBe(before + 1);
         evidence.recordAssertionEvidence("Den replay preserves usable credentials", "Replay rejected; a subsequent connection check reused saved credentials and remained connected without another token exchange.", true);
+
+        const invalidations = (log: string, message = "external_mcp_credential_invalidated") => log.split(/\r?\n/).flatMap((line) => {
+          const start = line.indexOf("{");
+          if (start < 0) return [];
+          try {
+            const value: unknown = JSON.parse(line.slice(start));
+            return isRecord(value) && value.message === message && value.connection_id === id ? [value] : [];
+          } catch { return []; }
+        });
+        expect(invalidations(await den.apiLog())).toHaveLength(0);
+
+        await provider.holdRefreshResponses();
+        const first = denFetch(den.admin, `/v1/mcp-connections/${id}/tools`, { headers });
+        await eventually(() => provider.pendingRefreshResponses(), { within: 8_000, intervalMs: 50, until: (responses) => responses.length === 1, label: "first refresh response held" });
+        const second = denFetch(den.admin, `/v1/mcp-connections/${id}/tools`, { headers });
+        const pending = await eventually(() => provider.pendingRefreshResponses(), { within: 8_000, intervalMs: 50, until: (responses) => responses.length === 2, label: "two concurrent refresh responses held" });
+        const success = pending.find((response) => response.status === 200);
+        const failure = pending.find((response) => response.status === 400);
+        expect(success).toBeDefined();
+        expect(failure).toBeDefined();
+        if (!success || !failure) throw new Error("Expected one successful rotation and one rejected refresh");
+        expect(failure.tokenId).toBe(success.tokenId);
+        await provider.releaseRefreshResponse(success.id);
+        const refreshed = await first;
+        expect(refreshed.response.status, refreshed.text).toBe(200);
+        await provider.releaseRefreshResponse(failure.id);
+        const recovered = await second;
+        expect(recovered.response.status, recovered.text).toBe(200);
+        const afterRace = await denFetch(den.admin, `/v1/mcp-connections/${id}/tools`, { headers });
+        expect(afterRace.response.status, afterRace.text).toBe(200);
+        const raceLogs = await den.apiLog();
+        expect(invalidations(raceLogs)).toHaveLength(0);
+        const preserved = invalidations(raceLogs, "external_mcp_credential_invalidation_skipped");
+        expect(preserved).toHaveLength(1);
+        expect(preserved[0]).toMatchObject({ mode: credentialMode, reason: "provider-rejected", skip_reason: "revision-changed", revision_changed: true, had_access: true, had_refresh: true });
+        expect(preserved[0].current_revision).not.toBe(preserved[0].loaded_revision);
+        expect(preserved[0].diagnostic).toMatchObject({ httpStatus: 400, providerErrorMessage: expect.stringContaining("invalid_grant") });
+        expect(JSON.stringify(preserved)).not.toMatch(/mock-access-|mock-refresh-|code_verifier|client_secret/);
+        evidence.recordAssertionEvidence(`Den preserves renewed ${credentialMode} credentials after a late rejection`, "Two requests used the same refresh grant. The successful rotation completed before the held invalid_grant was released. A subsequent authenticated tools request succeeded, zero deletion events were logged, and one skipped invalidation named different loaded/current revisions.", true);
+
+        await provider.resetOAuth();
+        const tokenRequestsBefore = (await provider.requests()).filter((entry) => entry.path === "/token").length;
+        const rejected = await denFetch(den.admin, `/v1/mcp-connections/${id}/tools`, { headers });
+        expect(rejected.response.ok).toBe(false);
+        expect((await provider.requests()).filter((entry) => entry.path === "/token").length).toBe(tokenRequestsBefore + 1);
+        const afterRejection = await denFetch(den.admin, "/v1/mcp-connections?scope=manageable", { headers });
+        if (!isRecord(afterRejection.body) || !Array.isArray(afterRejection.body.connections)) throw new Error("Connections missing after rejection");
+        expect(afterRejection.body.connections.find((entry) => isRecord(entry) && entry.id === id)).toMatchObject({ connected: false });
+        const logs = invalidations(await den.apiLog());
+        expect(logs).toHaveLength(1);
+        const [log] = logs;
+        expect(log).toMatchObject({ reason: "provider-rejected", mode: credentialMode, had_access: true, had_refresh: true, revision_changed: false });
+        expect(log.loaded_revision).toEqual(expect.any(String));
+        expect(log.current_revision).toBe(log.loaded_revision);
+        expect(log.org_membership_id).toEqual(credentialMode === "per_member" ? expect.any(String) : null);
+        expect(log.organization_id).toEqual(expect.any(String));
+        expect(log.diagnostic).toMatchObject({ httpStatus: 400, phase: "CONTINUITY_REFRESH", providerErrorMessage: expect.stringContaining("invalid_grant"), referenceId: expect.any(String) });
+        expect(JSON.stringify(log)).not.toMatch(/mock-access-|mock-refresh-|code_verifier|client_secret/);
+        evidence.recordAssertionEvidence(`Den logs committed ${credentialMode} SDK credential invalidation`, "One rejected refresh cleared the connection and produced exactly one structured log with provider error, member scope, and matching loaded/current revisions. Healthy reuse produced no invalidation log; token values and OAuth secrets were absent.", true);
       }
     }
   });

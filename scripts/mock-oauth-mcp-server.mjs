@@ -12,7 +12,7 @@ const strictOAuth = process.argv.includes("--strict") || process.env.STRICT_OAUT
 // Strict mode rejects refresh tokens this instance did not issue (and
 // rotates on every refresh grant). Off by default: eval flows restart the
 // mock mid-scenario and legitimately present pre-restart refresh tokens.
-const strictRefreshTokens = process.env.STRICT_REFRESH_TOKENS === "1";
+let strictRefreshTokens = process.env.STRICT_REFRESH_TOKENS === "1";
 const mockClientId = process.env.MOCK_CLIENT_ID || "mock-preregistered-client";
 const mockClientSecret = process.env.MOCK_CLIENT_SECRET || "mock-preregistered-secret";
 const preregisteredRedirectUris = (process.env.MOCK_REDIRECT_URIS || "")
@@ -48,6 +48,9 @@ const clients = new Map();
 const codes = new Map();
 const tokens = new Set();
 const refreshTokens = new Set();
+let holdRefreshResponses = false;
+let nextRefreshResponseId = 0;
+const pendingRefreshResponses = new Map();
 const requests = [];
 const drafts = [];
 let agentWorkloads = [];
@@ -682,6 +685,24 @@ async function issueToken(req, res, entry) {
   const form = await readForm(req);
   const grantType = form.grant_type || "authorization_code";
   if (entry) entry.grantType = grantType;
+  const respond = async (status, body) => {
+    if (grantType === "refresh_token" && holdRefreshResponses) {
+      const id = ++nextRefreshResponseId;
+      await new Promise((resolve) => {
+        const release = () => {
+          clearTimeout(timer);
+          pendingRefreshResponses.delete(id);
+          if (pendingRefreshResponses.size === 0) holdRefreshResponses = false;
+          resolve();
+        };
+        const timer = setTimeout(release, 30_000);
+        pendingRefreshResponses.set(id, {
+          id, status, tokenId: createHash("sha256").update(form.refresh_token || "").digest("hex").slice(0, 16), release,
+        });
+      });
+    }
+    json(res, status, body);
+  };
   let grantedScope = "mcp:read mcp:write";
 
   if (grantType === "authorization_code") {
@@ -711,7 +732,7 @@ async function issueToken(req, res, entry) {
     }
     if (strictRefreshTokens) {
       if (!form.refresh_token || !refreshTokens.has(form.refresh_token)) {
-        json(res, 400, { error: "invalid_grant", error_description: "unknown refresh token" });
+        await respond(400, { error: "invalid_grant", error_description: "unknown refresh token" });
         return;
       }
       // Rotate, like real providers (and the Den) do: the old refresh token
@@ -727,7 +748,7 @@ async function issueToken(req, res, entry) {
   tokens.add(accessToken);
   const refreshToken = `mock-refresh-${randomUUID()}`;
   refreshTokens.add(refreshToken);
-  json(res, 200, {
+  await respond(200, {
     access_token: accessToken,
     refresh_token: refreshToken,
     token_type: "Bearer",
@@ -1134,14 +1155,36 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Test hook: invalidate both access and refresh credentials. With
-    // STRICT_REFRESH_TOKENS=1 the next authenticated MCP operation follows
-    // the production-shaped 401 -> refresh -> invalid_grant path.
+    // Hold completed refresh responses so a journey can commit a successful
+    // rotation before delivering another request's rejection of the old grant.
+    if (url.pathname === "/admin/refresh-responses" && req.method === "POST") {
+      tokens.clear();
+      strictRefreshTokens = true;
+      holdRefreshResponses = true;
+      json(res, 200, { holding: true });
+      return;
+    }
+    if (url.pathname === "/admin/refresh-responses" && req.method === "GET") {
+      json(res, 200, { responses: [...pendingRefreshResponses.values()].map(({ id, status, tokenId }) => ({ id, status, tokenId })) });
+      return;
+    }
+    const refreshRelease = url.pathname.match(/^\/admin\/refresh-responses\/(\d+)\/release$/);
+    if (refreshRelease && req.method === "POST") {
+      const pending = pendingRefreshResponses.get(Number(refreshRelease[1]));
+      if (!pending) { json(res, 404, { error: "unknown_refresh_response" }); return; }
+      pending.release();
+      json(res, 200, { released: true });
+      return;
+    }
+
+    // Test hook: revoke both grants and enforce that revocation on refresh,
+    // producing the 401 -> refresh -> invalid_grant path in every test lane.
     if (url.pathname === "/admin/expire-oauth-tokens" && req.method === "POST") {
       const expiredAccessTokens = tokens.size;
       const expiredRefreshTokens = refreshTokens.size;
       tokens.clear();
       refreshTokens.clear();
+      strictRefreshTokens = true;
       json(res, 200, { expiredAccessTokens, expiredRefreshTokens });
       return;
     }
