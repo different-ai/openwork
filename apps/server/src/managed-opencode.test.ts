@@ -5,6 +5,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { createManagedOpencodeServer } from "./managed-opencode.js";
 import { createManagedOpencodeV2Server } from "./managed-opencode-v2.js";
+import { appendEngineOutputTail, createEngineStartupLineReader, ENGINE_OUTPUT_MAX_CHARS, ENGINE_STARTUP_LINE_MAX_CHARS } from "./engine-output.js";
+import { loopbackFetch } from "./server-fetch.js";
 
 const roots: string[] = [];
 
@@ -26,6 +28,95 @@ async function writeExecutable(root: string, name: string, lines: string[]): Pro
 }
 
 describe("managed OpenCode startup", () => {
+  test("bounds diagnostic tails and partial lines, and stops parsing once ready", () => {
+    let tail = "old diagnostics\n";
+    for (let index = 0; index < 256; index++) {
+      tail = appendEngineOutputTail(tail, "x".repeat(4096));
+      expect(tail.length).toBeLessThanOrEqual(ENGINE_OUTPUT_MAX_CHARS);
+    }
+    tail = appendEngineOutputTail(tail, "y".repeat(ENGINE_OUTPUT_MAX_CHARS * 4) + "failure tail");
+    expect(tail).toHaveLength(ENGINE_OUTPUT_MAX_CHARS);
+    expect(tail.endsWith("failure tail")).toBe(true);
+    expect(tail).not.toContain("old diagnostics");
+
+    const seen: string[] = [];
+    const lines = createEngineStartupLineReader((line) => { seen.push(line); lines.stop(); });
+    lines.write("x".repeat(ENGINE_STARTUP_LINE_MAX_CHARS));
+    lines.write("opencode server listening on http://wrong:1\n");
+    expect(seen).toEqual([]);
+    lines.write("open");
+    lines.write("code server listening on http://127.0.0.1:12");
+    expect(seen).toEqual([]);
+    lines.write("345\r");
+    expect(seen).toEqual([]);
+    lines.write("\nopencode server listening on http://wrong:2\n");
+    lines.write("opencode server listening without a URL\n".repeat(1000));
+    expect(seen).toEqual(["opencode server listening on http://127.0.0.1:12345\r"]);
+  });
+
+  for (const engine of ["v1", "v2"]) {
+    test(`${engine} recognizes fragmented stdout readiness amid stderr and keeps draining after ready`, async () => {
+      const root = await createRoot();
+      const bin = await writeExecutable(root, "noisy-startup.mjs", [
+        "const write = (stream, text) => new Promise((resolve) => stream.write(text, resolve));",
+        "const server = Bun.serve({ hostname: '127.0.0.1', port: Number(process.argv[process.argv.indexOf('--port') + 1]), async fetch(request) {",
+        "  if (new URL(request.url).pathname === '/noise') {",
+        "    for (let i = 0; i < 32; i++) { await write(process.stdout, 'x'.repeat(65536)); await write(process.stderr, 'y'.repeat(65536)); }",
+        "    await write(process.stdout, '\\nopencode server listening on http://127.0.0.1:1\\nopencode server listening without a URL\\n');",
+        "  }",
+        "  return Response.json({ healthy: true, version: 'test', pid: process.pid });",
+        "} });",
+        "process.on('SIGTERM', () => { server.stop(true); process.exit(0); });",
+        "await write(process.stdout, 'old stdout\\n' + 'x'.repeat(1048576) + '\\nopen');",
+        "await write(process.stderr, 'old stderr\\n' + 'y'.repeat(1048576) + '\\nserver listening on http://127.0.0.1:1\\n');",
+        "await write(process.stdout, 'code server listening on http://127.0.0.1:');",
+        "await write(process.stderr, 'interleaved diagnostic\\n');",
+        "await write(process.stdout, `${server.port}\\r\\n`);",
+      ]);
+      const managed = engine === "v1"
+        ? await createManagedOpencodeServer({ bin, cwd: root, timeoutMs: 5000 })
+        : await createManagedOpencodeV2Server({ bin, rootDir: root, bootTimeoutMs: 5000 });
+      try {
+        const url = managed.url;
+        const response = await loopbackFetch(`${url}/noise`, { signal: AbortSignal.timeout(5000) });
+        expect(await response.json()).toEqual({ healthy: true, version: "test", pid: "pid" in managed ? managed.pid : managed.childPid });
+        expect(managed.url).toBe(url);
+        expect((await loopbackFetch(url, { signal: AbortSignal.timeout(5000) })).ok).toBe(true);
+        if ("stdout" in managed) {
+          expect(managed.stdout.length).toBeLessThanOrEqual(ENGINE_OUTPUT_MAX_CHARS);
+          expect(managed.stderr.length).toBeLessThanOrEqual(ENGINE_OUTPUT_MAX_CHARS);
+          expect(managed.stdout).not.toContain("old stdout");
+          expect(managed.stderr).not.toContain("old stderr");
+        }
+      } finally {
+        await managed.close();
+      }
+    });
+
+    test(`${engine} retains bounded final diagnostics when startup fails after large output`, async () => {
+      const root = await createRoot();
+      const bin = await writeExecutable(root, "noisy-failure.mjs", [
+        "const write = (stream, text) => new Promise((resolve) => stream.write(text, resolve));",
+        "await write(process.stdout, 'old stdout\\n' + 'x'.repeat(1048576) + '\\nfinal stdout diagnostic\\n');",
+        "await write(process.stderr, 'old stderr\\n' + 'y'.repeat(1048576) + '\\nfatal configuration tail\\n');",
+        "process.exit(1);",
+      ]);
+      let thrown: unknown;
+      try {
+        if (engine === "v1") await createManagedOpencodeServer({ bin, cwd: root });
+        else await createManagedOpencodeV2Server({ bin, rootDir: root });
+      } catch (error) { thrown = error; }
+      expect(thrown).toBeInstanceOf(Error);
+      if (!(thrown instanceof Error)) throw new Error("Expected noisy startup to fail");
+      expect(thrown.message).toContain("exited with code 1");
+      expect(thrown.message).toContain("final stdout diagnostic");
+      expect(thrown.message).toContain("fatal configuration tail");
+      expect(thrown.message).not.toContain("old stdout");
+      expect(thrown.message).not.toContain("old stderr");
+      expect(thrown.message.length).toBeLessThan(ENGINE_OUTPUT_MAX_CHARS * 2 + 200);
+    });
+  }
+
   test("gives the next engine a policy-only credential without inheriting the client credential", async () => {
     const root = await createRoot();
     const bin = await writeExecutable(root, "policy-env.mjs", [
@@ -78,7 +169,12 @@ describe("managed OpenCode startup", () => {
     const diagnosticPath = join(root, "delayed-eaddrinuse.mjs");
     await writeFile(diagnosticPath, [
       "const port = process.argv[2];",
-      "setTimeout(() => console.error(`listen EADDRINUSE: address already in use 127.0.0.1:${port}`), 50);",
+      "setTimeout(async () => {",
+      "  const write = (text) => new Promise((resolve) => process.stderr.write(text, resolve));",
+      "  await write('listen EADDR');",
+      "  await write(`INUSE: address already in use 127.0.0.1:${port}\\n`);",
+      "  await write('x'.repeat(1048576) + '\\nfinal retry diagnostic\\n');",
+      "}, 50);",
     ].join("\n"));
     const bin = await writeExecutable(root, "retry-eaddrinuse.mjs", [
       "import { spawn } from 'node:child_process';",

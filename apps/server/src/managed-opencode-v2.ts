@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { appendEngineOutputTail, createEngineStartupLineReader } from "./engine-output.js";
 
 export { installOpencodeV2Binary } from "./opencode-v2-binary.js";
 
@@ -124,11 +125,24 @@ export async function createManagedOpencodeV2Server(
   let stdout = "";
   let stderr = "";
   let spawnError: Error | undefined;
+  let announced: string | undefined;
+  const lines = createEngineStartupLineReader((line) => {
+    announced = line.match(/server listening on (http:\/\/[^\s]+)/)?.[1];
+    if (announced) lines.stop();
+  });
+  // A close event, unlike exit, includes the final bytes from both pipes.
+  let closed = false;
+  child.once("close", () => {
+    closed = true;
+    lines.stop();
+  });
   child.stdout.on("data", (chunk) => {
-    stdout += String(chunk);
+    const text = String(chunk);
+    stdout = appendEngineOutputTail(stdout, text);
+    lines.write(text);
   });
   child.stderr.on("data", (chunk) => {
-    stderr += String(chunk);
+    stderr = appendEngineOutputTail(stderr, String(chunk));
   });
   child.on("error", (error) => {
     spawnError = error;
@@ -224,6 +238,7 @@ export async function createManagedOpencodeV2Server(
   }
 
   async function close(): Promise<void> {
+    lines.stop();
     if (child.exitCode !== null || child.signalCode !== null) return;
     const exit = new Promise<void>((resolve) => child.once("exit", () => resolve()));
     child.kill("SIGTERM");
@@ -271,23 +286,28 @@ export async function createManagedOpencodeV2Server(
   while (Date.now() < deadline) {
     if (spawnError !== undefined) {
       await close();
-      throw new Error(`Failed to start OpenCode v2 server: ${spawnError.message}`);
+      throw new Error(`Failed to start OpenCode v2 server: ${spawnError.message}\nstdout:\n${stdout.slice(-4_000)}\nstderr:\n${stderr.slice(-4_000)}`);
     }
-    if (child.exitCode !== null || child.signalCode !== null) throw diagnostics(child.exitCode, stdout, stderr);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      if (closed) throw diagnostics(child.exitCode, stdout, stderr);
+      await sleep(250);
+      continue;
+    }
     // Only the child can write its stdout pipe. Do not send the generated
     // credential to a probed port before that child confirms it has bound.
-    if (!url) {
-      const announced = stdout.match(/server listening on (http:\/\/[^\s]+)/)?.[1];
-      if (announced) {
+    if (!url && announced) {
+      try {
         const endpoint = new URL(announced);
         if (endpoint.hostname !== hostname || !endpoint.port || endpoint.port === "0"
           || endpoint.username || endpoint.password || endpoint.pathname !== "/"
           || endpoint.search || endpoint.hash
           || (port !== 0 && Number(endpoint.port) !== port)) {
-          await close();
           throw new Error("OpenCode v2 announced an unexpected listener");
         }
         url = endpoint.origin;
+      } catch (error) {
+        await close();
+        throw error;
       }
     }
     try {
@@ -299,6 +319,8 @@ export async function createManagedOpencodeV2Server(
     await sleep(250);
   }
 
+  const exited = child.exitCode !== null || child.signalCode !== null;
   await close();
+  if (exited) throw diagnostics(child.exitCode, stdout, stderr);
   throw new Error(`Timed out waiting ${bootTimeoutMs}ms for OpenCode v2 health\nstdout:\n${stdout.slice(-4_000)}\nstderr:\n${stderr.slice(-4_000)}`);
 }
