@@ -80,6 +80,10 @@ export interface MockMcpHandle {
   handshakes(opts?: { timeoutMs?: number; atLeast?: number; sinceIso?: string }): Promise<MockAuthorizeRequest[]>;
   configureOAuthRedirectUris(redirectUris: readonly string[]): Promise<void>;
   resetOAuth(): Promise<void>;
+  /** Expire access tokens and hold refresh replies until explicitly released. */
+  holdRefreshResponses(): Promise<void>;
+  pendingRefreshResponses(): Promise<{ id: number; status: number; tokenId: string }[]>;
+  releaseRefreshResponse(id: number): Promise<void>;
   stop(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 }
@@ -318,6 +322,9 @@ async function startEnterpriseProfileMock(options: StartMockMcpOptions): Promise
       await stop();
       await boot();
     },
+    async holdRefreshResponses() { throw new Error("Refresh response control requires the legacy OAuth mock."); },
+    async pendingRefreshResponses() { throw new Error("Refresh response control requires the legacy OAuth mock."); },
+    async releaseRefreshResponse() { throw new Error("Refresh response control requires the legacy OAuth mock."); },
     stop,
     [Symbol.asyncDispose]: stop,
   };
@@ -518,6 +525,23 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
     async resetOAuth() {
       const response = await fetch(`${url}/admin/expire-oauth-tokens`, { method: "POST" });
       if (!response.ok) throw new Error(`Mock OAuth reset failed: HTTP ${response.status}`);
+    },
+    async holdRefreshResponses() {
+      const response = await fetch(`${url}/admin/refresh-responses`, { method: "POST", signal: AbortSignal.timeout(5_000) });
+      if (!response.ok) throw new Error(`Mock refresh hold failed: HTTP ${response.status}`);
+    },
+    async pendingRefreshResponses() {
+      const response = await fetch(`${url}/admin/refresh-responses`, { signal: AbortSignal.timeout(5_000) });
+      const body: unknown = await response.json();
+      if (!response.ok || !isRecord(body) || !Array.isArray(body.responses)) throw new Error("Mock refresh responses missing");
+      return body.responses.map((entry: unknown) => {
+        if (!isRecord(entry) || typeof entry.id !== "number" || typeof entry.status !== "number" || typeof entry.tokenId !== "string") throw new Error("Invalid mock refresh response");
+        return { id: entry.id, status: entry.status, tokenId: entry.tokenId };
+      });
+    },
+    async releaseRefreshResponse(id) {
+      const response = await fetch(`${url}/admin/refresh-responses/${id}/release`, { method: "POST", signal: AbortSignal.timeout(5_000) });
+      if (!response.ok) throw new Error(`Mock refresh release failed: HTTP ${response.status}`);
     },
     stop,
     [Symbol.asyncDispose]: stop,

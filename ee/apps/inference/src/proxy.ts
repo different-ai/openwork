@@ -14,13 +14,15 @@ import {
 import type { InferenceReporter } from "./inference-reporting.js"
 import { listModelCatalog, resolveModelAlias } from "./model-catalog.js"
 import type { AnalyticsObserver, beginModelAnalytics } from "./task-analytics.js"
+import { completeChatResponse, inferenceError, readResponseJson, relayChatStream, upstreamError } from "./chat-response.js"
 
 type JsonObject = Record<string, unknown>
 type PreparedBody = {
-  body: BodyInit | null
+  body: JsonObject & { trace: JsonObject }
   incomingModel: string
   modelAlias: string
   upstreamModel: string | null
+  stream: boolean
 }
 type PreparedBodyResult = PreparedBody | {
   error: Response
@@ -201,26 +203,6 @@ async function logUpstreamError(input: {
   upstreamModel: string | null
   reporter: InferenceReporter
 }) {
-  let bodySnippet: string | null = null
-  try {
-    const text = await input.upstream.clone().text()
-    bodySnippet = text.slice(0, 2000)
-  } catch (error) {
-    bodySnippet = `Failed to read upstream error body: ${error instanceof Error ? error.message : String(error)}`
-  }
-
-  logProxyError("Upstream OpenRouter request failed", {
-    openworkRequestId: input.openworkRequestId,
-    organizationId: input.organizationId,
-    orgMembershipId: input.orgMembershipId,
-    inferenceKeyId: input.inferenceKeyId,
-    upstreamUrl: input.upstreamUrl.toString(),
-    status: input.upstream.status,
-    statusText: input.upstream.statusText,
-    modelAlias: input.modelAlias,
-    upstreamModel: input.upstreamModel,
-    bodySnippet,
-  })
   input.reporter.handledError({
     reason: "upstream_failure",
     organizationId: input.organizationId,
@@ -233,7 +215,7 @@ async function logUpstreamError(input: {
     incomingModel: input.incomingModel,
     resolvedUpstreamModel: input.upstreamModel,
     status: input.upstream.status,
-    statusText: input.upstream.statusText,
+    statusText: "Upstream request failed",
     upstreamUrl: input.upstreamUrl.toString(),
   })
 }
@@ -244,37 +226,6 @@ function buildRequestId() {
 
 function secondsUntil(date: Date) {
   return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 1000))
-}
-
-function trackStream(body: ReadableStream<Uint8Array> | null, observer: AnalyticsObserver | null, ok: boolean) {
-  const finish = (status: "completed" | "failed" | "cancelled") => {
-    try { observer?.finish(status) } catch { /* Optional analytics cannot interrupt inference. */ }
-  }
-  const complete = () => finish(ok ? "completed" : "failed")
-  if (!body) complete()
-  if (!body) return body
-  const reader = body.getReader()
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const chunk = await reader.read()
-        if (chunk.done) {
-          complete()
-          controller.close()
-          return
-        }
-        try { observer?.chunk(chunk.value) } catch { /* Forward the original bytes even if observation fails. */ }
-        controller.enqueue(chunk.value)
-      } catch (error) {
-        finish("failed")
-        controller.error(error)
-      }
-    },
-    async cancel(reason) {
-      finish("cancelled")
-      await reader.cancel(reason)
-    },
-  })
 }
 
 async function prepareBody(request: Request, input: {
@@ -322,7 +273,7 @@ async function prepareBody(request: Request, input: {
   try {
     json = await request.json()
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error)
+    const errorMessage = "Invalid JSON request body"
     const payloadLog = buildUnparsedPayloadLog("invalid_json", request.headers.get("content-type"))
     input.reporter.request({
       organizationId: input.organizationId,
@@ -371,7 +322,7 @@ async function prepareBody(request: Request, input: {
     route: input.route,
     method: input.method,
     headers: input.headers,
-    incomingModel: requestedModel,
+    incomingModel: model ? model.alias : null,
     resolvedUpstreamModel: model ? model.upstreamModel : null,
     payloadMode: payloadLog.mode,
     payload: payloadLog.payload,
@@ -417,11 +368,11 @@ async function prepareBody(request: Request, input: {
       route: input.route,
       method: input.method,
       headers: input.headers,
-      incomingModel: requestedModel,
+      incomingModel: model ? model.alias : null,
       resolvedUpstreamModel: model ? model.upstreamModel : null,
       status: 400,
     })
-    return { error: openAiError(400, "unsupported_model_selection", `OpenWork inference does not allow alternate model selection (${blockedSelection}).`), incomingModel: requestedModel, upstreamModel: model ? model.upstreamModel : null }
+    return { error: openAiError(400, "unsupported_model_selection", `OpenWork inference does not allow alternate model selection (${blockedSelection}).`), incomingModel: model ? model.alias : null, upstreamModel: model ? model.upstreamModel : null }
   }
 
   if (requestedModel === null) {
@@ -454,7 +405,7 @@ async function prepareBody(request: Request, input: {
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       inferenceKeyId: input.inferenceKeyId,
-      requestedModel,
+      requestedModel: "unknown",
     })
     input.reporter.handledError({
       reason: "model_not_found",
@@ -465,17 +416,17 @@ async function prepareBody(request: Request, input: {
       route: input.route,
       method: input.method,
       headers: input.headers,
-      incomingModel: requestedModel,
+      incomingModel: null,
       resolvedUpstreamModel: null,
       status: 404,
     })
-    return { error: openAiError(404, "model_not_found", `Unknown OpenWork model alias: ${requestedModel}`), incomingModel: requestedModel, upstreamModel: null }
+    return { error: openAiError(404, "model_not_found", `Unknown OpenWork model alias: ${requestedModel}`), incomingModel: null, upstreamModel: null }
   }
 
   body.model = model.upstreamModel
   body.user = input.orgMembershipId
   body.session_id = input.openworkRequestId
-  body.trace = {
+  const trace = {
     trace_id: input.openworkRequestId,
     trace_name: "OpenWork Inference",
     generation_name: model.alias,
@@ -485,10 +436,11 @@ async function prepareBody(request: Request, input: {
   }
 
   return {
-    body: JSON.stringify(body),
-    incomingModel: requestedModel,
+    body: { ...body, trace },
+    incomingModel: model.alias,
     modelAlias: model.alias,
     upstreamModel: model.upstreamModel,
+    stream: body.stream === true,
   }
 }
 
@@ -530,6 +482,9 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
   }
 
   async function handleApiRequest(c: Context) {
+    const openworkRequestId = buildRequestId()
+    c.header("x-openwork-request-id", openworkRequestId)
+    c.header("cache-control", "no-store")
     const bearerKey = readInferenceBearerKey(c.req.raw)
     if (!bearerKey) {
       logProxyError("Missing inference API key", { path: c.req.path, method: c.req.method })
@@ -553,7 +508,6 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       return localRouteRejection(c.req.path, c.req.method)
     }
 
-    const openworkRequestId = buildRequestId()
     const incomingHeaders = sanitizeIncomingHeaders(c.req.raw.headers)
 
     if (new URL(c.req.url).search) {
@@ -657,28 +611,57 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     const upstreamPath = c.req.path.replace(/^\/api\/v1/, "")
     const upstreamUrl = new URL(`${env.openRouterUpstreamUrl}${upstreamPath}`)
     const startedAt = Date.now()
+    // The provider validates n; only a valid requested cardinality constrains responses.
+    const choiceCount = typeof prepared.body.n === "number" && Number.isSafeInteger(prepared.body.n) && prepared.body.n > 0 ? prepared.body.n : 1
     // Fail closed and bound the optional analytics check; it cannot hold up
     // inference when the analytics store is unavailable.
     let timer: ReturnType<typeof setTimeout> | undefined
     const analytics = await Promise.race([
-      dependencies.analytics?.({ key: inferenceKey, request: c.req.raw, requestId: openworkRequestId, model: prepared.upstreamModel, startedAt }).catch(() => null) ?? null,
+      (async () => {
+        const begin = await dependencies.analytics?.({ key: inferenceKey, request: c.req.raw, requestId: openworkRequestId, model: prepared.upstreamModel, startedAt })
+        return begin?.(prepared.stream) ?? null
+      })().catch(() => null),
       new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 250) }),
     ]).finally(() => { if (timer) clearTimeout(timer) })
+    const observeChunk = (bytes: Uint8Array) => {
+      try { analytics?.chunk(bytes) } catch { /* Optional analytics cannot interrupt inference. */ }
+    }
+    const finishAnalytics = (status: Parameters<AnalyticsObserver["finish"]>[0]) => {
+      try { analytics?.finish(c.req.raw.signal.aborted ? "cancelled" : status) } catch { /* Optional analytics cannot interrupt inference. */ }
+    }
     let upstream: Response
+    const abort = new AbortController()
+    const abortError = () => c.req.raw.signal.aborted
+      ? inferenceError("request_cancelled", "Request cancelled.")
+      : abort.signal.aborted ? upstreamError(504) : null
+    const cancel = () => abort.abort()
+    c.req.raw.signal.addEventListener("abort", cancel, { once: true })
+    if (c.req.raw.signal.aborted) abort.abort()
+    const headerTimeout = setTimeout(() => abort.abort(), env.upstreamTimeoutMs)
     try {
       const upstreamInit: ProxyRequestInit = {
         method: c.req.method,
         headers: sanitizeHeaders(c.req.raw, providerKey.encrypted_api_key, openworkRequestId),
-        body: prepared.body,
+        body: JSON.stringify({ ...prepared.body, trace: { ...prepared.body.trace, usage_started_at: limits.admittedAt.toISOString() } }),
         duplex: "half",
+        signal: abort.signal,
         redirect: "error",
       }
       // Re-read after every preparation await, immediately before the only dispatch.
       const dispatchRejection = await managedModelsRejection(inferenceKey.organization_id)
-      if (dispatchRejection) return dispatchRejection
+      if (dispatchRejection) {
+        clearTimeout(headerTimeout)
+        c.req.raw.signal.removeEventListener("abort", cancel)
+        abort.abort()
+        finishAnalytics("failed")
+        return dispatchRejection
+      }
       upstream = await dependencies.fetch(upstreamUrl, upstreamInit)
-    } catch (error) {
-      analytics?.(false).finish("failed")
+    } catch {
+      clearTimeout(headerTimeout)
+      c.req.raw.signal.removeEventListener("abort", cancel)
+      finishAnalytics("failed")
+      const error = abortError() ?? inferenceError("upstream_unreachable", "The selected model could not be reached. Your work is preserved; retry when the provider recovers.")
       logProxyError("Failed to reach OpenRouter upstream", {
         openworkRequestId,
         organizationId: inferenceKey.organization_id,
@@ -687,10 +670,10 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         upstreamUrl: upstreamUrl.toString(),
         modelAlias: prepared.modelAlias,
         upstreamModel: prepared.upstreamModel,
-        error: error instanceof Error ? error.message : String(error),
+        error: "Upstream connection failed",
       })
       reporter.handledError({
-        reason: "upstream_unreachable",
+        reason: error.error.code,
         organizationId: inferenceKey.organization_id,
         orgMembershipId: inferenceKey.org_membership_id,
         inferenceKeyId: inferenceKey.id,
@@ -702,13 +685,14 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         resolvedUpstreamModel: prepared.upstreamModel,
         status: 502,
         upstreamUrl: upstreamUrl.toString(),
-        error: error instanceof Error ? error.message : String(error),
-        exception: error,
+        error: "Upstream connection failed",
       })
-      return c.json({ error: { message: "Failed to reach OpenRouter upstream.", type: "api_error", code: "upstream_unreachable" } }, 502)
+      return c.json(error, 502)
     }
+    clearTimeout(headerTimeout)
 
     if (!upstream.ok) {
+      finishAnalytics("failed")
       await logUpstreamError({
         upstream,
         upstreamUrl,
@@ -726,10 +710,73 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       })
     }
 
-    const headers = new Headers(upstream.headers)
-    headers.set("x-openwork-request-id", openworkRequestId)
-    return new Response(trackStream(upstream.body, analytics?.(upstream.headers.get("content-type")?.includes("text/event-stream") === true) ?? null, upstream.ok),
-      { status: upstream.status, statusText: upstream.statusText, headers })
+    const headers = new Headers({ "x-openwork-request-id": openworkRequestId, "cache-control": "no-store" })
+    const retryAfter = upstream.headers.get("retry-after")
+    if (retryAfter && (/^\d+$/.test(retryAfter) || Number.isFinite(Date.parse(retryAfter)))) headers.set("retry-after", retryAfter)
+    if (!upstream.ok) {
+      let error = upstreamError(upstream.status)
+      // Read only a bounded error envelope to classify context overflow. The
+      // provider's message and metadata never leave this scope or enter logs.
+      if (upstream.status === 400) {
+        const timeout = setTimeout(() => abort.abort(), Math.min(env.upstreamTimeoutMs, 5000))
+        try {
+          const payload = await readResponseJson(upstream.body, abort.signal, 65536)
+          if (isJsonObject(payload) && isJsonObject(payload.error) && (
+            payload.error.code === "context_length_exceeded" ||
+            (typeof payload.error.message === "string" && /maximum context length|context length.*exceed|too many tokens/i.test(payload.error.message))
+          )) error = upstreamError(413)
+        } catch { /* The safe status category remains sufficient. */ }
+        finally { clearTimeout(timeout) }
+      }
+      c.req.raw.signal.removeEventListener("abort", cancel)
+      abort.abort()
+      await upstream.body?.cancel().catch(() => {})
+      return Response.json(error, { status: upstream.status, headers })
+    }
+    const contentType = upstream.headers.get("content-type")?.split(";")[0].trim().toLowerCase()
+    if (prepared.stream) {
+      if (contentType !== "text/event-stream" || !upstream.body) {
+        finishAnalytics("failed")
+        c.req.raw.signal.removeEventListener("abort", cancel)
+        abort.abort()
+        await upstream.body?.cancel().catch(() => {})
+        return Response.json(inferenceError("upstream_malformed_stream", "The model did not return a response stream. Retry the selected model."), { status: 502, headers })
+      }
+      headers.set("content-type", "text/event-stream; charset=utf-8")
+      headers.set("x-accel-buffering", "no")
+      return new Response(relayChatStream({
+        body: upstream.body, abort, startedAt, idleMs: env.streamIdleMs, choiceCount,
+        onChunk: observeChunk,
+        onFinish(result) {
+          c.req.raw.signal.removeEventListener("abort", cancel)
+          finishAnalytics(result.outcome === "completed" ? "completed" : result.outcome === "cancelled" ? "cancelled" : "failed")
+          try {
+            reporter.completion?.({ ...result, openworkRequestId, organizationId: inferenceKey.organization_id, orgMembershipId: inferenceKey.org_membership_id, modelAlias: prepared.modelAlias })
+          } catch { /* Completion reporting must not interrupt stream cleanup. */ }
+        },
+      }), { headers })
+    }
+    // Bound non-streaming bodies too. An HTTP 200 without a terminal choice is
+    // not a completed inference response.
+    const bodyTimeout = setTimeout(() => abort.abort(), env.upstreamTimeoutMs)
+    try {
+      const value = await readResponseJson(upstream.body, abort.signal)
+      if (analytics) observeChunk(new TextEncoder().encode(JSON.stringify(value)))
+      if (!completeChatResponse(value, choiceCount)) {
+        finishAnalytics("failed")
+        return Response.json(inferenceError("upstream_incomplete", "The model returned an incomplete response. Review your work before retrying."), { status: 502, headers })
+      }
+      const response = Response.json(value, { headers })
+      finishAnalytics("completed")
+      return response
+    } catch {
+      finishAnalytics("failed")
+      return Response.json(abortError() ?? inferenceError("upstream_malformed_response", "The model response was interrupted or malformed. Review your work before retrying."), { status: 502, headers })
+    } finally {
+      clearTimeout(bodyTimeout)
+      c.req.raw.signal.removeEventListener("abort", cancel)
+      abort.abort()
+    }
   }
 
   app.all("/api/v1", handleApiRequest)

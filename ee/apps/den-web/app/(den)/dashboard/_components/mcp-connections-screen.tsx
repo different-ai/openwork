@@ -2408,8 +2408,13 @@ function AddConnectionDialog({
 
   function applyDiscoveredRequirements(result: McpRequirementsDiscovery) {
     setRequirements(result);
-    if (result.authentication.kind === "none") setAuthType("none");
-    else if (result.authentication.kind === "oauth") setAuthType("oauth");
+    // A curated preset's auth type stays authoritative over the live probe,
+    // matching the smart-add rule: an API-key server that also advertises
+    // OAuth metadata (or initializes anonymously) must not lose its key field.
+    if (!preset) {
+      if (result.authentication.kind === "none") setAuthType("none");
+      else if (result.authentication.kind === "oauth") setAuthType("oauth");
+    }
     const servers = result.authentication.authorizationServers;
     setAuthorizationServerIssuer(servers.length === 1 ? servers[0].issuer : "");
     setRequestedScopes(result.authentication.recommendedScopes);

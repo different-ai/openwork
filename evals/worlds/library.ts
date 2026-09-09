@@ -940,11 +940,11 @@ async function reloadConfiguredApp(app: import("@openwork/cdp").Surface): Promis
   throw new Error("The configured desktop control did not return after reload.");
 }
 
-export const connectionActionResourceUri = "ui://openwork/connection-action/v1/view.html";
 export const connectionActionReply = "Connect your Notion account to continue.";
 export const ordinaryDiscoveryPrompt = "Create a dashboard using my notes.";
 export const ordinaryDiscoveryReply = "I found the available capabilities for the dashboard.";
 export const connectionActionPrompt = "I want to connect Notion.";
+export const connectionStatusPrompt = "Check my Notion connection so I can sign in.";
 
 export const allConnectorsPrompt = "Show me all the quick-add connectors.";
 export const allConnectorsReply = "Here are all the connectors available to add.";
@@ -959,12 +959,22 @@ export async function connectionActionMcpApp(seed: Seed) {
     mocks: {
       connector: seed.mock({ agentWorkloads: [{
         promptMarker: ordinaryDiscoveryPrompt,
+        latestUserTurn: true,
         finalReply: ordinaryDiscoveryReply,
         steps: [{ tool: "search_capabilities", arguments: { query: "Notion", type: "mcp" } }],
       }, {
         promptMarker: connectionActionPrompt,
+        latestUserTurn: true,
         finalReply: connectionActionReply,
         steps: [{ tool: "search_capabilities", arguments: { query: "Notion", type: "mcp", intent: "connect" } }],
+      }, {
+        promptMarker: connectionStatusPrompt,
+        latestUserTurn: true,
+        finalReply: connectionActionReply,
+        steps: [
+          { tool: "search_capabilities", arguments: { query: "Notion", type: "mcp", limit: 1 } },
+          { tool: "execute_capability", arguments: {}, argumentsFrom: "capability-search" },
+        ],
       }, {
         promptMarker: connectorCatalogPrompt,
         finalReply: connectorCatalogReply,
@@ -1000,7 +1010,7 @@ export async function connectionActionMcpApp(seed: Seed) {
   });
   await reloadConfiguredApp(app);
   await seed.session(app);
-  return { app, den, connection, organizationId, mcpSession: { ...den.admin, token: mcpToken } };
+  return { app, den, connection, organizationId, mcpSession: { ...den.admin, token: mcpToken }, appHostSession: { ...den.admin, token: appHostToken } };
 }
 
 export const skillCreatedResourceUri = "ui://openwork/skill-created/v1/view.html";

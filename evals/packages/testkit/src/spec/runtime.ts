@@ -9,18 +9,22 @@ import {
   evalIn,
   listSessions,
   readComposerState,
+  readBrowserState,
+  readBrowserTabMetrics,
   renameSessionAndWait,
   signInDesktopAs,
   waitUntilInteractive,
 } from "@openwork/behaviors";
 import {
   callFunctionOnSurface,
+  addInitScript,
   callFunction, connect, debuggerUrlFor, listTargets,
   clickAt,
   dumpScreenState,
   evaluateOnSurface,
   hoverAt,
   locate,
+  readDom,
   assertAbsent,
   navigate,
   pressKey,
@@ -35,6 +39,9 @@ import {
   faultProxy as startFaultProxy,
   mcpMock,
   server,
+  requestBrowserTask,
+  readBrowserFixtureState,
+  setBrowserFixtureDiscovery,
 } from "@openwork/env";
 import type { Den, Place } from "@openwork/env";
 import { chrome, desktop } from "@openwork/hosts";
@@ -468,7 +475,7 @@ export class SeedChannel implements Seed {
       const web = this.#runtime.stack.use(await chrome({
         name: "spec-web",
         host: this.#runtime.place.host(),
-        startUrl: options.den.ref.webUrl,
+        startUrl: options.signedInAs === undefined ? options.den.ref.webUrl : "about:blank",
         headless: options.headless,
       }));
       if (options.viewport) await setViewport(web, {
@@ -478,22 +485,15 @@ export class SeedChannel implements Seed {
       if (options.signedInAs !== undefined) {
         const session = sessionFromWebOptions(options);
         const denOrigin = new URL(options.den.ref.webUrl).origin;
-        let lastHref = "unobserved";
-        const waitForDen = () => eventually(async () => {
-          const observation = await evaluateOnSurface(web, browserScript((denOrigin) => (location.origin === denOrigin && document.readyState !== "loading" ? "" : location.href), [denOrigin]));
-          if (typeof observation === "string") lastHref = observation;
-          return observation === "";
-        }, { within: 30_000, intervalMs: 250, label: "Den origin document" });
-        try {
-          await waitForDen();
-        } catch {
-          await navigate(web.client, options.den.ref.webUrl);
-          await waitForDen().catch(() => { throw new Error(`Den origin document did not load; last observed location.href: ${lastHref}`); });
-        }
-        await callFunctionOnSurface(web, (token) => {
-          localStorage.setItem("openwork:web:auth-token", token);
-          return true;
-        }, [session.token]);
+        // Seed before hydration: a running anonymous page can otherwise clear the token.
+        await using initialSession = await addInitScript(web.client, browserScript((origin, token) => {
+          if (location.origin === origin) localStorage.setItem("openwork:web:auth-token", token);
+        }, [denOrigin, session.token]));
+        await navigate(web.client, new URL(options.startPath ?? "/", options.den.ref.webUrl).toString());
+        await eventually(() => evaluateOnSurface(web, browserScript((origin) =>
+          location.origin === origin && document.readyState !== "loading", [denOrigin])),
+        { within: 30_000, intervalMs: 250, label: "Seeded Den origin document" });
+        return web;
       }
       const startPath = options.startPath ?? "/";
       await navigate(web.client, new URL(startPath, options.den.ref.webUrl).toString());
@@ -594,6 +594,11 @@ export class SeedChannel implements Seed {
       await waitForControlAction(app, "composer.set_text");
       await control(app, "composer.set_text", { text });
     });
+  }
+
+  browserFixtureDiscovery(app: Surface, origin: string, action: "hold" | "release") {
+    return this.#runtime.call("seed", "browserFixtureDiscovery", `browserFixtureDiscovery(${action})`, app,
+      () => setBrowserFixtureDiscovery(app, origin, action));
   }
 
   evalIn<T>(surface: Surface, expression: BrowserEvaluation<T>, options: EvaluateOptions = {}): Promise<Awaited<T>> {
@@ -765,6 +770,12 @@ export class AgentChannel implements Agent {
     return new AgentChannel(this.#runtime, surface);
   }
 
+  browserTask(input: import("@openwork/behaviors").BrowserTaskInput) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("agent", "browserTask", `browserTask(${input.operation}, session=${input.sessionId}, tab=${input.args?.tabId ?? "owned"})`, surface,
+      () => requestBrowserTask(surface, input));
+  }
+
   run(action: string, args?: unknown): Promise<unknown> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("agent", "run", `run(${action})`, surface, async () => {
@@ -777,7 +788,13 @@ export class AgentChannel implements Agent {
   browserRequest(input: { url: string; method?: string; body?: string }): Promise<{ reached: boolean; error?: string }> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("agent", "browserRequest", `browserRequest(${input.method ?? "GET"} ${input.url})`, surface, async () => {
-      const handle = await callFunctionOnSurface(surface, async () => window.__OPENWORK_ELECTRON__.browser.openUrl("about:blank"), [], { awaitPromise: true });
+      const handle = await callFunctionOnSurface(surface, async () => {
+        const browser = window.__OPENWORK_ELECTRON__.browser;
+        const state = await browser.getState();
+        const tab = state.tabs.find(tab => tab.id === state.activeTabId);
+        if (!tab?.ownerSessionId || !tab.url?.startsWith('http')) throw new Error('Select an owned website tab first');
+        return browser.openUrl(tab.url, 'builtin', { sessionId: tab.ownerSessionId });
+      }, [], { awaitPromise: true });
       if (!isRecord(handle) || typeof handle.target_id !== "string") throw new Error("Browser did not return a target");
       const target = (await listTargets(surface.handle.cdpUrl)).find((entry) => entry.id === handle.target_id);
       if (!target) throw new Error("Browser target missing");
@@ -864,6 +881,26 @@ export class ProbeChannel implements Probe {
 
   on(surface: Surface): Probe {
     return new ProbeChannel(this.#runtime, surface);
+  }
+
+  dom(selector: string) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "dom", `dom(${JSON.stringify(redacted(selector))})`, surface, () => readDom(surface, selector));
+  }
+
+  browserState() {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "browserState", "browserState", surface, () => readBrowserState(surface));
+  }
+
+  browserTabMetrics(targetId: string) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "browserTabMetrics", `browserTabMetrics(${targetId})`, surface, () => readBrowserTabMetrics(surface, targetId));
+  }
+
+  browserFixtureState(origin: string) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "browserFixtureState", "browserFixtureState(GET /state)", surface, () => readBrowserFixtureState(surface, origin));
   }
 
   text(): Promise<string> {

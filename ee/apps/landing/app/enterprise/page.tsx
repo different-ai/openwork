@@ -22,7 +22,6 @@ export default async function Enterprise() {
   return (
     <LandingEnterprise
       stars={github.stars}
-      downloadHref={github.downloads.macos}
       calUrl={cal}
     />
   );

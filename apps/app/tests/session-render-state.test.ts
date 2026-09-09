@@ -58,6 +58,39 @@ for (const { name, merge } of [
   { name: "mergeSnapshotIntoCachedMessages", merge: mergeSnapshotIntoCachedMessages },
 ]) {
   describe(name, () => {
+    test("keeps terminal tools by call identity without blocking fresh snapshot output", () => {
+      const running = {
+        id: "tools", role: "assistant", parts: [{
+          type: "dynamic-tool", toolName: "bash", toolCallId: "call-a",
+          state: "input-streaming", input: { command: "pwd" },
+        }],
+      } satisfies UIMessage;
+      for (const terminal of [
+        { state: "output-available", output: "finished" } as const,
+        { state: "output-error", errorText: "failed" } as const,
+      ]) {
+        const completed: UIMessage = {
+          ...running, parts: [{ ...running.parts[0], ...terminal }],
+        };
+        expect(merge([running], [completed])[0]?.parts).toEqual(completed.parts);
+        expect(merge([completed], [running])[0]?.parts).toEqual(completed.parts);
+        const reordered: UIMessage = {
+          ...running, parts: [{
+            type: "dynamic-tool", toolName: "bash", toolCallId: "call-b",
+            state: "input-streaming", input: {},
+          }, ...running.parts],
+        };
+        expect(merge([reordered], [completed])[0]?.parts).toEqual([
+          reordered.parts[0], completed.parts[0],
+        ]);
+        const refreshed: UIMessage = { ...completed, parts: [{
+          type: "dynamic-tool", toolName: "bash", toolCallId: "call-a",
+          state: "output-available", input: {}, output: "fresh snapshot output",
+        }] };
+        expect(merge([refreshed], [completed])[0]?.parts).toEqual(refreshed.parts);
+      }
+    });
+
     for (const historySize of [200, 400, 800]) {
       test(`bounds timestamp reads for a 140-message snapshot over ${historySize} cached messages`, () => {
         let reads = 0;

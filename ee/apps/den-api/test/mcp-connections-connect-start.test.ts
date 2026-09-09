@@ -612,6 +612,241 @@ test("connect start keeps the shared callback for a pre-registered confidential 
   }
 })
 
+test("connect start records the shared callback mode for an isolated row whose pre-registered client keeps the shared redirect", async () => {
+  let origin = ""
+  let expectedCodeChallenge = ""
+  const tokenRedirectUris: string[] = []
+  const server = Bun.serve({
+    port: 0,
+    async fetch(incoming) {
+      const url = new URL(incoming.url)
+      if (url.pathname === "/.well-known/oauth-protected-resource/mcp") {
+        return Response.json({ resource: `${origin}/mcp`, authorization_servers: [origin], scopes_supported: ["mcp_server"] })
+      }
+      if (url.pathname === "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          issuer: origin,
+          authorization_endpoint: `${origin}/authorize`,
+          token_endpoint: `${origin}/token`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code"],
+          token_endpoint_auth_methods_supported: ["client_secret_post"],
+          code_challenge_methods_supported: ["S256"],
+          scopes_supported: ["mcp_server"],
+        })
+      }
+      if (url.pathname === "/token") {
+        const form = new URLSearchParams(await incoming.text())
+        expect(form.get("client_id")).toBe("kept-preregistered-client")
+        expect(form.get("client_secret")).toBe("kept-preregistered-secret")
+        expect(form.get("code")).toBe("isolated-row-authorization-code")
+        tokenRedirectUris.push(form.get("redirect_uri") ?? "")
+        expect(createHash("sha256").update(form.get("code_verifier") ?? "").digest("base64url")).toBe(expectedCodeChallenge)
+        return Response.json({ access_token: "isolated-row-access-token", token_type: "Bearer", expires_in: 3_600, scope: "mcp_server" })
+      }
+      if (url.pathname === "/mcp") {
+        if (incoming.headers.get("authorization") !== "Bearer isolated-row-access-token") {
+          return new Response(null, {
+            status: 401,
+            headers: { "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="mcp_server"` },
+          })
+        }
+        if (incoming.method !== "POST") return new Response(null, { status: 405 })
+        const rpc: unknown = await incoming.json()
+        if (!isRecord(rpc)) return Response.json({ error: "invalid_request" }, { status: 400 })
+        if (rpc.method === "notifications/initialized") return new Response(null, { status: 202 })
+        const id = typeof rpc.id === "string" || typeof rpc.id === "number" ? rpc.id : null
+        if (rpc.method === "tools/list") {
+          return Response.json({ jsonrpc: "2.0", id, result: { tools: [{ name: "list-records", description: "Lists records.", inputSchema: { type: "object", properties: {} } }] } })
+        }
+        return Response.json({
+          jsonrpc: "2.0",
+          id,
+          result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "isolated-row-test", version: "1.0.0" } },
+        })
+      }
+      return new Response(null, { status: 404 })
+    },
+  })
+  origin = `http://127.0.0.1:${server.port}`
+  const publicOrigin = process.env.DEN_API_PUBLIC_URL ?? "http://127.0.0.1:8790"
+  const sharedCallback = new URL("/v1/mcp-connections/oauth/callback", publicOrigin).toString()
+
+  try {
+    // Historical sequence: a shared-v1 row with an admin-registered client whose
+    // recorded redirect is the shared callback, then callback isolation, which
+    // kept the pre-registered client while flipping the row to isolated-v1.
+    const connection = await createExternalMcpConnection({
+      organizationId,
+      name: "Isolated row with shared registration",
+      url: `${origin}/mcp`,
+      authType: "oauth",
+      credentialMode: "per_member",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    await db
+      .update(schema.ExternalMcpConnectionTable)
+      .set({
+        oauthConfiguration: {
+          version: 1,
+          authorizationServerIssuer: origin,
+          requestedScopes: [],
+          callbackMode: "shared-v1",
+          discovery: {
+            authorizationServerUrl: origin,
+            authorizationServerMetadata: { issuer: origin, authorization_response_iss_parameter_supported: false, code_challenge_methods_supported: ["S256"] },
+            resourceMetadata: { authorization_servers: [origin] },
+          },
+        },
+      })
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connection.id))
+    await upsertOrgOAuthClient({
+      organizationId,
+      providerId: connection.id,
+      clientId: "kept-preregistered-client",
+      clientSecret: "kept-preregistered-secret",
+      extra: {
+        enterpriseMcpRegistrationSource: "pre-registered",
+        registrationContractVersion: 2,
+        registeredRedirectUri: sharedCallback,
+        authorizationServerIssuer: origin,
+        tokenEndpointAuthMethod: "client_secret_post",
+      },
+      createdByOrgMembershipId: memberId,
+    })
+    const isolated = await isolateExternalMcpOAuthCallback({ organizationId, connectionId: connection.id })
+    expect(isolated.oauthConfiguration?.callbackMode).toBe("isolated-v1")
+    const keptClient = await getOrgOAuthClient(organizationId, connection.id)
+    expect(keptClient?.clientId).toBe("kept-preregistered-client")
+
+    const inconsistentList = await request("/v1/mcp-connections?scope=manageable")
+    const inconsistentBody: unknown = await inconsistentList.json()
+    if (!isRecord(inconsistentBody) || !Array.isArray(inconsistentBody.connections)) throw new Error("Expected manageable connections.")
+    expect(inconsistentBody.connections.find((entry) => isRecord(entry) && entry.id === connection.id))
+      .toMatchObject({ oauthCallbackMode: "isolated-v1", oauthCallbackUrl: sharedCallback, oauthRegistrationSource: "pre-registered" })
+
+    // A transaction signed with the stale row mode still fails closed at the
+    // shared route, before and after the row is reconciled.
+    const staleState = createOAuthStateToken({
+      organizationId,
+      orgMembershipId: regularMemberId,
+      providerId: connection.id,
+      binding: externalMcpIdentityBinding(isolated),
+      version: 2,
+      callbackMode: "isolated-v1",
+      authorizationServerIssuer: origin,
+      authorizationResponseIssuerRequired: false,
+      secret: process.env.BETTER_AUTH_SECRET ?? "",
+    })
+    const staleSharedCallback = new URL(sharedCallback)
+    staleSharedCallback.searchParams.set("code", "stale-code")
+    staleSharedCallback.searchParams.set("state", staleState)
+    const staleRejected = await app.fetch(new Request(staleSharedCallback))
+    expect(staleRejected.status).toBe(400)
+    expect(await staleRejected.json()).toEqual({
+      error: "invalid_request",
+      message: "This authorization callback must use the shared callback selected when authorization started.",
+    })
+
+    // A granted member starts sign-in: the row adopts the shared mode its
+    // registered redirect already uses, and nothing else about the client changes.
+    const started = await principalRequest(regularUserId, `/v1/mcp-connections/${connection.id}/connect/start`)
+    expect(started.status).toBe(200)
+    const startedBody: unknown = await started.json()
+    if (!isRecord(startedBody) || typeof startedBody.authorizeUrl !== "string") throw new Error("Expected an OAuth authorize URL.")
+    const authorizeUrl = new URL(startedBody.authorizeUrl)
+    expect(authorizeUrl.searchParams.get("client_id")).toBe("kept-preregistered-client")
+    expect(authorizeUrl.searchParams.get("redirect_uri")).toBe(sharedCallback)
+    expectedCodeChallenge = authorizeUrl.searchParams.get("code_challenge") ?? ""
+    expect(expectedCodeChallenge.length).toBeGreaterThan(0)
+    const signedState = authorizeUrl.searchParams.get("state") ?? ""
+    expect(verifyOAuthStateToken({ token: signedState, secret: process.env.BETTER_AUTH_SECRET ?? "" })).toMatchObject({
+      providerId: connection.id,
+      orgMembershipId: regularMemberId,
+      callbackMode: "shared-v1",
+      authorizationServerIssuer: origin,
+      authorizationResponseIssuerRequired: false,
+    })
+    const [reconciled] = await db
+      .select()
+      .from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connection.id))
+      .limit(1)
+    expect(reconciled?.oauthConfiguration?.callbackMode).toBe("shared-v1")
+    expect(reconciled?.updatedAt.getTime()).toBeGreaterThan(isolated.updatedAt.getTime())
+    expect(await getOrgOAuthClient(organizationId, connection.id)).toMatchObject({
+      clientId: "kept-preregistered-client",
+      clientSecret: "kept-preregistered-secret",
+      extra: { enterpriseMcpRegistrationSource: "pre-registered", registeredRedirectUri: sharedCallback },
+    })
+
+    const staleScopedCallback = new URL(`/v1/mcp-connections/${connection.id}/connect/callback`, publicOrigin)
+    staleScopedCallback.searchParams.set("code", "stale-code")
+    staleScopedCallback.searchParams.set("state", staleState)
+    const staleScopedRejected = await app.fetch(new Request(staleScopedCallback))
+    expect(staleScopedRejected.status).toBe(400)
+    expect(await staleScopedRejected.json()).toMatchObject({ error: "invalid_request", message: expect.stringContaining("changed after authorization started") })
+    expect(tokenRedirectUris).toEqual([])
+
+    const callbackUrl = new URL(sharedCallback)
+    callbackUrl.searchParams.set("code", "isolated-row-authorization-code")
+    callbackUrl.searchParams.set("state", signedState)
+    const callbackResponse = await app.fetch(new Request(callbackUrl))
+    expect(callbackResponse.status).toBe(200)
+    expect(await callbackResponse.text()).toContain("You're connected")
+    expect(tokenRedirectUris).toEqual([sharedCallback])
+    const [account] = await db
+      .select({ accessToken: schema.ConnectedAccountTable.accessToken })
+      .from(schema.ConnectedAccountTable)
+      .where(drizzle.and(
+        drizzle.eq(schema.ConnectedAccountTable.providerId, connection.id),
+        drizzle.eq(schema.ConnectedAccountTable.orgMembershipId, regularMemberId),
+      ))
+      .limit(1)
+    expect(account?.accessToken).toBe("isolated-row-access-token")
+    const connectedList = await request("/v1/mcp-connections?scope=manageable")
+    const connectedBody: unknown = await connectedList.json()
+    if (!isRecord(connectedBody) || !Array.isArray(connectedBody.connections)) throw new Error("Expected manageable connections.")
+    expect(connectedBody.connections.find((entry) => isRecord(entry) && entry.id === connection.id))
+      .toMatchObject({ connected: true, oauthCallbackMode: "shared-v1", oauthCallbackUrl: sharedCallback })
+
+    // Control: a legacy row whose pre-registered client recorded its own
+    // per-connection callback keeps that mode.
+    const legacy = await createExternalMcpConnection({
+      organizationId,
+      name: "Legacy row with scoped registration",
+      url: "http://127.0.0.1:9/legacy-scoped-mcp",
+      authType: "oauth",
+      credentialMode: "shared",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    await db
+      .update(schema.ExternalMcpConnectionTable)
+      .set({ oauthConfiguration: { version: 1, authorizationServerIssuer: null, requestedScopes: [], callbackMode: "legacy-v1" } })
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, legacy.id))
+    const legacyCallback = new URL(`/v1/mcp-connections/${legacy.id}/connect/callback`, publicOrigin).toString()
+    await upsertOrgOAuthClient({
+      organizationId,
+      providerId: legacy.id,
+      clientId: "legacy-scoped-client",
+      clientSecret: null,
+      extra: { enterpriseMcpRegistrationSource: "pre-registered", registrationContractVersion: 2, registeredRedirectUri: legacyCallback },
+      createdByOrgMembershipId: memberId,
+    })
+    expect((await request(`/v1/mcp-connections/${legacy.id}/connect/start`)).status).toBe(502)
+    const [legacyRow] = await db
+      .select({ oauthConfiguration: schema.ExternalMcpConnectionTable.oauthConfiguration })
+      .from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, legacy.id))
+      .limit(1)
+    expect(legacyRow?.oauthConfiguration?.callbackMode).toBe("legacy-v1")
+  } finally {
+    server.stop(true)
+  }
+})
+
 test("connect start repairs a verified stale resource issuer alias before authorization", async () => {
   let authorizationOrigin = ""
   const registeredRedirects: string[][] = []

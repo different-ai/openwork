@@ -20,17 +20,9 @@ const captureDirectory = resolve(directory);
 const recording = recordingFromCapture(
   JSON.parse(await readFile(join(captureDirectory, "capture.json"), "utf8")),
 );
-const completed = recording.downloads.find(
-  (event) => event.state === "completed",
-);
-if (
-  !completed ||
-  completed.receivedBytes <= 0 ||
-  completed.receivedBytes !== completed.totalBytes ||
-  recording.downloads.some((event) => event.state === "canceled")
-) {
+if (recording.downloads.length > 0) {
   throw new Error(
-    "Onboarding needs a completed installer download before animating the app opening",
+    "Use an onboarding capture that completes setup without downloading an installer",
   );
 }
 const temporary = await mkdtemp(join(tmpdir(), "openwork-onboarding-render-"));

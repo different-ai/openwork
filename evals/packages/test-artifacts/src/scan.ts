@@ -69,7 +69,7 @@ function timestampFromName(name: string): string | null {
 async function readStoredTestRun(path: string, format: StoredTestRunFormat): Promise<TestRunRecord | null> {
   try {
     const info = await lstat(path);
-    if (!info.isFile()) return null;
+    if (!info.isFile() || info.size > 25 * 1024 * 1024) return null;
     const raw = await readFile(path, "utf8");
     const value: unknown = JSON.parse(raw);
     return format === "current" ? parseTestRunJson(value) : parseLegacyTestRunJson(value);

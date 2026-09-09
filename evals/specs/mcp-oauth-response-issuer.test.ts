@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
-import { mcpMock, needs, server, test } from "@openwork/testkit";
+import { queryDenDatabase } from "@openwork/env";
+import { eventually, mcpMock, needs, server, test } from "@openwork/testkit";
 import { bootServer, isRecord, stopChild } from "../worlds/openwork-server-cli.ts";
 
 for (const issuerSupport of [true, false, undefined]) {
@@ -105,10 +106,11 @@ for (const issuerSupport of [true, false, undefined]) {
     if (!isRecord(metadata)) throw new Error("Provider metadata missing");
     expect(metadata.authorization_response_iss_parameter_supported).toBe(issuerSupport);
     const headers = { authorization: `Bearer ${den.admin.token}` };
+    const credentialMode = issuerSupport === true ? "per_member" : "shared";
     for (const mode of issuerSupport === true ? ["mismatch", "valid"] : ["valid"]) {
       const created = await denFetch(den.admin, "/v1/mcp-connections", {
         method: "POST", headers,
-        body: JSON.stringify({ name: `Issuer ${mode}`, url: provider.mcpUrl, authType: "oauth", credentialMode: "shared", access: { orgWide: true } }),
+        body: JSON.stringify({ name: `Issuer ${mode}`, url: provider.mcpUrl, authType: "oauth", credentialMode, access: { orgWide: true } }),
       });
       expect(created.response.status, created.text).toBe(200);
       if (!isRecord(created.body) || typeof created.body.id !== "string") throw new Error("Connection id missing");
@@ -148,7 +150,140 @@ for (const issuerSupport of [true, false, undefined]) {
         expect(reused.body).toMatchObject({ status: "connected", authorizeUrl: null });
         expect((await provider.requests()).filter((entry) => entry.path === "/token").length).toBe(before + 1);
         evidence.recordAssertionEvidence("Den replay preserves usable credentials", "Replay rejected; a subsequent connection check reused saved credentials and remained connected without another token exchange.", true);
+
+        const invalidations = (log: string, message = "external_mcp_credential_invalidated") => log.split(/\r?\n/).flatMap((line) => {
+          const start = line.indexOf("{");
+          if (start < 0) return [];
+          try {
+            const value: unknown = JSON.parse(line.slice(start));
+            return isRecord(value) && value.message === message && value.connection_id === id ? [value] : [];
+          } catch { return []; }
+        });
+        expect(invalidations(await den.apiLog())).toHaveLength(0);
+
+        await provider.holdRefreshResponses();
+        const first = denFetch(den.admin, `/v1/mcp-connections/${id}/tools`, { headers });
+        await eventually(() => provider.pendingRefreshResponses(), { within: 8_000, intervalMs: 50, until: (responses) => responses.length === 1, label: "first refresh response held" });
+        const second = denFetch(den.admin, `/v1/mcp-connections/${id}/tools`, { headers });
+        const pending = await eventually(() => provider.pendingRefreshResponses(), { within: 8_000, intervalMs: 50, until: (responses) => responses.length === 2, label: "two concurrent refresh responses held" });
+        const success = pending.find((response) => response.status === 200);
+        const failure = pending.find((response) => response.status === 400);
+        expect(success).toBeDefined();
+        expect(failure).toBeDefined();
+        if (!success || !failure) throw new Error("Expected one successful rotation and one rejected refresh");
+        expect(failure.tokenId).toBe(success.tokenId);
+        await provider.releaseRefreshResponse(success.id);
+        const refreshed = await first;
+        expect(refreshed.response.status, refreshed.text).toBe(200);
+        await provider.releaseRefreshResponse(failure.id);
+        const recovered = await second;
+        expect(recovered.response.status, recovered.text).toBe(200);
+        const afterRace = await denFetch(den.admin, `/v1/mcp-connections/${id}/tools`, { headers });
+        expect(afterRace.response.status, afterRace.text).toBe(200);
+        const raceLogs = await den.apiLog();
+        expect(invalidations(raceLogs)).toHaveLength(0);
+        const preserved = invalidations(raceLogs, "external_mcp_credential_invalidation_skipped");
+        expect(preserved).toHaveLength(1);
+        expect(preserved[0]).toMatchObject({ mode: credentialMode, reason: "provider-rejected", skip_reason: "revision-changed", revision_changed: true, had_access: true, had_refresh: true });
+        expect(preserved[0].current_revision).not.toBe(preserved[0].loaded_revision);
+        expect(preserved[0].diagnostic).toMatchObject({ httpStatus: 400, providerErrorMessage: expect.stringContaining("invalid_grant") });
+        expect(JSON.stringify(preserved)).not.toMatch(/mock-access-|mock-refresh-|code_verifier|client_secret/);
+        evidence.recordAssertionEvidence(`Den preserves renewed ${credentialMode} credentials after a late rejection`, "Two requests used the same refresh grant. The successful rotation completed before the held invalid_grant was released. A subsequent authenticated tools request succeeded, zero deletion events were logged, and one skipped invalidation named different loaded/current revisions.", true);
+
+        await provider.resetOAuth();
+        const tokenRequestsBefore = (await provider.requests()).filter((entry) => entry.path === "/token").length;
+        const rejected = await denFetch(den.admin, `/v1/mcp-connections/${id}/tools`, { headers });
+        expect(rejected.response.ok).toBe(false);
+        expect((await provider.requests()).filter((entry) => entry.path === "/token").length).toBe(tokenRequestsBefore + 1);
+        const afterRejection = await denFetch(den.admin, "/v1/mcp-connections?scope=manageable", { headers });
+        if (!isRecord(afterRejection.body) || !Array.isArray(afterRejection.body.connections)) throw new Error("Connections missing after rejection");
+        expect(afterRejection.body.connections.find((entry) => isRecord(entry) && entry.id === id)).toMatchObject({ connected: false });
+        const logs = invalidations(await den.apiLog());
+        expect(logs).toHaveLength(1);
+        const [log] = logs;
+        expect(log).toMatchObject({ reason: "provider-rejected", mode: credentialMode, had_access: true, had_refresh: true, revision_changed: false });
+        expect(log.loaded_revision).toEqual(expect.any(String));
+        expect(log.current_revision).toBe(log.loaded_revision);
+        expect(log.org_membership_id).toEqual(credentialMode === "per_member" ? expect.any(String) : null);
+        expect(log.organization_id).toEqual(expect.any(String));
+        expect(log.diagnostic).toMatchObject({ httpStatus: 400, phase: "CONTINUITY_REFRESH", providerErrorMessage: expect.stringContaining("invalid_grant"), referenceId: expect.any(String) });
+        expect(JSON.stringify(log)).not.toMatch(/mock-access-|mock-refresh-|code_verifier|client_secret/);
+        evidence.recordAssertionEvidence(`Den logs committed ${credentialMode} SDK credential invalidation`, "One rejected refresh cleared the connection and produced exactly one structured log with provider error, member scope, and matching loaded/current revisions. Healthy reuse produced no invalidation log; token values and OAuth secrets were absent.", true);
       }
     }
   });
 }
+
+// Rows isolated in July kept their admin-registered client, so the provider
+// still receives that client's shared redirect while Den signed a per-connection
+// mode the shared callback route rejects. This journey seeds that stored state
+// through the database (no supported surface produces it today) and signs in.
+test("Den member sign-in recovers an isolated connection whose pre-registered client uses the shared callback", { timeout: 300_000 }, async ({ place, evidence }) => {
+  needs({ commands: ["bun"] });
+  await using den = await server({
+    place, web: false,
+    mocks: { connector: mcpMock({ authorizationResponseIssuerSupported: false }) },
+    org: { name: `OAuth Callback Mode ${Date.now()}`, members: { teammate: {} } },
+  });
+  if (!den.database) throw new Error("Seeding the historical callback mode requires the isolated local testkit database");
+  const provider = den.mocks.connector;
+  const adminHeaders = { authorization: `Bearer ${den.admin.token}` };
+  const memberHeaders = { authorization: `Bearer ${den.members.teammate.token}` };
+  const tokenRequests = async () => (await provider.requests()).filter((entry) => entry.path === "/token").length;
+
+  const created = await denFetch(den.admin, "/v1/mcp-connections", {
+    method: "POST", headers: adminHeaders,
+    body: JSON.stringify({
+      name: "Registered shared callback", url: provider.mcpUrl, authType: "oauth", credentialMode: "per_member",
+      oauthClient: { clientId: "mock-preregistered-client", clientSecret: "mock-preregistered-secret", tokenEndpointAuthMethod: "client_secret_post" },
+      access: { orgWide: true },
+    }),
+  });
+  expect(created.response.status, created.text).toBe(200);
+  if (!isRecord(created.body) || typeof created.body.id !== "string" || typeof created.body.oauthCallbackUrl !== "string") throw new Error("Connection id or callback URL missing");
+  const id = created.body.id;
+  const sharedCallback = created.body.oauthCallbackUrl;
+  expect(new URL(sharedCallback).pathname).toBe("/v1/mcp-connections/oauth/callback");
+  expect(created.body).toMatchObject({ oauthCallbackMode: "shared-v1", oauthRegistrationSource: "pre-registered", oauthClientId: "mock-preregistered-client" });
+  await queryDenDatabase(den.database.url, "UPDATE external_mcp_connection SET oauth_configuration = JSON_SET(oauth_configuration, '$.callbackMode', 'isolated-v1') WHERE id = ?", [id]);
+
+  const detail = async () => {
+    const listed = await denFetch(den.admin, "/v1/mcp-connections?scope=manageable", { headers: adminHeaders });
+    expect(listed.response.status, listed.text).toBe(200);
+    if (!isRecord(listed.body) || !Array.isArray(listed.body.connections)) throw new Error("Connections missing");
+    const connection = listed.body.connections.find((entry) => isRecord(entry) && entry.id === id);
+    if (!isRecord(connection)) throw new Error("Seeded connection missing from the manageable list");
+    return connection;
+  };
+  expect(await detail()).toMatchObject({ oauthCallbackMode: "isolated-v1", oauthCallbackUrl: sharedCallback, connected: false });
+  evidence.recordAssertionEvidence("Stored callback mode disagrees with the registered redirect", "Admin detail reported an isolated-v1 callback mode while the effective callback URL was the shared route.", true);
+
+  const started = await denFetch(den.members.teammate, `/v1/mcp-connections/${id}/connect/start`, { headers: memberHeaders });
+  expect(started.response.status, started.text).toBe(200);
+  if (!isRecord(started.body) || typeof started.body.authorizeUrl !== "string") throw new Error("Authorization URL missing");
+  const authorize = new URL(started.body.authorizeUrl);
+  expect(authorize.searchParams.get("client_id")).toBe("mock-preregistered-client");
+  expect(authorize.searchParams.get("redirect_uri")).toBe(sharedCallback);
+  expect(authorize.searchParams.get("code_challenge_method")).toBe("S256");
+  expect(await detail()).toMatchObject({ oauthCallbackMode: "shared-v1", oauthCallbackUrl: sharedCallback, oauthClientId: "mock-preregistered-client", oauthRegistrationSource: "pre-registered", connected: false });
+  evidence.recordAssertionEvidence("Member sign-in records the shared callback mode without changing the registration", "connect/start sent the registered shared redirect with the same pre-registered client id; the stored mode now reads shared-v1 and nothing is connected yet.", true);
+
+  const redirect = await fetch(authorize, { redirect: "manual" });
+  expect(redirect.status).toBe(302);
+  const callback = new URL(redirect.headers.get("location")!);
+  expect(`${callback.origin}${callback.pathname}`).toBe(sharedCallback);
+  const before = await tokenRequests();
+  const completed = await fetch(callback, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+  const html = await completed.text();
+  expect(completed.status, html).toBe(200);
+  expect(html).toContain("connected");
+  expect(await tokenRequests()).toBe(before + 1);
+  expect(await detail()).toMatchObject({ connected: true, oauthCallbackMode: "shared-v1" });
+  const tools = await denFetch(den.members.teammate, `/v1/mcp-connections/${id}/tools`, { headers: memberHeaders });
+  expect(tools.response.status, tools.text).toBe(200);
+  expect(tools.text).toContain("\"tools\"");
+  const replay = await fetch(callback, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+  expect(replay.status).toBe(400);
+  expect(await tokenRequests()).toBe(before + 1);
+  evidence.recordAssertionEvidence("Shared callback completes sign-in and authenticated discovery after recovery", "The provider redirected to the shared route; the callback returned HTTP 200 with exactly one token exchange, the member listed tools with the new credential, and replaying the callback was rejected without another exchange.", true);
+});

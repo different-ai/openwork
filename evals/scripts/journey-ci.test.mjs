@@ -45,6 +45,12 @@ test('changed additional journey joins critical selection; manual filters work f
   const handoff = selectJourneys(entries, { only: 'cross-server-handoff-atomic-commit' });
   assert.equal(handoff.length, 1);
   assert.equal(handoff[0].placement, 'local');
+  const instantSend = selectJourneys(entries, { only: 'workspace-new-task-hit-target' });
+  assert.equal(instantSend.length, 1);
+  assert.equal(instantSend[0].name, 'Keep new tasks and sends instantly responsive');
+  assert.equal(instantSend[0].placement, 'local');
+  assert.equal(instantSend[0].model, 'mock');
+  assert.equal(instantSend[0].critical, false);
   assert.equal(selectJourneys(entries, { only: 'does-not-exist' }).length, 0);
 });
 

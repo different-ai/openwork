@@ -307,13 +307,13 @@ test("capability search results include structured output alongside text compati
   const quiet = agentModule.capabilitySearchToolResult(blocked)
   expect(quiet.structuredContent.matches).toEqual(blocked)
   expect(quiet.structuredContent.connectionAction).toBeUndefined()
-  expect(quiet._meta).toBeUndefined()
+  expect(quiet).not.toHaveProperty("_meta")
   const actionable = agentModule.capabilitySearchToolResult(blocked, undefined, null, true)
   expect(actionable.structuredContent.matches).toEqual(blocked)
   expect(actionable.structuredContent.connectionAction?.connectionId).toBe("emc_notes")
-  expect(actionable._meta?.["openwork/mcpApp"].arguments).toEqual({ connectionId: "emc_notes" })
+  expect(actionable).not.toHaveProperty("_meta")
   expect(agentModule.SEARCH_CAPABILITIES_OUTPUT_SCHEMA.safeParse(actionable.structuredContent).success).toBe(true)
-  expect(result._meta).toBeUndefined()
+  expect(result).not.toHaveProperty("_meta")
 })
 
 test("capability search preserves the bounded-fanout coverage warning", () => {
@@ -381,6 +381,13 @@ test("external capability failures preserve the slim agent-facing MCP error enve
   expect("actionOwner" in payload).toBe(false)
   expect("operatorAction" in payload).toBe(false)
   expect("diagnostic" in payload.connectionStatus).toBe(false)
+  expect(result.structuredContent).toMatchObject({
+    schemaVersion: "1",
+    connectionId: "emc_test",
+    state: "reauth_required",
+    action: { type: "reconnect" },
+  })
+  expect(result).not.toHaveProperty("_meta")
 })
 
 test("invalid capability arguments preserve corrective retry instructions", () => {

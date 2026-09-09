@@ -299,7 +299,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const onboardingRoute = getMarketplaceOnboardingRoute();
   const isOnboarding = pathname === onboardingRoute || pathname.startsWith(`${onboardingRoute}/`);
-  const { user, signOut, updateUserProfile, runtimeConfig, runtimeConfigLoaded } = useDenFlow();
+  const { user, signOut, updateUserProfile, runtimeConfig, runtimeConfigLoaded, setupPending, setupOrganizationId } = useDenFlow();
   const {
     activeOrg,
     orgDirectory,
@@ -793,7 +793,14 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto bg-[#fafafa]">{children}</main>
+        <main className="flex-1 overflow-y-auto bg-[#fafafa]">
+          {setupPending && setupOrganizationId === activeOrg?.id ? (
+            <div className="border-b border-gray-100 px-4 py-3 text-sm md:px-6">
+              <Link href={onboardingRoute} className="font-medium text-gray-900 underline underline-offset-4">Back to setup</Link>
+            </div>
+          ) : null}
+          {children}
+        </main>
       </div>
 
       <DenCommandPalette

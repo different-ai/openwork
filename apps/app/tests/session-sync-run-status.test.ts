@@ -15,8 +15,10 @@ import {
   __setWorkspaceSessionSyncStatusFetcherForTest,
   __setWorkspaceSessionSyncSubscriptionFactoryForTest,
   ensureWorkspaceSessionSync,
+  getWorkspaceSessionSyncStreamPhase,
   markSessionSnapshotFetchStart,
   reconcileFailureDegradedThreshold,
+  revalidateWorkspaceSessionSync,
   seedSessionState,
   snapshotKey,
   statusKey,
@@ -387,7 +389,13 @@ describe("session run status ordering", () => {
     cleanup();
   });
 
-  test("does not resurrect a finished run from a stale busy snapshot", () => {
+  test("does not resurrect a finished run from a stale busy snapshot", async () => {
+    jest.useFakeTimers();
+    let statusFetches = 0;
+    __setWorkspaceSessionSyncStatusFetcherForTest(async () => {
+      statusFetches += 1;
+      return {};
+    });
     const { input, cleanup, releaseSession } = createTestSync();
     const snapshot = createSnapshot({ type: "busy" });
     markSessionSnapshotFetchStart(snapshot, 100);
@@ -403,6 +411,10 @@ describe("session run status ordering", () => {
 
     expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.status).toBe("idle");
     expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "idle" });
+
+    jest.advanceTimersByTime(1_000);
+    await flushMicrotasks();
+    expect(statusFetches).toBe(0);
 
     releaseSession();
     cleanup();
@@ -633,6 +645,65 @@ describe("active session status reconciliation", () => {
     cleanup();
   });
 
+  test("validates a busy status seeded only from the durable snapshot", async () => {
+    jest.useFakeTimers();
+    setSystemTime(100);
+    let statusFetches = 0;
+    __setWorkspaceSessionSyncStatusFetcherForTest(async () => {
+      statusFetches += 1;
+      return {};
+    });
+    const { cleanup, releaseSession } = createTestSync();
+    const queryClient = getReactQueryClient();
+
+    // Neither a busy nor a terminal stream edge arrives for this snapshot.
+    const snapshot = createSnapshot({ type: "busy" });
+    markSessionSnapshotFetchStart(snapshot, 100);
+    seedSessionState(workspaceId, snapshot);
+    seedSessionState(workspaceId, snapshot);
+
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("thinking");
+    expect(queryClient.getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "busy" });
+
+    setSystemTime(350);
+    jest.advanceTimersByTime(250);
+    await flushMicrotasks();
+
+    expect(statusFetches).toBe(1);
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("idle");
+    expect(queryClient.getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "idle" });
+
+    jest.advanceTimersByTime(1_000);
+    await flushMicrotasks();
+    expect(statusFetches).toBe(1);
+
+    releaseSession();
+    cleanup();
+  });
+
+  test("does not start validation for an idle snapshot", async () => {
+    jest.useFakeTimers();
+    setSystemTime(100);
+    let statusFetches = 0;
+    __setWorkspaceSessionSyncStatusFetcherForTest(async () => {
+      statusFetches += 1;
+      return {};
+    });
+    const { cleanup, releaseSession } = createTestSync();
+
+    const snapshot = createSnapshot({ type: "idle" });
+    markSessionSnapshotFetchStart(snapshot, 100);
+    seedSessionState(workspaceId, snapshot);
+    jest.advanceTimersByTime(1_000);
+    await flushMicrotasks();
+
+    expect(statusFetches).toBe(0);
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("idle");
+
+    releaseSession();
+    cleanup();
+  });
+
   test("keeps genuine tool, retry, waiting, and compaction work active until status is authoritatively idle", async () => {
     jest.useFakeTimers();
     setSystemTime(100);
@@ -845,6 +916,103 @@ describe("run status reconcile liveness health", () => {
     expect(useWorkspaceSyncStreamStore.getState().reconcileHealthByKey[workspaceSyncStreamKey(input)]).toBeUndefined();
   });
 
+  test("reconnects a parked stream as soon as validation recovers", async () => {
+    jest.useFakeTimers();
+    setSystemTime(100);
+    let subscribeBlocked = false;
+    __setWorkspaceSessionSyncSubscriptionFactoryForTest(async (baseUrl, token, signal) => {
+      if (subscribeBlocked) throw Object.assign(new Error("workspace not registered yet"), { status: 404 });
+      return createSubscription(baseUrl, token, signal);
+    });
+    let statusUnreachable = false;
+    __setWorkspaceSessionSyncStatusFetcherForTest(async () => {
+      if (statusUnreachable) throw new Error("status unreachable");
+      return { [sessionId]: { type: "busy" } };
+    });
+    const input = {
+      workspaceId,
+      baseUrl: "https://run-status-health-parked.example/opencode",
+      openworkToken: "token",
+    };
+    syncInputs.push(input);
+    ensureWorkspaceSessionSync(input);
+    const releaseSession = trackWorkspaceSessionSync(input, sessionId);
+    await flushMicrotasks();
+
+    expect(subscriptions).toHaveLength(1);
+    expect(getWorkspaceSessionSyncStreamPhase(input)).toBe("live");
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runActive).toBe(true);
+
+    // A transient 404 parks the disconnected stream in slow auth backoff.
+    statusUnreachable = true;
+    subscribeBlocked = true;
+    subscriptions[0]?.end();
+    await flushMicrotasks();
+    for (let tick = 0; tick < 4; tick += 1) {
+      jest.advanceTimersByTime(250);
+      await flushMicrotasks();
+    }
+
+    expect(subscriptions).toHaveLength(1);
+    expect(getWorkspaceSessionSyncStreamPhase(input)).toBe("auth-blocked");
+    const degraded = useWorkspaceSyncStreamStore.getState().reconcileHealthByKey[workspaceSyncStreamKey(input)];
+    expect(degraded?.consecutiveFailures).toBeGreaterThanOrEqual(reconcileFailureDegradedThreshold);
+
+    statusUnreachable = false;
+    subscribeBlocked = false;
+    jest.advanceTimersByTime(250);
+    await flushMicrotasks();
+
+    expect(subscriptions).toHaveLength(2);
+    expect(getWorkspaceSessionSyncStreamPhase(input)).toBe("live");
+    const recovered = useWorkspaceSyncStreamStore.getState().reconcileHealthByKey[workspaceSyncStreamKey(input)];
+    expect(recovered?.consecutiveFailures).toBe(0);
+
+    releaseSession();
+  });
+
+  test("explicit revalidation reads only the requested workspace and leaves a healthy stream connected", async () => {
+    __setWorkspaceSessionSyncSubscriptionFactoryForTest(createSubscription);
+    const fetchedUrls: string[] = [];
+    __setWorkspaceSessionSyncStatusFetcherForTest(async (baseUrl) => {
+      fetchedUrls.push(baseUrl);
+      return {};
+    });
+    const input = createSyncInput();
+    const other = { ...input, workspaceId: "other-workspace", baseUrl: "https://other.example/opencode" };
+    syncInputs.push(other);
+    ensureWorkspaceSessionSync(input);
+    ensureWorkspaceSessionSync(other);
+    await flushMicrotasks();
+    fetchedUrls.length = 0;
+
+    await revalidateWorkspaceSessionSync({ workspaceId: input.workspaceId, baseUrl: input.baseUrl });
+
+    expect(fetchedUrls).toEqual([input.baseUrl]);
+    expect(subscriptions).toHaveLength(2);
+    expect(subscriptions.every((subscription) => !subscription.signal.aborted)).toBe(true);
+    await revalidateWorkspaceSessionSync({ workspaceId: "missing", baseUrl: input.baseUrl });
+    expect(fetchedUrls).toEqual([input.baseUrl]);
+  });
+
+  test("disposal cancels explicit revalidation without resurrecting run state", async () => {
+    const { input } = createTestSync();
+    let observedSignal: AbortSignal | undefined;
+    let resolveStatuses: (statuses: Record<string, SessionStatus>) => void = () => {};
+    __setWorkspaceSessionSyncStatusFetcherForTest((_baseUrl, _token, signal) => {
+      observedSignal = signal;
+      return new Promise((resolve) => { resolveStatuses = resolve; });
+    });
+    const pending = revalidateWorkspaceSessionSync(input);
+    __disposeWorkspaceSessionSyncForTest(input);
+    expect(observedSignal?.aborted).toBe(true);
+    resolveStatuses({ [sessionId]: { type: "busy" } });
+    await pending;
+
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]).toBeUndefined();
+    expect(useWorkspaceSyncStreamStore.getState().reconcileHealthByKey[workspaceSyncStreamKey(input)]).toBeUndefined();
+  });
+
   test("revalidates parked run state immediately when the network returns", async () => {
     __setWorkspaceSessionSyncSubscriptionFactoryForTest(createSubscription);
     let failing = true;
@@ -883,6 +1051,8 @@ describe("run status reconcile liveness health", () => {
     expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "idle" });
     const health = useWorkspaceSyncStreamStore.getState().reconcileHealthByKey[workspaceSyncStreamKey(input)];
     expect(health?.consecutiveFailures ?? 0).toBe(0);
+    expect(subscriptions).toHaveLength(1);
+    expect(subscriptions[0]?.signal.aborted).toBe(false);
 
     releaseSession();
   });

@@ -24,6 +24,19 @@ export function externalMcpLegacyCallbackUrl(connectionId: string): string {
   return publicApiUrl(`/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/callback`)
 }
 
+/**
+ * Whether a recorded redirect URI lands on the deployment-wide callback route,
+ * on any public host or base path Den has emitted (including the hosted web
+ * proxy, which forwards to the same route).
+ */
+export function isExternalMcpSharedCallbackRedirectUri(redirectUri: string): boolean {
+  try {
+    return new URL(redirectUri).pathname.endsWith("/v1/mcp-connections/oauth/callback")
+  } catch {
+    return false
+  }
+}
+
 function hostedWebProxyUrl(pathname: string): string {
   const url = new URL(`/api/den${pathname}`, env.betterAuthUrl)
   return url.toString()

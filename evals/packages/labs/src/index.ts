@@ -9,3 +9,4 @@ export * from "./not-implemented.ts";
 export * from "./release-feed.ts";
 export * from "./mock-planetscale.ts";
 export * from "./mock-atlassian.ts";
+export * from "./mock-inference.ts";

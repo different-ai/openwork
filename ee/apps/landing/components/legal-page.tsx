@@ -30,7 +30,6 @@ export async function LegalPage({ file }: LegalPageProps) {
           <SiteNav
             stars={github.stars}
             callUrl={callUrl}
-            downloadHref={github.downloads.macos}
           />
         </div>
 

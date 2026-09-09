@@ -1971,6 +1971,7 @@ export function createRuntimeManager({
       opencodeBaseUrl: options.opencodeBaseUrl ?? undefined,
       opencodeDirectory: activeWorkspace || undefined,
       manageOpencode: options.manageOpencode === true,
+      resumeInterruptedTasks: true,
       opencodeBin: managedOpencode?.path ?? undefined,
       opencodeCwd: managedOpencodeWorkdir(),
       localManagedMcpVaultKey,

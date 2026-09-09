@@ -176,7 +176,7 @@ stopTest("retry recovery and stopping a permission leave other requests and fres
 });
 
 const questionTest = spec.world(delegatedQuestionHandoff, { timeout: 600_000 });
-questionTest("a parent answers its real child question without settling an unrelated root question", { timeout: 1_200_000 }, async ({ world, user, probe, step }) => {
+questionTest("a parent answers and stops real child questions, then finishes fresh work without settling an unrelated root question", { timeout: 1_200_000 }, async ({ world, user, probe, step }) => {
   const v2 = world.engine === "v2";
   const mount = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/${v2 ? "opencode2/api" : "opencode"}`;
   const sessionPath = (id: string) => `/session/${encodeURIComponent(id)}`;
@@ -260,7 +260,7 @@ questionTest("a parent answers its real child question without settling an unrel
     return request;
   });
 
-  const child = await step("the parent displays only its delegated child's question", async () => {
+  const delegate = async () => {
     await open(world.root.sessionId, "Delegated question parent");
     await user.notSee({ text: world.unrelated.question });
     await send(world.root.prompt);
@@ -282,13 +282,15 @@ questionTest("a parent answers its real child question without settling an unrel
     expect(owner[v2 ? "location" : "directory"]).toEqual(root[v2 ? "location" : "directory"]);
     expect(other[v2 ? "location" : "directory"]).toEqual(root[v2 ? "location" : "directory"]);
     await user.see({ text: world.child.question }, { timeoutMs: 30_000 });
+    await user.see({ role: "button", label: /^Child checklist/ });
     await user.notSee({ text: world.unrelated.question });
     await user.notSee({ role: "button", label: /^Unrelated outline/ });
     expect(await probe.hash()).toContain(`/session/${world.root.sessionId}`);
     expect((await transcript(request.sessionID)).find((message) => message.id === request.messageID)?.tools)
       .toContainEqual(expect.objectContaining({ callID: request.callID, name: "question", status: "running" }));
     return request;
-  });
+  };
+  const child = await step("the parent displays only its delegated child's question", delegate);
 
   await step("reloading the parent restores the same unanswered requests", async () => {
     await user.reload();
@@ -333,7 +335,63 @@ questionTest("a parent answers its real child question without settling an unrel
     return { parent: parentFinished, child: childFinished };
   });
 
-  await step("the unrelated root remains answerable without changing the parent's result", async () => {
+  const stopped = await step("the parent waits on another foreground child while the unrelated question stays pending", delegate);
+  expect(stopped.sessionID).not.toBe(child.sessionID);
+  expect(stopped.id).not.toBe(child.id);
+  const parentBeforeStop = await transcript(world.root.sessionId);
+  const delegation = parentBeforeStop.flatMap((message) => message.tools)
+    .filter((part) => part.name === world.delegationTool && part.status === "running");
+  expect(delegation).toHaveLength(1);
+  const oldRequests = () => Promise.all([world.root.prompt, world.child.prompt]
+    .map((promptMarker) => world.mock.agentRequests({ promptMarker })));
+  const requestsBeforeStop = await oldRequests();
+
+  const recovered = await step("Stop immediately followed by fresh work interrupts the child and completes only the new turn once", async () => {
+    await user.click({ role: "button", label: "Stop" });
+    // No reload or cleanup polling between Stop and sending the next user turn.
+    await send(world.followup.prompt);
+    await user.see({ text: world.followup.reply }, { timeoutMs: 60_000 });
+    await user.notSee({ role: "button", label: /^Child checklist/ });
+    await user.notSee({ role: "button", label: "Stop" });
+    expect(await probe.hash()).toContain(`/session/${world.root.sessionId}`);
+    await probe.eventually(pending, {
+      within: 30_000, label: "interruption removes only the stopped child's question",
+      until: (items) => items.length === 1 && items[0]?.id === unrelated.id,
+    });
+    expect(await pending()).toEqual([unrelated]);
+    const interrupted = await probe.eventually(() => transcript(stopped.sessionID), {
+      within: 30_000, label: "the original child question tool is interrupted, not answered",
+      until: (messages) => messages.some((message) => message.id === stopped.messageID
+        && message.tools.some((part) => part.callID === stopped.callID && part.status === "error")),
+    });
+    expect(interrupted.flatMap((message) => message.tools).some((part) => part.status === "completed")).toBe(false);
+    expect(interrupted.map((message) => message.text).join("\n")).not.toContain(world.followup.reply);
+    const parent = await probe.eventually(() => transcript(world.root.sessionId), {
+      within: 30_000, label: "the fresh parent response completes after its old delegation is interrupted",
+      until: (messages) => messages.some((message) => message.completed && message.text === world.followup.reply)
+        && messages.some((message) => message.tools.some((part) => part.callID === delegation[0]?.callID && part.status === "error")),
+    });
+    const newReplies = parent.filter((message) => message.text
+      && !parentBeforeStop.some((previous) => previous.id === message.id));
+    expect(newReplies).toHaveLength(1);
+    expect(newReplies[0]).toMatchObject({ completed: true, text: world.followup.reply, tools: [] });
+    expect((await world.mock.agentRequests({ promptMarker: world.followup.prompt })).map((call) => call.kind)).toEqual(["final"]);
+    expect(await oldRequests()).toEqual(requestsBeforeStop);
+    expect((await world.mock.agentRequests({ promptMarker: world.unrelated.prompt })).some((call) => call.kind === "final")).toBe(false);
+    if (v2) {
+      await probe.eventually(() => read(sessionPath(stopped.sessionID)), {
+        within: 15_000, label: "the stopped child retains the native interrupted outcome",
+        until: (value) => record(value).outcome === "interrupted",
+      });
+      await probe.eventually(() => read(sessionPath(world.root.sessionId)), {
+        within: 15_000, label: "only the fresh parent turn succeeds",
+        until: (value) => record(value).outcome === "succeeded",
+      });
+    }
+    return { parent, interrupted };
+  });
+
+  await step("the unrelated root remains answerable without resuming the stopped child or duplicating the follow-up", async () => {
     await open(unrelated.sessionID, "Unrelated question root");
     await user.see({ text: world.unrelated.question });
     await user.notSee({ text: world.child.question });
@@ -341,8 +399,12 @@ questionTest("a parent answers its real child question without settling an unrel
     await complete(unrelated.sessionID, world.unrelated.prompt, "question", `"${world.unrelated.question}"="${world.unrelated.answer}"`, world.child.answer);
     await user.see({ text: /User has answered your questions:.*="Unrelated outline"/ });
     expect(await pending()).toEqual([]);
-    expect(await transcript(world.root.sessionId)).toEqual(finished.parent);
+    expect(await transcript(world.root.sessionId)).toEqual(recovered.parent);
     expect(await transcript(child.sessionID)).toEqual(finished.child);
+    expect(await transcript(stopped.sessionID)).toEqual(recovered.interrupted);
+    expect(await oldRequests()).toEqual(requestsBeforeStop);
+    expect((await world.mock.agentRequests({ promptMarker: world.followup.prompt })).map((call) => call.kind)).toEqual(["final"]);
+    if (v2) expect(record(await read(sessionPath(stopped.sessionID))).outcome).toBe("interrupted");
     await user.screenshot();
   });
 });

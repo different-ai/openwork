@@ -1,6 +1,6 @@
 import { Icon, Mark, mix } from "@openwork/presentation";
 
-/** Illustrated app opening; the recording proves the download, not desktop installation. */
+/** Standalone illustration, not evidence of desktop installation or launch. */
 export function EmptyChat({ f }: { f: number }) {
   const show = mix(f, 0, 32);
   return (

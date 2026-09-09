@@ -12,7 +12,9 @@
  * Redis on 127.0.0.1:6379 (pnpm dev:den:mysql).
  */
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import { basename, dirname, resolve } from "node:path";
+import { docShotReceiptSchema } from "@openwork/review";
 import { emulateFocus, freezeMotion, paintBackdrop, setViewport } from "@openwork/cdp";
 import { Ctx } from "./ctx.ts";
 import { captureUntil } from "./loop.ts";
@@ -45,6 +47,9 @@ if (unknown.length > 0) {
   process.exit(1);
 }
 const selected = requested.length > 0 ? shots.filter((shot) => requested.includes(shot.id)) : shots;
+const git = spawnSync("git", ["rev-parse", "HEAD"], { cwd: REPO_ROOT, encoding: "utf8" });
+if (git.status !== 0) throw new Error("DocShot requires a source commit.");
+const gitSha = git.stdout.trim();
 
 const ctx = new Ctx();
 const failures: string[] = [];
@@ -67,6 +72,10 @@ try {
       const outPath = resolve(REPO_ROOT, shot.out);
       await mkdir(dirname(outPath), { recursive: true });
       await writeFile(outPath, png);
+      await writeFile(`${outPath}.review.json`, JSON.stringify(docShotReceiptSchema.parse({
+        schemaVersion: 1, kind: "docshot", name: shot.id, gitSha,
+        createdAt: new Date().toISOString(), fileName: basename(outPath),
+      }), null, 2));
       console.log(`[docs-shots] wrote ${shot.out} (${png.byteLength} bytes)`);
     } catch (error) {
       failures.push(shot.id);

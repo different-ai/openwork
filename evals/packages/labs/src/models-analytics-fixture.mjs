@@ -73,6 +73,8 @@ async function serveWitness() {
     let holdStripe = false;
     let releaseStripe = null;
     let dpa = null;
+    const usageFixture = process.env.MODELS_USAGE_FIXTURE === "1"
+        ? await (await import("./paid-usage-fixture.mjs")).paidUsageFixture() : null;
     if (process.env.MODELS_DPA_FIXTURE === "1") {
         const url = new URL(process.env.DATABASE_URL);
         if (url.hostname !== "127.0.0.1" || !/^\/(openwork_eval_|openwork_den$)/.test(url.pathname)) throw new Error("DPA witness requires an isolated testkit database");
@@ -150,6 +152,13 @@ async function serveWitness() {
             }
             return;
         }
+        if (usageFixture && req.url?.startsWith("/fixture/usage/")) {
+            try {
+                res.setHeader("content-type", "application/json");
+                res.end(JSON.stringify(await usageFixture(req.url.slice("/fixture/usage/".length), text ? JSON.parse(text) : {})));
+            } catch (error) { res.writeHead(500).end(JSON.stringify({ error: error.message })); }
+            return;
+        }
         if (dpa && req.url?.startsWith("/stripe/")) {
             const authenticated = req.headers.authorization === "Bearer sk_test_models_dpa_fixture_not_real";
             const path = new URL(req.url, "http://fixture.test").pathname.slice("/stripe".length);
@@ -195,7 +204,7 @@ async function serveWitness() {
         const missing = prompt.includes("fixture:missing-usage");
         const byok = req.url === "/byok/chat/completions";
         const authenticated = req.headers.authorization === `Bearer ${byok ? "fixture-customer-owned-key" : fixtureUpstreamKey}`;
-        calls.push({ model: String(payload.model), authenticated, ...(dpa ? { route: byok ? "byok" : "managed" } : {}), kind: error ? "error" : missing ? "incomplete" : "success" });
+        calls.push({ model: String(payload.model), authenticated, ...(dpa ? { route: byok ? "byok" : "managed" } : {}), ...(usageFixture ? { trace: payload.trace } : {}), kind: error ? "error" : missing ? "incomplete" : "success" });
         if (dpa && !authenticated) { res.writeHead(401).end("{}"); return; }
         if (error) {
             res.writeHead(503, { "content-type": "application/json" });

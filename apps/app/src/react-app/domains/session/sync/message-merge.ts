@@ -12,7 +12,20 @@ function messageSignature(message: UIMessage) {
 }
 
 function mergeMessageParts(snapshotMessage: UIMessage, cachedMessage: UIMessage) {
+  const cachedTools = new Map(cachedMessage.parts.flatMap((part) =>
+    part.type === "dynamic-tool" ? [[part.toolCallId, part] as const] : []));
+  const snapshotToolIds = new Set(snapshotMessage.parts.flatMap((part) =>
+    part.type === "dynamic-tool" ? [part.toolCallId] : []));
   const parts = snapshotMessage.parts.map((part, index) => {
+    if (part.type === "dynamic-tool") {
+      const cached = cachedTools.get(part.toolCallId);
+      // A call cannot return from a terminal result to streaming input. Keep
+      // snapshot authority for terminal-to-terminal updates and other calls.
+      if (cached?.toolName === part.toolName
+        && (cached.state === "output-available" || cached.state === "output-error")
+        && (part.state === "input-streaming" || part.state === "input-available")) return cached;
+      return part;
+    }
     const cachedPart = cachedMessage.parts[index];
     if (!cachedPart) return part;
 
@@ -27,9 +40,9 @@ function mergeMessageParts(snapshotMessage: UIMessage, cachedMessage: UIMessage)
     return part;
   });
 
-  if (cachedMessage.parts.length > snapshotMessage.parts.length) {
-    parts.push(...cachedMessage.parts.slice(snapshotMessage.parts.length));
-  }
+  parts.push(...cachedMessage.parts.filter((part, index) => part.type === "dynamic-tool"
+    ? !snapshotToolIds.has(part.toolCallId)
+    : index >= snapshotMessage.parts.length));
 
   return parts;
 }

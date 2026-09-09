@@ -1,4 +1,4 @@
-import { browserScript } from "@openwork/cdp";
+import { browserScript, reattachSurface } from "@openwork/cdp";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -9,6 +9,12 @@ import type { MockAgentWorkload } from "@openwork/labs";
 import { chatContinuity } from "./chat-continuity.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
+
+declare global {
+  interface Window {
+    __openworkSubmissionFault?: { attempts: number; release: () => void };
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -271,6 +277,7 @@ export async function delegatedQuestionHandoff(seed: Seed) {
     answer: "Unrelated outline",
     alternative: "Unrelated checklist",
   };
+  const followup = { prompt: "Leave the delegated task stopped and prepare a fresh summary", reply: "Fresh summary finished after stopping the child." };
   const base = await splitPaneQuestions(seed, "delegated-question-handoff", [
     {
       promptMarker: rootPrompt, latestUserTurn: true,
@@ -292,6 +299,7 @@ export async function delegatedQuestionHandoff(seed: Seed) {
         ],
       }] } }],
     })),
+    { promptMarker: followup.prompt, latestUserTurn: true, finalReply: followup.reply, steps: [] },
   ], {
     permission: { question: "allow", task: "allow" },
     // Both engines deny questions for general by default; v2 migrates task to subagent.
@@ -299,7 +307,7 @@ export async function delegatedQuestionHandoff(seed: Seed) {
   });
   const root = await seedSessionRetry(seed, base.app, { title: "Delegated question parent" });
   const other = await seedSessionRetry(seed, base.app, { title: "Unrelated question root" });
-  return { ...base, engine, delegationTool, root: { ...root, prompt: rootPrompt }, child, unrelated: { ...other, ...unrelated } };
+  return { ...base, engine, delegationTool, followup, root: { ...root, prompt: rootPrompt }, child, unrelated: { ...other, ...unrelated } };
 }
 
 /** Real native permissions and a provider retry, without synthetic UI events. */
@@ -322,6 +330,77 @@ export async function permissionStopRecovery(seed: Seed) {
   const stoppedSession = await seedSessionRetry(seed, base.app, { title: "Stop permission task" });
   const otherSession = await seedSessionRetry(seed, base.app, { title: "Keep permission task" });
   return { ...base, engine, retry, followup, stopped: { ...stopped, ...stoppedSession }, other: { ...other, ...otherSession } };
+}
+
+/** Synthetic release/model responses, but real Electron quit, engine teardown, and relaunch. */
+export async function restartUpdateTaskWorld(seed: Seed) {
+  const engine = resolveEvalEngine();
+  const active = { prompt: "Prepare the restart continuity report", title: "Continue after update" };
+  const stopped = { prompt: "Prepare the cancelled continuity report", title: "Keep stopped after update" };
+  const completed = { prompt: "Prepare the completed continuity report", title: "Keep completed after update", reply: "The completed report is ready." };
+  const recovery = { marker: "Continue the interrupted task", reply: "The interrupted report continued after restart." };
+  const base = await splitPaneQuestions(seed, "restart-update-task", [
+    ...[active, stopped].map((task): MockAgentWorkload => ({
+      promptMarker: task.prompt, latestUserTurn: true, finalReply: "The original turn finished without restarting.",
+      steps: [{ tool: engine === "v2" ? "shell" : "bash", arguments: {
+        command: "sleep 120", description: "Wait for the report input", timeout: 180_000,
+      } }],
+    })),
+    { promptMarker: completed.prompt, latestUserTurn: true, finalReply: completed.reply, steps: [] },
+    { promptMarker: recovery.marker, latestUserTurn: true, finalReply: recovery.reply, steps: [] },
+  ], { permission: { bash: "allow" } });
+  const activeSession = await seedSessionRetry(seed, base.app, { title: active.title });
+  const stoppedSession = await seedSessionRetry(seed, base.app, { title: stopped.title });
+  const completedSession = await seedSessionRetry(seed, base.app, { title: completed.title });
+  const originalTimeOrigin = await evalIn(base.app, () => performance.timeOrigin);
+  await seed.evalIn(base.app, () => {
+    const currentVersion = "0.18.0";
+    window.__openworkReadDesktopVersionMetadataEval = () => ({
+      minAppVersion: "0.1.0", latestAppVersion: "9.9.9", publishedDesktopVersions: ["9.9.9"],
+    });
+    window.__openworkUpdaterEvalBridge = {
+      getChannel: async () => ({ channel: "stable", currentVersion }),
+      setChannel: async (channel) => ({ channel, currentVersion }),
+      check: async () => ({ available: true, channel: "stable", currentVersion, latestVersion: "9.9.9" }),
+      download: async () => ({ ok: true }),
+      // Do not replace a binary in a journey. Unlike the download-only fixture,
+      // confirmation goes through real main-process app.relaunch()/app.quit().
+      installAndRestart: async () => {
+        await window.__OPENWORK_ELECTRON__.shell.relaunch();
+        return { ok: true };
+      },
+      onDownloadProgress: () => () => {},
+    };
+  });
+  return {
+    ...base, engine, recovery,
+    active: { ...active, ...activeSession }, stopped: { ...stopped, ...stoppedSession }, completed: { ...completed, ...completedSession },
+    async reconnectAfterRestart() {
+      const deadline = Date.now() + 90_000;
+      while (Date.now() < deadline) {
+        try {
+          await reattachSurface(base.app, { timeoutMs: 3_000 });
+          const origin = await evalIn(base.app, () => performance.timeOrigin, { timeoutMs: 3_000 });
+          if (origin !== originalTimeOrigin) return { originalTimeOrigin, timeOrigin: origin };
+        } catch { /* The old renderer and CDP socket disappear during quit. */ }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      throw new Error("Update confirmation did not relaunch the Electron renderer");
+    },
+    async [Symbol.asyncDispose]() {
+      // The original seed owns the profile and processes; close the relaunched
+      // browser before its normal fixture cleanup removes that profile.
+      await base.app.client.send("Browser.close").catch(() => undefined);
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const alive = await fetch(`${base.app.handle.cdpUrl}/json/version`, { signal: AbortSignal.timeout(1_000) })
+          .then((response) => response.ok, () => false);
+        if (!alive) return;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      throw new Error("Relaunched Electron did not close before profile cleanup");
+    },
+  };
 }
 
 export async function newSplitPrimary(seed: Seed) {
@@ -537,6 +616,33 @@ export async function attachmentUpload(seed: Seed) {
       app,
       workspace,
       session,
+      async holdUploads() {
+        await seed.evalIn(app, () => {
+          const originalFetch = window.fetch;
+          let release = () => {};
+          const gate = new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("Attachment upload gate timed out")), 60_000);
+            release = () => { clearTimeout(timer); resolve(); };
+          });
+          const fault = {
+            attempts: 0,
+            release: () => { release(); window.fetch = originalFetch; },
+          };
+          window.__openworkSubmissionFault = fault;
+          window.fetch = async (input, init) => {
+            const url = input instanceof Request ? input.url : String(input);
+            const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+            if (method === "POST" && /\/inbox\?/.test(url) && url.includes("chat-attachments")) {
+              fault.attempts++;
+              await gate;
+            }
+            return originalFetch(input, init);
+          };
+        });
+      },
+      async releaseUploads() {
+        await seed.evalIn(app, () => window.__openworkSubmissionFault?.release());
+      },
       approvalTimeoutMs,
       uploadStatus: uploadResponse.status,
       uploadElapsedMs,
@@ -797,6 +903,35 @@ export async function streamedMarkdown(seed: Seed) {
   if (ready !== true) throw new Error(`Selected ${engine} engine was not ready for the streaming journey`);
   const session = await seedSessionRetry(seed, app);
   return { app, den, workspace, session,
+    async holdNextSubmission() {
+      await seed.evalIn(app, () => {
+        const originalFetch = window.fetch;
+        const fault = { attempts: 0, release: () => {} };
+        window.__openworkSubmissionFault = fault;
+        window.fetch = async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+          if (method === "POST" && /\/session\/[^/]+\/(prompt_async|prompt)(\?|$)/.test(url)) {
+            fault.attempts++;
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, 30_000);
+              fault.release = () => { clearTimeout(timer); resolve(); };
+            });
+            window.fetch = originalFetch;
+            return new Response(JSON.stringify({ name: "SubmissionUnavailable", message: "Submission unavailable" }), {
+              status: 503, headers: { "content-type": "application/json" },
+            });
+          }
+          return originalFetch(input, init);
+        };
+      });
+    },
+    async submissionAttempts() {
+      return seed.evalIn(app, () => window.__openworkSubmissionFault?.attempts ?? 0);
+    },
+    async rejectSubmission() {
+      await seed.evalIn(app, () => window.__openworkSubmissionFault?.release());
+    },
     async videoState(play = false) {
       return seed.evalIn(app, browserScript(async (play) => {
         const video = document.querySelector<HTMLVideoElement>('video[data-openwork-video-path="clip.mp4"]');
@@ -1527,7 +1662,7 @@ export async function taskActivity(seed: Seed) {
   const app = await seed.desktop({ name: "task-activity-shimmer" });
   const workspace = await seed.workspace(app, seed.tmpPath("task-activity-shimmer"));
   const session = await seedSessionRetry(seed, app);
-  await arrangeControl(seed, app, "eval.task_activity.seed");
+  await arrangeControl(seed, app, "eval.task_activity.seed", { withFollowup: true });
   return { app, workspace, session };
 }
 

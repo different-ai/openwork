@@ -28,6 +28,7 @@ import {
 } from "@modelcontextprotocol/sdk/shared/auth.js"
 import { z } from "zod"
 import { db } from "../db.js"
+import { appLogger } from "../observability/logger.js"
 import type { ExternalMcpMemberContext } from "./external-mcp-client.js"
 import {
   externalMcpIdentityBinding,
@@ -35,6 +36,11 @@ import {
 } from "./external-mcp-connections.js"
 import { externalMcpCompatibleCallbackUrl } from "./external-mcp-oauth-contract.js"
 import { normalizeConnectedAccountScopes, normalizeOAuthClientExtra } from "./oauth-credentials.js"
+import {
+  externalMcpDiagnosticForLog,
+  safeExternalMcpEndpointForLog,
+  type ExternalMcpDiagnosticTracker,
+} from "./external-mcp-diagnostics.js"
 
 const MAX_PENDING_AUTHORIZATIONS = 8
 
@@ -196,8 +202,13 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
   private connection: ExternalMcpConnectionRow
   private readonly identityBinding: string
   private readonly member?: ExternalMcpMemberContext
+  private loadedRevision: string | undefined
 
-  constructor(connection: ExternalMcpConnectionRow, member?: ExternalMcpMemberContext) {
+  constructor(
+    connection: ExternalMcpConnectionRow,
+    member?: ExternalMcpMemberContext,
+    private readonly diagnosticTracker?: ExternalMcpDiagnosticTracker,
+  ) {
     this.connection = connection
     this.identityBinding = externalMcpIdentityBinding(connection)
     this.member = member
@@ -591,9 +602,11 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
     load: async (context: EnterpriseMcpPersistenceContext) => {
       assertCommitActive(context)
       await this.refreshConnection()
+      this.loadedRevision = undefined
       if (this.isPerMember) {
         const account = await this.memberAccount()
         if (!account?.accessToken) return undefined
+        this.loadedRevision = `${account.id}:${account.updatedAt.getTime()}`
         return {
           tokens: {
             access_token: account.accessToken,
@@ -605,10 +618,11 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
               : {}),
           },
           expiresAt: account.expiresAt?.getTime(),
-          revision: `${account.id}:${account.updatedAt.getTime()}`,
+          revision: this.loadedRevision,
         }
       }
       if (!this.connection.accessToken) return undefined
+      this.loadedRevision = `${this.connection.id}:${this.connection.updatedAt.getTime()}`
       return {
         tokens: {
           access_token: this.connection.accessToken,
@@ -620,7 +634,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
             : {}),
         },
         expiresAt: this.connection.expiresAt?.getTime(),
-        revision: `${this.connection.id}:${this.connection.updatedAt.getTime()}`,
+        revision: this.loadedRevision,
       }
     },
 
@@ -784,7 +798,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
       context: EnterpriseMcpPersistenceContext
       reason: "expired" | "provider-rejected" | "post-authorization-validation-failed"
     }): Promise<void> => {
-      await db.transaction(async (tx) => {
+      const invalidated = await db.transaction(async (tx) => {
         const connections = await tx
           .select()
           .from(ExternalMcpConnectionTable)
@@ -798,6 +812,28 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
         if (!connection) return
         this.assertCurrentIdentity(connection)
         assertCommitActive(input.context)
+        const account = this.isPerMember && this.member
+          ? (await tx.select().from(ConnectedAccountTable).where(and(
+              eq(ConnectedAccountTable.organizationId, connection.organizationId),
+              eq(ConnectedAccountTable.orgMembershipId, this.member.orgMembershipId),
+              eq(ConnectedAccountTable.providerId, connection.id),
+            )).limit(1).for("update"))[0]
+          : undefined
+        const current = this.isPerMember ? account : connection
+        const currentRevision = current ? `${current.id}:${current.updatedAt.getTime()}` : null
+        const snapshot = {
+          loaded_revision: this.loadedRevision ?? null,
+          current_revision: currentRevision,
+          revision_changed: this.loadedRevision !== undefined && this.loadedRevision !== currentRevision,
+          had_access: Boolean(current?.accessToken),
+          had_refresh: Boolean(current?.refreshToken),
+        }
+        // A delayed rejection may belong to credentials that another operation
+        // has already replaced. Only clear the revision this operation read.
+        // Callback validation can also fail before reading any saved credential.
+        if ((snapshot.had_access || snapshot.had_refresh) && this.loadedRevision !== currentRevision) {
+          return { ...snapshot, skipped: true }
+        }
         if (this.isPerMember && this.member) {
           await tx
             .update(ConnectedAccountTable)
@@ -829,7 +865,34 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
             .where(eq(ExternalMcpConnectionTable.id, connection.id))
         }
         assertCommitActive(input.context)
+        return { ...snapshot, skipped: false }
       })
+      if (invalidated) {
+        // Log the committed decision, including requests initiated inside the
+        // SDK. Revision metadata is deliberately separate from secret values.
+        const tracker = this.diagnosticTracker
+        const { skipped, ...snapshot } = invalidated
+        try {
+          appLogger.warn(skipped ? "external_mcp_credential_invalidation_skipped" : "external_mcp_credential_invalidated", {
+            component: "external_mcp_oauth",
+            connection_id: this.connection.id,
+            organization_id: this.connection.organizationId,
+            org_membership_id: this.member?.orgMembershipId ?? null,
+            mode: this.connection.credentialMode,
+            reason: input.reason,
+            connection_endpoint: safeExternalMcpEndpointForLog(this.connection.url),
+            ...snapshot,
+            ...(skipped ? { skip_reason: this.loadedRevision === undefined ? "no-loaded-revision" : "revision-changed" } : {}),
+            ...(tracker ? externalMcpDiagnosticForLog(
+              tracker.error(new Error(skipped ? "Saved OAuth credential invalidation skipped." : "Saved OAuth credentials invalidated.")),
+              tracker.referenceId,
+              tracker.activePhase,
+            ) : {}),
+          })
+        } catch {
+          // Diagnostics must not change the committed credential outcome.
+        }
+      }
       await this.refreshConnection()
     },
   }

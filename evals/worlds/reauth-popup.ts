@@ -38,6 +38,19 @@ with open("/tmp/reauth-idp.log", "ab", buffering=0) as log:
 PY`);
   const orgResult = await seed.api(den.admin, "/v1/org");
   const organizationId = text(record(record(orgResult.body).organization).id);
+  const plugin = await seed.api(den.admin, "/v1/plugins", {
+    method: "POST", body: JSON.stringify({ name: "Shared editing", orgWide: true }),
+  });
+  if (!plugin.response.ok) throw new Error(`Plugin setup: ${plugin.response.status}`);
+  const pluginId = text(record(record(plugin.body).item).id);
+  const skill = await seed.api(den.admin, "/v1/config-objects", {
+    method: "POST", body: JSON.stringify({
+      type: "skill", sourceMode: "cloud", pluginIds: [pluginId],
+      input: { rawSourceText: "---\nname: shared-editing\ndescription: Synthetic shared instructions.\n---\n\nOriginal skill body." },
+    }),
+  });
+  if (!skill.response.ok) throw new Error(`Skill setup: ${skill.response.status}`);
+  const skillId = text(record(record(skill.body).item).id);
   const signIn = await seed.api(den.admin, "/api/auth/sign-in/email", { method: "POST", body: JSON.stringify({ email: den.admin.email, password: den.admin.password }) });
   if (!signIn.response.ok) throw new Error(`Fixture login: ${signIn.response.status}`);
   const sessionCookie = text(signIn.response.headers.getSetCookie().find((value) => value.includes("session_token=")));
@@ -64,7 +77,7 @@ PY`);
   const appliedCookie = await web.client.send("Network.setCookie", { name: cookie.slice(0, separator), value: cookie.slice(separator + 1), domain: `.${cookieDomain.replace(/^\./, "")}`, path: "/", url: den.ref.webUrl, httpOnly: true, secure: true });
   if (record(appliedCookie).success !== true) throw new Error("Could not apply the fixture session cookie");
   return {
-    den, web, originalName, testUrl, issuer, organizationId, otherEmail: `other@${domain}`,
+    den, web, originalName, testUrl, issuer, organizationId, pluginId, skillId, otherEmail: `other@${domain}`,
     async [Symbol.asyncDispose]() {
       await web.stop();
       await host.stop();
@@ -73,8 +86,21 @@ PY`);
       const result = await seed.api(den.admin, "/v1/sso/enable", { method: "POST", headers, body: "{}" });
       if (result.response.status !== 204) throw new Error(`SSO enable: ${result.response.status} ${result.text}`);
     },
-    async ageSession() {
-      await sql(`UPDATE session SET created_at=DATE_SUB(NOW(3), INTERVAL 20 MINUTE) WHERE user_id IN (SELECT id FROM user WHERE email=${sqlString(den.admin.email)});`);
+    async ageSession(minutes = 20) {
+      if (!Number.isSafeInteger(minutes) || minutes < 0) throw new Error("Invalid session age");
+      await sql(`UPDATE session SET created_at=DATE_SUB(NOW(3), INTERVAL ${minutes} MINUTE) WHERE user_id IN (SELECT id FROM user WHERE email=${sqlString(den.admin.email)});`);
+    },
+    async skillSnapshot() {
+      const detail = await seed.api(den.admin, `/v1/config-objects/${skillId}`);
+      const versions = await seed.api(den.admin, `/v1/config-objects/${skillId}/versions`);
+      const items = record(versions.body).items;
+      if (!detail.response.ok || !versions.response.ok || !Array.isArray(items)) throw new Error("Could not read stored skill");
+      return { source: text(record(record(record(detail.body).item).latestVersion).rawSourceText), versions: items.length };
+    },
+    async duplicateSkillSubmit() {
+      await evaluate(web.client, browserScript(() => {
+        document.querySelector("textarea")?.closest("form")?.requestSubmit();
+      }, []));
     },
     async storedName() {
       return (await sql(`SELECT name FROM organization WHERE id=${sqlString(organizationId)};`)).trim();

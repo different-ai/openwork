@@ -1,4 +1,4 @@
-import { browserScript } from "@openwork/cdp";
+import { browserScript, listTargets } from "@openwork/cdp";
 import { spawn } from "node:child_process";
 import { chmod, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -24,7 +24,6 @@ import { diagnoseEgressLabProduct } from "@openwork/behaviors";
 import { matchVerdictExpectations } from "@openwork/matchers";
 import {
   assignPluginToMarketplace,
-  captureOpenedUrls,
   completeDesktopHandoff,
   createDesktopHandoffGrant,
   createMarketplace,
@@ -84,44 +83,88 @@ export async function appSmokeWorld(seed: Seed) {
         const info = await bridge.invokeDesktop("openworkServerInfo");
         const health = await fetch(info.baseUrl + "/health", { signal: AbortSignal.timeout(5000) });
         return { bridge: true, protocol: location.protocol, health: health.status,
-          welcome: location.hash === "#/welcome" && [...document.querySelectorAll("button")]
-            .some(button => button.textContent.trim() === "Use Without Cloud" && !button.disabled),
+          emptySession: /^#\/workspace\/[^/]+\/session$/.test(location.hash)
+            && Boolean(document.querySelector('[contenteditable="true"][data-lexical-editor="true"]')),
+          signedOut: !localStorage.getItem("openwork.den.authToken") && !localStorage.getItem("openwork.den.activeOrgId"),
+          onboarding: /Welcome to OpenWork|Power your first task|How did you hear about OpenWork\?/.test(document.body.innerText),
           crash: /Something went wrong|Cannot find module|Maximum update depth exceeded/.test(document.body.innerText) };
       }, { awaitPromise: true });
     },
     async packagedToolIds() {
-      return evalIn(app, browserScript(async (value, inputValue) => {
-        await window.__OPENWORK_ELECTRON__.invokeDesktop("engineStart", value, { runtime: "direct" });
+      return evalIn(app, async () => {
+        const workspaces = await window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceBootstrap");
+        const workspace = workspaces.workspaces.find((entry) => entry.id === workspaces.selectedId);
+        if (workspaces.workspaces.length !== 1 || !workspace?.path?.endsWith("OpenWork Chat")) {
+          throw new Error("Packaged startup did not select its default chat workspace.");
+        }
         const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
         const headers = { Authorization: "Bearer " + info.ownerToken, "Content-Type": "application/json" };
-        const created = await fetch(info.baseUrl + "/workspaces/local", {
-          method: "POST", headers, signal: AbortSignal.timeout(15000),
-          body: JSON.stringify({ folderPath: inputValue }),
-        });
-        if (created.status !== 201) throw new Error("Workspace creation failed: " + created.status);
-        const workspace = await created.json();
-        const tools = await fetch(info.baseUrl + "/workspace/" + workspace.activeId + "/opencode/experimental/tool/ids", {
+        const tools = await fetch(info.baseUrl + "/workspace/" + workspace.id + "/opencode/experimental/tool/ids", {
           headers, signal: AbortSignal.timeout(30000),
         });
         if (!tools.ok) throw new Error("Engine tool discovery failed: " + tools.status);
         return tools.json();
-      }, [seed.tmpPath("packaged-plugin-smoke"), seed.tmpPath("packaged-plugin-smoke")]), { awaitPromise: true, timeoutMs: 60_000 });
+      }, { awaitPromise: true, timeoutMs: 60_000 });
     },
     async [Symbol.asyncDispose]() { await app[Symbol.asyncDispose](); },
   };
 }
 
 export async function bareFirstRunWorld(seed: Seed, { place }: { place: Place }) {
-  const capture = process.platform === "linux" && place.kind === "local" ? await captureOpenedUrls() : null;
-  const app = capture
-    ? await desktop({ name: "first-run", host: place.host(), env: { PATH: `${capture.binDir}:${process.env.PATH ?? ""}` } })
-    : await seed.desktop({ name: "first-run", signIn: false });
+  const app = await seed.desktop({ name: "first-run", signIn: false });
+  const url = new URL(await evalIn(app, () => location.href));
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("The non-desktop welcome journey requires the source app's HTTP surface.");
+  }
+  url.hash = "/welcome";
+  const web = await chrome({ name: "first-run-welcome", host: place.host(), startUrl: url.href, headless: true });
   return {
     app,
-    capture,
-    workspacePath: seed.tmpPath("first-run-workspace"),
-    async [Symbol.asyncDispose]() { await app[Symbol.asyncDispose](); },
+    web,
+    async openedUrls() { return (await listTargets(web.handle.cdpUrl)).map((target) => target.url); },
+    async [Symbol.asyncDispose]() { await web[Symbol.asyncDispose](); },
   };
+}
+
+export async function localFirstRunWorld(seed: Seed) {
+  const prompt = "Create a short welcome checklist for this OpenWork workspace. Use exactly three bullets and mention one thing I can do next.";
+  const reply = "Your workspace is ready. You can draft a document next.";
+  const den = await seed.den({
+    provision: false,
+    mocks: { starter: seed.mock({ agentWorkloads: [{ promptMarker: prompt, finalReply: reply, steps: [] }] }) },
+  });
+  const mock = den.mocks.starter;
+  // Only replace the provider transport. Do not seed a workspace, session,
+  // sign-in, onboarding preference, or selected model: the app must supply them.
+  const app = await seed.desktop({
+    name: "first-run-local",
+    signIn: false,
+    env: {
+      DAYTONA_SECRETS_ENV: "/tmp/openwork-first-run-no-secrets",
+      OPENWORK_DESKTOP_DISTRIBUTION: "public",
+      OPENWORK_EVAL_MODEL: "",
+      VITE_DISABLE_OPENWORK_MODELS: "0",
+      OPENCODE_CONFIG: "",
+      OPENCODE_CONFIG_CONTENT: JSON.stringify({
+        enabled_providers: ["opencode"],
+        small_model: "opencode/big-pickle",
+        provider: {
+          opencode: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: `${mock.url}/v1`, apiKey: "sk-eval-fixture" },
+            whitelist: ["big-pickle"],
+            models: {
+              "big-pickle": {
+                name: "Big Pickle",
+                provider: { npm: "@ai-sdk/openai-compatible", api: `${mock.url}/v1` },
+              },
+            },
+          },
+        },
+      }),
+    },
+  });
+  return { app, mock, prompt, reply };
 }
 
 export async function workspaceWorld(seed: Seed) {

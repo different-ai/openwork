@@ -22,7 +22,6 @@ export default async function TrustPage() {
   return (
     <LandingTrustOverview
       stars={github.stars}
-      downloadHref={github.downloads.macos}
       calUrl={cal}
     />
   );

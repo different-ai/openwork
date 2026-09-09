@@ -13,7 +13,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-test("attaching an image shows its chip instantly and sends with a visible uploading state", async ({ world, user, seed, probe, step }) => {
+for (const entryPoint of ["existing chat", "new task"]) {
+test(`attaching an image in ${entryPoint} retains the draft until the upload is ready`, async ({ world, user, seed, probe, step }) => {
   await step("manual approval exempts only chat-attachment inbox uploads", async () => {
     expect(world.uploadStatus).toBe(200);
     expect(world.uploadElapsedMs).toBeLessThan(world.approvalTimeoutMs);
@@ -21,9 +22,10 @@ test("attaching an image shows its chip instantly and sends with a visible uploa
     expect(world.writeElapsedMs).toBeGreaterThanOrEqual(world.approvalTimeoutMs - 100);
   });
 
+  if (entryPoint === "new task") await user.click({ role: "button", label: /^New task$/ });
   await user.type("composer", "Describe the attached image.");
   // TODO(primitive): attach an in-memory file through the composer's file chooser.
-  const attached = await seed.evalIn(world.app, browserScript(async (attachmentName) => {
+  const attached = await seed.evalIn(world.app, browserScript(async (attachmentName: string) => {
       const canvas = document.createElement("canvas");
       canvas.width = 2400;
       canvas.height = 2400;
@@ -88,15 +90,30 @@ test("attaching an image shows its chip instantly and sends with a visible uploa
     record();
     return true;
   });
+  await world.holdUploads();
   await user.click("Run task");
 
   // TODO(primitive): await a transient attachment-status witness.
-  expect(await probe.eventually(() => probe.eval(() => (globalThis.__attachmentUploadingSeen === true)), {
+  expect(await probe.eventually(() => probe.eval(() => (globalThis.__attachmentUploadingSeen === true && window.__openworkSubmissionFault?.attempts === 1)), {
     within: 30_000,
     intervalMs: 50,
     label: "attachment uploading state observed",
     until: (value) => value === true,
   })).toBe(true);
+  await step("the draft is not sent while its image is preparing", async () => {
+    await user.see("composer", { text: /Describe the attached image\./ });
+    expect((await probe.dom('[data-message-role="user"]')).elements).toHaveLength(0);
+    await user.click("composer");
+    await user.press("Enter");
+    await user.press("Meta+Enter");
+    await user.see("composer", { text: /Describe the attached image\./ });
+    expect((await probe.dom('[data-message-role="user"]')).elements).toHaveLength(0);
+    await user.notSee({ text: /1 queued/ });
+  });
+  await world.releaseUploads();
+  await user.see({ text: "attachment upload loading proof" });
+  await user.see("composer", { text: "" });
+  expect((await probe.dom('[data-message-role="user"]')).elements).toHaveLength(1);
   await user.notSee({ text: /1 queued/ });
   expect((await probe.hash()).includes("/session/ses_")).toBe(true);
   // TODO(primitive): inspect attachment cleanup and error-toast state after send.
@@ -112,3 +129,4 @@ test("attaching an image shows its chip instantly and sends with a visible uploa
   expect(await probe.eval(() => (document.querySelectorAll<HTMLButtonElement>('button[title="Open pasted-recording.mp4 in Artifacts"]').length))).toBe(1);
   await user.screenshot();
 });
+}
