@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowRight, CheckCircle2 } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { AUTH_TOKEN_STORAGE_KEY, getErrorMessage, getToken, requestJson } from "../_lib/den-flow";
 
 type SetupStatus = "loading" | "available" | "complete" | "unavailable";
@@ -24,6 +24,9 @@ export default function SetupPage() {
   const [setupCode, setSetupCode] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordMismatch, setPasswordMismatch] = useState(false);
+  const confirmationInput = useRef<HTMLInputElement>(null);
   const [grant, setGrant] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,8 +76,14 @@ export default function SetupPage() {
 
   async function submitAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setBusy(true);
     setError(null);
+    if (password !== confirmPassword) {
+      setPasswordMismatch(true);
+      confirmationInput.current?.focus();
+      return;
+    }
+    setPasswordMismatch(false);
+    setBusy(true);
     try {
       const { response, payload } = await requestJson("/api/auth/sign-up/email", {
         method: "POST",
@@ -200,9 +209,36 @@ export default function SetupPage() {
                 autoComplete="new-password"
                 className="den-input"
                 value={password}
-                onChange={(event) => setPassword(event.currentTarget.value)}
+                onChange={(event) => {
+                  setPassword(event.currentTarget.value);
+                  setPasswordMismatch(false);
+                }}
                 required
               />
+            </div>
+            <div className="grid gap-2">
+              <label className="den-label" htmlFor="setup-confirm-password">Confirm password</label>
+              <input
+                ref={confirmationInput}
+                id="setup-confirm-password"
+                name="confirmPassword"
+                type="password"
+                autoComplete="new-password"
+                className="den-input"
+                value={confirmPassword}
+                onChange={(event) => {
+                  setConfirmPassword(event.currentTarget.value);
+                  setPasswordMismatch(false);
+                }}
+                aria-invalid={passwordMismatch}
+                aria-describedby={passwordMismatch ? "setup-password-mismatch" : undefined}
+                required
+              />
+              {passwordMismatch ? (
+                <p id="setup-password-mismatch" className="m-0 text-sm font-medium text-rose-600" role="alert">
+                  Passwords do not match. Enter the same password in both fields.
+                </p>
+              ) : null}
             </div>
             {error ? <p className="m-0 text-sm font-medium text-rose-600" role="alert">{error}</p> : null}
             <button type="submit" className="den-button-primary" disabled={busy}>

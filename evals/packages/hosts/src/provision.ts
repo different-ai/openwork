@@ -50,6 +50,8 @@ export interface DenSandboxOptions {
   reuse?: string;
   repoRoot?: string;
   bootstrapAdminEmail?: string;
+  /** Disable demo accounts for first-account setup journeys. Defaults to true. */
+  seed?: boolean;
   /** Extra Den environment for a freshly provisioned sandbox; a reused Den is already running and cannot take it. */
   env?: Record<string, string>;
   log?: (line: string) => void;
@@ -500,12 +502,12 @@ export function encodeDenExtraEnv(env: Record<string, string>): string {
   return Buffer.from(lines.join("\n"), "utf8").toString("base64");
 }
 
-function runDenProvisionScript(ref: string, repoRoot: string, bootstrapAdminEmail: string | undefined, extraEnv: Record<string, string> | undefined, log: (line: string) => void, urlsFile: string): Promise<LocalProcessResult> {
+function runDenProvisionScript(ref: string, repoRoot: string, bootstrapAdminEmail: string | undefined, extraEnv: Record<string, string> | undefined, log: (line: string) => void, urlsFile: string, seed: boolean): Promise<LocalProcessResult> {
   return new Promise((resolve, reject) => {
     const env: NodeJS.ProcessEnv = { ...process.env, OPENWORK_DEN_URLS_FILE: urlsFile };
     if (bootstrapAdminEmail) env.DEN_BOOTSTRAP_ADMIN_EMAILS = bootstrapAdminEmail;
     if (extraEnv && Object.keys(extraEnv).length > 0) env.OPENWORK_DEN_EXTRA_ENV_B64 = encodeDenExtraEnv(extraEnv);
-    const child = spawn("bash", [".devcontainer/test-server-on-daytona.sh", ref, "--seed", "--name", serverSandboxName()], {
+    const child = spawn("bash", [".devcontainer/test-server-on-daytona.sh", ref, ...(seed ? ["--seed"] : []), "--name", serverSandboxName()], {
       cwd: repoRoot,
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -677,6 +679,7 @@ export async function provisionDenSandbox(options: DenSandboxOptions & Provision
         options.env,
         log,
         urlsFile,
+        options.seed !== false,
       ));
       if (result.code !== 0) {
         throw new Error(`Den provisioning script gate failed with exit ${result.code}. Output tail:\n${textTail(result.output)}`);
@@ -698,7 +701,9 @@ export async function provisionDenSandbox(options: DenSandboxOptions & Provision
     }
   }
 
-  await timedStep(log, "Den seeded-org proof", () => proveDenSeed(apiUrl, webUrl, sandbox, Boolean(reused)));
+  if (options.seed !== false) {
+    await timedStep(log, "Den seeded-org proof", () => proveDenSeed(apiUrl, webUrl, sandbox, Boolean(reused)));
+  }
   return { sandbox, apiUrl, webUrl, created: !reused };
 }
 
