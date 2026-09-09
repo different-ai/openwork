@@ -79,7 +79,7 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
   {
     presetId: "slack",
     displayName: "Slack",
-    description: "Channels, DMs, and search. Slack has no automatic app registration — paste your Slack app's OAuth client once; each person then connects their own account.",
+    description: "Channels, DMs, and search. Enable Slack Model Context Protocol (MCP) Server in your Slack app’s Agents settings, then add its OAuth client. Each person authorizes their own account; OAuth authorization alone does not make MCP ready.",
     url: "https://mcp.slack.com/mcp",
     authType: "oauth",
     requiresOAuthClient: true,

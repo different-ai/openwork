@@ -130,7 +130,7 @@ Use this table to pick scopes by capability:
 
 ### Troubleshooting Slack
 
-If members cannot connect even though the client ID and secret are correct, check that MCP is enabled for the Slack app: open it in [Slack API apps](https://api.slack.com/apps), go to the `Agents` tab, and turn on the `MCP` toggle.
+OAuth authorization and MCP readiness are separate: successful sign-in does not mean Slack can initialize its MCP server. If sign-in succeeds but tool initialization fails, ask the Slack app admin to open the app in [Slack API apps](https://api.slack.com/apps), go to `Agents`, and turn on `Slack Model Context Protocol (MCP) Server`, then retry loading tools in OpenWork. This is a prerequisite to check, not proof that every initialization failure is caused by the toggle. See [Slack’s setup guide](https://docs.slack.dev/ai/slack-mcp-server/developing/). Never share tokens or client secrets in feedback.
 
 If Slack says the redirect URL is invalid, add this Den instance's OAuth redirect URL to the Slack app's `OAuth & Permissions` redirect URLs. If Slack says a scope is invalid or unavailable, remove it from the Slack app and the connection's scopes, then retry; Slack workspace policies and plan settings can limit which scopes an app may request. If the workspace blocks app installation, a Slack admin must approve the app first.
 

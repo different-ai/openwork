@@ -59,6 +59,10 @@ test("chat suggests Slack setup and lets an admin browse every quick-add connect
   await webUser.see({ text: "OAuth app" }, { timeoutMs: 90_000 });
   await webUser.see({ text: "Client ID (optional for now)" });
   await webUser.see({ text: "Client secret (optional for now)" });
+  await webUser.see({ text: /In your Slack app’s Agents settings, turn on Slack Model Context Protocol/ });
+  await webUser.see({ text: /OAuth authorization alone does not make MCP ready/ });
+  await webUser.see({ text: /ask your Slack app admin to check this setting, then retry loading tools/ });
+  evidence.recordAssertionEvidence("Slack setup explains MCP readiness before authorization", "The OAuth form shows the Agents prerequisite and recovery guidance without authorizing an account.", true);
   await webUser.screenshot();
   const calls = await world.den.mocks.connector.agentRequests({ promptMarker: connectorCatalogPrompt });
   expect(calls.filter(call => call.kind === "tool")).toHaveLength(1);
