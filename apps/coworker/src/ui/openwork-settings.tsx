@@ -24,8 +24,9 @@ import { CoworkerMark, InlineLoader } from "@/ui/brand";
 import { Button, ErrorNote, StatusDot } from "@/ui/kit";
 import { LocalProviders } from "@/ui/local-providers";
 import { ModelsMembershipCard } from "@/ui/models-membership";
+import { FreshStartSettings } from "@/ui/fresh-start-settings";
 
-export type SettingsSection = "general" | "account" | "models" | "engine" | "all-hands";
+export type SettingsSection = "general" | "account" | "models" | "engine" | "all-hands" | "fresh-start";
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; detail: string }> = [
   { id: "all-hands", label: "All Hands", detail: "An optional team conversation and daily briefing" },
@@ -33,6 +34,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; detail: string }> = 
   { id: "account", label: "Account", detail: "OpenWork account and organization" },
   { id: "models", label: "AI models", detail: "What every coworker can use: your account, this Mac, and the free model" },
   { id: "engine", label: "AI & local setup", detail: "AI service, responsibilities on this Mac, and storage" },
+  { id: "fresh-start", label: "Fresh start", detail: "A tour, a tune-up, or a new beginning" },
 ];
 
 const EMPTY_CATALOG: EngineModelCatalog = { models: [], connectedProviderIds: [], cloud: null };
@@ -118,7 +120,11 @@ export function OpenWorkSettings({
   onRestartRuntime,
   onCoworkerChanged,
   onAllHandsChanged,
+  onReplayOnboarding,
+  onFactoryReset,
 }: {
+  onReplayOnboarding: () => void;
+  onFactoryReset: () => void;
   onAllHandsChanged: (settings: AllHandsSettings) => void;
   active?: boolean;
   runtime: RuntimeInfo;
@@ -250,7 +256,9 @@ export function OpenWorkSettings({
     : "No account is required for local coworkers.";
 
   return (
-    <div className="flex h-full min-h-0 flex-1 bg-ink" data-testid="openwork-settings">
+    <div className="flex h-full min-h-0 flex-1 bg-ink" data-testid="openwork-settings" onKeyDown={(event) => {
+      if (active && section === "fresh-start" && event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); onClose(); }
+    }}>
       <aside className="glass-rail flex h-full w-[252px] shrink-0 flex-col border-r border-line" data-testid="openwork-settings-sidebar">
         <div className="window-drag h-8 shrink-0" />
         <div className="window-no-drag px-3 pb-2">
@@ -305,6 +313,7 @@ export function OpenWorkSettings({
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto px-8 py-8">
           <div className="mx-auto w-full max-w-[760px] space-y-6">
+            {section === "fresh-start" ? <FreshStartSettings onReplay={onReplayOnboarding} onFactoryReset={onFactoryReset} /> : null}
             {section === "all-hands" ? <><AllHandsPreferences key={active ? "open" : "closed"} onChanged={onAllHandsChanged} />{coworkers.length < 2 ? <p className="text-sm text-mist">Add a second coworker to gather your team in All Hands. Your preferences will be ready for them.</p> : null}</> : null}
             {section === "general" ? (
               <>

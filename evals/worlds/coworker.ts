@@ -7,9 +7,14 @@
  * source and the boundary between witness and product stays visible.
  */
 import type { GeneratedArtifactViewBuildInput } from "../../ee/apps/den-api/src/generated-artifact-view-builder.js";
-import { addInitScript, browserScript, clickAt, evaluateOnSurface, pressKey, waitForLocated, type Surface, type Target } from "@openwork/cdp";
+import { addInitScript, browserScript, clickAt, evaluate, evaluateOnSurface, pressKey, waitForLocated, type Surface, type Target } from "@openwork/cdp";
 import { coworker } from "@openwork/hosts";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -77,6 +82,107 @@ export async function isolatedAccountCoworker(name: string, denBaseUrl: string, 
     return { ...app, async [Symbol.asyncDispose]() {
       await app.stop();
       await rm(profileDir, { recursive: true, force: true });
+    } };
+  } catch (error) {
+    await rm(profileDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/** Destructive proof owns every storage path and refuses an implicit SDK install. */
+export async function isolatedFreshStartCoworker(modelUrl: string, previewOnly = false) {
+  const profileDir = await mkdtemp(join(await realpath(tmpdir()), "coworker-fresh-start-"));
+  const owned = join(profileDir, "owned");
+  const cleared = Object.fromEntries(Object.keys(process.env).filter((key) =>
+    /^(OPENWORK_|OPENCODE_|COWORKER_|ELECTRON_|CODEX_|CLAUDE_)/.test(key)
+    || /(_API_KEY|_ACCESS_TOKEN|_AUTH_TOKEN)$/.test(key)).map((key) => [key, ""]));
+  try {
+    await mkdir(owned, { recursive: true });
+    const sdk = process.env.OPENWORK_EVAL_COWORKER_SDK_DIRECTORY;
+    if (!previewOnly && !sdk) throw new Error("Native reset proof cannot launch without installing: provide OPENWORK_EVAL_COWORKER_SDK_DIRECTORY containing the already-cached engine SDK (node_modules/@opencode-ai/plugin). No app was started.");
+    // The supplementary design preview exercises the real app's unavailable-engine
+    // path. It cannot run a model or install the engine SDK and never attempts reset.
+    const binary = previewOnly ? join(profileDir, "unavailable-opencode") : process.env.OPENWORK_EVAL_COWORKER_OPENCODE_BINARY || "opencode";
+    const env = {
+      ...process.env, ...cleared, HOME: join(profileDir, "home"),
+      XDG_CONFIG_HOME: join(profileDir, "xdg-config"), XDG_DATA_HOME: join(profileDir, "xdg-data"),
+      XDG_CACHE_HOME: join(profileDir, "xdg-cache"), XDG_STATE_HOME: join(profileDir, "xdg-state"),
+      OPENCODE_DB: join(profileDir, "opencode.db"),
+    };
+    if (!previewOnly && sdk) {
+      const version = (await promisify(execFile)(binary, ["--version"], { env, timeout: 10_000 })).stdout.trim();
+      const manifest: unknown = JSON.parse(await readFile(join(sdk, "node_modules/@opencode-ai/plugin/package.json"), "utf8"));
+      if (!manifest || typeof manifest !== "object" || !("version" in manifest) || manifest.version !== version) throw new Error(`Cached SDK does not match engine ${version}; no install or app launch was attempted.`);
+      for (const directory of [join(profileDir, "xdg-config/opencode"), join(profileDir, "opencode-config")]) {
+        await mkdir(directory, { recursive: true });
+        await cp(join(sdk, "node_modules"), join(directory, "node_modules"), { recursive: true, dereference: true, mode: constants.COPYFILE_FICLONE });
+      }
+    }
+    await writeFile(join(profileDir, "credential-sentinel.json"), JSON.stringify({ key: "UNRELATED-FIXTURE-CREDENTIAL" }), { mode: 0o600 });
+    const repoRoot = new URL("../../", import.meta.url).pathname;
+    const sourceFiles = [
+      ...(await readdir(join(repoRoot, "apps/coworker/electron"))).filter((name) => name.endsWith(".mjs") && !name.endsWith(".test.mjs") && !name.endsWith(".fixture.mjs")).map((name) => `apps/coworker/electron/${name}`),
+      "apps/coworker/dist/index.html",
+      ...(await readdir(join(repoRoot, "apps/coworker/dist/assets"))).filter((name) => /\.(js|css)$/.test(name)).map((name) => `apps/coworker/dist/assets/${name}`),
+      "evals/worlds/coworker.ts", "evals/specs/open-coworker-local-first.e2e.test.ts",
+      "evals/packages/hosts/src/coworker.ts", "evals/packages/hosts/src/local.ts",
+    ];
+    const files = Object.fromEntries(await Promise.all(sourceFiles.sort().map(async (file) => [file, createHash("sha256").update(await readFile(join(repoRoot, file))).digest("hex")])));
+    const head = (await promisify(execFile)("git", ["rev-parse", "HEAD"], { cwd: repoRoot })).stdout.trim();
+    await writeFile(join(profileDir, "source-fingerprint.json"), JSON.stringify({ head, files }, null, 2), { mode: 0o600 });
+    const app = await coworker({ name: "fresh-start", profileDir, env: {
+      ...cleared,
+      OPENWORK_EVAL_ELECTRON_ENTRY: new URL("../../apps/coworker/electron/main.mjs", import.meta.url).pathname,
+      COWORKER_USER_DATA_DIR: join(owned, "electron-userdata"),
+      COWORKER_HOME_DIR: join(owned, "coworkers"),
+      COWORKER_SERVER_CONFIG: join(owned, "coworker-server.json"),
+      OPENWORK_RUNTIME_DB: join(owned, "coworker-runtime.sqlite"),
+      OPENWORK_ENV_STORE: join(owned, "coworker-env.json"),
+      OPENWORK_DATA_DIR: join(profileDir, "openwork-data"),
+      OPENWORK_SERVER_STATE_PATH: join(profileDir, "server-state.json"),
+      OPENWORK_SERVER_TOKEN_STORE_PATH: join(profileDir, "server-tokens.json"),
+      OPENWORK_SERVER_LOG_FILE: join(profileDir, "server.log"),
+      OPENWORK_OPENCODE_BIN: binary,
+      OPENWORK_DEV_MODE: "1", OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION: "1",
+      OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1",
+      COWORKER_DEN_BASE_URL: modelUrl,
+      OPENCODE_DB: join(profileDir, "opencode.db"),
+      OPENCODE_CONFIG_DIR: join(profileDir, "opencode-config"),
+      CODEX_HOME: join(profileDir, "codex"), CLAUDE_CONFIG_DIR: join(profileDir, "claude"),
+      OLLAMA_HOST: "127.0.0.1:9", LMSTUDIO_HOST: "127.0.0.1:9",
+      OPENCODE_DISABLE_DEFAULT_PLUGINS: "1", OPENCODE_DISABLE_INSTALL: "1",
+      OPENCODE_CONFIG_CONTENT: JSON.stringify({ enabled_providers: ["eval-reset"], provider: {
+        "eval-reset": { npm: "@ai-sdk/openai-compatible", name: "Reset fixture", options: { baseURL: `${modelUrl}/v1`, apiKey: "fixture-only" }, models: { "stub-small": { name: "Reset fixture", tool_call: true } } },
+      } }),
+    } });
+    const invoke = (command: string, payload: unknown = {}) => evaluate(app.client,
+      browserScript((command, payload) => window.__COWORKER__.invoke(command, payload), [command, payload]),
+      { awaitPromise: true, timeoutMs: 90_000 });
+    const history = () => {
+      const db = new DatabaseSync(join(profileDir, "opencode.db"), { readOnly: true });
+      try { return db.prepare("SELECT id, directory FROM session ORDER BY id").all(); }
+      finally { db.close(); }
+    };
+    const credentials = async () => {
+      const nativeAuth: unknown = JSON.parse(await readFile(join(profileDir, "xdg-data/opencode/auth.json"), "utf8"));
+      const db = new DatabaseSync(join(profileDir, "opencode.db"), { readOnly: true });
+      try { return { database: db.prepare("SELECT * FROM credential").all(), nativeAuth }; }
+      finally { db.close(); }
+    };
+    const seedUnrelatedHistory = () => {
+      const db = new DatabaseSync(join(profileDir, "opencode.db"));
+      try {
+        const row = db.prepare("SELECT * FROM session LIMIT 1").get();
+        if (!row) throw new Error("Create a real conversation before seeding the unrelated history control.");
+        const other = { ...row, id: "ses_fresh_start_unrelated", directory: join(profileDir, "unrelated-project"), parent_id: null, slug: "fresh-start-unrelated" };
+        const columns = Object.keys(other);
+        db.prepare(`INSERT INTO session (${columns.map((key) => `"${key}"`).join(",")}) VALUES (${columns.map(() => "?").join(",")})`).run(...Object.values(other));
+      } finally { db.close(); }
+    };
+    return { app, profileDir, invoke, history, credentials, seedUnrelatedHistory, async [Symbol.asyncDispose]() {
+      await app.stop();
+      // Retain this disposable reset receipt, backup, and log for diagnosis.
+      console.log(`Isolated Fresh start receipt root: ${profileDir}`);
     } };
   } catch (error) {
     await rm(profileDir, { recursive: true, force: true });

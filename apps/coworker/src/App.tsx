@@ -45,6 +45,8 @@ import { emptyOnboardingDraft, loadOnboardingDraft, saveOnboardingDraft, toggleI
 import type { TeamRole } from "@/lib/bridge";
 import { AppLoader, CoworkerMark } from "@/ui/brand";
 import { OpenWorkSettings, type SettingsSection } from "@/ui/openwork-settings";
+import { FactoryResetScreen } from "@/ui/factory-reset";
+import { OnboardingReplay } from "@/ui/onboarding-replay";
 import { VoiceContext } from "@/ui/use-voice";
 
 /** How long a freshly (re)started workspace may stay silent before it is a problem worth naming. */
@@ -110,6 +112,9 @@ export default function App() {
   const [teamCatalog, setTeamCatalog] = useState<TeamRole[]>([]);
   const [globalSettings, setGlobalSettings] = useState<SettingsSection | null>(null);
   const [globalSettingsMounted, setGlobalSettingsMounted] = useState(false);
+  const [factoryResetOpen, setFactoryResetOpen] = useState(false);
+  // A read-only tour, deliberately separate from first-run flags and persisted team drafts.
+  const [replayOnboarding, setReplayOnboarding] = useState<"welcome" | "ai" | null>(null);
   const [activityBySlug, setActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
   const [liveActivityBySlug, setLiveActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
   const [attentionBySlug, setAttentionBySlug] = useState<Record<string, string>>({});
@@ -125,6 +130,7 @@ export default function App() {
   /** When each coworker's workspace first stopped answering; cleared by the next good read. */
   const notAnsweringSinceRef = useRef<Record<string, number>>({});
   const settingsReturnFocusRef = useRef<HTMLElement | null>(null);
+  const resetReturnFocusRef = useRef<HTMLElement | null>(null);
 
   const boot = useCallback(async () => {
     try {
@@ -212,6 +218,13 @@ export default function App() {
     settingsReturnFocusRef.current = null;
     if (target?.isConnected) target.focus({ preventScroll: true });
   }, [globalSettings]);
+
+  useEffect(() => {
+    if (factoryResetOpen) return;
+    const target = resetReturnFocusRef.current;
+    resetReturnFocusRef.current = null;
+    if (target?.isConnected) target.focus({ preventScroll: true });
+  }, [factoryResetOpen]);
 
   const refreshRuntime = useCallback(async () => {
     const info = await coworkerBridge.runtimeInfo();
@@ -826,13 +839,16 @@ export default function App() {
     }
   }
 
+  const workspaceActive = !globalSettings && !factoryResetOpen && !replayOnboarding;
+  const settingsActive = Boolean(globalSettings) && !factoryResetOpen && !replayOnboarding;
+
   return (
     <VoiceContext.Provider value={{ accountKey: session ? `${sessionKey(session)}\u0000${session.userEmail}` : "signed-out", openModels: () => openGlobalSettings("models"), signIn: () => setConnecting(true) }}>
     <div className="window-shell relative flex h-full overflow-hidden" data-testid="coworker-shell">
       <div
-        className={globalSettings ? "hidden" : "flex min-w-0 flex-1"}
+        className={workspaceActive ? "flex min-w-0 flex-1" : "hidden"}
         data-testid="coworker-workspace"
-        data-active={globalSettings ? "false" : "true"}
+        data-active={workspaceActive ? "true" : "false"}
       >
         {creating || !selected ? (
           // Creation takes the whole window: the team list returns once the coworker exists.
@@ -906,7 +922,7 @@ export default function App() {
                   documentsApi={coworkerBridge.groups.documents}
                   coworkers={coworkers}
                   runtime={runtime}
-                  active={selectedGroupId === allHandsGroup.id && !globalSettings && !groupDetailsOpen && !creatingGroup}
+                  active={selectedGroupId === allHandsGroup.id && workspaceActive && !groupDetailsOpen && !creatingGroup}
                   briefing={{ enabled: allHandsSettings.enabled, context: allHandsContext(allHandsSettings, coworkers, visibleActivityBySlug), request: briefingRequest }}
                   onRememberFocus={async (focus) => { setAllHandsSettings(await coworkerBridge.allHands.update({ focus })); }}
                   introduction={<AllHandsOverview settings={allHandsSettings} coworkers={coworkers.filter((coworker) => allHandsGroup.participantSlugs.includes(coworker.slug))} activity={visibleActivityBySlug} onSettings={() => openGlobalSettings("all-hands")} onRequest={(text) => setBriefingRequest({ id: `all-hands-manual:${Date.now()}`, text })} onOpenCoworker={(slug, threadId) => { setSelectedGroupId(""); setSelectedSlug(slug); if (threadId) setHomeRequest({ id: Date.now(), slug, kind: "thread", threadId }); }} />}
@@ -924,7 +940,7 @@ export default function App() {
               <GroupChat
                 key={selectedGroup.id}
                 group={selectedGroup}
-                active={!globalSettings && !groupDetailsOpen && !creatingGroup}
+                active={workspaceActive && !groupDetailsOpen && !creatingGroup}
                 documentsApi={coworkerBridge.groups.documents}
                 coworkers={coworkers}
                 runtime={runtime}
@@ -950,7 +966,7 @@ export default function App() {
             selectedGroupId === allHandsGroup?.id ? null : <CoworkerHome
               discussionToolsSlot={discussionToolsSlot}
               key={selected.slug}
-              active={!globalSettings && !creatingGroup}
+              active={workspaceActive && !creatingGroup}
               runtime={runtime}
               session={session}
               coworkers={coworkers}
@@ -978,13 +994,13 @@ export default function App() {
       </div>
       {globalSettingsMounted ? (
         <div
-          className={globalSettings ? "absolute inset-0 flex" : "hidden"}
+          className={settingsActive ? "absolute inset-0 flex" : "hidden"}
           data-testid="openwork-settings-pane"
-          data-active={globalSettings ? "true" : "false"}
+          data-active={settingsActive ? "true" : "false"}
         >
           <OpenWorkSettings
             onAllHandsChanged={(settings) => { setAllHandsSettings(settings); if (!settings.enabled && selectedGroupId === settings.groupId) setSelectedGroupId(""); }}
-            active={Boolean(globalSettings)}
+            active={settingsActive}
             runtime={runtime}
             session={session}
             providerSync={providerSync}
@@ -1002,9 +1018,24 @@ export default function App() {
             onRefreshRuntime={refreshRuntime}
             onRestartRuntime={restartRuntime}
             onCoworkerChanged={updateCoworkerInList}
+            onReplayOnboarding={() => {
+              setGlobalSettings("fresh-start");
+              setReplayOnboarding("welcome");
+            }}
+            onFactoryReset={() => {
+              const opener = document.activeElement;
+              resetReturnFocusRef.current = opener instanceof HTMLElement ? opener : null;
+              setGlobalSettings("fresh-start");
+              setFactoryResetOpen(true);
+            }}
           />
         </div>
       ) : null}
+      {factoryResetOpen ? <FactoryResetScreen coworkers={coworkers} onBack={() => setFactoryResetOpen(false)} /> : null}
+      {replayOnboarding ? <OnboardingReplay step={replayOnboarding} onStep={setReplayOnboarding} runtime={runtime} session={session} onExit={() => {
+        setReplayOnboarding(null);
+        setGlobalSettings(null);
+      }} /> : null}
     </div>
     </VoiceContext.Provider>
   );

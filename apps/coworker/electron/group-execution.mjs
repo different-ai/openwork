@@ -13,6 +13,13 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
   let failures = 0;
   let serviceError = "";
   const threadLocks = new Map();
+  const pending = new Set();
+  function track(work) {
+    const task = Promise.resolve(work);
+    pending.add(task);
+    void task.finally(() => pending.delete(task)).catch(() => {});
+    return task;
+  }
   async function publishReply(entry) {
     const event = await appendGroupEvent(directory, entry.owner.groupId, groupReplyEvent(entry));
     const group = await getGroup(directory, entry.owner.groupId);
@@ -24,6 +31,7 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
     return event;
   }
   async function participant(groupId, slug, signal = AbortSignal.timeout(setupTimeoutMs)) {
+    if (closed) throw new Error("Group collaboration is closing.");
     const key = `${groupId}:${slug}`;
     const previous = threadLocks.get(key) ?? Promise.resolve();
     const run = previous.catch(() => undefined).then(async () => {
@@ -32,19 +40,21 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
       if (group.archivedAt !== null || !group.participantSlugs.includes(slug)) throw new Error("That coworker is no longer in this active group.");
       let threadId = group.participantThreadIds[slug];
       if (!threadId) {
-        const client = await withAbort(clientFor(slug, { signal }), signal);
+        const client = await withAbort(track(clientFor(slug, { signal })), signal);
         signal.throwIfAborted();
-        const thread = await withAbort(client.createThread({ title: `Group chat: ${group.name}`, signal }), signal);
+        const thread = await withAbort(track(client.createThread({ title: `Group chat: ${group.name}`, signal })), signal);
         threadId = thread.id;
         await updateGroup(directory, groupId, { participantThreadIds: { [slug]: threadId } });
       }
       const owner = { slug, threadId, conversationId: groupId, groupId, kind: "group" };
       signal.throwIfAborted();
-      await withAbort(collaboration.registerOwner(owner), signal);
+      await withAbort(track(collaboration.registerOwner(owner)), signal);
       return owner;
     });
     threadLocks.set(key, run);
-    try { return await withAbort(run, signal); } finally { if (threadLocks.get(key) === run) threadLocks.delete(key); }
+    // Aborting the observer does not complete an in-flight filesystem write.
+    void run.finally(() => { if (threadLocks.get(key) === run) threadLocks.delete(key); }).catch(() => {});
+    return withAbort(run, signal);
   }
   async function execute(groupId, request) {
     if (closed || serviceError || active.has(groupId)) return;
@@ -116,6 +126,7 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
           } });
         },
       };
+      for (const [name, work] of Object.entries(deps)) deps[name] = (...args) => track(work(...args));
       const existing = group.turns.find((turn) => turn.id === request.turnId || turn.clientMessageId === request.id);
       if (existing) {
         await collaboration.change((state) => { const current = state.groups[groupId]?.queue.find((entry) => entry.id === request.id); if (current) current.turnId = existing.id; });
@@ -235,8 +246,16 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
       const tasks = await collaboration.read((state) => Object.values(state.tasks).filter((task) => task.owner.groupId === groupId && !["succeeded", "failed", "cancelled"].includes(task.state)));
       await Promise.all(tasks.map((task) => collaboration.cancel(task.id)));
     },
-    stop() { closed = true; clearTimeout(timer); for (const { controller } of active.values()) controller.abort(new Error("The app is closing.")); },
+    async stop() {
+      closed = true;
+      clearTimeout(timer);
+      for (const { controller } of active.values()) controller.abort(new Error("The app is closing."));
+      const deadline = Date.now() + setupTimeoutMs;
+      while ((active.size || pumping || threadLocks.size || pending.size) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+      if (active.size || pumping || threadLocks.size || pending.size) throw new Error("Group work did not finish stopping.");
+    },
     async consultation(task) {
+      if (closed) throw new Error("Group collaboration is closing.");
       const signal = task.signal ?? AbortSignal.timeout(setupTimeoutMs);
       const assertLive = async () => {
         signal.throwIfAborted();
@@ -252,18 +271,18 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
         const originGroup = task.origin.groupId ? await withAbort(getGroup(directory, task.origin.groupId), signal) : null;
         const suitable = originGroup?.archivedAt === null && originGroup.participantSlugs.includes(to.slug) && originGroup.participantSlugs.includes(from.slug) ? originGroup : null;
         await assertLive();
-        const group = suitable ?? (groups.length === 1 ? groups[0] : await withAbort(createGroup(directory, { id: `grp_${collaborationId(task.id, "pair").slice(5)}`, name: `${from.name} & ${to.name}`, participantSlugs: [from.slug, to.slug] }), signal));
+        const group = suitable ?? (groups.length === 1 ? groups[0] : await withAbort(track(createGroup(directory, { id: `grp_${collaborationId(task.id, "pair").slice(5)}`, name: `${from.name} & ${to.name}`, participantSlugs: [from.slug, to.slug] })), signal));
         groupId = group.id;
         await collaboration.change((state) => { signal.throwIfAborted(); if (!state.tasks[task.id].cancelRequested) state.tasks[task.id].groupId = groupId; });
       }
       await assertLive();
-      await withAbort(appendGroupEvent(directory, groupId, { id: `evt_${collaborationId(task.id, "question").slice(5)}`, kind: "coworker", slug: from.slug, status: "consultation", text: `${to.name}, ${task.input.question}${task.input.context ? `\n\nShared context: ${task.input.context}` : ""}` }), signal);
+      await withAbort(track(appendGroupEvent(directory, groupId, { id: `evt_${collaborationId(task.id, "question").slice(5)}`, kind: "coworker", slug: from.slug, status: "consultation", text: `${to.name}, ${task.input.question}${task.input.context ? `\n\nShared context: ${task.input.context}` : ""}` })), signal);
       // A consultation has its own native history; only the explicitly shared brief crosses over.
       let owner = await collaboration.read((state) => state.tasks[task.id].answerOwner ?? null);
       if (!owner) {
-        const client = await withAbort(clientFor(to.slug, { signal }), signal);
+        const client = await withAbort(track(clientFor(to.slug, { signal })), signal);
         await assertLive();
-        const thread = await withAbort(client.createThread({ title: `Question from ${from.name}`, signal }), signal);
+        const thread = await withAbort(track(client.createThread({ title: `Question from ${from.name}`, signal })), signal);
         owner = { slug: to.slug, threadId: thread.id, conversationId: groupId, groupId, kind: "consultation" };
         await collaboration.change((state) => { signal.throwIfAborted(); if (!state.tasks[task.id].cancelRequested) state.tasks[task.id].answerOwner = owner; });
       }

@@ -805,3 +805,22 @@ test("the native wrapper propagates tool cancellation to the same scoped broker 
   assert.equal(requests.length, 2);
   assert.deepEqual(requests[1], { ...requests[0], cancel: true });
 });
+
+test("shutdown refuses pending raw browser work, then destroys the host only after it drains", async () => {
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const f = fixture({ runTool: async () => { entered.resolve(); await release.promise; return "late capture"; } });
+  try {
+    const tab = await f.open();
+    const result = assert.rejects(f.execute(f.call("screenshot", { browser_url: tab.browser_url, target_id: tab.target_id })), /stopping|closed|stopped/i);
+    await entered.promise;
+    await assert.rejects(f.broker.shutdown({ cleanupMs: 20 }), /cleanup could not be confirmed/);
+    await result;
+    assert.equal(f.tabs.length, 1, "The host must not claim to be destroyed while raw work remains.");
+    release.resolve();
+    await f.broker.shutdown();
+    assert.equal(f.tabs.length, 0);
+    await assert.rejects(f.open(), /stopping|closed|saved private discussion/i);
+    assert.equal(f.tabs.length, 0);
+  } finally { release.resolve(); f.broker.destroy(); }
+});

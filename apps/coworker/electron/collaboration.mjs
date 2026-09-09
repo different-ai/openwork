@@ -50,6 +50,15 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
   let timer;
   let pumping = false;
   let closed = false;
+  let writesClosed = false;
+  let cleanupError;
+  const pending = new Set();
+  function track(work) {
+    const task = Promise.resolve(work);
+    pending.add(task);
+    void task.finally(() => pending.delete(task)).catch(() => {});
+    return task;
+  }
   const active = new Map();
   const admittedCount = () => [...active.values()].filter((run) => !run.waiting).length;
   const dispatching = new Map();
@@ -91,6 +100,7 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
   }
   function change(fn) {
     const run = tail.then(async () => {
+      if (writesClosed) throw new Error("Collaboration storage is closed.");
       const before = await load();
       const next = structuredClone(before);
       const result = await fn(next);
@@ -220,7 +230,7 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
     running.armDeadline = (current) => { entry = current; armDeadline(); };
     try {
       const setupSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(setupTimeoutMs)]);
-      const client = await withAbort(clientFor(entry.owner.slug, { kind: entry.continuation ? "review" : "reply", requestText: entry.requestText, signal: setupSignal }), setupSignal);
+      const client = await withAbort(track(clientFor(entry.owner.slug, { kind: entry.continuation ? "review" : "reply", requestText: entry.requestText, signal: setupSignal })), setupSignal);
       running.client = client;
       if (entry.workspaceId && client.workspaceId !== entry.workspaceId) throw new Error("The original workspace is no longer available. This execution will not be moved or replayed.");
       let snapshot = await withAbort(client.getThreadSnapshot(entry.owner.threadId, { signal: setupSignal }), setupSignal);
@@ -323,9 +333,11 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
       running.mustAbort = true;
     } finally {
       clearTimeout(timeout);
-      if (running.ownsNative) await onExecutionEnd(data.executions[id]).catch(() => schedulerFailed(COMPUTER_STOP_GUIDANCE));
+      if (running.ownsNative) await onExecutionEnd(data.executions[id]).catch((error) => { cleanupError = error; return schedulerFailed(COMPUTER_STOP_GUIDANCE); });
       if ((running.mustAbort || controller.signal.aborted) && running.client && running.ownsNative) {
-        await withAbort(running.client.abortThread(running.threadId), AbortSignal.timeout(setupTimeoutMs)).catch(() => schedulerFailed("Collaboration paused because stopping a native execution could not be confirmed. Existing work has been kept. Restart the AI service before continuing."));
+        await withAbort(track(running.client.abortThread(running.threadId)), AbortSignal.timeout(setupTimeoutMs)).then((result) => {
+          if (result?.accepted !== true) throw new Error("Native cancellation was not accepted.");
+        }).catch((error) => { cleanupError = error; return schedulerFailed("Collaboration paused because stopping a native execution could not be confirmed. Existing work has been kept. Restart the AI service before continuing."); });
       }
       if (active.get(threadKey(entry.owner)) === running) active.delete(threadKey(entry.owner));
       released();
@@ -361,7 +373,7 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
       });
       for (const task of expired) {
         for (const run of active.values()) if (run.id === task.executionId) run.controller.abort(new Error("The dependency reached its deadline."));
-        if (task.workerId) await withAbort(cancelWorker(task.slug, task.workerId), AbortSignal.timeout(setupTimeoutMs)).catch(() => undefined);
+        if (task.workerId) await withAbort(track(cancelWorker(task.slug, task.workerId)), AbortSignal.timeout(setupTimeoutMs)).catch((error) => { cleanupError = error; });
       }
       const tasks = await read((state) => Object.values(state.tasks));
       for (const task of tasks) {
@@ -386,14 +398,14 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
           const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(setupTimeoutMs)]);
           try {
             if (task.kind === "worker") {
-              const spawning = spawn(claimed.owner.slug, { ...claimed.input, id: claimed.workerId, spawnedFromThreadId: claimed.owner.threadId });
+              const spawning = track(spawn(claimed.owner.slug, { ...claimed.input, id: claimed.workerId, spawnedFromThreadId: claimed.owner.threadId }));
               // A late acknowledgement must not leave a newly created Worker running after cancellation.
-              void spawning.then(async () => { if (signal.aborted || cancelled(data, data.tasks[task.id])) await withAbort(cancelWorker(claimed.owner.slug, claimed.workerId), AbortSignal.timeout(setupTimeoutMs)); }).catch(() => undefined);
+              void track(spawning.then(async () => { if (signal.aborted || closed || cancelled(data, data.tasks[task.id])) await track(cancelWorker(claimed.owner.slug, claimed.workerId)); })).catch((error) => { cleanupError = error; });
               const worker = await withAbort(spawning, signal);
               await change((state) => { if (!signal.aborted && state.tasks[task.id].state === "starting" && !cancelled(state, state.tasks[task.id])) state.tasks[task.id].state = "waiting"; });
               if (terminal.has(worker.status) || ["finished", "failed", "cancelled"].includes(worker.status)) await api.completeWorker(worker, []);
             } else {
-              const prepared = await withAbort(consult({ ...claimed, signal }), signal);
+              const prepared = await withAbort(track(consult({ ...claimed, signal })), signal);
               await change((state) => {
                 const child = state.tasks[task.id];
                 if (closed || signal.aborted || child.state !== "starting" || cancelled(state, child)) return;
@@ -429,7 +441,7 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
     const entry = await read((state) => state[collection][id]);
     if (entry.published || entry.publicationFailed) return;
     try {
-      await withAbort(Promise.resolve(publishResult(entry)), AbortSignal.timeout(setupTimeoutMs));
+      await withAbort(track(publishResult(entry)), AbortSignal.timeout(setupTimeoutMs));
       await change((state) => { state[collection][id].published = true; });
     } catch {
       await change((state) => {
@@ -468,7 +480,22 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
     change,
     read,
     async start() { await load(); wake(); },
-    async stop() { closed = true; clearTimeout(timer); const runs = [...active.values()]; for (const run of runs) run.controller.abort(new Error("The app is closing.")); for (const controller of dispatching.values()) controller.abort(new Error("The app is closing.")); await Promise.all(runs.map((run) => run.done)); await tail; },
+    async stop({ requireConfirmed = false } = {}) {
+      closed = true;
+      clearTimeout(timer);
+      const runs = [...active.values()];
+      for (const run of runs) run.controller.abort(new Error("The app is closing."));
+      for (const controller of dispatching.values()) controller.abort(new Error("The app is closing."));
+      await withAbort(Promise.all(runs.map((run) => run.done)), AbortSignal.timeout(setupTimeoutMs));
+      const deadline = Date.now() + setupTimeoutMs;
+      while ((pumping || dispatching.size || active.size || pending.size) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+      if (pumping || dispatching.size || active.size || pending.size) throw new Error("Collaboration did not finish stopping.");
+      // Seal before draining the write queue: a late callback cannot enqueue a
+      // successful write behind the promise that stop() is awaiting.
+      writesClosed = true;
+      await tail;
+      if (requireConfirmed && cleanupError) throw new Error("Collaboration native cleanup could not be confirmed.", { cause: cleanupError });
+    },
     async registerOwner(owner) { return change((state) => own(state, owner)); },
     async owner(slug, threadId) { return read((state) => state.owners[`${slug}:${threadId}`] ?? null); },
     /** Read-side identities only. A group id alone never grants access to a private execution. */
@@ -566,7 +593,7 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
         if (!input.retryByPerson && cancelled(data, data.tasks[before.taskId])) throw new Error("This task was cancelled. Start a new request rather than resuming cancelled work.");
         if (before.followUpId) return read((state) => state.executions[before.followUpId]);
         const signal = AbortSignal.timeout(setupTimeoutMs);
-        const client = await withAbort(clientFor(before.owner.slug, { signal }), signal);
+        const client = await withAbort(track(clientFor(before.owner.slug, { signal })), signal);
         if (before.workspaceId && client.workspaceId !== before.workspaceId) throw new Error("The original workspace is no longer available. Review the earlier work before continuing.");
         const snapshot = await withAbort(client.getThreadSnapshot(before.owner.threadId, { signal }), signal);
         const toolBearing = snapshot.messages.some((message) => message.parentId === before.messageId && message.parts.some((part) => part.type === "tool"));
@@ -658,7 +685,7 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
     async context(slug, context, expected, validate = assertComputerToolContext) {
       if (!context?.sessionID || !context.messageID || !context.callID) throw new Error("Trusted turn context is required.");
       const signal = AbortSignal.timeout(setupTimeoutMs);
-      const client = await withAbort(clientFor(slug, { signal }), signal);
+      const client = await withAbort(track(clientFor(slug, { signal })), signal);
       const snapshot = await withAbort(client.getThreadSnapshot(context.sessionID, { signal }), signal);
       const message = snapshot.messages.find((entry) => entry.id === context.messageID && entry.role === "assistant");
       if (!message?.parentId || !message.parts.some((part) => part.callId === context.callID)) throw new Error("This tool call has no admitted parent message.");
@@ -806,9 +833,9 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
       for (const run of active.values()) if ((await read((state) => state.executions[run.id]?.state)) === "cancelled") {
         run.controller.abort(new Error("Stopped."));
         await onExecutionEnd(await read((state) => state.executions[run.id])).catch(() => schedulerFailed(COMPUTER_STOP_GUIDANCE));
-        if (run.ownsNative && run.client) await withAbort(run.client.abortThread(run.threadId), AbortSignal.timeout(setupTimeoutMs)).catch(() => undefined);
+        if (run.ownsNative && run.client) await withAbort(track(run.client.abortThread(run.threadId)), AbortSignal.timeout(setupTimeoutMs)).catch((error) => { cleanupError = error; });
       }
-      const stopped = await Promise.allSettled(workers.map((worker) => withAbort(cancelWorker(worker.slug, worker.id), AbortSignal.timeout(setupTimeoutMs))));
+      const stopped = await Promise.allSettled(workers.map((worker) => withAbort(track(cancelWorker(worker.slug, worker.id)), AbortSignal.timeout(setupTimeoutMs))));
       const failures = stopped.filter((result) => result.status === "rejected").map((result) => result.reason);
       if (failures.length) throw new AggregateError(failures, "Stopping requested Workers could not be confirmed. Try Stop again before continuing.");
     },

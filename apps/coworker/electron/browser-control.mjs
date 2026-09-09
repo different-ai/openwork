@@ -290,6 +290,17 @@ export function createBrowserControl({ createPanel, panelOptions, discussionFor,
       detachBinding();
     },
     hideWindow: detachBinding,
+    async shutdown({ cleanupMs = 4000 } = {}) {
+      destroyed = true;
+      lifetime.abort(new Error("The browser host is stopping."));
+      detachBinding();
+      const stopped = await Promise.all([...scopes.keys()].map((key) => {
+        const [slug, threadId] = JSON.parse(key);
+        return this.revokeOrigin({ slug, threadId, cleanupMs });
+      }));
+      if (stopped.some((confirmed) => !confirmed)) throw new Error("Browser cleanup could not be confirmed. No reset was performed.");
+      this.destroy();
+    },
     read({ viewId }) { return snapshot(view(viewId)); },
     async thumbnail({ viewId, tabId, size = "thumbnail" }) {
       const ownerId = view(viewId);
