@@ -48,6 +48,7 @@ export type UseSessionProviderAuthInput = {
    * POST /cloud-provider-sync/run are host-token routes.
    */
   localServerHostToken?: string;
+  localServerGeneration?: number | null;
   setProviders: (value: ProviderListItem[]) => void;
   setProviderDefaults: (value: Record<string, string>) => void;
   setProviderConnectedIds: (value: string[]) => void;
@@ -67,6 +68,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     selectedWorkspaceRoot,
     selectedWorkspaceId,
     localServerHostToken,
+    localServerGeneration,
     setProviders,
     setProviderDefaults,
     setProviderConnectedIds,
@@ -91,6 +93,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     selectedWorkspaceEndpoint,
     selectedWorkspaceRoot,
     localServerHostToken,
+    localServerGeneration,
   });
   stateRef.current = {
     opencodeClient,
@@ -103,6 +106,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     selectedWorkspaceEndpoint,
     selectedWorkspaceRoot,
     localServerHostToken,
+    localServerGeneration,
   };
 
   // Depend on the stable callback, not the coordinator object: the context
@@ -135,6 +139,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
         openworkServer: createSessionOpenworkServer({
           endpoint: () => stateRef.current.selectedWorkspaceEndpoint ?? null,
           hostToken: () => stateRef.current.localServerHostToken ?? "",
+          generation: () => stateRef.current.localServerGeneration ?? null,
         }),
         setProviders,
         setProviderDefaults,
@@ -256,8 +261,13 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     store.syncFromOptions();
   }, [
     opencodeClient,
+    localServerHostToken,
+    localServerGeneration,
     selectedWorkspace?.id,
     selectedWorkspace?.workspaceType,
+    selectedWorkspaceEndpoint?.baseUrl,
+    selectedWorkspaceEndpoint?.token,
+    selectedWorkspaceEndpoint?.isRemote,
     selectedWorkspaceEndpoint?.workspaceId,
     selectedWorkspaceRoot,
     store,

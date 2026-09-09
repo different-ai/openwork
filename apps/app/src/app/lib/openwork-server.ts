@@ -1595,17 +1595,18 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       const suffix = query.size ? `?${query.toString()}` : "";
       return requestJson<OpenworkConnectState>(baseUrl, `/experimental/connect/state${suffix}`, { token, hostToken, timeoutMs: timeouts.config });
     },
-    putDenSession: async (body: { baseUrl: string; token: string; orgId: string }) => {
-      await requestJson<unknown>(baseUrl, "/den-session", { hostToken, method: "PUT", body, timeoutMs: timeouts.config });
+    putDenSession: async (body: { baseUrl: string; token: string; orgId: string }, signal?: AbortSignal) => {
+      await requestJson<unknown>(baseUrl, "/den-session", { hostToken, method: "PUT", body, signal, timeoutMs: timeouts.config });
     },
     deleteDenSession: async () => {
       await requestJson<unknown>(baseUrl, "/den-session", { hostToken, method: "DELETE", timeoutMs: timeouts.config });
     },
-    runCloudProviderSyncNow: async (reason?: string) =>
+    runCloudProviderSyncNow: async (reason?: string, signal?: AbortSignal) =>
       parseCloudProviderSyncRun(await requestJson<unknown>(baseUrl, "/cloud-provider-sync/run", {
         hostToken,
         method: "POST",
         body: reason ? { reason } : {},
+        signal,
         timeoutMs: timeouts.cloudMcpReconcile,
       })),
     getCloudProviderSyncStatus: async () =>

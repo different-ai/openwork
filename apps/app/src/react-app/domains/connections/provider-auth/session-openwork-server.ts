@@ -31,6 +31,7 @@ export type CreateSessionOpenworkServerInput = {
   endpoint: () => ResolvedWorkspaceEndpoint | null;
   /** Live host token from the desktop runtime (openworkServerInfo). */
   hostToken?: () => string;
+  generation?: () => number | null;
 };
 
 function resolveHostToken(endpoint: ResolvedWorkspaceEndpoint, live: string): string {
@@ -83,6 +84,7 @@ export function createSessionOpenworkServer(
       return {
         openworkServerStatus: "connected",
         openworkServerClient: hostAwareClient(endpoint, hostToken),
+        openworkServerHostInfo: { generation: input.generation?.() ?? null },
         openworkServerAuth: {
           token: endpoint.token || undefined,
           hostToken: hostToken || undefined,
