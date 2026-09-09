@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { register } from "node:module";
 import test from "node:test";
 
@@ -9,7 +10,7 @@ import { EventEmitter } from "node:events";
 export const effects = [];
 export const controls = {
   ready: true,
-  confirm: async () => 0, beforeLoad: async () => {}, beforeCommand: async () => {},
+  confirm: async () => 0, beforeLoad: async () => {}, beforeCommand: async () => {}, beforeDiscovery: async () => {},
 };
 export const app = { on() {} };
 export const clipboard = { writeText(url) { effects.push({ type: "copy", url }); } };
@@ -115,8 +116,9 @@ export class WebContentsView {
 `;
 
 const installedBrowsersStub = `
-import { effects } from "electron";
+import { effects, controls } from "electron";
 export async function listInstalledBrowsers() {
+  await controls.beforeDiscovery();
   return [["chrome", "Google Chrome"], ["firefox", "Firefox"]].map(([id, name]) => ({
     id, name,
     async open(url) { effects.push({ type: "browser", id, url }); },
@@ -156,12 +158,14 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
   controls.confirm = async () => 0;
   controls.beforeLoad = async () => {};
   controls.beforeCommand = async () => {};
+  controls.beforeDiscovery = async () => {};
   browserSession.removeAllListeners("will-download");
   const policies = [];
   const children = [];
   const firstView = createdViews.length;
   const sent = [];
-  const mainWindow = {
+  const menus = [];
+  const mainWindow = Object.assign(new EventEmitter(), {
     contentView: {
       children,
       addChildView(view, index) {
@@ -172,15 +176,17 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
       },
       removeChildView(view) { children.splice(children.indexOf(view), 1); },
     },
-    webContents: {
+    webContents: Object.assign(new EventEmitter(), {
       mainFrame: {},
       getURL: () => "http://localhost/index.html",
       getZoomFactor: () => 1,
-      isDestroyed: () => false,
+      destroyed: false,
+      isDestroyed() { return this.destroyed; },
       send(channel, payload) { sent.push({ channel, payload }); },
-    },
-    isDestroyed: () => false,
-  };
+    }),
+    destroyed: false,
+    isDestroyed() { return this.destroyed; },
+  });
   const handlers = new Map();
   const ipcMain = {
     handle(channel, handler) { handlers.set(channel, handler); },
@@ -189,11 +195,19 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
   const panel = createBrowserPanel({
     getWindow: () => mainWindow, remoteDebugPort, onDeepLink: () => {},
     checkPolicy: async (request) => { policies.push(request); await checkPolicy(request); },
+    showNativeContextMenu: (request) => new Promise((resolve, reject) => {
+      menus.push({ request, choose: resolve, fail: reject, closed: false });
+    }),
+    // Intentionally allow a late result after close to exercise stale callbacks.
+    closeNativeContextMenu: () => { if (menus.length) menus.at(-1).closed = true; },
   });
   panel.registerIpc(ipcMain);
   const mainContents = mainWindow.webContents;
-  const emit = (channel, event, ...args) => handlers.get(channel)(event, ...args);
-  const invoke = (channel, ...args) => emit(channel, { sender: mainContents, senderFrame: mainContents.mainFrame }, ...args);
+  const emit = (channel, event, ...args) => handlers.get(channel)?.(event, ...args);
+  const invoke = (channel, ...args) => {
+    assert.ok(handlers.has(channel), `registered IPC: ${channel}`);
+    return emit(channel, { sender: mainContents, senderFrame: mainContents.mainFrame }, ...args);
+  };
   // Electron paints every child above the BrowserWindow's primary renderer.
   const onScreen = () => children.find((view) => view.getBounds().width > 1) ?? null;
   const views = () => createdViews.slice(firstView);
@@ -205,18 +219,20 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
     return invoke("openwork:browser:approve", tabId, tab.browserApproval.id, allowed);
   };
   async function openLinkMenu(payload = LINK) {
+    const before = menus.length;
     invoke("openwork:browser:linkContextMenu", payload);
     await flush();
-    const view = views().find((view) => view.webContents.getURL() === "http://localhost/overlay.html");
-    assert.ok(view, "the link menu creates an overlay renderer");
-    emit("openwork:menu-overlay:ready", { sender: view.webContents });
-    await flush();
-    const request = view.webContents.sent.findLast((entry) => entry.channel === "openwork:menu-overlay:show")?.payload;
-    assert.ok(request, "the ready overlay receives its menu");
-    const choose = (itemId) => emit("openwork:menu-overlay:choose", { sender: view.webContents }, { requestId: request.id, itemId });
-    return { view, request, choose };
+    assert.equal(menus.length, before + 1, "the link menu opens a native popup");
+    return menus.at(-1);
   }
-  return { invoke, emit, mainContents, onScreen, commands, children, messages, views, policies, openLinkMenu, panel, approve };
+  async function openTabMenu(tabId, point = LINK.point) {
+    const before = menus.length;
+    const done = invoke("openwork:browser:tabContextMenu", tabId, point);
+    await flush();
+    assert.equal(menus.length, before + 1, "the tab menu opens a native popup");
+    return { ...menus.at(-1), done };
+  }
+  return { invoke, emit, mainWindow, mainContents, menus, onScreen, commands, children, messages, views, policies, openLinkMenu, openTabMenu, panel, approve };
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -754,17 +770,33 @@ test("deletion cancels pending suspension and restoration without resurrecting s
   }
 });
 
-test("a catalog choice launches only the selected browser with the exact link, not a built-in tab", async () => {
-  const { openLinkMenu, invoke, policies } = createPanel();
-  const { request, choose } = await openLinkMenu();
-  assert.equal(request.source, "link");
-  assert.equal(request.items.find((item) => item.id === "browser:firefox")?.label, "Open in Firefox");
-  choose("browser:firefox");
-  await flush();
+test("a native choice launches only the selected installed or default browser with the exact link", async () => {
+  for (const itemId of ["browser:chrome", "browser:firefox", "open-external"]) {
+    const { openLinkMenu, invoke, policies, views } = createPanel();
+    const { request, choose } = await openLinkMenu();
+    assert.deepEqual(request, {
+      point: LINK.point,
+      items: [
+        { type: "item", id: "open-builtin", label: "Open in OpenWork" },
+        { type: "item", id: "open-external", label: "Open in Default Browser" },
+        { type: "item", id: "browser:chrome", label: "Open in Google Chrome" },
+        { type: "item", id: "browser:firefox", label: "Open in Firefox" },
+        { type: "separator" },
+        { type: "item", id: "copy-url", label: "Copy Link Address" },
+      ],
+    });
+    assert.deepEqual(policies, [], "showing the popup does not open the destination");
+    assert.deepEqual(effects, []);
+    choose(itemId);
+    await flush();
 
-  assert.deepEqual(policies, [{ url: LINK.url, external: true }]);
-  assert.deepEqual(effects, [{ type: "browser", id: "firefox", url: LINK.url }]);
-  assert.deepEqual(invoke("openwork:browser:state").tabs, []);
+    assert.deepEqual(policies, [{ url: LINK.url, external: true }]);
+    assert.deepEqual(effects, [itemId === "open-external"
+      ? { type: "external", url: LINK.url }
+      : { type: "browser", id: itemId.slice("browser:".length), url: LINK.url }]);
+    assert.deepEqual(invoke("openwork:browser:state").tabs, []);
+    assert.deepEqual(views(), [], "native menus allocate no overlay renderer");
+  }
 });
 
 test("external policy denial prevents catalog and default launches without a built-in fallback", async () => {
@@ -791,16 +823,20 @@ test("copying a link neither checks policy nor launches a browser", async () => 
   assert.deepEqual(invoke("openwork:browser:state").tabs, []);
 });
 
-test("link menus reject untrusted senders, subframes, and non-HTTP payloads", async () => {
-  const { emit, invoke, mainContents, views, policies } = createPanel();
+test("link menus reject untrusted senders, subframes, unsafe URLs and invalid points", async () => {
+  const { emit, invoke, mainContents, views, policies, menus } = createPanel();
   emit("openwork:browser:linkContextMenu", { sender: {}, senderFrame: mainContents.mainFrame }, LINK);
   emit("openwork:browser:linkContextMenu", { sender: mainContents, senderFrame: {} }, LINK);
-  for (const url of ["javascript:alert(1)", "file:///tmp/link.html", "data:text/html,link", "openwork://settings"]) {
+  for (const url of ["javascript:alert(1)", "file:///tmp/link.html", "data:text/html,link", "openwork://settings", "https://user:password@example.com", "https://example.com/\npath", "https://example.com/\u007f", `https://example.com/${"a".repeat(32_768)}`]) {
     invoke("openwork:browser:linkContextMenu", { ...LINK, url });
+  }
+  for (const point of [null, {}, { x: "20", y: 30 }, { x: NaN, y: 30 }, { x: 20, y: Infinity }]) {
+    invoke("openwork:browser:linkContextMenu", { ...LINK, point });
   }
   await flush();
 
   assert.deepEqual(views(), [], "rejected requests never create an overlay or tab");
+  assert.deepEqual(menus, []);
   assert.deepEqual(policies, []);
   assert.deepEqual(effects, []);
 });
@@ -827,25 +863,243 @@ test("the built-in choice retains the captured owner when focus changes before p
   assert.deepEqual(effects, []);
 });
 
-test("forged menu requests, senders, and action IDs are ignored without dismissing the valid menu", async () => {
-  const { openLinkMenu, invoke, emit, policies, children } = createPanel();
+test("obsolete renderer choice IPC cannot execute actions or dismiss the native menu", async () => {
+  const { openLinkMenu, invoke, emit, mainContents, policies } = createPanel();
   invoke("openwork:browser:createTab", "https://existing.example");
-  const { view, request, choose } = await openLinkMenu();
+  const menu = await openLinkMenu();
   const tabs = invoke("openwork:browser:state").tabs;
   policies.length = 0;
-  emit("openwork:menu-overlay:choose", { sender: view.webContents }, { requestId: "forged", itemId: "browser:firefox" });
-  invoke("openwork:menu-overlay:choose", { requestId: request.id, itemId: "browser:firefox" });
-  choose("browser:unlisted");
-  choose("close-all-tabs");
+  for (const sender of [{}, mainContents]) {
+    for (const itemId of ["browser:firefox", "copy-url", "close-all-tabs"]) {
+      emit("openwork:menu-overlay:choose", { sender, senderFrame: mainContents.mainFrame }, { requestId: "forged", itemId });
+    }
+  }
   await flush();
 
   assert.deepEqual(policies, []);
   assert.deepEqual(effects, []);
   assert.deepEqual(invoke("openwork:browser:state").tabs, tabs);
-  assert.ok(children.includes(view), "invalid choices leave the menu open");
-  choose("copy-url");
+  assert.equal(menu.closed, false, "renderer choices leave the native menu open");
+  menu.choose("copy-url");
+  await flush();
   assert.deepEqual(effects, [{ type: "copy", url: LINK.url }]);
-  assert.ok(!children.includes(view), "a valid choice still works and dismisses the menu");
+});
+
+test("tab menus use native items and CSS coordinates without selecting or replacing the captured tab", async () => {
+  for (const itemId of ["copy-url", "open-external", "close-tab", "close-all-tabs"]) {
+    const { invoke, openTabMenu, views, policies, mainContents } = createPanel();
+    invoke("openwork:browser:setVisibleSession", "A");
+    const first = invoke("openwork:browser:createTab", LINK.url, "A");
+    const second = invoke("openwork:browser:createTab", "https://second.example/", "A");
+    await flush();
+    policies.length = 0;
+    mainContents.getZoomFactor = () => 1.75;
+    const point = { x: 20.25, y: 30.75 };
+    const { request, choose, done } = await openTabMenu(first.tabId, point);
+    assert.deepEqual(request, {
+      point,
+      items: [
+        { type: "item", id: "copy-url", label: "Copy URL", enabled: true },
+        { type: "item", id: "open-external", label: "Open in Browser", enabled: true },
+        { type: "separator" },
+        { type: "item", id: "close-tab", label: "Close Tab" },
+        { type: "item", id: "close-all-tabs", label: "Close All Tabs" },
+      ],
+    });
+    assert.equal(invoke("openwork:browser:state").activeTabId, second.tabId);
+    assert.equal(views().length, 2, "no native view is allocated for the menu");
+    choose(itemId);
+    await done;
+    const remaining = invoke("openwork:browser:state").tabs.map((tab) => tab.id);
+    assert.deepEqual(remaining, itemId === "close-all-tabs" ? [] : itemId === "close-tab" ? [second.tabId] : [first.tabId, second.tabId]);
+    assert.deepEqual(policies, itemId === "open-external" ? [{ url: LINK.url, external: true }] : []);
+    assert.deepEqual(effects, itemId === "copy-url" ? [{ type: "copy", url: LINK.url }] : itemId === "open-external" ? [{ type: "external", url: LINK.url }] : []);
+  }
+});
+
+test("native results cannot invoke disabled, missing, or cross-menu action IDs", async () => {
+  const { openLinkMenu, openTabMenu, invoke, policies } = createPanel();
+  const { tabId } = invoke("openwork:browser:createTab", "about:blank", "A");
+  await flush();
+  policies.length = 0;
+  for (const itemId of ["copy-url", "open-external", "open-builtin", "browser:firefox", "forged", undefined]) {
+    const { request, choose, done } = await openTabMenu(tabId);
+    assert.equal(request.items.find((item) => item.id === "copy-url").enabled, false);
+    assert.equal(request.items.find((item) => item.id === "open-external").enabled, false);
+    choose(itemId);
+    await done;
+  }
+  for (const itemId of ["browser:unlisted", "close-tab", "close-all-tabs", undefined]) {
+    const { choose } = await openLinkMenu();
+    choose(itemId);
+    await flush();
+  }
+  assert.deepEqual(policies, []);
+  assert.deepEqual(effects, []);
+  assert.deepEqual(invoke("openwork:browser:state").tabs.map((tab) => tab.id), [tabId]);
+});
+
+test("tab external actions remain policy checked and non-HTTP addresses cannot launch", async () => {
+  const { openTabMenu, invoke, views, policies } = createPanel(async () => { throw new Error("blocked"); });
+  const { tabId } = invoke("openwork:browser:createTab", "about:blank", "A");
+  await flush();
+  views()[0].webContents.url = "file:///tmp/local.html";
+  policies.length = 0;
+  const blocked = await openTabMenu(tabId);
+  assert.equal(blocked.request.items.find((item) => item.id === "open-external").enabled, false);
+  blocked.choose("open-external");
+  await blocked.done;
+  assert.deepEqual(policies, []);
+  views()[0].webContents.url = LINK.url;
+  const denied = await openTabMenu(tabId);
+  const rejection = assert.rejects(denied.done, /blocked/);
+  denied.choose("open-external");
+  await rejection;
+  assert.deepEqual(policies, [{ url: LINK.url, external: true }]);
+  assert.deepEqual(effects, []);
+  assert.equal(invoke("openwork:browser:state").tabs.length, 1);
+});
+
+test("link points stay in CSS coordinates and native cancellation releases listeners without closing another popup", async () => {
+  const { openLinkMenu, mainContents, mainWindow, views, policies } = createPanel();
+  mainContents.getZoomFactor = () => 2;
+  const point = { x: 25.25, y: 40.75 };
+  const menu = await openLinkMenu({ ...LINK, point });
+  assert.deepEqual(menu.request.point, point);
+  assert.equal(mainWindow.listenerCount("blur"), 1);
+  menu.choose(null);
+  await flush();
+  assert.deepEqual(effects, []);
+  assert.deepEqual(policies, []);
+  assert.deepEqual(views(), []);
+  assert.equal(menu.closed, false, "the helper already dismissed or superseded this popup");
+  assert.equal(mainWindow.listenerCount("blur"), 0);
+  assert.equal(mainContents.listenerCount("did-start-navigation"), 0);
+  assert.equal(mainContents.listenerCount("destroyed"), 0);
+});
+
+test("late installed-browser discovery cannot reopen dismissed, superseded or destroyed menus", async () => {
+  for (const ending of ["dismiss", "blur", "navigate", "destroy", "renderer-destroyed", "session", "supersede"]) {
+    const { invoke, openLinkMenu, mainWindow, mainContents, menus, policies, views } = createPanel();
+    const discovery = gate();
+    let calls = 0;
+    controls.beforeDiscovery = () => ++calls === 1 ? discovery.promise : undefined;
+    invoke("openwork:browser:linkContextMenu", LINK);
+    // End the request immediately, even before its first asynchronous turn.
+    if (ending === "dismiss") invoke("openwork:menu-overlay:dismiss");
+    if (ending === "blur") mainWindow.emit("blur");
+    if (ending === "navigate") mainContents.emit("did-start-navigation", null, "http://localhost/next", false, true);
+    if (ending === "destroy") invoke("openwork:browser:destroy");
+    if (ending === "renderer-destroyed") { mainContents.destroyed = true; mainContents.emit("destroyed"); }
+    if (ending === "session") invoke("openwork:browser:setVisibleSession", "B");
+    const newer = ending === "supersede" ? await openLinkMenu({ ...LINK, url: "https://newer.example/" }) : null;
+    discovery.finish();
+    await flush();
+    assert.equal(menus.length, newer ? 1 : 0, ending);
+    assert.deepEqual(policies, [], ending);
+    assert.deepEqual(effects, [], ending);
+    assert.deepEqual(views(), [], ending);
+    if (newer) {
+      assert.equal(newer.closed, false, "stale discovery cannot close a newer native popup");
+      newer.choose("copy-url");
+      await flush();
+      assert.deepEqual(effects, [{ type: "copy", url: "https://newer.example/" }]);
+    }
+    assert.equal(mainWindow.listenerCount("blur"), 0, ending);
+  }
+});
+
+test("late native selections are ignored after dismissal, blur, navigation or destruction", async () => {
+  for (const ending of ["dismiss", "blur", "navigate", "destroy", "renderer-destroyed", "window-destroyed", "session", "hide"]) {
+    const { invoke, openLinkMenu, mainWindow, mainContents, policies, views } = createPanel();
+    const menu = await openLinkMenu();
+    if (ending === "dismiss") invoke("openwork:menu-overlay:dismiss");
+    if (ending === "blur") mainWindow.emit("blur");
+    if (ending === "navigate") mainContents.emit("did-start-navigation", null, "http://localhost/next", true, true);
+    if (ending === "destroy") invoke("openwork:browser:destroy");
+    if (ending === "renderer-destroyed") { mainContents.destroyed = true; mainContents.emit("destroyed"); }
+    if (ending === "window-destroyed") mainWindow.destroyed = true;
+    if (ending === "session") invoke("openwork:browser:show", PANEL_BOUNDS, "B");
+    if (ending === "hide") invoke("openwork:browser:hide");
+    menu.choose("open-builtin");
+    await flush();
+    assert.equal(menu.closed, true, ending);
+    assert.deepEqual(policies, [], ending);
+    assert.deepEqual(effects, [], ending);
+    assert.deepEqual(views(), [], ending);
+    assert.equal(mainWindow.listenerCount("blur"), 0, ending);
+  }
+});
+
+test("tab and link popups supersede each other without executing or closing the newer menu", async () => {
+  for (const first of ["tab", "link"]) {
+    const { invoke, openLinkMenu, openTabMenu, menus, policies } = createPanel();
+    const { tabId } = invoke("openwork:browser:createTab", LINK.url, "A");
+    await flush();
+    policies.length = 0;
+    const old = first === "tab" ? await openTabMenu(tabId) : await openLinkMenu();
+    const newer = first === "tab" ? await openLinkMenu() : await openTabMenu(tabId);
+    old.choose("open-external");
+    await flush();
+    assert.equal(menus[0].closed, true);
+    assert.equal(menus[1].closed, false);
+    assert.deepEqual(policies, []);
+    assert.deepEqual(effects, []);
+    newer.choose("copy-url");
+    await flush();
+    assert.deepEqual(effects, [{ type: "copy", url: LINK.url }]);
+    assert.equal(invoke("openwork:browser:state").tabs.length, 1);
+  }
+});
+
+test("selected link actions cannot run after a newer request or destroyed document while policy waits", async () => {
+  for (const itemId of ["open-builtin", "open-external", "browser:firefox"]) {
+    for (const ending of ["supersede", "destroy", "navigate", "renderer-destroyed"]) {
+      const policy = gate();
+      const { invoke, openLinkMenu, mainContents, policies, views } = createPanel(() => policy.promise);
+      const menu = await openLinkMenu();
+      menu.choose(itemId);
+      await flush();
+      assert.deepEqual(policies, [{ url: LINK.url, external: itemId !== "open-builtin" }]);
+      const newer = ending === "supersede" ? await openLinkMenu({ ...LINK, url: "https://newer.example/" }) : null;
+      if (ending === "destroy") invoke("openwork:browser:destroy");
+      if (ending === "navigate") mainContents.emit("did-start-navigation", null, "http://localhost/next", false, true);
+      if (ending === "renderer-destroyed") { mainContents.destroyed = true; mainContents.emit("destroyed"); }
+      policy.finish();
+      await flush();
+      assert.deepEqual(effects, [], `${itemId}: ${ending}`);
+      assert.deepEqual(views(), [], `${itemId}: ${ending}`);
+      if (newer) {
+        assert.equal(newer.closed, false);
+        newer.choose("copy-url");
+        await flush();
+        assert.deepEqual(effects, [{ type: "copy", url: "https://newer.example/" }]);
+      }
+    }
+  }
+});
+
+test("tab navigation or closure invalidates native choices and policy-pending external actions", async () => {
+  for (const selected of [false, true]) {
+    for (const ending of ["navigate", "close"]) {
+      const policy = gate();
+      const { invoke, openTabMenu, views, policies } = createPanel(({ external }) => external ? policy.promise : undefined);
+      const first = invoke("openwork:browser:createTab", LINK.url, "A");
+      const second = invoke("openwork:browser:createTab", "https://second.example/", "A");
+      await flush();
+      policies.length = 0;
+      const menu = await openTabMenu(first.tabId);
+      if (selected) { menu.choose("open-external"); await flush(); }
+      if (ending === "navigate") views()[0].webContents.emit("did-start-navigation", "https://next.example/", false, true);
+      if (ending === "close") invoke("openwork:browser:closeTab", first.tabId);
+      if (!selected) menu.choose("close-all-tabs");
+      policy.finish();
+      await menu.done;
+      assert.deepEqual(policies, selected ? [{ url: LINK.url, external: true }] : []);
+      assert.deepEqual(effects, []);
+      assert.ok(invoke("openwork:browser:state").tabs.some((tab) => tab.id === second.tabId));
+    }
+  }
 });
 
 test("automation open waits for its owner's consent and then reuses only that owned task tab", async () => {

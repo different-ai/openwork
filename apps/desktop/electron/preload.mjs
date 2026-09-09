@@ -49,9 +49,21 @@ function installMenuOverlayDismissListeners() {
   }
 }
 
-// Capture before message-bubble menus, but leave files, app routes, editable
-// text, and ordinary clicks to their existing handlers.
+// Selected text and ordinary editors use Chromium's native context-menu event.
+// Explicit editor action menus compose their own editing + formatting menu.
 window.addEventListener("contextmenu", (event) => {
+  const eventPath = event.composedPath();
+  const composedEditor = eventPath.some((node) => node instanceof HTMLElement && node.hasAttribute("data-native-context-menu-editable"));
+  const editable = eventPath.some((node) => node instanceof HTMLElement && (
+    node.isContentEditable || node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
+  ));
+  const selection = window.getSelection();
+  const selectedTarget = event.target instanceof Node && selection?.toString() && selection.containsNode(event.target, true);
+  if (!composedEditor && (editable || selectedTarget)) {
+    event.stopImmediatePropagation();
+    return;
+  }
+  if (composedEditor) return;
   const anchor = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
   if (!anchor || anchor.isContentEditable || anchor.hasAttribute("download")) return;
   const href = anchor.getAttribute("href") ?? "";

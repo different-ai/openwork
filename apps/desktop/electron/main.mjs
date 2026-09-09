@@ -33,6 +33,7 @@ import {
 } from "./computer-use.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
+import { createNativeContextMenus } from "./context-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserLoginSync } from "./browser-login-sync.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
@@ -102,6 +103,7 @@ const {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
   nativeImage,
   nativeTheme,
   net: electronNet,
@@ -1071,8 +1073,11 @@ const IDLE_ROUTER_INFO = Object.freeze({
 
 let mainWindow = null;
 const pendingDeepLinks = [];
+const nativeContextMenus = createNativeContextMenus({ Menu, getWindow: () => mainWindow });
 
 browserPanel = createBrowserPanel({
+  showNativeContextMenu: nativeContextMenus.show,
+  closeNativeContextMenu: nativeContextMenus.close,
   remoteDebugPort,
   getWindow: () => mainWindow,
   onDeepLink: (urls) => queueDeepLinks(urls),
@@ -2383,6 +2388,12 @@ const desktopCommandHandlers = {
   "__setNativeTheme": async (event, ...args) => {
       return applyNativeTheme(String(args[0]));
   },
+  "__showContextMenu": async (event, ...args) => {
+      return nativeContextMenus.showFromRenderer(event, args[0]);
+  },
+  "__cancelContextMenu": async (event, ...args) => {
+      return nativeContextMenus.cancelFromRenderer(event, args[0]);
+  },
   "__setApplicationMenuVisible": async (event, ...args) => {
       return applicationMenu.setVisible(args[0]);
   },
@@ -2542,6 +2553,12 @@ async function createMainWindow() {
     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
   }
   applicationMenu.applyVisibility(mainWindow);
+
+  mainWindow.webContents.on("context-menu", (_event, params) => {
+    void nativeContextMenus.showEditing(params).catch((error) => {
+      console.warn("[context-menu] Could not open editing menu", error);
+    });
+  });
 
   mainWindow.on("page-title-updated", (event) => {
     event.preventDefault();
