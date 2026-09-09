@@ -10,7 +10,9 @@ import { captureAnalyticsEvent } from "@/app/lib/analytics";
 import { interruptSessionTurn, sessionNeedsStop, submitAfterInterruption, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
 import { createClient, createPromptMessageID, hasAcceptedPromptMessage, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
-import { composeNativeSessionSnapshot } from "@/app/lib/opencode-session-native";
+import * as opencodeSessionNative from "@/app/lib/opencode-session-native";
+import type { NativeSessionSnapshotTarget } from "@/app/lib/opencode-session-native";
+import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import { setThemeMode } from "@/app/theme";
 import { t } from "@/i18n";
 import type { ComposerSettingsSection } from "@/react-app/domains/settings/library";
@@ -22,6 +24,7 @@ import type {
   OpenworkServerClient,
   OpenworkSessionSnapshot,
 } from "@/app/lib/openwork-server";
+import { isLoopbackOpenworkServerUrl } from "@/app/lib/openwork-server";
 import type {
   ComposerAttachment,
   ComposerDraft,
@@ -161,6 +164,16 @@ const EMPTY_TRANSCRIPT: UIMessage[] = [];
 const IDLE_STATUS: SessionStatus = { type: "idle" };
 const DEFAULT_COMPOSER_CONTROL_TEXT = "Help me outline the next OpenWork task.";
 const SESSION_SURFACE_SELECTOR = "[data-session-surface-id]";
+
+function sanitizedInspectorDiagnosticText(value: string) {
+  return value
+    .replace(/https?:\/\/[^\s"'<>]+/gi, "[url]")
+    .replace(/\b(Bearer|Basic)\s+[^\s"'<>]+/gi, "$1 [redacted]")
+    .replace(/\b(authorization|ownerToken|clientToken|openworkToken|accessToken|apiKey|token)\b\s*[=:]\s*[^\s,;]+/gi, "$1=[redacted]")
+    .replace(/[\r\n\t]+/g, " ")
+    .slice(0, 240);
+}
+
 const MARKDOWN_PRIMITIVE_EVAL_TEXT = `# Markdown proof heading
 
 This shared renderer keeps **bold proof text**, inline \`renderMarkdownHtml\`, and [OpenWork link](https://openworklabs.com) readable in one message.
@@ -1126,6 +1139,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
   const activeSessionOwnerRef = useRef(sessionOwner);
   activeSessionOwnerRef.current = sessionOwner;
+  const snapshotTargetRef = useRef<NativeSessionSnapshotTarget>({
+    owner: sessionOwner,
+    endpoint: { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
+    sessionId: props.sessionId,
+  });
+  snapshotTargetRef.current = {
+    owner: sessionOwner,
+    endpoint: { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
+    sessionId: props.sessionId,
+  };
   const [ownedError, setOwnedError] = useState<{ owner: string; error: SessionError } | null>(null);
   const error = ownedError?.owner === sessionOwner ? ownedError.error : null;
   const setError = useCallback((nextError: SessionError | null) => {
@@ -1199,6 +1222,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
     () => reactStatusKey(props.workspaceId, props.sessionId),
     [props.workspaceId, props.sessionId],
   );
+  const useDesktopLoopbackSnapshotRetry = isDesktopRuntime()
+    && isLoopbackOpenworkServerUrl(props.opencodeBaseUrl);
   const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
     queryKey: snapshotQueryKey,
     queryFn: async ({ signal }) => {
@@ -1206,19 +1231,36 @@ export function SessionSurface(props: SessionSurfaceProps) {
         throw new Error("eval: forced session snapshot failure");
       }
       const startedAt = Date.now();
-      const item = await composeNativeSessionSnapshot(
-        { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
-        props.sessionId,
-        { limit: 140, signal },
-      );
+      const item = useDesktopLoopbackSnapshotRetry
+        ? await opencodeSessionNative.composeNativeSessionSnapshotWithRetry(
+          sessionOwner,
+          () => snapshotTargetRef.current,
+          { limit: 140, signal },
+        )
+        : await opencodeSessionNative.composeNativeSessionSnapshot(
+          { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
+          props.sessionId,
+          { limit: 140, signal },
+        );
       markSessionSnapshotFetchStart(item, startedAt);
       return item;
     },
     staleTime: 500,
-    retry: (failureCount) => !evalSnapshotFailureRef.current && failureCount < 3,
+    networkMode: useDesktopLoopbackSnapshotRetry ? "always" : undefined,
+    retry: useDesktopLoopbackSnapshotRetry
+      ? false
+      : (failureCount) => !evalSnapshotFailureRef.current && failureCount < 3,
   });
 
   const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
+  const inspectorOpencodeBaseUrl = useMemo(() => {
+    try {
+      const url = new URL(props.opencodeBaseUrl);
+      return { origin: url.origin, pathname: url.pathname };
+    } catch {
+      return { origin: null, pathname: null };
+    }
+  }, [props.opencodeBaseUrl]);
   const transcriptState = useSharedQueryState<UIMessage[]>(transcriptQueryKey, EMPTY_TRANSCRIPT);
   const statusQuery = useQuery<SessionStatus, Error, SessionStatus, readonly unknown[]>({
     queryKey: statusQueryKey,
@@ -1285,6 +1327,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
         code: props.cloudMcpSubmissionState.issue?.code ?? null,
         stage: props.cloudMcpSubmissionState.issue?.stage ?? null,
       },
+      snapshotQuery: {
+        status: snapshotQuery.status,
+        fetchStatus: snapshotQuery.fetchStatus,
+        isPaused: snapshotQuery.isPaused,
+        failureCount: snapshotQuery.failureCount,
+        errorName: snapshotQuery.error ? sanitizedInspectorDiagnosticText(snapshotQuery.error.name) : null,
+        errorMessage: snapshotQuery.error ? sanitizedInspectorDiagnosticText(snapshotQuery.error.message) : null,
+        dataSessionId: snapshotQuery.data?.session.id ?? null,
+        dataMessageCount: snapshotQuery.data?.messages.length ?? null,
+        currentSnapshotId: currentSnapshot?.session.id ?? null,
+        intendedSessionId: props.sessionId,
+        opencodeBaseUrl: inspectorOpencodeBaseUrl,
+        tokenPresent: props.openworkToken.length > 0,
+      },
       error,
     }));
     return dispose;
@@ -1294,10 +1350,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
     error,
     mentions,
     pasteParts,
+    currentSnapshot,
+    inspectorOpencodeBaseUrl,
+    props.openworkToken,
     props.sessionId,
     props.workspaceId,
     props.cloudMcpSubmissionState,
     sending,
+    snapshotQuery.data,
+    snapshotQuery.error,
+    snapshotQuery.failureCount,
+    snapshotQuery.fetchStatus,
+    snapshotQuery.isPaused,
+    snapshotQuery.status,
   ]);
 
   useEffect(() => {

@@ -36,6 +36,22 @@ declare global {
       };
     };
     __openwork: {
+      slice(name: "composer"): {
+        snapshotQuery: {
+          status: "pending" | "error" | "success";
+          fetchStatus: "fetching" | "paused" | "idle";
+          isPaused: boolean;
+          failureCount: number;
+          errorName: string | null;
+          errorMessage: string | null;
+          dataSessionId: string | null;
+          dataMessageCount: number | null;
+          currentSnapshotId: string | null;
+          intendedSessionId: string;
+          opencodeBaseUrl: { origin: string | null; pathname: string | null };
+          tokenPresent: boolean;
+        };
+      };
       slice(name: "route"): {
         selectedWorkspaceId: string | null;
         workspaces: { id: string; name?: string; displayName?: string; displayNameResolved?: string; loading?: boolean; error?: string | null }[];

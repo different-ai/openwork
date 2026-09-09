@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { focusManager } from "@tanstack/react-query";
 import type { Message, Part, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, createPromptMessageID, hasAcceptedPromptMessage, unwrap, type FieldsResult } from "../src/app/lib/opencode";
@@ -6,6 +7,7 @@ import { interruptSessionTurn, sessionNeedsStop, submitAfterInterruption } from 
 import { createClientV2 } from "../src/app/lib/opencode-v2-adapter";
 import {
   composeNativeSessionSnapshot,
+  composeNativeSessionSnapshotWithRetry,
   deleteNativeSession,
   getNativeSession,
   getNativeSessionMessages,
@@ -203,6 +205,96 @@ describe("native OpenCode session operations", () => {
         todo: async () => failedResult({ code: "engine_unavailable" }, 503),
       }),
     })).rejects.toMatchObject({ status: 503, code: "engine_unavailable" });
+  });
+
+  test("retries a failed local snapshot read without waiting for query focus or issuing writes", async () => {
+    const calls: string[] = [];
+    const endpointTokens: string[] = [];
+    let currentEndpoint = endpoint;
+    let attempt = 0;
+    focusManager.setFocused(false);
+    try {
+      const snapshot = await composeNativeSessionSnapshotWithRetry("owner-a", () => ({
+        owner: "owner-a",
+        endpoint: currentEndpoint,
+        sessionId: session.id,
+      }), { limit: 140 }, {
+        createOperations: (target) => {
+          attempt += 1;
+          endpointTokens.push(target.token);
+          const track = <T>(name: string, value: FieldsResult<T>) => {
+            calls.push(name);
+            return Promise.resolve(value);
+          };
+          return operations({
+            get: async () => track("get", attempt === 1
+              ? failedResult({ code: "engine_reloading" }, 503)
+              : result(session)),
+            messages: async () => track("messages", result(messages)),
+            todo: async () => track("todo", result(todos)),
+            status: async () => track("status", result<Record<string, SessionStatus>>({})),
+            delete: async () => {
+              calls.push("delete");
+              return result(true);
+            },
+          });
+        },
+        waitForSnapshotRetry: async () => {
+          currentEndpoint = { ...endpoint, token: "rotated-workspace-token" };
+        },
+      });
+
+      expect(snapshot.session.id).toBe(session.id);
+      expect(attempt).toBe(2);
+      expect(endpointTokens).toEqual([endpoint.token, "rotated-workspace-token"]);
+      expect(calls).toEqual(["get", "messages", "todo", "status", "get", "messages", "todo", "status"]);
+      expect(calls).not.toContain("delete");
+      expect(calls).not.toContain("prompt");
+    } finally {
+      focusManager.setFocused(undefined);
+    }
+  });
+
+  test("rejects the final local snapshot read error after four attempts", async () => {
+    let attempt = 0;
+    const delays: number[] = [];
+    const promise = composeNativeSessionSnapshotWithRetry("owner-a", () => ({
+      owner: "owner-a",
+      endpoint,
+      sessionId: session.id,
+    }), {}, {
+      createOperations: () => {
+        attempt += 1;
+        return operations({
+          get: async () => failedResult({ code: `engine_unavailable_${attempt}` }, 503),
+        });
+      },
+      waitForSnapshotRetry: async (delayMs) => { delays.push(delayMs); },
+    });
+
+    await expect(promise).rejects.toMatchObject({ status: 503, code: "engine_unavailable_4" });
+    expect(attempt).toBe(4);
+    expect(delays).toEqual([100, 250, 500]);
+  });
+
+  test("aborting a local snapshot retry prevents the next read attempt", async () => {
+    const controller = new AbortController();
+    const aborted = new Error("snapshot read cancelled");
+    let attempt = 0;
+    const promise = composeNativeSessionSnapshotWithRetry("owner-a", () => ({
+      owner: "owner-a",
+      endpoint,
+      sessionId: session.id,
+    }), { signal: controller.signal }, {
+      createOperations: () => {
+        attempt += 1;
+        return operations({ get: async () => failedResult({ code: "engine_reloading" }, 503) });
+      },
+      waitForSnapshotRetry: async () => { controller.abort(aborted); },
+    });
+
+    await expect(promise).rejects.toBe(aborted);
+    expect(attempt).toBe(1);
   });
 });
 

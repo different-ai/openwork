@@ -924,7 +924,7 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
   };
   const providerRequestCount = async (promptMarker: string) => (await mock.agentRequests({ promptMarker }))
     .filter((request) => request.promptMarker === promptMarker && request.kind !== "utility").length;
-  const visibleMessageFacts = (sessionId: string, role: "user" | "assistant", marker: string) => seed.evalIn(app, browserScript((sessionId, role, marker, workspaceId) => {
+  const visibleMessageFacts = (sessionId: string, role: "user" | "assistant", marker: string) => seed.evalIn(app, browserScript((sessionId, role, marker) => {
     const visible = (node: HTMLElement) => {
       const rect = node.getBoundingClientRect();
       const style = getComputedStyle(node);
@@ -942,11 +942,10 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
       .map((node) => (node.getAttribute("aria-label") ?? node.innerText).replace(/\s+/g, " ").trim().slice(0, 120))
       .filter((label, index, values) => Boolean(label) && values.indexOf(label) === index)
       .slice(0, 5);
-    const resourcePrefixes = ["workspace", "w"].map((mount) => `/${mount}/${encodeURIComponent(workspaceId)}/opencode`);
     const network = performance.getEntriesByType("resource").flatMap((entry) => {
       if (!(entry instanceof PerformanceResourceTiming)) return [];
+      if (entry.initiatorType !== "fetch" && entry.initiatorType !== "xmlhttprequest") return [];
       const url = new URL(entry.name);
-      if (!resourcePrefixes.some((prefix) => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))) return [];
       return [{
         path: url.pathname,
         limit: url.searchParams.get("limit"),
@@ -965,7 +964,38 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
       errorLabels: labels('[role="alert"]'),
       network,
     };
-  }, [sessionId, role, marker, workspace.workspaceId]));
+  }, [sessionId, role, marker]));
+  const rendererDiagnostic = (expectedSessionId: string | null) => seed.evalIn(app, browserScript((expectedWorkspaceId, expectedSessionId) => {
+    const composer = window.__openwork?.slice("composer") ?? null;
+    const ownerWorkspaceId: unknown = composer ? Reflect.get(composer, "workspaceId") : null;
+    const ownerSessionId: unknown = composer ? Reflect.get(composer, "sessionId") : null;
+    return {
+      expectedWorkspaceId,
+      expectedSessionId,
+      expectedRoute: expectedSessionId
+        ? `#/workspace/${expectedWorkspaceId}/session/${expectedSessionId}`
+        : `#/workspace/${expectedWorkspaceId}/session`,
+      actualRoute: location.hash,
+      ownerWorkspaceId: typeof ownerWorkspaceId === "string" ? ownerWorkspaceId : null,
+      ownerSessionId: typeof ownerSessionId === "string" ? ownerSessionId : null,
+      snapshotQuery: composer ? {
+        status: composer.snapshotQuery.status,
+        fetchStatus: composer.snapshotQuery.fetchStatus,
+        isPaused: composer.snapshotQuery.isPaused,
+        failureCount: composer.snapshotQuery.failureCount,
+        errorName: composer.snapshotQuery.errorName,
+        errorMessage: composer.snapshotQuery.errorMessage,
+        dataSessionId: composer.snapshotQuery.dataSessionId,
+        dataMessageCount: composer.snapshotQuery.dataMessageCount,
+        currentSnapshotId: composer.snapshotQuery.currentSnapshotId,
+        intendedSessionId: composer.snapshotQuery.intendedSessionId,
+        opencodeBaseUrl: composer.snapshotQuery.opencodeBaseUrl,
+        tokenPresent: composer.snapshotQuery.tokenPresent,
+      } : null,
+      navigatorOnline: navigator.onLine,
+      documentHasFocus: document.hasFocus(),
+    };
+  }, [workspace.workspaceId, expectedSessionId]));
   const readInstantComposer = () => seed.evalIn(app, browserScript((workspaceId) => {
     const visible = (node: HTMLElement) => {
       const rect = node.getBoundingClientRect();
@@ -1233,6 +1263,7 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
     messageFacts,
     providerRequestCount,
     visibleMessageFacts,
+    rendererDiagnostic,
     insertFocusedText,
     prepareWorkspaceNewTask,
     clickWorkspaceNewTask,
