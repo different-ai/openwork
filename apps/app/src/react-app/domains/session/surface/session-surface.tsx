@@ -1436,6 +1436,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     [snapshot, transcriptState],
   );
   const pendingMessages = useComposerStateStore((state) => state.pendingMessages[sessionOwner]);
+  const [submittedMessage, setSubmittedMessage] = useState<{ owner: string; id: string } | null>(null);
   const failedDraft = useComposerStateStore((state) => state.failedDrafts[sessionOwner]?.[0]);
   const autoSendPayload = getComposerAutoSendPayload(props.sessionId, sessionOwner);
   const autoSending = (Boolean(autoSendPayload)
@@ -2039,6 +2040,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const registerPending = () => {
       if (pendingRegistered) return;
       pendingRegistered = true;
+      setSubmittedMessage({ owner: sessionOwner, id: nextDraft.messageId });
       useComposerStateStore.setState((state) => ({
         pendingMessages: {
           ...state.pendingMessages,
@@ -2678,6 +2680,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const sessionScroll = useSessionScrollController({
     selectedSessionId: props.sessionId,
+    submittedMessageId: submittedMessage?.owner === sessionOwner ? submittedMessage.id : null,
     renderedMessages,
     containerRef: scrollRef,
     contentRef,

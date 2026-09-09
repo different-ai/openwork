@@ -21,6 +21,7 @@ const MANUAL_BROWSE_UPWARD_THRESHOLD_PX = 16;
 
 type SessionScrollControllerOptions = {
   selectedSessionId: string | null;
+  submittedMessageId: string | null;
   renderedMessages: unknown;
   containerRef: RefObject<HTMLDivElement | null>;
   contentRef: RefObject<HTMLDivElement | null>;
@@ -82,11 +83,13 @@ export function useSessionScrollController(
 
   const lastKnownScrollTopRef = useRef(0);
   const programmaticScrollRef = useRef(false);
+  const positioningRafRef = useRef<number | undefined>(undefined);
   const programmaticScrollResetRafARef = useRef<number | undefined>(undefined);
   const programmaticScrollResetRafBRef = useRef<number | undefined>(undefined);
   const observedContentHeightRef = useRef(0);
   const lastGestureAtRef = useRef(0);
   const previousSessionIdRef = useRef<string | null>(null);
+  const revealedMessageIdRef = useRef<string | null>(null);
 
   const hasScrollGesture = useCallback(
     () => Date.now() - lastGestureAtRef.current < SCROLL_GESTURE_WINDOW_MS,
@@ -124,6 +127,12 @@ export function useSessionScrollController(
     }
   }, []);
 
+  const clearPendingPosition = useCallback(() => {
+    if (positioningRafRef.current === undefined) return;
+    window.cancelAnimationFrame(positioningRafRef.current);
+    positioningRafRef.current = undefined;
+  }, []);
+
   const releaseProgrammaticScrollSoon = useCallback(() => {
     clearProgrammaticScrollReset();
     programmaticScrollResetRafARef.current = window.requestAnimationFrame(() => {
@@ -149,6 +158,7 @@ export function useSessionScrollController(
 
       setStickyBottom(selectedSessionId, null);
       programmaticScrollRef.current = true;
+      clearPendingPosition();
 
       if (behavior === "smooth") {
         container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
@@ -158,7 +168,8 @@ export function useSessionScrollController(
 
       container.scrollTop = container.scrollHeight;
       lastKnownScrollTopRef.current = container.scrollTop;
-      window.requestAnimationFrame(() => {
+      positioningRafRef.current = window.requestAnimationFrame(() => {
+        positioningRafRef.current = undefined;
         const next = options.containerRef.current;
         if (!next) {
           programmaticScrollRef.current = false;
@@ -170,7 +181,7 @@ export function useSessionScrollController(
         releaseProgrammaticScrollSoon();
       });
     },
-    [options.containerRef, refreshTopClippedMessage, releaseProgrammaticScrollSoon, selectedSessionId, setStickyBottom],
+    [clearPendingPosition, options.containerRef, refreshTopClippedMessage, releaseProgrammaticScrollSoon, selectedSessionId, setStickyBottom],
   );
 
   const saveScrollPosition = useCallback(
@@ -202,6 +213,7 @@ export function useSessionScrollController(
       // actually get away from the tail of the transcript.
       if (programmaticScrollRef.current && (userGestured || scrolledUp)) {
         programmaticScrollRef.current = false;
+        clearPendingPosition();
         clearProgrammaticScrollReset();
         saveScrollPosition(container);
         lastKnownScrollTopRef.current = currentTop;
@@ -227,7 +239,7 @@ export function useSessionScrollController(
       saveScrollPosition(container);
       lastKnownScrollTopRef.current = currentTop;
     },
-    [clearProgrammaticScrollReset, hasScrollGesture, refreshTopClippedMessage, saveScrollPosition, selectedSessionId, setStickyBottom],
+    [clearPendingPosition, clearProgrammaticScrollReset, hasScrollGesture, refreshTopClippedMessage, saveScrollPosition, selectedSessionId, setStickyBottom],
   );
 
   const jumpToLatest = useCallback(
@@ -291,6 +303,7 @@ export function useSessionScrollController(
   useEffect(() => {
     if (selectedSessionId === previousSessionIdRef.current) return;
     previousSessionIdRef.current = selectedSessionId;
+    clearPendingPosition();
     if (!selectedSessionId) return;
 
     observedContentHeightRef.current = 0;
@@ -304,7 +317,8 @@ export function useSessionScrollController(
         programmaticScrollRef.current = true;
         container.scrollTop = Math.min(savedState.scrollTop, Math.max(0, container.scrollHeight - container.clientHeight));
         lastKnownScrollTopRef.current = container.scrollTop;
-        window.requestAnimationFrame(() => {
+        positioningRafRef.current = window.requestAnimationFrame(() => {
+          positioningRafRef.current = undefined;
           const next = options.containerRef.current;
           if (!next) {
             programmaticScrollRef.current = false;
@@ -320,7 +334,7 @@ export function useSessionScrollController(
 
       scrollToBottom("auto");
     });
-  }, [options.containerRef, releaseProgrammaticScrollSoon, saveScrollPosition, scrollToBottom, selectedSessionId]);
+  }, [clearPendingPosition, options.containerRef, releaseProgrammaticScrollSoon, saveScrollPosition, scrollToBottom, selectedSessionId]);
 
   useEffect(() => {
     void options.renderedMessages;
@@ -328,10 +342,37 @@ export function useSessionScrollController(
   }, [options.renderedMessages, refreshTopClippedMessage]);
 
   useEffect(() => {
+    const messageId = options.submittedMessageId;
+    if (!messageId || messageId === revealedMessageIdRef.current) return;
+    let cancelled = false;
+    // Wait for the submitted row and any session restoration to commit. Sending
+    // is explicit navigation; passive output must still respect manual browsing.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      const container = options.containerRef.current;
+      const target = container && messageElementById(container, messageId);
+      if (!container || !target) return;
+      revealedMessageIdRef.current = messageId;
+      clearPendingPosition();
+      lastGestureAtRef.current = 0;
+      programmaticScrollRef.current = true;
+      const containerRect = container.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      // Align the start of an oversized prompt; short prompts clamp to the tail.
+      container.scrollTop += targetRect.top - containerRect.top;
+      lastKnownScrollTopRef.current = container.scrollTop;
+      saveScrollPosition(container);
+      releaseProgrammaticScrollSoon();
+    });
+    return () => { cancelled = true; };
+  }, [clearPendingPosition, options.submittedMessageId, options.renderedMessages, options.containerRef, selectedSessionId, saveScrollPosition, releaseProgrammaticScrollSoon]);
+
+  useEffect(() => {
     return () => {
+      clearPendingPosition();
       clearProgrammaticScrollReset();
     };
-  }, [clearProgrammaticScrollReset]);
+  }, [clearPendingPosition, clearProgrammaticScrollReset]);
 
   return {
     handleScroll,
