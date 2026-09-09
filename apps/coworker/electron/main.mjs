@@ -2341,6 +2341,12 @@ const commands = {
   },
   "coworkers.list": async () => listPreparedCoworkers(),
   "coworkers.get": async ({ slug }) => repairGroupSelection(await getCoworker(coworkersDir, slug), await listGroups(coworkersDir), (owner, patch) => updateCoworker(coworkersDir, owner, patch)),
+  "coworkers.openFolder": async ({ slug }) => {
+    if (slug !== undefined && typeof slug !== "string") throw new Error("Coworker slug must be a string.");
+    const directory = slug === undefined ? coworkersDir : (await getCoworker(coworkersDir, slug)).path;
+    const error = await shell.openPath(directory);
+    if (error) throw new Error(error);
+  },
   "coworkers.create": async ({ name, role, mission, avatarColor, avatarGlasses, personality, roleId, firstNote }) =>
     addCoworker({ name, role, mission, avatarColor, avatarGlasses, personality, roleId, firstNote }),
   // The team: the catalog onboarding proposes from, the person's answers to a
@@ -2811,7 +2817,7 @@ function registerIpc() {
       return { ok: false, error: "Open Coworker commands are only available to the main app frame." };
     }
     const command = typeof request?.command === "string" ? request.command : "";
-    if ((command.startsWith("voice.") || command.startsWith("computer.") || command.startsWith("browser.") || command.startsWith("workers.") || command.startsWith("groups.documents.")) && !trustedComputerSender(event, mainWindow?.webContents, rendererUrl())) {
+    if ((command === "coworkers.openFolder" || command.startsWith("voice.") || command.startsWith("computer.") || command.startsWith("browser.") || command.startsWith("workers.") || command.startsWith("groups.documents.")) && !trustedComputerSender(event, mainWindow?.webContents, rendererUrl())) {
       return { ok: false, error: "Native controls require the trusted Open Coworker window and renderer URL." };
     }
     if (command === "voice.microphone" && request?.userGesture !== true) {

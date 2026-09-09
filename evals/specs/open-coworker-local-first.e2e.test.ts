@@ -788,6 +788,22 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
 
   await clickButtonContaining(app, "OpenWork");
   await waitForText(app, "OpenWork settings", { timeoutMs: 30_000 });
+  await clickButton(app, "General");
+  const novaBeforeSettings = await invokeCoworker(app, "coworkers.get", { slug: "nova" });
+  await evalIn(app, () => {
+    const summary = document.querySelector<HTMLElement>('[data-testid="coworker-defaults-scout"] summary');
+    if (!summary) throw new Error("Scout model settings unavailable");
+    summary.click();
+  });
+  await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-defaults-scout"] [data-testid="effort-dial-reset"]')), { timeoutMs: 10_000, label: "editable effort in global Settings" });
+  await waitFor(app, () => (document.querySelector('[data-testid="coworker-defaults-scout"] [data-testid="thinking-model-settings"] [data-testid="model-picker-current-detail"]')?.textContent ?? "").includes("Big Pickle"), { timeoutMs: 30_000, label: "Worker default names the main model" });
+  await evalIn(app, () => { document.querySelector<HTMLElement>('[data-testid="coworker-defaults-scout"] [data-testid="effort-dial-reset"]')?.click(); });
+  await waitFor(app, async () => {
+    const { result } = await window.__COWORKER__.invoke("coworkers.get", { slug: "scout" });
+    return typeof result === "object" && result !== null && "effortPreference" in result && result.effortPreference === "balanced";
+  }, { awaitPromise: true, timeoutMs: 15_000, label: "global Settings saves Scout's effort" });
+  expect(await invokeCoworker(app, "coworkers.get", { slug: "nova" })).toEqual(novaBeforeSettings);
+  evidence.recordAssertionEvidence("Global Settings edits only the chosen coworker", "Scout's Worker default names its main model. Changing Scout's effort to Balanced persists without changing Nova's record.", true);
   await clickButton(app, "AI models");
   await waitFor(app, () => document.querySelector<HTMLElement>('[data-testid="this-mac-providers"] [data-testid="local-providers"]')?.dataset.loaded === "true" && Boolean(document.querySelector('[data-testid="connected-openai"]')), { timeoutMs: 120_000, label: "AI models page ready" });
   const modelsPage = String(await evalIn(app, () => document.querySelector<HTMLElement>('[data-testid="openwork-settings"] main')?.innerText ?? ""));

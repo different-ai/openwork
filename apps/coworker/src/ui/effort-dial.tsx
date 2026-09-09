@@ -49,10 +49,10 @@ export function EffortDial({
     { label: "Background work", kind: "worker-turn" },
   ];
   const dial = (
-    <div className="w-[320px] max-w-[calc(100vw-56px)] space-y-4" data-testid="effort-dial-panel" data-stop={stop}>
+    <div className={`${compact ? "w-[320px] max-w-[calc(100vw-56px)]" : "w-full min-w-0"} space-y-4`} data-testid="effort-dial-panel" data-stop={stop}>
       <div>
-        <p className="flex items-center gap-2 text-sm font-semibold text-snow"><DynamicEffortIcon />Dynamic effort</p>
-        <p className="mt-1.5 text-xs leading-relaxed text-mist">{coworkerName} adapts to the task. You set the pace.</p>
+        <p className="flex items-center gap-2 text-sm font-semibold text-snow"><DynamicEffortIcon />{compact ? "Dynamic effort" : "Default effort"}</p>
+        <p className="mt-1.5 text-xs leading-relaxed text-mist">Adjust how much {coworkerName} thinks before answering. Use less for simple tasks, more for difficult work.</p>
       </div>
       <div>
         <div className="flex items-center justify-between gap-3">
@@ -65,7 +65,7 @@ export function EffortDial({
               data-testid="effort-dial-reset"
               onClick={() => onChange(DEFAULT_EFFORT_STOP)}
             >
-              Reset
+              Use Balanced
             </button>
           ) : null}
         </div>
@@ -84,15 +84,15 @@ export function EffortDial({
       </div>
       {fixedVariant ? (
         <p className="rounded-xl border border-line bg-white/3 px-3 py-2.5 text-[11px] leading-relaxed text-mist" data-testid="effort-fixed-note">
-          Your fixed thinking effort ({fixedVariant}) takes priority when the model supports it. This preference still guides automatic model selection and the default number of Worker steps.
+          Fixed effort is set to {fixedVariant} and takes priority when supported. This setting still affects Automatic model selection and how many turns new delivery Workers get.
         </p>
       ) : (
         <details className="group rounded-xl border border-line bg-ink/30">
           <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-[11px] font-medium text-mist hover:text-snow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50" data-testid="effort-explainer">How it adapts<span aria-hidden="true" className="transition-transform group-open:rotate-90">›</span></summary>
           <div className="space-y-2.5 px-3 pb-3" data-testid="effort-adapts-preview">
-            <p className="text-[10px] font-medium uppercase tracking-[0.1em] text-mint">Adapts with your work</p>
+            <p className="text-[10px] font-medium text-mint">Effort by task</p>
             {examples.map(({ label, kind }) => (
-              <div key={kind} className="flex items-center justify-between gap-3 text-[11px] text-mist">
+              <div key={label} className="flex items-center justify-between gap-3 text-[11px] text-mist">
                 <span>{label}</span>
                 <span className="flex gap-1" aria-label={`${label}: ${effortLevelFor(kind, stop) + 1} of 6 thinking levels`}>
                   {Array.from({ length: 6 }, (_, level) => <span key={level} aria-hidden="true" className={`h-1.5 w-3.5 rounded-full ${level <= effortLevelFor(kind, stop) ? "bg-spark/75" : "bg-white/8"}`} />)}
@@ -104,7 +104,7 @@ export function EffortDial({
           </div>
         </details>
       )}
-      <p className="text-[10px] leading-relaxed text-mist/65">More depth can use more time and allowance.</p>
+      <p className="text-[11px] leading-relaxed text-mist">Higher effort can take longer and cost more.</p>
     </div>
   );
 
