@@ -49,7 +49,7 @@ type UserId = NonNullable<typeof WorkerTable.$inferSelect.created_by_user_id>
 type WorkerId = typeof WorkerTable.$inferSelect.id
 type GetSandboxRecord = (workerId: WorkerId) => Promise<CloudRuntimeSandboxRecord | null>
 type InspectSandbox = (workerId: WorkerId) => Promise<CloudRuntimeSandboxInspection>
-type RefreshSignedPreview = (workerId: WorkerId) => Promise<CloudRuntimeSandboxRecord | null>
+export type RefreshSignedPreview = (workerId: WorkerId) => Promise<CloudRuntimeSandboxRecord | null>
 type ProbeSignedPreview = (signedPreviewUrl: string) => Promise<boolean>
 type StartWake = (workerId: WorkerId) => void
 
@@ -196,15 +196,15 @@ function tokenByScope(tokens: CloudRuntimeToken[], scope: CloudRuntimeToken["sco
   return tokens.find((entry) => entry.scope === scope)?.token ?? null
 }
 
-function defaultGetSandboxRecord(): GetSandboxRecord {
+export function defaultGetSandboxRecord(): GetSandboxRecord {
   return env.provisionerMode === "kubernetes" ? getKubernetesWorkerRecord : getDaytonaSandboxRecord
 }
 
-function defaultRefreshSignedPreview(): RefreshSignedPreview {
+export function defaultRefreshSignedPreview(): RefreshSignedPreview {
   return env.provisionerMode === "kubernetes" ? refreshKubernetesSignedPreview : refreshDaytonaSignedPreview
 }
 
-function defaultInspectSandbox(): InspectSandbox {
+export function defaultInspectSandbox(): InspectSandbox {
   return env.provisionerMode === "kubernetes" ? inspectKubernetesWorker : inspectDaytonaSandbox
 }
 
