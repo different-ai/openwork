@@ -26,27 +26,24 @@ test("getDerivedStateFromError captures the message and stack for the fallback",
   });
 });
 
-test("a captured error renders the recovery screen instead of a blank window", () => {
-  const html = renderFallback(new Error("render exploded"));
+test("a captured error renders the recovery screen with the details collapsed", () => {
+  const error = new Error("render exploded");
+  error.stack = "Error: render exploded\n    at sessionRoute (session-route.tsx:1797)";
+  const html = renderFallback(error);
 
   expect(html).toContain("OpenWork hit an unexpected error");
-  expect(html).toContain("render exploded");
   expect(html).toContain("Reload");
-  expect(html).toContain("Copy details");
-  // The logs action depends on the desktop bridge, which is absent here.
+  expect(html).toContain('aria-expanded="false"');
+  expect(html).toContain("Technical details");
+  // Progressive disclosure: the raw payload and its actions wait behind the toggle.
+  expect(html).not.toContain("render exploded");
+  expect(html).not.toContain("session-route.tsx:1797");
+  expect(html).not.toContain("Copy details");
   expect(html).not.toContain("Open logs folder");
-});
-
-test("the recovery screen shows the stack when one is available", () => {
-  const error = new Error("no stack here");
-  error.stack = "Error: no stack here\n    at sessionRoute (session-route.tsx:1797)";
-
-  expect(renderFallback(error)).toContain("session-route.tsx:1797");
 });
 
 test("non-Error throws still produce a readable message", () => {
   expect(describeCrash("Local context is missing")).toEqual({ message: "Local context is missing", stack: "" });
-  expect(renderFallback("Local context is missing")).toContain("Local context is missing");
 });
 
 test("the copy payload carries message, stack, app version and distribution flavor", () => {

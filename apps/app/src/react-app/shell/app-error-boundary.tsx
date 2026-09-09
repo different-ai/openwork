@@ -57,6 +57,7 @@ async function resolveLogFilePath(): Promise<string | null> {
 }
 
 function RecoveryScreen({ crash }: { crash: CrashDetails }) {
+  const [open, setOpen] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
   const [logFilePath, setLogFilePath] = React.useState<string | null>(null);
   const [logsError, setLogsError] = React.useState<string | null>(null);
@@ -91,14 +92,7 @@ function RecoveryScreen({ crash }: { crash: CrashDetails }) {
           </p>
         </div>
 
-        <p className="break-words font-medium text-foreground">{crash.message}</p>
-        {crash.stack ? (
-          <pre className="max-h-64 overflow-auto rounded-md bg-muted p-3 text-xs text-muted-foreground">
-            {crash.stack}
-          </pre>
-        ) : null}
-
-        <div className="flex flex-wrap gap-2">
+        <div>
           <button
             type="button"
             className="rounded-md bg-primary px-3 py-2 font-medium text-primary-foreground"
@@ -106,24 +100,48 @@ function RecoveryScreen({ crash }: { crash: CrashDetails }) {
           >
             Reload
           </button>
+        </div>
+
+        {/* Same disclosure shape as the session error card: the raw payload
+            and its actions are for whoever reports the crash, on demand. */}
+        <div className="flex flex-col gap-2">
           <button
             type="button"
-            className="rounded-md border border-border px-3 py-2 font-medium text-foreground"
-            onClick={copy}
+            aria-expanded={open}
+            onClick={() => setOpen(!open)}
+            className="flex w-fit items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
           >
-            {copied ? "Copied" : "Copy details"}
+            <span aria-hidden="true" className={open ? "inline-block rotate-90" : "inline-block"}>›</span>
+            Technical details
           </button>
-          {logFilePath ? (
-            <button
-              type="button"
-              className="rounded-md border border-border px-3 py-2 font-medium text-foreground"
-              onClick={() => openLogs(logFilePath)}
-            >
-              Open logs folder
-            </button>
+          {open ? (
+            <div className="flex flex-col gap-2 rounded-lg bg-muted p-3 text-xs">
+              <p className="break-words font-medium text-foreground">{crash.message}</p>
+              {crash.stack ? (
+                <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-muted-foreground">{crash.stack}</pre>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded-md border border-border px-3 py-1.5 font-medium text-foreground"
+                  onClick={copy}
+                >
+                  {copied ? "Copied" : "Copy details"}
+                </button>
+                {logFilePath ? (
+                  <button
+                    type="button"
+                    className="rounded-md border border-border px-3 py-1.5 font-medium text-foreground"
+                    onClick={() => openLogs(logFilePath)}
+                  >
+                    Open logs folder
+                  </button>
+                ) : null}
+              </div>
+              {logsError ? <p className="text-muted-foreground">{logsError}</p> : null}
+            </div>
           ) : null}
         </div>
-        {logsError ? <p className="text-muted-foreground">{logsError}</p> : null}
       </div>
     </div>
   );
