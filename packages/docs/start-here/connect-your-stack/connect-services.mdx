@@ -50,6 +50,24 @@ then executes an exact match. If an account still needs attention, it should
 send you back to `Settings` > `OpenWork Connect` with the action to take instead of
 telling you to add an MCP server.
 
+### Gmail drafts with attachments
+
+Ask for a draft with files from your workspace, for example: “Draft an email
+with `report.pdf` and `summary.csv` attached. Do not send it.” The same Gmail
+draft capability accepts optional `attachments` paths; a supporting OpenWork
+host uploads the files using your selected Google connection. File bytes stay
+outside the model's context. Review the returned Gmail draft link before sending.
+
+You can attach 1–10 files totaling at most 4 MiB. The files must be inside an
+authorized workspace or folder on the host running the conversation. A remote
+workspace cannot read files that exist only on your desktop.
+
+Attachment fulfillment requires a direct capability call from a compatible
+OpenWork host. Code Mode, saved Workflows, and MCP clients without that host
+support return `file_input_requires_host` and create no draft. Do not retry
+without the requested attachments. If an upload's result is uncertain, check
+Gmail Drafts before attempting creation again.
+
 ## Connect, connectors, and connections
 
 - **Connect** is the member-facing page in the desktop app for signing in to

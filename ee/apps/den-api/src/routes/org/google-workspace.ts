@@ -11,6 +11,7 @@ import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../op
 import { decodeFileContent } from "../../capability-sources/binary-content.js"
 import { buildGmailDraftRaw, gmailDraftUrl, gmailThreadUrl, readGmailDraftIds } from "../../capability-sources/gmail.js"
 import type { GmailDraftAttachment } from "../../capability-sources/gmail.js"
+import { gmailFileInputPreflight, gmailFileInputPreflightSchema } from "../../capability-sources/gmail-file-input.js"
 import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
 import { listNativeProviderUsableEntries, resolveDefaultNativeProviderCredentialId } from "../../capability-sources/native-provider-connections.js"
 import {
@@ -52,7 +53,7 @@ const GMAIL_METADATA_CONCURRENCY = 4
 
 const CONNECT_GOOGLE_ACCOUNT_MESSAGE = "Connect your Google account first: open Settings > Connect and use Connect your account on the Google Workspace row, or connect from the OpenWork Cloud dashboard."
 
-const createDraftBodySchema = z.object({
+const draftMetadataSchema = z.object({
   to: z.string().trim().min(3).max(320).describe("Recipient email address."),
   cc: z.string().trim().min(3).max(1_000).optional().describe("Optional comma-separated Cc email addresses."),
   bcc: z.string().trim().min(3).max(1_000).optional().describe("Optional comma-separated Bcc email addresses."),
@@ -60,6 +61,14 @@ const createDraftBodySchema = z.object({
   body: z.string().min(1).max(50_000).describe("Plain-text draft body. Write plain prose with no markdown syntax, separate paragraphs with blank lines, and do not hard-wrap prose. For threaded drafts, the server appends the quoted conversation automatically; do not include quoted history."),
   threadId: z.string().trim().min(1).max(512).optional().describe("Gmail thread id to reply on. Required for replies and forwards; get it from the gmail-messages capability. When set, the draft is attached to that thread as a reply — keep the thread's subject (e.g. 'Re: …')."),
 }).strict()
+
+const createDraftBodySchema = draftMetadataSchema.extend({
+  attachments: z.array(z.string().trim().min(1)).min(1).max(DIRECT_UPLOAD_MAX_FILES).optional().describe("Optional workspace file paths, 1 to 10 files totaling at most 4 MiB. File bytes stay outside model context. Requires a direct execute_capability call from a supporting OpenWork host; Code Mode and other MCP hosts are unsupported and create no draft. Do not retry without attachments."),
+})
+
+const directDraftPayloadSchema = draftMetadataSchema.extend({
+  connectionId: z.string().trim().min(1).optional().describe("Selected native Google Workspace connection ID, or google-workspace for the legacy credential. An unavailable selection never falls back to another account."),
+})
 
 const createDraftResponseSchema = z.object({
   ok: z.literal(true),
@@ -353,6 +362,7 @@ function isDeclaredTextFile(mimeType: string): boolean {
 async function googleWorkspaceToken(input: {
   organizationId: DenTypeId<"organization">
   orgMembershipId: DenTypeId<"member">
+  connectionId?: string | null
 }): Promise<GoogleWorkspaceAccessToken> {
   const provider = getNativeOAuthProvider("google-workspace")
   if (!provider) {
@@ -363,9 +373,14 @@ async function googleWorkspaceToken(input: {
     memberId: input.orgMembershipId,
   })
   const teamIds = memberTeams.map((team) => team.id)
-  const requestedConnectorId = readInternalCapabilityConnectorId(getContext().req.raw.headers)
+  // Gmail multipart hosts select via payload, never via Den's signed internal headers.
+  const requestedConnectorId = input.connectionId === undefined
+    ? readInternalCapabilityConnectorId(getContext().req.raw.headers)
+    : input.connectionId
   let credentialProviderId: string | null
   if (requestedConnectorId) {
+    // This exact lookup also handles the synthetic google-workspace legacy
+    // entry. An explicit selection must never use the default resolver.
     const entries = await listNativeProviderUsableEntries({
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
@@ -595,7 +610,8 @@ async function executeGmailDraft(
   input: z.infer<typeof createDraftBodySchema>,
   payload: OrganizationContext,
   attachments: GmailDraftAttachment[],
-): Promise<{ status: 200 | 400 | 409 | 502; body: Record<string, unknown> }> {
+  connectionId?: string | null,
+): Promise<{ status: 200 | 400 | 409 | 422 | 502; body: Record<string, unknown> }> {
   const { to, cc, bcc, subject, body, threadId } = input
   if (!threadId && GMAIL_REPLY_SUBJECT_RE.test(subject)) {
     return {
@@ -610,6 +626,7 @@ async function executeGmailDraft(
   const token = await googleWorkspaceToken({
     organizationId: payload.organization.id,
     orgMembershipId: payload.currentMember.id,
+    connectionId,
   })
   if (token.kind === "google_api_error") {
     return { status: 502, body: { error: "google_api_error", message: token.message } }
@@ -618,14 +635,17 @@ async function executeGmailDraft(
     return { status: 409, body: { error: "needs_connection", message: token.message } }
   }
 
+  if (threadId && missingScope(token.account, [GMAIL_READ_SCOPE])) {
+    return { status: 409, body: { error: "needs_connection", message: missingPermissionMessage("Gmail read") } }
+  }
+  if (input.attachments) {
+    return { status: 422, body: gmailFileInputPreflight }
+  }
+
   const headers: { name: string; value: string }[] = []
   let draftBody = body
   let quotedHistoryIncluded = false
   if (threadId) {
-    if (missingScope(token.account, [GMAIL_READ_SCOPE])) {
-      return { status: 409, body: { error: "needs_connection", message: missingPermissionMessage("Gmail read") } }
-    }
-
     const threadUrl = new URL(`${gmailApiBase()}/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}`)
     threadUrl.searchParams.set("format", "full")
     const threadResponse = await googleWorkspaceApiFetch(threadUrl, {
@@ -825,7 +845,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       } catch {
         return c.json({ error: "invalid_request", message: "Draft payload must be valid JSON." }, 400)
       }
-      const parsed = createDraftBodySchema.safeParse(payloadJson)
+      const parsed = directDraftPayloadSchema.safeParse(payloadJson)
       if (!parsed.success) {
         return c.json({ error: "invalid_request", details: parsed.error.flatten() }, 400)
       }
@@ -833,7 +853,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (attachments.some((attachment) => !attachment.filename)) {
         return c.json({ error: "invalid_request", message: "Every attachment requires a filename." }, 400)
       }
-      const result = await executeGmailDraft(parsed.data, c.get("organizationContext"), attachments)
+      const result = await executeGmailDraft(parsed.data, c.get("organizationContext"), attachments, parsed.data.connectionId ?? null)
       return c.json(result.body, result.status)
     },
   )
@@ -1463,11 +1483,12 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     "/v1/capabilities/google-workspace/gmail-drafts",
     describeRoute({
       tags: ["Capability Sources"],
-      summary: "Create a Gmail draft or threaded reply draft without attachments",
-      description: "Creates a plain-text Gmail draft in the calling member own mailbox. For workspace attachments, use the openwork-cloud-uploads gmail_create_draft_with_attachments action so file bytes stay outside model context. Set threadId for replies and forwards. Always share the returned draftUrl.",
+      summary: "Create a Gmail draft or threaded reply with optional workspace attachments",
+      description: "Creates a plain-text Gmail draft in the calling member own mailbox. Optional attachments are workspace paths, up to 10 files totaling at most 4 MiB, fulfilled outside model context by a supporting OpenWork host on direct execute_capability calls. Code Mode and other MCP hosts cannot fulfill attachments and create no draft. Set threadId for replies and forwards. Always share the returned draftUrl.",
       responses: {
         200: jsonResponse("Draft created.", createDraftResponseSchema),
         400: jsonResponse("The draft request was invalid.", z.union([invalidRequestSchema, missingThreadIdSchema])),
+        422: jsonResponse("Workspace attachments require a supporting OpenWork host; no draft was created.", gmailFileInputPreflightSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         409: jsonResponse("The calling member has not connected their Google account or is missing permission.", needsConnectionSchema),
         502: jsonResponse("Google rejected the request.", upstreamErrorSchema),

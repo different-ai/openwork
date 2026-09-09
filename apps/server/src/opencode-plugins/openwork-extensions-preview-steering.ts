@@ -136,7 +136,7 @@ const connectCatalogResponseSchema = z.object({
 }).passthrough();
 
 export const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
-  "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action.";
+  "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action. Do not use another route to bypass a failed connection; follow its connection guidance.";
 
 export const OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION =
   "Skill creation: Cloud. When the user asks to create a skill, retrieve and follow the listed create-skill remote skill by calling openwork-cloud_execute_capability with its exact <capability>. Create the skill in OpenWork Cloud as a private plugin, not in the workspace. For later steps, use share-plugin when the user wants a specific person or team to use a skill, and use add-to-marketplace or add-user-to-marketplace only when the user asks. Use a workspace-local skill only when the user explicitly requests one. Do not create both copies.";
@@ -153,7 +153,7 @@ export const OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION =
 // steering is selected. Restating either here costs characters on every
 // request and drifts.
 export const OPENWORK_CLOUD_CONNECTION_INSTRUCTION =
-  "The OpenWork Cloud connection is verified ready for this exact workspace/model. The openwork-cloud server instructions in this prompt are authoritative for search-first discovery, MCP Apps, connection_status results, schema guidance, and retry rules; follow them instead of improvising. Local OpenWork extensions remain available through openwork_query/openwork_execute with extension.actions and extension.call.";
+  "The OpenWork Cloud connection is verified ready for this exact workspace/model. The openwork-cloud server instructions in this prompt are authoritative for search-first discovery, MCP Apps, connection_status results, schema guidance, and retry rules; follow them instead of improvising. Discover the native Gmail draft schema before declaring attachments unsupported: OpenWork fulfills its attachment paths through host file transport. Local OpenWork extensions remain available through openwork_query/openwork_execute with extension.actions and extension.call.";
 
 export const OPENWORK_CONNECT_SIGN_IN_INSTRUCTION =
   `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} OpenWork Cloud is not signed in or no desired agent access configuration exists for this workspace. Direct the user to sign in to OpenWork and connect the service in Settings → Connect.`;
