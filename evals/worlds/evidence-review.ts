@@ -1,5 +1,13 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +18,7 @@ import { uploadReview } from "@openwork/review/storage";
 import type { TestRunRecord } from "@openwork/test-artifacts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
+const publisher = join(root, "evals/scripts/publish-review.mjs");
 
 /** Synthetic report inputs exercise the real publisher and production HTTP app. */
 export async function reviewWorld(
@@ -173,6 +182,96 @@ export async function reviewWorld(
     referenceBundle.assets,
     { localDir: storage },
   );
+  let publisherSequence = 0;
+  async function runPublisher(evidence: "missing" | "current") {
+    publisherSequence += 1;
+    const fixture = join(directory, `publisher-${publisherSequence}`);
+    const bin = join(fixture, "bin");
+    const uploads = join(fixture, "uploads");
+    const summary = join(fixture, "summary.md");
+    const commands = join(fixture, "commands.log");
+    const mutations = join(fixture, "mutations.log");
+    await mkdir(bin, { recursive: true });
+    await mkdir(uploads);
+    await Promise.all([
+      writeFile(summary, ""),
+      writeFile(commands, ""),
+      writeFile(mutations, ""),
+    ]);
+    const gh = join(bin, "gh");
+    await writeFile(
+      gh,
+      `#!${process.execPath}
+const { appendFileSync, cpSync, mkdirSync } = require("node:fs");
+const { join } = require("node:path");
+
+function main() {
+  const args = process.argv.slice(2);
+  const commandLog = process.env.GH_WITNESS_COMMANDS;
+  const mutationLog = process.env.GH_WITNESS_MUTATIONS;
+  const sha = process.env.GH_WITNESS_SHA;
+  if (!commandLog || !mutationLog || !sha) process.exit(90);
+  appendFileSync(commandLog, JSON.stringify(args) + "\\n");
+  if (args[0] === "pr" && args[1] === "view" && args.includes("headRefOid")) {
+    process.stdout.write(args.includes("--jq") ? sha + "\\n" : JSON.stringify({ headRefOid: sha }));
+    return;
+  }
+  if (args[0] === "run" && args[1] === "download") {
+    const output = args[args.indexOf("--dir") + 1];
+    if (!output) process.exit(91);
+    mkdirSync(output, { recursive: true });
+    const source = process.env.GH_WITNESS_SOURCE;
+    if (source) cpSync(source, join(output, "evidence"), { recursive: true });
+    return;
+  }
+  if (args[0] === "pr" && args[1] === "view" && args.includes("comments")) {
+    process.stdout.write(JSON.stringify({ comments: [] }));
+    return;
+  }
+  if ((args[0] === "pr" && args[1] === "comment") || args[0] === "api") {
+    appendFileSync(mutationLog, JSON.stringify(args) + "\\n");
+    return;
+  }
+  process.stderr.write("Unexpected gh command: " + JSON.stringify(args) + "\\n");
+  process.exitCode = 92;
+}
+
+main();
+`,
+    );
+    await chmod(gh, 0o700);
+    const result = spawnSync(process.execPath, [publisher], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 30_000,
+      env: {
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        HOME: fixture,
+        TMPDIR: fixture,
+        LANG: "C.UTF-8",
+        REVIEW_PR: "17",
+        REVIEW_SHA: gitSha,
+        REVIEW_RUN_ID: "123456",
+        GITHUB_STEP_SUMMARY: summary,
+        OPENWORK_REVIEW_LOCAL_DIR: uploads,
+        OPENWORK_REVIEW_URL: "http://127.0.0.1:4173",
+        GH_WITNESS_COMMANDS: commands,
+        GH_WITNESS_MUTATIONS: mutations,
+        GH_WITNESS_SHA: gitSha,
+        ...(evidence === "current" ? { GH_WITNESS_SOURCE: runDirs[0] } : {}),
+      },
+    });
+    const mutationLog = await readFile(mutations, "utf8");
+    return {
+      code: result.status ?? 1,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      summary: await readFile(summary, "utf8"),
+      commandLog: await readFile(commands, "utf8"),
+      commentWrites: mutationLog.split("\n").filter(Boolean).length,
+      uploadWrites: (await readdir(uploads)).length,
+    };
+  }
   const port = await new Promise<number>((resolve, reject) => {
     const server = createServer();
     server.once("error", reject);
@@ -248,6 +347,7 @@ export async function reviewWorld(
     failed,
     reference,
     report: bundle.report,
+    runPublisher,
     directory,
     [Symbol.asyncDispose]: dispose,
   };

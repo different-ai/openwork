@@ -77,6 +77,33 @@ test("A reviewer can inspect two runs and a DocShot with honest results and priv
     true,
   );
 
+  const missingPublication = await world.runPublisher("missing");
+  expect(missingPublication.code).not.toBe(0);
+  expect(missingPublication.stderr).toContain(
+    "INCOMPLETE: no test records for this PR head",
+  );
+  expect(missingPublication.summary).toContain(
+    "## Evidence review — incomplete",
+  );
+  expect(missingPublication.summary).toContain(
+    "no passing evidence is claimed",
+  );
+  expect(missingPublication.commentWrites).toBe(0);
+  expect(missingPublication.uploadWrites).toBe(0);
+  expect(missingPublication.commandLog).not.toContain('"comment"');
+
+  const currentPublication = await world.runPublisher("current");
+  expect(currentPublication.code).toBe(0);
+  expect(currentPublication.stdout).toContain("http://127.0.0.1:4173/r/");
+  expect(currentPublication.stderr).not.toContain("INCOMPLETE");
+  expect(currentPublication.commentWrites).toBe(1);
+  expect(currentPublication.uploadWrites).toBe(1);
+  evidence.recordAssertionEvidence(
+    "The CI publisher fails closed when exact-head records are missing",
+    "The real publisher CLI exits nonzero and writes an Incomplete summary without upload or comment writes when the controlled download has no current-head record; a valid current-head record follows the supported local-storage and PR-comment path.",
+    true,
+  );
+
   await using production = await reviewWorld("production");
   for (const path of [
     "/",
