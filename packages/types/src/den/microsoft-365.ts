@@ -1,6 +1,8 @@
 export type Microsoft365Feature =
   | "mailRead"
   | "mailDraft"
+  | "mailSend"
+  | "mailManage"
   | "calendarRead"
   | "calendarWrite"
   | "filesRead"
@@ -20,6 +22,8 @@ export const MICROSOFT_365_FEATURES: readonly Microsoft365Feature[] = [
   "calendarRead",
   "calendarWrite",
   "mailDraft",
+  "mailSend",
+  "mailManage",
   "mailRead",
   "filesRead",
   "filesWrite",

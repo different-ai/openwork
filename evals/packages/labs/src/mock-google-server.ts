@@ -4,6 +4,7 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import { buildOidcClaims, signOidcJwt } from "./idp.ts";
+import { serviceActionsWitness } from "./mock-service-actions.ts";
 
 interface MockGoogleServerOptions {
   accounts: string[];
@@ -87,6 +88,7 @@ interface MockGoogleState {
   drafts: Map<string, RecordedDraft[]>;
   driveUploads: Map<string, RecordedDriveUpload[]>;
   keys: SigningKeys;
+  actions: ReturnType<typeof serviceActionsWitness>;
 }
 
 const HTML_ENTITIES: Record<string, string> = {
@@ -611,6 +613,12 @@ async function handleRequest(state: MockGoogleState, request: IncomingMessage, r
     sendJson(response, 200, { requests: state.requests });
     return;
   }
+  if (requestMethod === "GET" && url.pathname === "/__mock-google/actions") {
+    sendJson(response, 200, state.actions.snapshot(url.searchParams.get("email") ?? ""));
+    return;
+  }
+  const accessToken = bearerToken(request);
+  if (await state.actions.handle(request, response, url, accountForRequest(state, request)?.email ?? null, accessToken ? tokenId(accessToken) : null)) return;
   if (requestMethod === "GET" && url.pathname === "/__mock-google/pending-authorizations") {
     sendJson(response, 200, pendingAuthorizations(state));
     return;
@@ -712,6 +720,7 @@ export async function startMockGoogleServer(options: MockGoogleServerOptions): P
     drafts: new Map(),
     driveUploads: new Map(),
     keys: createSigningKeys(),
+    actions: serviceActionsWitness(),
   };
   const server = createServer((request, response) => {
     void handleRequest(state, request, response).catch((error) => {

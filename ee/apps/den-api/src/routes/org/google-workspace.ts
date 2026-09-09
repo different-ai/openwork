@@ -28,8 +28,10 @@ import {
   gmailBodyHasQuotedHistory,
   truncateText,
 } from "../../capability-sources/google-workspace-api.js"
-import type { ConnectedAccountRow } from "../../capability-sources/oauth-credentials.js"
-import { getNativeOAuthProvider } from "../../capability-sources/provider-registry.js"
+import { getOrgOAuthClient, type ConnectedAccountRow } from "../../capability-sources/oauth-credentials.js"
+import { clientSelectedFeatures, getNativeOAuthProvider, providerScopesSatisfy, resolveProviderScopes } from "../../capability-sources/provider-registry.js"
+import { registerGmailManagementRoutes } from "./gmail-management.js"
+import { registerGoogleProductivityManagementRoutes } from "./google-productivity-management.js"
 import { listTeamsForMember } from "../../orgs.js"
 import { readInternalCapabilityConnectorId } from "../../session.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -96,6 +98,7 @@ const upstreamErrorSchema = z.object({
 const gmailMessagesQuerySchema = z.object({
   q: z.string().trim().min(1).max(1_000).optional().describe("Optional Gmail search query, using Gmail's search syntax."),
   maxResults: z.coerce.number().int().min(1).max(25).default(10).describe("Maximum messages to return, capped at 25."),
+  pageToken: z.string().min(1).max(2048).optional().describe("nextPageToken from a previous page of the same Gmail search."),
 })
 
 const gmailMessageParamSchema = z.object({
@@ -128,6 +131,7 @@ const gmailMessageSchema = gmailMessageSummarySchema.extend({
 const gmailMessagesResponseSchema = z.object({
   ok: z.literal(true),
   messages: z.array(gmailMessageSummarySchema),
+  nextPageToken: z.string().optional(),
 }).meta({ ref: "GoogleWorkspaceGmailMessagesResponse" })
 
 const gmailMessageResponseSchema = z.object({
@@ -212,8 +216,11 @@ const updateCalendarEventResponseSchema = z.object({
 }).meta({ ref: "GoogleWorkspaceUpdateCalendarEventResponse" })
 
 const driveFilesQuerySchema = z.object({
-  query: z.string().trim().min(1).max(500).describe("Text to search in Drive file names and full text."),
+  query: z.string().trim().min(1).max(500).optional().describe("Optional text to search in Drive file names and full text. Omit to list files."),
   maxResults: z.coerce.number().int().min(1).max(25).default(10).describe("Maximum files to return, capped at 25."),
+  pageToken: z.string().min(1).max(2048).optional(),
+  modifiedAfter: z.string().datetime({ offset: true }).optional().describe("Only files modified after this RFC3339 timestamp; follow nextPageToken to enumerate all matching files."),
+  folderId: z.string().min(1).max(512).regex(/^[A-Za-z0-9_-]+$/).optional().describe("Limit to direct children of this folder."),
 })
 
 const driveFileParamSchema = z.object({
@@ -255,6 +262,8 @@ const driveFileSummarySchema = z.object({
 const driveFilesResponseSchema = z.object({
   ok: z.literal(true),
   files: z.array(driveFileSummarySchema),
+  nextPageToken: z.string().optional(),
+  incompleteSearch: z.boolean().optional().describe("Google reports some drives were not searched; do not claim these are all matching files."),
 }).meta({ ref: "GoogleWorkspaceDriveFilesResponse" })
 
 const uploadDriveFileResponseSchema = z.object({
@@ -281,8 +290,8 @@ const shareDriveFileResponseSchema = z.object({
   role: z.string(),
 }).meta({ ref: "GoogleWorkspaceShareDriveFileResponse" })
 
-type GoogleWorkspaceAccessToken =
-  | { kind: "ok"; accessToken: string; account: ConnectedAccountRow }
+export type GoogleWorkspaceAccessToken =
+  | { kind: "ok"; accessToken: string; account: ConnectedAccountRow; enabledScopes: string[]; enabledFeatures?: string[] }
   | { kind: "needs_connection"; message: string }
   | { kind: "google_api_error"; message: string }
 
@@ -324,7 +333,8 @@ export function missingScope(account: ConnectedAccountRow, anyOf: string[]): boo
     // general Drive retrieval uses the stricter, fail-closed check below.
     return false
   }
-  return !anyOf.some((scope) => scopes.includes(scope))
+  const provider = getNativeOAuthProvider("google-workspace")
+  return !anyOf.some((scope) => scopes.includes(scope) || (provider && providerScopesSatisfy(provider, scopes, scope)))
 }
 
 function missingPermissionMessage(label: string): string {
@@ -395,7 +405,10 @@ async function googleWorkspaceToken(input: {
     return { kind: "needs_connection", message: CONNECT_GOOGLE_ACCOUNT_MESSAGE }
   }
 
-  return { kind: "ok", accessToken: token.accessToken, account: token.account }
+  const client = await getOrgOAuthClient(input.organizationId, credentialProviderId)
+  const enabledFeatures = client ? clientSelectedFeatures(provider, client.extra) : []
+  const enabledScopes = client ? resolveProviderScopes(provider, enabledFeatures) : []
+  return { kind: "ok", accessToken: token.accessToken, account: token.account, enabledScopes, enabledFeatures }
 }
 
 async function googleApiError(operation: string, response: Response) {
@@ -710,6 +723,9 @@ async function executeGmailDraft(
 export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.use("/v1/capabilities/google-workspace/*", contextStorage())
   app.use("/v1/direct-uploads/google-workspace/*", contextStorage())
+  const actionDependencies = { token: googleWorkspaceToken, fetch: googleWorkspaceApiFetch }
+  registerGmailManagementRoutes(app, actionDependencies)
+  registerGoogleProductivityManagementRoutes(app, actionDependencies)
 
   app.post(
     "/v1/direct-uploads/google-workspace/drive-files",
@@ -873,6 +889,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       const listUrl = new URL(`${gmailApiBase()}/gmail/v1/users/me/messages`)
       if (query.q) listUrl.searchParams.set("q", query.q)
       listUrl.searchParams.set("maxResults", String(query.maxResults))
+      if (query.pageToken) listUrl.searchParams.set("pageToken", query.pageToken)
 
       const listResponse = await googleWorkspaceApiFetch(listUrl, {
         headers: { authorization: `Bearer ${token.accessToken}` },
@@ -881,7 +898,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         return c.json(await googleApiError("Gmail messages list", listResponse), 502)
       }
 
-      const ids = extractGmailMessageIds(await readJson(listResponse), 25)
+      const listed = await readJson(listResponse)
+      const ids = extractGmailMessageIds(listed, 25)
       const metadata = await fetchGmailMetadata(ids, token.accessToken, c.req.raw.signal)
       if (!metadata.ok) {
         return c.json(metadata.error, 502)
@@ -900,7 +918,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         }
       })
 
-      return c.json({ ok: true, messages })
+      return c.json({ ok: true, messages, ...(isRecordValue(listed) && typeof listed.nextPageToken === "string" ? { nextPageToken: listed.nextPageToken } : {}) })
     },
   )
 
@@ -1186,7 +1204,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Search Google Drive files as the calling member",
-      description: "Searches the calling member's Google Drive files by name and full text, using their connected Google Workspace account.",
+      description: "Lists or searches Drive files, including an optional modifiedAfter date and direct-parent folder filter. Follow nextPageToken until absent, and honor incompleteSearch before claiming complete coverage.",
       responses: {
         200: jsonResponse("Google Drive files returned.", driveFilesResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -1215,13 +1233,17 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
 
       const query = c.req.valid("query")
       const url = new URL(`${driveApiBase()}/drive/v3/files`)
-      url.searchParams.set("q", buildDriveSearchQuery(query.query))
+      const filters = [query.query ? buildDriveSearchQuery(query.query) : "trashed = false"]
+      if (query.modifiedAfter) filters.push(`modifiedTime > '${query.modifiedAfter}'`)
+      if (query.folderId) filters.push(`'${query.folderId}' in parents`)
+      url.searchParams.set("q", filters.join(" and "))
+      if (query.pageToken) url.searchParams.set("pageToken", query.pageToken)
       url.searchParams.set("pageSize", String(query.maxResults))
       url.searchParams.set("corpora", "allDrives")
       url.searchParams.set("spaces", "drive")
       url.searchParams.set("supportsAllDrives", "true")
       url.searchParams.set("includeItemsFromAllDrives", "true")
-      url.searchParams.set("fields", "files(id,name,mimeType,modifiedTime,webViewLink,size)")
+      url.searchParams.set("fields", "files(id,name,mimeType,modifiedTime,webViewLink,size),nextPageToken,incompleteSearch")
 
       const response = await googleWorkspaceApiFetch(url, {
         headers: { authorization: `Bearer ${token.accessToken}` },
@@ -1231,7 +1253,11 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         return error.status === 409 ? c.json(error.body, 409) : c.json(error.body, 502)
       }
 
-      return c.json({ ok: true, files: extractDriveFiles(await readJson(response)) })
+      const listed = await readJson(response)
+      return c.json({ ok: true, files: extractDriveFiles(listed),
+        ...(isRecordValue(listed) && typeof listed.nextPageToken === "string" ? { nextPageToken: listed.nextPageToken } : {}),
+        ...(isRecordValue(listed) && typeof listed.incompleteSearch === "boolean" ? { incompleteSearch: listed.incompleteSearch } : {}),
+      })
     },
   )
 
@@ -1240,7 +1266,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Read a Google Drive file's text or binary content as the calling member",
-      description: "Reads one Google Drive file, exporting Google Docs editors files as plain text. Downloaded files are content-sniffed with strict UTF-8 detection; declared text is bounded, and binary content is returned as standard base64 only up to the internal model-safety limit.",
+      description: "Reads a Drive file. Docs and Slides export as plain text; Sheets exports the first tab as CSV. For every spreadsheet tab or edits use the spreadsheet metadata and values capabilities. Downloaded content is bounded; binary files use standard base64 within the model-safety limit.",
       responses: {
         200: jsonResponse("Google Drive file returned.", driveFileResponseSchema),
         400: jsonResponse("The Drive item is not a readable file.", invalidRequestSchema),
@@ -1315,7 +1341,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         ? new URL(`${driveApiBase()}/drive/v3/files/${encodeURIComponent(fileId)}/export`)
         : new URL(`${driveApiBase()}/drive/v3/files/${encodeURIComponent(fileId)}`)
       if (isGoogleAppsFile) {
-        contentUrl.searchParams.set("mimeType", "text/plain")
+        contentUrl.searchParams.set("mimeType", file.mimeType === "application/vnd.google-apps.spreadsheet" ? "text/csv" : "text/plain")
       } else {
         contentUrl.searchParams.set("alt", "media")
         contentUrl.searchParams.set("supportsAllDrives", "true")
