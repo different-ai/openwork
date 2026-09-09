@@ -183,7 +183,9 @@ export async function reviewWorld(
     { localDir: storage },
   );
   let publisherSequence = 0;
-  async function runPublisher(evidence: "missing" | "current") {
+  async function runPublisher(
+    evidence: "missing" | "current" | "stale-record" | "stale-pr-head",
+  ) {
     publisherSequence += 1;
     const fixture = join(directory, `publisher-${publisherSequence}`);
     const bin = join(fixture, "bin");
@@ -198,6 +200,19 @@ export async function reviewWorld(
       writeFile(commands, ""),
       writeFile(mutations, ""),
     ]);
+    let source: string | undefined;
+    if (evidence === "current") source = runDirs[0];
+    if (evidence === "stale-record") {
+      const record = records[0];
+      if (!record) throw new Error("Missing publisher fixture record.");
+      source = join(fixture, "stale-record");
+      await mkdir(source);
+      await writeFile(
+        join(source, "test-run.json"),
+        JSON.stringify({ ...record, gitSha: "f".repeat(40) }),
+      );
+      await writeFile(join(source, "dialog.png"), png);
+    }
     const gh = join(bin, "gh");
     await writeFile(
       gh,
@@ -257,8 +272,9 @@ main();
         OPENWORK_REVIEW_URL: "http://127.0.0.1:4173",
         GH_WITNESS_COMMANDS: commands,
         GH_WITNESS_MUTATIONS: mutations,
-        GH_WITNESS_SHA: gitSha,
-        ...(evidence === "current" ? { GH_WITNESS_SOURCE: runDirs[0] } : {}),
+        GH_WITNESS_SHA:
+          evidence === "stale-pr-head" ? "e".repeat(40) : gitSha,
+        ...(source ? { GH_WITNESS_SOURCE: source } : {}),
       },
     });
     const mutationLog = await readFile(mutations, "utf8");

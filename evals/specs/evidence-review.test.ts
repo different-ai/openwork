@@ -92,6 +92,28 @@ test("A reviewer can inspect two runs and a DocShot with honest results and priv
   expect(missingPublication.uploadWrites).toBe(0);
   expect(missingPublication.commandLog).not.toContain('"comment"');
 
+  const stalePublication = await world.runPublisher("stale-record");
+  expect(stalePublication.code).not.toBe(0);
+  expect(stalePublication.stderr).toContain(
+    "INCOMPLETE: no test records for this PR head",
+  );
+  expect(stalePublication.summary).toContain(
+    "no passing evidence is claimed",
+  );
+  expect(stalePublication.commentWrites).toBe(0);
+  expect(stalePublication.uploadWrites).toBe(0);
+
+  const supersededPublication = await world.runPublisher("stale-pr-head");
+  expect(supersededPublication.code).toBe(0);
+  expect(supersededPublication.stdout).toContain(
+    "Source run is no longer current; existing evidence is unchanged.",
+  );
+  expect(supersededPublication.commandLog).not.toContain(
+    '["run","download"',
+  );
+  expect(supersededPublication.commentWrites).toBe(0);
+  expect(supersededPublication.uploadWrites).toBe(0);
+
   const currentPublication = await world.runPublisher("current");
   expect(currentPublication.code).toBe(0);
   expect(currentPublication.stdout).toContain("http://127.0.0.1:4173/r/");
@@ -99,8 +121,8 @@ test("A reviewer can inspect two runs and a DocShot with honest results and priv
   expect(currentPublication.commentWrites).toBe(1);
   expect(currentPublication.uploadWrites).toBe(1);
   evidence.recordAssertionEvidence(
-    "The CI publisher fails closed when exact-head records are missing",
-    "The real publisher CLI exits nonzero and writes an Incomplete summary without upload or comment writes when the controlled download has no current-head record; a valid current-head record follows the supported local-storage and PR-comment path.",
+    "The CI publisher distinguishes missing, stale, superseded, and current evidence",
+    "The real publisher CLI exits nonzero with an Incomplete summary and no publication for empty or stale-only downloads; a superseded source run exits successfully before download and preserves existing evidence; a valid current-head record follows the supported local-storage and PR-comment path.",
     true,
   );
 
