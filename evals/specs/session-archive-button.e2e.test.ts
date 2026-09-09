@@ -564,11 +564,11 @@ test("accepted commands require exact engine admission before archive and never 
       await agent.run("composer.set_text", { text: "/archive-witness" });
       await user.see("composer", { text: "/archive-witness" });
       if (queued) {
-        await user.click({ role: "button", text: "/archive-witness" });
         await user.click("composer");
+        await user.press("Escape");
         await user.press("Enter");
         await user.see("composer", { text: "" });
-        await user.see({ role: "button", text: "/archive-witness" });
+        await user.see({ text: "/archive-witness" });
         await send(a2, "The message after the accepted command must never replay.");
         await open(b1);
         await world.releaseRun();
