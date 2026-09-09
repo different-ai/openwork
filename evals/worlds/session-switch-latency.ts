@@ -333,16 +333,43 @@ export async function sessionSwitchLatency(seed: Seed) {
       };
     },
     sidebarTargetState: (sessionId: string) => evaluate(app.client, browserScript((workspaceId, sessionId) => {
-      const row = document.querySelector<HTMLElement>(`[data-sidebar-session-id="${CSS.escape(sessionId)}"][data-sidebar-session-workspace-id="${CSS.escape(workspaceId)}"]`);
-      const showMoreLabels = [...document.querySelectorAll<HTMLButtonElement>("button")]
-        .filter((button) => button.innerText.trim() === "Show 4 more")
-        .filter((button) => {
-          const rect = button.getBoundingClientRect();
-          const style = getComputedStyle(button);
+      const workspace = document.querySelector<HTMLElement>(`[data-sidebar-workspace-id="${CSS.escape(workspaceId)}"]`);
+      const row = workspace?.querySelector<HTMLElement>(`[data-sidebar-session-id="${CSS.escape(sessionId)}"][data-sidebar-session-workspace-id="${CSS.escape(workspaceId)}"]`);
+      const visible = (element: HTMLElement) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.display !== "none"
+          && style.visibility !== "hidden" && style.opacity !== "0";
+      };
+      const showMoreControls = [...(workspace?.querySelectorAll<HTMLElement>(
+        '[data-sidebar="menu-sub-button"][data-slot="sidebar-menu-sub-button"]',
+      ) ?? [])]
+        .filter((control) => /^Show \d+ more$/.test(control.innerText.trim()))
+        .filter(visible)
+        .map((control) => ({
+          label: control.innerText.trim(),
+          tagName: control.tagName.toLowerCase(),
+          dataSidebar: control.dataset.sidebar ?? "",
+          dataSlot: control.dataset.slot ?? "",
+          ariaDisabled: control.getAttribute("aria-disabled"),
+        }));
+      const visibleSessionCount = [...(workspace?.querySelectorAll<HTMLElement>(
+        `[data-sidebar-session-workspace-id="${CSS.escape(workspaceId)}"]`,
+      ) ?? [])]
+        .filter((session) => {
+          const rect = session.getBoundingClientRect();
+          const style = getComputedStyle(session);
           return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
         })
-        .map((button) => button.innerText.trim());
-      return { targetPresent: Boolean(row), showMoreLabels };
+        .length;
+      return {
+        workspacePresent: Boolean(workspace),
+        targetPresent: Boolean(row),
+        visibleSessionCount,
+        showMoreControls,
+        sidebarText: (workspace?.innerText ?? "").slice(0, 4_000),
+        domShape: (workspace?.outerHTML ?? "").slice(0, 12_000),
+      };
     }, [workspace.workspaceId, sessionId])),
     current: () => evaluate(app.client, () => {
       const surface = document.querySelector<HTMLElement>('[data-workbench-pane="primary"] [data-session-surface-id]');
@@ -352,7 +379,15 @@ export async function sessionSwitchLatency(seed: Seed) {
         hash: location.hash,
       };
     }),
-    runtimeFacts: () => evaluate(app.client, browserScript(async (workspaceId, engine, providerId, modelId, expectedOrigin) => {
+    runtimeFacts: () => evaluate(app.client, browserScript(async (
+      workspaceId,
+      engine,
+      providerId,
+      modelId,
+      expectedOrigin,
+      actualSourceSha,
+      hostKind,
+    ) => {
       const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
       const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") };
       const [health, status, native] = await Promise.all([
@@ -370,6 +405,8 @@ export async function sessionSwitchLatency(seed: Seed) {
         electronBridge: Boolean(window.__OPENWORK_ELECTRON__),
         origin: location.origin,
         expectedOrigin,
+        actualSourceSha,
+        hostKind,
         engine,
         healthStatus: health.status,
         engineStatus: status.status,
@@ -381,7 +418,10 @@ export async function sessionSwitchLatency(seed: Seed) {
         modelVisible: engine === "v1" || (nativeBody.includes(providerId) && nativeBody.includes(modelId)),
         viewport: { width: innerWidth, height: innerHeight, devicePixelRatio },
       };
-    }, [workspace.workspaceId, engine, providerId, modelId, new URL(app.webUrl).origin]), { awaitPromise: true, timeoutMs: 30_000 }),
+    }, [workspace.workspaceId, engine, providerId, modelId, new URL(app.webUrl).origin, app.actualSourceSha, app.handle.hostKind]), {
+      awaitPromise: true,
+      timeoutMs: 30_000,
+    }),
     async controllerCounts() {
       const allRequests = await agentMock.agentRequests();
       const requests = allRequests.filter((request) => request.kind === "final" && request.promptMarker !== null && markerSet.has(request.promptMarker));

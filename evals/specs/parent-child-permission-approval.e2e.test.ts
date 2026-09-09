@@ -115,11 +115,23 @@ function sidebarSessionAvailability(workspaceId: string, sessionId: string) {
   return browserScript((expectedWorkspaceId, expectedSessionId) => {
     const workspace = [...document.querySelectorAll<HTMLElement>("[data-sidebar-workspace-id]")]
       .find((candidate) => candidate.dataset.sidebarWorkspaceId === expectedWorkspaceId);
+    const visible = (element: HTMLElement) => {
+      const rect = element.getBoundingClientRect();
+      if (element.getClientRects().length === 0 || rect.width <= 0 || rect.height <= 0) return false;
+      let current: Element | null = element;
+      while (current) {
+        const style = getComputedStyle(current);
+        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+        current = current.parentElement;
+      }
+      return true;
+    };
+    const showMore = [...(workspace?.querySelectorAll<HTMLElement>('[data-sidebar="menu-sub-button"]') ?? [])]
+      .find((candidate) => visible(candidate) && /^Show (?:\d+ )?more$/.test(candidate.innerText.trim()));
     return {
       row: [...(workspace?.querySelectorAll<HTMLElement>("[data-sidebar-session-id]") ?? [])]
-        .some((candidate) => candidate.dataset.sidebarSessionId === expectedSessionId),
-      showMore: [...(workspace?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
-        .some((button) => /^Show (?:\d+ )?more$/.test(button.innerText.trim())),
+        .some((candidate) => candidate.dataset.sidebarSessionId === expectedSessionId && visible(candidate)),
+      showMoreLabel: showMore?.innerText.trim() ?? "",
     };
   }, [workspaceId, sessionId]);
 }
@@ -144,16 +156,17 @@ stopTest("retry recovery and stopping a permission leave other requests and fres
     await user.press("Enter");
   };
   const open = async (session: { title: string; sessionId: string }) => {
-    const available = await probe.eventually(() => probe.eval(sidebarSessionAvailability(world.workspace.workspaceId, session.sessionId)), {
-      within: 30_000, label: "the intended conversation or its sidebar expansion is available",
-      until: (state) => state.row || state.showMore,
-    });
-    if (!available.row) {
-      await user.click({ role: "button", label: /^Show (?:\d+ )?more$/ });
-      await probe.eventually(() => probe.eval(sidebarSessionAvailability(world.workspace.workspaceId, session.sessionId)), {
-        within: 15_000, label: "Show more reveals the intended conversation", until: (state) => state.row,
+    for (let expansions = 0; expansions < 4; expansions++) {
+      const available = await probe.eventually(() => probe.eval(sidebarSessionAvailability(world.workspace.workspaceId, session.sessionId)), {
+        within: 30_000, label: "the intended conversation or its sidebar expansion is available",
+        until: (state) => state.row || state.showMoreLabel.length > 0,
       });
+      if (available.row) break;
+      await user.click({ text: available.showMoreLabel });
     }
+    await probe.eventually(() => probe.eval(sidebarSessionAvailability(world.workspace.workspaceId, session.sessionId)), {
+      within: 15_000, label: "bounded Show more expansion reveals the intended conversation", until: (state) => state.row,
+    });
     await user.click({ text: session.title });
     await probe.eventually(() => probe.eval(primarySurfaceOwns(session.sessionId)), {
       within: 30_000, label: "the intended conversation owns the primary session surface", until: Boolean,

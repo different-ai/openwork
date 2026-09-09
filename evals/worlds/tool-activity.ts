@@ -67,6 +67,10 @@ export type ActivityObservation = {
   rootInactiveMs: number | null;
   ownerToolTerminalMs: number | null;
   parentToolTerminalMs: number | null;
+  nativeSettledMs: number | null;
+  uiSettledMs: number | null;
+  uiSettledAfterNativeMs: number | null;
+  stoppingSeen: boolean;
   transitions: Array<{
     atMs: number;
     selected: boolean;
@@ -79,6 +83,8 @@ export type ActivityObservation = {
     parentToolStatus: string;
     nativeFresh: boolean;
     stopEnabled: boolean;
+    stoppingVisible: boolean;
+    stoppingBusy: boolean;
     activeAnimation: boolean;
   }>;
   current: {
@@ -99,6 +105,9 @@ export type ActivityObservation = {
     label: string;
     stopVisible: boolean;
     stopEnabled: boolean;
+    stoppingVisible: boolean;
+    stoppingDisabled: boolean;
+    stoppingBusy: boolean;
     activeAnimation: boolean;
     animationNames: string[];
     reducedMotion: boolean;
@@ -119,6 +128,12 @@ type ActivityExpectation = {
 declare global {
   interface Window {
     __toolActivityObservation?: { state: ActivityObservation; stop(): void };
+    __toolPromptPosts?: {
+      sessionId: string;
+      posts: number;
+      paths: string[];
+      restore(): void;
+    };
   }
 }
 
@@ -134,12 +149,14 @@ function installActivityObservation(expected: ActivityExpectation): void {
     primaryMissingIntervals: [], sidebarMissingIntervals: [],
     returnActionCaptured: false, returnSelectedMs: null, returnActivityMs: null,
     stopActionCaptured: false, stopFeedbackMs: null, rootInactiveMs: null, ownerToolTerminalMs: null, parentToolTerminalMs: null,
+    nativeSettledMs: null, uiSettledMs: null, uiSettledAfterNativeMs: null, stoppingSeen: false,
     transitions: [],
     current: {
       selected: false, nativeActive: false, rootActive: false, ownerActive: false, toolStatus: "", parentToolStatus: "", nativeFresh: false,
       primaryVisible: false, primaryActive: false, primaryCount: 0, sidebarVisible: false,
       childSessionId: "", childSessionMatches: false,
-      activity: "", label: "", stopVisible: false, stopEnabled: false, activeAnimation: false,
+      activity: "", label: "", stopVisible: false, stopEnabled: false,
+      stoppingVisible: false, stoppingDisabled: false, stoppingBusy: false, activeAnimation: false,
       animationNames: [], reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
     },
   };
@@ -159,6 +176,7 @@ function installActivityObservation(expected: ActivityExpectation): void {
   let toolStatus = "";
   let parentToolStatus = "";
   let lastNativeConfirmationAt: number | null = null;
+  let nativeSettledAt: number | null = null;
   const NATIVE_STALE_AFTER_MS = 1_000;
 
   const elapsed = () => performance.now() - startedAt;
@@ -242,6 +260,10 @@ function installActivityObservation(expected: ActivityExpectation): void {
     const sidebar = row?.querySelector<HTMLElement>("[data-session-loading-indicator]") ?? null;
     const sidebarVisible = visible(sidebar);
     const stop = selected ? [...(pane?.querySelectorAll<HTMLButtonElement>('button[aria-label="Stop"]') ?? [])].find(visible) ?? null : null;
+    const stopping = selected ? [...(pane?.querySelectorAll<HTMLButtonElement>('button[aria-label="Stopping"]') ?? [])].find(visible) ?? null : null;
+    const stoppingVisible = visible(stopping);
+    const stoppingDisabled = Boolean(stopping && stopping.disabled);
+    const stoppingBusy = stopping?.getAttribute("aria-busy") === "true";
     const shimmer = primary ? [...primary.querySelectorAll<HTMLElement>(".ow-text-shimmer")].filter(visible) : [];
     const animationNames = shimmer.map((node) => getComputedStyle(node).animationName).filter((name) => name && name !== "none");
     const activeAnimation = animationNames.length > 0 && shimmer.some((node) => getComputedStyle(node).animationPlayState === "running");
@@ -276,7 +298,10 @@ function installActivityObservation(expected: ActivityExpectation): void {
     if (returnClickedAt !== null && selected && state.returnSelectedMs === null) state.returnSelectedMs = now - returnClickedAt;
     if (returnClickedAt !== null && primaryActive && state.returnActivityMs === null) state.returnActivityMs = now - returnClickedAt;
     if (stopClickedAt !== null) {
-      if (state.stopFeedbackMs === null && (!stop || !stopEnabled || !explicitlyActive)) state.stopFeedbackMs = now - stopClickedAt;
+      if (stoppingVisible && stoppingDisabled && stoppingBusy) {
+        state.stoppingSeen = true;
+        state.stopFeedbackMs ??= now - stopClickedAt;
+      }
       if (state.rootInactiveMs === null && !rootActive) state.rootInactiveMs = now - stopClickedAt;
       if (state.ownerToolTerminalMs === null && (toolStatus === "error" || toolStatus === "completed" || toolStatus === "cancelled")) {
         state.ownerToolTerminalMs = now - stopClickedAt;
@@ -285,6 +310,18 @@ function installActivityObservation(expected: ActivityExpectation): void {
         && parentToolStatus !== "pending" && parentToolStatus !== "running" && parentToolStatus !== "streaming") {
         state.parentToolTerminalMs = now - stopClickedAt;
       }
+      const nativeSettled = state.rootInactiveMs !== null && state.ownerToolTerminalMs !== null
+        && (!expected.parentToolCallId || state.parentToolTerminalMs !== null);
+      if (nativeSettled && nativeSettledAt === null) {
+        nativeSettledAt = now;
+        state.nativeSettledMs = now - stopClickedAt;
+      }
+      const settledAt = nativeSettledAt;
+      const uiSettled = settledAt !== null && !stop && !stoppingVisible && !primaryActive && !activeAnimation;
+      if (uiSettled && state.uiSettledMs === null) {
+        state.uiSettledMs = now - stopClickedAt;
+        state.uiSettledAfterNativeMs = now - settledAt;
+      }
     }
     const label = primary?.innerText.trim().replace(/\s+/g, " ") ?? "";
     state.current = {
@@ -292,19 +329,22 @@ function installActivityObservation(expected: ActivityExpectation): void {
       primaryVisible: visible(primary), primaryActive, primaryCount: visiblePrimary.length,
       childSessionId, childSessionMatches: expected.kind !== "child" || childSessionId === expected.ownerSessionId,
       sidebarVisible, activity, label, stopVisible: Boolean(stop), stopEnabled,
+      stoppingVisible, stoppingDisabled, stoppingBusy,
       activeAnimation, animationNames, reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
     };
     const previous = state.transitions.at(-1);
-    const signature = JSON.stringify({ selected, nativeActive, primaryActive, sidebarVisible, activity, label, toolStatus, parentToolStatus, stopEnabled, activeAnimation });
+    const signature = JSON.stringify({ selected, nativeActive, primaryActive, sidebarVisible, activity, label, toolStatus,
+      parentToolStatus, stopEnabled, stoppingVisible, stoppingBusy, activeAnimation });
     const previousSignature = previous ? JSON.stringify({
       selected: previous.selected, nativeActive: previous.nativeActive, primaryActive: previous.primaryActive,
       sidebarVisible: previous.sidebarActive, activity: previous.activity, label: previous.label,
       toolStatus: previous.toolStatus, parentToolStatus: previous.parentToolStatus,
-      stopEnabled: previous.stopEnabled, activeAnimation: previous.activeAnimation,
+      stopEnabled: previous.stopEnabled, stoppingVisible: previous.stoppingVisible,
+      stoppingBusy: previous.stoppingBusy, activeAnimation: previous.activeAnimation,
     }) : "";
     if (signature !== previousSignature && state.transitions.length < 80) {
       state.transitions.push({ atMs: elapsed(), selected, nativeActive, primaryActive, sidebarActive: sidebarVisible,
-        activity, label, toolStatus, parentToolStatus, nativeFresh, stopEnabled, activeAnimation });
+        activity, label, toolStatus, parentToolStatus, nativeFresh, stopEnabled, stoppingVisible, stoppingBusy, activeAnimation });
     }
   };
   const readJson = async (path: string): Promise<unknown> => {
@@ -428,6 +468,48 @@ export async function observeToolActivity(app: Surface, expected: ActivityExpect
       disposed = true;
       await evaluate(app.client, () => { window.__toolActivityObservation?.stop(); delete window.__toolActivityObservation; });
       registration.dispose();
+    },
+  };
+}
+
+export async function observeSessionPromptPosts(app: Surface, sessionId: string) {
+  await evaluate(app.client, browserScript((sessionId) => {
+    window.__toolPromptPosts?.restore();
+    const originalFetch = window.fetch.bind(window);
+    const state: NonNullable<Window["__toolPromptPosts"]> = {
+      sessionId,
+      posts: 0,
+      paths: [],
+      restore() {
+        window.fetch = originalFetch;
+        delete window.__toolPromptPosts;
+      },
+    };
+    window.fetch = async (input, init) => {
+      const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+      const path = new URL(input instanceof Request ? input.url : String(input), location.href).pathname;
+      const match = method === "POST"
+        ? path.match(/\/(?:opencode|opencode2\/api)\/session\/([^/]+)\/(?:prompt|prompt_async)$/)
+        : null;
+      if (match?.[1] && decodeURIComponent(match[1]) === sessionId) {
+        state.posts += 1;
+        state.paths.push(path);
+      }
+      return originalFetch(input, init);
+    };
+    window.__toolPromptPosts = state;
+  }, [sessionId]));
+  let disposed = false;
+  return {
+    read: () => evaluate(app.client, () => {
+      const state = window.__toolPromptPosts;
+      if (!state) throw new Error("Session prompt POST observer is unavailable");
+      return { sessionId: state.sessionId, posts: state.posts, paths: [...state.paths] };
+    }),
+    async [Symbol.asyncDispose]() {
+      if (disposed) return;
+      disposed = true;
+      await evaluate(app.client, () => { window.__toolPromptPosts?.restore(); });
     },
   };
 }
@@ -565,7 +647,7 @@ async function bootActivityApp(
   workspacePath: string,
   mock: ReturnType<Seed["mock"]>,
   model: string,
-): Promise<{ app: Surface; mock: MockMcpHandle }> {
+): Promise<{ app: Surface; mock: MockMcpHandle; actualSourceSha: string | null }> {
   if (requestedSurface() === "web") {
     const app = await seed.appWeb({
       name,
@@ -575,13 +657,13 @@ async function bootActivityApp(
     });
     const agentMock = app.mocks.agent;
     if (!agentMock) throw new Error(`The app-web fixture did not boot the ${name} model witness.`);
-    return { app, mock: agentMock };
+    return { app, mock: agentMock, actualSourceSha: app.actualSourceSha };
   }
   const den = await seed.den({ mocks: { agent: mock } });
   const app = await seed.desktop({ name, den, as: "admin", model });
   const agentMock = den.mocks.agent;
   if (!agentMock) throw new Error(`The Electron fixture did not boot the ${name} model witness.`);
-  return { app, mock: agentMock };
+  return { app, mock: agentMock, actualSourceSha: null };
 }
 
 function workspaceFileApi(seed: Seed, app: Surface, workspaceId: string) {
@@ -700,6 +782,7 @@ export async function longToolActivity(seed: Seed) {
   return {
     app, workspace, surface, engine, tool, history, root: { ...root, ...rootSession }, other: { ...other, ...otherSession },
     historySession, followup, mock: booted.mock, transcript, active, session, selected,
+    runtimeFacts: () => ({ surface, hostKind: app.handle.hostKind, actualSourceSha: booted.actualSourceSha }),
     directoryFacts: async (sessionId: string) => {
       const owner = await session(sessionId);
       return { configuredPath: workspacePath, nativeDirectory: owner.directory, nativeLocation: owner.location };
@@ -813,6 +896,7 @@ export async function liveChildActivity(seed: Seed) {
     app, workspace, surface, engine, shell, delegation,
     root: { ...root, ...rootSession }, other: { ...other, ...otherSession }, child, followup,
     mock: booted.mock, transcript, active, activeIds, session, selected,
+    runtimeFacts: () => ({ surface, hostKind: app.handle.hostKind, actualSourceSha: booted.actualSourceSha }),
     async childCandidates() {
       const rootOwner = await session(rootSession.sessionId);
       const ids = (await activeIds()).filter((id) => id !== rootSession.sessionId && id !== otherSession.sessionId);
@@ -827,6 +911,9 @@ export async function liveChildActivity(seed: Seed) {
         ownerSessionId: childSessionId, ownerToolCallId: childToolCallId, parentToolCallId: delegationCallId,
         uiCallId: delegationCallId, kind: "child",
       });
+    },
+    observePromptPosts(sessionId: string) {
+      return observeSessionPromptPosts(app, sessionId);
     },
     async [Symbol.asyncDispose]() {
       await Promise.all([files.write(CHILD_RELEASE), files.write(CHILD_OTHER_RELEASE)]);

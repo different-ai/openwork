@@ -63,6 +63,9 @@ liveChildTest("CHILD-LIVE keeps a real silent foreground child visibly active an
     state.sidebarMissingMaxMs, state.sidebarMissingCurrentMs,
     ...state.sidebarMissingIntervals.map((gap) => gap.durationMs),
   );
+  const runtime = world.runtimeFacts();
+  if (runtime.surface === "web" && runtime.hostKind === "daytona") expect(runtime.actualSourceSha).toMatch(/^[0-9a-f]{40,64}$/);
+  else if (runtime.actualSourceSha !== null) expect(runtime.actualSourceSha).toMatch(/^[0-9a-f]{40,64}$/);
 
   const unrelatedBefore = await step("an unrelated root owns a separate controlled native command", async () => {
     await open(world.other);
@@ -141,8 +144,8 @@ liveChildTest("CHILD-LIVE keeps a real silent foreground child visibly active an
   await step("the original child card remains owner-scoped across switch-away and return", async () => {
     observations.beforeSwitch = await probe.eventually(() => activity.read(), {
       within: 10_000,
-      label: "the observer samples the active native child",
-      until: (state) => state.nativeActiveSamples > 2,
+      label: "the observer receives two fresh native confirmations for the active child",
+      until: (state) => state.nativePolls >= 2 && state.current.nativeFresh && state.current.nativeActive,
     });
     await open(world.other);
     expect(await world.active(world.root.sessionId)).toBe(true);
@@ -195,9 +198,10 @@ liveChildTest("CHILD-LIVE keeps a real silent foreground child visibly active an
     try {
       observations.afterStop = await probe.eventually(() => activity.read(), {
         within: 5_000,
-        label: "the root becomes inactive and the child and parent tools become terminal",
-        until: (state) => state.rootInactiveMs !== null && state.ownerToolTerminalMs !== null
-          && state.parentToolTerminalMs !== null,
+        label: "Stopping feedback, native parent-child termination, and the later static UI are observed",
+        until: (state) => state.stopFeedbackMs !== null && state.rootInactiveMs !== null
+          && state.ownerToolTerminalMs !== null && state.parentToolTerminalMs !== null
+          && state.uiSettledAfterNativeMs !== null,
       });
     } catch (error) {
       stopObservationError = error;
@@ -246,6 +250,7 @@ liveChildTest("CHILD-LIVE keeps a real silent foreground child visibly active an
 
   let followupError: unknown;
   let followupFacts: { rootActive: boolean; requests: string[]; screen: string } | undefined;
+  await using followupAdmission = await world.observePromptPosts(world.root.sessionId);
   await step("fresh parent work is attempted once while the unrelated root remains releasable", async () => {
     await send(world.followup.prompt);
     try {
@@ -288,6 +293,11 @@ liveChildTest("CHILD-LIVE keeps a real silent foreground child visibly active an
     const afterReload = observations.afterReload;
     const afterStop = observations.afterStop;
     if (!beforeSwitch || !afterReturn || !afterSilence || !afterReload || !afterStop) throw new Error("Child activity observation phase is missing");
+    const followupRequests = await world.mock.agentRequests({ promptMarker: world.followup.prompt });
+    const followupFinalRequests = followupRequests.filter((request) => request.kind === "final");
+    const followupUtilityRequests = followupRequests.filter((request) => request.kind === "utility");
+    const followupUnexpectedRequests = followupRequests.filter((request) => request.kind === "error" || request.kind === "tool");
+    const followupPromptPosts = await followupAdmission.read();
     evidence.recordJsonArtifact("CHILD-LIVE native and UI timeline", {
       engine: world.engine,
       surface: world.surface,
@@ -314,6 +324,12 @@ liveChildTest("CHILD-LIVE keeps a real silent foreground child visibly active an
       terminalDelegation,
       terminalChildTool,
       followupFacts,
+      followupAdmission: followupPromptPosts,
+      followupProviderRequests: {
+        final: followupFinalRequests,
+        utility: followupUtilityRequests,
+        unexpected: followupUnexpectedRequests,
+      },
     });
     for (const state of [beforeSwitch, afterReturn, afterSilence, afterReload]) {
       expect.soft(state.current.nativeActive).toBe(true);
@@ -354,19 +370,26 @@ liveChildTest("CHILD-LIVE keeps a real silent foreground child visibly active an
     if (nativeElapsedAfterReload !== null) expect.soft(nativeElapsedAfterReload).toBeGreaterThan(60_000);
     expect.soft(stopObservationError).toBeUndefined();
     expect.soft(afterStop.stopActionCaptured).toBe(true);
+    expect.soft(afterStop.stoppingSeen).toBe(true);
     expect.soft(afterStop.stopFeedbackMs).toBeLessThan(100);
     expect.soft(afterStop.rootInactiveMs).toBeLessThanOrEqual(500);
     expect.soft(afterStop.ownerToolTerminalMs).toBeLessThanOrEqual(500);
     expect.soft(afterStop.parentToolTerminalMs).not.toBeNull();
     expect.soft(afterStop.parentToolTerminalMs).toBeLessThanOrEqual(500);
+    expect.soft(afterStop.nativeSettledMs).toBeLessThanOrEqual(500);
+    expect.soft(afterStop.uiSettledAfterNativeMs).toBeLessThanOrEqual(200);
     expect.soft(afterStop.nativePollIntervalMs).toBe(25);
     expect.soft(afterStop.nativeErrors).toBe(0);
     expect.soft(afterStop.current.nativeActive).toBe(false);
     expect.soft(afterStop.current.primaryActive).toBe(false);
     expect.soft(afterStop.current.activeAnimation).toBe(false);
     expect.soft(afterStop.current.stopEnabled).toBe(false);
+    expect.soft(afterStop.current.stoppingVisible).toBe(false);
     expect.soft(followupError).toBeUndefined();
-    expect.soft((await world.mock.agentRequests({ promptMarker: world.followup.prompt })).map((request) => request.kind)).toEqual(["final"]);
+    expect.soft(followupPromptPosts).toMatchObject({ sessionId: world.root.sessionId, posts: 1 });
+    expect.soft(followupFinalRequests).toHaveLength(1);
+    expect.soft(followupFinalRequests[0]).toMatchObject({ promptMarker: world.followup.prompt, kind: "final" });
+    expect.soft(followupUnexpectedRequests).toEqual([]);
     console.info(`[CHILD-LIVE] stop feedback=${afterStop.stopFeedbackMs}ms rootInactive=${afterStop.rootInactiveMs}ms childToolTerminal=${afterStop.ownerToolTerminalMs}ms parentTerminal=${afterStop.parentToolTerminalMs}ms stopPollResolution=${afterStop.nativePollIntervalMs}ms nativePolls=${afterSilence.nativePolls} maxNativeGap=${afterSilence.maxNativeConfirmationGapMs}ms maxPrimaryGap=${Math.max(...[beforeSwitch, afterReturn, afterSilence, afterReload].map(maxGap))}ms maxSidebarGap=${Math.max(...[beforeSwitch, afterReturn, afterSilence, afterReload].map(maxSidebarGap))}ms`);
   });
 });

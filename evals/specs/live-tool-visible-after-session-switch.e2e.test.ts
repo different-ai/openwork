@@ -451,38 +451,73 @@ latencyTest("SWITCH-10 opens ten persisted conversations within the normal and w
   timeout: 12 * 60_000,
 }, async ({ world, user, probe, step, evidence }) => {
   const measurements: Awaited<ReturnType<typeof world.readMeasurement>>[] = [];
+  type SidebarTargetState = Awaited<ReturnType<typeof world.sidebarTargetState>>;
   const sidebarExpansions: Array<{
     phase: string;
-    clicked: boolean;
-    before: Awaited<ReturnType<typeof world.sidebarTargetState>>;
-    after: Awaited<ReturnType<typeof world.sidebarTargetState>>;
+    clickedLabels: string[];
+    states: SidebarTargetState[];
+    before: SidebarTargetState;
+    after: SidebarTargetState;
   }> = [];
   const normalized = (text: string) => text.split("\n").map((line) => line.trim()).filter(Boolean).join("\n");
   const nativeBodies = (state: Awaited<ReturnType<typeof world.nativeState>>) => state.sessions
     .map(({ sessionId, status, body }) => ({ sessionId, status, body }));
   const exposeOldestSidebarRow = async (phase: string) => {
     const oldest = world.targets[0]!;
-    const before = await probe.eventually(() => world.sidebarTargetState(oldest.sessionId), {
-      within: 15_000,
-      intervalMs: 50,
-      label: `${phase} oldest row or collapsed-session control available`,
-      until: (state) => state.targetPresent || state.showMoreLabels.length > 0,
-    });
-    if (!before.targetPresent) {
-      expect(before.showMoreLabels).toEqual(["Show 4 more"]);
-      await user.click({ role: "button", label: "Show 4 more" });
+    const states: SidebarTargetState[] = [];
+    const clickedLabels: string[] = [];
+    try {
+      let current = await probe.eventually(() => world.sidebarTargetState(oldest.sessionId), {
+        within: 15_000,
+        intervalMs: 50,
+        label: `${phase} oldest row or scoped Show N more control available`,
+        until: (state) => state.targetPresent || state.showMoreControls.length > 0,
+      });
+      states.push(current);
+      const before = current;
+      for (let attempt = 0; !current.targetPresent && attempt < 20; attempt += 1) {
+        expect(current.showMoreControls).toHaveLength(1);
+        const control = current.showMoreControls[0];
+        if (!control) throw new Error(`${phase}: the scoped Show N more control disappeared`);
+        expect(control).toMatchObject({
+          tagName: "a",
+          dataSidebar: "menu-sub-button",
+          dataSlot: "sidebar-menu-sub-button",
+          ariaDisabled: null,
+        });
+        expect(control.label).toMatch(/^Show \d+ more$/);
+        const visibleBefore = current.visibleSessionCount;
+        const controlsBefore = JSON.stringify(current.showMoreControls);
+        clickedLabels.push(control.label);
+        await user.click({ text: control.label });
+        current = await probe.eventually(() => world.sidebarTargetState(oldest.sessionId), {
+          within: 10_000,
+          intervalMs: 25,
+          label: `${phase} explicit ${control.label} click advances the capped sidebar`,
+          until: (state) => state.targetPresent || state.visibleSessionCount > visibleBefore
+            || JSON.stringify(state.showMoreControls) !== controlsBefore,
+        });
+        states.push(current);
+      }
+      if (!current.targetPresent) throw new Error(`${phase}: oldest row stayed hidden after ${clickedLabels.length} bounded Show N more clicks`);
+      await user.see({ text: oldest.title }, { timeoutMs: 10_000 });
+      expect(clickedLabels.length).toBeGreaterThan(0);
+      const expansion = { phase, clickedLabels, states, before, after: current };
+      sidebarExpansions.push(expansion);
+      console.info(`[SWITCH-10] sidebar-expansion=${JSON.stringify(expansion)}`);
+      return expansion;
+    } catch (error) {
+      const current = await world.sidebarTargetState(oldest.sessionId);
+      evidence.recordJsonArtifact(`SWITCH-10 ${phase} sidebar exposure failure`, {
+        error: error instanceof Error ? error.message : String(error),
+        oldest: { sessionId: oldest.sessionId, title: oldest.title },
+        clickedLabels,
+        states,
+        current,
+      });
+      await user.screenshot();
+      throw error;
     }
-    const after = await probe.eventually(() => world.sidebarTargetState(oldest.sessionId), {
-      within: 10_000,
-      intervalMs: 25,
-      label: `${phase} oldest row exposed after explicit sidebar expansion`,
-      until: (state) => state.targetPresent,
-    });
-    await user.see({ text: oldest.title }, { timeoutMs: 10_000 });
-    const expansion = { phase, clicked: !before.targetPresent, before, after };
-    sidebarExpansions.push(expansion);
-    console.info(`[SWITCH-10] sidebar-expansion=${JSON.stringify(expansion)}`);
-    return expansion;
   };
   const measure = async (target: (typeof world.targets)[number], phase: "first" | "warm" | "reload", ceilingMs: number) => {
     await user.see({ text: target.title }, { timeoutMs: 10_000 });
@@ -569,6 +604,8 @@ latencyTest("SWITCH-10 opens ten persisted conversations within the normal and w
       modelVisible: true,
       viewport: { width: 1280, height: 900, devicePixelRatio: 1 },
     });
+    if (runtime.hostKind === "daytona") expect(runtime.actualSourceSha).toMatch(/^[0-9a-f]{40,64}$/);
+    else if (runtime.actualSourceSha !== null) expect(runtime.actualSourceSha).toMatch(/^[0-9a-f]{40,64}$/);
     if (world.engine === "v2") expect(runtime.engineRunning).toBe(true);
     expect(current.sessionId).toBe(restored.sessionId);
     expect(current.workspaceId).toBe(world.workspace.workspaceId);

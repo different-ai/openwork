@@ -51,6 +51,9 @@ longTest("TOOL-LONG preserves a real silent tool's activity across switching and
     state.sidebarMissingMaxMs, state.sidebarMissingCurrentMs,
     ...state.sidebarMissingIntervals.map((gap) => gap.durationMs),
   );
+  const runtime = world.runtimeFacts();
+  if (runtime.surface === "web" && runtime.hostKind === "daytona") expect(runtime.actualSourceSha).toMatch(/^[0-9a-f]{40,64}$/);
+  else if (runtime.actualSourceSha !== null) expect(runtime.actualSourceSha).toMatch(/^[0-9a-f]{40,64}$/);
 
   expect(world.root.sessionId).toBe(world.historySession.sessionId);
   const historyBefore = await step("the first turn runs 24 real commands and exposes the capped history in the same conversation", async () => {
@@ -128,8 +131,8 @@ longTest("TOOL-LONG preserves a real silent tool's activity across switching and
   await step("continuous native and visible observations span switch-away and return", async () => {
     await probe.eventually(() => activity.read(), {
       within: 10_000,
-      label: "the observer samples the active native root",
-      until: (state) => state.nativeActiveSamples > 2,
+      label: "the observer receives two fresh native confirmations for the active root",
+      until: (state) => state.nativePolls >= 2 && state.current.nativeFresh && state.current.nativeActive,
     });
     observations.beforeSwitch = await activity.read();
     await open(world.other);
@@ -179,8 +182,9 @@ longTest("TOOL-LONG preserves a real silent tool's activity across switching and
     try {
       observations.afterStop = await probe.eventually(() => activity.read(), {
         within: 5_000,
-        label: "root inactivity and the held tool's terminal state are both observed",
-        until: (state) => state.rootInactiveMs !== null && state.ownerToolTerminalMs !== null,
+        label: "Stopping feedback, native termination, and the later static UI are observed",
+        until: (state) => state.stopFeedbackMs !== null && state.rootInactiveMs !== null
+          && state.ownerToolTerminalMs !== null && state.uiSettledAfterNativeMs !== null,
       });
     } catch (error) {
       stopObservationError = error;
@@ -198,20 +202,16 @@ longTest("TOOL-LONG preserves a real silent tool's activity across switching and
     until: (messages) => toolFacts(messages).some((tool) => tool.callId === rootTool.callId
       && !["pending", "running", "streaming"].includes(tool.status)),
   });
-  expect(toolFacts(terminal)).toEqual(expect.arrayContaining([
+  expect.soft(toolFacts(terminal)).toEqual(expect.arrayContaining([
     expect.objectContaining({ status: "completed", output: expect.stringContaining(world.root.partial) }),
     expect.objectContaining({ callId: rootTool.callId, status: expect.stringMatching(/^(completed|error|cancelled)$/) }),
   ]));
   const cancelledRoot = toolFacts(terminal).find((tool) => tool.callId === rootTool.callId);
   if (!cancelledRoot) throw new Error("The stopped root tool disappeared from native history");
   const rootSessionAfterStop = await world.session(world.root.sessionId);
-  if (world.engine === "v1") {
-    expect(cancelledRoot.cancelled).toBe(true);
-    expect(cancelledRoot.output).toContain("User aborted the command");
-  } else {
-    expect(cancelledRoot.status).toBe("error");
-    expect(rootSessionAfterStop.outcome).toBe("interrupted");
-  }
+  const cancellationText = [cancelledRoot.output, cancelledRoot.error, JSON.stringify(cancelledRoot.metadata)].join("\n");
+  const structuredNativeCancellation = cancelledRoot.status === "cancelled"
+    || (cancelledRoot.cancelled && /(?:abort|interrupt|cancel)/i.test(cancellationText));
   expect(terminal.map((message) => message.text).join("\n")).not.toContain(world.root.final);
   expect(await world.mock.agentRequests({ promptMarker: world.root.prompt })).toEqual(oldRootRequests);
   for (const previous of historyBefore.tools) {
@@ -288,15 +288,19 @@ longTest("TOOL-LONG preserves a real silent tool's activity across switching and
     expect.soft(afterSilence.current.activity).toBe("running");
     expect.soft(afterSilence.current.label).toContain(".tool-long-root-release");
     expect.soft(afterStop.stopActionCaptured).toBe(true);
+    expect.soft(afterStop.stoppingSeen).toBe(true);
     expect.soft(afterStop.stopFeedbackMs).toBeLessThan(100);
     expect.soft(afterStop.rootInactiveMs).toBeLessThanOrEqual(500);
     expect.soft(afterStop.ownerToolTerminalMs).toBeLessThanOrEqual(500);
+    expect.soft(afterStop.nativeSettledMs).toBeLessThanOrEqual(500);
+    expect.soft(afterStop.uiSettledAfterNativeMs).toBeLessThanOrEqual(200);
     expect.soft(afterStop.nativePollIntervalMs).toBe(25);
     expect.soft(afterStop.nativeErrors).toBe(0);
     expect.soft(afterStop.current.nativeActive).toBe(false);
     expect.soft(afterStop.current.primaryActive).toBe(false);
     expect.soft(afterStop.current.activeAnimation).toBe(false);
     expect.soft(afterStop.current.stopEnabled).toBe(false);
+    expect.soft(afterStop.current.stoppingVisible).toBe(false);
     expect.soft(followupError).toBeUndefined();
     expect.soft((await world.mock.agentRequests({ promptMarker: world.followup.prompt })).map((request) => request.kind)).toEqual(["final"]);
     evidence.recordJsonArtifact("TOOL-LONG native and UI timeline", {
@@ -315,8 +319,23 @@ longTest("TOOL-LONG preserves a real silent tool's activity across switching and
       afterStop,
       stoppedTranscript: terminal,
       rootSessionAfterStop,
+      cancellation: {
+        status: cancelledRoot.status,
+        cancelled: cancelledRoot.cancelled,
+        output: cancelledRoot.output,
+        error: cancelledRoot.error,
+        metadata: cancelledRoot.metadata,
+        structuredNativeCancellation,
+      },
       followupFacts,
     });
+    if (world.engine === "v1") {
+      expect.soft(cancelledRoot.cancelled).toBe(true);
+      expect.soft(structuredNativeCancellation).toBe(true);
+    } else {
+      expect.soft(cancelledRoot.status).toBe("error");
+      expect.soft(rootSessionAfterStop.outcome).toBe("interrupted");
+    }
     console.info(`[TOOL-LONG] rootTurnsBeforeStop=2 rootCallsBeforeStop=${rootToolsBeforeStop.length} stop feedback=${afterStop.stopFeedbackMs}ms rootInactive=${afterStop.rootInactiveMs}ms toolTerminal=${afterStop.ownerToolTerminalMs}ms nativePolls=${afterSilence.nativePolls} maxNativeGap=${afterSilence.maxNativeConfirmationGapMs}ms maxPrimaryGap=${Math.max(...[beforeSwitch, afterReturn, afterSilence, afterReload].map(maxGap))}ms maxSidebarGap=${Math.max(...[beforeSwitch, afterReturn, afterSilence, afterReload].map(maxSidebarGap))}ms`);
   });
 });
