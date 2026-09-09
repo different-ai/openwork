@@ -786,7 +786,13 @@ describe("cloud provider sync gateway", () => {
     const root = await createRoot();
     const config = serverConfig(root, "https://engine.example.test");
     config.workspaces = [];
-    const gatewayKey = "ow_inf_member_key";
+    const gatewayKey = `ow_gw_${Buffer.alloc(32, 1).toString("base64url")}`;
+    const groupSuffix = "00000000000000000000000001";
+    const setSuffix = "00000000000000000000000002";
+    const modelSuffix = "00000000000000000000000003";
+    const modelId = `gwm_${groupSuffix}_${setSuffix}_${modelSuffix}`;
+    const pendingSetId = "gcs_00000000000000000000000004";
+    const pendingAuthUrl = `https://den.example.test/v1/inference-providers/ipr_pending/oauth/start?credentialSetId=${pendingSetId}`;
     const gatewayBaseUrl = "https://inference.example.test/api/v1/providers/ipr_ready";
     const llmProvider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
     const readyGateway = {
@@ -796,7 +802,10 @@ describe("cloud provider sync gateway", () => {
       source: "openwork_gateway",
       credentialMode: "org",
       credentialStatus: "ready",
+      status: "active",
       authUrl: null,
+      authorizationRequests: [],
+      modelIds: ["claude-sonnet"],
       updatedAt: "2026-08-20T00:00:00.000Z",
       providerConfig: {
         env: ["IPR_READY_ANTHROPIC_API_KEY"],
@@ -804,17 +813,25 @@ describe("cloud provider sync gateway", () => {
         api: gatewayBaseUrl,
         options: { baseURL: gatewayBaseUrl },
       },
-      models: [{ id: "claude-sonnet", name: "Claude Sonnet", config: {} }],
+      models: [{
+        id: modelId, name: "Claude Sonnet", config: { id: modelId, name: "Claude Sonnet" },
+        upstreamModelId: "claude-sonnet",
+        modelGroupId: `gmg_${groupSuffix}`, modelGroupName: "Team models",
+        credentialSetId: `gcs_${setSuffix}`, credentialSetName: "Organization key",
+      }],
     };
     const pendingGateway = {
       ...readyGateway,
       id: "ipr_pending",
-      name: "Member OpenAI",
-      providerId: "openai",
+      name: "Member Google",
+      providerId: "google",
       credentialMode: "member",
       credentialStatus: "member_auth_required",
-      authUrl: "https://den.example.test/v1/inference-providers/ipr_pending/oauth/start",
-      providerConfig: { env: ["OPENAI_API_KEY"], npm: "@ai-sdk/openai" },
+      authUrl: pendingAuthUrl,
+      authorizationRequests: [{ credentialSetId: pendingSetId, name: "Personal Google", authUrl: pendingAuthUrl }],
+      models: [],
+      modelIds: [],
+      providerConfig: { env: ["IPR_PENDING_GOOGLE_GENERATIVE_AI_API_KEY"], npm: "@ai-sdk/google" },
     };
     let inferenceEndpointMissing = false;
     const denPaths: string[] = [];
@@ -865,15 +882,15 @@ describe("cloud provider sync gateway", () => {
       sourceProviderId: "anthropic",
       name: "Team Anthropic",
       source: "openwork_gateway",
-      modelIds: ["claude-sonnet"],
+      modelIds: [modelId],
     });
     expect(status.providers[1]?.source).toBe("custom");
     expect(status.skippedProviders).toEqual([{
       cloudProviderId: "ipr_pending",
       providerId: "ipr_pending",
-      name: "Member OpenAI",
+      credentialSetId: pendingSetId,
+      name: "Member Google / Personal Google",
       reason: "member_auth_required",
-      authUrl: "https://den.example.test/v1/inference-providers/ipr_pending/oauth/start",
     }]);
 
     const runtimeProviders = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
@@ -882,12 +899,14 @@ describe("cloud provider sync gateway", () => {
     expect(gatewayRuntime.name).toBe("Team Anthropic");
     expect(gatewayRuntime.npm).toBe("@ai-sdk/anthropic");
     expect(gatewayRuntime.api).toBe(gatewayBaseUrl);
+    expect(gatewayRuntime.models).toEqual({ [modelId]: { id: modelId, name: "Claude Sonnet" } });
     expect(expectRecord(gatewayRuntime.options, "gateway options").baseURL).toBe(gatewayBaseUrl);
     expect(JSON.stringify(gatewayRuntime)).not.toContain(gatewayKey);
     const storedEnv = await env.list();
     expect(storedEnv.find((entry) => entry.key === "IPR_READY_ANTHROPIC_API_KEY")?.value).toBe(gatewayKey);
     expect(storedEnv.find((entry) => entry.key === "TEST_PROVIDER_API_KEY")?.value).toBe("sk-test-provider");
-    expect(storedEnv.some((entry) => entry.key === "OPENAI_API_KEY")).toBe(false);
+    expect(storedEnv.some((entry) => entry.key === "IPR_PENDING_GOOGLE_GENERATIVE_AI_API_KEY")).toBe(false);
+    expect(storedEnv.some((entry) => entry.key === "GOOGLE_GENERATIVE_AI_API_KEY")).toBe(false);
 
     // An older Den has no inference-providers resource: llm-provider sync
     // must keep working and the gateway rows simply disappear.

@@ -265,12 +265,18 @@ describe("gateway member sign-in", () => {
     expect(resolveGatewayConnectProviders(undefined)).toEqual([]);
   });
 
-  test("Connect opens authUrl in the browser, then re-syncs until the provider is no longer skipped", async () => {
+  test("Connect opens the authenticated start result, then re-syncs until the provider is no longer skipped", async () => {
     const opened: string[] = [];
+    const started: Array<[string, string | undefined]> = [];
     let syncs = 0;
     const waits: number[] = [];
     const connected = await connectGatewayProvider({
-      provider: resolveGatewayConnectProviders(skipped)[0]!,
+      provider: { ...resolveGatewayConnectProviders(skipped)[0]!, credentialSetId: "gcs_member" },
+      signal: new AbortController().signal,
+      startOAuth: async (providerId, credentialSetId) => {
+        started.push([providerId, credentialSetId]);
+        return { authorizationUrl: "https://oauth.example.test/authorize?state=test" };
+      },
       openUrl: (url) => { opened.push(url); },
       resync: async () => { syncs += 1; },
       isConnected: () => syncs >= 3,
@@ -278,18 +284,21 @@ describe("gateway member sign-in", () => {
       pollIntervalMs: 10_000,
       attempts: 6,
     });
-    expect(opened).toEqual(["https://den.example.test/v1/inference-providers/ipr_member/oauth/start"]);
+    expect(started).toEqual([["ipr_member", "gcs_member"]]);
+    expect(opened).toEqual(["https://oauth.example.test/authorize?state=test"]);
     expect(connected).toBe(true);
     expect(syncs).toBe(3);
     expect(waits).toEqual([10_000, 10_000, 10_000]);
   });
 
-  test("Connect gives up after the poll budget and never opens a browser without an authUrl", async () => {
+  test("Connect gives up after the poll budget and never opens a browser when authenticated start fails", async () => {
     const opened: string[] = [];
     let syncs = 0;
     const provider = resolveGatewayConnectProviders(skipped)[0]!;
     expect(await connectGatewayProvider({
       provider,
+      signal: new AbortController().signal,
+      startOAuth: async () => ({ authorizationUrl: "https://oauth.example.test/authorize?state=test" }),
       openUrl: (url) => { opened.push(url); },
       resync: async () => { syncs += 1; throw new Error("den offline"); },
       isConnected: () => false,
@@ -299,13 +308,40 @@ describe("gateway member sign-in", () => {
     expect(syncs).toBe(2);
     expect(opened).toHaveLength(1);
 
-    expect(await connectGatewayProvider({
-      provider: { ...provider, authUrl: null },
+    await expect(connectGatewayProvider({
+      provider,
+      signal: new AbortController().signal,
+      startOAuth: async () => { throw new Error("OAuth start denied"); },
       openUrl: (url) => { opened.push(url); },
       resync: async () => { syncs += 1; },
       isConnected: () => true,
-    })).toBe(false);
+    })).rejects.toThrow("OAuth start denied");
     expect(opened).toHaveLength(1);
     expect(syncs).toBe(2);
+  });
+
+  test.each(["before-start", "during-start", "during-wait"])("Connect respects cancellation %s", async (phase) => {
+    const controller = new AbortController();
+    const opened: string[] = [];
+    let starts = 0;
+    let syncs = 0;
+    if (phase === "before-start") controller.abort();
+    const connected = await connectGatewayProvider({
+      provider: resolveGatewayConnectProviders(skipped)[0]!,
+      signal: controller.signal,
+      startOAuth: async () => {
+        starts += 1;
+        if (phase === "during-start") controller.abort();
+        return { authorizationUrl: "https://oauth.example.test/authorize?state=test" };
+      },
+      openUrl: (url) => { opened.push(url); },
+      wait: async () => { controller.abort(); },
+      resync: async () => { syncs += 1; },
+      isConnected: () => true,
+    });
+    expect(connected).toBe(false);
+    expect(starts).toBe(phase === "before-start" ? 0 : 1);
+    expect(opened).toHaveLength(phase === "during-wait" ? 1 : 0);
+    expect(syncs).toBe(0);
   });
 });

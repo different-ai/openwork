@@ -261,7 +261,7 @@ describe("response parsing", () => {
     expect(providers).toHaveLength(1);
     expect(providers[0].access).toEqual({ allMembers: true, memberIds: ["mem_1"], teamIds: [] });
     expect(providers[0].credentials).toEqual([
-      { subject: "org", orgMembershipId: null, memberName: null, memberEmail: null, kind: "api_key", status: "active", expiresAt: null },
+      { subject: "org", orgMembershipId: null, memberName: null, memberEmail: null, kind: "api_key", status: "active", expiresAt: null, credentialSetId: null },
     ]);
     expect(providers[0].oauthClientId).toBeNull();
     expect(providers[0].hasOauthClientSecret).toBe(false);
