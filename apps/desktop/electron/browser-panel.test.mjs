@@ -984,6 +984,26 @@ test("the task timeout cancels the longer approval dialog and late acceptance ca
   assert.deepEqual(invoke("openwork:browser:state").tabs, []);
 });
 
+test("blocked main-window links require navigation consent and retain their originating owner", async () => {
+  for (const allowed of [false, true]) {
+    const { invoke, panel, views, approve } = createPanel();
+    invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+    panel.routeBlockedMainWindowNavigation("https://linked.example/private");
+    invoke("openwork:browser:setVisibleSession", "B");
+    await flush();
+    const tab = invoke("openwork:browser:state").tabs[0];
+    assert.equal(tab.ownerSessionId, "A", "the destination belongs to the conversation that initiated the navigation");
+    assert.equal(tab.browserApproval.approveLabel, "Allow origin in this tab");
+    assert.deepEqual(views()[0].webContents.destinations, []);
+    assert.equal(approve(true, tab.id), false, "another conversation cannot authorize the destination");
+    invoke("openwork:browser:setVisibleSession", "A");
+    approve(allowed, tab.id);
+    await flush();
+    assert.deepEqual(views()[0].webContents.destinations, allowed ? ["https://linked.example/private"] : []);
+    if (!allowed) assert.equal(views()[0].webContents.isDestroyed(), true);
+  }
+});
+
 test("task navigation reuses only exact-origin consent in the same tab", async () => {
   const { invoke, panel, views, approve } = createPanel();
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");

@@ -200,10 +200,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   function routeBlockedMainWindowNavigation(url) {
     if (!/^https?:\/\//i.test(String(url ?? ""))) return;
-    runDetachedTask("open linked browser page", async () => {
-      await checkPolicy?.({ url });
-      await openBrowserTab(url, registry.visibleSessionId());
-    });
+    const ownerSessionId = registry.visibleSessionId();
+    runDetachedTask("open linked browser page", () => openBrowserUrlForAutomation(url, "builtin", { ownerSessionId }));
   }
 
   function cdpBrowserUrl() {
