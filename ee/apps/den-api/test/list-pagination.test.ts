@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
 import { eq, sql } from "@openwork-ee/den-db/drizzle"
-import { WorkflowRunTable } from "@openwork-ee/den-db/schema"
+import { WorkerTable, WorkflowRunTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { decodeKeysetCursor } from "../src/list-pagination.js"
+import { Hono } from "hono"
+import { z } from "zod"
+import { decodeKeysetCursor, encodeKeysetCursor, keysetCursorQuerySchema } from "../src/list-pagination.js"
 
 // Proves the additive cursor pagination on the limit-only lists
 // (docs/api-style.md#pagination): two pages join without gaps or duplicates
@@ -18,12 +20,17 @@ process.env.CORS_ORIGINS ??= API_ORIGIN
 
 type Db = typeof import("../src/db.js").db
 type Workflows = typeof import("../src/workflows.js")
+type WorkerList = typeof import("../src/workers/list.js")
+type Middleware = typeof import("../src/middleware/index.js")
 
 let db: Db
 let workflows: Workflows
+let workerList: WorkerList
+let middleware: Middleware
 let databaseAvailable = true
 
 const organizationId = createDenTypeId("organization")
+const workerOrgId = createDenTypeId("org")
 const configObjectId = createDenTypeId("configObject")
 const base = Date.UTC(2026, 8, 9, 12, 0, 0)
 
@@ -33,6 +40,8 @@ beforeAll(async () => {
   db = realDb
   mock.module("../src/db.js", () => ({ db: realDb }))
   workflows = await import("../src/workflows.js")
+  workerList = await import("../src/workers/list.js")
+  middleware = await import("../src/middleware/index.js")
   try {
     await db.execute(sql`select 1`)
   } catch (error) {
@@ -44,6 +53,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (!databaseAvailable) return
   await db.delete(WorkflowRunTable).where(eq(WorkflowRunTable.organization_id, organizationId))
+  await db.delete(WorkerTable).where(eq(WorkerTable.org_id, workerOrgId))
 })
 
 function cursorFrom(nextCursor: string | null) {
@@ -118,4 +128,69 @@ test("workflow snapshot pages join without gaps or duplicates and the no-cursor 
   expect(paged.pages).toBe(3)
   expect(paged.ids).toEqual(all.items.map((item) => item.receiptId))
   expect(new Set(paged.ids).size).toBe(5)
+})
+
+test("worker pages join without gaps or duplicates and the no-cursor call is unchanged", async () => {
+  if (!databaseAvailable) return
+
+  // Two workers share a created_at so the id tiebreaker is exercised.
+  const createdAt = [0, 1, 1, 2, 3].map((offset) => new Date(base + offset * 1000))
+  for (const [index, at] of createdAt.entries()) {
+    await db.insert(WorkerTable).values({
+      id: createDenTypeId("worker"),
+      org_id: workerOrgId,
+      name: `worker-${index}`,
+      destination: "local",
+      status: "healthy",
+      created_at: at,
+      updated_at: at,
+    })
+  }
+  // Another organization's worker must never appear.
+  await db.insert(WorkerTable).values({
+    id: createDenTypeId("worker"),
+    org_id: createDenTypeId("org"),
+    name: "foreign",
+    destination: "local",
+    status: "healthy",
+  })
+
+  const all = await workerList.listWorkersPage({ orgId: workerOrgId, limit: 20 })
+  expect(all.items).toHaveLength(5)
+  expect(all.nextCursor).toBeNull()
+  expect(all.items.map((row) => row.created_at.getTime())).toEqual(
+    [...createdAt].reverse().map((at) => at.getTime()),
+  )
+
+  const paged = await walk(
+    (cursor) => workerList.listWorkersPage({ orgId: workerOrgId, limit: 2, cursor }),
+    (row) => row.id,
+  )
+  expect(paged.pages).toBe(3)
+  expect(paged.ids).toEqual(all.items.map((row) => row.id))
+  expect(new Set(paged.ids).size).toBe(5)
+})
+
+test("an undecodable cursor is a 400 invalid_request and a valid one reaches the handler decoded", async () => {
+  const app = new Hono()
+  app.get(
+    "/list",
+    middleware.queryValidator(z.object({ cursor: keysetCursorQuerySchema.optional() })),
+    (c) => c.json({ cursor: c.req.valid("query").cursor ?? null }),
+  )
+
+  const invalid = await app.request("/list?cursor=not-a-cursor")
+  expect(invalid.status).toBe(400)
+  const invalidBody: unknown = await invalid.json()
+  expect(invalidBody).toMatchObject({ error: "invalid_request" })
+  expect(JSON.stringify(invalidBody)).toContain("Invalid cursor.")
+
+  const key = { at: new Date(base), id: "wfr_01cursor" }
+  const valid = await app.request(`/list?cursor=${encodeKeysetCursor(key)}`)
+  expect(valid.status).toBe(200)
+  expect(await valid.json()).toEqual({ cursor: { at: key.at.toISOString(), id: key.id } })
+
+  const first = await app.request("/list")
+  expect(first.status).toBe(200)
+  expect(await first.json()).toEqual({ cursor: null })
 })

@@ -3993,6 +3993,10 @@ export type WorkerListResponse = {
     createdAt: string;
     updatedAt: string;
   }>;
+  /**
+   * Pass as cursor to fetch the next page; null on the last page.
+   */
+  nextCursor: string | null;
 };
 
 export type Worker = {
@@ -21050,6 +21054,10 @@ export type GetV1WorkersData = {
   body?: never;
   path?: never;
   query?: {
+    /**
+     * Opaque cursor returned as nextCursor by the previous page. Omit for the first page.
+     */
+    cursor?: string;
     limit?: number;
   };
   url: "/v1/workers";
