@@ -1154,15 +1154,22 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     const denied = await member.agent.desktopApi("/managed-policy/evaluate", { method: "POST", body: { action: "browser", input: { url, method: "GET" } } });
     expect(denied.status).toBe(403);
     expect(isRecord(denied.body) && denied.body.code).toBe("organization_policy_denied");
-    const blocked = await member.agent.browserRequest({ url });
+    const policyMessage = "Error invoking remote method 'openwork:browser:openUrl': Error: Your organization does not allow this website.";
+    const blocked = await member.agent.browserRequest({ url }).then(
+      () => { throw new Error("Expected the browser request to reject under the empty website allowlist"); },
+      (error: unknown) => {
+        if (!(error instanceof Error)) throw error;
+        expect(error.message).toBe(policyMessage);
+        return error.message;
+      },
+    );
     const unaffected = await other.browserRequest({ url });
-    expect(blocked.reached).toBe(false);
     expect(unaffected.reached).toBe(true);
     expect(await effective(world.den.members.casey)).toEqual(controlBefore);
     await admin.user.reload();
     await admin.user.see({ role: "combobox", label: "Website access" }, { value: "blocked", timeoutMs: 60_000 });
     await admin.user.notSee({ role: "button", label: `Remove ${origin}` });
-    evidence.recordAssertionEvidence("Saving an empty approved-site list persists browsing Blocked and stops real requests to the formerly approved site only for the assigned team", JSON.stringify({ saved, denied, before, unsaved, blocked, unaffected, controlBefore }), denied.status === 403 && before.reached && unsaved.reached && !blocked.reached && unaffected.reached);
+    evidence.recordAssertionEvidence("Saving an empty approved-site list persists browsing Blocked and rejects real requests to the formerly approved site only for the assigned team", JSON.stringify({ saved, denied, before, unsaved, blocked, unaffected, controlBefore }), denied.status === 403 && before.reached && unsaved.reached && blocked === policyMessage && unaffected.reached);
     await admin.user.looks(["Team Access shows Website access Blocked and says no websites are approved"]);
   });
 
