@@ -87,6 +87,24 @@ app.kubernetes.io/component: {{ .component }}
 {{- default (printf "http://%s:%v" (include "openwork-ee.inferenceServiceName" .) .Values.inference.service.port) .Values.config.internal.inferenceProxyBaseUrl -}}
 {{- end -}}
 
+{{- define "openwork-ee.kubernetesWorkerNamespace" -}}
+{{- default "openwork-workers" .Values.config.kubernetes.workerNamespace -}}
+{{- end -}}
+
+{{- define "openwork-ee.denApiServiceAccountName" -}}
+{{- default (printf "%s-den-api" (include "openwork-ee.fullname" .)) .Values.workers.kubernetes.serviceAccount.name -}}
+{{- end -}}
+
+{{- define "openwork-ee.kubernetesWorkersValidate" -}}
+{{- if eq .Values.config.provisioner.mode "kubernetes" -}}
+{{- if not .Values.workers.kubernetes.serviceAccount.create -}}
+{{- if not .Values.workers.kubernetes.serviceAccount.name -}}
+{{- fail "workers.kubernetes.serviceAccount.name is required when workers.kubernetes.serviceAccount.create=false and config.provisioner.mode=kubernetes" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "openwork-ee.customCa.mountPath" -}}
 /etc/openwork/custom-ca
 {{- end -}}

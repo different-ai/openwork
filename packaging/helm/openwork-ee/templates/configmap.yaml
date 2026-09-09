@@ -174,6 +174,61 @@ data:
   {{ with .Values.config.daytona.healthcheckTimeoutMs }}
   DAYTONA_HEALTHCHECK_TIMEOUT_MS: {{ . | quote }}
   {{ end }}
+  {{- if eq .Values.config.provisioner.mode "kubernetes" }}
+  # Kubernetes worker provisioner. KUBERNETES_API_TOKEN lives in the release
+  # secret; everything else is plain config. The worker namespace is emitted
+  # explicitly (with the same default as den-api) so the rendered RBAC in
+  # kubernetes-workers.yaml and the API calls always agree.
+  KUBERNETES_WORKER_NAMESPACE: {{ default "openwork-workers" .Values.config.kubernetes.workerNamespace | quote }}
+  {{ with .Values.config.kubernetes.apiUrl }}
+  KUBERNETES_API_URL: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.kubernetes.apiCaFile }}
+  KUBERNETES_API_CA_FILE: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.kubernetes.workerImage }}
+  KUBERNETES_WORKER_IMAGE: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.kubernetes.workerImagePullPolicy }}
+  KUBERNETES_WORKER_IMAGE_PULL_POLICY: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.kubernetes.workerPort }}
+  KUBERNETES_WORKER_PORT: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.kubernetes.workerApprovalMode }}
+  KUBERNETES_WORKER_APPROVAL_MODE: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.kubernetes.workerCpuRequest }}
+  KUBERNETES_WORKER_CPU_REQUEST: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.kubernetes.workerCpuLimit }}
+  KUBERNETES_WORKER_CPU_LIMIT: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.kubernetes.workerMemoryRequest }}
+  KUBERNETES_WORKER_MEMORY_REQUEST: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.kubernetes.workerMemoryLimit }}
+  KUBERNETES_WORKER_MEMORY_LIMIT: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.kubernetes.workerWorkspaceVolumeSize }}
+  KUBERNETES_WORKER_WORKSPACE_VOLUME_SIZE: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.kubernetes.workerDataVolumeSize }}
+  KUBERNETES_WORKER_DATA_VOLUME_SIZE: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.kubernetes.workerStorageClass }}
+  KUBERNETES_WORKER_STORAGE_CLASS: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.kubernetes.healthcheckTimeoutMs }}
+  KUBERNETES_HEALTHCHECK_TIMEOUT_MS: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.kubernetes.pollIntervalMs }}
+  KUBERNETES_POLL_INTERVAL_MS: {{ . | quote }}
+  {{ end }}
+  {{ with .Values.config.kubernetes.workerRecordTtlSeconds }}
+  KUBERNETES_WORKER_RECORD_TTL_SECONDS: {{ . | quote }}
+  {{ end }}
+  {{- end }}
   {{ with .Values.config.inference.openRouterWorkspaceId }}
   OPENROUTER_WORKSPACE_ID: {{ . | quote }}
   {{ end }}

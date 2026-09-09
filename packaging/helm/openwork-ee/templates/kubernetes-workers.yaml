@@ -1,0 +1,65 @@
+{{- include "openwork-ee.kubernetesWorkersValidate" . }}
+{{- if eq .Values.config.provisioner.mode "kubernetes" }}
+{{- $workerNamespace := include "openwork-ee.kubernetesWorkerNamespace" . }}
+{{- $serviceAccountName := include "openwork-ee.denApiServiceAccountName" . }}
+{{- if .Values.workers.kubernetes.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $serviceAccountName }}
+  labels:
+    {{- include "openwork-ee.labels" . | nindent 4 }}
+    app.kubernetes.io/component: den-api
+---
+{{- end }}
+{{- if and .Values.workers.kubernetes.createNamespace (ne $workerNamespace .Release.Namespace) }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $workerNamespace }}
+  labels:
+    {{- include "openwork-ee.labels" . | nindent 4 }}
+---
+{{- end }}
+{{- if .Values.workers.kubernetes.rbac.create }}
+# Namespaced only, on purpose: den-api manages worker Deployments, Services,
+# Secrets, and PVCs inside the worker namespace, and reads pods and their logs
+# for provisioning diagnostics. Nothing here grants cluster-scoped access.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-worker-manager
+  namespace: {{ $workerNamespace }}
+  labels:
+    {{- include "openwork-ee.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "secrets", "persistentvolumeclaims"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-worker-manager
+  namespace: {{ $workerNamespace }}
+  labels:
+    {{- include "openwork-ee.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $serviceAccountName }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "openwork-ee.fullname" . }}-worker-manager
+{{- end }}
+{{- end }}

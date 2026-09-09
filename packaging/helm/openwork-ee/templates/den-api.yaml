@@ -50,6 +50,9 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
+      {{- if eq .Values.config.provisioner.mode "kubernetes" }}
+      serviceAccountName: {{ include "openwork-ee.denApiServiceAccountName" . }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

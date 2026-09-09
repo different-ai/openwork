@@ -984,3 +984,70 @@ Readiness probes use dependency-aware endpoints:
 ## Worker Provisioning Recovery
 
 `den-api` periodically reconciles cloud workers that remain in `provisioning` beyond `config.provisioner.reconcileStaleMs`. This lets a replacement pod resume provisioning after a crash. Keep `denApi.replicaCount: 1` unless your worker provider operations are idempotent or you add external leader election.
+
+## Kubernetes Worker Provisioner
+
+Set `config.provisioner.mode: kubernetes` to have `den-api` provision each cloud worker directly in your cluster as a Deployment + Service + token Secret + two PVCs (`/workspace`, `/data`). Per-user workers idle-stop to zero replicas, wake in place, and deprovision with full data erasure. This is the self-hosted alternative to the hosted Daytona and Render providers.
+
+### Values
+
+| Value | Default | Description |
+| --- | --- | --- |
+| `config.provisioner.mode` | `stub` | Set to `kubernetes` to enable the provisioner. |
+| `config.kubernetes.workerImage` | (den-api default, required) | Worker image, e.g. built from `packaging/docker/Dockerfile.microsandbox`. Provisioning fails fast when unset. |
+| `config.kubernetes.workerNamespace` | `openwork-workers` | Namespace where worker objects are created. Also rendered as `KUBERNETES_WORKER_NAMESPACE` so RBAC and API calls agree. |
+| `config.kubernetes.apiUrl` | in-cluster detection | Kubernetes API URL. Leave empty in-cluster; set only for out-of-cluster testing. |
+| `config.kubernetes.apiCaFile` | in-cluster CA | CA bundle for `apiUrl`. |
+| `config.kubernetes.workerImagePullPolicy` | `IfNotPresent` | Worker container pull policy. |
+| `config.kubernetes.workerPort` | `8787` | `openwork-server` port inside the worker pod. |
+| `config.kubernetes.workerApprovalMode` | `auto` | Worker approval mode; `manual` blocks unattended cloud runs. |
+| `config.kubernetes.workerCpuRequest` / `workerCpuLimit` | `500m` / `2` | Worker CPU requests/limits. |
+| `config.kubernetes.workerMemoryRequest` / `workerMemoryLimit` | `1Gi` / `4Gi` | Worker memory requests/limits. |
+| `config.kubernetes.workerWorkspaceVolumeSize` / `workerDataVolumeSize` | `10Gi` / `10Gi` | PVC sizes for `/workspace` and `/data`. |
+| `config.kubernetes.workerStorageClass` | cluster default | StorageClass for the worker PVCs. |
+| `config.kubernetes.healthcheckTimeoutMs` | `300000` | How long provisioning waits for the worker `/health` endpoint. |
+| `config.kubernetes.pollIntervalMs` | `1000` | Health poll interval while provisioning. |
+| `config.kubernetes.workerRecordTtlSeconds` | `3600` | TTL for the worker record served to clients. |
+| `secret.kubernetesApiToken` | `""` | `KUBERNETES_API_TOKEN`. Leave empty in-cluster (the ServiceAccount token is used). |
+| `workers.kubernetes.createNamespace` | `true` | Create the worker namespace from the chart. |
+| `workers.kubernetes.serviceAccount.create` | `true` | Create a dedicated ServiceAccount for `den-api`. |
+| `workers.kubernetes.serviceAccount.name` | `<release>-den-api` | Explicit ServiceAccount name when `create: false`. |
+| `workers.kubernetes.rbac.create` | `true` | Render the namespaced Role and RoleBinding. |
+| `config.provisioner.workerUrlTemplate` | `""` | Optional public worker URL template (see below). |
+
+### Worker image
+
+Build and push the microsandbox worker image once per release, then reference it:
+
+```bash
+./scripts/build-microsandbox-openwork-image.sh
+docker tag <built-image> registry.example.com/openwork-microsandbox:<version>
+docker push registry.example.com/openwork-microsandbox:<version>
+```
+
+```yaml
+config:
+  provisioner:
+    mode: kubernetes
+  kubernetes:
+    workerImage: registry.example.com/openwork-microsandbox:<version>
+```
+
+The chart deploys only the control plane; the worker image must be present in a registry reachable by the cluster (or pre-loaded on single-node clusters such as k3s with `k3s ctr images import`).
+
+### RBAC scope
+
+When `workers.kubernetes.rbac.create: true` the chart renders, in the worker namespace only:
+
+- a Role granting get/list/create/update/patch/delete on `apps/deployments`, get/list/create/delete on core `services`, `secrets`, and `persistentvolumeclaims`, get/list on `pods`, and get on `pods/log`
+- a RoleBinding binding that Role to the `den-api` ServiceAccount
+
+Nothing cluster-scoped is rendered, and worker pods run with `automountServiceAccountToken: false`.
+
+### URLs and ingress
+
+`den-api` reaches workers at `http://<worker>.<workerNamespace>.svc.cluster.local:<workerPort>`. Set `config.provisioner.workerUrlTemplate` (for example `https://{workerId}.workers.example.com`) only when workers must be reachable by hostname outside the cluster: the `{workerId}` placeholder receives the DNS-safe, hyphenated worker NAME (`wrk_abc...` becomes `wrk-abc...`), and you are responsible for routing that host to the worker Service. Worker pods must be able to reach `den-api` in-cluster for activity heartbeats; set `config.internal.apiBaseUrl` explicitly if your Service/URL layout is non-standard (`WORKER_ACTIVITY_BASE_URL` follows the internal API URL).
+
+### Public ingress
+
+The worker Services are ClusterIP-internal by default. If you expose workers publicly through `workerUrlTemplate`, front them with your own ingress, TLS, and authentication — the chart does not render worker ingresses. Keep `WORKER_URL_TEMPLATE` unset for fully private clusters.
