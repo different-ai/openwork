@@ -6,6 +6,7 @@ import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge";
 import { t } from "@/i18n";
 import type { ComposerAttachment, ComposerDraft, ComposerPart } from "@/app/types";
 import { parseConnectSkillToken } from "@/react-app/domains/session/surface/composer/connect-skill-token";
+import { parseConnectorToken } from "@/react-app/domains/session/surface/composer/connector-token";
 import type { QueuedComposerItem } from "@/react-app/domains/session/surface/composer-state-store";
 
 export type QueuedMessagesPanelProps = {
@@ -17,7 +18,7 @@ export type QueuedMessagesPanelProps = {
   sending?: boolean;
 };
 
-const TOKEN_RE = /(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\])/;
+const TOKEN_RE = /(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\])/;
 
 function isImageAttachment(attachment: ComposerAttachment) {
   return attachment.kind === "image" || attachment.mimeType.startsWith("image/");
@@ -85,6 +86,20 @@ function QueuedDraftContent(props: { draft: ComposerDraft }) {
           title={`Skill: ${connectSkill?.name ?? skillName}`}
         >
           {`/${skillName}`}
+        </span>,
+      );
+      continue;
+    }
+
+    const connectorName = parseConnectorToken(segment);
+    if (connectorName) {
+      nodes.push(
+        <span
+          key={key}
+          className="mx-0.5 inline-flex items-center rounded-full border border-blue-6/35 bg-blue-3/20 px-2.5 py-1 text-xs font-medium text-blue-11 align-middle"
+          title={`Connector: ${connectorName}`}
+        >
+          {connectorName}
         </span>,
       );
       continue;

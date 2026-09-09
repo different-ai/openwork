@@ -1982,6 +1982,7 @@ export type ExternalMcpPresetResponse = {
   description: string;
   url: string;
   authType: "oauth" | "apikey" | "none";
+  supportedAuthTypes?: Array<"oauth" | "apikey" | "none">;
   requiresOAuthClient?: boolean;
   authorizationServerIssuer?: string;
   defaultOAuthScopes?: Array<string>;

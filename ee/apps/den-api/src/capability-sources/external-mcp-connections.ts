@@ -21,7 +21,7 @@ import {
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { env } from "../env.js"
-import { declaredPluginMcpAuthType, requiredPluginMcpAuthType } from "./external-mcp-auth-policy.js"
+import { declaredPluginMcpAuthType, pluginMcpAuthTypeCompatible, requiredPluginMcpAuthType } from "./external-mcp-auth-policy.js"
 import { isExternalMcpSharedCallbackRedirectUri } from "./external-mcp-oauth-contract.js"
 import {
   createExternalMcpIdentityBinding,
@@ -348,7 +348,11 @@ async function sourcedUsableExternalMcpConnections(input: {
     const requiredAuthType = entry
       ? requiredPluginMcpAuthType({ declaredAuthType: declaredPluginMcpAuthType(entry.config), url: declaredUrl })
       : null
-    if (!input.includeAuthMismatches && requiredAuthType && row.connection.authType !== requiredAuthType) return []
+    if (!input.includeAuthMismatches && !pluginMcpAuthTypeCompatible({
+      authType: row.connection.authType,
+      requiredAuthType,
+      url: declaredUrl,
+    })) return []
     return normalizeExternalMcpIdentityUrl(row.connection.url) === normalizeExternalMcpIdentityUrl(declaredUrl)
       ? [row.connection]
       : []

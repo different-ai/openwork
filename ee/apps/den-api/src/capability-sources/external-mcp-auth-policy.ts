@@ -44,8 +44,20 @@ export function requiredPluginMcpAuthType(input: {
   declaredAuthType: "oauth" | null
   url: string
 }): PluginMcpAuthType | null {
+  if (input.declaredAuthType) return input.declaredAuthType
   const preset = matchExternalMcpPresetForUrl(input.url)
-  return preset?.authType ?? input.declaredAuthType
+  if (preset?.supportedAuthTypes && preset.supportedAuthTypes.length > 1) return null
+  return preset?.authType ?? null
+}
+
+export function pluginMcpAuthTypeCompatible(input: {
+  authType: PluginMcpAuthType
+  requiredAuthType: PluginMcpAuthType | null
+  url: string
+}): boolean {
+  if (input.requiredAuthType && input.authType !== input.requiredAuthType) return false
+  const preset = matchExternalMcpPresetForUrl(input.url)
+  return !preset || (preset.supportedAuthTypes ?? [preset.authType]).includes(input.authType)
 }
 
 export function pluginMcpRequiresPreRegisteredOAuthClient(url: string): boolean {
@@ -54,8 +66,12 @@ export function pluginMcpRequiresPreRegisteredOAuthClient(url: string): boolean 
 
 export function resolveGithubPluginMcpImportAuthType(input: {
   declaredAuthType: "oauth" | null
-  requestedAuthType: "none" | "oauth"
+  existingAuthType?: PluginMcpAuthType
+  requestedAuthType: PluginMcpAuthType
   url: string
 }): PluginMcpAuthType {
-  return requiredPluginMcpAuthType(input) ?? input.requestedAuthType
+  if (input.declaredAuthType) return input.declaredAuthType
+  const preset = matchExternalMcpPresetForUrl(input.url)
+  if (input.existingAuthType && preset?.supportedAuthTypes?.includes(input.existingAuthType)) return input.existingAuthType
+  return preset?.authType ?? input.requestedAuthType
 }
