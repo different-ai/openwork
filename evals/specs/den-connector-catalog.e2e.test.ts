@@ -107,8 +107,9 @@ test("Den catalog shows its full inventory, preserves service identity, and keep
     expect(usable.response.ok).toBe(true);
     if (!isRecord(usable.body)) throw new Error("Den returned no usable connections.");
     for (const id of ["google-workspace", "microsoft-365"]) {
+      // Legacy native entries use connected for configured client presence, not account authorization.
       expect(records(usable.body.connections).filter((entry) => entry.id === id)).toMatchObject([
-        { id, connectedForMe: false, connected: false },
+        { id, connectedForMe: false, connected: true, credentialMode: "per_member" },
       ]);
       await admin.navigate(`${catalogUrl}/${id}`);
       await admin.reload();
