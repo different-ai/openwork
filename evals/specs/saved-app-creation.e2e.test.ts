@@ -370,6 +370,9 @@ test("create, preview, save and reopen an app without changing already-open resu
     if (typeof verificationUrl !== "string") throw new Error("Missing verification address");
     const nonce = new URL(verificationUrl).searchParams.get("nonce");
     if (!nonce) throw new Error("Missing verification nonce");
+    expect(new URL(verificationUrl).searchParams.has("email")).toBe(false);
+    expect(new URL(verificationUrl).searchParams.has("userId")).toBe(false);
+    expect(new URLSearchParams(new URL(verificationUrl).hash.slice(1)).get("email")).toBe(world.den.admin.email);
     const wrongGrant = await seed.api(colleague, "/v1/auth/desktop-handoff", { method: "POST", body: "{}" });
     expect(wrongGrant.response.status, wrongGrant.text).toBe(200);
     const wrongLink = `openwork://den-reauth?nonce=${nonce}&grant=${field(wrongGrant.body, "grant")}`;
