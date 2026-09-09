@@ -109,6 +109,10 @@ export const idTypesMapNameToPrefix = {
   inferenceProviderOauthState: "ipos",
   inferenceRequestLog: "irl",
   inferenceUsageRollup: "iur",
+  gatewayKey: "gky",
+  gatewayModelGroup: "gmg",
+  gatewayModelGroupModel: "gmm",
+  gatewayCredentialSet: "gcs",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

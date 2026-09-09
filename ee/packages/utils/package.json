@@ -36,6 +36,21 @@
       "development": "./src/inference-credentials.ts",
       "default": "./dist/inference-credentials.js"
     },
+    "./gateway-bearer-key": {
+      "types": "./src/gateway-bearer-key.ts",
+      "development": "./src/gateway-bearer-key.ts",
+      "default": "./dist/gateway-bearer-key.js"
+    },
+    "./gateway-routing": {
+      "types": "./src/gateway-routing.ts",
+      "development": "./src/gateway-routing.ts",
+      "default": "./dist/gateway-routing.js"
+    },
+    "./gateway-rollups": {
+      "types": "./src/gateway-rollups.ts",
+      "development": "./src/gateway-rollups.ts",
+      "default": "./dist/gateway-rollups.js"
+    },
     "./inference-bearer-key": {
       "types": "./src/inference-bearer-key.ts",
       "development": "./src/inference-bearer-key.ts",

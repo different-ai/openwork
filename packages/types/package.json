@@ -79,6 +79,16 @@
       "development": "./src/den/managed-models-policy.ts",
       "default": "./src/den/managed-models-policy.ts"
     },
+    "./den/gateway": {
+      "types": "./src/den/gateway.ts",
+      "development": "./src/den/gateway.ts",
+      "default": "./src/den/gateway.ts"
+    },
+    "./den/gateway-usage": {
+      "types": "./src/den/gateway-usage.ts",
+      "development": "./src/den/gateway-usage.ts",
+      "default": "./src/den/gateway-usage.ts"
+    },
     "./den/inference": {
       "types": "./src/den/inference.ts",
       "development": "./src/den/inference.ts",

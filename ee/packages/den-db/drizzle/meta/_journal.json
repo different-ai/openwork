@@ -673,6 +673,27 @@
       "when": 1788787198866,
       "tag": "0094_inference_accounting_observations",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "5",
+      "when": 1788881313425,
+      "tag": "0095_gateway_access_matrix",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "5",
+      "when": 1788958587949,
+      "tag": "0096_gateway_provider_model_universe",
+      "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "5",
+      "when": 1788961365465,
+      "tag": "0097_gateway_credential_set_creator",
+      "breakpoints": true
     }
   ]
 }
