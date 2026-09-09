@@ -62,3 +62,58 @@ False
 
 #### Deprecated details
 None.
+
+## v0.18.44
+
+#### Commit
+`cac94b07`
+
+#### Released at
+`2026-09-09T05:32:36Z`
+
+#### Title
+Sessions preserve live progress and drafts
+
+#### One-line summary
+Preserves live session progress and composer drafts while recording shared callback modes and removing the legacy embedded connection path.
+
+#### Main changes
+- Preserved live progress when hydrating cached threads.
+- Recorded the shared callback mode for isolated MCP rows with shared registrations.
+- Preserved composer drafts and verified instant sends.
+- Removed the legacy embedded connection app and gateway launch path.
+
+#### Lines of code changed since previous release
+4945 lines changed since `v0.18.43` (4095 insertions, 850 deletions).
+
+#### Release importance
+Minor release: focused session, composer, MCP callback, and legacy connection-path improvements without a major-version change.
+
+#### Major improvements
+False
+
+#### Number of major improvements
+0
+
+#### Major improvement details
+None.
+
+#### Major bugs resolved
+True
+
+#### Number of major bugs resolved
+3
+
+#### Major bug fix details
+- Preserved live progress when hydrating cached threads.
+- Recorded the shared callback mode for isolated MCP rows with shared registrations.
+- Preserved composer drafts and verified instant sends.
+
+#### Deprecated features
+True
+
+#### Number of deprecated features
+1
+
+#### Deprecated details
+- Removed the legacy embedded connection app and gateway launch path.
