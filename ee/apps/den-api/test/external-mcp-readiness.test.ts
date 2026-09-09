@@ -111,7 +111,7 @@ const {
   listUsableExternalMcpConnections,
 } = await import("../src/capability-sources/external-mcp-connections.js")
 
-test("plugin-sourced GitHub PATs remain usable without allowing anonymous or explicit OAuth mismatches", async () => {
+test("plugin-sourced GitHub PATs and legacy none remain usable without bypassing access or explicit OAuth", async () => {
   const organizationId = createDenTypeId("organization")
   const orgMembershipId = createDenTypeId("member")
   const pluginId = createDenTypeId("plugin")
@@ -121,13 +121,20 @@ test("plugin-sourced GitHub PATs remain usable without allowing anonymous or exp
   const cases = [
     { authType: "apikey", oauth: false, granted: true, usable: true },
     { authType: "oauth", oauth: false, granted: true, usable: true },
-    { authType: "none", oauth: false, granted: true, usable: false },
+    { authType: "none", oauth: false, granted: true, usable: true },
+    { authType: "none", oauth: true, granted: true, usable: false },
     { authType: "apikey", oauth: true, granted: true, usable: false },
     { authType: "oauth", oauth: true, granted: true, usable: true },
     { authType: "apikey", oauth: false, granted: false, usable: false },
+    { authType: "none", oauth: false, granted: false, usable: false },
   ]
   for (const input of cases) {
-    const candidate = { ...connection, organizationId, authType: input.authType, credentialMode: "shared", url, apiKey: "fixture-pat" }
+    const candidate = {
+      ...connection, organizationId, authType: input.authType, credentialMode: "shared", url,
+      apiKey: input.authType === "apikey" ? "fixture-pat" : null,
+      accessToken: input.authType === "oauth" ? "fixture-token" : null,
+      connectedAt: new Date(),
+    }
     queueSelectResults([
       [], // No direct grants: access must come from this plugin.
       [{ binding, connection: candidate, configObjectTitle: "GitHub" }],
@@ -143,7 +150,7 @@ test("plugin-sourced GitHub PATs remain usable without allowing anonymous or exp
   expect(transactionCalls).toBe(0)
 })
 
-test("GitHub plugin readiness accepts PATs and still requires a registered client for OAuth", async () => {
+test("GitHub plugin readiness preserves connected legacy none but still enforces OAuth setup", async () => {
   // The marketplace module imports the app graph; do not initialize auth's resource registry.
   mock.module("../src/auth.js", () => ({
     auth: { api: { getSession: async () => null }, handler: async () => new Response() },
@@ -167,7 +174,9 @@ test("GitHub plugin readiness accepts PATs and still requires a registered clien
   for (const input of [
     { authType: "apikey", oauth: false, client: false, state: "ready" },
     { authType: "apikey", oauth: true, client: false, state: "needs_admin_setup" },
-    { authType: "none", oauth: false, client: false, state: "needs_admin_setup" },
+    { authType: "none", oauth: false, client: false, state: "ready" },
+    { authType: "none", oauth: true, client: false, state: "needs_admin_setup" },
+    { authType: "none", oauth: false, client: false, state: "needs_admin_setup", disconnected: true },
     { authType: "oauth", oauth: false, client: false, state: "needs_admin_setup" },
     { authType: "oauth", oauth: false, client: true, state: "ready" },
   ]) {
@@ -175,7 +184,7 @@ test("GitHub plugin readiness accepts PATs and still requires a registered clien
       ...connection, organizationId, url, authType: input.authType, credentialMode: "shared",
       apiKey: input.authType === "apikey" ? "fixture-pat" : null,
       accessToken: input.authType === "oauth" ? "fixture-token" : null,
-      connectedAt: new Date(),
+      connectedAt: input.disconnected ? null : new Date(),
     }
     queueSelectResults([
       [{ id: configObjectId, objectType: "mcp", pluginId, title: "GitHub" }],
@@ -190,6 +199,7 @@ test("GitHub plugin readiness accepts PATs and still requires a registered clien
       organizationId, member: { orgMembershipId, teamIds: [] }, pluginIds: [pluginId],
     })
     expect(readiness.get(pluginId)?.state).toBe(input.state)
+    expect(readiness.get(pluginId)?.connections[0]?.authTypeMismatch).toBe(input.oauth && input.authType !== "oauth")
     expect(readiness.get(pluginId)?.connections[0]?.oauthClientRequired).toBe(input.authType === "oauth" ? true : input.oauth ? false : undefined)
     expect(selectResults).toHaveLength(0)
   }

@@ -136,6 +136,8 @@ test("Den catalog shows its full inventory, preserves service identity, and keep
     expect(records(memberState.body.connections).find((entry) => entry.id === world.connection.id)).toMatchObject({ connectedForMe: true });
     await admin.navigate(`${catalogUrl}/${world.connection.id}`);
     await admin.see({ testId: "connector-detail-state" }, { text: "Needs your account" });
+    const information = await catalog.dom('[data-testid="connector-detail-information"]');
+    expect(JSON.stringify(information)).not.toContain("Added by");
     await admin.notSee({ testId: "connector-detail-test-tools" });
     const adminState = await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable");
     if (!isRecord(adminState.body)) throw new Error("Den returned no admin connections.");
@@ -161,7 +163,9 @@ test("Den catalog shows its full inventory, preserves service identity, and keep
     await admin.see({ role: "link", label: "Review connection" });
     await admin.notSee({ text: /added for everyone|Finish signing in|Your account is connected/ });
     const requests = (await world.rejected.requestLog()).slice(requestsBefore);
-    expect(requests.some((entry) => entry.path === "/mcp" && entry.faulted && entry.status === 503)).toBe(true);
+    expect(requests, "the provider endpoint receives the declared failure before authorization").toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "/mcp", faulted: true, status: 503 }),
+    ]));
     expect((await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token")).toEqual(authBefore);
     expect(await probe.toolCalls(world.connector)).toEqual([]);
     await admin.click({ role: "link", label: "Review connection" });

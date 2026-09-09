@@ -387,14 +387,11 @@ export async function connectorCatalogManagement(seed: Seed) {
   });
   if (!google.response.ok) throw new Error("Could not arrange the native Google client.");
   // Fault the provider boundary, not Den's startup response or persisted readiness.
-  const rejected = await seed.faultProxy({
-    ...den,
-    ref: { apiUrl: den.mocks.connector.url, webUrl: den.mocks.connector.url },
-  });
+  const rejected = await seed.faultProxy(den);
   await rejected.faults.status("/mcp", 503, { times: 1000, body: { error: "catalog_provider_unavailable" } });
   const rejectedConnection = await seed.orgConnection(den.admin, {
     name: "Catalog Recovery",
-    url: `${rejected.ref.apiUrl}/mcp`,
+    url: `${rejected.ref.webUrl}/mcp`,
     authType: "oauth",
     credentialMode: "per_member",
     access: { orgWide: true },

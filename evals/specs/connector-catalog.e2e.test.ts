@@ -69,7 +69,8 @@ test("chat suggests Slack setup and lets an admin browse every quick-add connect
   await probe.eventually(() => appProbe.composer(), {
     within: 15_000, label: "new session has an empty transcript", until: state => state.userMessageCount === 0,
   });
-  await agent.on(world.app).send(allConnectorsPrompt);
+  await appUser.type("composer", allConnectorsPrompt, { replace: true, verify: true });
+  await appUser.click({ role: "button", label: "Run task" });
   await appUser.see({ text: allConnectorsReply }, { timeoutMs: 120_000 });
   const listed = await appProbe.eval(() => {
     const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="connector-catalog"]'));

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   declaredPluginMcpAuthType,
+  existingPluginMcpAuthTypeCompatible,
   pluginMcpAuthTypeCompatible,
   pluginMcpRequiresPreRegisteredOAuthClient,
   requiredPluginMcpAuthType,
@@ -23,7 +24,7 @@ describe("GitHub plugin MCP authentication", () => {
     }
   })
 
-  test("a compatible existing PAT can be reused, but never overrides an explicit OAuth declaration", () => {
+  test("existing PAT and legacy no-auth imports are preserved, but never override explicit OAuth", () => {
     expect(resolveGithubPluginMcpImportAuthType({
       declaredAuthType: null,
       existingAuthType: "apikey",
@@ -36,8 +37,16 @@ describe("GitHub plugin MCP authentication", () => {
       requestedAuthType: "none",
       url: githubUrl,
     })).toBe("oauth")
+    for (const requestedAuthType of ["none", "oauth"] as const) {
+      expect(resolveGithubPluginMcpImportAuthType({
+        declaredAuthType: null,
+        existingAuthType: "none",
+        requestedAuthType,
+        url: githubUrl,
+      })).toBe("none")
+    }
     expect(resolveGithubPluginMcpImportAuthType({
-      declaredAuthType: null,
+      declaredAuthType: "oauth",
       existingAuthType: "none",
       requestedAuthType: "none",
       url: githubUrl,
@@ -46,6 +55,15 @@ describe("GitHub plugin MCP authentication", () => {
     expect(requiredAuthType).toBe("oauth")
     expect(pluginMcpAuthTypeCompatible({ authType: "apikey", requiredAuthType, url: githubUrl })).toBe(false)
     expect(pluginMcpAuthTypeCompatible({ authType: "oauth", requiredAuthType, url: githubUrl })).toBe(true)
+  })
+
+  test("stored GitHub none remains compatible without permitting a new anonymous setup", () => {
+    for (const requiredAuthType of [null, "none"] as const) {
+      expect(existingPluginMcpAuthTypeCompatible({ authType: "none", requiredAuthType })).toBe(true)
+      expect(pluginMcpAuthTypeCompatible({ authType: "none", requiredAuthType, url: githubUrl })).toBe(false)
+    }
+    expect(existingPluginMcpAuthTypeCompatible({ authType: "none", requiredAuthType: "oauth" })).toBe(false)
+    expect(existingPluginMcpAuthTypeCompatible({ authType: "apikey", requiredAuthType: "oauth" })).toBe(false)
   })
 
   test("single-auth presets still reject unsupported and anonymous connections", () => {
@@ -58,6 +76,8 @@ describe("GitHub plugin MCP authentication", () => {
       expect(requiredAuthType).toBe(authType)
       expect(pluginMcpAuthTypeCompatible({ authType, requiredAuthType, url })).toBe(true)
       expect(pluginMcpAuthTypeCompatible({ authType: authType === "none" ? "apikey" : "none", requiredAuthType, url })).toBe(false)
+      expect(existingPluginMcpAuthTypeCompatible({ authType, requiredAuthType })).toBe(true)
+      expect(existingPluginMcpAuthTypeCompatible({ authType: authType === "none" ? "apikey" : "none", requiredAuthType })).toBe(false)
     }
   })
 

@@ -20,7 +20,7 @@ import {
 import {
   declaredPluginMcpAuthType,
   requiredPluginMcpAuthType,
-  pluginMcpAuthTypeCompatible,
+  existingPluginMcpAuthTypeCompatible,
   pluginMcpRequiresPreRegisteredOAuthClient,
   type PluginMcpAuthType,
 } from "../capability-sources/external-mcp-auth-policy.js"
@@ -1011,10 +1011,9 @@ async function statusForRequirement(input: {
   usableConnections: ExternalMcpConnectionRow[]
 }): Promise<MarketplaceMcpRequirementStatus> {
   const connection = matchingConnectionForRequirement(input)
-  const authTypeMismatch = Boolean(connection && !pluginMcpAuthTypeCompatible({
+  const authTypeMismatch = Boolean(connection && !existingPluginMcpAuthTypeCompatible({
     authType: connection.authType,
     requiredAuthType: input.requirement.requiredAuthType,
-    url: input.requirement.url,
   }))
   const usable = connection && !authTypeMismatch
     ? connectionIsUsable({ connectionId: connection.id, usableConnections: input.usableConnections })
@@ -1218,10 +1217,9 @@ async function resolveMcpReadinessConnections(input: {
       connectedCache.set(matched.id, connectedForMe)
     }
     let oauthClientConfigured: boolean | undefined
-    const authTypeMismatch = !pluginMcpAuthTypeCompatible({
+    const authTypeMismatch = !existingPluginMcpAuthTypeCompatible({
       authType: matched.authType,
       requiredAuthType: dependency.requiredAuthType,
-      url: dependency.url,
     })
     const oauthClientRequired = matched.authType === "oauth" && pluginMcpRequiresPreRegisteredOAuthClient(matched.url)
     if (dependency.requiredAuthType === "oauth" || matched.authType === "oauth") {

@@ -269,9 +269,7 @@ export function connectorDetailFacts(
     if (connection.exposeDirectly) facts.push({ label: "Exposure", value: "Available as a standard MCP server with its own tool catalog" });
     const access = accessLabel(connection, context.orgName);
     if (access) facts.push({ label: "Access", value: access });
-    const added = [connection.createdByName ? `Added by ${connection.createdByName}` : null, formatDate(connection.connectedAt ?? connection.updatedAt)]
-      .filter((part): part is string => Boolean(part))
-      .join(" · ");
+    const added = formatDate(connection.connectedAt ?? connection.updatedAt);
     if (added) facts.push({ label: "Added", value: added });
     for (const owner of connection.identityManagedBy) {
       facts.push({ label: "Managed by", value: owner.name, href: context.pluginHref(owner.pluginId) });

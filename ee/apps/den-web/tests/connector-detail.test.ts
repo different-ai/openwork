@@ -119,7 +119,8 @@ describe("connector detail copy", () => {
     expect(byLabel.Server).toMatchObject({ value: "https://mcp.notion.com/mcp/", mono: true });
     expect(byLabel["Sign-in"].value).toBe("OAuth sign-in · each person connects their own account");
     expect(byLabel.Access.value).toBe("Everyone in Acme");
-    expect(byLabel.Added.value).toContain("Added by Jalil");
+    expect(byLabel.Added.value).toBe(new Date(NOTION.connectedAt!).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }));
+    expect(facts.some((fact) => fact.value.includes("Added by"))).toBe(false);
     expect(byLabel["Required by"]).toMatchObject({ value: "Research kit", href: "/dashboard/plugins/plg_1" });
     expect(byLabel.Docs.href).toContain("shared-mcp-connections");
   });
@@ -134,6 +135,15 @@ describe("connector detail copy", () => {
     expect(googleFacts.find((fact) => fact.label === "Provider")?.value).toBe("Google");
     expect(googleFacts.some((fact) => fact.label === "Server")).toBe(false);
     expect(googleFacts.find((fact) => fact.label === "Part of")?.value).toContain("Google Workspace");
+  });
+
+  test("information facts never project the creator's name or email fallback", () => {
+    for (const createdByName of ["Connector creator", "creator@example.test"]) {
+      const connection = { ...NOTION, createdByName };
+      const facts = connectorDetailFacts({ kind: "connection", connection }, context);
+      expect(facts.some((fact) => fact.value.includes(createdByName))).toBe(false);
+      expect(facts.find((fact) => fact.label === "Added")).toBeDefined();
+    }
   });
 });
 

@@ -50,12 +50,21 @@ export function requiredPluginMcpAuthType(input: {
   return preset?.authType ?? null
 }
 
+// Stored connections predate preset setup allowlists; only a required auth type
+// can disqualify them. New configuration must also pass the preset allowlist.
+export function existingPluginMcpAuthTypeCompatible(input: {
+  authType: PluginMcpAuthType
+  requiredAuthType: PluginMcpAuthType | null
+}): boolean {
+  return input.requiredAuthType === null || input.authType === input.requiredAuthType
+}
+
 export function pluginMcpAuthTypeCompatible(input: {
   authType: PluginMcpAuthType
   requiredAuthType: PluginMcpAuthType | null
   url: string
 }): boolean {
-  if (input.requiredAuthType && input.authType !== input.requiredAuthType) return false
+  if (!existingPluginMcpAuthTypeCompatible(input)) return false
   const preset = matchExternalMcpPresetForUrl(input.url)
   return !preset || (preset.supportedAuthTypes ?? [preset.authType]).includes(input.authType)
 }
@@ -72,6 +81,9 @@ export function resolveGithubPluginMcpImportAuthType(input: {
 }): PluginMcpAuthType {
   if (input.declaredAuthType) return input.declaredAuthType
   const preset = matchExternalMcpPresetForUrl(input.url)
-  if (input.existingAuthType && preset?.supportedAuthTypes?.includes(input.existingAuthType)) return input.existingAuthType
+  if (input.existingAuthType && preset?.supportedAuthTypes && existingPluginMcpAuthTypeCompatible({
+    authType: input.existingAuthType,
+    requiredAuthType: requiredPluginMcpAuthType(input),
+  })) return input.existingAuthType
   return preset?.authType ?? input.requestedAuthType
 }

@@ -106,7 +106,7 @@ import {
   externalMcpOAuthConfigurationDefaults,
   pluginMcpRequiresPreRegisteredOAuthClient,
   requiredPluginMcpAuthType,
-  pluginMcpAuthTypeCompatible,
+  existingPluginMcpAuthTypeCompatible,
   matchExternalMcpPresetForUrl,
 } from "../../capability-sources/external-mcp-auth-policy.js"
 import {
@@ -1156,8 +1156,7 @@ async function toConnectionResponse(
   if (requiredAuthTypes.length === 0 && presetRequiredAuthType) requiredAuthTypes.push(presetRequiredAuthType)
   const authPolicyConfirmed = options.identityManagedBy.length === 0 || requiredAuthTypes.length > 0
     || (row.kind === "external_mcp" && matchExternalMcpPresetForUrl(row.url) !== null)
-  const authTypeMismatch = requiredAuthTypes.some((requiredAuthType) => requiredAuthType !== row.authType)
-    || (row.kind === "external_mcp" && !pluginMcpAuthTypeCompatible({ authType: row.authType, requiredAuthType: null, url: row.url }))
+  const authTypeMismatch = requiredAuthTypes.some((requiredAuthType) => !existingPluginMcpAuthTypeCompatible({ authType: row.authType, requiredAuthType }))
   const oauthClientRequired = row.kind === "external_mcp" && row.authType === "oauth" && pluginMcpRequiresPreRegisteredOAuthClient(row.url)
   const oauthClientConfigured = Boolean(oauthClient)
   const setupRequired = options.identityManagedBy.length > 0 && (

@@ -5469,8 +5469,9 @@ async function ensureImportedExternalMcpConnection(input: {
   if (existing) {
     const authType = resolveGithubPluginMcpImportAuthType({
       declaredAuthType: input.server.authType,
-      // A shared PAT must never replace a requested per-member OAuth connection.
-      existingAuthType: existing.credentialMode === input.credentialMode ? existing.authType : undefined,
+      // Legacy none always used shared mode, regardless of the import's OAuth
+      // mode default. A shared PAT must not replace per-member OAuth.
+      existingAuthType: existing.authType === "none" || existing.credentialMode === input.credentialMode ? existing.authType : undefined,
       requestedAuthType: input.authType,
       url: serverUrl,
     })
@@ -5480,9 +5481,9 @@ async function ensureImportedExternalMcpConnection(input: {
       existingAuthType: existing.authType,
       existingCredentialMode: existing.credentialMode,
     })
-    if (input.authType === "none") {
+    if (authType === "none") {
       try {
-        await validateConfiguredPluginMcpConnection({ authType: input.authType, connection: existing })
+        await validateConfiguredPluginMcpConnection({ authType, connection: existing })
       } catch (error) {
         await db.update(ExternalMcpConnectionTable).set({ connectedAt: null }).where(and(
           eq(ExternalMcpConnectionTable.organizationId, organizationId),
