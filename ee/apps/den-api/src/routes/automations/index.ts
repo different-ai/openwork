@@ -53,8 +53,8 @@ const paginationSchema = z.object({
   cursor: z.string().min(1).max(160).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
 })
-const runListSchema = z.object({ items: z.array(automationRunSchema), nextCursor: z.string().nullable() })
-const runResponseSchema = z.object({ run: automationRunSchema })
+const runListSchema = z.object({ items: z.array(automationRunSchema), nextCursor: z.string().nullable() }).meta({ ref: "AutomationRunList" })
+const runResponseSchema = z.object({ run: automationRunSchema }).meta({ ref: "AutomationRunResponse" })
 const runnerClaimResponseSchema = z.object({ assignment: automationDesktopRunnerAssignmentSchema.nullable() })
 const openWorkWebAccessRequiredSchema = z.object({
   error: z.literal("openwork_web_access_required"),

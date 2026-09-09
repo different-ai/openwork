@@ -12,15 +12,15 @@ const timezoneSchema = z.string().trim().min(1).max(120).refine((timezone) => {
   }
 }, "Expected a valid IANA timezone")
 
-export const automationStateSchema = z.enum(["active", "inactive", "needs_attention", "archived"])
+export const automationStateSchema = z.enum(["active", "inactive", "needs_attention", "archived"]).meta({ ref: "AutomationState" })
 export type AutomationState = z.infer<typeof automationStateSchema>
 
 export const automationRunStatusSchema = z.enum([
   "queued", "claimed", "running", "succeeded", "failed", "cancelled", "skipped",
-])
+]).meta({ ref: "AutomationRunStatus" })
 export type AutomationRunStatus = z.infer<typeof automationRunStatusSchema>
 
-export const automationRunTriggerSchema = z.enum(["scheduled", "recovery", "manual"])
+export const automationRunTriggerSchema = z.enum(["scheduled", "recovery", "manual"]).meta({ ref: "AutomationRunTrigger" })
 export type AutomationRunTrigger = z.infer<typeof automationRunTriggerSchema>
 
 export const automationScheduleSchema = z.discriminatedUnion("kind", [
@@ -39,7 +39,7 @@ export const automationScheduleSchema = z.discriminatedUnion("kind", [
     hour: z.number().int().min(0).max(23),
     minute: z.number().int().min(0).max(59),
   }),
-])
+]).meta({ ref: "AutomationSchedule" })
 export type AutomationSchedule = z.infer<typeof automationScheduleSchema>
 
 /**
@@ -51,14 +51,14 @@ export const automationModelSchema = z.object({
   providerId: idSchema,
   modelId: idSchema,
   variant: z.string().trim().min(1).max(60).nullable().optional(),
-})
+}).meta({ ref: "AutomationModel" })
 export type AutomationModel = z.infer<typeof automationModelSchema>
 
 export const automationSavedScriptReferenceSchema = z.object({
   pluginId: idSchema,
   configObjectId: idSchema,
   configObjectVersionId: idSchema,
-}).strict()
+}).strict().meta({ ref: "AutomationSavedScriptReference" })
 export type AutomationSavedScriptReference = z.infer<typeof automationSavedScriptReferenceSchema>
 
 export const automationActionSchema = z.discriminatedUnion("kind", [
@@ -72,7 +72,7 @@ export const automationActionSchema = z.discriminatedUnion("kind", [
     script: automationSavedScriptReferenceSchema,
     input: z.unknown().optional(),
   }).strict(),
-])
+]).meta({ ref: "AutomationAction" })
 export type AutomationAction = z.infer<typeof automationActionSchema>
 
 /**
@@ -97,7 +97,7 @@ export const automationNeedsAttentionReasonSchema = z.object({
   ]),
   message: z.string().trim().min(1).max(2_000),
   occurredAt: timestampSchema,
-})
+}).meta({ ref: "AutomationNeedsAttentionReason" })
 export type AutomationNeedsAttentionReason = z.infer<typeof automationNeedsAttentionReasonSchema>
 
 export const automationSchema = z.object({
@@ -115,7 +115,7 @@ export const automationSchema = z.object({
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
   archivedAt: nullableTimestampSchema,
-})
+}).meta({ ref: "Automation" })
 export type Automation = z.infer<typeof automationSchema>
 
 /**
@@ -141,7 +141,7 @@ export const automationRevisionSchema = z.object({
   maximumRuntimeMs: z.number().int().min(10_000).max(60 * 60 * 1_000),
   digest: z.string().trim().min(16).max(128),
   createdAt: timestampSchema,
-})
+}).meta({ ref: "AutomationRevision" })
 export type AutomationRevision = z.infer<typeof automationRevisionSchema>
 
 export const automationErrorSchema = z.object({
@@ -161,14 +161,14 @@ export const automationErrorSchema = z.object({
   ]),
   message: z.string().trim().min(1).max(2_000),
   retryable: z.boolean(),
-})
+}).meta({ ref: "AutomationError" })
 export type AutomationError = z.infer<typeof automationErrorSchema>
 
 export const automationUsageSchema = z.object({
   inputTokens: z.number().int().nonnegative().nullable(),
   outputTokens: z.number().int().nonnegative().nullable(),
   costMicros: z.number().int().nonnegative().nullable(),
-})
+}).meta({ ref: "AutomationUsage" })
 export type AutomationUsage = z.infer<typeof automationUsageSchema>
 
 export const automationExecutionThreadSchema = z.object({
@@ -181,11 +181,11 @@ export const automationExecutionThreadSchema = z.object({
   /** Native OpenCode session identity for agent runs. */
   nativeThreadId: idSchema.nullable().optional(),
   workspaceId: idSchema.nullable().optional(),
-})
+}).meta({ ref: "AutomationExecutionThread" })
 export type AutomationExecutionThread = z.infer<typeof automationExecutionThreadSchema>
 
 /** Creation surface fixes execution placement: Desktop stays local; Web runs in Cloud. */
-export const automationExecutionTargetSchema = z.enum(["desktop", "cloud"])
+export const automationExecutionTargetSchema = z.enum(["desktop", "cloud"]).meta({ ref: "AutomationExecutionTarget" })
 export type AutomationExecutionTarget = z.infer<typeof automationExecutionTargetSchema>
 
 export const AUTOMATION_MODEL_ATTENTION_CAPABILITY = "model_attention_v1" as const
@@ -220,7 +220,7 @@ export const AUTOMATION_DESKTOP_RUNNER_PRESENCE_WINDOW_MS = 10 * 60_000
 export const automationDesktopRunnerPresenceSchema = z.object({
   connected: z.boolean(),
   lastSeenAt: timestampSchema.nullable(),
-})
+}).meta({ ref: "AutomationDesktopRunnerPresence" })
 export type AutomationDesktopRunnerPresence = z.infer<typeof automationDesktopRunnerPresenceSchema>
 
 export const automationRunnerNotificationSchema = z.object({
@@ -340,7 +340,7 @@ export const automationRunnerTokenResponseSchema = z.object({
   token: z.string().trim().min(32).max(512),
   expiresAt: timestampSchema,
   eventsPath: z.literal("/v1/automation-runners/events"),
-})
+}).meta({ ref: "AutomationRunnerTokenResponse" })
 export type AutomationRunnerTokenResponse = z.infer<typeof automationRunnerTokenResponseSchema>
 
 export const automationRunSchema = z.object({
@@ -369,12 +369,12 @@ export const automationRunSchema = z.object({
   usage: automationUsageSchema,
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
-})
+}).meta({ ref: "AutomationRun" })
 export type AutomationRun = z.infer<typeof automationRunSchema>
 
 export const automationRunEventTypeSchema = z.enum([
   "user", "assistant", "capability_search", "capability_execution", "usage", "warning", "terminal",
-])
+]).meta({ ref: "AutomationRunEventType" })
 export type AutomationRunEventType = z.infer<typeof automationRunEventTypeSchema>
 
 export const automationRunEventSchema = z.object({
@@ -385,7 +385,7 @@ export const automationRunEventSchema = z.object({
   type: automationRunEventTypeSchema,
   payload: z.record(z.string(), z.unknown()),
   createdAt: timestampSchema,
-})
+}).meta({ ref: "AutomationRunEvent" })
 export type AutomationRunEvent = z.infer<typeof automationRunEventSchema>
 
 const legacyCreateAutomationSchema = z.object({
@@ -470,14 +470,14 @@ export const automationListSchema = z.object({
     latestRun: automationRunSchema.nullable(),
   })),
   nextCursor: z.string().nullable(),
-})
+}).meta({ ref: "AutomationList" })
 export type AutomationList = z.infer<typeof automationListSchema>
 
 export const automationDetailSchema = z.object({
   automation: automationSchema,
   revision: automationRevisionSchema,
   latestRun: automationRunSchema.nullable(),
-})
+}).meta({ ref: "AutomationDetail" })
 export type AutomationDetail = z.infer<typeof automationDetailSchema>
 
 export const automationRunReceiptSchema = z.object({
@@ -485,7 +485,7 @@ export const automationRunReceiptSchema = z.object({
   automation: automationSchema,
   revision: automationRevisionSchema,
   events: z.array(automationRunEventSchema),
-})
+}).meta({ ref: "AutomationRunReceipt" })
 export type AutomationRunReceipt = z.infer<typeof automationRunReceiptSchema>
 
 export const AUTOMATION_MAXIMUM_ATTEMPTS = 2
