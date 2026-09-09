@@ -189,7 +189,7 @@ export function CoworkerRail({
                   }`}
                 >
                   {active ? <span aria-hidden="true" className="absolute left-0 top-4 h-6 w-[3px] rounded-full bg-spark" /> : null}
-                  <GroupAvatars members={membersOf(group)} size={18} activeSlugs={groupActiveSlugs[group.id]} />
+                  <GroupAvatars members={membersOf(group)} size={18} motion="navigation" activeSlugs={groupActiveSlugs[group.id]} />
                 </button>
               );
             })}
@@ -314,7 +314,7 @@ export function CoworkerRail({
                       }`}
                     >
                       <span className="mt-0.5 flex h-11 min-w-11 shrink-0 items-center justify-center">
-                        <GroupAvatars members={members} size={22} activeSlugs={groupActiveSlugs[group.id]} />
+                        <GroupAvatars members={members} size={22} motion="navigation" activeSlugs={groupActiveSlugs[group.id]} />
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-semibold text-snow">{group.name}</span>
