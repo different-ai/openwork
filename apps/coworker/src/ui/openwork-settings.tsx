@@ -19,7 +19,9 @@ import {
   type ProgressModelOption,
 } from "@/lib/threads";
 import { PROGRESS_LIMITS } from "@/lib/progress-config";
-import { clearAutoPicked } from "@/lib/model-choice";
+import { carryVariant, clearAutoPicked } from "@/lib/model-choice";
+import { effortStopLabel } from "@/lib/effort";
+import { CoworkerModelSettings } from "@/ui/coworker-model-settings";
 import { CoworkerMark, InlineLoader } from "@/ui/brand";
 import { Button, ErrorNote, StatusDot } from "@/ui/kit";
 import { LocalProviders } from "@/ui/local-providers";
@@ -30,7 +32,7 @@ export type SettingsSection = "general" | "account" | "models" | "engine" | "all
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; detail: string }> = [
   { id: "all-hands", label: "All Hands", detail: "An optional team conversation and daily briefing" },
-  { id: "general", label: "General", detail: "Open Coworker and shared defaults" },
+  { id: "general", label: "General", detail: "Coworker models, effort and activity preferences" },
   { id: "account", label: "Account", detail: "OpenWork account and organization" },
   { id: "models", label: "AI models", detail: "What every coworker can use: your account, this Mac, and the free model" },
   { id: "engine", label: "AI & local setup", detail: "AI service, responsibilities on this Mac, and storage" },
@@ -48,15 +50,15 @@ function sectionDescription(section: SettingsSection): string {
 }
 
 function modelLabel(coworker: CoworkerSummary, models: EngineModelOption[], catalogLoaded: boolean): string {
-  if (!coworker.model) return "Default AI model";
+  if (!coworker.model) return "No model selected yet";
   const match = models.find((model) => model.id === coworker.model);
   if (match) return `${match.label} · ${modelSourceLabel(match.source)}`;
   return catalogLoaded ? `${coworker.model} · unavailable` : coworker.model;
 }
 
 function modelHint(coworker: CoworkerSummary): string {
-  if (!coworker.model) return "Follows OpenWork's default AI model";
-  return coworker.modelVariant ? `${coworker.model} · thinking effort ${coworker.modelVariant}` : coworker.model;
+  const mode = coworker.modelMode === "auto" ? "Automatic model selection" : "Selected model for every message";
+  return `${mode} · ${coworker.modelVariant ? `Fixed effort: ${coworker.modelVariant}` : `Adaptive effort: ${effortStopLabel(coworker.effortPreference)}`}`;
 }
 
 function hostOf(url: string): string {
@@ -81,7 +83,7 @@ function describeSyncRun(run: ProviderSyncRun | null, status: EngineModelCatalog
   return { value: last?.status === "applied" || run?.status === "applied" ? "Up to date" : "Up to date · no changes", hint: at ? `Checked ${at}` : "", tone: "mint" };
 }
 
-function SettingsRow({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: "mint" | "amber" | "rose" | "mist" }) {
+function SettingsRow({ label, value, hint, tone, action }: { label: string; value: string; hint?: string; tone?: "mint" | "amber" | "rose" | "mist"; action?: ReactNode }) {
   return (
     <div className="flex items-start gap-5 border-t border-line px-4 py-3.5 first:border-t-0">
       <span className="w-36 shrink-0 text-xs font-medium text-mist">{label}</span>
@@ -91,6 +93,7 @@ function SettingsRow({ label, value, hint, tone }: { label: string; value: strin
           <span className="block truncate text-xs font-medium text-snow" title={value}>{value}</span>
         </span>
         {hint ? <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">{hint}</span> : null}
+        {action ? <span className="mt-2 block">{action}</span> : null}
       </span>
     </div>
   );
@@ -150,6 +153,7 @@ export function OpenWorkSettings({
   onCoworkerChanged?: (coworker: CoworkerSummary) => void;
 }) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
+  const [editingCoworker, setEditingCoworker] = useState("");
   useEffect(() => {
     if (active && session && section === "account") void onSyncTemplates();
   }, [active, session, section, onSyncTemplates]);
@@ -157,7 +161,7 @@ export function OpenWorkSettings({
     setError("");
     try {
       clearAutoPicked(coworker.slug);
-      onCoworkerChanged?.(await coworkerBridge.coworkers.update(coworker.slug, { model: modelId, modelVariant: "", modelChosenBy: "person" }));
+      onCoworkerChanged?.(await coworkerBridge.coworkers.update(coworker.slug, { model: modelId, modelVariant: carryVariant(coworker.modelVariant, catalog.models.find((model) => model.id === modelId)), modelChosenBy: "person" }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -320,7 +324,7 @@ export function OpenWorkSettings({
                 <div>
                   <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">OpenWork settings</h2>
                   <p className="mt-1 max-w-2xl text-sm leading-relaxed text-mist">
-                    Your account, AI providers, and local setup apply across Open Coworker. Each coworker keeps its own identity, memory, and AI model in its own settings.
+                    Connections are shared across your team. Each coworker has its own model and effort settings. Change them here or in that coworker's sidebar.
                   </p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
@@ -347,19 +351,33 @@ export function OpenWorkSettings({
                     hint={models.length > 0 ? `${cloudProviders.length} OpenWork Cloud provider${cloudProviders.length === 1 ? "" : "s"} · ${localProviders.length} on this Mac` : "Provider connections are shared; each coworker chooses its own AI model."}
                   />
                 </SettingsCard>
-                <ProgressSummariesCard active={active} />
                 {coworkers.length > 0 ? (
-                  <SettingsCard>
-                    {coworkers.map((coworker) => (
-                      <SettingsRow
-                        key={coworker.slug}
-                        label={coworker.name}
-                        value={modelLabel(coworker, models, catalogLoaded)}
-                        hint={modelHint(coworker)}
-                      />
-                    ))}
-                  </SettingsCard>
+                  <section className="space-y-3" data-testid="coworker-defaults">
+                    <h2 className="text-sm font-semibold text-snow">Models and effort by coworker</h2>
+                    <p className="text-xs leading-relaxed text-mist">There is no shared model default. Each change applies only to the coworker you edit.</p>
+                    <SettingsCard>
+                      {coworkers.map((coworker) => (
+                        <details key={coworker.slug} open={editingCoworker === coworker.slug} onToggle={(event) => {
+                          const open = event.currentTarget.open;
+                          setEditingCoworker((current) => open ? coworker.slug : current === coworker.slug ? "" : current);
+                        }} className="border-t border-line first:border-t-0" data-testid={`coworker-defaults-${coworker.slug}`}>
+                          <summary className="flex cursor-pointer items-start justify-between gap-4 p-4 text-xs text-snow">
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-semibold">{coworker.name}</span>
+                              <span className="mt-1 block break-words">{modelLabel(coworker, models, catalogLoaded)}</span>
+                              <span className="mt-1 block leading-relaxed text-mist">{modelHint(coworker)}</span>
+                            </span>
+                            <span className="shrink-0 text-spark">Edit models & effort</span>
+                          </summary>
+                          {editingCoworker === coworker.slug && onCoworkerChanged ? <div className="border-t border-line p-4">
+                            <CoworkerModelSettings runtime={runtime} session={session} coworker={coworker} onCoworkerChanged={onCoworkerChanged} onSyncProviders={onSyncProviders} onOpenAccount={() => setSection("account")} />
+                          </div> : null}
+                        </details>
+                      ))}
+                    </SettingsCard>
+                  </section>
                 ) : null}
+                <ProgressSummariesCard active={active} />
               </>
             ) : null}
 
@@ -493,7 +511,10 @@ export function OpenWorkSettings({
                 <SettingsCard testId="local-setup-card">
                   <SettingsRow label="AI service" value={runtime.engineManaged ? "AI is ready" : "AI is unavailable"} hint={runtime.engineManaged ? "Runs with Open Coworker on this Mac." : "Coworkers cannot work until it is running again."} tone={runtime.engineManaged ? "mint" : "rose"} />
                   <SettingsRow label="Application" value={`${runtime.appName} ${runtime.version}`} />
-                  <SettingsRow label="Coworker files" value={runtime.coworkersDir} hint="Identities, memory, and responsibility definitions stay on this Mac." />
+                  <SettingsRow label="Coworker files" value={runtime.coworkersDir} hint="Open the folder to browse each coworker's files and saved configuration." action={<Button variant="ghost" className="text-xs" onClick={() => {
+                    setError("");
+                    void coworkerBridge.coworkers.openFolder().catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+                  }}>Open folder</Button>} />
                   <SettingsRow label="Sign-in links" value={runtime.deepLinksRegistered ? `${runtime.deepLinkScheme}:// registered` : "Paste only"} hint={runtime.deepLinksRegistered ? "OpenWork can open this app directly after sign-in." : "Unpackaged and isolated launches accept the pasted sign-in link."} />
                 </SettingsCard>
                 <LocalRunsCard active={active} />
@@ -543,7 +564,8 @@ function ProgressSummariesCard({ active }: { active: boolean }) {
         Progress summaries
         <input type="checkbox" aria-label="Enable progress summaries" checked={settings?.progressSummariesEnabled ?? false} disabled={!settings || saving} onChange={(event) => void choose({ progressSummariesEnabled: event.target.checked })} />
       </label>
-      <p className="text-xs leading-relaxed text-mist">Optional AI selection of observed activity facts for long-running work. Private messages, reasoning, file contents and tool results are never sent. Activity stays deterministic unless you enable this and choose a model.</p>
+      <p className="text-xs leading-relaxed text-mist">Use AI to summarize activity during long tasks. Leave this off to show activity without extra model calls. This model does not answer your messages or run Workers.</p>
+      <p className="text-[11px] leading-relaxed text-mist">Only activity facts are sent. Private messages, reasoning, file contents and tool results are excluded.</p>
       <label className="block space-y-1 text-xs text-mist">
         <span>Summary model</span>
         <select aria-label="Progress summary model" className="block w-full min-w-0 rounded-lg border border-line bg-ink p-2 text-snow" value={selected} disabled={!settings || saving} onChange={(event) => void choose({ progressSummaryModelId: event.target.value })}>
@@ -552,9 +574,12 @@ function ProgressSummariesCard({ active }: { active: boolean }) {
           {models.map((model) => <option key={model.id} value={model.id}>{model.label} (${model.cost.input} input / ${model.cost.output} output per million tokens)</option>)}
         </select>
       </label>
-      <p className="text-[11px] leading-relaxed text-mist">Connected, active, non-reasoning text models with verified OpenAI-compatible token caps only. Known prices must be at most ${PROGRESS_LIMITS.maxInputPrice.toFixed(2)} input and ${PROGRESS_LIMITS.maxOutputPrice.toFixed(2)} output per million tokens. No automatic fallback.</p>
+      <details className="text-[11px] leading-relaxed text-mist">
+        <summary className="cursor-pointer">Model requirements and cost limits</summary>
+        <p className="mt-2">Only connected text models with verified prices and output limits appear here. Reasoning models are excluded. Prices must be at most ${PROGRESS_LIMITS.maxInputPrice.toFixed(2)} input and ${PROGRESS_LIMITS.maxOutputPrice.toFixed(2)} output per million tokens. The app does not switch to another model if this one fails.</p>
+        <p className="mt-2">At most {PROGRESS_LIMITS.maxCallsPerExecution} requests per task, {PROGRESS_LIMITS.minCallIntervalMs / 1000} seconds apart. Each request allows {PROGRESS_LIMITS.maxOutputTokens} output tokens and times out after {PROGRESS_LIMITS.timeoutMs / 1000} seconds.</p>
+      </details>
       {!models.length ? <p className="text-xs text-mist">No eligible model is ready here yet. Models with missing price or capability information are not offered. Observed activity will continue normally.</p> : null}
-      <p className="text-[11px] text-mist">At most {PROGRESS_LIMITS.maxCallsPerExecution} requests per originating task, {PROGRESS_LIMITS.minCallIntervalMs / 1000} seconds apart, with {PROGRESS_LIMITS.maxOutputTokens} output tokens and a {PROGRESS_LIMITS.timeoutMs / 1000}-second timeout each.</p>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
     </div>
   </SettingsCard>;
@@ -652,8 +677,7 @@ function LocalRunsCard({ active }: { active: boolean }) {
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold text-snow">Runs on this Mac</h3>
           <p className="mt-1 max-w-md text-xs leading-relaxed text-mist">
-            Scheduled assignments and Worker turns run up to this many at the same time. Any others wait in line and start by
-            themselves when a run finishes. OpenWork Cloud schedules its own runs and is not limited here.
+            Limit how many scheduled assignments and Worker turns run at once. Others wait for a free slot. Lower this if your Mac slows down. Cloud runs use separate limits.
           </p>
           {live ? <p className="mt-2 text-[11px] text-mist" data-testid="local-runs-live">{live}</p> : null}
           {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
@@ -671,7 +695,7 @@ function LocalRunsCard({ active }: { active: boolean }) {
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold text-snow">How often one assignment may run</h3>
           <p className="mt-1 max-w-md text-xs leading-relaxed text-mist">
-            A schedule a coworker sets up itself, or one you add, is refused when its runs would be closer together than this or more than this in a day.
+            Set limits for local schedules to avoid running too often. New or edited schedules must meet both limits.
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">

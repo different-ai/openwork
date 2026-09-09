@@ -158,15 +158,15 @@ export function effortStopLabel(stop: EffortStop): string {
 export function describeEffortStop(stop: EffortStop): string {
   switch (stop) {
     case "light":
-      return "Quick, short work: brief replies, little thinking, Workers with a few steps. Good for chat and small asks.";
+      return "Less thinking for simple questions. Delivery Workers get up to 6 turns by default.";
     case "steady":
-      return "A bit less thinking than usual on real work; quick questions stay quick.";
+      return "Less thinking than Balanced. Delivery Workers get up to 8 turns by default.";
     case "balanced":
-      return "The usual: quick questions get quick answers, real work and Workers think harder.";
+      return "The default. Uses more thinking for complex tasks. Delivery Workers get up to 10 turns.";
     case "thorough":
-      return "More thinking on real work, and quick asks get a proper look. Workers take more steps.";
+      return "More thinking for each task. Delivery Workers get up to 14 turns by default.";
     case "all-in":
-      return "Prioritizes deeper thinking and gives Workers more steps. Can take longer and use more of your allowance.";
+      return "The most thinking this setting allows. Delivery Workers get up to 20 turns by default.";
   }
 }
 

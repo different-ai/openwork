@@ -500,6 +500,7 @@ export const coworkerBridge = {
   coworkers: {
     list: () => invoke<CoworkerSummary[]>("coworkers.list"),
     get: (slug: string) => invoke<CoworkerSummary>("coworkers.get", { slug }),
+    openFolder: (slug?: string) => invoke<void>("coworkers.openFolder", { slug }),
     create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses; personality: Personality; roleId?: string; firstNote?: string }) =>
       invoke<CoworkerSummary>("coworkers.create", input),
     update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "thinkingModel" | "thinkingModelVariant" | "deliveryModel" | "deliveryModelVariant" | "modelChosenBy" | "modelMode" | "effortPreference" | "avatarColor" | "avatarGlasses" | "personality">>) =>
