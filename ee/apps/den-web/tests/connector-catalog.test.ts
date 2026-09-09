@@ -56,15 +56,15 @@ describe("popular connector catalog", () => {
     }
   });
 
-  test("limits Google descriptions and Drive's starter to supported operations", () => {
-    expect(POPULAR_CONNECTORS.find((connector) => connector.id === "gmail")?.description).toBe("Search and read Gmail, create drafts");
-    expect(POPULAR_CONNECTORS.find((connector) => connector.id === "google-calendar")?.description).toBe("List and create Google Calendar events");
+  test("describes the native service management delivered with the catalog", () => {
+    expect(POPULAR_CONNECTORS.find((connector) => connector.id === "gmail")?.description).toBe("Read, send, and manage Gmail");
+    expect(POPULAR_CONNECTORS.find((connector) => connector.id === "google-calendar")?.description).toBe("Create, reschedule, and manage Google Calendar events");
     const drive = POPULAR_CONNECTORS.find((connector) => connector.id === "google-drive");
-    expect(drive?.description).toBe("Search files, read Docs and Slides text, upload and share files");
-    expect(drive?.chatPrompt).toContain("Ask me for a topic");
-    expect(drive?.chatPrompt).toContain("search for a small sample");
-    expect(drive?.chatPrompt).toContain("summarize readable text");
-    expect(`${drive?.description} ${drive?.chatPrompt}`).not.toMatch(/Sheets|edit|changed|last 7 days|this week|everything/i);
+    expect(drive?.description).toBe("Organize files, read Docs and Slides, and edit Sheets");
+    expect(drive?.chatPrompt).toContain("last 7 days");
+    expect(drive?.chatPrompt).toContain("follow pagination");
+    expect(drive?.chatPrompt).toContain("incomplete search");
+    expect(drive?.chatPrompt).toContain("without accessing Drive");
   });
 
   test("builds an openwork:// chat deep link carrying the connector and its prompt", () => {

@@ -28,7 +28,7 @@ export const POPULAR_CONNECTORS: PopularConnector[] = [
   {
     id: "gmail",
     displayName: "Gmail",
-    description: "Search and read Gmail, create drafts",
+    description: "Read, send, and manage Gmail",
     icon: { simpleIconSlug: "gmail" },
     target: { kind: "google-workspace" },
     chatPrompt: "Explain how I can triage my Gmail inbox. If access is available, search and summarize unread threads and suggest reply priorities. Otherwise, help me plan a triage routine without accessing my inbox.",
@@ -44,15 +44,15 @@ export const POPULAR_CONNECTORS: PopularConnector[] = [
   {
     id: "google-drive",
     displayName: "Google Drive",
-    description: "Search files, read Docs and Slides text, upload and share files",
+    description: "Organize files, read Docs and Slides, and edit Sheets",
     icon: { simpleIconSlug: "googledrive" },
     target: { kind: "google-workspace" },
-    chatPrompt: "Explain how I can find useful files in Google Drive. Ask me for a topic; if access is available, search for a small sample and summarize readable text, including Docs and Slides. Otherwise, help me plan the search without accessing Drive.",
+    chatPrompt: "Explain what changed in Google Drive this week. If access is available, list files modified in the last 7 days, follow pagination, and call out any incomplete search before summarizing the results. Otherwise, help me plan a file review without accessing Drive.",
   },
   {
     id: "google-calendar",
     displayName: "Google Calendar",
-    description: "List and create Google Calendar events",
+    description: "Create, reschedule, and manage Google Calendar events",
     icon: { simpleIconSlug: "googlecalendar" },
     target: { kind: "google-workspace" },
     chatPrompt: "Explain how I can plan my week with Google Calendar. If access is available, list my meetings, point out conflicts, and suggest focus time without changing events. Otherwise, help me plan a weekly schedule without accessing my calendar.",
