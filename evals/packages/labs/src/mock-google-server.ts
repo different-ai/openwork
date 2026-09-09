@@ -24,6 +24,7 @@ interface Account {
 }
 
 interface RequestEntry {
+  tokenId?: string;
   method: string;
   path: string;
   url: string;
@@ -87,6 +88,11 @@ interface MockGoogleState {
   drafts: Map<string, RecordedDraft[]>;
   driveUploads: Map<string, RecordedDriveUpload[]>;
   keys: SigningKeys;
+  authorizationExpiresIn: number;
+  refreshError: string | null;
+  holdRefresh: boolean;
+  pendingRefreshes: Array<() => void>;
+  refreshAttempts: number;
 }
 
 const HTML_ENTITIES: Record<string, string> = {
@@ -216,8 +222,10 @@ function accountForRequest(state: MockGoogleState, request: IncomingMessage): Ac
 }
 
 function recordRequest(state: MockGoogleState, request: IncomingMessage, url: URL): void {
+  const credential = bearerToken(request);
   state.requests.push({
     method: method(request),
+    ...(credential ? { tokenId: tokenId(credential) } : {}),
     path: url.pathname,
     url: `${url.pathname}${url.search}`,
     at: new Date().toISOString(),
@@ -369,6 +377,18 @@ async function token(state: MockGoogleState, request: IncomingMessage, response:
       sendJson(response, 400, { error: "invalid_grant" });
       return;
     }
+    state.refreshAttempts++;
+    const refreshError = state.refreshError;
+    if (state.holdRefresh) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 10_000);
+        state.pendingRefreshes.push(() => { clearTimeout(timer); resolve(); });
+      });
+    }
+    if (refreshError) {
+      sendJson(response, refreshError === "invalid_grant" ? 400 : 503, { error: refreshError });
+      return;
+    }
     credential = refresh;
   } else {
     sendJson(response, 400, { error: "unsupported_grant_type" });
@@ -380,7 +400,7 @@ async function token(state: MockGoogleState, request: IncomingMessage, response:
     access_token: issued.accessToken,
     refresh_token: issued.refreshToken,
     token_type: "Bearer",
-    expires_in: 3600,
+    expires_in: grantType === "authorization_code" ? state.authorizationExpiresIn : 3600,
     scope: credential.scope,
     id_token: issued.idToken,
   });
@@ -611,6 +631,18 @@ async function handleRequest(state: MockGoogleState, request: IncomingMessage, r
     sendJson(response, 200, { requests: state.requests });
     return;
   }
+  if (url.pathname === "/__mock-google/refresh-control") {
+    if (requestMethod === "POST") {
+      const input = await jsonBody(request);
+      if (!isRecord(input)) { sendJson(response, 400, { error: "invalid_request" }); return; }
+      if (typeof input.authorizationExpiresIn === "number") state.authorizationExpiresIn = input.authorizationExpiresIn;
+      if (input.refreshError === null || input.refreshError === "invalid_grant" || input.refreshError === "temporarily_unavailable") state.refreshError = input.refreshError;
+      if (typeof input.holdRefresh === "boolean") state.holdRefresh = input.holdRefresh;
+      if (input.release === true) state.pendingRefreshes.splice(0).forEach(release => release());
+    }
+    sendJson(response, 200, { attempts: state.refreshAttempts, pending: state.pendingRefreshes.length });
+    return;
+  }
   if (requestMethod === "GET" && url.pathname === "/__mock-google/pending-authorizations") {
     sendJson(response, 200, pendingAuthorizations(state));
     return;
@@ -641,6 +673,15 @@ async function handleRequest(state: MockGoogleState, request: IncomingMessage, r
   }
   if (requestMethod === "GET" && url.pathname === "/userinfo") {
     userinfo(state, request, response);
+    return;
+  }
+  // Minimal Graph-compatible mail boundary for the shared native OAuth journey.
+  if (requestMethod === "GET" && url.pathname === "/v1.0/me/messages") {
+    if (!accountForRequest(state, request)) {
+      sendJson(response, 401, { error: { code: "InvalidAuthenticationToken" } });
+      return;
+    }
+    sendJson(response, 200, { value: [] });
     return;
   }
   if (requestMethod === "GET" && url.pathname === "/gmail/v1/users/me/profile") {
@@ -705,6 +746,11 @@ export async function startMockGoogleServer(options: MockGoogleServerOptions): P
     autoApprove: options.autoApprove,
     baseUrl: options.baseUrl ?? "http://127.0.0.1",
     requests: [],
+    authorizationExpiresIn: 3600,
+    refreshError: null,
+    holdRefresh: false,
+    pendingRefreshes: [],
+    refreshAttempts: 0,
     pending: new Map(),
     codes: new Map(),
     accessTokens: new Map(),
