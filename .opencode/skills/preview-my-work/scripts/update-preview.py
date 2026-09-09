@@ -25,6 +25,8 @@ if state.get("kind") != "script" or state.get("place") != "daytona" or Path(stat
     parser.error("Receipt is not an owned Daytona preview in this worktree.")
 os.kill(state["pid"], 0)
 outputs = state["outputs"]
+if outputs.get("releaseVersion"):
+    parser.error("Published release previews are immutable and cannot use the source frontend updater; stop this stage and launch a new one.")
 # All commands are argv-based locally, and one shell-quoted Python program remotely.
 # Reuse the running web process's environment without printing or serializing it.
 remote = r'''

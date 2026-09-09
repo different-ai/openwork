@@ -57,6 +57,8 @@ export interface ServerOptions {
   reuseMembers?: Record<string, PersonShape>;
   ports?: { api: number; web: number };
   seedProfile?: "demo-org";
+  /** Daytona idle shutdown in minutes. Preview worlds pass 0 so their lifetime owns teardown. */
+  daytonaAutoStopMinutes?: number;
   /**
    * Extra origins Den should trust, on top of its own API and web hosts. A
    * loopback identity provider needs this: Den refuses to register an SSO
@@ -685,6 +687,7 @@ export async function server(options: ServerOptions): Promise<Den> {
       reuse: preparedSandbox,
       bootstrapAdminEmail: bootstrapAdmin.email,
       env: denEnv,
+      ...(options.daytonaAutoStopMinutes === undefined ? {} : { autoStopMinutes: options.daytonaAutoStopMinutes }),
       log: (line) => console.error(`[openwork/testkit] ${line}`),
     });
     let bootedMocks: { handles: Record<string, MockHandle>; env: Record<string, string> } = { handles: {}, env: {} };

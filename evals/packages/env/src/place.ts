@@ -7,6 +7,7 @@ import type {
   ChromeSurfaceOptions,
   ElectronSurfaceOptions,
   Host,
+  RetainedElectronSurface,
   SurfaceHandle,
 } from "@openwork/hosts";
 
@@ -158,6 +159,7 @@ interface PlacedSurface {
   host: Host;
   sandbox: string;
   created: boolean;
+  release?: Awaited<ReturnType<typeof provisionDesktopSandbox>>["release"];
 }
 
 /** Provisions one isolated sandbox for each app surface, only when it is used. */
@@ -175,8 +177,9 @@ class DaytonaPlacementHost implements Host {
     this.#preparedHost = preparedSandbox ? daytonaSandbox(preparedSandbox) : undefined;
   }
 
-  async #provision(name: string): Promise<PlacedSurface> {
+  async #provision(name: string, options?: ElectronSurfaceOptions): Promise<PlacedSurface> {
     if (this.#preparedSandbox && this.#preparedHost) {
+      if (options?.release) throw new Error("Published release previews require a newly owned Daytona sandbox.");
       return {
         host: this.#preparedHost,
         sandbox: this.#preparedSandbox,
@@ -186,21 +189,73 @@ class DaytonaPlacementHost implements Host {
     const provisioned = await provisionDesktopSandbox({
       ref: this.#ref,
       name,
+      ...(options?.release ? { release: options.release } : {}),
+      ...(process.env.OPENWORK_WORLD_PREVIEW_DAYTONA === "1" ? { autoStopMinutes: 0 } : {}),
       log: (line) => console.error(`[openwork/testkit] ${line}`),
     });
     return {
       host: daytonaSandbox(provisioned.sandbox),
       sandbox: provisioned.sandbox,
       created: provisioned.created,
+      ...(provisioned.release ? { release: provisioned.release } : {}),
     };
   }
 
   async spawnElectron(name: string, options?: ElectronSurfaceOptions): Promise<SurfaceHandle> {
-    const placed = await this.#provision(name);
+    const placed = await this.#provision(name, options);
     try {
-      const handle = await placed.host.spawnElectron(name, options);
+      const handle = await placed.host.spawnElectron(name, {
+        ...options,
+        ...(placed.release ? { binaryPath: placed.release.binaryPath } : {}),
+      });
+      if (placed.release) {
+        handle.meta = {
+          ...handle.meta,
+          releaseArchive: placed.release.archivePath,
+          releaseAsset: placed.release.assetName,
+          releaseBinary: placed.release.binaryPath,
+          releaseDigest: placed.release.digest,
+          releaseDistribution: placed.release.distribution,
+          releaseInstallRoot: placed.release.installRoot,
+          releaseManifest: placed.release.manifestPath,
+          releaseVersion: placed.release.version,
+        };
+      }
       this.#surfaces.set(handle, placed);
       return handle;
+    } catch (error) {
+      if (placed.created) {
+        await deleteSandboxes([placed.sandbox]).catch((cleanupError: unknown) => {
+          console.error(`[openwork/testkit] Daytona cleanup failed: ${messageText(cleanupError)}`);
+        });
+      }
+      throw error;
+    }
+  }
+
+  async spawnElectronRetained(name: string, options?: ElectronSurfaceOptions): Promise<RetainedElectronSurface> {
+    const placed = await this.#provision(name, options);
+    try {
+      if (!placed.host.spawnElectronRetained) throw new Error("The selected host cannot retain a failed Electron launch.");
+      const surface = await placed.host.spawnElectronRetained(name, {
+        ...options,
+        ...(placed.release ? { binaryPath: placed.release.binaryPath } : {}),
+      });
+      if (placed.release) {
+        surface.handle.meta = {
+          ...surface.handle.meta,
+          releaseArchive: placed.release.archivePath,
+          releaseAsset: placed.release.assetName,
+          releaseBinary: placed.release.binaryPath,
+          releaseDigest: placed.release.digest,
+          releaseDistribution: placed.release.distribution,
+          releaseInstallRoot: placed.release.installRoot,
+          releaseManifest: placed.release.manifestPath,
+          releaseVersion: placed.release.version,
+        };
+      }
+      this.#surfaces.set(surface.handle, placed);
+      return surface;
     } catch (error) {
       if (placed.created) {
         await deleteSandboxes([placed.sandbox]).catch((cleanupError: unknown) => {
