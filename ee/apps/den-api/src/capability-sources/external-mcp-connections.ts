@@ -72,7 +72,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function isSdkRegisteredOAuthClient(extra: Record<string, unknown> | null): boolean {
+export function isSdkRegisteredOAuthClient(extra: Record<string, unknown> | null): boolean {
   const source = extra?.enterpriseMcpRegistrationSource
   return source === "dynamic"
     || source === "client-metadata"

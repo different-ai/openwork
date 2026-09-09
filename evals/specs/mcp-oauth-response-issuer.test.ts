@@ -287,3 +287,92 @@ test("Den member sign-in recovers an isolated connection whose pre-registered cl
   expect(await tokenRequests()).toBe(before + 1);
   evidence.recordAssertionEvidence("Shared callback completes sign-in and authenticated discovery after recovery", "The provider redirected to the shared route; the callback returned HTTP 200 with exactly one token exchange, the member listed tools with the new credential, and replaying the callback was rejected without another exchange.", true);
 });
+
+// A provider that rejects the configured client's authentication used to make
+// Den delete the administrator-supplied client and fall back to dynamic
+// registration, losing the registered redirect. Only Den-created registrations
+// may be discarded that way.
+test("Den keeps an administrator-supplied OAuth client when the provider rejects its authentication", { timeout: 300_000 }, async ({ place, evidence }) => {
+  needs({ commands: ["bun"] });
+  await using den = await server({
+    place, web: false,
+    mocks: { connector: mcpMock({ authorizationResponseIssuerSupported: false, rejectTokenClientIds: ["admin-configured-client", "@dynamic"] }) },
+    org: { name: `OAuth Client Rejection ${Date.now()}`, members: {} },
+  });
+  const provider = den.mocks.connector;
+  const headers = { authorization: `Bearer ${den.admin.token}` };
+  const providerCalls = async (path: string) => (await provider.requests()).filter((entry) => entry.path === path).length;
+  const detail = async (id: string) => {
+    const listed = await denFetch(den.admin, "/v1/mcp-connections?scope=manageable", { headers });
+    expect(listed.response.status, listed.text).toBe(200);
+    if (!isRecord(listed.body) || !Array.isArray(listed.body.connections)) throw new Error("Connections missing");
+    const connection = listed.body.connections.find((entry) => isRecord(entry) && entry.id === id);
+    if (!isRecord(connection)) throw new Error("Connection missing from the manageable list");
+    return connection;
+  };
+  const signIn = async (id: string) => {
+    const started = await denFetch(den.admin, `/v1/mcp-connections/${id}/connect/start`, { headers });
+    expect(started.response.status, started.text).toBe(200);
+    if (!isRecord(started.body) || typeof started.body.authorizeUrl !== "string") throw new Error("Authorization URL missing");
+    const authorize = new URL(started.body.authorizeUrl);
+    const redirect = await fetch(authorize, { redirect: "manual" });
+    expect(redirect.status).toBe(302);
+    const completed = await fetch(new URL(redirect.headers.get("location")!), { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+    return { clientId: authorize.searchParams.get("client_id"), status: completed.status, html: await completed.text() };
+  };
+
+  const created = await denFetch(den.admin, "/v1/mcp-connections", {
+    method: "POST", headers,
+    body: JSON.stringify({
+      name: "Administrator-configured client", url: provider.mcpUrl, authType: "oauth", credentialMode: "shared",
+      oauthClient: { clientId: "admin-configured-client", clientSecret: "admin-configured-secret", tokenEndpointAuthMethod: "client_secret_post" },
+      access: { orgWide: true },
+    }),
+  });
+  expect(created.response.status, created.text).toBe(200);
+  if (!isRecord(created.body) || typeof created.body.id !== "string" || typeof created.body.oauthCallbackUrl !== "string") throw new Error("Connection id or callback URL missing");
+  const id = created.body.id;
+  const callbackUrl = created.body.oauthCallbackUrl;
+  expect(created.text).not.toContain("admin-configured-secret");
+
+  const first = await signIn(id);
+  expect(first.clientId).toBe("admin-configured-client");
+  expect(first.status, first.html).toBe(400);
+  expect(first.html).toContain("rejected the OAuth client configured for this connection");
+  expect(first.html).toContain("Unsupported client authentication method");
+  expect(first.html).not.toContain("admin-configured-secret");
+  expect(await providerCalls("/token")).toBe(1);
+  expect(await providerCalls("/register")).toBe(0);
+  const afterRejection = await detail(id);
+  expect(afterRejection).toMatchObject({
+    connected: false, needsReconnect: true, credentialHealth: "reconnect_required", credentialHealthReason: "authorization_rejected",
+    oauthClientConfigured: true, oauthClientId: "admin-configured-client", oauthRegistrationSource: "pre-registered", oauthCallbackUrl: callbackUrl,
+  });
+  expect(JSON.stringify(afterRejection)).not.toContain("admin-configured-secret");
+  evidence.recordAssertionEvidence("Provider client rejection keeps the administrator-supplied client", "The callback page named the rejected configured client with the provider's own detail and no secret; the provider saw one token request and no registration; the connection reports reconnect_required with the same client id, source, and callback URL.", true);
+
+  const second = await signIn(id);
+  expect(second.clientId).toBe("admin-configured-client");
+  expect(second.status).toBe(400);
+  expect(await providerCalls("/token")).toBe(2);
+  expect(await providerCalls("/register")).toBe(0);
+  evidence.recordAssertionEvidence("Retrying reuses the configured client without registering a replacement", "A second sign-in sent the same configured client id, produced exactly one more token request, and still no dynamic registration.", true);
+
+  const dynamic = await denFetch(den.admin, "/v1/mcp-connections", {
+    method: "POST", headers,
+    body: JSON.stringify({ name: "Dynamically registered client", url: provider.mcpUrl, authType: "oauth", credentialMode: "shared", access: { orgWide: true } }),
+  });
+  expect(dynamic.response.status, dynamic.text).toBe(200);
+  if (!isRecord(dynamic.body) || typeof dynamic.body.id !== "string") throw new Error("Dynamic connection id missing");
+  const dynamicFirst = await signIn(dynamic.body.id);
+  expect(dynamicFirst.clientId).toMatch(/^mock-client-/);
+  expect(dynamicFirst.status).toBe(400);
+  expect(await providerCalls("/register")).toBe(1);
+  expect(await detail(dynamic.body.id)).toMatchObject({ connected: false, oauthClientConfigured: false, oauthRegistrationSource: null });
+  const dynamicSecond = await signIn(dynamic.body.id);
+  expect(dynamicSecond.clientId).toMatch(/^mock-client-/);
+  expect(dynamicSecond.clientId).not.toBe(dynamicFirst.clientId);
+  expect(await providerCalls("/register")).toBe(2);
+  expect(await detail(id)).toMatchObject({ oauthClientConfigured: true, oauthClientId: "admin-configured-client" });
+  evidence.recordAssertionEvidence("Den-created registrations are still discarded and re-registered", "The dynamically registered connection lost its client after the same rejection and registered a fresh client on the next sign-in, while the administrator-configured connection kept its client.", true);
+});

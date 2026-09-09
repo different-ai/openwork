@@ -19,6 +19,13 @@ const preregisteredRedirectUris = (process.env.MOCK_REDIRECT_URIS || "")
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
+// Client ids whose token requests fail the way a provider rejects a client whose
+// configured authentication does not match its registration. The entry
+// "@dynamic" rejects every client this mock registered dynamically.
+const rejectedTokenClientIds = new Set((process.env.MOCK_REJECT_TOKEN_CLIENT_IDS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean));
 const advertisedScopes = ["mcp:read", "mcp:write"];
 const extraToolName = (process.env.MOCK_EXTRA_TOOL_NAME || "").trim();
 const extraToolTitle = (process.env.MOCK_EXTRA_TOOL_TITLE || extraToolName).trim();
@@ -704,6 +711,12 @@ async function issueToken(req, res, entry) {
     json(res, status, body);
   };
   let grantedScope = "mcp:read mcp:write";
+
+  const requestedClientId = basicClient(req)?.clientId || form.client_id || "";
+  if (rejectedTokenClientIds.has(requestedClientId) || (rejectedTokenClientIds.has("@dynamic") && clients.has(requestedClientId))) {
+    json(res, 400, { error: "invalid_client", error_description: "Unsupported client authentication method" });
+    return;
+  }
 
   if (grantType === "authorization_code") {
     const grant = codes.get(form.code);

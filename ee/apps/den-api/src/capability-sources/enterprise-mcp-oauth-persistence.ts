@@ -32,6 +32,7 @@ import { appLogger } from "../observability/logger.js"
 import type { ExternalMcpMemberContext } from "./external-mcp-client.js"
 import {
   externalMcpIdentityBinding,
+  isSdkRegisteredOAuthClient,
   type ExternalMcpConnectionRow,
 } from "./external-mcp-connections.js"
 import { externalMcpCompatibleCallbackUrl } from "./external-mcp-oauth-contract.js"
@@ -399,12 +400,27 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
         if (!connections[0]) return
         this.assertCurrentIdentity(connections[0])
         assertCommitActive(input.context)
-        await tx
-          .delete(OrgOAuthClientTable)
+        const clients = await tx
+          .select({ id: OrgOAuthClientTable.id, extra: OrgOAuthClientTable.extra })
+          .from(OrgOAuthClientTable)
           .where(and(
             eq(OrgOAuthClientTable.organizationId, this.connection.organizationId),
             eq(OrgOAuthClientTable.providerId, this.connection.id),
           ))
+          .limit(1)
+        const client = clients[0]
+        if (!client) return
+        // A provider rejection can only discard registrations Den created for
+        // itself. An administrator-supplied client is configuration: deleting it
+        // would silently fall back to dynamic registration and lose the
+        // registered redirect, so it stays until an administrator replaces it.
+        if (input.reason === "provider-rejected" && !isSdkRegisteredOAuthClient(normalizeOAuthClientExtra(client.extra))) {
+          throw new EnterpriseMcpOAuthContractError(
+            "MCP_OAUTH_CLIENT_REJECTED",
+            "The authorization server rejected the administrator-supplied OAuth client; review its client ID, secret, and token endpoint authentication method.",
+          )
+        }
+        await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.id, client.id))
       })
     },
   }

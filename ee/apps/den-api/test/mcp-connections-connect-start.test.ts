@@ -847,6 +847,155 @@ test("connect start records the shared callback mode for an isolated row whose p
   }
 })
 
+test("a provider invalid_client rejection keeps the administrator-supplied client but still replaces SDK registrations", async () => {
+  let origin = ""
+  const tokenClientIds: string[] = []
+  const registeredClientIds: string[] = []
+  const server = Bun.serve({
+    port: 0,
+    async fetch(incoming) {
+      const url = new URL(incoming.url)
+      if (url.pathname === "/.well-known/oauth-protected-resource/mcp") {
+        return Response.json({ resource: `${origin}/mcp`, authorization_servers: [origin], scopes_supported: ["mcp_server"] })
+      }
+      if (url.pathname === "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          issuer: origin,
+          authorization_endpoint: `${origin}/authorize`,
+          token_endpoint: `${origin}/token`,
+          registration_endpoint: `${origin}/register`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
+          code_challenge_methods_supported: ["S256"],
+          scopes_supported: ["mcp_server"],
+        })
+      }
+      if (url.pathname === "/register") {
+        const clientId = `dynamic-client-${registeredClientIds.length + 1}`
+        registeredClientIds.push(clientId)
+        return Response.json({ client_id: clientId, token_endpoint_auth_method: "none", redirect_uris: [] }, { status: 201 })
+      }
+      if (url.pathname === "/token") {
+        const form = new URLSearchParams(await incoming.text())
+        tokenClientIds.push(form.get("client_id") ?? "")
+        // Every exchange is rejected the way a provider rejects a client whose
+        // configured authentication does not match its registration.
+        return Response.json({ error: "invalid_client", error_description: "Unsupported client authentication method" }, { status: 400 })
+      }
+      if (url.pathname === "/mcp") {
+        return new Response(null, {
+          status: 401,
+          headers: { "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="mcp_server"` },
+        })
+      }
+      return new Response(null, { status: 404 })
+    },
+  })
+  origin = `http://127.0.0.1:${server.port}`
+  const publicOrigin = process.env.DEN_API_PUBLIC_URL ?? "http://127.0.0.1:8790"
+  const sharedCallback = new URL("/v1/mcp-connections/oauth/callback", publicOrigin).toString()
+
+  const startAndCallback = async (connectionId: string) => {
+    const started = await request(`/v1/mcp-connections/${connectionId}/connect/start`)
+    expect(started.status).toBe(200)
+    const startedBody: unknown = await started.json()
+    if (!isRecord(startedBody) || typeof startedBody.authorizeUrl !== "string") throw new Error("Expected an OAuth authorize URL.")
+    const authorizeUrl = new URL(startedBody.authorizeUrl)
+    const callbackUrl = new URL(sharedCallback)
+    callbackUrl.searchParams.set("code", "rejected-authorization-code")
+    callbackUrl.searchParams.set("state", authorizeUrl.searchParams.get("state") ?? "")
+    const callback = await app.fetch(new Request(callbackUrl))
+    return { clientId: authorizeUrl.searchParams.get("client_id"), callback }
+  }
+  const rowState = async (connectionId: string) => {
+    const [row] = await db
+      .select({ oauthConfiguration: schema.ExternalMcpConnectionTable.oauthConfiguration, credentialHealth: schema.ExternalMcpConnectionTable.credentialHealth, accessToken: schema.ExternalMcpConnectionTable.accessToken })
+      .from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connectionId))
+      .limit(1)
+    if (!row) throw new Error("Connection row missing.")
+    return row
+  }
+
+  try {
+    const created = await staleSessionRequest("/v1/mcp-connections", "POST", {
+      name: "Administrator-registered MCP",
+      url: `${origin}/mcp`,
+      authType: "oauth",
+      credentialMode: "shared",
+      oauthClient: { clientId: "admin-preregistered-client", clientSecret: "admin-preregistered-secret", tokenEndpointAuthMethod: "client_secret_post" },
+    })
+    expect(created.status).toBe(200)
+    const createdBody: unknown = await created.json()
+    if (!isRecord(createdBody) || typeof createdBody.id !== "string") throw new Error("Expected a created connection id.")
+    const adminConnectionId = createdBody.id
+    const adminClientBefore = await getOrgOAuthClient(organizationId, adminConnectionId)
+    expect(adminClientBefore).toMatchObject({ clientId: "admin-preregistered-client", clientSecret: "admin-preregistered-secret" })
+
+    const first = await startAndCallback(adminConnectionId)
+    expect(first.clientId).toBe("admin-preregistered-client")
+    expect(first.callback.status).toBe(400)
+    const firstPage = await first.callback.text()
+    expect(firstPage).toContain("rejected the OAuth client configured for this connection")
+    expect(firstPage).toContain("Unsupported client authentication method")
+    expect(firstPage).not.toContain("admin-preregistered-secret")
+    expect(tokenClientIds).toEqual(["admin-preregistered-client"])
+    expect(registeredClientIds).toEqual([])
+
+    // The administrator's configuration survives the provider rejection; only
+    // the unusable credential state is cleared and reported.
+    expect(await getOrgOAuthClient(organizationId, adminConnectionId)).toMatchObject({
+      clientId: "admin-preregistered-client",
+      clientSecret: "admin-preregistered-secret",
+      extra: { enterpriseMcpRegistrationSource: "pre-registered", registeredRedirectUri: sharedCallback, tokenEndpointAuthMethod: "client_secret_post" },
+    })
+    const adminRow = await rowState(adminConnectionId)
+    expect(adminRow.accessToken).toBeNull()
+    expect(adminRow.credentialHealth).toMatchObject({ status: "reconnect_required", reason: "authorization_rejected" })
+    const listed = await request("/v1/mcp-connections?scope=manageable")
+    const listedBody: unknown = await listed.json()
+    if (!isRecord(listedBody) || !Array.isArray(listedBody.connections)) throw new Error("Expected manageable connections.")
+    expect(listedBody.connections.find((entry) => isRecord(entry) && entry.id === adminConnectionId)).toMatchObject({
+      connected: false,
+      needsReconnect: true,
+      credentialHealth: "reconnect_required",
+      oauthClientConfigured: true,
+      oauthClientId: "admin-preregistered-client",
+      oauthRegistrationSource: "pre-registered",
+      oauthCallbackUrl: sharedCallback,
+    })
+
+    // Retrying uses the same configured client and never registers a new one.
+    const second = await startAndCallback(adminConnectionId)
+    expect(second.clientId).toBe("admin-preregistered-client")
+    expect(second.callback.status).toBe(400)
+    expect(tokenClientIds).toEqual(["admin-preregistered-client", "admin-preregistered-client"])
+    expect(registeredClientIds).toEqual([])
+
+    // Control: an SDK-registered client is still discarded and re-registered.
+    const dynamic = await createExternalMcpConnection({
+      organizationId,
+      name: "Dynamically registered MCP",
+      url: `${origin}/mcp`,
+      authType: "oauth",
+      credentialMode: "shared",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    const dynamicFirst = await startAndCallback(dynamic.id)
+    expect(dynamicFirst.clientId).toBe("dynamic-client-1")
+    expect(dynamicFirst.callback.status).toBe(400)
+    expect(await getOrgOAuthClient(organizationId, dynamic.id)).toBeNull()
+    const dynamicSecond = await startAndCallback(dynamic.id)
+    expect(dynamicSecond.clientId).toBe("dynamic-client-2")
+    expect(registeredClientIds).toEqual(["dynamic-client-1", "dynamic-client-2"])
+    expect(tokenClientIds.slice(2)).toEqual(["dynamic-client-1", "dynamic-client-2"])
+  } finally {
+    server.stop(true)
+  }
+})
+
 test("connect start repairs a verified stale resource issuer alias before authorization", async () => {
   let authorizationOrigin = ""
   const registeredRedirects: string[][] = []

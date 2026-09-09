@@ -90,6 +90,13 @@ so a secret can never be sent to a newly selected issuer.
   protected resource. Metadata must return that exact issuer.
 - **Reauthorization required**: the refresh grant is missing, expired, rejected,
   or bound to an older issuer/client registration.
+- **OAuth client rejected** (`invalid_client`, for example "unsupported client
+  authentication method"): the provider refused the client credentials or
+  authentication method. A registration Den created dynamically is discarded and
+  registered again on the next sign-in. An administrator-supplied client is kept
+  as saved, with its registered callback; compare its client ID, secret, and
+  token endpoint authentication method with the provider application, then sign
+  in again. Rejected tokens are cleared either way.
 - **Network trust required**: verify Den's proxy, private CA, DNS, firewall, and
   service-mesh egress. Discovery uses the same Den network policy as live MCP calls.
 - **Additional permission required**: review and approve the newly challenged
