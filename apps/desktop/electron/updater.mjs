@@ -258,9 +258,10 @@ const SHIP_IT_DEFAULTS_DOMAIN = "com.differentai.openwork.ShipIt";
 // avoids the ENOENT abort.
 async function enableSquirrelDirectContentsWrite(
   shipItDefaultsDomain = SHIP_IT_DEFAULTS_DOMAIN,
+  writeDefaults = runDefaults,
 ) {
   if (process.platform !== "darwin") return;
-  await runDefaults(["write", shipItDefaultsDomain, "SquirrelMacEnableDirectContentsWrite", "-bool", "YES"]);
+  await writeDefaults(["write", shipItDefaultsDomain, "SquirrelMacEnableDirectContentsWrite", "-bool", "YES"]);
 }
 
 // Path of the ShipIt cache that, when stuck, keeps aborting future installs.
@@ -297,6 +298,8 @@ export function registerUpdaterIpc({
   loadAutoUpdater = () => import("electron-updater"),
   manifestChannel = "latest",
   shipItDefaultsDomain = SHIP_IT_DEFAULTS_DOMAIN,
+  writeDefaults = runDefaults,
+  nativeStagingTimeoutMs = 120_000,
   electronNet = null,
   shell = null,
   distribution = "public",
@@ -310,6 +313,7 @@ export function registerUpdaterIpc({
   let checkedUpdateTargetVersion = null;
   let checkedUpdateChannel = null;
   let updateDownloaded = false;
+  let macStagedVersion = null;
   let recoveryReleases = [];
   const recoveryWitness = { installRequests: [], openedArtifactUrls: [], quitRequested: false };
   let updaterOperationQueue = Promise.resolve();
@@ -349,7 +353,7 @@ export function registerUpdaterIpc({
             autoUpdaterInstance.disableDifferentialDownload = true;
             // Make Squirrel.Mac write contents in place rather than moving whole
             // bundles (see enableSquirrelDirectContentsWrite for why).
-            await enableSquirrelDirectContentsWrite(shipItDefaultsDomain);
+            await enableSquirrelDirectContentsWrite(shipItDefaultsDomain, writeDefaults);
             autoUpdaterInstance.on("error", (err) => {
               // Do not invalidate a staged download on arbitrary updater errors.
               // A later transient check failure does not delete the downloaded
@@ -357,7 +361,7 @@ export function registerUpdaterIpc({
               console.warn("[updater] error", err);
             });
             autoUpdaterInstance.on("update-downloaded", () => {
-              updateDownloaded = true;
+              if (platform !== "darwin") updateDownloaded = true;
             });
             // Forward download progress to the renderer so the UI can show
             // incremental bytes instead of staying stuck at 0.
@@ -380,6 +384,59 @@ export function registerUpdaterIpc({
       })();
     }
     return autoUpdaterLoadPromise;
+  }
+
+  async function downloadAndStageUpdate(updater, version) {
+    if (platform !== "darwin") {
+      updater.autoInstallOnAppQuit = true;
+      await updater.downloadUpdate();
+      return;
+    }
+
+    updateDownloaded = false;
+    macStagedVersion = null;
+    preventPendingUpdaterInstall(updater);
+    // MacUpdater exposes this property at runtime. Never treat ZIP completion
+    // (or its sticky squirrelDownloadedUpdate flag) as native install readiness.
+    const nativeUpdater = updater.nativeUpdater;
+    if (!nativeUpdater) throw new Error("Native macOS updater is unavailable.");
+
+    // With autoInstallOnAppQuit disabled, even a cached ZIP rebuilds the proxy
+    // feed without starting Squirrel. Own that check so errors after ZIP transfer
+    // and a stalled native stage cannot leave downloadUpdate pending forever.
+    await updater.downloadUpdate();
+    const feedUrl = nativeUpdater.getFeedURL();
+    if (!feedUrl) throw new Error("Native macOS update feed is unavailable.");
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        finish(new Error("Timed out preparing the macOS update. Please retry the download."));
+      }, nativeStagingTimeoutMs);
+      function finish(error) {
+        clearTimeout(timer);
+        nativeUpdater.removeListener("update-downloaded", onDownloaded);
+        nativeUpdater.removeListener("error", onError);
+        if (error) reject(error);
+        else resolve();
+      }
+      function onDownloaded(_event, _notes, _name, _date, updateUrl) {
+        // Each MacUpdater download creates a new loopback feed. A cached or
+        // delayed Squirrel event from an older feed must not ready this version.
+        if (typeof updateUrl !== "string" || !updateUrl.startsWith(`${feedUrl}/`)) return;
+        finish();
+      }
+      function onError(error) {
+        finish(error);
+      }
+      nativeUpdater.on("update-downloaded", onDownloaded);
+      nativeUpdater.on("error", onError);
+      try {
+        nativeUpdater.checkForUpdates();
+      } catch (error) {
+        finish(error);
+      }
+    });
+    macStagedVersion = version;
+    updater.autoInstallOnAppQuit = true;
   }
 
   async function resolveRecoveryArtifact(version) {
@@ -553,8 +610,7 @@ export function registerUpdaterIpc({
         if (compareStableVersions(release.version, currentVersion) === null) {
           throw new Error("Installed version could not be validated.");
         }
-        updater.autoInstallOnAppQuit = true;
-        await updater.downloadUpdate();
+        await downloadAndStageUpdate(updater, release.version);
         updater.quitAndInstall(false, true);
         return { ok: true, action: "install" };
       } catch (error) {
@@ -642,6 +698,10 @@ export function registerUpdaterIpc({
         throw new Error(`Target update manifest did not resolve to v${targetVersion}.`);
       }
       const available = Boolean(info?.version && isVersionNewer(info.version, currentVersion));
+      if (platform === "darwin" && info?.version !== macStagedVersion) {
+        updateDownloaded = false;
+        preventPendingUpdaterInstall(updater);
+      }
       checkedUpdateVersion = available ? info.version : null;
       checkedUpdateTargetVersion = available ? targetVersion : null;
       checkedUpdateChannel = available ? channelState.channel : null;
@@ -707,8 +767,7 @@ export function registerUpdaterIpc({
       // Clear any stuck ShipIt state from a prior aborted install so this
       // download applies cleanly on quit.
       await cleanStaleUpdaterState(app, shipItDefaultsDomain);
-      updater.autoInstallOnAppQuit = true;
-      await updater.downloadUpdate();
+      await downloadAndStageUpdate(updater, checkedUpdateVersion);
       updateDownloaded = true;
       return { ok: true };
     } catch (error) {
@@ -724,7 +783,7 @@ export function registerUpdaterIpc({
     try {
       // Re-assert the in-place-write default right before the swap; the ShipIt
       // defaults domain may have been wiped when stale state was cleaned.
-      await enableSquirrelDirectContentsWrite();
+      await enableSquirrelDirectContentsWrite(shipItDefaultsDomain, writeDefaults);
       updater.quitAndInstall(false, true);
       return { ok: true };
     } catch (error) {

@@ -1192,6 +1192,12 @@ export async function managedVaultWorld(_seed: Seed, { place }: { place: Place }
   };
 }
 
+declare global {
+  interface Window {
+    __backgroundUpdateInstallAttempts: number;
+  }
+}
+
 export async function backgroundUpdateWorld(seed: Seed) {
   const app = await seed.desktop({ name: "background-update", signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("background-update"));
@@ -1200,6 +1206,7 @@ export async function backgroundUpdateWorld(seed: Seed) {
     const now = Date.now.bind(Date);
     const state: Window["__backgroundUpdateWitness"] = { checks: 0, downloads: 0, installs: 0, offset: 0, finishDownload: null, intervalCheck: null };
     window.__backgroundUpdateWitness = state;
+    window.__backgroundUpdateInstallAttempts = 0;
     const schedule = window.setInterval.bind(window);
     // The browser timer returns a numeric handle; Node's merged ambient overload does not apply here.
     const browserWindow: Window = window;
@@ -1222,9 +1229,24 @@ export async function backgroundUpdateWorld(seed: Seed) {
       },
       download: async () => {
         state.downloads++;
-        return new Promise(resolve => { state.finishDownload = () => resolve({ ok: true }); });
+        const attempt = state.downloads;
+        return new Promise((resolve, reject) => {
+          state.finishDownload = () => {
+            state.finishDownload = null;
+            if (attempt === 1) resolve({ ok: false, reason: "Update native preparation failed." });
+            else if (attempt === 2) reject(new Error("Update download connection failed."));
+            else resolve({ ok: true });
+          };
+        });
       },
-      installAndRestart: async () => { state.installs++; return { ok: true }; },
+      // Witness renderer handling of bridge outcomes, not native installer behavior.
+      installAndRestart: async () => {
+        const attempt = ++window.__backgroundUpdateInstallAttempts;
+        if (attempt === 1) return { ok: false, reason: "Update installer could not start." };
+        if (attempt === 2) throw new Error("Update installer connection failed.");
+        state.installs++;
+        return { ok: true };
+      },
       onDownloadProgress: () => () => {},
     };
     state.offset += 16 * 60 * 1000;
@@ -1236,6 +1258,7 @@ export async function backgroundUpdateWorld(seed: Seed) {
       const { checks, downloads, installs } = window.__backgroundUpdateWitness;
       return {
         checks, downloads, installs, route: location.hash,
+        installAttempts: window.__backgroundUpdateInstallAttempts,
         updateInTitlebar: Boolean(document.querySelector<HTMLElement>('header [data-update-button]')),
         updateInSidebar: Boolean(document.querySelector<HTMLElement>('[data-sidebar="footer"] [data-update-button]')),
         sidebarName: document.querySelector<HTMLElement>('[data-sidebar-brand]')?.textContent?.trim() ?? null,
@@ -1252,7 +1275,11 @@ export async function backgroundUpdateWorld(seed: Seed) {
       state.offset += 15 * 60 * 1000;
       state.intervalCheck();
     }),
-    finishDownload: () => evalIn(app, () => (window.__backgroundUpdateWitness.finishDownload?.())),
+    finishDownload: () => evalIn(app, () => {
+      const finish = window.__backgroundUpdateWitness.finishDownload;
+      if (!finish) throw new Error("No update download is pending");
+      finish();
+    }),
     returnToApp: () => evalIn(app, () => {
       window.__backgroundUpdateWitness.offset += 16 * 60 * 1000;
       window.dispatchEvent(new Event("focus"));
