@@ -32,8 +32,8 @@ const logger = appLogger.child({ component: "scim_auth_routes" })
 
 const scimGroupMemberSchema = z.object({
   value: z.string().trim().min(1),
-  display: z.string().optional(),
-  $ref: z.string().optional(),
+  display: z.preprocess((value) => value === null ? undefined : value, z.string().optional()),
+  $ref: z.preprocess((value) => value === null ? undefined : value, z.string().optional()),
 }).passthrough()
 
 const scimGroupInputSchema = z.object({
