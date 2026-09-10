@@ -1056,7 +1056,10 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
         for (const span of timeline().slice(timelineStart)) {
           if (span.label === "app.readiness" && span.detail === appName) appReadinessMs = span.ms;
         }
-        const workspaceA = await createAndSelectWorkspace(app, { path: workspaceAPath });
+        // A fresh desktop boots into its default "OpenWork Chat" workspace, so
+        // the bench folder (which carries the witness provider in opencode.json)
+        // must be created explicitly rather than adopting whatever is active.
+        const workspaceA = await createAndSelectWorkspace(app, { path: workspaceAPath, create: true });
         coldWorkspaceIds.push(workspaceA.workspaceId);
         const workspaceReady = Date.now() - coldStartedAt;
         await waitForComposerReady(app, `cold composer ${coldIndex}`);
