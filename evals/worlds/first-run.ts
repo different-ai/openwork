@@ -21,6 +21,7 @@ import {
 } from "@openwork/hosts";
 import { startEgressLab, startMockMcp } from "@openwork/labs";
 import { diagnoseEgressLabProduct } from "@openwork/behaviors";
+import { configureProvider } from "./chat.ts";
 import { matchVerdictExpectations } from "@openwork/matchers";
 import {
   assignPluginToMarketplace,
@@ -178,6 +179,57 @@ export async function sessionWorld(seed: Seed) {
   const base = await workspaceWorld(seed);
   const session = await seed.session(base.app);
   return { ...base, session };
+}
+
+/**
+ * A workspace with a mock model and NO session: the person lands on the
+ * sessionless New task route and the first Run task must create the session
+ * and deliver the prompt through whichever engine (v1 or v2) is selected.
+ */
+export async function sessionlessFirstSendWorld(seed: Seed) {
+  const engine = resolveEvalEngine();
+  const providerId = "first-send-mock";
+  const modelId = "first-send-model";
+  const nonce = `${Date.now().toString(36)}-${process.pid}`;
+  const prompt = `Summarize this workspace in one sentence. FIRST-SEND-${nonce}`;
+  const reply = `Workspace summary finished ${nonce}.`;
+  await using setup = new AsyncDisposableStack();
+  const mock = setup.use(await startMockMcp({
+    port: await allocateFreePort(),
+    agentWorkloads: [{ promptMarker: prompt, latestUserTurn: true, finalReply: reply, steps: [] }],
+  }));
+  const app = await seed.desktop({ name: "sessionless-first-send", model: `${providerId}/${modelId}` });
+  const workspacePath = seed.tmpPath("sessionless-first-send");
+  const workspace = await seed.workspace(app, workspacePath);
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "First send mock",
+        options: { baseURL: `${mock.url}/v1`, apiKey: "sk-first-send" },
+        models: { [modelId]: { name: "First send model" } },
+      },
+    },
+  });
+  const resources = setup.move();
+  const mount = `/workspace/${encodeURIComponent(workspace.workspaceId)}`;
+  return {
+    app,
+    workspace,
+    workspacePath,
+    engine,
+    prompt,
+    reply,
+    sessionlessRoute: `#/workspace/${workspace.workspaceId}/session`,
+    /** Engine-native message list for one session, on the selected engine's mount. */
+    messagesPath: (sessionId: string) => engine === "v2"
+      ? `${mount}/opencode2/api/session/${encodeURIComponent(sessionId)}/message`
+      : `${mount}/opencode/session/${encodeURIComponent(sessionId)}/message`,
+    /** Engine-native session list on the selected engine's mount. */
+    sessionsPath: engine === "v2" ? `${mount}/opencode2/api/session` : `${mount}/opencode/session?limit=100`,
+    openNewTask: () => go(app, `/workspace/${workspace.workspaceId}/session`),
+    [Symbol.asyncDispose]: () => resources.disposeAsync(),
+  };
 }
 
 export async function parentChildPermissionWorld(seed: Seed) {
