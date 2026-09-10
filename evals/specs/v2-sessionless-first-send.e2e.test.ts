@@ -1,8 +1,11 @@
 import { expect } from "vitest";
-import { spec } from "@openwork/testkit";
+import { resolveEvalEngine, spec } from "@openwork/testkit";
 import { sessionlessFirstSendWorld } from "../worlds/first-run.ts";
 
-const test = spec.world(sessionlessFirstSendWorld, { timeout: 420_000 });
+const test = spec.world(sessionlessFirstSendWorld, {
+  timeout: 420_000,
+  needs: { env: ["OPENWORK_EVAL_ENGINE"] },
+});
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -37,7 +40,7 @@ function nativeSessionIds(body: unknown): string[] {
   return nativeItems(body).flatMap((session) => isRecord(session) && typeof session.id === "string" ? [session.id] : []).sort();
 }
 
-test("Run task on the sessionless New task route creates the session and delivers the first prompt", async ({ world, user, probe, step, evidence }) => {
+test(`${resolveEvalEngine()}: Run task on the sessionless New task route creates the session and delivers the first prompt`, async ({ world, user, probe, step, evidence }) => {
   const { prompt, engine } = world;
   const persistedPrefix = `${world.sessionlessRoute}/`;
   const readSessions = async () => {
@@ -48,6 +51,10 @@ test("Run task on the sessionless New task route creates the session and deliver
 
   await step("the person lands on the sessionless New task route with an empty, editable composer", async () => {
     await world.openNewTask();
+    const routing = await probe.desktopApi("/experimental/engine-v2-preview/status");
+    expect(routing.status).toBe(200);
+    expect(routing.body).toMatchObject({ chatRouting: engine === "v2" });
+    if (engine === "v2") expect(routing.body).toMatchObject({ enabled: true, running: true });
     expect(await probe.hash()).toBe(world.sessionlessRoute);
     await user.see("composer", { editable: true });
     const composer = await probe.eventually(() => probe.composer(), {
