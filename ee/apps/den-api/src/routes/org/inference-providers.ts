@@ -67,12 +67,13 @@ const summarySchema = z.object({
 const detailsSchema = summarySchema.extend({ settings: z.record(z.string(), z.unknown()), modelGroups: z.array(groupSchema), credentialSets: z.array(setSchema), accessGrants: z.array(grantSchema), oauthCallbackUrl: z.string().optional(), credentials: z.array(z.object({ id: denTypeIdSchema("inferenceProviderCredential"), credentialSetId: denTypeIdSchema("gatewayCredentialSet"), subject: z.string(), orgMembershipId: denTypeIdSchema("member").nullable(), memberName: z.string().nullable(), memberEmail: z.string().nullable(), kind: z.enum(GATEWAY_PROVIDER_CREDENTIAL_KINDS), status: z.enum(GATEWAY_PROVIDER_CREDENTIAL_STATUSES), expiresAt: z.string().datetime().nullable() })).optional() }).meta({ ref: "GatewayProviderDetails" })
 const detailsResponse = z.object({ inferenceProvider: detailsSchema })
 const connectResponse = z.object({ inferenceProvider: summarySchema.extend({ apiKey: z.string(), apiKeys: z.record(z.string(), z.string()) }) })
-const conflictSchema = z.object({ error: z.string(), message: z.string().optional() })
+const gatewayErrorSchema = z.object({ error: z.string(), message: z.string().optional() })
 
-function route(summary: string, schema?: z.ZodType, status: 200 | 201 | 204 = 200, secret = false) {
+function route(summary: string, description: string, schema?: z.ZodType, status: 200 | 201 | 204 = 200, secret = false, metadata: Pick<DescribeRouteOptions, "security" | "responses"> = {}) {
   const options: DescribeRouteOptions & { "x-mcp"?: false } = {
-    tags: ["Inference Providers"], summary,
-    responses: { [status]: schema ? jsonResponse(summary, schema) : emptyResponse(summary), 400: jsonResponse("Invalid request.", invalidRequestSchema), 401: jsonResponse("Sign-in required.", unauthorizedSchema), 403: jsonResponse("Access denied or Gateway management disabled.", z.union([forbiddenSchema, gatewayManagementUnavailableSchema])), 404: jsonResponse("Resource not found.", notFoundSchema), 409: jsonResponse("Selection or resource conflict.", conflictSchema) },
+    ...metadata,
+    tags: ["Inference Providers"], summary, description,
+    responses: { [status]: schema ? jsonResponse(summary, schema) : emptyResponse(summary), 400: jsonResponse("Invalid request or provider configuration.", z.union([invalidRequestSchema, gatewayErrorSchema])), 401: jsonResponse("Sign-in required.", unauthorizedSchema), 403: jsonResponse("Access denied or Gateway management disabled.", z.union([forbiddenSchema, gatewayManagementUnavailableSchema])), 404: jsonResponse("Resource not found.", notFoundSchema), 409: jsonResponse("Selection or resource conflict.", gatewayErrorSchema), ...metadata.responses },
     ...(secret ? { "x-mcp": false as const } : {}),
   }
   return describeRoute(options)
@@ -172,7 +173,7 @@ async function selectOAuthSet(provider: GatewayProvider, memberId: GatewayMember
 
 export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   registerOrgGatewayUsageRoutes(app)
-  app.get("/v1/inference-providers", route("List organization inference gateway providers", z.object({ inferenceProviders: z.array(z.union([detailsSchema, summarySchema])) })), orgMemberRoute(), queryValidator(z.object({ scope: z.enum(["usable", "manageable"]).default("usable") })), async (c) => {
+  app.get("/v1/inference-providers", route("List organization inference gateway providers", "Defaults to scope=usable: returns active providers granted to the caller through active model groups and credential sets, with usable model aliases and any member authorization requests. A granted provider can remain discoverable with no usable models. scope=manageable requires owner/admin permission and enabled Gateway management, and returns provider details including disabled providers; credential secrets are never returned.", z.object({ inferenceProviders: z.array(z.union([detailsSchema, summarySchema])) })), orgMemberRoute(), queryValidator(z.object({ scope: z.enum(["usable", "manageable"]).default("usable") })), async (c) => {
     try {
     const actor = c.get("organizationContext")
     const manage = c.req.valid("query").scope === "manageable"
@@ -202,7 +203,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/:inferenceProviderId", route("Get inference gateway provider", detailsResponse), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId", route("Get inference gateway provider", "Returns management details for an organization provider, including public settings, model groups, credential-set status, access grants and credential metadata without secrets. Requires owner/admin permission and enabled Gateway management.", detailsResponse), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true)
@@ -210,7 +211,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/:inferenceProviderId/connect", route("Get inference gateway provider connect payload", connectResponse, 200, true), orgMemberRoute(), paramValidator(paramsSchema), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId/connect", route("Get inference gateway provider connect payload", "Returns the caller's provider summary plus their Gateway apiKey and an apiKeys map for the provider's runtime environment names, never upstream provider secrets. Requires an active provider and an effective grant through active model groups and credential sets; member authorization may still be required before models are usable.", connectResponse, 200, true), orgMemberRoute(), paramValidator(paramsSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
@@ -229,7 +230,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.post("/v1/inference-providers", route("Create inference gateway provider", detailsResponse, 201), orgMemberRoute(), managementWrite, jsonValidator(createSchema), async (c) => {
+  app.post("/v1/inference-providers", route("Create inference gateway provider", "Creates an organization Gateway provider from the trusted catalog and returns its management details. Empty modelIds follows all supported catalog models; a nonempty list restricts the provider universe. Creates an initial model group; legacy credential and audience fields can also create a default credential set and grants. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", detailsResponse, 201), orgMemberRoute(), managementWrite, jsonValidator(createSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const input = c.req.valid("json")
@@ -247,7 +248,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.patch("/v1/inference-providers/:inferenceProviderId", route("Update inference gateway provider", detailsResponse), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(patchSchema), async (c) => {
+  app.patch("/v1/inference-providers/:inferenceProviderId", route("Update inference gateway provider", "Partially updates the provider name, model universe or status and returns management details. Provider identity and upstream destination are immutable; changing them requires a new provider. Legacy credential or audience fields are rejected with matrix_write_required: edit credential sets and access grants instead. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", detailsResponse), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(patchSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const input = c.req.valid("json")
@@ -281,7 +282,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
   })
 
   // The management catalog is independent of selected wire models and group memberships.
-  app.get("/v1/inference-providers/:inferenceProviderId/models", route("List configured gateway catalog models", z.object({ modelIds: universeSchema, catalogWarning: z.string().optional(), models: z.array(z.object({ id: z.string(), name: z.string(), config: z.record(z.string(), z.unknown()) })) })), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId/models", route("List configured gateway catalog models", "Refreshes and returns supported catalog models within the saved modelIds policy, independently of model-group membership or caller-usable aliases. If catalog refresh is unavailable or incompatible, retains the saved configuration and returns catalogWarning. Requires owner/admin permission and enabled Gateway management.", z.object({ modelIds: universeSchema, catalogWarning: z.string().optional(), models: z.array(z.object({ id: z.string(), name: z.string(), config: z.record(z.string(), z.unknown()) })) })), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
     try {
       const { provider, catalogWarning } = await refreshGatewayCatalog(await getProvider(db, c.get("organizationContext"), c.req.valid("param").inferenceProviderId, true))
       const models = (await db.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id)))
@@ -290,7 +291,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/:inferenceProviderId/model-groups", route("List gateway model groups", z.object({ modelGroups: z.array(groupSchema) })), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId/model-groups", route("List gateway model groups", "Returns the provider's model groups, including disabled groups, with catalog model IDs in the current provider universe. Requires owner/admin permission and enabled Gateway management.", z.object({ modelGroups: z.array(groupSchema) })), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true)
@@ -298,7 +299,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       return c.json({ modelGroups: details.modelGroups })
     } catch (error) { return respond(c, error) }
   })
-  app.post("/v1/inference-providers/:inferenceProviderId/model-groups", route("Create gateway model group", z.object({ modelGroup: groupSchema }), 201), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(groupWrite), async (c) => {
+  app.post("/v1/inference-providers/:inferenceProviderId/model-groups", route("Create gateway model group", "Creates and returns a model group using supported catalog model IDs from this provider; creating a group alone grants no access. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ modelGroup: groupSchema }), 201), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(groupWrite), async (c) => {
     try {
       const actor = c.get("organizationContext")
       await refreshGatewayCatalog(await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true))
@@ -314,7 +315,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       return c.json({ modelGroup }, 201)
     } catch (error) { return respond(c, error) }
   })
-  app.patch("/v1/inference-providers/:inferenceProviderId/model-groups/:groupId", route("Update gateway model group", z.object({ modelGroup: groupSchema })), orgMemberRoute(), managementWrite, paramValidator(groupParams), jsonValidator(groupWrite.partial()), async (c) => {
+  app.patch("/v1/inference-providers/:inferenceProviderId/model-groups/:groupId", route("Update gateway model group", "Partially updates a group's name, description, status or model membership. Supplied modelIds replaces membership; omitted modelIds preserves it. IDs must belong to the provider's supported catalog universe. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ modelGroup: groupSchema })), orgMemberRoute(), managementWrite, paramValidator(groupParams), jsonValidator(groupWrite.partial()), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const params = c.req.valid("param")
@@ -331,7 +332,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       return c.json({ modelGroup })
     } catch (error) { return respond(c, error) }
   })
-  app.delete("/v1/inference-providers/:inferenceProviderId/model-groups/:groupId", route("Delete gateway model group", undefined, 204), orgMemberRoute(), managementWrite, paramValidator(groupParams), async (c) => {
+  app.delete("/v1/inference-providers/:inferenceProviderId/model-groups/:groupId", route("Delete gateway model group", "Deletes the group and its model links, returning an empty 204. Referencing access grants must be removed first or the operation returns model_group_in_use. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", undefined, 204), orgMemberRoute(), managementWrite, paramValidator(groupParams), async (c) => {
     try {
       const params = c.req.valid("param")
       await db.transaction(async (tx) => {
@@ -349,7 +350,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/:inferenceProviderId/credential-sets", route("List gateway credential sets", z.object({ credentialSets: z.array(setSchema) })), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId/credential-sets", route("List gateway credential sets", "Returns credential-set configuration status, creator metadata and OAuth client metadata without stored secrets. Member credential readiness is evaluated for the caller. Requires owner/admin permission and enabled Gateway management.", z.object({ credentialSets: z.array(setSchema) })), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true)
@@ -357,7 +358,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       return c.json({ credentialSets: details.credentialSets })
     } catch (error) { return respond(c, error) }
   })
-  app.post("/v1/inference-providers/:inferenceProviderId/credential-sets", route("Create gateway credential set", z.object({ credentialSet: setSchema }), 201), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(setWrite.superRefine(singleCredential)), async (c) => {
+  app.post("/v1/inference-providers/:inferenceProviderId/credential-sets", route("Create gateway credential set", "Creates an organization credential set with a supported shared credential, or a member set with a Google OAuth client for each member's own sign-in. Returns configuration status without secrets; access grants are created separately. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ credentialSet: setSchema }), 201), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(setWrite.superRefine(singleCredential)), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true)
@@ -375,7 +376,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       return c.json({ credentialSet }, 201)
     } catch (error) { return respond(c, error) }
   })
-  app.patch("/v1/inference-providers/:inferenceProviderId/credential-sets/:credentialSetId", route("Update gateway credential set", z.object({ credentialSet: setSchema })), orgMemberRoute(), managementWrite, paramValidator(setParams), jsonValidator(setWrite.partial().superRefine(singleCredential)), async (c) => {
+  app.patch("/v1/inference-providers/:inferenceProviderId/credential-sets/:credentialSetId", route("Update gateway credential set", "Partially updates a credential set and returns status without secrets. Omitted credential fields preserve stored credentials. Changing mode or OAuth client configuration, or disabling the set, invalidates pending sign-ins and revokes affected credentials; renaming alone does not. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ credentialSet: setSchema })), orgMemberRoute(), managementWrite, paramValidator(setParams), jsonValidator(setWrite.partial().superRefine(singleCredential)), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const params = c.req.valid("param")
@@ -395,7 +396,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       return c.json({ credentialSet })
     } catch (error) { return respond(c, error) }
   })
-  app.delete("/v1/inference-providers/:inferenceProviderId/credential-sets/:credentialSetId", route("Delete gateway credential set", undefined, 204), orgMemberRoute(), managementWrite, paramValidator(setParams), async (c) => {
+  app.delete("/v1/inference-providers/:inferenceProviderId/credential-sets/:credentialSetId", route("Delete gateway credential set", "Deletes a credential set, its credentials and pending sign-ins, revokes applicable Google tokens, and returns an empty 204. Referencing grants must be removed first or the operation returns credential_set_in_use. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", undefined, 204), orgMemberRoute(), managementWrite, paramValidator(setParams), async (c) => {
     try {
       const params = c.req.valid("param")
       const credentials = await db.transaction(async (tx) => {
@@ -417,14 +418,14 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/:inferenceProviderId/access-grants", route("List gateway access grants", z.object({ accessGrants: z.array(grantSchema) })), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId/access-grants", route("List gateway access grants", "Returns all provider grants linking a model group and credential set to an organization, team or member audience. Requires owner/admin permission and enabled Gateway management.", z.object({ accessGrants: z.array(grantSchema) })), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
     try {
       const provider = await getProvider(db, c.get("organizationContext"), c.req.valid("param").inferenceProviderId, true)
       const rows = await db.select().from(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id))
       return c.json({ accessGrants: rows.map(gatewayGrantSummary) })
     } catch (error) { return respond(c, error) }
   })
-  app.post("/v1/inference-providers/:inferenceProviderId/access-grants", route("Create gateway access grant", z.object({ accessGrant: grantSchema }), 201), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(grantWrite), async (c) => {
+  app.post("/v1/inference-providers/:inferenceProviderId/access-grants", route("Create gateway access grant", "Links a model group and credential set from this provider to an organization, team or member audience and returns the grant. An identical existing grant returns access_grant_exists. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ accessGrant: grantSchema }), 201), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(grantWrite), async (c) => {
     try {
       const input = c.req.valid("json")
       const id = await db.transaction(async (tx) => {
@@ -436,7 +437,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       return c.json({ accessGrant: { id, ...input } }, 201)
     } catch (error) { return respond(c, error) }
   })
-  app.patch("/v1/inference-providers/:inferenceProviderId/access-grants/:grantId", route("Update gateway access grant", z.object({ accessGrant: grantSchema })), orgMemberRoute(), managementWrite, paramValidator(grantParams), jsonValidator(grantWrite.partial()), async (c) => {
+  app.patch("/v1/inference-providers/:inferenceProviderId/access-grants/:grantId", route("Update gateway access grant", "Partially updates one grant's model group, credential set or audience, preserving omitted fields. Both resources must belong to this provider and a team or member must belong to this organization. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ accessGrant: grantSchema })), orgMemberRoute(), managementWrite, paramValidator(grantParams), jsonValidator(grantWrite.partial()), async (c) => {
     try {
       const input = c.req.valid("json")
       const params = c.req.valid("param")
@@ -455,7 +456,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
   })
   // The legacy delete URL remains an exact single-grant operation, without creator exceptions.
   for (const path of ["/v1/inference-providers/:inferenceProviderId/access-grants/:grantId", "/v1/inference-providers/:inferenceProviderId/access/:grantId"]) {
-    app.delete(path, route("Remove inference provider access grant", undefined, 204), orgMemberRoute(), managementWrite, paramValidator(grantParams), async (c) => {
+    app.delete(path, route("Remove inference provider access grant", "Deletes exactly the selected grant and returns an empty 204; the legacy /access/{grantId} URL has the same behavior. Other grants and member credentials are retained, and OAuth callbacks recheck remaining access. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", undefined, 204), orgMemberRoute(), managementWrite, paramValidator(grantParams), async (c) => {
       try {
         const params = c.req.valid("param")
         await db.transaction(async (tx) => {
@@ -472,7 +473,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     })
   }
 
-  app.delete("/v1/inference-providers/:inferenceProviderId", route("Delete inference gateway provider", undefined, 204), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), async (c) => {
+  app.delete("/v1/inference-providers/:inferenceProviderId", route("Delete inference gateway provider", "Deletes the provider, models, groups, credential sets, grants, credentials and pending sign-ins, and revokes applicable Google tokens. Returns an empty 204; historical request logs and usage rollups are retained. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", undefined, 204), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), async (c) => {
     try {
       const credentials = await db.transaction(async (tx) => {
         const provider = await getProvider(tx, c.get("organizationContext"), c.req.valid("param").inferenceProviderId, true, true)
@@ -494,7 +495,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/:inferenceProviderId/oauth/start", route("Begin Google sign-in for a member inference credential", z.object({ authUrl: z.string() })), userSessionRoute(), orgMemberRoute(), paramValidator(paramsSchema), queryValidator(oauthQuery), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId/oauth/start", route("Begin Google sign-in for a member inference credential", "Requires a signed-in user session, not an API key, and an active provider with an effective grant to a member credential set. Specify credentialSetId when multiple sets are available. Creates a ten-minute, single-use PKCE state and returns { authUrl } for Accept: application/json, otherwise redirects to Google. An optional redirectTo must use an allowed web origin or the openwork scheme. The callback browser must independently be signed in to Den as the same user.", z.object({ authUrl: z.string() }), 200, false, { security: [{ bearerAuth: [] }], responses: { 302: emptyResponse("Redirect to Google authorization when JSON is not requested.") } }), userSessionRoute(), orgMemberRoute(), paramValidator(paramsSchema), queryValidator(oauthQuery), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
@@ -516,7 +517,16 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/oauth/callback", describeRoute({ tags: ["Authentication"], summary: "Google OAuth callback for a member inference credential", responses: { 200: htmlResponse("Connected."), 302: emptyResponse("Validated client redirect."), 400: htmlResponse("Sign-in failed.") } }), publicRoute, queryValidator(z.object({ code: z.string().trim().min(1).max(4096).optional(), state: z.string().trim().min(1).max(255).optional(), error: z.string().trim().max(255).optional() })), async (c) => {
+  app.get("/v1/inference-providers/oauth/callback", describeRoute({
+    tags: ["Authentication"], summary: "Google OAuth callback for a member inference credential",
+    description: "Browser callback with no bearer-token or API-key authentication. The handler requires a signed Den session cookie backed by an unexpired live session for the same user who started Connect; OAuth state alone is not browser authentication. Validates single-use, unexpired state, rechecks current membership and active provider/group/set access before and after the PKCE exchange, and stores only that member's credential. Returns HTML on success or failure when no validated client redirect applies; otherwise redirects to the validated destination, with an error parameter on failure. Invalid query parameters return a JSON validation error.",
+    security: [],
+    responses: {
+      200: htmlResponse("Connected."),
+      302: emptyResponse("Validated client redirect on success or with an error parameter on failure."),
+      400: { description: "Sign-in failed (HTML) or invalid callback query (JSON).", content: { ...htmlResponse("Sign-in failed.").content, ...jsonResponse("Invalid callback query.", invalidRequestSchema).content } },
+    },
+  }), publicRoute, queryValidator(z.object({ code: z.string().trim().min(1).max(4096).optional(), state: z.string().trim().min(1).max(255).optional(), error: z.string().trim().max(255).optional() })), async (c) => {
     const query = c.req.valid("query")
     const requestId = c.get("requestId")
     const fail = (message: string, redirectTo: string | null = null) => {
@@ -577,7 +587,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     return redirectTo ? c.redirect(redirectTo, 302) : c.html(connectCallbackPage({ ok: true, name: set.name }))
   })
 
-  app.delete("/v1/inference-providers/:inferenceProviderId/oauth", route("Disconnect the caller's Google credential for an inference provider", undefined, 204), orgMemberRoute(), paramValidator(paramsSchema), queryValidator(z.object({ credentialSetId: denTypeIdSchema("gatewayCredentialSet").optional() }).strict()), async (c) => {
+  app.delete("/v1/inference-providers/:inferenceProviderId/oauth", route("Disconnect the caller's Google credential for an inference provider", "Revokes only the caller's Google credential and cancels their pending sign-ins for a granted member credential set, returning an empty 204. Other members and grants are unchanged. Requires an active provider and current access; specify credentialSetId when multiple member sets are available.", undefined, 204), orgMemberRoute(), paramValidator(paramsSchema), queryValidator(z.object({ credentialSetId: denTypeIdSchema("gatewayCredentialSet").optional() }).strict()), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
@@ -596,7 +606,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.post("/v1/inference-providers/migrate-from-llm-provider", route("Move an LLM provider to the inference gateway", detailsResponse, 201), orgMemberRoute(), managementWrite, jsonValidator(z.object({ llmProviderId: denTypeIdSchema("llmProvider") }).strict()), async (c) => {
+  app.post("/v1/inference-providers/migrate-from-llm-provider", route("Move an LLM provider to the inference gateway", "Atomically converts a supported shared models.dev LLM provider into a Gateway provider with its models, shared credential and audiences, then deletes the source. Returns Gateway management details; validation failure preserves the source. Per-member credentials and providers needing explicit Azure/Vertex configuration are rejected. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", detailsResponse, 201), orgMemberRoute(), managementWrite, jsonValidator(z.object({ llmProviderId: denTypeIdSchema("llmProvider") }).strict()), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const sourceId = normalizeDenTypeId("llmProvider", c.req.valid("json").llmProviderId)

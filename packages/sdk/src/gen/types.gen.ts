@@ -12276,9 +12276,14 @@ export type GetV1InferenceProvidersData = {
 
 export type GetV1InferenceProvidersErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -12356,9 +12361,14 @@ export type PostV1InferenceProvidersData = {
 
 export type PostV1InferenceProvidersErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -12413,9 +12423,14 @@ export type DeleteV1InferenceProvidersByInferenceProviderIdData = {
 
 export type DeleteV1InferenceProvidersByInferenceProviderIdErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -12469,9 +12484,14 @@ export type GetV1InferenceProvidersByInferenceProviderIdData = {
 
 export type GetV1InferenceProvidersByInferenceProviderIdErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -12556,9 +12576,14 @@ export type PatchV1InferenceProvidersByInferenceProviderIdData = {
 
 export type PatchV1InferenceProvidersByInferenceProviderIdErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -12614,9 +12639,14 @@ export type GetV1InferenceProvidersByInferenceProviderIdConnectData = {
 
 export type GetV1InferenceProvidersByInferenceProviderIdConnectErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -12731,9 +12761,14 @@ export type GetV1InferenceProvidersByInferenceProviderIdModelsData = {
 
 export type GetV1InferenceProvidersByInferenceProviderIdModelsErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -12800,9 +12835,14 @@ export type GetV1InferenceProvidersByInferenceProviderIdModelGroupsData = {
 
 export type GetV1InferenceProvidersByInferenceProviderIdModelGroupsErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -12872,9 +12912,14 @@ export type PostV1InferenceProvidersByInferenceProviderIdModelGroupsData = {
 
 export type PostV1InferenceProvidersByInferenceProviderIdModelGroupsErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -12943,9 +12988,14 @@ export type DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdD
 
 export type DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -13008,9 +13058,14 @@ export type PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdDa
 
 export type PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -13075,9 +13130,14 @@ export type GetV1InferenceProvidersByInferenceProviderIdCredentialSetsData = {
 
 export type GetV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -13167,9 +13227,14 @@ export type PostV1InferenceProvidersByInferenceProviderIdCredentialSetsData = {
 
 export type PostV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -13250,9 +13315,14 @@ export type DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCrede
 
 export type DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -13323,9 +13393,14 @@ export type PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCreden
 
 export type PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -13402,9 +13477,14 @@ export type GetV1InferenceProvidersByInferenceProviderIdAccessGrantsData = {
 
 export type GetV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -13518,9 +13598,14 @@ export type PostV1InferenceProvidersByInferenceProviderIdAccessGrantsData = {
 
 export type PostV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -13611,9 +13696,14 @@ export type DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantId
 
 export type DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -13698,9 +13788,14 @@ export type PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdD
 
 export type PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -13791,9 +13886,14 @@ export type DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdData =
 
 export type DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -13853,9 +13953,14 @@ export type GetV1InferenceProvidersByInferenceProviderIdOauthStartData = {
 
 export type GetV1InferenceProvidersByInferenceProviderIdOauthStartErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -13910,9 +14015,9 @@ export type GetV1InferenceProvidersOauthCallbackData = {
 
 export type GetV1InferenceProvidersOauthCallbackErrors = {
   /**
-   * Sign-in failed.
+   * Sign-in failed (HTML) or invalid callback query (JSON).
    */
-  400: string;
+  400: InvalidRequestError;
 };
 
 export type GetV1InferenceProvidersOauthCallbackError =
@@ -13947,9 +14052,14 @@ export type DeleteV1InferenceProvidersByInferenceProviderIdOauthData = {
 
 export type DeleteV1InferenceProvidersByInferenceProviderIdOauthErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */
@@ -14003,9 +14113,14 @@ export type PostV1InferenceProvidersMigrateFromLlmProviderData = {
 
 export type PostV1InferenceProvidersMigrateFromLlmProviderErrors = {
   /**
-   * Invalid request.
+   * Invalid request or provider configuration.
    */
-  400: InvalidRequestError;
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
    * Sign-in required.
    */

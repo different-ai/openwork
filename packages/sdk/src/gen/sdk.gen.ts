@@ -5530,6 +5530,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List organization inference gateway providers
+   *
+   * Defaults to scope=usable: returns active providers granted to the caller through active model groups and credential sets, with usable model aliases and any member authorization requests. A granted provider can remain discoverable with no usable models. scope=manageable requires owner/admin permission and enabled Gateway management, and returns provider details including disabled providers; credential secrets are never returned.
    */
   public getV1InferenceProviders<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -5551,6 +5553,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create inference gateway provider
+   *
+   * Creates an organization Gateway provider from the trusted catalog and returns its management details. Empty modelIds follows all supported catalog models; a nonempty list restricts the provider universe. Creates an initial model group; legacy credential and audience fields can also create a default credential set and grants. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public postV1InferenceProviders<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5622,6 +5626,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete inference gateway provider
+   *
+   * Deletes the provider, models, groups, credential sets, grants, credentials and pending sign-ins, and revokes applicable Google tokens. Returns an empty 204; historical request logs and usage rollups are retained. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public deleteV1InferenceProvidersByInferenceProviderId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5643,6 +5649,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Get inference gateway provider
+   *
+   * Returns management details for an organization provider, including public settings, model groups, credential-set status, access grants and credential metadata without secrets. Requires owner/admin permission and enabled Gateway management.
    */
   public getV1InferenceProvidersByInferenceProviderId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5664,6 +5672,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update inference gateway provider
+   *
+   * Partially updates the provider name, model universe or status and returns management details. Provider identity and upstream destination are immutable; changing them requires a new provider. Legacy credential or audience fields are rejected with matrix_write_required: edit credential sets and access grants instead. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public patchV1InferenceProvidersByInferenceProviderId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5737,6 +5747,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Get inference gateway provider connect payload
+   *
+   * Returns the caller's provider summary plus their Gateway apiKey and an apiKeys map for the provider's runtime environment names, never upstream provider secrets. Requires an active provider and an effective grant through active model groups and credential sets; member authorization may still be required before models are usable.
    */
   public getV1InferenceProvidersByInferenceProviderIdConnect<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5758,6 +5770,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List configured gateway catalog models
+   *
+   * Refreshes and returns supported catalog models within the saved modelIds policy, independently of model-group membership or caller-usable aliases. If catalog refresh is unavailable or incompatible, retains the saved configuration and returns catalogWarning. Requires owner/admin permission and enabled Gateway management.
    */
   public getV1InferenceProvidersByInferenceProviderIdModels<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5779,6 +5793,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List gateway model groups
+   *
+   * Returns the provider's model groups, including disabled groups, with catalog model IDs in the current provider universe. Requires owner/admin permission and enabled Gateway management.
    */
   public getV1InferenceProvidersByInferenceProviderIdModelGroups<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5800,6 +5816,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create gateway model group
+   *
+   * Creates and returns a model group using supported catalog model IDs from this provider; creating a group alone grants no access. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public postV1InferenceProvidersByInferenceProviderIdModelGroups<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5843,6 +5861,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete gateway model group
+   *
+   * Deletes the group and its model links, returning an empty 204. Referencing access grants must be removed first or the operation returns model_group_in_use. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public deleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5875,6 +5895,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update gateway model group
+   *
+   * Partially updates a group's name, description, status or model membership. Supplied modelIds replaces membership; omitted modelIds preserves it. IDs must belong to the provider's supported catalog universe. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public patchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5920,6 +5942,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List gateway credential sets
+   *
+   * Returns credential-set configuration status, creator metadata and OAuth client metadata without stored secrets. Member credential readiness is evaluated for the caller. Requires owner/admin permission and enabled Gateway management.
    */
   public getV1InferenceProvidersByInferenceProviderIdCredentialSets<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5941,6 +5965,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create gateway credential set
+   *
+   * Creates an organization credential set with a supported shared credential, or a member set with a Google OAuth client for each member's own sign-in. Returns configuration status without secrets; access grants are created separately. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public postV1InferenceProvidersByInferenceProviderIdCredentialSets<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5995,6 +6021,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete gateway credential set
+   *
+   * Deletes a credential set, its credentials and pending sign-ins, revokes applicable Google tokens, and returns an empty 204. Referencing grants must be removed first or the operation returns credential_set_in_use. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public deleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetId<
     ThrowOnError extends boolean = false,
@@ -6029,6 +6057,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update gateway credential set
+   *
+   * Partially updates a credential set and returns status without secrets. Omitted credential fields preserve stored credentials. Changing mode or OAuth client configuration, or disabling the set, invalidates pending sign-ins and revokes affected credentials; renaming alone does not. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public patchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetId<
     ThrowOnError extends boolean = false,
@@ -6087,6 +6117,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List gateway access grants
+   *
+   * Returns all provider grants linking a model group and credential set to an organization, team or member audience. Requires owner/admin permission and enabled Gateway management.
    */
   public getV1InferenceProvidersByInferenceProviderIdAccessGrants<ThrowOnError extends boolean = false>(
     parameters: {
@@ -6108,6 +6140,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create gateway access grant
+   *
+   * Links a model group and credential set from this provider to an organization, team or member audience and returns the grant. An identical existing grant returns access_grant_exists. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public postV1InferenceProvidersByInferenceProviderIdAccessGrants<ThrowOnError extends boolean = false>(
     parameters: {
@@ -6166,6 +6200,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Remove inference provider access grant
+   *
+   * Deletes exactly the selected grant and returns an empty 204; the legacy /access/{grantId} URL has the same behavior. Other grants and member credentials are retained, and OAuth callbacks recheck remaining access. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public deleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -6198,6 +6234,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update gateway access grant
+   *
+   * Partially updates one grant's model group, credential set or audience, preserving omitted fields. Both resources must belong to this provider and a team or member must belong to this organization. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public patchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -6258,6 +6296,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Remove inference provider access grant
+   *
+   * Deletes exactly the selected grant and returns an empty 204; the legacy /access/{grantId} URL has the same behavior. Other grants and member credentials are retained, and OAuth callbacks recheck remaining access. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public deleteV1InferenceProvidersByInferenceProviderIdAccessByGrantId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -6290,6 +6330,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Begin Google sign-in for a member inference credential
+   *
+   * Requires a signed-in user session, not an API key, and an active provider with an effective grant to a member credential set. Specify credentialSetId when multiple sets are available. Creates a ten-minute, single-use PKCE state and returns { authUrl } for Accept: application/json, otherwise redirects to Google. An optional redirectTo must use an allowed web origin or the openwork scheme. The callback browser must independently be signed in to Den as the same user.
    */
   public getV1InferenceProvidersByInferenceProviderIdOauthStart<ThrowOnError extends boolean = false>(
     parameters: {
@@ -6324,6 +6366,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Google OAuth callback for a member inference credential
+   *
+   * Browser callback with no bearer-token or API-key authentication. The handler requires a signed Den session cookie backed by an unexpired live session for the same user who started Connect; OAuth state alone is not browser authentication. Validates single-use, unexpired state, rechecks current membership and active provider/group/set access before and after the PKCE exchange, and stores only that member's credential. Returns HTML on success or failure when no validated client redirect applies; otherwise redirects to the validated destination, with an error parameter on failure. Invalid query parameters return a JSON validation error.
    */
   public getV1InferenceProvidersOauthCallback<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -6358,6 +6402,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Disconnect the caller's Google credential for an inference provider
+   *
+   * Revokes only the caller's Google credential and cancels their pending sign-ins for a granted member credential set, returning an empty 204. Other members and grants are unchanged. Requires an active provider and current access; specify credentialSetId when multiple member sets are available.
    */
   public deleteV1InferenceProvidersByInferenceProviderIdOauth<ThrowOnError extends boolean = false>(
     parameters: {
@@ -6390,6 +6436,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Move an LLM provider to the inference gateway
+   *
+   * Atomically converts a supported shared models.dev LLM provider into a Gateway provider with its models, shared credential and audiences, then deletes the source. Returns Gateway management details; validation failure preserves the source. Per-member credentials and providers needing explicit Azure/Vertex configuration are rejected. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public postV1InferenceProvidersMigrateFromLlmProvider<ThrowOnError extends boolean = false>(
     parameters: {
