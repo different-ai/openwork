@@ -1,4 +1,5 @@
 import { OpenworkServerError, type OpenworkMcpAppResource, type OpenworkServerClient } from "@/app/lib/openwork-server";
+import { createMcpAppConversation } from "./mcp-app-conversation";
 
 /** The host surface owns this value. Never derive it from the selected workspace or App HTML. */
 export type McpAppOrigin = {
@@ -17,8 +18,10 @@ export function createMcpAppActions(origin: McpAppOrigin, app: OpenworkMcpAppRes
     if (origin.readOnly) throw new Error("This view is read-only and cannot perform App actions.");
     if (!app.launchId) throw new Error("This App has no live launch context. Update OpenWork and reopen the App.");
   };
+  const conversation = createMcpAppConversation(origin, app, assertActive);
   return {
-    dispose: () => { active = false; },
+    ...conversation,
+    dispose: () => { active = false; conversation.dispose(); },
     assertActive,
     callTool: async (name: string, args?: Record<string, unknown>) => {
       assertActive();

@@ -23,6 +23,7 @@ import {
 import { ENGINE_GLOBAL_RUNTIME_CONFIG_ID, readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig, writeGlobalRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import {
   callMcpAppTool,
+  validateMcpAppLaunch,
   listMcpAppCatalog,
   McpAppHostError,
   projectedMcpToolName,
@@ -353,6 +354,28 @@ async function fixtureLaunch(config: ServerConfig, root: string) {
 }
 
 describe("MCP Apps host transport", () => {
+  test("conversation validation reuses the exact lease without running tools and fences release, wrong origin, and archive", async () => {
+    const { config, root, calls } = await configuredFixture("openwork-app-conversation-");
+    const lease = await fixtureLaunch(config, root);
+    const input = { ...lease, serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, serverName: "fixture" };
+    await validateMcpAppLaunch(input);
+    for (const mismatch of [{ sessionId: "session-b" }, { workspaceId: "workspace-b" }, { engine: "v2" as const }, { resourceUri: UPDATED_RESOURCE_URI }]) {
+      await expect(validateMcpAppLaunch({ ...input, ...mismatch })).rejects.toMatchObject({ code: "stale_launch_context" });
+    }
+    await expect(validateMcpAppLaunch({ ...input, assertSessionActive: async () => { throw new McpAppHostError("inactive_session", "Archived"); } })).rejects.toMatchObject({ code: "inactive_session" });
+    expect(calls).toEqual([]);
+    releaseMcpAppLaunch(config, WORKSPACE_ID, lease.launchId);
+    await expect(validateMcpAppLaunch(input)).rejects.toMatchObject({ code: "stale_launch_context" });
+  });
+
+  test("conversation validation rejects a changed provider App binding without executing a tool", async () => {
+    const { config, root, calls, activateUpdatedResource } = await configuredFixture("openwork-app-context-binding-");
+    const lease = await fixtureLaunch(config, root);
+    activateUpdatedResource();
+    await expect(validateMcpAppLaunch({ ...lease, serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, serverName: "fixture" })).rejects.toMatchObject({ code: "stale_launch_context" });
+    expect(calls).toEqual([]);
+  });
+
   test("uses OpenCode's exact projected MCP tool naming", () => {
     expect(projectedMcpToolName("sales force", "render.pipeline")).toBe("sales_force_render_pipeline");
     expect(toolUiResourceUri({ _meta: { ui: { resourceUri: RESOURCE_URI } } })).toBe(RESOURCE_URI);

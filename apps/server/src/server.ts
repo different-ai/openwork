@@ -37,6 +37,7 @@ import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
 import { buildOpenWorkV2Instructions, waitForOpenWorkV2Skills, OPENWORK_V2_INSTRUCTION_KEY } from "./opencode-v2-instructions.js";
 import {
   callMcpAppTool,
+  validateMcpAppLaunch,
   listMcpAppCatalog,
   McpAppHostError,
   resolveConnectMcpAppResource,
@@ -3517,7 +3518,7 @@ function createRoutes(
     }
   });
 
-  addRoute(routes, "POST", "/workspace/:id/mcp-apps/call", "client", async (ctx) => {
+  for (const action of ["call", "validate"]) addRoute(routes, "POST", `/workspace/:id/mcp-apps/${action}`, "client", async (ctx) => {
     requireClientScope(ctx, "viewer");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
@@ -3531,11 +3532,12 @@ function createRoutes(
     const launchId = typeof body.launchId === "string" ? body.launchId : undefined;
     const sessionId = typeof body.sessionId === "string" || body.sessionId === null ? body.sessionId : undefined;
     if (body.engine !== undefined && body.engine !== "v1" && body.engine !== "v2") throw new ApiError(400, "invalid_launch_context", "Unknown App session engine.");
-    const engine = body.engine === "v2" ? "v2" : "v1";
-    if (!serverName || !name) throw new ApiError(400, "invalid_payload", "serverName and name are required");
+    const engine: "v1" | "v2" = body.engine === "v2" ? "v2" : "v1";
+    if (!serverName || (action === "call" && !name)) throw new ApiError(400, "invalid_payload", "serverName and name are required");
+    if (action === "validate" && !sessionId) throw new ApiError(400, "inactive_session", "App conversation handoffs require the originating chat. Dashboard Apps cannot send messages or context.");
     if (approved) requireClientScope(ctx, "collaborator");
     try {
-      return jsonResponse(await callMcpAppTool({
+      const input = {
         serverConfig: config,
         launchId,
         sessionId,
@@ -3574,7 +3576,12 @@ function createRoutes(
           }
           await assertWorkspaceOwnsProxiedSessionRead(config, workspace, "GET", `/session/${encodeURIComponent(sessionId)}`, true);
         },
-      }));
+      };
+      if (action === "validate") {
+        await validateMcpAppLaunch(input);
+        return jsonResponse({});
+      }
+      return jsonResponse(await callMcpAppTool(input));
     } catch (error) {
       rethrowMcpAppHostError(error);
     }

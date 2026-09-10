@@ -7,6 +7,7 @@ import { Check, CirclePause, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { sameMcpAppConversation, type McpAppHandoff } from "@/components/chat/mcp-app-conversation";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
 import { hasTerminalSessionReply, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
@@ -608,7 +609,7 @@ export type SessionSurfaceProps = {
   onModelChange: (model: ModelRef, variant?: string | null) => void;
   archived?: boolean;
   onRestoreSession?: () => Promise<void>;
-  onSendDraft: (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void) => Promise<CloudMcpSubmissionResult>;
+  onSendDraft: (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void, appHandoff?: McpAppHandoff) => Promise<CloudMcpSubmissionResult>;
   cloudMcpSubmissionState: CloudMcpSubmissionGateState;
   onOpenConnect: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
@@ -2007,8 +2008,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
     nextDraft: ComposerDraft,
     itemId: string,
     onPrepared?: (text?: string) => void,
-    options: { consumeQueuedItem?: boolean } = {},
+    options: { consumeQueuedItem?: boolean; appHandoff?: McpAppHandoff } = {},
   ): Promise<CloudMcpSubmissionResult | { outcome: "unknown" }> => {
+    const { appHandoff } = options;
     const messageId = nextDraft.messageId ?? createPromptMessageID();
     const generation = getQueuedSendGeneration(props.sessionId);
     const submissionId = Symbol();
@@ -2017,16 +2019,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setError(null);
     try {
       if (archived || !archiveStateKnown) throw new Error("This session is read-only. Restore it before sending.");
+      appHandoff?.assertCurrent();
       // The reading preview can omit the current delegated turn. Reuse or finish
       // the uncapped read before deciding whether this follow-up must interrupt it.
       const sendSnapshot = await openingHistory.ensureFullSnapshot();
+      appHandoff?.assertCurrent();
       if (getQueuedSendGeneration(props.sessionId) !== generation) throw new Error("Send cancelled by Stop.");
       const result = await submitImmediateSessionTurn<CloudMcpSubmissionResult>(props.opencodeBaseUrl, opencodeClient, props.sessionId,
         sendSnapshot.messages, async () => {
           if (getQueuedSendGeneration(props.sessionId) !== generation) {
             return { outcome: "cancelled", reason: "context_changed" };
           }
-          return props.onSendDraft({ ...nextDraft, messageId }, props.sessionId, onPrepared);
+          appHandoff?.assertCurrent();
+          return props.onSendDraft({ ...nextDraft, messageId }, props.sessionId, onPrepared, appHandoff);
         }, { directory: props.workspaceRoot.trim() || undefined, messageID: messageId });
       // Drain listeners can reconcile idle and claim another item synchronously.
       // Consume the submitted row while its send slot is still held.
@@ -2072,6 +2077,26 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
   }, [archived, archiveStateKnown, opencodeClient, openingHistory.ensureFullSnapshot, props.onSendDraft, props.opencodeBaseUrl, props.sessionId, props.workspaceId, props.workspaceRoot, removeQueuedDraftFromStore, renderedMessages.length, sessionOwner, setError]);
+
+  const handleMcpAppMessage = useCallback(async (text: string, handoff: McpAppHandoff) => {
+    const assertCurrent = () => {
+      handoff.assertCurrent();
+      if (activeSessionOwnerRef.current !== sessionOwner || !sameMcpAppConversation(handoff.origin, {
+        client: props.client, workspaceId: props.workspaceId, sessionId: props.sessionId,
+        engine: isOpencodeV2BaseUrl(props.opencodeBaseUrl) ? "v2" : "v1", readOnly: archived || !archiveStateKnown || archiveHeld,
+      })) throw new Error("The originating conversation changed. Nothing was sent.");
+      if (sessionWorkHeld(props.opencodeBaseUrl, props.sessionId) || model.transitionState !== "idle" || sessionModelUnavailable) {
+        throw new Error("The originating conversation is not ready to send. Try again from that chat.");
+      }
+    };
+    assertCurrent();
+    const messageId = createPromptMessageID();
+    if (!claimQueuedSend(props.sessionId, messageId, true)) throw new Error("Another message is being admitted in the originating conversation. Try again after it settles.");
+    // Literal text only: App content must not become a slash command, mention, or file attachment.
+    const result = await sendDraft({ mode: "prompt", text, resolvedText: text, parts: [{ type: "text", text }], attachments: [], messageId }, messageId, undefined, { appHandoff: { ...handoff, assertCurrent } });
+    if (result.outcome === "unknown") throw new Error("Message acceptance is unknown. Check the originating chat before trying again; it may already be running.");
+    if (result.outcome !== "sent" && result.outcome !== "accepted") throw new Error("The originating conversation did not accept the App message. Nothing was sent.");
+  }, [archiveHeld, archiveStateKnown, archived, model.transitionState, props.client, props.opencodeBaseUrl, props.sessionId, props.workspaceId, sendDraft, sessionModelUnavailable, sessionOwner]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
@@ -3213,6 +3238,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   >
                     <MessageListProvider
                       uiStateOwner={props.draftScope ? sessionOwner : null}
+                      onMcpAppMessage={handleMcpAppMessage}
                       client={props.client}
                       mcpAppEngine={isOpencodeV2BaseUrl(props.opencodeBaseUrl) ? "v2" : "v1"}
                       readOnly={archived || !archiveStateKnown || archiveHeld}

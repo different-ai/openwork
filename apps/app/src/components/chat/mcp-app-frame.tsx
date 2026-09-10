@@ -20,6 +20,8 @@ import {
 } from "@/app/lib/openwork-server"
 import { useMessageList } from "./message-list-provider"
 import { createMcpAppActions, type McpAppOrigin } from "./mcp-app-origin"
+import type { McpAppMessageHandler } from "./mcp-app-conversation"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
 import {
   formatMcpAppDiagnostic,
@@ -247,6 +249,7 @@ export function McpAppDiagnosticNotice({ error, notice }: { error: McpAppDiagnos
 }
 
 export type McpAppSandboxViewProps = {
+  onMcpAppMessage?: McpAppMessageHandler
   origin: McpAppOrigin
   app: OpenworkMcpAppResource
   /** Tool name used for host diagnostics and the iframe title. */
@@ -269,13 +272,17 @@ export type McpAppSandboxViewProps = {
  * bridges it to the workspace MCP App host. Chat messages and dashboard tiles
  * share this exact pipeline so rendering and diagnostics stay identical.
  */
-export function McpAppSandboxView({ origin, app, toolName, inputArguments, result, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange }: McpAppSandboxViewProps) {
+export function McpAppSandboxView({ origin, app, toolName, inputArguments, result, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, onMcpAppMessage }: McpAppSandboxViewProps) {
   const openworkServerClient = origin.client
   const workspaceId = origin.workspaceId
   const readOnly = origin.readOnly
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [height, setHeightState] = useState(initialHeight ?? DEFAULT_HEIGHT)
   const [error, setError] = useState<McpAppDiagnostic | null>(null)
+  const [review, setReview] = useState<{ text: string; settle: (accepted: boolean) => void } | null>(null)
+  const messageHandlerRef = useRef(onMcpAppMessage)
+  messageHandlerRef.current = onMcpAppMessage
+  const canMessage = Boolean(onMcpAppMessage && origin.sessionId && !readOnly && app.launchId)
   const teardownRef = useRef(onRequestTeardown)
   teardownRef.current = onRequestTeardown
   const onHeightChangeRef = useRef(onHeightChange)
@@ -290,6 +297,7 @@ export function McpAppSandboxView({ origin, app, toolName, inputArguments, resul
     if (!iframe || !iframe.contentWindow || !openworkServerClient || !workspaceId) return
     let disposed = false
     const actions = createMcpAppActions(origin, app, (message) => window.confirm(message))
+    let cancelReview: (() => void) | undefined
     let lastSizeEventAt = 0
     const startedAt = performance.now()
     const checkpoints: string[] = []
@@ -306,6 +314,7 @@ export function McpAppSandboxView({ origin, app, toolName, inputArguments, resul
       if (disposed || failed) return
       failed = true
       actions.dispose()
+      cancelReview?.()
       const diagnostic: McpAppDiagnostic = {
         code,
         stage,
@@ -340,7 +349,7 @@ export function McpAppSandboxView({ origin, app, toolName, inputArguments, resul
     const bridge = new AppBridge(
       null,
       { name: "OpenWork", version: "1.0.0" },
-      readOnly ? {} : { serverTools: {} },
+      readOnly ? {} : { serverTools: {}, ...(canMessage ? { message: { text: {} }, updateModelContext: { text: {}, structuredContent: {} } } : {}) },
       {
         hostContext: {
           theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
@@ -400,7 +409,40 @@ export function McpAppSandboxView({ origin, app, toolName, inputArguments, resul
     }
     bridge.onrequestteardown = () => {
       actions.dispose()
+      cancelReview?.()
       teardownRef.current?.()
+    }
+    bridge.onupdatemodelcontext = async (params) => {
+      if (!canMessage) throw new Error("This view cannot update a conversation. Reopen the App in its originating chat.")
+      return actions.updateModelContext(params)
+    }
+    bridge.onmessage = async (params, extra) => {
+      try {
+        return await actions.sendMessage(params, (text) => new Promise<boolean>((resolve) => {
+          const settle = (accepted: boolean) => {
+            extra.signal.removeEventListener("abort", cancel)
+            cancelReview = undefined
+            setReview(null)
+            resolve(accepted && !extra.signal.aborted)
+          }
+          const cancel = () => settle(false)
+          cancelReview = cancel
+          if (extra.signal.aborted) { cancel(); return }
+          extra.signal.addEventListener("abort", cancel, { once: true })
+          setReview({ text, settle })
+        }), canMessage ? async (text, handoff) => {
+          const assertCurrent = () => {
+            handoff.assertCurrent()
+            if (extra.signal.aborted) throw new Error("The App message request expired or was cancelled. Nothing was sent.")
+          }
+          assertCurrent()
+          const handler = messageHandlerRef.current
+          if (!handler) throw new Error("The originating conversation is no longer available. Nothing was sent.")
+          await handler(text, { ...handoff, assertCurrent })
+        } : undefined)
+      } catch (cause) {
+        return { isError: true, message: safeMcpAppDiagnosticMessage(cause, "The App message was not accepted. Nothing was sent.") }
+      }
     }
     bridge.oncalltool = async ({ name, arguments: args }) => {
       try {
@@ -552,6 +594,7 @@ export function McpAppSandboxView({ origin, app, toolName, inputArguments, resul
     return () => {
       disposed = true
       actions.dispose()
+      cancelReview?.()
       window.removeEventListener("message", handleSandboxDiagnosticMessage)
       window.removeEventListener("message", handleSandboxReady)
       window.clearTimeout(sandboxReadyTimer)
@@ -563,7 +606,7 @@ export function McpAppSandboxView({ origin, app, toolName, inputArguments, resul
         new Promise<void>((resolve) => window.setTimeout(resolve, 500)),
       ]).catch(() => undefined).finally(() => bridge.close().catch(() => undefined))
     }
-  }, [app, inputArguments, openworkServerClient, result, toolName, workspaceId, readOnly, origin])
+  }, [app, inputArguments, openworkServerClient, result, toolName, workspaceId, readOnly, origin, canMessage])
 
   if (error) return <McpAppDiagnosticNotice error={error} notice={unavailableNotice} />
   return (
@@ -582,6 +625,21 @@ export function McpAppSandboxView({ origin, app, toolName, inputArguments, resul
         className="block w-full border-0 bg-transparent"
         style={{ height }}
       />
+      <AlertDialog open={review !== null} onOpenChange={(open) => { if (!open) review?.settle(false) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Send App message?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {app.toolName} on {app.serverName} proposes this message for its originating conversation ({origin.sessionId}) in workspace {origin.workspaceId}. Sending starts a normal user turn. Your existing draft stays unchanged.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted p-3 text-sm">{review?.text}</pre>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => review?.settle(false)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => review?.settle(true)}>Send to originating chat</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -602,7 +660,7 @@ export function McpAppFrame({ part }: { part: DynamicToolUIPart }) {
 }
 
 function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
-  const { mcpAppOrigin: origin } = useMessageList()
+  const { mcpAppOrigin: origin, onMcpAppMessage } = useMessageList()
   const openworkServerClient = origin?.client
   const workspaceId = origin?.workspaceId
   const nextResult = preservedResult(part)
@@ -694,6 +752,7 @@ function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
   if (!app || resolvedFor.current !== resolution) return null
   return (
     <McpAppSandboxView
+      onMcpAppMessage={onMcpAppMessage}
       origin={origin}
       app={app}
       toolName={part.toolName}

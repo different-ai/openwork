@@ -240,7 +240,7 @@ function validateAgentWorkloads(value) {
     if (workload.latestUserTurn !== undefined && typeof workload.latestUserTurn !== "boolean") {
       throw new Error(`agent workload ${promptMarker} latestUserTurn must be a boolean`);
     }
-    if (workload.finalReplyFrom !== undefined && !["last-tool-text", "system-text"].includes(workload.finalReplyFrom)) {
+    if (workload.finalReplyFrom !== undefined && !["last-tool-text", "system-text", "latest-user-text"].includes(workload.finalReplyFrom)) {
       throw new Error(`agent workload ${promptMarker} has an unknown reply source`);
     }
     const steps = workload.steps.map((step) => {
@@ -582,6 +582,7 @@ async function handleAgentCompletion(req, res, entry) {
     if (workload.finalReplyDelayMs) await new Promise(resolve => setTimeout(resolve, workload.finalReplyDelayMs));
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
     const finalReply = workload.finalReplyFrom === "last-tool-text" ? lastToolText(scopedMessages)
+      : workload.finalReplyFrom === "latest-user-text" ? latestUserText
       : workload.finalReplyFrom === "system-text" ? messages
         .filter((message) => message.role === "system" || message.role === "developer")
         .map(agentContentText).join("\n") || "No system instructions"

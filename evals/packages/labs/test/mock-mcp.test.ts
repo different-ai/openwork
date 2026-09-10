@@ -105,6 +105,26 @@ test("scripts and records deterministic OpenAI-compatible agent tool rounds", as
   assert.deepEqual(requests.map((request) => request.matchedMarkers), [[marker], [marker], [marker]]);
 });
 
+test("App context witness echoes only the latest user input, not system text or history", async () => {
+  const marker = "app-context-witness";
+  await using mock = await startMockMcp({ port: await allocateFreePort(), isolatedProcessEnv: true, agentWorkloads: [{
+    promptMarker: marker, latestUserTurn: true, finalReply: "Echo user input", finalReplyFrom: "latest-user-text", steps: [],
+  }] });
+  const response = await fetch(`${mock.url}/v1/chat/completions`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...completionBody(marker, 0), messages: [
+      { role: "system", content: "private-system-marker" },
+      { role: "user", content: "old-context-marker" },
+      { role: "assistant", content: "previous response" },
+      { role: "user", content: `${marker}\nApp view context: latest-selection` },
+    ] }),
+  });
+  assert.equal(response.status, 200);
+  const reply = await response.text();
+  assert.match(reply, /App view context: latest-selection/);
+  assert.doesNotMatch(reply, /private-system-marker|old-context-marker/);
+});
+
 test("gated agent replies bind hermetically and clear waiters when the client disconnects", async () => {
   const marker = "agent-gate-unit-marker";
   const chunks = ["chunk-one", "chunk-two", "chunk-three"];
