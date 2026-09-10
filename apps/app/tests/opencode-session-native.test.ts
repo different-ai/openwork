@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { focusManager } from "@tanstack/react-query";
 import type { Message, Part, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
-import { createClient, createPromptMessageID, hasAcceptedPromptMessage, unwrap, type FieldsResult } from "../src/app/lib/opencode";
+import { createClient, createPromptMessageID, hasAcceptedPromptMessage, PromptAdmissionUnknownError, promptAdmissionFailure, readPromptAdmission, unwrap, type FieldsResult } from "../src/app/lib/opencode";
 import { holdSessionWork, interruptSessionTurn, sendSessionCommand, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption } from "../src/app/lib/opencode-interruption";
 import { createClientV2 } from "../src/app/lib/opencode-v2-adapter";
 import {
@@ -128,6 +128,60 @@ describe("native OpenCode session operations", () => {
         expect(`${url.origin}${url.pathname}`).toBe(`${endpoint.opencodeBaseUrl}/session/${session.id}/message/${messageID}`);
         expect(url.searchParams.get("directory")).toBe(session.directory);
       }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+  test("an idle conversation listed without the message is the only absence that counts", async () => {
+    const originalFetch = globalThis.fetch;
+    const messageID = createPromptMessageID();
+    let listed: unknown = [];
+    let statuses: Record<string, SessionStatus> = {};
+    let messageStatus = 404;
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(new Request(input, init).url).pathname;
+        if (path.endsWith(`/message/${messageID}`)) {
+          return messageStatus === 200
+            ? Response.json({ info: { id: messageID, sessionID: session.id, role: "user" }, parts: [] })
+            : new Response(null, { status: messageStatus });
+        }
+        if (path.endsWith("/session/status")) return Response.json(statuses);
+        if (path.endsWith(`/session/${session.id}/message`)) return Response.json(listed);
+        return new Response(null, { status: 500 });
+      },
+    });
+    try {
+      const client = createClient(endpoint.opencodeBaseUrl, session.directory, { token: endpoint.token, mode: "openwork" });
+      expect(await readPromptAdmission(client, session.id, messageID)).toBe("absent");
+      statuses = { [session.id]: { type: "busy" } };
+      expect(await readPromptAdmission(client, session.id, messageID)).toBe("unknown");
+      statuses = {};
+      listed = [{ info: { id: messageID, sessionID: session.id, role: "user" }, parts: [] }];
+      expect(await readPromptAdmission(client, session.id, messageID)).toBe("unknown");
+      listed = { unexpected: true };
+      expect(await readPromptAdmission(client, session.id, messageID)).toBe("unknown");
+      messageStatus = 200;
+      expect(await readPromptAdmission(client, session.id, messageID)).toBe("accepted");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+  test("a settled prompt failure keeps its response body behind the unknown admission", async () => {
+    const originalFetch = globalThis.fetch;
+    const body = { name: "APIError", data: { statusCode: 507, message: "storage quota exceeded" } };
+    let response = () => Response.json(body, { status: 507 });
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: async () => response() });
+    try {
+      const client = createClient(endpoint.opencodeBaseUrl, session.directory, { token: endpoint.token, mode: "openwork" });
+      const settled = await client.session.promptAsync({ sessionID: session.id, parts: [] }).catch((error: unknown) => error);
+      if (!(settled instanceof PromptAdmissionUnknownError)) throw new Error("Expected an unknown admission");
+      expect(promptAdmissionFailure(settled)).toEqual(body);
+      response = () => new Response("", { status: 502 });
+      const empty = await client.session.promptAsync({ sessionID: session.id, parts: [] }).catch((error: unknown) => error);
+      if (!(empty instanceof PromptAdmissionUnknownError)) throw new Error("Expected an unknown admission");
+      expect(promptAdmissionFailure(empty)).toBeUndefined();
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -710,6 +764,7 @@ describe("native Stop and follow-up handoff", () => {
     const idle = Promise.withResolvers<Response>();
     const idleReached = Promise.withResolvers<void>();
     const aborted: string[] = [];
+    const withdrawn: string[] = [];
     const sent: boolean[] = [];
     let admissionReconciled = false;
     let statusReads = 0;
@@ -726,6 +781,17 @@ describe("native Stop and follow-up handoff", () => {
         idleReached.resolve();
         return idle.promise;
       }
+      // The engine keeps an interrupted child's question pending; only the
+      // stopped tree's questions may be withdrawn, never another root's.
+      if (path.endsWith("/question")) {
+        expect(statusReads).toBeGreaterThan(1);
+        return Response.json([
+          { id: "que_nested", sessionID: "ses_nested", questions: [] },
+          { id: "que_unrelated", sessionID: "ses_unrelated", questions: [] },
+        ]);
+      }
+      const rejected = path.match(/\/question\/([^/]+)\/reject$/)?.[1];
+      if (request.method === "POST" && rejected) { withdrawn.push(rejected); return Response.json(true); }
       const [, id, action] = path.match(/\/session\/([^/]+)(?:\/([^/]+))?$/) ?? [];
       if (request.method === "POST" && action === "prompt_async") return new Response(null, { status: 204 });
       if (request.method === "POST" && action === "abort" && id) {
@@ -774,12 +840,13 @@ describe("native Stop and follow-up handoff", () => {
         idle.resolve(Response.json({ [root.id]: { type: "idle" }, ses_unrelated: { type: "busy" }, ses_old: { type: "busy" } }));
         await Promise.all([stop, followUp]);
         expect(sent).toEqual([true]);
+        expect(withdrawn).toEqual(["que_nested"]);
         expect(sessionNeedsStop(baseUrl, root.id)).toBe(false);
         expect(requests.filter((request) => /\/session\/ses_[^/]+$/.test(new URL(request.url).pathname))
           .map((request) => new URL(request.url).pathname.split("/").at(-1)))
           .toEqual([root.id, "ses_child", "ses_nested", "ses_late"]);
         for (const request of requests) {
-          expect(request.url.startsWith(`${baseUrl}/session/`)).toBe(true);
+          expect(request.url.startsWith(`${baseUrl}/session/`) || request.url.startsWith(`${baseUrl}/question`)).toBe(true);
           expect(request.headers.get("Authorization")).toBe(`Bearer ${endpoint.token}`);
           if (!request.url.endsWith("/prompt_async")) expect(new URL(request.url).searchParams.get("directory")).toBe(root.directory);
         }
