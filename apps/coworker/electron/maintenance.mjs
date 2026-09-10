@@ -232,12 +232,12 @@ async function copyPrivate(source, destination) {
     for (const name of await readdir(source)) await copyPrivate(path.join(source, name), path.join(destination, name));
     await syncDirectory(destination);
   } else if (entry.isFile()) {
-    if (entry.nlink !== 1) throw new Error("A shared hard link prevents an owned recovery backup.");
+    if (entry.nlink !== 1) throw Object.assign(new Error("A shared hard link prevents an owned recovery backup."), { code: "SHARED_HARDLINK" });
     await copyFile(source, destination, constants.COPYFILE_EXCL);
     await chmod(destination, 0o600);
     const handle = await open(destination, "r+");
     try { await handle.sync(); } finally { await handle.close(); }
-  } else throw new Error("An unsupported special file prevents a complete recovery backup.");
+  } else throw Object.assign(new Error("An unsupported special file prevents a complete recovery backup."), { code: "SPECIAL_FILE" });
 }
 
 const identityOf = (entry) => JSON.stringify([entry.dev, entry.ino, entry.mode, entry.nlink, entry.size, entry.mtimeMs, entry.ctimeMs]);

@@ -450,7 +450,7 @@ export const coworkerBridge = {
       const receipt = await invoke<{ phase: "handoff"; backupDirectory: string; handoffId: string }>("maintenance.factoryReset", input);
       // Native exit waits for this acknowledgement of the handoff, not for an
       // assumed IPC delivery delay. The relaunched app reports the actual result.
-      void invoke("maintenance.handoffReceived", { handoffId: receipt.handoffId }).catch(() => undefined);
+      await invoke("maintenance.handoffReceived", { handoffId: receipt.handoffId });
       return { phase: receipt.phase, backupDirectory: receipt.backupDirectory };
     },
     restoreDefaults: () => invoke<CoworkerSettings>("maintenance.restoreDefaults"),
@@ -500,6 +500,7 @@ export const coworkerBridge = {
   coworkers: {
     list: () => invoke<CoworkerSummary[]>("coworkers.list"),
     get: (slug: string) => invoke<CoworkerSummary>("coworkers.get", { slug }),
+    openFolder: (slug?: string) => invoke<void>("coworkers.openFolder", { slug }),
     create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses; personality: Personality; roleId?: string; firstNote?: string }) =>
       invoke<CoworkerSummary>("coworkers.create", input),
     update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "thinkingModel" | "thinkingModelVariant" | "deliveryModel" | "deliveryModelVariant" | "modelChosenBy" | "modelMode" | "effortPreference" | "avatarColor" | "avatarGlasses" | "personality">>) =>

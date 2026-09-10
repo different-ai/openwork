@@ -120,7 +120,7 @@ import {
 } from "./local-providers.mjs";
 import { resolveBundledOpencodeBinary, resolveUserDataDir } from "./runtime-paths.mjs";
 import { assertMaintenanceSender, assertResetConfirmation, createMaintenance, createMaintenanceAdmission, resolveMaintenanceHistoryDb, validateMaintenancePaths } from "./maintenance.mjs";
-import { captureMaintenanceProcesses, prepareMaintenanceHandoff, readMaintenanceStartup } from "./maintenance-handoff.mjs";
+import { captureMaintenanceProcesses, maintenanceFailureDetail, prepareMaintenanceHandoff, readMaintenanceStartup } from "./maintenance-handoff.mjs";
 import { noteProgress, readChanges, trackChange, undoChange, writeTrackedFile } from "./self-memory.mjs";
 import { SETTINGS_FILE, normalizeSettings, readSettings, scheduleGuardrails, updateSettings } from "./settings.mjs";
 import {
@@ -2341,6 +2341,12 @@ const commands = {
   },
   "coworkers.list": async () => listPreparedCoworkers(),
   "coworkers.get": async ({ slug }) => repairGroupSelection(await getCoworker(coworkersDir, slug), await listGroups(coworkersDir), (owner, patch) => updateCoworker(coworkersDir, owner, patch)),
+  "coworkers.openFolder": async ({ slug }) => {
+    if (slug !== undefined && typeof slug !== "string") throw new Error("Coworker slug must be a string.");
+    const directory = slug === undefined ? coworkersDir : (await getCoworker(coworkersDir, slug)).path;
+    const error = await shell.openPath(directory);
+    if (error) throw new Error(error);
+  },
   "coworkers.create": async ({ name, role, mission, avatarColor, avatarGlasses, personality, roleId, firstNote }) =>
     addCoworker({ name, role, mission, avatarColor, avatarGlasses, personality, roleId, firstNote }),
   // The team: the catalog onboarding proposes from, the person's answers to a
@@ -2811,7 +2817,7 @@ function registerIpc() {
       return { ok: false, error: "Open Coworker commands are only available to the main app frame." };
     }
     const command = typeof request?.command === "string" ? request.command : "";
-    if ((command.startsWith("voice.") || command.startsWith("computer.") || command.startsWith("browser.") || command.startsWith("workers.") || command.startsWith("groups.documents.")) && !trustedComputerSender(event, mainWindow?.webContents, rendererUrl())) {
+    if ((command === "coworkers.openFolder" || command.startsWith("voice.") || command.startsWith("computer.") || command.startsWith("browser.") || command.startsWith("workers.") || command.startsWith("groups.documents.")) && !trustedComputerSender(event, mainWindow?.webContents, rendererUrl())) {
       return { ok: false, error: "Native controls require the trusted Open Coworker window and renderer URL." };
     }
     if (command === "voice.microphone" && request?.userGesture !== true) {
@@ -2928,6 +2934,14 @@ async function createMainWindow() {
 }
 
 async function focusMainWindow() {
+  // A failed reset seals native work until quit. Its existing window must still
+  // be reachable, so the person can read the failure and quit normally.
+  if (!mainWindow && maintenanceAdmission.closed) {
+    dialog.showErrorBox("Fresh start needs attention", resetInProgress
+      ? "Fresh start is still stopping the app. It will reopen after the reset finishes."
+      : "Fresh start did not finish. Quit and reopen Open Coworker to review the saved result.");
+    return null;
+  }
   const window = mainWindow ?? await createMainWindow();
   if (window.isMinimized()) window.restore();
   window.show();
@@ -2942,8 +2956,15 @@ if (!singleInstanceLock) {
   if (protocolRegistered) app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
 
   app.on("second-instance", (_event, argv) => {
-    if (maintenanceAdmission.closed) return;
-    void focusMainWindow().then(() => queueDeepLinks(forwardedDeepLinks(argv)));
+    void app.whenReady().then(() => focusMainWindow()).then(() => {
+      if (!maintenanceAdmission.closed) queueDeepLinks(forwardedDeepLinks(argv));
+    });
+  });
+
+  // Register before startup awaits: Dock activation must also restore a hidden
+  // or minimized window, including while startup is reporting a reset failure.
+  app.on("activate", () => {
+    void app.whenReady().then(() => focusMainWindow());
   });
 
   app.on("open-url", (event, url) => {
@@ -2966,6 +2987,7 @@ if (!singleInstanceLock) {
         message: maintenanceNotice.phase === "completed" ? "Your previous local setup was saved in recovery. Open Coworker is ready for a fresh start."
           : "Fresh start stopped safely. Your previous local setup was kept or restored. No cloud records or provider credentials were reset.",
         detail: [maintenanceNotice.relaunchFailed ? "Automatic reopening failed. This launch is reading the saved result." : "",
+          maintenanceFailureDetail(maintenanceNotice.diagnostics),
           maintenanceNotice.backupPath ? `Recovery directory: ${maintenanceNotice.backupPath}` : "No completed recovery copy was recorded."].filter(Boolean).join("\n"), buttons: ["Continue"],
       });
       readMaintenanceStartup(userDataDir);
@@ -2983,14 +3005,11 @@ if (!singleInstanceLock) {
       engineError = error instanceof Error ? error.message : String(error);
     });
     startLocalResponsibilitiesScheduler();
-    await createMainWindow();
+    await focusMainWindow();
     // A verified reset returns directly to onboarding. Acknowledge only after
     // its replacement window exists; failures still require the native notice.
     if (maintenanceNotice?.phase === "completed" && !maintenanceNotice.relaunchFailed) readMaintenanceStartup(userDataDir);
     queueDeepLinks(forwardedDeepLinks(process.argv));
-    app.on("activate", () => {
-      if (!mainWindow) void createMainWindow();
-    });
   });
 
   app.on("window-all-closed", () => {

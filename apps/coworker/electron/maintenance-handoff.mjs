@@ -13,6 +13,26 @@ const ticketPattern = /^[a-f0-9]{64}$/;
 const recoveryDirectory = (userData) => path.join(path.dirname(userData), `${path.basename(userData)}-recovery`);
 const pendingFile = (directory) => path.join(directory, "pending-reset.json");
 const resultFile = (directory) => path.join(directory, "reset-result.json");
+const failureStages = new Map([
+  ["preparing", "preparing the reset"], ["waiting-for-exit", "waiting for the previous app to exit"],
+  ["validating-reset", "checking the reset scope"], ["copying", "backing up your local setup"], ["resetting", "clearing the local setup"],
+]);
+const failureReasons = new Map([
+  ["ENOSPC", "There is not enough free disk space for the recovery backup."],
+  ["EACCES", "The app could not access a file needed for the reset."],
+  ["EPERM", "The operating system refused a required file operation."],
+  ["ENOENT", "A required file or folder was no longer available."],
+  ["EIO", "The disk reported an input/output error."],
+  ["EXDEV", "The setup and recovery folder are on different volumes; this reset requires same-volume moves."],
+  ["SHARED_HARDLINK", "A file is shared through a hard link; reset kept the setup rather than change shared storage."],
+  ["SPECIAL_FILE", "A special file could not be safely included in the recovery backup."],
+]);
+
+export function maintenanceFailureDetail(diagnostics) {
+  return [failureStages.has(diagnostics?.stage) ? `Stopped while ${failureStages.get(diagnostics.stage)}.` : "",
+    failureReasons.get(diagnostics?.code) ?? ""].filter(Boolean).join(" ");
+}
+
 const cancellationFile = (directory, ticket) => path.join(directory, `cancel-${ticket}.json`);
 let bootIdentity;
 const systemText = (file, args) => execFileSync(file, args, { encoding: "utf8", env: { ...process.env, LC_ALL: "C", TZ: "UTC" }, timeout: 3000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -317,7 +337,7 @@ export async function runMaintenanceHelper(channel = process, { exitTimeoutMs = 
     result = { version: 2, ticket, phase: error.recovery?.committed ? "completed" : "failed", backupPath: error.recovery?.backupPath ?? backupPath,
       previousProcesses, recoveryRequired: error.recovery?.recoveryRequired === true,
       diagnostics: { stage,
-        ...(["ENOSPC", "EACCES", "EPERM", "ENOENT", "EIO"].includes(error.cause?.code ?? error.code) ? { code: error.cause?.code ?? error.code } : {}),
+        ...(failureReasons.has(error.cause?.code ?? error.code) ? { code: error.cause?.code ?? error.code } : {}),
         ...(error.processes ? { processes: error.processes } : {}) } };
   } finally {
     channel.removeListener("message", cancel);
@@ -382,7 +402,12 @@ export function readMaintenanceStartup(userData, { consume = true } = {}) {
       || (result.version === 2 && !Array.isArray(result.previousProcesses)) || (result.backupPath !== null && (path.dirname(result.backupPath) !== directory || !path.basename(result.backupPath).startsWith("fresh-start-")))) throw new Error("Invalid maintenance result.");
     if (result.recoveryRequired || (result.phase === "failed" && result.version === 2 && result.previousProcesses.some(processMatches))) return { blocked: true, message: `Fresh start stopped without confirmed cleanup. Your recovery data was kept in ${directory}. Close the previous app processes before reopening; recovery may need attention.` };
     if (consume) renameSync(resultFile(directory), path.join(directory, "reset-result-acknowledged.json"));
-    return { blocked: false, phase: result.phase, backupPath: result.backupPath, ...(result.relaunchFailed ? { relaunchFailed: true } : {}) };
+    return { blocked: false, phase: result.phase, backupPath: result.backupPath, ...(result.relaunchFailed ? { relaunchFailed: true } : {}),
+      ...(result.diagnostics ? { diagnostics: {
+        ...(failureStages.has(result.diagnostics.stage) ? { stage: result.diagnostics.stage } : {}),
+        ...(failureReasons.has(result.diagnostics.code) ? { code: result.diagnostics.code } : {}),
+      } } : {}),
+    };
   } catch {
     return { blocked: true, message: "Open Coworker could not verify its Fresh start recovery receipt. The existing profile was not opened. Check the recovery directory before continuing." };
   }

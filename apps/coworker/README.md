@@ -945,10 +945,10 @@ are proven on the packaged app.
 
 The choice is never hidden: the rail says "Working on a deep think on GPT-5
 pro" while the turn runs (the live row keeps to its shapes), every reply
-bubble's title says which model answered, and the picker's Automatic row
-previews all three lanes ("Quick GPT-5 mini · Standard GPT-5 · Deep GPT-5 pro"). To change
-the standard model while staying Automatic, pick a model (that fixes it) and
-tap Automatic again. Assignments and responsibilities use the standard model
+bubble's title says which model answered, and the picker previews the available
+Automatic choices. The Model selection control switches between using the selected
+model and Automatic for each message. Picking another main model keeps that mode.
+Assignments and responsibilities use the standard model
 (`localRunModel` in `main.mjs`). Workers use the purpose-specific setting below,
 or inherit the standard model at creation. When a conversation lane's model cannot
 answer, the app steps back towards the standard model and retries the same
@@ -957,12 +957,22 @@ is saved. A model the person fixed is never swapped.
 
 ### Compose models around the work
 
-Coworker settings → **Worker models** has independent **Deep thinking model**
-and **Delivery model** choices, each with supported exact effort. Both default
-to **Same as coworker**. These are provider-neutral choices from the connected
+The sidebar's Worker defaults section has separate Deep thinking model
+and Delivery model choices, each with supported exact effort. Both initially
+use the coworker's main model. The picker names that model and previews its Worker
+effort. These are provider-neutral choices from the connected
 catalog, not fixed model tiers or automatic upgrades. New Workers snapshot the
 resolved provider, model and effort; existing pinned work does not change when
 settings change. Records from before this feature retain owner-model behavior.
+
+Settings > General lists each coworker's main model, selection mode and effort.
+Expand Edit models & effort to change the same saved settings as the sidebar.
+There is no app-wide model default. Use recommended model selects a connected
+recommendation once, not a default that changes in the background. Default effort
+adapts to the task unless a supported fixed thinking effort takes priority.
+Open folder sits beside the app's coworker directory in AI & local setup and
+beside the individual coworker's path in the sidebar. It opens only those
+app-owned directories through the trusted native window.
 
 For hard ambiguity, the coworker can delegate one `thinking` Worker (two turns
 by default), receive a completed brief, then delegate at most two `delivery`

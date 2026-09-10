@@ -5,9 +5,8 @@ import type { ConnectState } from "@/lib/connect";
 import { describeCoworkerSummary, showSummaryLine, summaryRowTitle, type CoworkerSummaryLine, type SummaryKind } from "@/lib/coworker-summary";
 import { referralPrompt } from "@/lib/conversation";
 import type { DenSession } from "@/lib/den";
-import type { EffortStop } from "@/lib/effort";
-import { clearAutoPicked, markAutoPicked, peekStartingModel, takeStartingModel } from "@/lib/model-choice";
-import { EffortDial } from "@/ui/effort-dial";
+import { markAutoPicked, peekStartingModel, takeStartingModel } from "@/lib/model-choice";
+import { CoworkerModelSettings } from "@/ui/coworker-model-settings";
 import { createCoworkerThreads, recommendModel, type CoworkerActivity, type ThreadListItem } from "@/lib/threads";
 import { acknowledgeCoworker, AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
@@ -40,7 +39,6 @@ import { WorkersPanel } from "@/ui/workers";
 import { AssignmentsPanel } from "@/ui/assignments";
 import type { WorkerSummary } from "@/lib/workers";
 import { Row, RowList, useReturnFocus } from "@/ui/rows";
-import { ModelPicker, type ModelSelection } from "@/ui/model-picker";
 import type { SettingsSection } from "@/ui/openwork-settings";
 
 const CONTEXT_PANEL_WIDTH_KEY = "open-coworker.context-panel-width";
@@ -939,37 +937,6 @@ function CoworkerSettings({
     }
   }
 
-  async function updateEffort(stop: EffortStop) {
-    setError("");
-    try {
-      onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { effortPreference: stop }));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }
-
-  async function updateModel(selection: ModelSelection) {
-    setError("");
-    try {
-      clearAutoPicked(coworker.slug);
-      onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { ...selection, modelChosenBy: "person" }));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }
-
-  async function updateWorkerModel(purpose: "thinking" | "delivery", selection: ModelSelection) {
-    setError("");
-    try {
-      const patch = purpose === "thinking"
-        ? { thinkingModel: selection.model, thinkingModelVariant: selection.modelVariant }
-        : { deliveryModel: selection.model, deliveryModelVariant: selection.modelVariant };
-      onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, patch));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }
-
   async function retire() {
     setBusy(true);
     setError("");
@@ -1046,54 +1013,33 @@ function CoworkerSettings({
         ) : null}
       </section>
 
-      <section ref={modelSectionRef} data-testid="coworker-model-settings">
-        <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">AI model</h3>
-        <ModelPicker
+      <section ref={modelSectionRef}>
+        <CoworkerModelSettings
           runtime={runtime}
           session={session}
           coworker={coworker}
-          value={coworker.model}
-          modelVariant={coworker.modelVariant}
-          chosenBy={coworker.modelChosenBy}
-          modelMode={coworker.modelMode}
-          onChange={(selection) => void updateModel(selection)}
+          onCoworkerChanged={onCoworkerChanged}
           onSyncProviders={onSyncProviders}
-          onConnect={onOpenAccount}
-          compact
+          onOpenAccount={onOpenAccount}
         />
-        <div className="mt-4" data-testid="coworker-effort-settings">
-          <EffortDial stop={coworker.effortPreference} onChange={(stop) => void updateEffort(stop)} coworkerName={coworker.name} fixedVariant={coworker.modelVariant} compact={false} />
-        </div>
-        <p className="mt-3 text-xs leading-relaxed text-mist" data-testid="coworker-model-note">
-          {coworker.modelMode === "auto"
-            ? `${coworker.name} reads each message and picks a quick, standard, or deep model for it; the header says which one is answering. Assignments use the standard model. Worker models can be set separately below.`
-            : `${coworker.name} uses this AI model for discussions and assignments. Worker models can be set separately below. How hard it thinks follows the dial unless an exact effort is fixed.`}
-        </p>
-      </section>
-
-      <section className="space-y-4" data-testid="coworker-worker-model-settings">
-        <div>
-          <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Worker models</h3>
-          <p className="mt-2 text-xs leading-relaxed text-mist">Optional choices for new Workers, which pin their model and effort when started. Clear work stays with {coworker.name}; hard ambiguity can use one thinking brief before delivery. Unavailable choices stop rather than switch providers. Older Workers still follow the coworker's model.</p>
-        </div>
-        <div data-testid="thinking-model-settings">
-          <h4 className="mb-2 text-xs font-medium text-snow">Deep thinking model</h4>
-          <ModelPicker runtime={runtime} session={session} coworker={coworker} value={coworker.thinkingModel ?? ""} modelVariant={coworker.thinkingModelVariant ?? ""} onChange={(selection) => void updateWorkerModel("thinking", selection)} onSyncProviders={onSyncProviders} onConnect={onOpenAccount} compact forWorker />
-          <p className="mt-2 text-[11px] text-mist">A bounded decision brief. Two turns by default.</p>
-        </div>
-        <div data-testid="delivery-model-settings">
-          <h4 className="mb-2 text-xs font-medium text-snow">Delivery model</h4>
-          <ModelPicker runtime={runtime} session={session} coworker={coworker} value={coworker.deliveryModel ?? ""} modelVariant={coworker.deliveryModelVariant ?? ""} onChange={(selection) => void updateWorkerModel("delivery", selection)} onSyncProviders={onSyncProviders} onConnect={onOpenAccount} compact forWorker />
-          <p className="mt-2 text-[11px] text-mist">Work from a brief and file references, with evidence returned to {coworker.name}. Uses the effort dial's finite turn budget by default.</p>
-        </div>
       </section>
 
       <section className="flex items-center justify-between gap-3 border-t border-line/60 pt-4">
         <div className="min-w-0">
           <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Memory</h3>
-          <p className="mt-1 text-xs leading-relaxed text-mist">Plain Markdown files {coworker.name} maintains; read or edit them any time.</p>
+          <p className="mt-1 text-xs leading-relaxed text-mist">Read or edit what {coworker.name} remembers about you and your work.</p>
         </div>
-        <Button variant="ghost" className="shrink-0 text-xs" onClick={onOpenMemory}>Open</Button>
+        <Button variant="ghost" className="shrink-0 text-xs" onClick={onOpenMemory}>View memory</Button>
+      </section>
+
+      <section className="border-t border-line/60 pt-4">
+        <h3 className="text-xs font-semibold text-snow">Coworker folder</h3>
+        <p className="mt-1 text-xs leading-relaxed text-mist">{coworker.name}'s files and saved configuration on this Mac.</p>
+        <p className="my-2 break-all text-[11px] text-mist">{coworker.path}</p>
+        <Button variant="ghost" className="text-xs" onClick={() => {
+          setError("");
+          void coworkerBridge.coworkers.openFolder(coworker.slug).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+        }}>Open folder</Button>
       </section>
 
       {error ? <ErrorNote>{error}</ErrorNote> : null}
