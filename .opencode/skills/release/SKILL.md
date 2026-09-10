@@ -21,6 +21,66 @@ A release is **done when the run is green and the GitHub release is published**
 
 ---
 
+## Before you tag: open fix PRs and fork PRs
+
+Run this before `release:cut` or any manual tag. It exists because a fork PR
+carrying the exact fix for a blank-window-on-launch regression sat open for a
+day before the affected version was tagged (incident 2026-09-09): fork PRs
+never receive Warden clearance (`warden.yml` skips them and
+`warden-clearance.yml` requires `head_repository == repository`), so nothing
+surfaces them until a human looks.
+
+List, against `dev`, every open PR opened since the previous stable tag whose
+title or body matches `fix(app)|crash|blank|white screen|regression|first
+launch`, plus every open fork PR created or updated in that window:
+
+```bash
+export R=different-ai/openwork
+PREV=$(gh release list -R $R --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName')
+SINCE=$(gh release view "$PREV" -R $R --json createdAt --jq '.createdAt')
+echo "previous tag $PREV created $SINCE"
+gh pr list -R $R --state open --base dev --limit 300 --search "sort:created-asc" \
+  --json number,title,body,isCrossRepository,createdAt,updatedAt,url \
+  | jq -r --arg since "$SINCE" '.[]
+      | select((.createdAt >= $since
+                and ((.title + " " + .body) | test("fix\\(app\\)|crash|blank|white screen|regression|first launch"; "i")))
+               or (.isCrossRepository and .updatedAt >= $since))
+      | "#\(.number)\(if .isCrossRepository then " [FORK]" else "" end) \(.title) \(.url)"'
+```
+
+Then the fork backlog: open fork PRs of any age describing a crash or
+startup failure. Scan the titles; a match for the bug class you are shipping
+(or any blank/white-screen/first-launch fix) blocks the same way.
+
+```bash
+gh pr list -R $R --state open --base dev --limit 300 \
+  --json number,title,body,isCrossRepository,url \
+  | jq -r '.[] | select(.isCrossRepository
+      and ((.title + " " + .body) | test("crash|blank|white screen|first launch|regression"; "i")))
+      | "#\(.number) \(.title) \(.url)"'
+```
+
+For every PR listed, decide one of:
+
+- **Land it first** — review it (fork PRs: `review-a-contributor-pr` skill),
+  merge to `dev`, then tag.
+- **Ship anyway** — the release goes out without it. This is only allowed as
+  an explicit, recorded decision: paste the list of PR numbers, who decided,
+  and the one-line reason into the release notes PR that `changelog.yml`
+  opens after publish (`docs(changelog): release notes for vX.Y.Z`, branch
+  `automation/changelog-vX.Y.Z-*`), under a `Known open fixes` heading. If
+  the notes PR has not appeared yet, put the same text in the GitHub release
+  body (`gh release edit vX.Y.Z -R $R --notes-file ...`) and move it when the
+  PR opens.
+- **Not a fix / not relevant** — say so in the same list; a false positive
+  still gets one line, so the next release does not re-triage it silently.
+
+An empty list is also recorded (`Known open fixes: none matched`). Tagging
+with a non-empty list and no recorded decision is the failure mode this step
+prevents; do not proceed.
+
+---
+
 ## Cut a release (default path)
 
 ```bash
@@ -126,72 +186,13 @@ Confirm `npm view openwork-server version` matches.
 
 ## Validate a published release
 
-Boot the *released* mac-arm64 desktop binaries (not a source build) through the
-packaged journeys. Both specs are `placement: 'local'` in
-`evals/scripts/journey-catalog.mjs` and skip loudly (verdict `incomplete`,
-exit 2) when `OPENWORK_EVAL_ELECTRON_BINARY` is unset, so a run without a
-binary can never pass by accident.
-
-Run them from a checkout of the tag (`git worktree add /tmp/ow-vX.Y.Z vX.Y.Z`,
-then `pnpm install --frozen-lockfile` there) so the specs' expectations match
-the binary. `dev`'s specs move ahead of published binaries: its
-`packaged-first-launch` fails 0.18.45 and 0.18.46 enterprise on the
-pre-activation IPC rejection fixed by #4727, which no release carries yet.
-
-Download and unpack the enterprise + cloud assets of the tag (`ditto` keeps
-the signature intact; the quarantine flag must go or macOS blocks the spawn):
-
-```bash
-V=X.Y.Z; cd /tmp/ow-release
-gh release download "v$V" -R different-ai/openwork -p "openwork-enterprise-mac-arm64-$V.zip" -p "openwork-cloud-mac-arm64-$V.zip"
-for f in enterprise cloud; do mkdir -p "$f-$V" && ditto -x -k "openwork-$f-mac-arm64-$V.zip" "$f-$V" && xattr -dr com.apple.quarantine "$f-$V"; done
-ENT="/tmp/ow-release/enterprise-$V/OpenWork Enterprise.app/Contents/MacOS/OpenWork Enterprise"
-CLD="/tmp/ow-release/cloud-$V/OpenWork Cloud.app/Contents/MacOS/OpenWork Cloud"
-```
-
-Fresh-machine gate (no bootstrap): the enterprise build must mount
-"Link this app to your organization", the cloud build "Welcome to OpenWork",
-each with zero renderer exceptions:
-
-```bash
-OPENWORK_EVAL_ELECTRON_BINARY="$ENT" pnpm evals:e2e packaged-first-launch --local
-OPENWORK_EVAL_ELECTRON_BINARY="$CLD" pnpm evals:e2e packaged-first-launch --local
-```
-
-Activated enterprise install (what every existing enterprise user boots
-into): the spec cold-boots a local Den, seeds an activated bootstrap and
-asserts the release reports its own version, skips the activation page and
-lands on the interactive `/signin` surface without a render crash.
-`OPENWORK_EVAL_RELEASED_VERSION` pins the version the binary must report:
-
-```bash
-OPENWORK_EVAL_ELECTRON_BINARY="$ENT" OPENWORK_EVAL_RELEASED_VERSION="$V" \
-  pnpm evals:e2e released-enterprise-activated --local
-```
-
-Baseline-upgrade variant: also download the previous release's enterprise zip
-(same steps, e.g. `B=X.Y.W`) and pass it as the baseline. The older release
-signs in and selects a workspace on a fresh profile, quits, then the release
-under test opens that same profile in place and once more after a restart;
-both launches must land in the same signed-in workspace route with zero
-renderer exceptions. Without the baseline variable this second test skips and
-the run is `incomplete`:
-
-```bash
-OPENWORK_EVAL_ELECTRON_BINARY="$ENT" OPENWORK_EVAL_RELEASED_VERSION="$V" \
-OPENWORK_EVAL_RELEASED_BASELINE_BINARY="/tmp/ow-release/enterprise-$B/OpenWork Enterprise.app/Contents/MacOS/OpenWork Enterprise" \
-  pnpm evals:e2e released-enterprise-activated --local
-```
-
-Each command prints a JSON verdict line; only `"verdict":"passed"` with
-`"skipped":0` counts. This covers mac-arm64 only, and the update is simulated
-by launching the new binary on the old profile — the real electron-updater
-download/apply is not exercised. An activated install (and, before 0.18.46,
-an unactivated one) checks for updates and installs the newest release over
-its bundle on quit. `released-enterprise-activated` launches a private copy
-of the `.app` each time so the download stays pristine; `packaged-first-launch`
-launches it in place, so re-extract the zip before re-running it. A run that
-reports a newer version than `$V` booted the wrong binary.
+Once the assets are published, run the `validate-a-release` skill
+(`.opencode/skills/validate-a-release/SKILL.md`) against the released
+mac-arm64 zips before telling anyone the version is safe to roll out: it
+boots the released enterprise and cloud binaries through
+`packaged-first-launch` and `released-enterprise-activated` (fresh install,
+activated install, and a previous-release profile opened by the new build),
+checks the updater manifests' sha512, and verifies signing/notarization.
 
 ---
 

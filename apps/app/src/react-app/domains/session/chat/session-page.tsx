@@ -1377,6 +1377,7 @@ export function SessionPage(props: SessionPageProps) {
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
           newTaskDisabled={props.sidebar.newTaskDisabled}
+          newTaskDraftScope={props.newTaskComposer?.draftScope ?? null}
           onSelectWorkspace={props.sidebar.onSelectWorkspace}
           onOpenSession={openSessionTab}
           onPrefetchSession={props.sidebar.onPrefetchSession}
@@ -1921,6 +1922,10 @@ export function SessionPage(props: SessionPageProps) {
                   ) : (
                     <div className="flex flex-1 items-center justify-center py-16">
                       <SessionEmptyHero
+                        // Remount per draft owner so the hero reads that
+                        // workspace's persisted new-task draft instead of
+                        // carrying the previous workspace's text across.
+                        key={props.newTaskComposer?.draftOwnerKey}
                         providerCount={providerCount}
                         onRunTask={(prompt, attachments, handoff) =>
                           props.sidebar.onCreateTaskWithPrompt?.(props.selectedWorkspaceId, prompt, attachments, handoff)

@@ -48,12 +48,6 @@ export type ComposerStateStore = {
   pendingFocusSessionId: string | null;
   sessions: Record<string, ComposerSessionState>;
   queuedDrafts: Record<string, QueuedComposerItem[]>;
-  /**
-   * Sent-prompt history per session, oldest first. Kept outside
-   * `sessions` because `clearSession` resets the composer after every
-   * send and must not wipe the recall history (#2012).
-   */
-  history: Record<string, string[]>;
   setDraft: (sessionId: string, draft: string) => void;
   replaceDraft: (sessionId: string, draft: string, revertMessageId?: string | null) => void;
   hydrateDraft: (sessionId: string, draft: string) => void;
@@ -61,7 +55,6 @@ export type ComposerStateStore = {
   setAttachments: (sessionId: string, attachments: ComposerAttachment[]) => void;
   setMentions: (sessionId: string, mentions: Record<string, ComposerMentionKind>) => void;
   setPasteParts: (sessionId: string, pasteParts: ComposerPastePart[]) => void;
-  appendHistory: (sessionId: string, text: string) => void;
   appendQueuedDraft: (sessionId: string, draft: ComposerDraft) => void;
   removeQueuedDraft: (sessionId: string, id: string) => void;
   updateQueuedDraft: (sessionId: string, id: string, draft: ComposerDraft) => void;
@@ -74,9 +67,7 @@ export type ComposerStateStore = {
 const EMPTY_ATTACHMENTS: ComposerAttachment[] = [];
 const EMPTY_MENTIONS: Record<string, ComposerMentionKind> = {};
 const EMPTY_PASTE_PARTS: ComposerPastePart[] = [];
-const EMPTY_HISTORY: string[] = [];
 const EMPTY_QUEUED_DRAFTS: QueuedComposerItem[] = [];
-const HISTORY_LIMIT = 50;
 const composerSessionDraftScopes = new Map<string, string>();
 
 export function claimComposerSessionDraftScope(sessionId: string, scopeKey: string) {
@@ -127,7 +118,6 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
   pendingFocusSessionId: null,
   sessions: {},
   queuedDrafts: {},
-  history: {},
   setDraft: (sessionId, draft) => set((state) => {
     const current = getWritableSession(state, sessionId);
     const revertMessageId = draft ? current.revertMessageId : null;
@@ -186,16 +176,6 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
     const current = getWritableSession(state, sessionId);
     if (current.pasteParts === pasteParts) return state;
     return { sessions: { ...state.sessions, [sessionId]: { ...current, pasteParts } } };
-  }),
-  appendHistory: (sessionId, text) => set((state) => {
-    const trimmed = text.trim();
-    if (!trimmed) return state;
-    const current = state.history[sessionId] ?? EMPTY_HISTORY;
-    // Skip consecutive duplicates so spamming the same prompt does not
-    // fill the recall buffer.
-    if (current[current.length - 1] === trimmed) return state;
-    const next = [...current, trimmed].slice(-HISTORY_LIMIT);
-    return { history: { ...state.history, [sessionId]: next } };
   }),
   appendQueuedDraft: (sessionId, draft) => set((state) => {
     const current = state.queuedDrafts[sessionId] ?? EMPTY_QUEUED_DRAFTS;
@@ -269,10 +249,6 @@ export function getComposerMentions(state: ComposerStateStore, sessionId: string
 
 export function getComposerPasteParts(state: ComposerStateStore, sessionId: string): ComposerPastePart[] {
   return state.sessions[sessionId]?.pasteParts ?? EMPTY_PASTE_PARTS;
-}
-
-export function getComposerHistory(state: ComposerStateStore, sessionId: string): string[] {
-  return state.history[sessionId] ?? EMPTY_HISTORY;
 }
 
 export function getComposerQueuedDrafts(state: ComposerStateStore, sessionId: string): QueuedComposerItem[] {

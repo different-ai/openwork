@@ -32,6 +32,7 @@ import type {
   DashboardElement,
   DeactivateAutomationErrors,
   DeactivateAutomationResponses,
+  DeleteApiAuthScimV2GroupsByGroupIdErrors,
   DeleteApiAuthScimV2GroupsByGroupIdResponses,
   DeleteGmailDraftErrors,
   DeleteGmailDraftResponses,
@@ -41,7 +42,9 @@ import type {
   DeleteGoogleCalendarEventResponses,
   DeleteMicrosoft365CalendarEventErrors,
   DeleteMicrosoft365CalendarEventResponses,
+  DeleteV1AdminAdminsByAdminIdErrors,
   DeleteV1AdminAdminsByAdminIdResponses,
+  DeleteV1AdminUsersByUserIdErrors,
   DeleteV1AdminUsersByUserIdResponses,
   DeleteV1ConfigObjectsByConfigObjectIdAccessByGrantIdErrors,
   DeleteV1ConfigObjectsByConfigObjectIdAccessByGrantIdResponses,
@@ -58,6 +61,7 @@ import type {
   DeleteV1DesktopPoliciesByDesktopPolicyIdErrors,
   DeleteV1DesktopPoliciesByDesktopPolicyIdResponses,
   DeleteV1DesktopPoliciesByKeyByExternalKeyResponses,
+  DeleteV1InferenceAnalyticsLangfuseErrors,
   DeleteV1InferenceAnalyticsLangfuseResponses,
   DeleteV1LlmProvidersByKeyByExternalKeyResponses,
   DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdErrors,
@@ -98,6 +102,7 @@ import type {
   DeleteV1TeamsByTeamIdResponses,
   DeleteV1WorkersByIdErrors,
   DeleteV1WorkersByIdResponses,
+  DeleteV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdContentErrors,
   DeleteV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdContentResponses,
   DenDesktopPolicyDocumentWrite,
   ExternalMcpConnectionAccessInput,
@@ -107,14 +112,20 @@ import type {
   ExternalMcpIssuerReviewInput,
   ExternalMcpRequirementsDiscoveryInput,
   ExternalMcpResolveInput,
-  GetApiAuthOauth2AuthorizeResponses,
+  GetApiAuthOauth2AuthorizeErrors,
+  GetApiAuthScimV2GroupsByGroupIdErrors,
   GetApiAuthScimV2GroupsByGroupIdResponses,
+  GetApiAuthScimV2GroupsErrors,
   GetApiAuthScimV2GroupsResponses,
+  GetApiAuthScimV2ResourceTypesErrors,
+  GetApiAuthScimV2ResourceTypesGroupErrors,
   GetApiAuthScimV2ResourceTypesGroupResponses,
   GetApiAuthScimV2ResourceTypesResponses,
+  GetApiAuthScimV2SchemasErrors,
   GetApiAuthScimV2SchemasResponses,
   GetApiAuthWellKnownOauthAuthorizationServerResponses,
   GetApiAuthWellKnownOpenidConfigurationResponses,
+  GetAutomationDesktopRunnerPresenceErrors,
   GetAutomationDesktopRunnerPresenceResponses,
   GetAutomationErrors,
   GetAutomationResponses,
@@ -138,11 +149,13 @@ import type {
   GetReadyResponses,
   GetV1AdminMetricsErrors,
   GetV1AdminMetricsResponses,
+  GetV1AdminOrganizationsByOrganizationIdCapabilitiesErrors,
   GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses,
   GetV1AdminOrganizationsErrors,
   GetV1AdminOrganizationsResponses,
   GetV1AdminOverviewErrors,
   GetV1AdminOverviewResponses,
+  GetV1AdminUsersByUserIdInferenceUsageErrors,
   GetV1AdminUsersByUserIdInferenceUsageResponses,
   GetV1AdminUsersErrors,
   GetV1AdminUsersResponses,
@@ -154,8 +167,6 @@ import type {
   GetV1AuthBootstrapStatusResponses,
   GetV1AuthLoginOptionsErrors,
   GetV1AuthLoginOptionsResponses,
-  GetV1AutomationRunnersEventsResponses,
-  GetV1AutomationRunnerWorkResponses,
   GetV1BrandAssetsByOrganizationIdByKindByVersionErrors,
   GetV1BrandAssetsByOrganizationIdByKindByVersionResponses,
   GetV1CapabilitiesGoogleWorkspaceCalendarEventsErrors,
@@ -242,8 +253,6 @@ import type {
   GetV1DesktopPoliciesByKeyByExternalKeyResponses,
   GetV1DesktopPoliciesErrors,
   GetV1DesktopPoliciesResponses,
-  GetV1DevEmailsLastResponses,
-  GetV1DevEmailsResponses,
   GetV1DiagnosticsEgressErrors,
   GetV1DiagnosticsEgressResponses,
   GetV1InferenceAnalyticsActivityResponses,
@@ -318,6 +327,7 @@ import type {
   GetV1MemoryResponses,
   GetV1MemorySearchErrors,
   GetV1MemorySearchResponses,
+  GetV1MeOrgsErrors,
   GetV1MeOrgsResponses,
   GetV1MePluginAccessErrors,
   GetV1MePluginAccessResponses,
@@ -379,8 +389,11 @@ import type {
   GetV1WorkflowsByConfigObjectIdResponses,
   GetV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdErrors,
   GetV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdResponses,
+  GetV1WorkflowsByConfigObjectIdSnapshotsErrors,
   GetV1WorkflowsByConfigObjectIdSnapshotsResponses,
+  GetV1WorkflowsByConfigObjectIdVersionsErrors,
   GetV1WorkflowsByConfigObjectIdVersionsResponses,
+  GetV1WorkflowsByConfigObjectIdViewsErrors,
   GetV1WorkflowsByConfigObjectIdViewsResponses,
   GetV1WorkflowsErrors,
   GetV1WorkflowsResponses,
@@ -395,6 +408,7 @@ import type {
   GoogleWorkspaceCreateCalendarEventBody,
   GoogleWorkspaceShareDriveFileBody,
   GoogleWorkspaceUpdateCalendarEventBody,
+  ListAutomationRunsErrors,
   ListAutomationRunsResponses,
   ListAutomationsErrors,
   ListAutomationsResponses,
@@ -419,11 +433,15 @@ import type {
   MintAutomationRunnerTokenResponses,
   MoveMicrosoft365MailMessageErrors,
   MoveMicrosoft365MailMessageResponses,
+  PatchApiAuthScimV2GroupsByGroupIdErrors,
   PatchApiAuthScimV2GroupsByGroupIdResponses,
+  PatchApiAuthScimV2UsersByUserIdErrors,
   PatchApiAuthScimV2UsersByUserIdResponses,
   PatchV1AdminOrganizationsByOrganizationIdDpaErrors,
   PatchV1AdminOrganizationsByOrganizationIdDpaResponses,
+  PatchV1AdminOrganizationsByOrganizationIdFreeSeatsErrors,
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses,
+  PatchV1AdminOrganizationsByOrganizationIdPlanErrors,
   PatchV1AdminOrganizationsByOrganizationIdPlanResponses,
   PatchV1CapabilitiesGoogleWorkspaceCalendarEventByEventIdErrors,
   PatchV1CapabilitiesGoogleWorkspaceCalendarEventByEventIdResponses,
@@ -459,11 +477,17 @@ import type {
   PatchV1TeamsByTeamIdResponses,
   PatchV1WorkersByIdErrors,
   PatchV1WorkersByIdResponses,
+  PostApiAuthOauth2RegisterErrors,
   PostApiAuthOauth2RegisterResponses,
+  PostApiAuthScimV2GroupsErrors,
   PostApiAuthScimV2GroupsResponses,
+  PostApiAuthScimV2UsersErrors,
   PostApiAuthScimV2UsersResponses,
+  PostRegisterErrors,
   PostRegisterResponses,
+  PostV1AdminAdminsErrors,
   PostV1AdminAdminsResponses,
+  PostV1AdminUsersByUserIdInferenceUsageResetErrors,
   PostV1AdminUsersByUserIdInferenceUsageResetResponses,
   PostV1ApiKeysErrors,
   PostV1ApiKeysResponses,
@@ -471,14 +495,12 @@ import type {
   PostV1AppsByAppIdSaveResponses,
   PostV1AppsByAppIdShareErrors,
   PostV1AppsByAppIdShareResponses,
+  PostV1ArtifactViewsByArtifactViewIdRetireErrors,
   PostV1ArtifactViewsByArtifactViewIdRetireResponses,
+  PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateErrors,
   PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateResponses,
   PostV1AuthBootstrapVerifyErrors,
   PostV1AuthBootstrapVerifyResponses,
-  PostV1AutomationRunsByIdClaimResponses,
-  PostV1AutomationRunsByIdCompleteResponses,
-  PostV1AutomationRunsByIdEventsResponses,
-  PostV1AutomationRunsByIdHeartbeatResponses,
   PostV1BootstrapClaimsAcceptErrors,
   PostV1BootstrapClaimsAcceptResponses,
   PostV1BootstrapWorkspaceErrors,
@@ -565,8 +587,11 @@ import type {
   PostV1DirectUploadsGoogleWorkspaceDriveFilesResponses,
   PostV1DirectUploadsGoogleWorkspaceGmailDraftsErrors,
   PostV1DirectUploadsGoogleWorkspaceGmailDraftsResponses,
+  PostV1InferenceAnalyticsEventsErrors,
   PostV1InferenceAnalyticsEventsResponses,
+  PostV1InferenceAnalyticsLangfuseConnectErrors,
   PostV1InferenceAnalyticsLangfuseConnectResponses,
+  PostV1InferenceAnalyticsLangfuseTestErrors,
   PostV1InferenceAnalyticsLangfuseTestResponses,
   PostV1InstallConnectExchangeErrors,
   PostV1InstallConnectExchangeResponses,
@@ -645,8 +670,6 @@ import type {
   PostV1PluginsImportMcpsFromGithubUrlPreviewResponses,
   PostV1PluginsImportMcpsFromGithubUrlResponses,
   PostV1PluginsResponses,
-  PostV1RemoteSessionCommandsByIdClaimResponses,
-  PostV1RemoteSessionCommandsByIdCompleteResponses,
   PostV1RolesErrors,
   PostV1RolesResponses,
   PostV1ScimReconcileErrors,
@@ -656,6 +679,7 @@ import type {
   PostV1SkillHubsBySkillHubIdAccessErrors,
   PostV1SkillHubsBySkillHubIdSkillsErrors,
   PostV1SkillHubsErrors,
+  PostV1SsoDisableErrors,
   PostV1SsoDisableResponses,
   PostV1SsoEnableErrors,
   PostV1SsoEnableResponses,
@@ -665,6 +689,7 @@ import type {
   PostV1SsoRequestDomainVerificationResponses,
   PostV1SsoSamlErrors,
   PostV1SsoSamlResponses,
+  PostV1SsoTestByIntentIdCancelErrors,
   PostV1SsoTestByIntentIdCancelResponses,
   PostV1SsoTestByIntentIdStartErrors,
   PostV1SsoTestByIntentIdStartResponses,
@@ -692,9 +717,13 @@ import type {
   PostV1WorkflowsByConfigObjectIdVersionsResponses,
   PostV1WorkflowsTestErrors,
   PostV1WorkflowsTestResponses,
+  PutApiAuthScimV2GroupsByGroupIdErrors,
   PutApiAuthScimV2GroupsByGroupIdResponses,
+  PutApiAuthScimV2UsersByUserIdErrors,
   PutApiAuthScimV2UsersByUserIdResponses,
+  PutV1AdminOrganizationsByOrganizationIdCapabilitiesErrors,
   PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses,
+  PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessErrors,
   PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessResponses,
   PutV1CapabilitiesMicrosoft365DriveFilesErrors,
   PutV1CapabilitiesMicrosoft365DriveFilesResponses,
@@ -830,13 +859,23 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Add a platform admin
+   *
+   * Adds an email address to the platform admin allowlist. Body: { email: string, note?: string | null }.
+   */
   public postV1AdminAdmins<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).post<PostV1AdminAdminsResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<PostV1AdminAdminsResponses, PostV1AdminAdminsErrors, ThrowOnError>({
       url: "/v1/admin/admins",
       ...options,
     });
   }
 
+  /**
+   * Remove a platform admin
+   *
+   * Removes an email address from the platform admin allowlist. Admins cannot remove themselves or the final remaining admin.
+   */
   public deleteV1AdminAdminsByAdminId<ThrowOnError extends boolean = false>(
     parameters: {
       adminId: string;
@@ -844,13 +883,22 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "adminId" }] }]);
-    return (options?.client ?? this.client).delete<DeleteV1AdminAdminsByAdminIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).delete<
+      DeleteV1AdminAdminsByAdminIdResponses,
+      DeleteV1AdminAdminsByAdminIdErrors,
+      ThrowOnError
+    >({
       url: "/v1/admin/admins/{adminId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Get a user's inference usage
+   *
+   * Returns the user's inference usage per organization and limit window, alongside the organization-wide usage of the same windows.
+   */
   public getV1AdminUsersByUserIdInferenceUsage<ThrowOnError extends boolean = false>(
     parameters: {
       userId: string;
@@ -858,13 +906,22 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "userId" }] }]);
-    return (options?.client ?? this.client).get<GetV1AdminUsersByUserIdInferenceUsageResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<
+      GetV1AdminUsersByUserIdInferenceUsageResponses,
+      GetV1AdminUsersByUserIdInferenceUsageErrors,
+      ThrowOnError
+    >({
       url: "/v1/admin/users/{userId}/inference-usage",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Reset a user's inference usage
+   *
+   * Removes the user's charges from the current inference limit windows of every organization they belong to and returns the total amount released.
+   */
   public postV1AdminUsersByUserIdInferenceUsageReset<ThrowOnError extends boolean = false>(
     parameters: {
       userId: string;
@@ -874,7 +931,7 @@ export class DenClient extends HeyApiClient {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "userId" }] }]);
     return (options?.client ?? this.client).post<
       PostV1AdminUsersByUserIdInferenceUsageResetResponses,
-      unknown,
+      PostV1AdminUsersByUserIdInferenceUsageResetErrors,
       ThrowOnError
     >({
       url: "/v1/admin/users/{userId}/inference-usage/reset",
@@ -883,6 +940,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Delete a user
+   *
+   * Deletes the user account, revokes its sessions, API keys, OAuth grants and connected accounts, and soft-removes its organization memberships. Admins cannot delete their own user.
+   */
   public deleteV1AdminUsersByUserId<ThrowOnError extends boolean = false>(
     parameters: {
       userId: string;
@@ -890,13 +952,22 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "userId" }] }]);
-    return (options?.client ?? this.client).delete<DeleteV1AdminUsersByUserIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).delete<
+      DeleteV1AdminUsersByUserIdResponses,
+      DeleteV1AdminUsersByUserIdErrors,
+      ThrowOnError
+    >({
       url: "/v1/admin/users/{userId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Set an organization's plan
+   *
+   * Assigns a manual plan tier and seat limit to the organization. Body: { tier: "free" | "team" | "enterprise", seatLimit: integer }.
+   */
   public patchV1AdminOrganizationsByOrganizationIdPlan<ThrowOnError extends boolean = false>(
     parameters: {
       organizationId: string;
@@ -906,7 +977,7 @@ export class DenClient extends HeyApiClient {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "organizationId" }] }]);
     return (options?.client ?? this.client).patch<
       PatchV1AdminOrganizationsByOrganizationIdPlanResponses,
-      unknown,
+      PatchV1AdminOrganizationsByOrganizationIdPlanErrors,
       ThrowOnError
     >({
       url: "/v1/admin/organizations/{organizationId}/plan",
@@ -915,6 +986,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Set an organization's free seats
+   *
+   * Sets the total number of free seats for the organization and resynchronizes its seat subscription quantity. Body: { totalFreeSeats: integer }.
+   */
   public patchV1AdminOrganizationsByOrganizationIdFreeSeats<ThrowOnError extends boolean = false>(
     parameters: {
       organizationId: string;
@@ -924,7 +1000,7 @@ export class DenClient extends HeyApiClient {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "organizationId" }] }]);
     return (options?.client ?? this.client).patch<
       PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses,
-      unknown,
+      PatchV1AdminOrganizationsByOrganizationIdFreeSeatsErrors,
       ThrowOnError
     >({
       url: "/v1/admin/organizations/{organizationId}/free-seats",
@@ -974,6 +1050,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Grant or revoke complimentary OpenWork Web access
+   *
+   * Toggles complimentary OpenWork Web access for the organization and records an audit event. Access cannot be granted while a paid OpenWork Web subscription is ongoing. Body: { enabled: boolean, reason: string }.
+   */
   public putV1AdminOrganizationsByOrganizationIdOpenworkWebAccess<ThrowOnError extends boolean = false>(
     parameters: {
       organizationId: string;
@@ -983,7 +1064,7 @@ export class DenClient extends HeyApiClient {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "organizationId" }] }]);
     return (options?.client ?? this.client).put<
       PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessResponses,
-      unknown,
+      PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessErrors,
       ThrowOnError
     >({
       url: "/v1/admin/organizations/{organizationId}/openwork-web-access",
@@ -992,6 +1073,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Get an organization's capability overrides
+   *
+   * Returns the admin-visible capability flags (install links, MCP connections) for the organization.
+   */
   public getV1AdminOrganizationsByOrganizationIdCapabilities<ThrowOnError extends boolean = false>(
     parameters: {
       organizationId: string;
@@ -1001,7 +1087,7 @@ export class DenClient extends HeyApiClient {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "organizationId" }] }]);
     return (options?.client ?? this.client).get<
       GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses,
-      unknown,
+      GetV1AdminOrganizationsByOrganizationIdCapabilitiesErrors,
       ThrowOnError
     >({
       url: "/v1/admin/organizations/{organizationId}/capabilities",
@@ -1010,6 +1096,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Set an organization's capability overrides
+   *
+   * Enables, disables or clears (null) the install-links and MCP-connections capability overrides for the organization. Body: { capabilities: { installLinks?: boolean | null, mcpConnections?: boolean | null } }.
+   */
   public putV1AdminOrganizationsByOrganizationIdCapabilities<ThrowOnError extends boolean = false>(
     parameters: {
       organizationId: string;
@@ -1019,7 +1110,7 @@ export class DenClient extends HeyApiClient {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "organizationId" }] }]);
     return (options?.client ?? this.client).put<
       PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses,
-      unknown,
+      PutV1AdminOrganizationsByOrganizationIdCapabilitiesErrors,
       ThrowOnError
     >({
       url: "/v1/admin/organizations/{organizationId}/capabilities",
@@ -1146,43 +1237,72 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * List SCIM schemas
+   *
+   * Returns the SCIM schemas this server supports (RFC 7644 section 4), combining the Better Auth User schema with the Den Group schema.
+   */
   public getApiAuthScimV2Schemas<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetApiAuthScimV2SchemasResponses, unknown, ThrowOnError>({
-      url: "/api/auth/scim/v2/Schemas",
-      ...options,
-    });
+    return (options?.client ?? this.client).get<
+      GetApiAuthScimV2SchemasResponses,
+      GetApiAuthScimV2SchemasErrors,
+      ThrowOnError
+    >({ url: "/api/auth/scim/v2/Schemas", ...options });
   }
 
+  /**
+   * Get the SCIM Group resource type
+   */
   public getApiAuthScimV2ResourceTypesGroup<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
-    return (options?.client ?? this.client).get<GetApiAuthScimV2ResourceTypesGroupResponses, unknown, ThrowOnError>({
-      url: "/api/auth/scim/v2/ResourceTypes/Group",
-      ...options,
-    });
+    return (options?.client ?? this.client).get<
+      GetApiAuthScimV2ResourceTypesGroupResponses,
+      GetApiAuthScimV2ResourceTypesGroupErrors,
+      ThrowOnError
+    >({ url: "/api/auth/scim/v2/ResourceTypes/Group", ...options });
   }
 
+  /**
+   * List SCIM resource types
+   *
+   * Returns the SCIM resource types this server supports (RFC 7644 section 4), combining the Better Auth User type with the Den Group type.
+   */
   public getApiAuthScimV2ResourceTypes<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetApiAuthScimV2ResourceTypesResponses, unknown, ThrowOnError>({
-      url: "/api/auth/scim/v2/ResourceTypes",
-      ...options,
-    });
+    return (options?.client ?? this.client).get<
+      GetApiAuthScimV2ResourceTypesResponses,
+      GetApiAuthScimV2ResourceTypesErrors,
+      ThrowOnError
+    >({ url: "/api/auth/scim/v2/ResourceTypes", ...options });
   }
 
+  /**
+   * List SCIM groups
+   *
+   * Lists the organization's SCIM-managed groups. Supports the `filter` (displayName or externalId equality), `startIndex` and `count` query parameters from RFC 7644 section 3.4.2.
+   */
   public getApiAuthScimV2Groups<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetApiAuthScimV2GroupsResponses, unknown, ThrowOnError>({
-      url: "/api/auth/scim/v2/Groups",
-      ...options,
-    });
+    return (options?.client ?? this.client).get<
+      GetApiAuthScimV2GroupsResponses,
+      GetApiAuthScimV2GroupsErrors,
+      ThrowOnError
+    >({ url: "/api/auth/scim/v2/Groups", ...options });
   }
 
+  /**
+   * Create a SCIM group
+   */
   public postApiAuthScimV2Groups<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).post<PostApiAuthScimV2GroupsResponses, unknown, ThrowOnError>({
-      url: "/api/auth/scim/v2/Groups",
-      ...options,
-    });
+    return (options?.client ?? this.client).post<
+      PostApiAuthScimV2GroupsResponses,
+      PostApiAuthScimV2GroupsErrors,
+      ThrowOnError
+    >({ url: "/api/auth/scim/v2/Groups", ...options });
   }
 
+  /**
+   * Delete a SCIM group
+   */
   public deleteApiAuthScimV2GroupsByGroupId<ThrowOnError extends boolean = false>(
     parameters: {
       groupId: string;
@@ -1190,13 +1310,20 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "groupId" }] }]);
-    return (options?.client ?? this.client).delete<DeleteApiAuthScimV2GroupsByGroupIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).delete<
+      DeleteApiAuthScimV2GroupsByGroupIdResponses,
+      DeleteApiAuthScimV2GroupsByGroupIdErrors,
+      ThrowOnError
+    >({
       url: "/api/auth/scim/v2/Groups/{groupId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Get a SCIM group
+   */
   public getApiAuthScimV2GroupsByGroupId<ThrowOnError extends boolean = false>(
     parameters: {
       groupId: string;
@@ -1204,13 +1331,22 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "groupId" }] }]);
-    return (options?.client ?? this.client).get<GetApiAuthScimV2GroupsByGroupIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<
+      GetApiAuthScimV2GroupsByGroupIdResponses,
+      GetApiAuthScimV2GroupsByGroupIdErrors,
+      ThrowOnError
+    >({
       url: "/api/auth/scim/v2/Groups/{groupId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Patch a SCIM group
+   *
+   * Applies an RFC 7644 section 3.5.2 PatchOp (add, remove, replace) to the group and returns the updated resource.
+   */
   public patchApiAuthScimV2GroupsByGroupId<ThrowOnError extends boolean = false>(
     parameters: {
       groupId: string;
@@ -1218,13 +1354,20 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "groupId" }] }]);
-    return (options?.client ?? this.client).patch<PatchApiAuthScimV2GroupsByGroupIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).patch<
+      PatchApiAuthScimV2GroupsByGroupIdResponses,
+      PatchApiAuthScimV2GroupsByGroupIdErrors,
+      ThrowOnError
+    >({
       url: "/api/auth/scim/v2/Groups/{groupId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Replace a SCIM group
+   */
   public putApiAuthScimV2GroupsByGroupId<ThrowOnError extends boolean = false>(
     parameters: {
       groupId: string;
@@ -1232,13 +1375,22 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "groupId" }] }]);
-    return (options?.client ?? this.client).put<PutApiAuthScimV2GroupsByGroupIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).put<
+      PutApiAuthScimV2GroupsByGroupIdResponses,
+      PutApiAuthScimV2GroupsByGroupIdErrors,
+      ThrowOnError
+    >({
       url: "/api/auth/scim/v2/Groups/{groupId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Patch a SCIM user
+   *
+   * Forwarded to the Better Auth SCIM server after the bearer token is validated; the resulting user is then synchronized into the organization's membership.
+   */
   public patchApiAuthScimV2UsersByUserId<ThrowOnError extends boolean = false>(
     parameters: {
       userId: string;
@@ -1246,13 +1398,22 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "userId" }] }]);
-    return (options?.client ?? this.client).patch<PatchApiAuthScimV2UsersByUserIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).patch<
+      PatchApiAuthScimV2UsersByUserIdResponses,
+      PatchApiAuthScimV2UsersByUserIdErrors,
+      ThrowOnError
+    >({
       url: "/api/auth/scim/v2/Users/{userId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Replace a SCIM user
+   *
+   * Forwarded to the Better Auth SCIM server after the bearer token is validated; the resulting user is then synchronized into the organization's membership.
+   */
   public putApiAuthScimV2UsersByUserId<ThrowOnError extends boolean = false>(
     parameters: {
       userId: string;
@@ -1260,20 +1421,35 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "userId" }] }]);
-    return (options?.client ?? this.client).put<PutApiAuthScimV2UsersByUserIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).put<
+      PutApiAuthScimV2UsersByUserIdResponses,
+      PutApiAuthScimV2UsersByUserIdErrors,
+      ThrowOnError
+    >({
       url: "/api/auth/scim/v2/Users/{userId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Create a SCIM user
+   *
+   * Forwarded to the Better Auth SCIM server after the bearer token is validated; the resulting user is then synchronized into the organization's membership.
+   */
   public postApiAuthScimV2Users<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).post<PostApiAuthScimV2UsersResponses, unknown, ThrowOnError>({
-      url: "/api/auth/scim/v2/Users",
-      ...options,
-    });
+    return (options?.client ?? this.client).post<
+      PostApiAuthScimV2UsersResponses,
+      PostApiAuthScimV2UsersErrors,
+      ThrowOnError
+    >({ url: "/api/auth/scim/v2/Users", ...options });
   }
 
+  /**
+   * Get OAuth authorization server metadata
+   *
+   * Returns the RFC 8414 authorization server metadata for the Den OAuth issuer used by MCP clients.
+   */
   public getApiAuthWellKnownOauthAuthorizationServer<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1284,6 +1460,11 @@ export class DenClient extends HeyApiClient {
     >({ url: "/api/auth/.well-known/oauth-authorization-server", ...options });
   }
 
+  /**
+   * Get OpenID Connect discovery document
+   *
+   * Returns the OpenID Connect Discovery 1.0 configuration for the Den OAuth issuer used by MCP clients.
+   */
   public getApiAuthWellKnownOpenidConfiguration<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1292,6 +1473,11 @@ export class DenClient extends HeyApiClient {
     );
   }
 
+  /**
+   * Get OAuth authorization server metadata
+   *
+   * Returns the RFC 8414 authorization server metadata for the Den OAuth issuer used by MCP clients.
+   */
   public getWellKnownOauthAuthorizationServerApiAuth<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1302,6 +1488,11 @@ export class DenClient extends HeyApiClient {
     >({ url: "/.well-known/oauth-authorization-server/api/auth", ...options });
   }
 
+  /**
+   * Get OpenID Connect discovery document
+   *
+   * Returns the OpenID Connect Discovery 1.0 configuration for the Den OAuth issuer used by MCP clients.
+   */
   public getWellKnownOpenidConfigurationApiAuth<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1310,6 +1501,11 @@ export class DenClient extends HeyApiClient {
     );
   }
 
+  /**
+   * Get OAuth authorization server metadata
+   *
+   * Returns the RFC 8414 authorization server metadata for the Den OAuth issuer used by MCP clients.
+   */
   public getWellKnownOauthAuthorizationServer<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1319,6 +1515,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Get OpenID Connect discovery document
+   *
+   * Returns the OpenID Connect Discovery 1.0 configuration for the Den OAuth issuer used by MCP clients.
+   */
   public getWellKnownOpenidConfiguration<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetWellKnownOpenidConfigurationResponses, unknown, ThrowOnError>({
       url: "/.well-known/openid-configuration",
@@ -1326,22 +1527,38 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Register an OAuth client dynamically
+   *
+   * RFC 7591 dynamic client registration for MCP clients. The Den registration policy validates redirect URIs and grant types before the request reaches the authorization server.
+   */
   public postRegister<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).post<PostRegisterResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<PostRegisterResponses, PostRegisterErrors, ThrowOnError>({
       url: "/register",
       ...options,
     });
   }
 
+  /**
+   * Register an OAuth client dynamically
+   *
+   * RFC 7591 dynamic client registration for MCP clients. The Den registration policy validates redirect URIs and grant types before the request reaches the authorization server.
+   */
   public postApiAuthOauth2Register<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).post<PostApiAuthOauth2RegisterResponses, unknown, ThrowOnError>({
-      url: "/api/auth/oauth2/register",
-      ...options,
-    });
+    return (options?.client ?? this.client).post<
+      PostApiAuthOauth2RegisterResponses,
+      PostApiAuthOauth2RegisterErrors,
+      ThrowOnError
+    >({ url: "/api/auth/oauth2/register", ...options });
   }
 
+  /**
+   * Start an OAuth authorization request
+   *
+   * RFC 6749 authorization endpoint. The Den request policy normalizes the MCP client's request, then the user signs in and consents through the Better Auth authorization server; the browser is redirected back to the client's redirect URI.
+   */
   public getApiAuthOauth2Authorize<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetApiAuthOauth2AuthorizeResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<unknown, GetApiAuthOauth2AuthorizeErrors, ThrowOnError>({
       url: "/api/auth/oauth2/authorize",
       ...options,
     });
@@ -1779,20 +1996,6 @@ export class DenClient extends HeyApiClient {
     });
   }
 
-  public getV1DevEmails<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetV1DevEmailsResponses, unknown, ThrowOnError>({
-      url: "/v1/dev/emails",
-      ...options,
-    });
-  }
-
-  public getV1DevEmailsLast<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetV1DevEmailsLastResponses, unknown, ThrowOnError>({
-      url: "/v1/dev/emails/last",
-      ...options,
-    });
-  }
-
   /**
    * Get current user
    *
@@ -1811,7 +2014,7 @@ export class DenClient extends HeyApiClient {
    * Lists the organizations visible to the current user and marks which organization is currently active.
    */
   public getV1MeOrgs<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetV1MeOrgsResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<GetV1MeOrgsResponses, GetV1MeOrgsErrors, ThrowOnError>({
       url: "/v1/me/orgs",
       ...options,
     });
@@ -1935,235 +2138,11 @@ export class DenClient extends HeyApiClient {
   public getAutomationDesktopRunnerPresence<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
-    return (options?.client ?? this.client).get<GetAutomationDesktopRunnerPresenceResponses, unknown, ThrowOnError>({
-      url: "/v1/automation-runners/presence",
-      ...options,
-    });
-  }
-
-  public getV1AutomationRunnersEvents<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetV1AutomationRunnersEventsResponses, unknown, ThrowOnError>({
-      url: "/v1/automation-runners/events",
-      ...options,
-    });
-  }
-
-  public getV1AutomationRunnerWork<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetV1AutomationRunnerWorkResponses, unknown, ThrowOnError>({
-      url: "/v1/automation-runner/work",
-      ...options,
-    });
-  }
-
-  public postV1RemoteSessionCommandsByIdClaim<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "id" }] }]);
-    return (options?.client ?? this.client).post<PostV1RemoteSessionCommandsByIdClaimResponses, unknown, ThrowOnError>({
-      url: "/v1/remote-session-commands/{id}/claim",
-      ...options,
-      ...params,
-    });
-  }
-
-  public postV1RemoteSessionCommandsByIdComplete<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-      body:
-        | {
-            status: "delivered";
-            sessionId: string;
-            workspaceId: string;
-            resultSummary?: string;
-            error?: unknown;
-          }
-        | {
-            status: "failed";
-            sessionId?: unknown;
-            workspaceId?: unknown;
-            resultSummary?: string;
-            error: {
-              code: string;
-              message: string;
-            };
-          };
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "id" },
-            { key: "body", map: "body" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<
-      PostV1RemoteSessionCommandsByIdCompleteResponses,
-      unknown,
+    return (options?.client ?? this.client).get<
+      GetAutomationDesktopRunnerPresenceResponses,
+      GetAutomationDesktopRunnerPresenceErrors,
       ThrowOnError
-    >({
-      url: "/v1/remote-session-commands/{id}/complete",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  public postV1AutomationRunsByIdClaim<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "id" }] }]);
-    return (options?.client ?? this.client).post<PostV1AutomationRunsByIdClaimResponses, unknown, ThrowOnError>({
-      url: "/v1/automation-runs/{id}/claim",
-      ...options,
-      ...params,
-    });
-  }
-
-  public postV1AutomationRunsByIdHeartbeat<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-      attempt: number;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "id" },
-            { in: "body", key: "attempt" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<PostV1AutomationRunsByIdHeartbeatResponses, unknown, ThrowOnError>({
-      url: "/v1/automation-runs/{id}/heartbeat",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  public postV1AutomationRunsByIdEvents<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-      attempt: number;
-      sequence: number;
-      type: "user" | "assistant" | "capability_search" | "capability_execution" | "usage" | "warning" | "terminal";
-      payload: {
-        [key: string]: unknown;
-      };
-      createdAt: number;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "id" },
-            { in: "body", key: "attempt" },
-            { in: "body", key: "sequence" },
-            { in: "body", key: "type" },
-            { in: "body", key: "payload" },
-            { in: "body", key: "createdAt" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<PostV1AutomationRunsByIdEventsResponses, unknown, ThrowOnError>({
-      url: "/v1/automation-runs/{id}/events",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  public postV1AutomationRunsByIdComplete<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-      attempt: number;
-      status: "succeeded" | "failed" | "cancelled";
-      sessionId: string | null;
-      workspaceId: string | null;
-      resultSummary: string | null;
-      usage: {
-        inputTokens: number | null;
-        outputTokens: number | null;
-        costMicros: number | null;
-      };
-      error: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable"
-          | "execution_failed"
-          | "execution_timed_out"
-          | "runner_unavailable"
-          | "cancelled"
-          | "lease_lost"
-          | "internal_error";
-        message: string;
-        retryable: boolean;
-      } | null;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "id" },
-            { in: "body", key: "attempt" },
-            { in: "body", key: "status" },
-            { in: "body", key: "sessionId" },
-            { in: "body", key: "workspaceId" },
-            { in: "body", key: "resultSummary" },
-            { in: "body", key: "usage" },
-            { in: "body", key: "error" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<PostV1AutomationRunsByIdCompleteResponses, unknown, ThrowOnError>({
-      url: "/v1/automation-runs/{id}/complete",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
+    >({ url: "/v1/automation-runners/presence", ...options });
   }
 
   /**
@@ -2579,7 +2558,7 @@ export class DenClient extends HeyApiClient {
         },
       ],
     );
-    return (options?.client ?? this.client).get<ListAutomationRunsResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<ListAutomationRunsResponses, ListAutomationRunsErrors, ThrowOnError>({
       url: "/v1/automations/{id}/runs",
       ...options,
       ...params,
@@ -2846,15 +2825,26 @@ export class DenClient extends HeyApiClient {
   /**
    * List Workflow runs
    *
-   * Lists Workflow run receipts visible to the active organization member.
+   * Lists Workflow run receipts visible to the active organization member, newest first. Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page.
    */
   public getV1WorkflowRuns<ThrowOnError extends boolean = false>(
     parameters?: {
+      cursor?: string;
       limit?: number;
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "limit" }] }]);
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "cursor" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    );
     return (options?.client ?? this.client).get<GetV1WorkflowRunsResponses, GetV1WorkflowRunsErrors, ThrowOnError>({
       url: "/v1/workflow-runs",
       ...options,
@@ -2864,6 +2854,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List accessible Workflows
+   *
+   * Lists every Workflow the calling member can reach through Plugin or direct grants, each with the Plugin it executes under, its latest immutable version id, declared inputSchema and outputSchema, and the capabilities it calls. Workflows whose latest version cannot be parsed are omitted. Use the returned configObjectVersionId to run an exact version.
    */
   public getV1Workflows<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1WorkflowsResponses, GetV1WorkflowsErrors, ThrowOnError>({
@@ -2874,6 +2866,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Save a successful Code Mode run as a Workflow inside an OpenWork Connect Plugin
+   *
+   * Turns the caller's most recent successful execute_capability_script run into a reusable Workflow: code must match that run byte-for-byte and the run must be less than 15 minutes old (400 workflow_recent_receipt_required), and the tool calls the run made become the Workflow's requiredCapabilities (400 workflow_capability_unavailable when one is no longer in the caller's tool tree). Omit pluginId to save into the member's private My Workflows Plugin, created on first use; passing pluginId requires editor access to that Plugin. Saving a name that already exists in the Plugin adds a new immutable version to that Workflow, which requires manager access to it.
    */
   public saveWorkflow<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2917,6 +2911,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Inspect a Workflow
+   *
+   * Returns the Workflow's library entry (caller role, connection readiness, result freshness, view state, Automation count), its detail (current and past versions, latest snapshot, latest successful snapshot), and the generated Artifact views bound to it. maxAgeMs (60 seconds to 30 days, default 24 hours) is the threshold that classifies the latest result as fresh or stale. Version code and example input are redacted for members without manager access; when generated Artifact views are disabled for the deployment, views is empty and viewState is default.
    */
   public getV1WorkflowsByConfigObjectId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2949,6 +2945,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List saved reusable apps
+   *
+   * Lists active Artifact views that have a saved revision and whose Workflow the caller can read, newest first, each with the Workflow title, whether the caller can manage it, and whether it is on the caller's personal dashboard. When generated Artifact views are disabled for the deployment, returns enabled: false and an empty list.
    */
   public getV1Apps<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1AppsResponses, unknown, ThrowOnError>({
@@ -2959,6 +2957,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Share a saved app with a teammate
+   *
+   * Grants the teammate identified by email viewer access to the app's underlying Workflow and places the app on their personal dashboard; result data is never copied. An existing editor or manager grant for that teammate is kept, so repeated shares never downgrade access. Requires manager access to the Workflow and an app with an active saved revision; fails with teammate_not_found when no active member of the organization has that email.
    */
   public postV1AppsByAppIdShare<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2996,6 +2996,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Open an app or an exact draft preview
+   *
+   * Returns the app with the compiled HTML of one revision and the artifact payload it should render. Without revisionId the active saved revision is used; pass revisionId to preview an exact draft revision instead. The data comes from the Workflow's latest successful snapshot, or from the snapshot named by receiptId. When the revision has not finished building, no readable successful result exists, or the result's output schema no longer matches the revision, html and payload are null and previewNotice explains why.
    */
   public getV1AppsByAppId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3026,6 +3028,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Add or remove an app on your personal dashboard
+   *
+   * Adds (added: true) or removes (added: false) the app on the calling member's personal dashboard. Adding requires an app with an active saved revision that the caller can read; removal also works after access to the app has been revoked. Both directions are idempotent.
    */
   public postV1AppsByAppIdDashboard<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3059,6 +3063,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Save an exact app revision for reuse
+   *
+   * Activates the exact revisionId as the app's saved revision, sets its title and useInWorkflow flag, and places the app on the caller's dashboard in one transaction. Requires manager access to the Workflow; the revision must have finished building (artifact_view_revision_not_ready) and its output schema must match the Workflow's current version (artifact_view_schema_incompatible). expectedActiveRevisionId must equal the revision that is active right now (null when none); otherwise the save is refused with 409 app_changed_since_preview so a stale preview cannot overwrite a newer save.
    */
   public postV1AppsByAppIdSave<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3098,6 +3104,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List generated Artifact views for a Workflow
+   *
+   * Lists the generated Artifact views bound to this Workflow, newest first, each with its recent revisions and their build status. Requires read access to the Workflow. Returns an empty list when generated Artifact views are disabled for the deployment.
    */
   public getV1WorkflowsByConfigObjectIdViews<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3106,7 +3114,11 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "configObjectId" }] }]);
-    return (options?.client ?? this.client).get<GetV1WorkflowsByConfigObjectIdViewsResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<
+      GetV1WorkflowsByConfigObjectIdViewsResponses,
+      GetV1WorkflowsByConfigObjectIdViewsErrors,
+      ThrowOnError
+    >({
       url: "/v1/workflows/{configObjectId}/views",
       ...options,
       ...params,
@@ -3115,6 +3127,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Activate or roll back an immutable Artifact view revision
+   *
+   * Makes revisionId the active revision of the Artifact view and marks the view active; selecting an older revision performs a rollback without changing its bytes. The revision must have built successfully and not be retired (artifact_view_revision_not_ready), and its output schema digest must match the Workflow's current version (artifact_view_schema_incompatible). Requires manager access to the Workflow.
    */
   public postV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivate<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3136,7 +3150,7 @@ export class DenClient extends HeyApiClient {
     );
     return (options?.client ?? this.client).post<
       PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateResponses,
-      unknown,
+      PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateErrors,
       ThrowOnError
     >({
       url: "/v1/artifact-views/{artifactViewId}/revisions/{revisionId}/activate",
@@ -3147,6 +3161,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Retire a generated Artifact view
+   *
+   * Retires the Artifact view: its status becomes retired, it loses its active revision and useInWorkflow flag, and it is removed from every member's dashboard. Immutable revisions are kept, so activating one later restores the view. Requires manager access to the Workflow.
    */
   public postV1ArtifactViewsByArtifactViewIdRetire<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3157,7 +3173,7 @@ export class DenClient extends HeyApiClient {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "artifactViewId" }] }]);
     return (options?.client ?? this.client).post<
       PostV1ArtifactViewsByArtifactViewIdRetireResponses,
-      unknown,
+      PostV1ArtifactViewsByArtifactViewIdRetireErrors,
       ThrowOnError
     >({
       url: "/v1/artifact-views/{artifactViewId}/retire",
@@ -3168,6 +3184,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List immutable Workflow versions
+   *
+   * Lists the Workflow's immutable versions, newest first, each with its code, call graph, schemas, requiredCapabilities, digests, and the caller's own Automations that pin it. Code, example input, and source-derived graph labels are redacted for members without manager access. Requires read access to the Workflow.
    */
   public getV1WorkflowsByConfigObjectIdVersions<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3176,17 +3194,21 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "configObjectId" }] }]);
-    return (options?.client ?? this.client).get<GetV1WorkflowsByConfigObjectIdVersionsResponses, unknown, ThrowOnError>(
-      {
-        url: "/v1/workflows/{configObjectId}/versions",
-        ...options,
-        ...params,
-      },
-    );
+    return (options?.client ?? this.client).get<
+      GetV1WorkflowsByConfigObjectIdVersionsResponses,
+      GetV1WorkflowsByConfigObjectIdVersionsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/workflows/{configObjectId}/versions",
+      ...options,
+      ...params,
+    });
   }
 
   /**
    * Create an immutable Workflow version using the immediately preceding matching test receipt and unchanged draft
+   *
+   * Appends a new immutable version to the Workflow and updates its name and description. receiptId must reference a successful draft test by the caller that is less than 15 minutes old, has not already produced a version, and whose code, exampleInput, inputSchema, outputSchema, name, description, and requiredCapabilities all match this body byte-for-byte (400 workflow_matching_test_receipt_required). Every capability the test actually called must be listed in requiredCapabilities and still be available to the caller (400 workflow_capability_unavailable). Requires manager access to the Workflow.
    */
   public postV1WorkflowsByConfigObjectIdVersions<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3241,10 +3263,13 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List Workflow artifact snapshots
+   *
+   * Lists run receipts of saved versions of this Workflow, most recently finished first, including failed runs and runs whose content was deleted (value and markdown are null and contentDeletedAt is set). Draft test runs are not snapshots and never appear here. limit caps the result at 1 to 200 rows (default 100). Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page. Requires read access to the Workflow.
    */
   public getV1WorkflowsByConfigObjectIdSnapshots<ThrowOnError extends boolean = false>(
     parameters: {
       configObjectId: string;
+      cursor?: string;
       limit?: number;
     },
     options?: Options<never, ThrowOnError>,
@@ -3255,6 +3280,7 @@ export class DenClient extends HeyApiClient {
         {
           args: [
             { in: "path", key: "configObjectId" },
+            { in: "query", key: "cursor" },
             { in: "query", key: "limit" },
           ],
         },
@@ -3262,7 +3288,7 @@ export class DenClient extends HeyApiClient {
     );
     return (options?.client ?? this.client).get<
       GetV1WorkflowsByConfigObjectIdSnapshotsResponses,
-      unknown,
+      GetV1WorkflowsByConfigObjectIdSnapshotsErrors,
       ThrowOnError
     >({
       url: "/v1/workflows/{configObjectId}/snapshots",
@@ -3273,6 +3299,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Inspect one Workflow artifact snapshot
+   *
+   * Returns one run receipt of a saved version of this Workflow: the validated result value, its Markdown rendering, code and schema digests, tool calls, status, error details, and whether it was produced by an Automation. value and markdown are null once the content has been deleted. Requires read access to the Workflow; receiptId must belong to this Workflow.
    */
   public getV1WorkflowsByConfigObjectIdSnapshotsByReceiptId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3305,6 +3333,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Test the exact Workflow draft and return the receiptId required to create that unchanged version
+   *
+   * Executes the draft code once with exampleInput against the caller's live tools, validating the input against inputSchema and the result against outputSchema, and records a durable test receipt. The returned receiptId is the proof required by POST /v1/workflows/{configObjectId}/versions and is only accepted when every draft field is resubmitted unchanged within 15 minutes. Requires manager access to the Workflow; a script failure, argument mismatch, or result mismatch is returned as a 400 with the error code and message.
    */
   public postV1WorkflowsTest<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3355,6 +3385,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Run an exact Workflow version
+   *
+   * Executes the version identified by configObjectVersionId of this Workflow, under the Plugin named by pluginId, with input as the script's input, using the caller's live tools, and records a snapshot receipt. The input is validated against the version's inputSchema and the result against its outputSchema; a mismatch is rejected with 400 invalid_capability_arguments, a required capability that is unavailable with capability_unavailable, and a thrown script error with script_failed. The caller needs a Workflow, Plugin, or Marketplace grant that covers this Workflow; an unknown Workflow or Plugin returns unknown_capability and a missing grant returns forbidden, both as 400.
    */
   public postV1WorkflowsByConfigObjectIdRun<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3396,6 +3428,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete artifact content while retaining its audit receipt
+   *
+   * Clears the stored input, result value, and Markdown of one snapshot and stamps contentDeletedAt, while the receipt itself (digests, tool calls, status, timings) stays in history. When the snapshot came from an Automation, that Automation's latest successful result is re-pointed to its newest remaining readable snapshot. Idempotent: deleting already-deleted content returns the snapshot unchanged. Requires manager access to the Workflow.
    */
   public deleteV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdContent<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3417,7 +3451,7 @@ export class DenClient extends HeyApiClient {
     );
     return (options?.client ?? this.client).delete<
       DeleteV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdContentResponses,
-      unknown,
+      DeleteV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdContentErrors,
       ThrowOnError
     >({
       url: "/v1/workflows/{configObjectId}/snapshots/{receiptId}/content",
@@ -3428,6 +3462,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List dashboards
+   *
+   * Lists every dashboard in the organization, ordered by name, with its ordered MCP App elements. Workspace owners and admins only; members read the dashboards granted to them through GET /v1/me/dashboards.
    */
   public getV1Dashboards<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1DashboardsResponses, GetV1DashboardsErrors, ThrowOnError>({
@@ -3438,6 +3474,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create dashboard
+   *
+   * Creates an organization-owned dashboard: a named, ordered list of up to 50 MCP App elements, each pointing at a ui:// resource served by a connected MCP server. Nobody sees the dashboard until access is granted through POST /v1/dashboards/{dashboardId}/access.
    */
   public postV1Dashboards<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3471,6 +3509,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete dashboard
+   *
+   * Soft-deletes the dashboard so it disappears from admin lists and from every member's granted dashboards. Its access grants are kept but stop applying; there is no restore.
    */
   public deleteV1DashboardsByDashboardId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3492,6 +3532,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Get dashboard
+   *
+   * Returns one dashboard with its ordered MCP App elements. Deleted dashboards answer 404.
    */
   public getV1DashboardsByDashboardId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3513,6 +3555,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update dashboard
+   *
+   * Partially updates a dashboard. Send name, elements, or both; when elements is present it replaces the whole ordered element list.
    */
   public patchV1DashboardsByDashboardId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3552,6 +3596,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List dashboard access grants
+   *
+   * Lists every access grant on the dashboard, oldest first, including revoked grants (removedAt set). Each grant targets exactly one member, one team, or the whole organization.
    */
   public getV1DashboardsByDashboardIdAccess<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3618,6 +3664,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Revoke dashboard access
+   *
+   * Revokes one access grant by setting removedAt; the grant row is kept so regranting the same subject reactivates it. Revoking an already revoked grant answers 204 again.
    */
   public deleteV1DashboardsByDashboardIdAccessByGrantId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3650,6 +3698,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List dashboards granted to the current member
+   *
+   * Returns the dashboards the signed-in member can see: granted directly, through one of their teams, or org-wide, deduplicated and ordered by name. The desktop MCP Apps dashboard renders these as read-only tiles.
    */
   public getV1MeDashboards<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1MeDashboardsResponses, GetV1MeDashboardsErrors, ThrowOnError>({
@@ -3660,6 +3710,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete desktop-policies by stable key
+   *
+   * Deletes the desktop policy identified by its stable externalKey. Idempotent: deleting a key that does not exist is reported as already removed.
    */
   public deleteV1DesktopPoliciesByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3681,6 +3733,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read desktop-policies by stable key
+   *
+   * Reads the desktop policy identified by the stable externalKey assigned through declarative provisioning.
    */
   public getV1DesktopPoliciesByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3753,6 +3807,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete desktop policy
+   *
+   * Soft-deletes a custom desktop policy, disables it, and releases its stable externalKey for reuse. The default policy cannot be deleted (400 default_policy_required).
    */
   public deleteV1DesktopPoliciesByDesktopPolicyId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3774,6 +3830,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read desktop-policies by id
+   *
+   * Reads a single desktop policy by id.
    */
   public getV1DesktopPoliciesByDesktopPolicyId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3795,6 +3853,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update desktop policy
+   *
+   * Rewrites one desktop policy. The full write body is required: the policy document is replaced (access, execution, and onboarding prompts omitted from it are carried over from the stored document) and the member, team, and role assignments are replaced with the ones sent. The default policy keeps its name, priority, and assignments and cannot be disabled (400 default_policy_required).
    */
   public patchV1DesktopPoliciesByDesktopPolicyId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3844,6 +3904,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List desktop policies
+   *
+   * Returns the organization's desktop policies, default policy first and then by name, each with its member, team, and role assignments, alongside the definitions catalog describing every setting a policy document can control. Workspace owners and admins can read; writes require super-admin.
    */
   public getV1DesktopPolicies<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<
@@ -3855,6 +3917,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create desktop policy
+   *
+   * Creates a desktop policy from a policy document plus optional priority, enabled flag, and assignments to members, teams, or roles (owner, admin, member). Requires the Enterprise plan; referenced members and teams must belong to the organization.
    */
   public postV1DesktopPolicies<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3988,6 +4052,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read the OpenWork Models task analytics choice
+   *
+   * Returns the organization's task analytics state for OpenWork Models: whether the feature is available and the organization has an active Models subscription, whether collection is enabled and when it was consented to, and whether export to a configured Langfuse host is on. Any member can read it.
    */
   public getV1InferenceAnalyticsSettings<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1InferenceAnalyticsSettingsResponses, unknown, ThrowOnError>({
@@ -3998,6 +4064,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Choose whether to collect task analytics included with OpenWork Models
+   *
+   * Turns task analytics collection on or off for the organization. Workspace owners and admins only. Enabling requires the feature, an active OpenWork Models subscription, and consentVersion 1 (403 models_analytics_unavailable otherwise); repeating an already enabled choice keeps the original consent time as the collection cutoff, and disabling also switches export off.
    */
   public patchV1InferenceAnalyticsSettings<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4029,6 +4097,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Report task analytics events for the calling member's OpenWork Models calls
+   *
+   * Accepts runtime metadata for tasks the member actually ran through OpenWork Models; events for other members' tasks or BYOK calls are dropped. Answers 204 when the organization has not opted into task analytics.
+   */
   public postV1InferenceAnalyticsEvents<ThrowOnError extends boolean = false>(
     parameters: {
       events: Array<{
@@ -4067,7 +4140,11 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "events" }] }]);
-    return (options?.client ?? this.client).post<PostV1InferenceAnalyticsEventsResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<
+      PostV1InferenceAnalyticsEventsResponses,
+      PostV1InferenceAnalyticsEventsErrors,
+      ThrowOnError
+    >({
       url: "/v1/inference/analytics/events",
       ...options,
       ...params,
@@ -4081,6 +4158,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read task activity collected after the analytics choice
+   *
+   * Returns the task analytics events recorded for the organization over the last `days` days (default 30, max 90), newest first, 200 per page with a `next` cursor made of before + beforeId. Filter by memberId, taskId, or sessionId. Workspace owners and admins only; answers 403 models_analytics_unavailable while collection is disabled.
    */
   public getV1InferenceAnalyticsActivity<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -4117,6 +4196,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read provider-reported consumption for OpenWork Models
+   *
+   * Aggregates provider-reported OpenWork Models calls per model, provider, member, and day over the last `days` days (default 30, max 90): call counts, failed and incomplete calls, input, output, and cache-read tokens, and cost in USD. Optionally filter by memberId. Workspace owners and admins only; answers 403 models_analytics_unavailable while collection is disabled and 400 narrow_date_range when the range would produce more than 10,000 groups.
    */
   public getV1InferenceAnalyticsConsumption<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -4151,6 +4232,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Test a Langfuse analytics export destination
+   *
+   * Sends an empty batch to the given Langfuse host with the project keys to verify connectivity. Nothing is stored.
+   */
   public postV1InferenceAnalyticsLangfuseTest<ThrowOnError extends boolean = false>(
     parameters: {
       host: string;
@@ -4171,7 +4257,11 @@ export class DenClient extends HeyApiClient {
         },
       ],
     );
-    return (options?.client ?? this.client).post<PostV1InferenceAnalyticsLangfuseTestResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<
+      PostV1InferenceAnalyticsLangfuseTestResponses,
+      PostV1InferenceAnalyticsLangfuseTestErrors,
+      ThrowOnError
+    >({
       url: "/v1/inference/analytics/langfuse/test",
       ...options,
       ...params,
@@ -4183,6 +4273,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Connect a Langfuse analytics export destination
+   *
+   * Verifies connectivity, then stores the Langfuse destination and starts exporting task analytics recorded from now on. Requires the organization to have opted into task analytics.
+   */
   public postV1InferenceAnalyticsLangfuseConnect<ThrowOnError extends boolean = false>(
     parameters: {
       host: string;
@@ -4205,7 +4300,7 @@ export class DenClient extends HeyApiClient {
     );
     return (options?.client ?? this.client).post<
       PostV1InferenceAnalyticsLangfuseConnectResponses,
-      unknown,
+      PostV1InferenceAnalyticsLangfuseConnectErrors,
       ThrowOnError
     >({
       url: "/v1/inference/analytics/langfuse/connect",
@@ -4219,13 +4314,19 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Disconnect the Langfuse analytics export destination
+   *
+   * Stops exporting and forgets the stored Langfuse host and project keys.
+   */
   public deleteV1InferenceAnalyticsLangfuse<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
-    return (options?.client ?? this.client).delete<DeleteV1InferenceAnalyticsLangfuseResponses, unknown, ThrowOnError>({
-      url: "/v1/inference/analytics/langfuse",
-      ...options,
-    });
+    return (options?.client ?? this.client).delete<
+      DeleteV1InferenceAnalyticsLangfuseResponses,
+      DeleteV1InferenceAnalyticsLangfuseErrors,
+      ThrowOnError
+    >({ url: "/v1/inference/analytics/langfuse", ...options });
   }
 
   /**
@@ -4384,6 +4485,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Cancel an organization SSO authentication test
+   *
+   * Marks the caller's in-flight SSO test intent as cancelled so it can no longer be started or completed. Only the administrator who created the intent can cancel it; unknown or foreign intents are ignored and still answer 204.
    */
   public postV1SsoTestByIntentIdCancel<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4392,7 +4495,11 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "intentId" }] }]);
-    return (options?.client ?? this.client).post<PostV1SsoTestByIntentIdCancelResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<
+      PostV1SsoTestByIntentIdCancelResponses,
+      PostV1SsoTestByIntentIdCancelErrors,
+      ThrowOnError
+    >({
       url: "/v1/sso/test/{intentId}/cancel",
       ...options,
       ...params,
@@ -4401,6 +4508,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Enable the tested organization SSO configuration
+   *
+   * Switches the organization's SSO connection to enabled once its domain is verified and the current configuration revision has a successful test. Any other state, including a configuration edited after its last test, answers 409 with an explanatory message. Requires the Enterprise plan; the change is recorded in the organization audit log.
    */
   public postV1SsoEnable<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).post<PostV1SsoEnableResponses, PostV1SsoEnableErrors, ThrowOnError>({
@@ -4411,9 +4520,11 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Disable organization SSO
+   *
+   * Switches the organization's SSO connection to disabled while keeping its provider configuration, so it can be tested and enabled again later. Answers 404 when the organization has no SSO connection; the change is recorded in the organization audit log.
    */
   public postV1SsoDisable<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).post<PostV1SsoDisableResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<PostV1SsoDisableResponses, PostV1SsoDisableErrors, ThrowOnError>({
       url: "/v1/sso/disable",
       ...options,
     });
@@ -4731,6 +4842,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete llm-providers by stable key
+   *
+   * Deletes the LLM provider identified by its stable externalKey. Idempotent: deleting a key that does not exist is reported as already removed.
    */
   public deleteV1LlmProvidersByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4752,6 +4865,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read llm-providers by stable key
+   *
+   * Reads the LLM provider identified by the stable externalKey assigned through declarative provisioning.
    */
   public getV1LlmProvidersByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4859,6 +4974,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read llm-providers by id
+   *
+   * Reads a single LLM provider by id.
    */
   public getV1LlmProvidersByLlmProviderId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5119,6 +5236,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete the calling member's LLM provider credential
+   *
+   * Removes the calling member's own stored credential on a granted per-member provider. Answers 200 even when no credential was stored. A credential an admin has blocked is admin-owned and cannot be removed by the member (409 credential_blocked).
    */
   public deleteV1LlmProvidersByLlmProviderIdMyCredential<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5257,6 +5376,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Block one member's LLM provider credential
+   *
+   * Admin-only. Marks one member's credential on the provider as blocked: it is no longer used for inference and the member can neither delete nor overwrite it. Storing a new credential for that member through the admin PUT endpoint is the unblock path.
    */
   public postV1LlmProvidersByLlmProviderIdMemberCredentialsByOrgMembershipIdBlock<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7687,6 +7808,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Get the tool policy for an External MCP Connection
+   *
+   * Returns the admin-managed tool policy for one connection: whether every tool is disabled, the individual tool names that are disabled, and who last changed it. Disabled tools are hidden from capability search and Code Mode and refused when called. Workspace owners and admins only.
    */
   public getV1McpConnectionsByConnectionIdToolPolicy<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7708,6 +7831,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update the tool policy for an External MCP Connection
+   *
+   * Replaces the connection's tool policy with the full desired state: allDisabled plus the complete list of disabled tool names (duplicates are collapsed). The policy takes effect immediately for capability search, Code Mode, and tool execution and records the calling admin as its author.
    */
   public putV1McpConnectionsByConnectionIdToolPolicy<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7894,6 +8019,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Remove an External MCP Connection
+   *
+   * Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. Workspace owners and super-admins can remove any connection; other members only the connections they created. Session callers must have signed in within the last 15 minutes (403 reauth); API-key callers are exempt.
    */
   public deleteV1McpConnectionsByConnectionId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -9399,6 +9526,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete marketplace by stable key
+   *
+   * Deletes the marketplace identified by its stable externalKey. Idempotent: deleting a key that does not exist is reported as already removed.
    */
   public deleteV1MarketplacesByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -9420,6 +9549,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read marketplace by stable key
+   *
+   * Reads the marketplace identified by the stable externalKey assigned through declarative provisioning.
    */
   public getV1MarketplacesByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -11401,6 +11532,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete teams by stable key
+   *
+   * Deletes the team identified by its stable externalKey. Idempotent: deleting a key that does not exist is reported as already removed.
    */
   public deleteV1TeamsByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -11418,6 +11551,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read teams by stable key
+   *
+   * Reads the team identified by the stable externalKey assigned through declarative provisioning.
    */
   public getV1TeamsByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -11505,6 +11640,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read teams by id
+   *
+   * Reads a single team by id.
    */
   public getV1TeamsByTeamId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -11673,15 +11810,26 @@ export class DenClient extends HeyApiClient {
   /**
    * List workers
    *
-   * Lists the workers that belong to the caller's active organization, including each worker's latest known instance state.
+   * Lists the workers that belong to the caller's active organization, newest first, including each worker's latest known instance state. Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page.
    */
   public getV1Workers<ThrowOnError extends boolean = false>(
     parameters?: {
+      cursor?: string;
       limit?: number;
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "limit" }] }]);
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "cursor" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    );
     return (options?.client ?? this.client).get<GetV1WorkersResponses, GetV1WorkersErrors, ThrowOnError>({
       url: "/v1/workers",
       ...options,
@@ -11920,6 +12068,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Get OAuth protected resource metadata for /mcp
+   *
+   * Returns the RFC 9728 protected-resource metadata MCP clients use to discover the authorization server and scopes for this transport.
+   */
   public getWellKnownOauthProtectedResource<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -11929,6 +12082,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Get OAuth protected resource metadata for /mcp
+   *
+   * Returns the RFC 9728 protected-resource metadata MCP clients use to discover the authorization server and scopes for this transport.
+   */
   public getWellKnownOauthProtectedResourceMcp<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -11938,6 +12096,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Get OAuth protected resource metadata for /mcp
+   *
+   * Returns the RFC 9728 protected-resource metadata MCP clients use to discover the authorization server and scopes for this transport.
+   */
   public getMcpWellKnownOauthProtectedResource<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -11947,6 +12110,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Get OAuth protected resource metadata for /mcp/agent
+   *
+   * Returns the RFC 9728 protected-resource metadata MCP clients use to discover the authorization server and scopes for this transport.
+   */
   public getWellKnownOauthProtectedResourceMcpAgent<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -11957,6 +12125,11 @@ export class DenClient extends HeyApiClient {
     >({ url: "/.well-known/oauth-protected-resource/mcp/agent", ...options });
   }
 
+  /**
+   * Get OAuth protected resource metadata for /mcp/agent
+   *
+   * Returns the RFC 9728 protected-resource metadata MCP clients use to discover the authorization server and scopes for this transport.
+   */
   public getMcpAgentWellKnownOauthProtectedResource<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -11967,6 +12140,11 @@ export class DenClient extends HeyApiClient {
     >({ url: "/mcp/agent/.well-known/oauth-protected-resource", ...options });
   }
 
+  /**
+   * Get OAuth protected resource metadata for /mcp/admin
+   *
+   * Returns the RFC 9728 protected-resource metadata MCP clients use to discover the authorization server and scopes for this transport.
+   */
   public getWellKnownOauthProtectedResourceMcpAdmin<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -11977,6 +12155,11 @@ export class DenClient extends HeyApiClient {
     >({ url: "/.well-known/oauth-protected-resource/mcp/admin", ...options });
   }
 
+  /**
+   * Get OAuth protected resource metadata for /mcp/admin
+   *
+   * Returns the RFC 9728 protected-resource metadata MCP clients use to discover the authorization server and scopes for this transport.
+   */
   public getMcpAdminWellKnownOauthProtectedResource<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {

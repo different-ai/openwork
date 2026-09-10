@@ -14,15 +14,44 @@ import {
 
 const test = spec.world(preseededConnect, { timeout: 600_000 });
 
-test("bundled engine connects to preseeded organization skills and connections", async ({ world, user, agent, seed, probe, step, evidence }) => {
-  await user.click("Library");
-  await user.see({ text: "Library" });
+test("bundled engine recovers from a startup outage and uses preseeded organization skills and connections", async ({ world, user, agent, seed, probe, step, evidence }) => {
+  await user.see("composer", { editable: true });
+  const taskRoute = await probe.hash();
+  expect(taskRoute).toBe(`#/workspace/${world.workspaceId}/session`);
   const signedOut = await probe.connectState(world.app);
   expect(signedOut).toMatchObject({ status: "missing", connectEnabled: false });
   expect(signedOut).not.toMatchObject({ status: "available" });
   await user.screenshot();
 
-  await seed.signIn(world.app, world.member, "admin");
+  const tokenRequests = async () => (await world.proxy.requestLog())
+    .filter((request) => request.method === "POST" && request.path === world.tokenPath);
+  const firstFailure = await step("desktop startup maintenance encounters a sustained token-mint outage", async () => {
+    await seed.signIn(world.app, world.member, "admin");
+    const first = await probe.eventually(async () => (await tokenRequests())
+      .find((request) => request.faulted && request.status === 503), {
+      within: 60_000,
+      label: "the desktop reaches the startup token-mint fault",
+    });
+    if (!first) throw new Error("Desktop startup did not encounter the token-mint fault.");
+
+    // Measure from an observed desktop failure, not world boot: slow startup
+    // must not consume the outage before maintenance ever reaches it.
+    const observedAt = Date.now();
+    const outage = await probe.eventually(async () => ({
+      requests: await tokenRequests(),
+      heldForMs: Date.now() - observedAt,
+    }), {
+      within: 60_000,
+      label: "startup remains unavailable beyond the initial 1s/3s retry burst",
+      until: (value) => value.heldForMs >= 10_000 && value.requests.length >= 3,
+    });
+    expect(outage.requests.every((request) => request.faulted && request.status === 503)).toBe(true);
+    expect(await probe.desktopApi(`/workspace/${world.workspaceId}/mcp/openwork-cloud/health`))
+      .toMatchObject({ status: 200, body: { usable: false } });
+    expect(await probe.hash()).toBe(taskRoute);
+    return first;
+  });
+
   const signedIn = await probe.eventually(
     () => probe.connectState(world.app),
     {
@@ -32,6 +61,19 @@ test("bundled engine connects to preseeded organization skills and connections",
     },
   );
   expect(signedIn).toMatchObject({ status: "available", connectEnabled: true });
+
+  await step("restore connectivity without navigation, reload, focus, online, or manual retry", async () => {
+    await world.proxy.faults.clear();
+    await world.proxy.faults.status("/api/runtime-config", 200, { times: 1000, body: world.runtimeConfig });
+  });
+
+  // Observe UI convergence before asking the server to probe health: the test
+  // must not supply the recovery trigger it is asserting happens automatically.
+  await probe.eventually(() => probe.dom('[data-testid="account-status-menu"][data-connect-state="ready"]'), {
+    within: 120_000,
+    label: "the task screen reports Connect ready after background recovery",
+    until: (value) => value.elements.length === 1,
+  });
 
   const health = await probe.eventually(
     // TODO(primitive): probe.cloudMcpHealth
@@ -63,6 +105,14 @@ test("bundled engine connects to preseeded organization skills and connections",
     "openwork-cloud_search_capabilities",
     "openwork-cloud_execute_capability",
   ]));
+  const recoveredMint = (await tokenRequests()).find((request) => !request.faulted && request.status === 200);
+  if (!recoveredMint) throw new Error("Connect became ready without a successful desktop token mint through the restored connection.");
+  // Exclude the five-minute maintenance interval as the recovery mechanism.
+  expect(recoveredMint.at - firstFailure.at).toBeLessThan(120_000);
+  expect(await probe.hash()).toBe(taskRoute);
+  await user.see("composer", { editable: true });
+  evidence.recordAssertionEvidence("Connect recovers from a startup outage without a UI recovery action",
+    "The desktop encountered at least three HTTP 503 token-mint failures over a fault held for at least ten seconds after an observed failure. A later background mint succeeded within two minutes of the first failure; the unchanged task route reported Ready with both engine and direct Cloud tools present before any navigation or agent send.", true);
 
   await step("the preseeded skill is discovered and executed", async () => {
     const search = await seed.api(world.mcpSession, "/mcp/agent", {

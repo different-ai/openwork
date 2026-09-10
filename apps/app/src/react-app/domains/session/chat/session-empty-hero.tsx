@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ArrowRight, X, Zap } from "lucide-react";
 
 import { DEFAULT_MODEL } from "@/app/constants";
@@ -15,6 +15,8 @@ import {
   useOpenWorkModelsPromoEligibility,
 } from "@/react-app/domains/cloud/openwork-models-promo";
 import { usePlatform } from "@/react-app/kernel/platform";
+import { persistableComposerDraftText } from "@/react-app/domains/session/surface/composer-state-store";
+import { useNewTaskDraftState } from "@/react-app/domains/session/sync/draft-store";
 import {
   NewTaskComposer,
   type NewTaskComposerContext,
@@ -73,7 +75,19 @@ export type SessionEmptyHeroProps = {
  * built-in defaults otherwise.
  */
 export function SessionEmptyHero(props: SessionEmptyHeroProps) {
-  const [prompt, setPrompt] = useState("");
+  // The session is created on submit, so until then the prompt has no
+  // conversation to live in. Persist it under the workspace's reserved slot so
+  // opening another session (or restarting) does not lose it; the sidebar
+  // offers a Draft row for the same slot. The parent keys this component by
+  // draft owner, so the initial read is the only hydration needed.
+  const persistedDraft = useNewTaskDraftState(props.composer?.draftScope, props.composer?.workspaceId);
+  const [prompt, setPromptState] = useState(() => persistedDraft.snapshot?.text ?? "");
+  const persistPrompt = persistedDraft.save;
+  const setPrompt = useCallback((value: string) => {
+    setPromptState(value);
+    // Attachment chips only exist in memory (File objects); the stored text drops their tokens.
+    persistPrompt({ text: persistableComposerDraftText(value), mode: "prompt" });
+  }, [persistPrompt]);
   const orgRestrictions = useOrgRestrictions();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const canAddProviders = !checkDesktopRestriction({ restriction: "allowCustomProviders" });
