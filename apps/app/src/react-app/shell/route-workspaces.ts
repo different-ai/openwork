@@ -69,6 +69,16 @@ async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promis
     : endpoint;
 }
 
+function nativeRouteSessionClient(native: ResolvedWorkspaceEndpoint, directory?: string) {
+  return isOpencodeV2BaseUrl(native.opencodeBaseUrl)
+    ? createClientV2(native.opencodeBaseUrl, directory, { token: native.token })
+    : createClient(native.opencodeBaseUrl, directory, { token: native.token, mode: "openwork" });
+}
+
+export async function createRouteSessionClient(endpoint: ResolvedWorkspaceEndpoint, directory?: string) {
+  return nativeRouteSessionClient(await routeSessionEndpoint(endpoint), directory);
+}
+
 /**
  * Create a session and report the engine endpoint that owns it. Callers that
  * key follow-up state by `opencodeBaseUrl` (the hero's one-step auto-send) must
@@ -80,9 +90,7 @@ export async function createRouteSessionOnEngine(
   directory?: string,
 ): Promise<{ session: Session; endpoint: ResolvedWorkspaceEndpoint }> {
   const native = await routeSessionEndpoint(endpoint);
-  const client = isOpencodeV2BaseUrl(native.opencodeBaseUrl)
-    ? createClientV2(native.opencodeBaseUrl, directory, { token: native.token })
-    : createClient(native.opencodeBaseUrl, directory, { token: native.token, mode: "openwork" });
+  const client = nativeRouteSessionClient(native, directory);
   return { session: unwrap(await client.session.create({ directory })), endpoint: native };
 }
 

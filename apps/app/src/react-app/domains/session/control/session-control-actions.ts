@@ -7,6 +7,8 @@ import { deleteRouteSession } from "../../../shell/route-workspaces";
 import type { ResolvedWorkspaceEndpoint } from "../../../../app/lib/workspace-endpoint";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
+import { useSessionActivityStore } from "../status/session-activity-store";
+import { sessionAttentionCacheIds } from "./session-attention-owners";
 import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
 import { controlWorkspaceLabel as workspaceLabel, listControlSessions, type ControlSessionLike as SessionLike } from "./list-control-sessions";
 
@@ -95,7 +97,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.list_sessions",
     label: "List available sessions",
-    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
+    description: "Return every loaded session across workspaces (pinned first, then newest), with exact workspaceId and cached activity including separate question/permission counts and per-kind freshness. Empty cached waits and ambiguous cache owners remain unknown, never confirmed zero. Use session.attention for a fresh scoped read. Pass limit to cap the count or workspaceId to narrow to one workspace.",
     kind: "query",
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
@@ -103,8 +105,10 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       { name: "limit", type: "number", required: false, description: "Maximum sessions to return. Omit to return all loaded sessions." },
       { name: "workspaceId", type: "string", required: false, description: "Workspace ID or display name. Omit to include every workspace." },
     ],
-    execute: (args) => listControlSessions(args, { workspaces, sessionsByWorkspaceId, pinnedIds }),
-  }), [pinnedIds, sessionsByWorkspaceId, workspaces]);
+    execute: (args) => listControlSessions(args, { workspaces, sessionsByWorkspaceId, pinnedIds,
+      activityCacheIds: sessionAttentionCacheIds({ workspaces, endpointForWorkspace }),
+      activityByWorkspaceId: useSessionActivityStore.getState().recordsByWorkspaceId }),
+  }), [endpointForWorkspace, pinnedIds, sessionsByWorkspaceId, workspaces]);
   useControlAction(listSessionsControlAction);
 
   const openSessionControlAction = useMemo<OpenworkControlAction>(() => ({

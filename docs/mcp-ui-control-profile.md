@@ -40,12 +40,19 @@ OpenWork's cross-session memory currently comes from saved session history expos
 
 For requests like `What did I say in the customer migration session?` or `Remind me what we decided in session ses_abc123`, an MCP client can:
 
-1. Run `session.list_sessions` to find a matching session by ID, title, workspace, or topic words.
-2. Run `session.open` with the selected `sessionId`.
-3. Run `session.read_transcript` to read recent messages from that session.
-4. Answer from the returned transcript, and say when the returned messages are insufficient.
+1. Discover available actions from `openwork_context`. Run `session.search` or `session.list_sessions` to find a matching session.
+2. Run `session.read` with the selected `sessionId` and workspace to read bounded history without navigation.
+3. Answer from the returned transcript, and say when the returned messages are insufficient.
 
-This may navigate OpenWork away from the user's current session while the lookup runs. If multiple sessions match, ask which one to inspect.
+If multiple sessions match, ask which one to inspect. `session.open` is for explicit navigation; the older `session.read_transcript` action reads the active surface.
+
+### Pending interactions are not transcript history
+
+The loaded inventory exposes workspace identity and conservative cached attention signals. Use `session.attention` with an exact workspace/session pair for fresh question contents, request fingerprints, and permission summaries. Missing observations are unknown, not zero; reading does not settle anything.
+
+`session.question.reply.propose` stages an asynchronous, human-reviewed answer to one exact question. It returns promptly, rather than holding the UI mailbox open while a person decides. Only the review button submits; the command cannot grant permissions. `session.question.reply.status` reads the scoped receipt. Native acceptance, stale rejection, and uncertain writes are distinct outcomes. Never treat disappearance of a question as proof that this proposal answered it.
+
+The review revalidates owner and question content before submission. Redacted receipts and no-retry guards survive same-window reloads, not independent app/window sessions. This is not a durable audit service. See `packages/docs/start-here/do-work-with-it/cross-chat-memory.mdx` for the user-facing workflow and limits.
 
 ### OpenWork agents
 

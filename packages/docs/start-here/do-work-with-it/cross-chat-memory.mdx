@@ -8,7 +8,9 @@ OpenWork's cross-chat memory currently comes from saved session history. It is n
 When an agent is running inside the OpenWork app, it can use OpenWork's semantic UI actions to look up past chats:
 
 - `session.list_sessions` lists every loaded session across the workspaces the app knows about (pinned first, then newest). Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.
-- `session.open` opens a matching session by ID.
+- `session.search` searches titles and recent transcripts without changing the visible conversation.
+- `session.read` reads recent messages from a specified session without opening it.
+- `session.open` opens a matching session when you explicitly want to navigate.
 - `session.read_transcript` reads recent messages from the currently open session.
 - `session.latest_message` reads the newest message in the currently open session.
 
@@ -21,18 +23,34 @@ That means you can ask things like:
 
 ## What happens
 
-1. The agent lists sessions and matches by session ID, title, workspace, or topic words you provided.
-2. If there is one clear match, the agent opens that session.
+1. The agent searches or lists sessions and matches by session ID, title, workspace, or topic words you provided.
+2. If there is one clear match, the agent reads it by ID without changing your tabs or focused conversation.
 3. The agent reads the transcript and answers from the returned messages.
 4. If there are multiple likely matches, the agent asks which session you meant.
 
-Because this uses the OpenWork UI, the agent may briefly navigate away from your current session to inspect another one. You can ask it to return to the current session afterward.
+Transcript inspection does not require navigation. The available actions in `openwork_context` are the authority for the connected version of the app.
+
+## Sessions that need your attention
+
+The orange sidebar indicator means a session needs input; it is separate from an unread result. Pending questions and permissions are live interaction state, not ordinary transcript text. Reading a conversation does not answer a question or grant permission.
+
+Ask `Which sessions need my attention?` The agent can inspect the loaded inventory's workspace IDs and cached attention signals, then use `session.attention` with an exact workspace ID and session ID to read current questions and permission summaries. Unknown counts mean the app cannot establish the state, not that there are no requests. Requests belong to their originating session, including child sessions.
+
+Some engine versions continue listing requests from aborted or superseded work. Fresh attention reads cross-check the owning transcript and exclude a request whose linked tool has already completed or failed. The same check runs again before sending a reviewed answer. If the transcript cannot be read, OpenWork does not send the answer or claim there are no blockers.
+
+To answer a question in another session, the agent can use `session.question.reply.propose` after reading the current request. OpenWork shows a review containing the requesting and target conversations, the question, and the proposed answers. **Only your review button sends the answer.** This may resume the target agent under its existing permissions; it does not grant new permissions or approve tool requests.
+
+The proposal initially reports `loading`, not delivery. The agent can inspect `session.question.reply.status` using the returned review ID and exact target to distinguish acceptance, cancellation, stale rejection, and an uncertain result. A changed or already-resolved question must be read again; an uncertain submission must not be automatically retried.
+
+Redacted receipts survive reloads within the same window session. They are not a permanent audit log or a cross-window coordination service. Question text and answer text are not stored in these receipts. A disconnected workspace or unavailable receipt storage can prevent sending safely.
+
+This workflow requires an engine that exposes OpenWork's host tools to the agent. Native v2 host-tool exposure is not yet verified; direct availability of the app controls alone does not establish that a v2 model can call them.
 
 ## Current limits
 
 - Session lookup is based on the sessions OpenWork has loaded for the current app and workspace context.
-- Transcript reads return a bounded set of recent messages from the opened session. If an older part of a long chat is not returned, the agent should say that instead of guessing.
-- This is not semantic search over every message yet. Clear titles, session IDs, workspace names, or topic clues help the agent find the right chat.
+- Transcript reads and searches return bounded recent history. If an older part of a long chat is not returned, the agent should say that instead of guessing.
+- Search is not an unlimited semantic memory database. Clear titles, session IDs, workspace names, or topic clues help the agent find the right chat.
 - The agent can only read sessions available to the current OpenWork app and user.
 
 ## How to ask

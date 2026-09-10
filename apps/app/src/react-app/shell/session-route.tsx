@@ -250,6 +250,7 @@ import {
 } from "./cloud-workspace-status";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
+import { useSessionAttention } from "@/react-app/domains/session/control/use-session-attention";
 import { useSessionArchive } from "@/react-app/domains/session/sidebar/use-session-archive";
 import { openComposerConfigure, isLibraryAgent, type ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import {
@@ -2501,6 +2502,7 @@ export function SessionRoute() {
     await archiveSession(sessionId, archived);
   };
 
+  const questionReviewDialog = useSessionAttention({ workspaces, sessionsByWorkspaceId, endpointForWorkspace });
   useSessionControlActions({
     workspaces,
     sessionsByWorkspaceId,
@@ -3798,6 +3800,7 @@ export function SessionRoute() {
       onSelectAgent={setSelectedAgent}
     />
     {archiveDialog}
+    {questionReviewDialog}
     <SessionSearchDialog
       open={sessionSearchOpen}
       onClose={() => setSessionSearchOpen(false)}

@@ -104,6 +104,13 @@ type V2QuestionField = {
   options: { value: string; label: string; description: string }[];
 };
 
+const nativeQuestionFields = new WeakMap<QuestionRequest, string>();
+
+/** Review fingerprints also bind native field keys/values hidden by label compatibility. */
+export function nativeQuestionFingerprintContent(request: QuestionRequest): string | null {
+  return nativeQuestionFields.get(request) ?? null;
+}
+
 function mapV2Question(value: unknown): { request: QuestionRequest; fields: V2QuestionField[] } | null {
   if (!isRecord(value) || readString(value.metadata, "kind") !== "question") return null;
   const id = readString(value, "id");
@@ -133,7 +140,9 @@ function mapV2Question(value: unknown): { request: QuestionRequest; fields: V2Qu
   const source = readRecord(value.metadata, "tool");
   const messageID = readString(source, "messageID");
   const callID = readString(source, "id");
-  return { request: { id, sessionID, questions, ...(messageID && callID ? { tool: { messageID, callID } } : {}) }, fields };
+  const request = { id, sessionID, questions, ...(messageID && callID ? { tool: { messageID, callID } } : {}) };
+  nativeQuestionFields.set(request, JSON.stringify(value.fields));
+  return { request, fields };
 }
 
 type V2MessageRole = "user" | "assistant" | "system";

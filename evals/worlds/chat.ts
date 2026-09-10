@@ -249,6 +249,7 @@ async function splitPaneQuestions(
   agentWorkloads: MockAgentWorkload[],
   policy: Record<string, unknown> = { permission: { question: "allow" } },
   surface: AppSurface = "electron",
+  policyFile = "opencode.json",
 ) {
   const providerId = "split-send-mock";
   const modelId = "split-send-model";
@@ -279,16 +280,16 @@ async function splitPaneQuestions(
   const workspace = await seed.workspace(app, workspacePath);
   // Arrange an allowed native question tool independently of custom-agent defaults.
   // TODO(primitive): write workspace fixture files through a first-class seed API.
-  const questionPolicyWritten = await seed.evalIn(app, browserScript(async (workspaceId, content) => {
+  const questionPolicyWritten = await seed.evalIn(app, browserScript(async (workspaceId, content, policyFile) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/files/content", {
       method: "POST",
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "opencode.json", content }),
+      body: JSON.stringify({ path: policyFile, content }),
     });
     return response.ok;
-  }, [workspace.workspaceId, JSON.stringify(policy)]), { awaitPromise: true });
+  }, [workspace.workspaceId, JSON.stringify(policy), policyFile]), { awaitPromise: true });
   if (questionPolicyWritten !== true) throw new Error("Could not arrange the question-tool policy.");
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     provider: {
@@ -350,6 +351,70 @@ export async function delegatedQuestionHandoff(seed: Seed) {
   const root = await seedSessionRetry(seed, base.app, { title: "Delegated question parent" });
   const other = await seedSessionRetry(seed, base.app, { title: "Unrelated question root" });
   return { ...base, engine, delegationTool, followup, root: { ...root, prompt: rootPrompt }, child, unrelated: { ...other, ...unrelated } };
+}
+
+export async function sessionAttentionReview(seed: Seed) {
+  const engine = resolveEvalEngine();
+  const asking = { title: "Question owner", prompt: "Choose the report format", question: "Which report format should I use?", answer: "Checklist" };
+  const permission = { title: "Permission owner", prompt: "Inspect the approval workspace", command: "printf ATTENTION_PERMISSION_WITNESS" };
+  const origin = { title: "Review coordinator", prompt: "Prepare the report answer for my review" };
+  const followup = { prompt: "Continue the report without the previous question", reply: "The superseding report is finished." };
+  const workloads: MockAgentWorkload[] = [
+    { promptMarker: asking.prompt, latestUserTurn: true, finalReply: "Unused", finalReplyFrom: "last-tool-text", steps: [{ tool: "question", arguments: { questions: [{
+      header: "Report format", question: asking.question, custom: false,
+      options: [{ label: asking.answer, description: "Use a checklist" }, { label: "Outline", description: "Use an outline" }],
+    }] } }] },
+    { promptMarker: permission.prompt, latestUserTurn: true, finalReply: "Permission work finished.", steps: [{ tool: engine === "v2" ? "shell" : "bash", arguments: {
+      command: permission.command, description: "Inspect the approval workspace", timeout: 30_000,
+    } }] },
+    { promptMarker: followup.prompt, latestUserTurn: true, finalReply: followup.reply, steps: [] },
+  ];
+  // The desktop's default workspace already uses JSONC, which wins over a
+  // second opencode.json. Do not silently test against the engine's allow default.
+  const base = await splitPaneQuestions(seed, "session-attention-review", workloads, engine === "v2" ? {
+    // Native v2 defaults to build, not the injected v1 openwork agent.
+    agents: { build: { permissions: [{ action: "shell", resource: "*", effect: "ask" }] } },
+  } : {
+    permission: { question: "allow", openwork_execute: "allow" },
+    // Agent rules follow the native catch-all in the evaluated ruleset.
+    agent: { openwork: { permission: { bash: "ask" } } },
+  }, "electron", "opencode.jsonc");
+  // This endpoint describes v1's evaluated rules. V2 is verified by its real
+  // pending permission in the journey, not by querying the inactive v1 engine.
+  if (engine === "v1") {
+    const permissionSetup = await seed.evalIn(base.app, browserScript(async (workspaceId) => {
+      const baseUrl = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+      const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") };
+      const response = await fetch(baseUrl + "/workspace/" + encodeURIComponent(workspaceId) + "/permissions/effective", { headers });
+      if (!response.ok) return { status: response.status };
+      const body = await response.json();
+      return { agent: body.agent, shell: body.rows.find((row: { key: string }) => row.key === "shell"), workspaceConfig: body.files.workspace };
+    }, [base.workspace.workspaceId]), { awaitPromise: true });
+    if (!isRecord(permissionSetup) || !isRecord(permissionSetup.shell) || permissionSetup.shell.action !== "ask") {
+      throw new Error(`Permission fixture is not asking before shell work: ${JSON.stringify(permissionSetup)}`);
+    }
+  }
+  const b = await seedSessionRetry(seed, base.app, { title: asking.title });
+  const c = await seedSessionRetry(seed, base.app, { title: permission.title });
+  const a = await seedSessionRetry(seed, base.app, { title: origin.title });
+  return { ...base, engine, followup, asking: { ...asking, ...b }, permission: { ...permission, ...c }, origin: { ...origin, ...a },
+    async prepareProposal(args: Record<string, unknown>) {
+      // The model calls the real server tool, which stamps origin. No DOM-side
+      // synthetic origin and no resource IDs hidden in the person's prompt.
+      const response = await fetch(`${base.mock.url}/admin/agent-workloads`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workloads: [...workloads, { promptMarker: origin.prompt, latestUserTurn: true,
+          finalReply: "Unused", finalReplyFrom: "last-tool-text", steps: [{ tool: "openwork_execute", arguments: { id: "session.question.reply.propose", args } }],
+        }] }),
+      });
+      if (!response.ok) throw new Error(`Proposal witness setup failed: HTTP ${response.status}`);
+    },
+  };
+}
+
+export async function sessionAttentionZombie(seed: Seed) {
+  if (resolveEvalEngine() !== "v1") throw new SkipError("needs: v1 engine for the native aborted-question zombie reproduction");
+  return sessionAttentionReview(seed);
 }
 
 /** Real native permissions and a provider retry, without synthetic UI events. */
