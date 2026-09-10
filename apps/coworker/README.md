@@ -923,26 +923,26 @@ whoever changes the model.
 
 A coworker's AI model has a mode (`coworker.md` `modelMode`): **fixed** (one
 model, every time — the default, and what any record from before the field
-means) or **Automatic**, chosen in the picker. In Automatic the coworker reads each message and
-picks a lane (`lib/model-choice.ts`): `classifyRequest` — the person's own
-words win ("quickly", "briefly", "tl;dr" → quick; "think carefully",
-"thorough", "step by step" → deep), then the shape of the ask (a greeting or a
-one-line question that needs no work → quick; research, plans, comparisons,
-drafts, code, a stack trace, three questions, a numbered list, or more than
-120 words → deep; anything that asks the coworker to *do* something — check,
-find, write, schedule, explain — is at least standard). `chooseModelForLane`
-anchors on the coworker's standard model (the saved one, or the recommendation
-that is then saved) and looks **only among that provider's models that cost no
-more than it** (`costsNoMoreThan`; the free provider is one provider with a
-free model beside dozens of paid ones, so "same provider" alone promised
-nothing about the bill), so one account is billed and never for more than the
-person already accepted: quick takes the newest fast,
-non-reasoning sibling (`mini`, `flash`, `haiku`, `nano`…), deep the most
-capable reasoning sibling (`opus`, `pro`, `max`, `o-series`…), and each lane
-falls back to the standard model when nothing better exists there. A standard
-model that is already fast stays for quick; one that is already the most
-capable stays for deep. Automatic stays opt-in until the free provider's lanes
-are proven on the packaged app.
+means) or **Automatic**, chosen in the picker. `classifyRequest` weighs explicit
+thinking instructions and task complexity before brevity: a short research or
+coding request is still substantive work. The effort preference adjusts that
+lane. Private discussions and native group replies use `resolveDiscussionModel`
+for the same model and effort decision.
+
+The source-linked, versioned [model intelligence index](MODEL-INTELLIGENCE.md)
+replaces model-name guesses. Automatic ranks eligible siblings using reported
+reasoning support, token prices, capacity and saved per-coworker preferences.
+Names such as mini/pro and release dates are not quality or speed evidence.
+Switches stay within the same connected engine provider, at both reported token
+prices no higher than the standard model, preserving known modalities and limits.
+This limits token prices, not total spend or OpenRouter's downstream routing.
+Unknown facts remain unknown; an existing anchor can retain legacy compatibility,
+but unknown tool support or status cannot qualify a replacement.
+
+Standard work keeps the standard model. Fixed mode ignores Automatic preferences.
+Missing, excluded or avoided Automatic anchors require a user choice, not an
+implicit replacement. Each newly admitted native turn pins its selected model.
+Automatic remains opt-in; no existing model or mode is migrated.
 
 The choice is never hidden: the rail says "Working on a deep think on GPT-5
 pro" while the turn runs (the live row keeps to its shapes), every reply
@@ -953,7 +953,7 @@ Assignments and responsibilities use the standard model
 (`localRunModel` in `main.mjs`). Workers use the purpose-specific setting below,
 or inherit the standard model at creation. When a conversation lane's model cannot
 answer, the app steps back towards the standard model and retries the same
-message once or twice, saying so; only the standard model failing changes what
+message once, saying so; only the standard model failing changes what
 is saved. A model the person fixed is never swapped.
 
 ### Compose models around the work

@@ -491,10 +491,13 @@ test("shutdown retains group participant ownership until a cancelled raw write s
 test("fresh admission waits through an idle unfinished placeholder", async () => {
   await withHome(async (home) => {
     const fixture = nativeFixture();
+    const selected = { providerId: "fixture", modelId: "publisher/compact", variant: "low" };
+    const seenModels = [];
     let polls = 0;
-    const service = createCollaboration({ directory: home, pollMs: 5, consult: async () => {}, spawn: async () => {}, cancelWorker: async () => {}, clientFor: async (slug) => {
+    const service = createCollaboration({ directory: home, pollMs: 5, consult: async () => {}, spawn: async () => {}, cancelWorker: async () => {}, clientFor: async (slug, options) => {
+      seenModels.push(options.model);
       const client = await fixture.clientFor(slug);
-      return { ...client, waitForThread: async (...args) => {
+      return { ...client, resolvedModel: selected, waitForThread: async (...args) => {
         const result = await client.waitForThread(...args);
         if (++polls !== 1) return result;
         return { ...result, outcome: "timeout", snapshot: { ...result.snapshot, messages: result.snapshot.messages.map((message) => message.role === "assistant" ? { ...message, completedAt: null } : message) } };
@@ -504,7 +507,14 @@ test("fresh admission waits through an idle unfinished placeholder", async () =>
       const entry = await service.submit({ owner: { slug: "scout", threadId: "ses_placeholder", conversationId: "ses_placeholder", kind: "private" }, messageId: "msg_placeholder", prompt: "Wait for the real reply" });
       await eventually(async () => (await service.read((state) => state.executions[entry.id])).state === "succeeded");
       assert.equal(polls, 2);
-      assert.equal(fixture.requests.length, 1);
+       assert.equal(fixture.requests.length, 1);
+       assert.deepEqual(fixture.requests[0].model, selected);
+       assert.deepEqual((await service.read((state) => state.executions[entry.id])).model, selected, "native model selection is pinned at admission");
+       const explicit = { providerId: "fixture", modelId: "publisher/fixed" };
+       const next = await service.submit({ owner: { slug: "scout", threadId: "ses_explicit", conversationId: "ses_explicit", kind: "private" }, prompt: "Keep this exact model", model: explicit });
+       await eventually(async () => (await service.read((state) => state.executions[next.id])).state === "succeeded");
+       assert.deepEqual(seenModels.at(-1), explicit, "native preparation receives the already-selected override");
+       assert.deepEqual(fixture.requests.at(-1).model, explicit, "a default never replaces an explicit model");
     } finally { await service.stop(); }
   });
 });
