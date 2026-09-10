@@ -155,8 +155,16 @@ export async function configureProvider(
   }, [workspaceId, providerId, modelId, `${providerId}/${modelId}`, JSON.stringify(opencode)]), { awaitPromise: true, timeoutMs: 120_000 });
   if (result !== "ok") throw new Error(`Provider configuration failed: ${String(result)}`);
   await seed.evalIn(app, () => { location.reload(); return true; });
-  const ready = await seed.evalIn(app, browserScript(async (workspaceId, engine, providerId, modelId) => {
+  // The display name the app gives the configured model once its provider list
+  // contains it; a fixture provider declares it in opencode.json, a live one is
+  // read from the engine catalog.
+  const configuredModel = recordValue(recordValue(recordValue(opencode, "provider"), providerId), "models");
+  const configuredNameValue = recordValue(recordValue(configuredModel, modelId), "name");
+  const configuredName = typeof configuredNameValue === "string" ? configuredNameValue : null;
+  const ready = await seed.evalIn(app, browserScript(async (workspaceId, engine, providerId, modelId, configuredName) => {
     const deadline = Date.now() + 60000;
+    const expectedRef = providerId + "/" + modelId;
+    let observed = "";
     while (Date.now() < deadline) {
       const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
       const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") };
@@ -171,16 +179,37 @@ export async function configureProvider(
         const mounted = base + "/workspace/" + encodeURIComponent(workspaceId);
         const response = await fetch(mounted + (engine === "v2" ? "/opencode2/api/model" : "/opencode/session"), { headers });
         if (response.ok && window.__openworkControl) {
-          if (engine === "v1") return true;
-          const catalog = JSON.stringify(await response.json());
-          if (catalog.includes(providerId) && catalog.includes(modelId)) return true;
+          let catalogName: string | null = null;
+          if (engine === "v2") {
+            const record = (value: unknown): value is Record<string, unknown> =>
+              typeof value === "object" && value !== null && !Array.isArray(value);
+            const catalog: unknown = await response.json();
+            const items: unknown[] = Array.isArray(catalog) ? catalog : record(catalog) && Array.isArray(catalog.data) ? catalog.data : [];
+            const entry = items.find((item) => record(item) && item.id === modelId && item.providerID === providerId);
+            if (!record(entry)) throw new Error("catalog pending");
+            catalogName = typeof entry.name === "string" ? entry.name : null;
+          }
+          // The engine lists the provider; now the app must too. Its composer
+          // shows the model's display name only once the app's own provider
+          // list contains the configured model, and the stored default must
+          // have survived boot rather than being replaced by an organization
+          // model while that list was still loading.
+          const name = configuredName ?? catalogName ?? modelId;
+          const chip = document.querySelector<HTMLElement>('button[aria-label="Change model"]');
+          const chipText = chip?.innerText.trim() ?? "";
+          const stored = localStorage.getItem("openwork.defaultModel");
+          observed = JSON.stringify({ composerModel: chipText, storedDefault: stored, expected: { name, ref: expectedRef } });
+          if (stored === expectedRef && chipText.startsWith(name)) return true;
         }
       } catch {}
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    return false;
-  }, [workspaceId, engine, providerId, modelId]), { awaitPromise: true, timeoutMs: 120_000 });
-  if (ready !== true) throw new Error(`Selected ${engine} engine did not become ready after provider configuration.`);
+    return observed || false;
+  }, [workspaceId, engine, providerId, modelId, configuredName]), { awaitPromise: true, timeoutMs: 120_000 });
+  if (ready !== true) {
+    throw new Error(`Selected ${engine} engine did not become ready after provider configuration`
+      + (typeof ready === "string" ? `; last observed ${ready}` : "."));
+  }
 }
 
 async function seedControls(
@@ -2199,13 +2228,18 @@ export async function skillLifecycle(seed: Seed) {
         });
         if (!result.ok) throw new Error("Could not arrange model response");
       },
+      /**
+       * Every completed reply in the conversation came from the arranged
+       * provider and model, never from an organization model that replaced it.
+       * Only a live provider reports token usage; the fixture model streams none.
+       */
       async usedConfiguredModel() {
         const result = await request(`/workspace/${workspace.workspaceId}/opencode2/api/session/${session.sessionId}/message`);
         const messages = isRecord(result.json) && Array.isArray(result.json.data) ? result.json.data.filter(isRecord) : [];
         const replies = messages.filter(message => message.type === "assistant" && message.finish === "stop");
         return replies.length > 0 && replies.every(message => isRecord(message.model)
           && message.model.id === modelId && message.model.providerID === providerId
-          && isRecord(message.tokens) && typeof message.tokens.output === "number" && message.tokens.output > 0);
+          && (!live || (isRecord(message.tokens) && typeof message.tokens.output === "number" && message.tokens.output > 0)));
       },
       async runtimeIdentity() {
         const result = await request("/experimental/engine-v2-preview/status");
