@@ -1,10 +1,14 @@
-import { startMockGoogleServer } from "./mock-google-server.ts";
+import { parseMockGmailMime, startMockGoogleServer, type MockGoogleThread } from "./mock-google-server.ts";
 import { trimTrailingSlashes } from "./strings.ts";
 
 export interface MockGoogleDraft {
   to: string;
   body: string;
   threadId?: string;
+  draftId?: string;
+  messageId?: string;
+  returnedThreadId?: string | null;
+  mime?: ReturnType<typeof parseMockGmailMime>;
   attachments?: MockGoogleAttachment[];
   /** Which credential created it — the isolation witness. */
   tokenId: string;
@@ -47,6 +51,7 @@ export interface StartMockGoogleOptions {
   port?: number;
   publicUrl?: string;
   autoApprove?: boolean;
+  threads?: Record<string, MockGoogleThread[]>;
 }
 
 export async function startMockGoogle(options: StartMockGoogleOptions): Promise<MockGoogleHandle> {
@@ -55,7 +60,7 @@ export async function startMockGoogle(options: StartMockGoogleOptions): Promise<
   const externalUrl = options.publicUrl ? trimTrailingSlashes(options.publicUrl.trim()) || undefined : undefined;
   const local = externalUrl
     ? null
-    : await startMockGoogleServer({ accounts, port: options.port ?? 3980, autoApprove: options.autoApprove ?? true });
+    : await startMockGoogleServer({ accounts, port: options.port ?? 3980, autoApprove: options.autoApprove ?? true, threads: options.threads });
   const url = externalUrl ?? local?.baseUrl;
   if (!url) throw new Error("Mock Google did not expose a URL.");
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -121,6 +126,10 @@ export async function startMockGoogle(options: StartMockGoogleOptions): Promise<
       at: value.at,
     };
     if (typeof value.threadId === "string") draft.threadId = value.threadId;
+    if (typeof value.draftId === "string") draft.draftId = value.draftId;
+    if (typeof value.messageId === "string") draft.messageId = value.messageId;
+    if (typeof value.returnedThreadId === "string" || value.returnedThreadId === null) draft.returnedThreadId = value.returnedThreadId;
+    if (typeof value.raw === "string") draft.mime = parseMockGmailMime(value.raw);
     if (Array.isArray(value.attachments)) {
       const attachments = value.attachments.flatMap((entry) => {
         const attachment = parseAttachment(entry);

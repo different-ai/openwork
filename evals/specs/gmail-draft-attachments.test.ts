@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { eventually, needs, test } from "@openwork/testkit";
-import { gmailAttachmentFixtures, gmailDraftAttachments } from "../worlds/gmail-draft-attachments.ts";
+import { gmailAttachmentFixtures, gmailDraftAttachments, gmailReplyFixtures } from "../worlds/gmail-draft-attachments.ts";
 
 // New journey: native MCP preflight must reach the managed engine's real after-hook,
 // then the authenticated host upload and Den MIME writer, without a second tool call.
@@ -91,6 +91,93 @@ test("Gmail attachments cross the real MCP, engine hook, host and Den boundaries
   expect(await world.google.draftsFor(world.mailboxes.other, { timeoutMs: 5_000 })).toEqual([]);
   expect(await world.google.draftsFor(world.mailboxes.second, { timeoutMs: 5_000 })).toEqual([]);
   evidence.recordAssertionEvidence("Missing auth and unavailable member/connector selections fail closed", "The real engine hook could not upload with missing host Cloud authorization. Separate real Den multipart negative probes rejected an absent bearer, another member without the selected credential, and an unconnected selection, without falling back to the connected default mailbox or calling Google.", true);
+
+  const beforeReply = world.requests().length;
+  const uploadsBeforeReply = uploads().length;
+  const plain = gmailReplyFixtures.plain;
+  const replyBody = { threadId: plain.id, subject: plain.subject, body: plain.body };
+  const replyPrompt = "Reply to the inventory conversation in the selected mailbox with inventory.csv and sample.bin attached. Leave it as a draft.";
+  expect(replyPrompt).not.toContain(world.selectedId);
+  expect(replyPrompt).not.toContain(plain.id);
+  const replyMessages = await finish(await world.run(replyPrompt, world.body.attachments, false, replyBody));
+  const replyCalls = world.requests().slice(beforeReply).filter((entry) => entry.tool);
+  expect(replyCalls.map((entry) => entry.tool)).toEqual(["search_capabilities", "execute_capability"]);
+  expect(replyCalls[1]).toMatchObject({ member: "first", args: { name: world.capability, body: replyBody }, draftsBeforeReply: 1 });
+  expect(uploads()).toHaveLength(uploadsBeforeReply + 1);
+  expect(uploads()[uploadsBeforeReply]).toMatchObject({ member: "first", status: 200, payload: { connectionId: world.selectedId, threadId: plain.id } });
+  const replyDrafts = await world.google.draftsFor(world.mailboxes.selected, { timeoutMs: 5_000 });
+  expect(replyDrafts).toHaveLength(2);
+  const reply = replyDrafts[1];
+  expect(reply).toMatchObject({ to: world.body.to, threadId: plain.id, returnedThreadId: plain.returnedThreadId, draftId: expect.any(String), messageId: expect.any(String), tokenId: drafts[0].tokenId });
+  expect(reply.attachments).toEqual(gmailAttachmentFixtures.map((file) => ({ filename: file.filename, mimeType: file.mimeType, size: file.bytes.byteLength, content: file.bytes })));
+  const mime = reply.mime;
+  if (!mime) throw new Error("Google did not capture the reply MIME");
+  expect(mime.raw).toContain("Content-Type: multipart/mixed;");
+  expect(mime.raw).toContain("Content-Type: multipart/alternative;");
+  expect(mime.inReplyTo).toBe("<latest@test.example>");
+  expect(mime.references).toBe("<root@test.example> <older@test.example> <latest@test.example>");
+  expect(mime.subject).toBe(plain.subject.replace("\r\n", " ").trim());
+  expect(mime.headers).not.toMatch(/[^\x00-\x7f]/);
+  const subjectHeader = mime.headers.match(/^Subject:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*/m)?.[0];
+  expect(subjectHeader).toBeDefined();
+  expect(subjectHeader?.split("\r\n").every((line) => Buffer.byteLength(line) <= 78)).toBe(true);
+  const encodedWords = subjectHeader?.match(/=\?UTF-8\?B\?[^?]+\?=/g) ?? [];
+  expect(encodedWords.length).toBeGreaterThan(1);
+  expect(encodedWords.every((word) => word.length <= 75)).toBe(true);
+  expect(mime.headers.split("\r\n").filter((line) => !/^[ \t]/.test(line)).map((line) => line.split(":")[0])).toEqual(["To", "Subject", "In-Reply-To", "References", "MIME-Version", "Content-Type"]);
+  expect(mime.plain).toBe(`${plain.body}\n\nOn Tue, 08 Sep 2026 at 12:34 UTC, Latest Sender <latest@test.example> wrote:\n> Latest plain history & <SCRIPT>history-sentinel</SCRIPT>\n> <IMG src="history" onerror="history-sentinel">`);
+  expect(mime.html).toContain('<div class="gmail_quote">');
+  expect(mime.html).toMatch(/<blockquote\b[^>]*>[\s\S]*Latest plain history &amp; &lt;SCRIPT&gt;history-sentinel&lt;\/SCRIPT&gt;[\s\S]*&lt;IMG src="history" onerror="history-sentinel"&gt;[\s\S]*<\/blockquote>/);
+  expect(mime.html).toContain('Thanks &amp; please review &lt;SCRIPT&gt;new-prose&lt;/SCRIPT&gt; and &lt;IMG src="new"&gt;.');
+  expect(mime.html).not.toMatch(/<(?:script|img)\b|OLDER-HISTORY-MUST-NOT-BE-QUOTED/i);
+  const mailboxUrl = `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(world.mailboxes.selected)}`;
+  const replyReceipt = {
+    ok: true, draftId: reply.draftId, messageId: reply.messageId,
+    draftUrl: `${mailboxUrl}#drafts?compose=${reply.messageId}`,
+    threadId: plain.returnedThreadId, threadUrl: `${mailboxUrl}#all/${plain.returnedThreadId}`, quotedHistoryIncluded: true,
+  };
+  const toolResults = world.objects(replyMessages).filter((entry) => entry.type === "tool" && entry.tool === "openwork-cloud_execute_capability");
+  expect(world.objects(toolResults)).toEqual(expect.arrayContaining([expect.objectContaining(replyReceipt)]));
+  expect(world.objects(world.model.inputs())).toEqual(expect.arrayContaining([expect.objectContaining(replyReceipt)]));
+  expect(await world.providerRequests()).toEqual([...negativeCalls,
+    expect.objectContaining({ method: "GET", url: `/gmail/v1/users/me/threads/${plain.id}?format=full`, email: world.mailboxes.selected }),
+    expect.objectContaining({ method: "POST", path: "/gmail/v1/users/me/drafts", email: world.mailboxes.selected }),
+  ]);
+  evidence.recordAssertionEvidence("Multipart replies preserve bytes, safe quoted history, threading and provider receipts through the engine hook", "The selected mailbox alone received one full-thread GET and one drafts POST. Provider-observed MIME has the latest plain history in an escaped HTML blockquote and a plain alternative, exact References/In-Reply-To, safely folded Unicode subject with no injected header, and unchanged attachments. The real execute tool result and next model input contain the provider's actual IDs and mailbox URLs, including its different returned thread ID.", true);
+
+  const html = gmailReplyFixtures.html;
+  const jsonReply = await world.mcp("execute_capability", { name: world.capability, body: { to: world.body.to, threadId: html.id, subject: html.subject, body: html.body } });
+  expect(jsonReply.isError).toBe(false);
+  expect(uploads()).toHaveLength(uploadsBeforeReply + 1);
+  const allDrafts = await world.google.draftsFor(world.mailboxes.selected, { timeoutMs: 5_000 });
+  expect(allDrafts).toHaveLength(3);
+  const jsonDraft = allDrafts[2];
+  expect(jsonDraft).toMatchObject({ to: world.body.to, threadId: html.id, returnedThreadId: null, draftId: expect.any(String), messageId: expect.any(String), tokenId: drafts[0].tokenId });
+  expect(jsonDraft.attachments ?? []).toEqual([]);
+  expect(jsonDraft.mime).toMatchObject({ subject: html.subject, inReplyTo: "<latest@test.example>", references: "<root@test.example> <older@test.example> <latest@test.example>" });
+  expect(jsonDraft.mime?.raw).toContain("Content-Type: multipart/alternative;");
+  expect(jsonDraft.mime?.plain).toContain(`${html.body}\n\nOn Tue, 08 Sep 2026 at 12:34 UTC, Latest Sender <latest@test.example> wrote:\n> HTML-only latest & readable.`);
+  expect(jsonDraft.mime?.plain).toContain("> <SCRIPT>literal-sentinel</SCRIPT>");
+  expect(jsonDraft.mime?.html).toContain('<div class="gmail_quote">');
+  expect(jsonDraft.mime?.html).toMatch(/<blockquote\b[^>]*>[\s\S]*HTML-only latest &amp; readable\.[\s\S]*&lt;SCRIPT&gt;literal-sentinel&lt;\/SCRIPT&gt;[\s\S]*<\/blockquote>/);
+  for (const alternative of [jsonDraft.mime?.html, jsonDraft.mime?.plain]) {
+    expect(alternative).not.toMatch(/active-(?:script|style|image)-sentinel|image\.test\.example|OLDER-HISTORY-MUST-NOT-BE-QUOTED/);
+  }
+  expect(jsonDraft.mime?.html).not.toMatch(/<(?:script|style|img)\b/i);
+  expect(world.objects(jsonReply)).toEqual(expect.arrayContaining([expect.objectContaining({
+    ok: true, draftId: jsonDraft.draftId, messageId: jsonDraft.messageId,
+    draftUrl: `${mailboxUrl}#drafts?compose=${jsonDraft.messageId}`,
+    threadId: null, threadUrl: null, quotedHistoryIncluded: true,
+  })]));
+  expect((await world.providerRequests()).slice(negativeCalls.length)).toEqual([
+    expect.objectContaining({ method: "GET", url: `/gmail/v1/users/me/threads/${plain.id}?format=full`, email: world.mailboxes.selected }),
+    expect.objectContaining({ method: "POST", path: "/gmail/v1/users/me/drafts", email: world.mailboxes.selected }),
+    expect.objectContaining({ method: "GET", url: `/gmail/v1/users/me/threads/${html.id}?format=full`, email: world.mailboxes.selected }),
+    expect.objectContaining({ method: "POST", path: "/gmail/v1/users/me/drafts", email: world.mailboxes.selected }),
+  ]);
+  expect(await world.google.draftsFor(world.mailboxes.other, { timeoutMs: 5_000 })).toEqual([]);
+  expect(await world.google.draftsFor(world.mailboxes.second, { timeoutMs: 5_000 })).toEqual([]);
+  evidence.recordAssertionEvidence("Direct JSON replies safely convert HTML-only history and never invent a provider thread receipt", "A second full-thread GET and drafts POST stayed on the selected mailbox without a host upload. Both MIME alternatives contain converted readable history and exclude active script/style/image content and older messages. The actual provider draft/message IDs reach the MCP result; omitted provider threadId yields null threadId and threadUrl. Both other mailboxes remain untouched.", true);
 
   const modelVisible = JSON.stringify(world.model.inputs());
   for (const file of gmailAttachmentFixtures) {
