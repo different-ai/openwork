@@ -10,12 +10,20 @@ const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 const GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_inference_providers"
-  process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "local-dev-db-encryption-key-please-change-1234567890"
-  process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "w".repeat(32)
-  process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? API_ORIGIN
-  process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? API_ORIGIN
-  process.env.INFERENCE_PROXY_BASE_URL = `${PROXY_BASE_URL}/`
+  const databaseUrl = process.env.DEN_TEST_DATABASE_URL
+  if (!databaseUrl) throw new Error("Set DEN_TEST_DATABASE_URL to an isolated prepared test database; ambient DATABASE_URL is not used")
+  process.env.DATABASE_URL = databaseUrl
+  process.env.DB_MODE = "mysql"
+  process.env.NODE_ENV = "test"
+  process.env.OPENWORK_DEV_MODE = "1"
+  process.env.DEN_DB_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1234567890"
+  process.env.BETTER_AUTH_SECRET = "w".repeat(32)
+  process.env.BETTER_AUTH_URL = API_ORIGIN
+  process.env.DEN_BASE_URL = API_ORIGIN
+  process.env.CORS_ORIGINS = API_ORIGIN
+  process.env.GATEWAY_ENABLED = "true"
+  process.env.GATEWAY_PROXY_BASE_URL = PROXY_BASE_URL
+  process.env.GATEWAY_PUBLIC_BASE_URL = PROXY_BASE_URL
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -507,39 +515,46 @@ test("callback rejects expired and unknown state, and redirects failures with er
   expect(credential?.scopes).toBe("https://www.googleapis.com/auth/cloud-platform")
 })
 
-test("DELETE oauth revokes the refresh token at Google and marks the credential revoked", async () => {
-  await withFakeGoogle(
-    () => Response.json({ access_token: "ya29.third", refresh_token: "1//refresh-third", expires_in: 3600 }),
-    async () => {
-      const start = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth/start`)
-      const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
-      const callback = await publicRequest(`/v1/inference-providers/oauth/callback?code=ok&state=${encodeURIComponent(state)}`)
-      expect(callback.status).toBe(200)
-    },
-  )
+test.each([true, false])("DELETE oauth revokes the refresh token at Google with deployment management enabled=%s", async (enabled) => {
+  const { env } = await import("../src/env.js")
+  const previous = env.gatewayEnabled
+  env.gatewayEnabled = enabled
+  try {
+    await withFakeGoogle(
+      () => Response.json({ access_token: "ya29.third", refresh_token: "1//refresh-third", expires_in: 3600 }),
+      async () => {
+        const start = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth/start`)
+        const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
+        const callback = await publicRequest(`/v1/inference-providers/oauth/callback?code=ok&state=${encodeURIComponent(state)}`)
+        expect(callback.status).toBe(200)
+      },
+    )
 
-  const ownerDelete = await request(ownerCookie, `/v1/inference-providers/${inferenceProviderId}/oauth`, { method: "DELETE" })
-  expect(ownerDelete.status).toBe(204)
+    const ownerDelete = await request(ownerCookie, `/v1/inference-providers/${inferenceProviderId}/oauth`, { method: "DELETE" })
+    expect(ownerDelete.status).toBe(204)
 
-  await withFakeGoogle(
-    () => new Response(null, { status: 200 }),
-    async (calls) => {
-      const revoked = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth`, { method: "DELETE" })
-      expect(revoked.status).toBe(204)
-      expect(calls).toHaveLength(1)
-      expect(calls[0]?.url).toBe(GOOGLE_REVOKE_URL)
-      expect(calls[0]?.body.get("token")).toBe("1//refresh-third")
-    },
-  )
-  const credential = await loadMemberCredential()
-  expect(credential?.status).toBe("revoked")
+    await withFakeGoogle(
+      () => new Response(null, { status: 200 }),
+      async (calls) => {
+        const revoked = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth`, { method: "DELETE" })
+        expect(revoked.status).toBe(204)
+        expect(calls).toHaveLength(1)
+        expect(calls[0]?.url).toBe(GOOGLE_REVOKE_URL)
+        expect(calls[0]?.body.get("token")).toBe("1//refresh-third")
+      },
+    )
+    const credential = await loadMemberCredential()
+    expect(credential?.status).toBe("revoked")
 
-  const connect = readProvider(await (await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/connect`)).json())
-  expect(connect).toMatchObject({ credentialStatus: "member_auth_required" })
-  expect(readString(connect, "authUrl")).toContain("/oauth/start")
+    const connect = readProvider(await (await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/connect`)).json())
+    expect(connect).toMatchObject({ credentialStatus: "member_auth_required" })
+    expect(readString(connect, "authUrl")).toContain("/oauth/start")
 
-  const again = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth`, { method: "DELETE" })
-  expect(again.status).toBe(204)
+    const again = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth`, { method: "DELETE" })
+    expect(again.status).toBe(204)
+  } finally {
+    env.gatewayEnabled = previous
+  }
 })
 
 test("named member sets coexist with ready models and fence in-flight consent independently", async () => {

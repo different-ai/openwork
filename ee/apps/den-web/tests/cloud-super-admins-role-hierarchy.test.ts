@@ -83,7 +83,7 @@ describe("cloud super-admin role hierarchy", () => {
   test("exposes exact admin sidebar destinations for Manage, Observability, and Team", () => {
     const navigation = read("../app/(den)/dashboard/_lib/dashboard-navigation.ts");
 
-    for (const label of ["Plugin Directory", "Connectors", "Tool Tester", "Models", "Gateway", "OpenWork Models", "Bring Your Own Keys (Legacy)", "Advanced", "Workflow Runs", "Analytics", "Members", "Settings"]) {
+    for (const label of ["Plugin Directory", "Connectors", "Tool Tester", "Models", "Gateway", "OpenWork Models", "Bring Your Own Keys (Legacy)", "Advanced", "Analytics", "Members", "Settings"]) {
       expect(navigation).toContain(`label: "${label}"`);
     }
 
@@ -97,6 +97,7 @@ describe("cloud super-admin role hierarchy", () => {
     expect(navigation).toContain('label: "Team"');
     expect(navigation).not.toContain('label: "Extensions"');
     expect(navigation).not.toContain('label: "Your Connections"');
+    expect(navigation).not.toContain('label: "Workflow Runs"');
     expect(navigation).toContain("access.canViewSettings");
     expect(navigation).toContain("access.isAdmin && orgSlug");
   });

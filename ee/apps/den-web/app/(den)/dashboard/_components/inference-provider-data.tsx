@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { GatewayAccessGrantWrite, GatewayCredentialSetWrite, GatewayModelGroupWrite } from "@openwork/types/den/gateway";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
+import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import {
   buildMigrateFromLlmProviderBody,
   readInferenceProviderFromPayload,
@@ -14,11 +15,13 @@ import {
 } from "./inference-provider-request";
 
 export function useOrgInferenceProviders(orgId: string | null) {
+  const generation = useRef(0);
   const [inferenceProviders, setInferenceProviders] = useState<DenInferenceProvider[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const loadProviders = useCallback(async () => {
+    const request = ++generation.current;
     if (!orgId) {
       setInferenceProviders([]);
       setBusy(false);
@@ -28,20 +31,23 @@ export function useOrgInferenceProviders(orgId: string | null) {
     setBusy(true);
     setError(null);
     try {
-      const { response, payload } = await requestJson(`/v1/inference-providers?scope=manageable`, { method: "GET" }, 15000);
+      const { response, payload } = await requestJson(`/v1/inference-providers?scope=manageable`, { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId } }, 15000);
+      if (request !== generation.current) return;
       if (!response.ok) {
         throw new Error(getErrorMessage(payload, `Failed to load gateway providers (${response.status}).`));
       }
       setInferenceProviders(readInferenceProvidersFromPayload(payload));
     } catch (loadError) {
+      if (request !== generation.current) return;
       setError(loadError instanceof Error ? loadError.message : "Failed to load gateway providers.");
     } finally {
-      setBusy(false);
+      if (request === generation.current) setBusy(false);
     }
   }, [orgId]);
 
   useEffect(() => {
     void loadProviders();
+    return () => { generation.current += 1; };
   }, [loadProviders]);
 
   return { inferenceProviders, busy, error, reloadProviders: loadProviders };
@@ -49,11 +55,13 @@ export function useOrgInferenceProviders(orgId: string | null) {
 
 /** One provider with its access grants and credential list (no secret values). */
 export function useInferenceProvider(orgId: string | null, inferenceProviderId: string | null) {
+  const generation = useRef(0);
   const [provider, setProvider] = useState<DenInferenceProviderDetails | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    const request = ++generation.current;
     if (!orgId || !inferenceProviderId) {
       setProvider(null);
       setBusy(false);
@@ -64,13 +72,15 @@ export function useInferenceProvider(orgId: string | null, inferenceProviderId: 
     try {
       const { response, payload } = await requestJson(
         `/v1/inference-providers/${encodeURIComponent(inferenceProviderId)}`,
-        { method: "GET" },
+        { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId } },
         15000,
       );
+      if (request !== generation.current) return;
       if (!response.ok) {
         throw new Error(getErrorMessage(payload, `Failed to load the provider (${response.status}).`));
       }
-      const catalog = await requestJson(`/v1/inference-providers/${encodeURIComponent(inferenceProviderId)}/models`, { method: "GET" }, 15000);
+      const catalog = await requestJson(`/v1/inference-providers/${encodeURIComponent(inferenceProviderId)}/models`, { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId } }, 15000);
+      if (request !== generation.current) return;
       if (!catalog.response.ok) throw new Error(getErrorMessage(catalog.payload, "Could not load configured catalog models."));
       const next = readInferenceProviderDetails(payload, catalog.payload);
       if (!next) {
@@ -78,15 +88,17 @@ export function useInferenceProvider(orgId: string | null, inferenceProviderId: 
       }
       setProvider(next);
     } catch (loadError) {
+      if (request !== generation.current) return;
       setProvider(null);
       setError(loadError instanceof Error ? loadError.message : "Failed to load the provider.");
     } finally {
-      setBusy(false);
+      if (request === generation.current) setBusy(false);
     }
   }, [orgId, inferenceProviderId]);
 
   useEffect(() => {
     void load();
+    return () => { generation.current += 1; };
   }, [load]);
 
   return { provider, busy, error, reload: load };

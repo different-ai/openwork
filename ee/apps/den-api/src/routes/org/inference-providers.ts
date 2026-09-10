@@ -10,6 +10,7 @@ import { createPkcePair, OAuthTokenExchangeError, resolvePublicApiBaseUrl } from
 import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
+import { gatewayManagementUnavailable, gatewayManagementUnavailableSchema } from "../../gateway-deployment.js"
 import { ensureMemberGatewayKey } from "../../gateway-keys.js"
 import { GatewayWriteError, gatewayCatalog, gatewayGrantSummary, gatewaySummary, refreshGatewayCatalog, resolveGatewayCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
 import { gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm } from "../../llm/inference-provider-config.js"
@@ -70,7 +71,7 @@ const conflictSchema = z.object({ error: z.string(), message: z.string().optiona
 function route(summary: string, schema?: z.ZodType, status: 200 | 201 | 204 = 200, secret = false) {
   const options: DescribeRouteOptions & { "x-mcp"?: false } = {
     tags: ["Inference Providers"], summary,
-    responses: { [status]: schema ? jsonResponse(summary, schema) : emptyResponse(summary), 400: jsonResponse("Invalid request.", invalidRequestSchema), 401: jsonResponse("Sign-in required.", unauthorizedSchema), 403: jsonResponse("Access denied.", forbiddenSchema), 404: jsonResponse("Resource not found.", notFoundSchema), 409: jsonResponse("Selection or resource conflict.", conflictSchema) },
+    responses: { [status]: schema ? jsonResponse(summary, schema) : emptyResponse(summary), 400: jsonResponse("Invalid request.", invalidRequestSchema), 401: jsonResponse("Sign-in required.", unauthorizedSchema), 403: jsonResponse("Access denied or Gateway management disabled.", z.union([forbiddenSchema, gatewayManagementUnavailableSchema])), 404: jsonResponse("Resource not found.", notFoundSchema), 409: jsonResponse("Selection or resource conflict.", conflictSchema) },
     ...(secret ? { "x-mcp": false as const } : {}),
   }
   return describeRoute(options)
@@ -81,11 +82,15 @@ const managementMessage = "Only workspace owners and admins can manage inference
 const managementRead: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
   const permission = ensureOrganizationAdminRole(c, managementMessage)
   if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+  const unavailable = gatewayManagementUnavailable()
+  if (unavailable) return c.json(unavailable, 403)
   await next()
 }
 const managementWrite: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
   const permission = ensureOrganizationAdmin(c, managementMessage)
   if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+  const unavailable = gatewayManagementUnavailable()
+  if (unavailable) return c.json(unavailable, 403)
   await next()
 }
 async function liveMember(database: GatewayTx | typeof db, actor: Actor, lock: boolean, manage = false) {
@@ -173,6 +178,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     if (manage) {
       const permission = ensureOrganizationAdminRole(c, managementMessage)
       if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+      const unavailable = gatewayManagementUnavailable()
+      if (unavailable) return c.json(unavailable, 403)
     }
     await liveMember(db, actor, false, manage)
     const providers = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, actor.organization.id)).orderBy(desc(GatewayProviderTable.updated_at))

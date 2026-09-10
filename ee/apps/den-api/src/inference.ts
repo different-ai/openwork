@@ -132,16 +132,16 @@ function currentWindow(input: { anchorAt: Date | null; currentEnd: Date | null; 
   return { start, end }
 }
 
-function buildOpenWorkProviderConfig() {
+export function buildOpenWorkProviderConfig() {
   return {
     id: OPENWORK_PROVIDER_ID,
     name: "OpenWork",
     npm: "@openrouter/ai-sdk-provider",
     env: ["OPENWORK_API_KEY"],
     doc: "OpenWork-managed inference proxy for organization models.",
-    api: `${env.inferenceProxyBaseUrl.replace(/\/+$/, "")}/api/v1`,
+    api: `${env.modelsPublicBaseUrl.replace(/\/+$/, "")}/api/v1`,
     options: {
-      baseURL: `${env.inferenceProxyBaseUrl.replace(/\/+$/, "")}/api/v1`,
+      baseURL: `${env.modelsPublicBaseUrl.replace(/\/+$/, "")}/api/v1`,
     },
   }
 }

@@ -106,6 +106,7 @@ const updateOrganizationCapabilitiesSchema = z.object({
     installLinks: z.boolean().nullable().optional(),
     mcpConnections: z.boolean().nullable().optional(),
     modelsAnalytics: z.boolean().nullable().optional(),
+    gatewayDashboard: z.boolean().nullable().optional(),
   }),
 })
 
@@ -278,6 +279,7 @@ function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unkno
     installLinks: organizationInstallLinksEnabled(metadata, { gatingEnabled: false }),
     mcpConnections: memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: false }),
     modelsAnalytics: normalizeOrganizationCapabilities(metadata).modelsAnalytics,
+    gatewayDashboard: normalizeOrganizationCapabilities(metadata).gatewayDashboard,
   }
 }
 
@@ -316,7 +318,7 @@ function readUnmanagedCapabilityMetadata(metadata: Record<string, unknown>): Rec
     // OpenWork Web access instead), so stale stored overrides stay managed
     // (dropped on the next capabilities write) instead of passing through as
     // unmanaged metadata.
-    if (key !== "modelsAnalytics" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
+    if (key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
       capabilities[key] = value
     }
   }
@@ -2041,6 +2043,10 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         const modelsAnalytics = body.data.capabilities.modelsAnalytics
         if (modelsAnalytics === null) delete capabilities.modelsAnalytics
         else if (modelsAnalytics !== undefined) capabilities.modelsAnalytics = modelsAnalytics
+
+        const gatewayDashboard = body.data.capabilities.gatewayDashboard
+        if (gatewayDashboard === null) delete capabilities.gatewayDashboard
+        else if (gatewayDashboard !== undefined) capabilities.gatewayDashboard = gatewayDashboard
 
         return {
           ...current,

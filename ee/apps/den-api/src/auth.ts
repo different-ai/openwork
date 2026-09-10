@@ -1174,6 +1174,10 @@ export const auth = betterAuth({
           if ("dpaSigned" in metadata) {
             throw new APIError("FORBIDDEN", { message: "dpaSigned is reserved for internal platform administration." });
           }
+          const capabilities = metadata.capabilities;
+          if (capabilities && typeof capabilities === "object" && "gatewayDashboard" in capabilities) {
+            throw new APIError("FORBIDDEN", { message: "capabilities.gatewayDashboard is reserved for internal platform administration." });
+          }
         },
         beforeUpdateOrganization: async ({ organization }) => {
           // A replacement without dpaSigned can erase it just as easily as an explicit false.

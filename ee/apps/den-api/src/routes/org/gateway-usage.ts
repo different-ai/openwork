@@ -6,6 +6,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
+import { gatewayManagementUnavailable, gatewayManagementUnavailableSchema } from "../../gateway-deployment.js"
 import { getModelsDevProviders } from "../../llm/models-dev.js"
 import { orgMemberRoute, queryValidator } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -347,12 +348,14 @@ export function registerOrgGatewayUsageRoutes<T extends { Variables: OrgRouteVar
       200: jsonResponse("Gateway usage", responseSchema),
       400: jsonResponse("Invalid query", invalidRequestSchema),
       401: jsonResponse("Sign-in required", unauthorizedSchema),
-      403: jsonResponse("Owner/admin permission required", forbiddenSchema),
+      403: jsonResponse("Owner/admin permission required or Gateway management disabled", z.union([forbiddenSchema, gatewayManagementUnavailableSchema])),
       422: jsonResponse("Usage cannot be represented safely", z.object({ error: z.string(), message: z.string() })),
     },
   }), orgMemberRoute(), queryValidator(querySchema), async (c) => {
     const permission = ensureOrganizationAdminRole(c, "Only workspace owners and admins can read organization Gateway usage.")
     if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+    const unavailable = gatewayManagementUnavailable()
+    if (unavailable) return c.json(unavailable, 403)
     c.header("cache-control", "no-store")
     try {
       return c.json(await readGatewayUsage(c.get("organizationContext").organization.id, c.req.valid("query")))

@@ -41,6 +41,11 @@
       "development": "./src/gateway-bearer-key.ts",
       "default": "./dist/gateway-bearer-key.js"
     },
+    "./gateway-env": {
+      "types": "./src/gateway-env.ts",
+      "development": "./src/gateway-env.ts",
+      "default": "./dist/gateway-env.js"
+    },
     "./gateway-routing": {
       "types": "./src/gateway-routing.ts",
       "development": "./src/gateway-routing.ts",

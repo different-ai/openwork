@@ -1,10 +1,11 @@
 import "./load-env.js";
 import type { DenDbMode, PlanetScaleCredentials } from "@openwork-ee/den-db";
+import { gatewayInteger, gatewayOrigin, parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env";
 import { z } from "zod";
 
 const EnvSchema = z
   .object({
-    PORT: z.string().optional(),
+    PORT: z.number().int().min(1).max(65535),
     CORS_ORIGINS: z.string().optional(),
     DATABASE_URL: z.string().min(1).optional(),
     DB_MODE: z.enum(["mysql", "planetscale"]).optional(),
@@ -14,11 +15,11 @@ const EnvSchema = z
     DEN_DB_ENCRYPTION_KEY: z.string().trim().min(32),
     GATEWAY_PROXY_BASE_URL: z.string().optional(),
     OPENROUTER_UPSTREAM_URL: z.string().optional(),
-    INFERENCE_STREAM_IDLE_MS: z.coerce.number().int().min(1000).max(900000).default(120000),
+    GATEWAY_STREAM_IDLE_MS: z.number().int().min(1000).max(900000),
     OPENAI_REALTIME_API_KEY: z.string().optional(),
     OPENAI_API_KEY: z.string().optional(),
     GATEWAY_ADMIN_TOKEN: z.string().optional(),
-    GATEWAY_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1000).max(24 * 60 * 60_000).default(30 * 60_000),
+    GATEWAY_UPSTREAM_TIMEOUT_MS: z.number().int().min(1000).max(24 * 60 * 60_000),
     GATEWAY_WEBHOOK_SECRET: z.string().optional(),
     GATEWAY_CREDITS_PER_DOLLAR: z.string().optional(),
   })
@@ -49,16 +50,17 @@ const EnvSchema = z
     }
   });
 
-export const isDevMode = process.env.OPENWORK_DEV_MODE === "1";
+export const isDevMode = process.env.OPENWORK_DEV_MODE === "1" && process.env.NODE_ENV !== "production";
 
-const parsed = EnvSchema.parse({
+const input = {
   ...process.env,
   // Deprecated INFERENCE_* aliases: an explicitly set GATEWAY_* value wins,
   // including empty values (disable), and invalid values fail validation.
-  PORT: process.env.GATEWAY_PORT ?? process.env.PORT ?? process.env.INFERENCE_PORT,
+  PORT: gatewayInteger(process.env.GATEWAY_PORT ?? process.env.PORT ?? process.env.INFERENCE_PORT, "GATEWAY_PORT (or PORT/INFERENCE_PORT when absent)", 8791, 1, 65535),
   GATEWAY_PROXY_BASE_URL: process.env.GATEWAY_PROXY_BASE_URL ?? process.env.INFERENCE_PROXY_BASE_URL,
   GATEWAY_ADMIN_TOKEN: process.env.GATEWAY_ADMIN_TOKEN ?? process.env.INFERENCE_ADMIN_TOKEN,
-  GATEWAY_UPSTREAM_TIMEOUT_MS: process.env.GATEWAY_UPSTREAM_TIMEOUT_MS ?? process.env.INFERENCE_UPSTREAM_TIMEOUT_MS,
+  GATEWAY_UPSTREAM_TIMEOUT_MS: gatewayInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS ?? process.env.INFERENCE_UPSTREAM_TIMEOUT_MS, "GATEWAY_UPSTREAM_TIMEOUT_MS", 30 * 60_000, 1000, 24 * 60 * 60_000),
+  GATEWAY_STREAM_IDLE_MS: gatewayInteger(process.env.GATEWAY_STREAM_IDLE_MS ?? process.env.INFERENCE_STREAM_IDLE_MS, "GATEWAY_STREAM_IDLE_MS", 120000, 1000, 900000),
   GATEWAY_CREDITS_PER_DOLLAR: process.env.GATEWAY_CREDITS_PER_DOLLAR ?? process.env.INFERENCE_CREDITS_PER_DOLLAR,
   DATABASE_URL:
     process.env.DATABASE_URL ??
@@ -74,7 +76,23 @@ const parsed = EnvSchema.parse({
   GATEWAY_WEBHOOK_SECRET:
     process.env.GATEWAY_WEBHOOK_SECRET ?? process.env.INFERENCE_WEBHOOK_SECRET ??
     (isDevMode ? "local-dev-webhook-secret" : undefined),
+};
+const gatewayDeployment = parseGatewayDeploymentEnv({ ...process.env,
+  DATABASE_URL: input.DATABASE_URL,
+  DB_MODE: input.DB_MODE,
+  DEN_DB_ENCRYPTION_KEY: input.DEN_DB_ENCRYPTION_KEY,
 });
+const parsed = EnvSchema.parse(input);
+const openRouterUpstreamUrl = normalizeUrl(parsed.OPENROUTER_UPSTREAM_URL ?? "https://openrouter.ai/api/v1");
+if (gatewayDeployment.enabled) {
+  try {
+    const url = new URL(openRouterUpstreamUrl);
+    if (url.username || url.password || url.search || url.hash || openRouterUpstreamUrl !== openRouterUpstreamUrl.trim()) throw new Error();
+    gatewayOrigin(url.origin, "OPENROUTER_UPSTREAM_URL", !isDevMode, true);
+  } catch {
+    throw new Error("OPENROUTER_UPSTREAM_URL must be an HTTP(S) URL without credentials, query, or fragment; production requires non-local HTTPS");
+  }
+}
 
 function optionalString(value: string | undefined) {
   const trimmed = value?.trim();
@@ -92,17 +110,9 @@ function normalizeUrl(value: string) {
   return value.replace(/\/+$/, "");
 }
 
-function parsePort(value: string | undefined) {
-  const port = Number(value ?? "8791");
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-    throw new Error("PORT must be an integer between 1 and 65535");
-  }
-  return port;
-}
-
 function parseCreditsPerDollar(value: string | undefined) {
   const credits = Number(value ?? "1000000");
-  if (!Number.isFinite(credits) || credits <= 0) {
+  if ((value !== undefined && !/^\d+(?:\.\d+)?$/.test(value)) || !Number.isFinite(credits) || credits <= 0) {
     throw new Error("GATEWAY_CREDITS_PER_DOLLAR must be a positive number");
   }
   return credits;
@@ -120,21 +130,20 @@ const planetscale: PlanetScaleCredentials | null =
     : null;
 
 export const env = {
+  gatewayEnabled: gatewayDeployment.enabled,
   upstreamTimeoutMs: parsed.GATEWAY_UPSTREAM_TIMEOUT_MS,
-  port: parsePort(parsed.PORT),
+  port: parsed.PORT,
   managedUpstreamTimeoutMs: process.env.GATEWAY_UPSTREAM_TIMEOUT_MS !== undefined || process.env.INFERENCE_UPSTREAM_TIMEOUT_MS !== undefined
     ? parsed.GATEWAY_UPSTREAM_TIMEOUT_MS : 120000,
-  streamIdleMs: parsed.INFERENCE_STREAM_IDLE_MS,
-  corsOrigins: splitCsv(parsed.CORS_ORIGINS),
+  streamIdleMs: parsed.GATEWAY_STREAM_IDLE_MS,
+  corsOrigins: splitCsv(parsed.CORS_ORIGINS).map((origin) => gatewayDeployment.enabled ? gatewayOrigin(origin, "CORS_ORIGINS", !isDevMode, true) : origin),
   databaseUrl: parsed.DATABASE_URL,
   dbMode: (parsed.DB_MODE ??
     (parsed.DATABASE_URL ? "mysql" : "planetscale")) as DenDbMode,
   planetscale,
   dbEncryptionKey: parsed.DEN_DB_ENCRYPTION_KEY,
   proxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL),
-  openRouterUpstreamUrl: normalizeUrl(
-    parsed.OPENROUTER_UPSTREAM_URL ?? "https://openrouter.ai/api/v1",
-  ),
+  openRouterUpstreamUrl,
   openAiRealtimeApiKey: optionalString(parsed.OPENAI_REALTIME_API_KEY) ?? optionalString(parsed.OPENAI_API_KEY),
   adminToken: optionalString(parsed.GATEWAY_ADMIN_TOKEN),
   webhookSecret: optionalString(parsed.GATEWAY_WEBHOOK_SECRET),

@@ -308,7 +308,7 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   const summary: GatewayProviderSummary = {
     modelIds: provider.model_ids, ...(refreshed.catalogWarning ? { catalogWarning: refreshed.catalogWarning } : {}),
     id: provider.id, providerId: provider.provider_id, name: provider.name, source: "openwork_gateway", credentialMode: sets.length > 0 && sets.every((set) => set.credential_mode === "member") ? "member" : "org", status: provider.status, updatedAt: provider.updated_at.toISOString(),
-    providerConfig: buildGatewayProviderConfig(provider, env.inferenceProxyBaseUrl), models: usableModels.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)), authorizationRequests,
+    providerConfig: buildGatewayProviderConfig(provider, env.gatewayPublicBaseUrl), models: usableModels.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)), authorizationRequests,
     credentialStatus: usableModels.length ? "ready" : authorizationRequests.length ? "member_auth_required" : "org_credential_missing", authUrl: authorizationRequests[0]?.authUrl ?? null,
   }
   if (typeof migration === "object" && migration !== null && "llmProviderId" in migration && typeof migration.llmProviderId === "string"

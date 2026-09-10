@@ -7,6 +7,7 @@ export default defineConfig({
     "inference-bearer-key": "src/inference-bearer-key.ts",
     "gateway-bearer-key": "src/gateway-bearer-key.ts",
     "gateway-routing": "src/gateway-routing.ts",
+    "gateway-env": "src/gateway-env.ts",
     "gateway-rollups": "src/gateway-rollups.ts",
     "inference-egress": "src/inference-egress.ts",
     "inference-credentials": "src/inference-credentials.ts",

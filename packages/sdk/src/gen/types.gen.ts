@@ -661,6 +661,14 @@ export type OrganizationContextResponse = {
   currentMemberTeams: Array<{
     [key: string]: unknown;
   }>;
+  capabilities: {
+    gatewayDashboard: boolean;
+    [key: string]: unknown;
+  };
+  deploymentCapabilities: {
+    version: 1;
+    aiGateway: boolean;
+  };
   [key: string]: unknown;
 };
 
@@ -1203,7 +1211,7 @@ export type CreateInstallLinkResponse = {
 
 export type CapabilityDisabledError = {
   error: "capability_disabled";
-  capability: "installLinks" | "mcpConnections" | "modelsAnalytics";
+  capability: "installLinks" | "mcpConnections" | "modelsAnalytics" | "gatewayDashboard";
 };
 
 export type CreateInstallLinkRequest = {
@@ -1397,7 +1405,7 @@ export type GatewayProviderDetails = {
     name: string;
     config: {
       id: string;
-      [key: string]: unknown | string;
+      [key: string]: unknown;
     };
     upstreamModelId: string;
     /**
@@ -1539,7 +1547,7 @@ export type GatewayProviderSummary = {
     name: string;
     config: {
       id: string;
-      [key: string]: unknown | string;
+      [key: string]: unknown;
     };
     upstreamModelId: string;
     /**
@@ -12195,9 +12203,14 @@ export type GetV1InferenceProvidersUsageErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Owner/admin permission required
+   * Owner/admin permission required or Gateway management disabled
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Usage cannot be represented safely
    */
@@ -12271,9 +12284,14 @@ export type GetV1InferenceProvidersErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -12346,9 +12364,14 @@ export type PostV1InferenceProvidersErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -12398,9 +12421,14 @@ export type DeleteV1InferenceProvidersByInferenceProviderIdErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -12449,9 +12477,14 @@ export type GetV1InferenceProvidersByInferenceProviderIdErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -12531,9 +12564,14 @@ export type PatchV1InferenceProvidersByInferenceProviderIdErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -12584,9 +12622,14 @@ export type GetV1InferenceProvidersByInferenceProviderIdConnectErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -12634,7 +12677,7 @@ export type GetV1InferenceProvidersByInferenceProviderIdConnectResponses = {
         name: string;
         config: {
           id: string;
-          [key: string]: unknown | string;
+          [key: string]: unknown;
         };
         upstreamModelId: string;
         /**
@@ -12696,9 +12739,14 @@ export type GetV1InferenceProvidersByInferenceProviderIdModelsErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -12760,9 +12808,14 @@ export type GetV1InferenceProvidersByInferenceProviderIdModelGroupsErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -12827,9 +12880,14 @@ export type PostV1InferenceProvidersByInferenceProviderIdModelGroupsErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -12893,9 +12951,14 @@ export type DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdE
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -12953,9 +13016,14 @@ export type PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdEr
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -13015,9 +13083,14 @@ export type GetV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -13102,9 +13175,14 @@ export type PostV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors = 
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -13180,9 +13258,14 @@ export type DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCrede
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -13248,9 +13331,14 @@ export type PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCreden
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -13322,9 +13410,14 @@ export type GetV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -13433,9 +13526,14 @@ export type PostV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -13521,9 +13619,14 @@ export type DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantId
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -13603,9 +13706,14 @@ export type PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdE
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -13691,9 +13799,14 @@ export type DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdErrors
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -13748,9 +13861,14 @@ export type GetV1InferenceProvidersByInferenceProviderIdOauthStartErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -13837,9 +13955,14 @@ export type DeleteV1InferenceProvidersByInferenceProviderIdOauthErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */
@@ -13888,9 +14011,14 @@ export type PostV1InferenceProvidersMigrateFromLlmProviderErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Access denied.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
    * Resource not found.
    */

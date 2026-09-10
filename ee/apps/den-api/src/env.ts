@@ -2,6 +2,7 @@ import os from "node:os"
 import { readFileSync } from "node:fs"
 import path from "node:path"
 import { denUrls } from "@openwork-ee/utils/den-urls"
+import { parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
 import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { resolveDenServiceVersion } from "./service-version.js"
@@ -235,6 +236,7 @@ const EnvSchema = z.object({
   }
 })
 
+const gatewayDeployment = parseGatewayDeploymentEnv(process.env)
 const parsed = EnvSchema.parse({
   ...process.env,
   // Deprecated deployment alias; an explicitly set canonical value wins.
@@ -815,6 +817,12 @@ export const env = {
   corsHandledByEdge,
   openworkWebEnabled,
   inferenceProxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
+  // Keep known public Models destinations even when Gateway management is off.
+  modelsPublicBaseUrl: gatewayDeployment.modelsPublicBaseUrl ?? optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
+  gatewayEnabled: gatewayDeployment.enabled,
+  gatewayProxyBaseUrl: gatewayDeployment.proxyBaseUrl,
+  // Existing member payloads retain their legacy destination until explicitly configured.
+  gatewayPublicBaseUrl: gatewayDeployment.publicBaseUrl ?? optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   openRouterManagementApiKey: optionalString(parsed.OPENROUTER_MANAGEMENT_API_KEY),
   openRouterWorkspaceId: optionalString(parsed.OPENROUTER_WORKSPACE_ID),
   stripe: {

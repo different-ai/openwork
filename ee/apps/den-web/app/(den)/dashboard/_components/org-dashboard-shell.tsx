@@ -60,6 +60,7 @@ import {
   type DenSearchBarHandle,
 } from "./command-palette/den-search-bar";
 import { UserProfileDialog } from "./user-profile-dialog";
+import { useGatewayDashboardAccess } from "./gateway-dashboard-capability-guard";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
 
@@ -300,6 +301,7 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
 }
 
 export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
+  const gatewayAccess = useGatewayDashboardAccess();
   const pathname = usePathname();
   const onboardingRoute = getMarketplaceOnboardingRoute();
   const isOnboarding = pathname === onboardingRoute || pathname.startsWith(`${onboardingRoute}/`);
@@ -432,14 +434,18 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const navSections = buildDashboardNavSections({
     orgSlug: activeOrg?.slug ?? null,
     access,
-    capabilities: orgContext?.capabilities ?? {
-      cloud: false,
-      installLinks: false,
-      mcpConnections: false,
-      openworkWeb: false,
-      orgManagedDashboards: false,
-      workflows: false,
+    capabilities: {
+      ...(orgContext?.capabilities ?? {
+        cloud: false,
+        installLinks: false,
+        mcpConnections: false,
+        openworkWeb: false,
+        orgManagedDashboards: false,
+        workflows: false,
+      }),
+      gatewayDashboard: orgContext?.capabilities.gatewayDashboard === true,
     },
+    gatewayAccess,
     orgMode: runtimeConfig.orgMode,
     runtimeConfigLoaded,
   });

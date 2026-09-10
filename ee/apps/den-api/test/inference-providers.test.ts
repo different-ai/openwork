@@ -6,12 +6,20 @@ const API_ORIGIN = "http://127.0.0.1:8790"
 const PROXY_BASE_URL = "https://inference.example.test"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_inference_providers"
-  process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "local-dev-db-encryption-key-please-change-1234567890"
-  process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "w".repeat(32)
-  process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? API_ORIGIN
-  process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? API_ORIGIN
-  process.env.INFERENCE_PROXY_BASE_URL = `${PROXY_BASE_URL}/`
+  const databaseUrl = process.env.DEN_TEST_DATABASE_URL
+  if (!databaseUrl) throw new Error("Set DEN_TEST_DATABASE_URL to an isolated prepared test database; ambient DATABASE_URL is not used")
+  process.env.DATABASE_URL = databaseUrl
+  process.env.DB_MODE = "mysql"
+  process.env.NODE_ENV = "test"
+  process.env.OPENWORK_DEV_MODE = "1"
+  process.env.DEN_DB_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1234567890"
+  process.env.BETTER_AUTH_SECRET = "w".repeat(32)
+  process.env.BETTER_AUTH_URL = API_ORIGIN
+  process.env.DEN_BASE_URL = API_ORIGIN
+  process.env.CORS_ORIGINS = API_ORIGIN
+  process.env.GATEWAY_ENABLED = "true"
+  process.env.GATEWAY_PROXY_BASE_URL = PROXY_BASE_URL
+  process.env.GATEWAY_PUBLIC_BASE_URL = PROXY_BASE_URL
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1002,6 +1010,37 @@ test("Models enable and disable affect only Models keys, never the stable Gatewa
   expect(providers).toHaveLength(1)
   expect(providers[0]?.apiKey).toMatch(/^ow_inf_/)
   expect(providers[0]?.apiKey).not.toBe(beforeKey.encryptedKey)
+  const { env } = await import("../src/env.js")
+  const deploymentEnabled = env.gatewayEnabled
+  const usable = readProviderList(await (await request(memberCookie, "/v1/inference-providers?scope=usable")).json())
+  const ready = usable.find((provider) => provider.credentialStatus === "ready")
+  if (!ready) throw new Error("expected a usable gateway provider")
+  try {
+    for (const enabled of [false, true]) for (const gatewayDashboard of [false, true]) {
+      env.gatewayEnabled = enabled
+      await db.update(schema.OrganizationTable).set({ metadata: {
+        inference: { enabled: true, tier: "tier1" }, capabilities: { gatewayDashboard },
+      } }).where(drizzle.eq(schema.OrganizationTable.id, organizationId))
+      const context = await request(ownerCookie, "/v1/org")
+      expect(context.status).toBe(200)
+      expect(await context.json()).toMatchObject({
+        capabilities: { gatewayDashboard }, deploymentCapabilities: { version: 1, aiGateway: enabled },
+      })
+      expect((await request(ownerCookie, "/v1/inference-providers?scope=manageable")).status).toBe(enabled ? 200 : 403)
+      const connect = await request(memberCookie, `/v1/inference-providers/${readString(ready, "id")}/connect`)
+      expect(connect.status).toBe(200)
+      expect(readProvider(await connect.json()).apiKey).toBe(beforeKey.encryptedKey)
+      expect((await request(ownerCookie, "/v1/inference")).status).toBe(200)
+      expect(await listOpenWorkLlmProviders(memberId)).toEqual(providers)
+      expect(await db.select({ id: schema.InferenceKeyTable.id }).from(schema.InferenceKeyTable).where(drizzle.and(
+        drizzle.eq(schema.InferenceKeyTable.org_membership_id, memberId), drizzle.eq(schema.InferenceKeyTable.status, "active"),
+      ))).toEqual(activeKeys)
+    }
+  } finally {
+    env.gatewayEnabled = deploymentEnabled
+    await db.update(schema.OrganizationTable).set({ metadata: { inference: { enabled: true, tier: "tier1" } } })
+      .where(drizzle.eq(schema.OrganizationTable.id, organizationId))
+  }
   await setInferenceEnabled({ organizationId, enabled: false })
   const [gatewayKey] = await db.select().from(schema.GatewayKeyTable).where(drizzle.eq(schema.GatewayKeyTable.id, beforeKey.id))
   expect(gatewayKey).toMatchObject({ status: "active", encrypted_key: beforeKey.encryptedKey })

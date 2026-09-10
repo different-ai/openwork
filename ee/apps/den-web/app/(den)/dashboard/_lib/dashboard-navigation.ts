@@ -41,6 +41,7 @@ import {
   getWebRoute,
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
+import type { getGatewayDashboardAccess } from "./gateway-dashboard-access";
 
 export type DashboardNavChild = {
   href: string;
@@ -78,6 +79,7 @@ export type BuildDashboardNavSectionsInput = {
   orgSlug: string | null;
   access: DenOrgAccessFlags;
   capabilities: DenOrgCapabilities;
+  gatewayAccess: ReturnType<typeof getGatewayDashboardAccess>;
   orgMode: DenOrgMode;
   runtimeConfigLoaded: boolean;
 };
@@ -86,6 +88,7 @@ export function buildDashboardNavSections({
   orgSlug,
   access,
   capabilities,
+  gatewayAccess,
   orgMode,
   runtimeConfigLoaded,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
@@ -112,7 +115,8 @@ export function buildDashboardNavSections({
 
   // Hosted deployments expose OpenWork Models; self-hosted deployments only
   // expose their own providers. Keep hidden until runtime config is known.
-  const showOpenWorkModels = runtimeConfigLoaded && orgMode === "multi_org";
+  const showOpenWorkModels = runtimeConfigLoaded && orgMode === "multi_org"
+    && gatewayAccess !== "checking" && gatewayAccess !== "enabled";
   const modelsGroup: DashboardNavItem | null = access.isAdmin && orgSlug
     ? {
         href: showOpenWorkModels
@@ -122,7 +126,9 @@ export function buildDashboardNavSections({
         icon: Sparkles,
         badge: "Providers",
         children: [
-          { href: getGatewayProvidersRoute(orgSlug), label: "Gateway", badge: "New" },
+          ...((gatewayAccess === "enabled" || gatewayAccess === "unavailable") && capabilities.gatewayDashboard === true
+            ? [{ href: getGatewayProvidersRoute(orgSlug), label: "Gateway", badge: "New" }]
+            : []),
           ...(showOpenWorkModels
             ? [{ href: getInferenceRoute(orgSlug), label: "OpenWork Models" }]
             : []),

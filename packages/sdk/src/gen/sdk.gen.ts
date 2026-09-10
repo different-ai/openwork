@@ -5553,9 +5553,9 @@ export class DenClient extends HeyApiClient {
    * Create inference gateway provider
    */
   public postV1InferenceProviders<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
-      providerId?: string;
+    parameters: {
+      name: string;
+      providerId: string;
       modelIds?: Array<string>;
       settings?: {
         project?: string;
@@ -5804,9 +5804,9 @@ export class DenClient extends HeyApiClient {
   public postV1InferenceProvidersByInferenceProviderIdModelGroups<ThrowOnError extends boolean = false>(
     parameters: {
       inferenceProviderId: string;
-      name?: string;
+      name: string;
       description?: string | null;
-      modelIds?: Array<string>;
+      modelIds: Array<string>;
       status?: "active" | "disabled";
     },
     options?: Options<never, ThrowOnError>,
@@ -5945,8 +5945,8 @@ export class DenClient extends HeyApiClient {
   public postV1InferenceProvidersByInferenceProviderIdCredentialSets<ThrowOnError extends boolean = false>(
     parameters: {
       inferenceProviderId: string;
-      name?: string;
-      credentialMode?: "org" | "member";
+      name: string;
+      credentialMode: "org" | "member";
       credential?: {
         kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
         secret: string;
@@ -6112,9 +6112,9 @@ export class DenClient extends HeyApiClient {
   public postV1InferenceProvidersByInferenceProviderIdAccessGrants<ThrowOnError extends boolean = false>(
     parameters: {
       inferenceProviderId: string;
-      modelGroupId?: string;
-      credentialSetId?: string;
-      audience?:
+      modelGroupId: string;
+      credentialSetId: string;
+      audience:
         | {
             type: "organization";
           }
@@ -6392,8 +6392,8 @@ export class DenClient extends HeyApiClient {
    * Move an LLM provider to the inference gateway
    */
   public postV1InferenceProvidersMigrateFromLlmProvider<ThrowOnError extends boolean = false>(
-    parameters?: {
-      llmProviderId?: string;
+    parameters: {
+      llmProviderId: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {

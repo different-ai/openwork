@@ -2,13 +2,13 @@ import { expect, onTestFinished } from "vitest";
 import { screenshot, validate } from "@openwork/test-evidence";
 import { denFetch, evalIn, go, readAvailableModels } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
-import { app, browserScript, eventually, needs, server, test } from "@openwork/testkit";
+import { app, browserScript, eventually, needs, server, SkipError, test } from "@openwork/testkit";
 
 /**
  * Desktop half of the inference gateway (plan §3 #2): after cloud provider
  * sync, one runtime opencode provider exists per `inference_providers` row —
  * id = the `ipr_` id, `api`/`options.baseURL` = the gateway URL, the scoped env
- * name from /connect set to the member's `ow_inf_` key — and the model
+ * name from /connect set to the member's `ow_gw_` key — and the model
  * picker badges that provider group "via OpenWork Gateway".
  *
  * The inference app is not booted here: materialization depends only on
@@ -20,7 +20,7 @@ const ORGANIZATION_NAME = "Inference Gateway Desktop Sync";
 const PROVIDER_NAME = "Anthropic via OpenWork Gateway";
 const CATALOG_PROVIDER_ID = "anthropic";
 const CATALOG_ENV_KEY = "ANTHROPIC_API_KEY";
-const GATEWAY_KEY_PREFIX = "ow_inf_";
+const GATEWAY_KEY_PREFIX = "ow_gw_";
 const GATEWAY_BADGE_LABEL = "via OpenWork Gateway";
 const FAKE_UPSTREAM_KEY = "sk-ant-fake-upstream-key-never-reaches-a-device";
 // Nothing listens here on purpose: the desktop must materialize the URL as given, not probe it.
@@ -99,7 +99,7 @@ async function deleteGatewayProvider(admin: DenSession, orgId: string, id: strin
   });
 }
 
-async function memberConnect(member: DenSession, orgId: string, id: string): Promise<{ key: string; gatewayUrl: string; envName: string }> {
+async function memberConnect(member: DenSession, orgId: string, id: string, upstreamModelId: string): Promise<{ key: string; gatewayUrl: string; envName: string; wireModelId: string }> {
   const result = await denFetch(member, `/v1/inference-providers/${encodeURIComponent(id)}/connect`, {
     headers: orgHeaders(member, orgId),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -121,10 +121,21 @@ async function memberConnect(member: DenSession, orgId: string, id: string): Pro
   expect(Object.keys(apiKeys ?? {})).toEqual([envName]);
   expect(stringAt(apiKeys, envName) === key).toBe(true);
   expect(key.startsWith(GATEWAY_KEY_PREFIX)).toBe(true);
+  expect(key).toMatch(/^ow_gw_[A-Za-z0-9_-]{43}$/);
+  const models = Array.isArray(provider?.models) ? provider.models.filter(isRecord) : [];
+  expect(models).toHaveLength(1);
+  const model = models[0];
+  const wireModelId = stringAt(model, "id");
+  expect(model?.upstreamModelId).toBe(upstreamModelId);
+  expect(wireModelId).toMatch(/^gwm_[a-z0-9]+_[a-z0-9]+_[a-z0-9]+$/);
+  expect(wireModelId).not.toBe(upstreamModelId);
+  expect(model?.config).toMatchObject({ id: wireModelId });
+  expect(model?.modelGroupId).toMatch(/^gmg_/);
+  expect(model?.credentialSetId).toMatch(/^gcs_/);
   expect(result.text.includes(FAKE_UPSTREAM_KEY)).toBe(false);
   const options = isRecord(providerConfig?.options) ? providerConfig.options : null;
   expect(stringAt(options, "baseURL")).toBe(gatewayUrl);
-  return { key, gatewayUrl, envName };
+  return { key, gatewayUrl, envName, wireModelId };
 }
 
 interface LocalServerSnapshot {
@@ -189,9 +200,15 @@ async function readLocalServer(desktopApp: Parameters<typeof evalIn>[0], iprId: 
 
 test("a gateway provider materializes on the desktop as its own ipr_ provider with the member's OpenWork key and a gateway badge", async ({ evidence, place }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
+  if (process.env.OPENWORK_EVAL_DEN_API_URL?.trim()) throw new SkipError("Gateway deployment configuration requires an isolated Den, not an attached service");
   await using den = await server({
     place,
-    env: { INFERENCE_PROXY_BASE_URL: GATEWAY_ORIGIN },
+    env: {
+      NODE_ENV: "test", OPENWORK_DEV_MODE: "1", DB_MODE: "mysql",
+      GATEWAY_ENABLED: "true",
+      GATEWAY_PROXY_BASE_URL: GATEWAY_ORIGIN,
+      GATEWAY_PUBLIC_BASE_URL: GATEWAY_ORIGIN,
+    },
     org: {
       name: ORGANIZATION_NAME,
       admin: { name: "Gateway Admin" },
@@ -207,9 +224,9 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
   onTestFinished(async () => {
     await deleteGatewayProvider(den.admin, orgId, iprId).catch(() => undefined);
   });
-  // Fresh local and Daytona Dens both receive server.env. An attached Den must
-  // already have this exact origin; never turn this into a suffix-only check.
-  const { key: memberKey, gatewayUrl, envName } = await memberConnect(member, orgId, iprId);
+  // Fresh local and Daytona Dens both receive server.env; verify the exact
+  // configured public origin rather than a suffix-only match.
+  const { key: memberKey, gatewayUrl, envName, wireModelId } = await memberConnect(member, orgId, iprId, modelId);
   expect(memberKey.startsWith(GATEWAY_KEY_PREFIX)).toBe(true);
   expect(gatewayUrl).toBe(`${GATEWAY_ORIGIN}/api/v1/providers/${iprId}`);
 
@@ -239,7 +256,8 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
   expect(stringAt(runtimeOptions, "baseURL")).toBe(gatewayUrl);
   expect(runtimeEnv).toEqual([envName]);
   expect(runtimeEnv).not.toContain(CATALOG_ENV_KEY);
-  expect(Object.keys(runtimeModels)).toContain(modelId);
+  expect(Object.keys(runtimeModels)).toEqual([wireModelId]);
+  expect(Object.keys(runtimeModels)).not.toContain(modelId);
   expect(syncEntry?.providerId, local.syncStatusRaw).toBe(iprId);
   expect(syncEntry?.source).toBe("openwork_gateway");
   expect(syncEntry?.name).toBe(PROVIDER_NAME);
@@ -252,7 +270,7 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
       && syncEntry?.source === "openwork_gateway",
   );
 
-  // --- Env store: the member's ow_inf_ key, never the org's upstream key. ---
+  // --- Env store: the member's Gateway key, never a Models or upstream key. ---
   expect(local.envValue === memberKey).toBe(true);
   expect(local.envValue?.startsWith(GATEWAY_KEY_PREFIX)).toBe(true);
   expect(local.bareEnvValue?.startsWith(GATEWAY_KEY_PREFIX) === true).toBe(false);
@@ -260,7 +278,7 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
   expect(JSON.stringify(runtimeProvider).includes(FAKE_UPSTREAM_KEY)).toBe(false);
   expect(local.syncStatusRaw.includes(FAKE_UPSTREAM_KEY)).toBe(false);
   evidence.recordAssertionEvidence(
-    "The device holds the member's OpenWork inference key and no upstream credential",
+    "The device holds the member's Gateway key and no upstream credential",
     `/env/${envName} equals the key den-api returned from /connect (prefix ${GATEWAY_KEY_PREFIX}); the bare catalog slot is not a gateway credential and the full env store does not contain the upstream secret.`,
     local.envValue === memberKey && !local.envDump.includes(FAKE_UPSTREAM_KEY),
   );
@@ -268,7 +286,7 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
   // --- Picker: the model is selectable under a group badged "via OpenWork Gateway". ---
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
   const models = await readAvailableModels(desktopApp);
-  const gatewayModel = models.find((model) => model.id === modelId && model.providerName === PROVIDER_NAME) ?? null;
+  const gatewayModel = models.find((model) => model.id === wireModelId && model.providerName === PROVIDER_NAME) ?? null;
   expect(gatewayModel?.selectable).toBe(true);
   expect(gatewayModel?.providerName).toBe(PROVIDER_NAME);
 
@@ -298,7 +316,7 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
   expect(unbadged.length).toBeGreaterThan(0);
   evidence.recordAssertionEvidence(
     "The picker badges only the gateway provider group as via OpenWork Gateway",
-    `Model ${modelId} is selectable under ${String(gatewayModel?.providerName)}; group header ${JSON.stringify(gatewayGroup?.text)} carries the badge, ${otherBadged.length} other group(s) do, and ${unbadged.length} non-gateway group(s) do not.`,
+    `Model ${wireModelId} is selectable under ${String(gatewayModel?.providerName)}; group header ${JSON.stringify(gatewayGroup?.text)} carries the badge, ${otherBadged.length} other group(s) do, and ${unbadged.length} non-gateway group(s) do not.`,
     gatewayModel?.selectable === true && gatewayGroup?.badged === true && otherBadged.length === 0 && unbadged.length > 0,
   );
   {

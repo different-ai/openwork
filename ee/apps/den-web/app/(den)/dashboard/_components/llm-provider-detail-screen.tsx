@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRightLeft, ExternalLink, KeyRound, Trash2, Users } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
@@ -14,6 +14,7 @@ import {
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { migrateLlmProviderToGateway } from "./inference-provider-data";
+import { useGatewayDashboardAccess } from "./gateway-dashboard-capability-guard";
 import {
     formatProviderTimestamp,
     getProviderApiBase,
@@ -43,6 +44,7 @@ export function LlmProviderDetailScreen({
     llmProviderId: string;
 }) {
     const router = useRouter();
+    const gatewayEnabled = useGatewayDashboardAccess() === "enabled";
     const { orgId, orgSlug, runReauthableAction } = useOrgDashboard();
     const { llmProviders, busy, error, reloadProviders } =
         useOrgLlmProviders(orgId);
@@ -51,6 +53,11 @@ export function LlmProviderDetailScreen({
     const [confirmingMigrate, setConfirmingMigrate] = useState(false);
     const [migrateBusy, setMigrateBusy] = useState(false);
     const [migrateError, setMigrateError] = useState<string | null>(null);
+
+    useEffect(() => {
+        setConfirmingMigrate(false);
+        setMigrateError(null);
+    }, [orgId, gatewayEnabled]);
 
     const provider = useMemo(
         () => llmProviders.find((entry) => entry.id === llmProviderId) ?? null,
@@ -100,7 +107,7 @@ export function LlmProviderDetailScreen({
     }
 
     async function moveToGateway() {
-        if (!provider || provider.credentialMode === "per_member") {
+        if (!gatewayEnabled || !provider || !provider.canManage || provider.credentialMode === "per_member") {
             return;
         }
         setMigrateError(null);
@@ -177,7 +184,7 @@ export function LlmProviderDetailScreen({
                 </Link>
 
                 <div className="flex flex-wrap gap-3">
-                    {provider.canManage && provider.source === "models_dev" && provider.credentialMode !== "per_member" ? (
+                    {gatewayEnabled && provider.canManage && provider.source === "models_dev" && provider.credentialMode !== "per_member" ? (
                         <DenButton
                             variant="secondary"
                             data-testid="llm-provider-move-to-gateway"
@@ -215,7 +222,7 @@ export function LlmProviderDetailScreen({
                 </div>
             </div>
 
-            {provider.source === "models_dev" && provider.credentialMode === "per_member" ? (
+            {gatewayEnabled && provider.source === "models_dev" && provider.credentialMode === "per_member" ? (
                 <DenNotice className="mb-6" tone="info" message="Per-member BYOK providers cannot be moved to the gateway. Their individual credentials stay unchanged. Create a separate gateway provider instead; member sign-in is supported only for Google Vertex." />
             ) : null}
             {deleteError ? (
@@ -223,13 +230,13 @@ export function LlmProviderDetailScreen({
                     {deleteError}
                 </div>
             ) : null}
-            {migrateError ? (
+            {gatewayEnabled && migrateError ? (
                 <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
                     {migrateError}
                 </div>
             ) : null}
 
-            {confirmingMigrate ? (
+            {gatewayEnabled && confirmingMigrate ? (
                 <div
                     className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/30 px-4"
                     role="dialog"
