@@ -6,6 +6,14 @@ The sidebar's orange indicator represents pending questions or permissions from 
 
 This is an observability bug plus a missing delegation workflow, not evidence that every orange indicator is stale. A screenshot alone cannot prove a request is still pending. Existing cross-chat documentation also incorrectly required navigation despite backend search/read support.
 
+### Coordination with the stale-waiting fix (#4840)
+
+[PR #4840](https://github.com/different-ai/openwork/pull/4840) established a second failure mode on OpenCode 1.18.18: aborting or superseding a turn can mark the requesting tool `completed`/`error` without settling its question/permission. The engine can still list that zombie request. Pending-list membership alone therefore does not establish answerability; idle status alone does not establish abandonment either.
+
+Attention reads and question review revalidation use the same `sync/orphaned-interactions.ts` module as #4840, byte-identical to its `5e7b16f49` version. After reading the lists, they read the exact owner's fresh transcript and filter requests with `isOrphanedInteraction(request.tool, terminalToolCallIds(messages))` (native permission links use `source`). No snapshot seed or activity-store guards are changed here. Requests without a complete tool link or without observed terminal evidence remain eligible. Transcript read failures prevent replies rather than falling back to cached state or reporting fresh zeros.
+
+The helper is included at the same shared path while #4840 is unmerged; this does not import its separate sidebar, seed, or archive changes. The zombie E2E requires the engine to keep listing the unchanged request after the linked tool ends, then verifies that fresh attention hides it and an already-staged review rejects without sending.
+
 ## Product and design evaluation
 
 Public references checked September 10, 2026:

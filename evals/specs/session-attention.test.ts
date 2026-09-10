@@ -3,6 +3,7 @@ import { expect } from "vitest";
 import { test } from "@openwork/testkit";
 import { openworkContextSnapshotSchema } from "@openwork/types/openwork-context";
 import { buildOpenworkContext } from "../../apps/app/src/react-app/shell/openwork-context-projector.ts";
+import { createRouteSessionClient } from "../../apps/app/src/react-app/shell/route-workspaces.ts";
 import { resolveWorkspaceEndpoint } from "../../apps/app/src/app/lib/workspace-endpoint.ts";
 import { listControlSessions, observedSessionAttention, sessionAttentionRevision } from "../../apps/app/src/react-app/domains/session/control/list-control-sessions.ts";
 import { createQuestionReplyRegistry, MAX_QUESTION_REPLY_RECEIPTS, QUESTION_REPLY_RECEIPTS_KEY } from "../../apps/app/src/react-app/domains/session/control/question-reply-registry.ts";
@@ -11,7 +12,7 @@ import { getReactQueryClient } from "../../apps/app/src/react-app/infra/query-cl
 import { questionKey } from "../../apps/app/src/react-app/domains/session/sync/session-sync.ts";
 import { useSessionActivityStore } from "../../apps/app/src/react-app/domains/session/status/session-activity-store.ts";
 import {
-  createQuestionReplyReview, readSessionAttention, validateQuestionAnswers,
+  createQuestionReplyReview, readSessionAttention, questionFingerprint, validateQuestionAnswers,
   type AttentionTarget, type QuestionReplyReview,
 } from "../../apps/app/src/react-app/domains/session/control/session-attention.ts";
 
@@ -98,15 +99,30 @@ test("run and transcript observations never imply observed zero waits; publisher
   store.removeSession("projection", "session");
 });
 
+type WitnessState = {
+  changed: boolean; nativeChanged: boolean; pending: boolean; uncertain: boolean; directory: string;
+  hold: boolean; permissionOwner: string; permissionUnavailable: boolean; ownerDenied: boolean; holdReply: boolean;
+  questionLink?: { messageID: string; callID: string };
+  permissionLink?: { messageID: string; callID: string };
+  incompletePermissionSource: boolean;
+  scopedPermission: boolean;
+  transcriptUnavailable: boolean;
+  terminalOnPermissionRead: boolean;
+  tools: { sessionID: string; messageID: string; callID: string; status: "pending" | "running" | "completed" | "error" }[];
+};
+
 async function witness(engine: "v1" | "v2", run: (state: {
   target: AttentionTarget;
   posted: { path: string; body: unknown }[];
-  state: { changed: boolean; nativeChanged: boolean; pending: boolean; uncertain: boolean; directory: string; hold: boolean; permissionOwner: string; permissionUnavailable: boolean; ownerDenied: boolean; holdReply: boolean };
+  state: WitnessState;
+  reads: string[];
   store: ReturnType<typeof receiptStorage>;
   registry: ReturnType<typeof createQuestionReplyRegistry>;
   releaseReply: () => void;
 }) => Promise<void>) {
-  const state = { changed: false, nativeChanged: false, pending: true, uncertain: false, directory: "/synthetic/remote", hold: false, permissionOwner: "session-c", permissionUnavailable: false, ownerDenied: false, holdReply: false };
+  const state: WitnessState = { changed: false, nativeChanged: false, pending: true, uncertain: false, directory: "/synthetic/remote", hold: false, permissionOwner: "session-c", permissionUnavailable: false, ownerDenied: false, holdReply: false,
+    incompletePermissionSource: false, scopedPermission: engine === "v2", transcriptUnavailable: false, terminalOnPermissionRead: false, tools: [] };
+  const reads: string[] = [];
   const store = receiptStorage();
   const registry = createQuestionReplyRegistry(() => store.storage);
   const replyWaiters: (() => void)[] = [];
@@ -122,6 +138,7 @@ async function witness(engine: "v1" | "v2", run: (state: {
     const mount = `/remote/workspace/owner/${engine === "v2" ? "opencode2/api" : "opencode"}`;
     if (!path.startsWith(mount)) return respond({}, 404);
     const route = path.slice(mount.length);
+    if (incoming.method === "GET") reads.push(route);
     if (incoming.method === "POST") {
       posted.push({ path: route, body: JSON.parse(body) });
       if (state.holdReply) await new Promise<void>(resolve => replyWaiters.push(resolve));
@@ -134,20 +151,37 @@ async function witness(engine: "v1" | "v2", run: (state: {
       const session = { id: "session-b", title: "Question task", directory: state.directory, location: { directory: state.directory }, time: { created: 1, updated: 1 } };
       return respond(engine === "v2" ? { data: session } : session);
     }
+    if (route === "/session/session-b/message") {
+      if (state.transcriptUnavailable) return respond({ code: "transcript_unavailable" }, 503);
+      const messages = state.tools.map(tool => {
+        const toolState = { status: tool.status, input: {}, output: "Synthetic output", error: "Synthetic terminal error", title: "Question", metadata: {}, time: { start: 1, end: 2 } };
+        return engine === "v1"
+          ? { info: { id: tool.messageID, sessionID: tool.sessionID, role: "assistant", time: { created: 1 } },
+            parts: [{ id: `part-${tool.callID}`, type: "tool", sessionID: tool.sessionID, messageID: tool.messageID, callID: tool.callID, tool: "question", state: toolState }] }
+          : { id: tool.messageID, sessionID: tool.sessionID, type: "assistant", time: { created: 1 },
+            content: [{ type: "tool", id: tool.callID, name: "question", state: toolState, time: { created: 1, ran: 1, completed: 2 } }] };
+      });
+      return respond(engine === "v1" ? messages : { data: messages });
+    }
     if (route === "/question" || route === "/form/request") {
       if (state.hold) return;
-      const questions = state.pending ? [{ ...question, questions: [{ ...question.questions[0], question: state.changed ? "Changed question" : "Which format?" }] }] : [];
+      const questions = state.pending ? [{ ...question, ...(state.questionLink ? { tool: state.questionLink } : {}), questions: [{ ...question.questions[0], question: state.changed ? "Changed question" : "Which format?" }] }] : [];
       if (engine === "v1") return respond([...questions, { ...question, id: "question-other", sessionID: "other" }]);
-      const forms = questions.map(request => ({ id: request.id, sessionID: request.sessionID, metadata: { kind: "question" }, fields: [{
+      const forms = questions.map(request => ({ id: request.id, sessionID: request.sessionID, metadata: { kind: "question",
+        ...(state.questionLink ? { tool: { messageID: state.questionLink.messageID, id: state.questionLink.callID } } : {}) }, fields: [{
         key: "format", type: "string", title: "Format", description: request.questions[0].question, custom: false,
         options: request.questions[0].options.map(option => ({ ...option, value: state.nativeChanged ? `changed-${option.label}` : `value-${option.label}` })),
       }] }));
       return respond({ data: [...forms, { ...forms[0], id: "generic-form", metadata: { kind: "form" } }] });
     }
+    if (route.includes("permission") && state.terminalOnPermissionRead) state.tools.forEach(tool => { tool.status = "completed"; });
     if (route.includes("permission") && state.permissionUnavailable) return respond({}, 503);
-    if (route === "/permission") return respond([{ id: "permission-c", sessionID: state.permissionOwner, permission: "bash", metadata: { secret: "private-fixture" }, patterns: ["private-command"] }]);
-    if (route === "/session/session-b/permission" || route === "/api/session/session-b/permission") return respond({ data: engine === "v2" && state.permissionOwner === "session-b"
-      ? [{ id: "permission-c", sessionID: "session-b", action: "bash", metadata: { secret: "private-fixture" }, resources: ["private-command"] }] : [] });
+    if (route === "/permission") return respond([{ id: "permission-c", sessionID: state.permissionOwner, permission: "bash", metadata: { secret: "private-fixture" }, patterns: ["private-command"],
+      ...(state.permissionLink ? { tool: state.permissionLink } : {}) }]);
+    if (route === "/session/session-b/permission" || route === "/api/session/session-b/permission") return respond({ data: state.scopedPermission && state.permissionOwner === "session-b"
+      ? [{ id: "permission-c", sessionID: "session-b", action: "bash", metadata: { secret: "private-fixture" }, resources: ["private-command"],
+        ...(state.permissionLink ? { source: { type: "tool", ...(state.incompletePermissionSource ? {} : { messageID: state.permissionLink.messageID }),
+          ...(engine === "v2" ? { id: state.permissionLink.callID } : { callID: state.permissionLink.callID }) } } : {}) }] : [] });
     return respond({}, 404);
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -157,7 +191,7 @@ async function witness(engine: "v1" | "v2", run: (state: {
     const endpoint = resolveWorkspaceEndpoint({ id: "rem_owner", workspaceType: "remote", baseUrl: `http://127.0.0.1:${address.port}/remote`, openworkToken: "synthetic-remote",
       openworkHostUrl: null, openworkWorkspaceId: null, openworkClientToken: null, openworkHostToken: null }, { baseUrl: null, token: null });
     if (!endpoint) throw new Error("Missing owner endpoint");
-    await run({ target: { workspaceId: "rem_owner", sessionId: "session-b", directory: "/synthetic/remote", endpoint }, posted, state, store, registry, releaseReply });
+    await run({ target: { workspaceId: "rem_owner", sessionId: "session-b", directory: "/synthetic/remote", endpoint }, posted, state, reads, store, registry, releaseReply });
   } finally {
     releaseReply();
     server.closeAllConnections();
@@ -281,6 +315,127 @@ test("receipts are bounded without evicting submission guards, and pending priva
 }));
 
 for (const engine of ["v1", "v2"] satisfies ("v1" | "v2")[]) {
+  test(`${engine}: fresh attention filters completed and errored linked questions and permissions even while their lists retain them`, async () => witness(engine, async ({ target, state, posted, reads }) => {
+    state.questionLink = { messageID: "question-message", callID: "question-call" };
+    state.permissionLink = { messageID: "permission-message", callID: "permission-call" };
+    state.permissionOwner = target.sessionId;
+    state.scopedPermission = true;
+    for (const status of ["completed", "error"] satisfies WitnessState["tools"][number]["status"][]) {
+      state.tools = [state.questionLink, state.permissionLink].map(tool => ({ ...tool, sessionID: target.sessionId, status }));
+      const attention = await readSessionAttention(target);
+      expect(attention.questions).toMatchObject({ freshness: "fresh", items: [] });
+      expect(attention.permissions).toMatchObject({ freshness: "fresh", items: [] });
+      const client = await createRouteSessionClient(target.endpoint, target.directory);
+      expect((await client.question.list({ directory: target.directory })).data?.some(request => request.id === question.id)).toBe(true);
+      expect((await client.v2.session.permission.list({ sessionID: target.sessionId })).data?.data.some(request => request.id === "permission-c")).toBe(true);
+      if (engine === "v1") expect((await client.permission.list({ directory: target.directory })).data).toHaveLength(1);
+      expect(state.pending).toBe(true);
+    }
+    expect(reads.filter(path => path.endsWith("/message"))).toEqual(["/session/session-b/message", "/session/session-b/message"]);
+    expect(posted).toEqual([]);
+  }));
+
+  test(`${engine}: running, pending, unlinked, and absent-tool requests stay eligible and foreign transcripts cannot settle them`, async () => witness(engine, async ({ target, state, posted }) => {
+    state.permissionOwner = target.sessionId;
+    state.scopedPermission = true;
+    state.questionLink = { messageID: "question-message", callID: "question-call" };
+    state.permissionLink = { messageID: "permission-message", callID: "permission-call" };
+    const assertPresent = async () => {
+      const attention = await readSessionAttention(target);
+      expect(attention.questions.items.map(request => request.requestId)).toEqual([question.id]);
+      expect(attention.permissions.items.map(request => request.requestId)).toEqual(["permission-c"]);
+    };
+    for (const status of ["running", "pending"] satisfies WitnessState["tools"][number]["status"][]) {
+      state.tools = [state.questionLink, state.permissionLink].map(tool => ({ ...tool, sessionID: target.sessionId, status }));
+      await assertPresent();
+    }
+    state.tools = []; // Missing messages are not terminal evidence.
+    await assertPresent();
+    state.tools = [state.questionLink, state.permissionLink].map(tool => ({ ...tool, sessionID: "foreign-session", status: "completed" }));
+    await assertPresent();
+    state.tools = [{ messageID: "question-message", callID: "different-call", sessionID: target.sessionId, status: "error" }];
+    await assertPresent(); // A present message without the linked call is not terminal either.
+    state.questionLink = undefined;
+    state.permissionLink = undefined;
+    state.tools = [question.id, "permission-c"].map(callID => ({ messageID: "message", callID, sessionID: target.sessionId, status: "completed" }));
+    await assertPresent(); // Never associate by request ID alone.
+    if (engine === "v2") {
+      state.permissionLink = { messageID: "message", callID: "permission-c" };
+      state.incompletePermissionSource = true;
+      await assertPresent(); // The adapter discards incomplete native tool sources.
+    }
+    expect(posted).toEqual([]);
+  }));
+
+  test(`${engine}: the fresh transcript follows every interaction list and catches tools ending during list reads`, async () => witness(engine, async ({ target, state, reads, posted }) => {
+    state.questionLink = { messageID: "question-message", callID: "question-call" };
+    state.permissionLink = { messageID: "permission-message", callID: "permission-call" };
+    state.permissionOwner = target.sessionId;
+    state.scopedPermission = true;
+    state.tools = [state.questionLink, state.permissionLink].map(tool => ({ ...tool, sessionID: target.sessionId, status: "running" }));
+    state.terminalOnPermissionRead = true;
+    const attention = await readSessionAttention(target);
+    expect(attention.questions.items).toEqual([]);
+    expect(attention.permissions.items).toEqual([]);
+    expect(reads.at(-1)).toBe("/session/session-b/message");
+    expect(reads.filter(path => path.endsWith("/message"))).toHaveLength(1);
+    expect(reads).toContain(engine === "v1" ? "/question" : "/form/request");
+    expect(reads.some(path => path.includes("permission"))).toBe(true);
+    expect(posted).toEqual([]);
+  }));
+
+  test(`${engine}: terminal question tools reject both proposal loading and confirmation without a POST despite an unchanged fingerprint`, async () => witness(engine, async ({ target, state, posted, registry }) => {
+    state.questionLink = { messageID: "question-message", callID: "question-call" };
+    state.tools = [{ ...state.questionLink, sessionID: target.sessionId, status: "running" }];
+    const questionBefore = (await readSessionAttention(target)).questions.items[0];
+    const args = { workspaceId: target.workspaceId, sessionId: target.sessionId, requestId: question.id, fingerprint: questionBefore.fingerprint, answers: [["Checklist"]] };
+    const origin = { workspaceId: "origin", sessionId: "session-a", title: "Origin" };
+    const updates: QuestionReplyReview[] = [];
+    const review = createQuestionReplyReview({ registry, resolveTarget: () => target, changed: value => updates.push(value), settled: () => { throw new Error("A zombie must not settle"); } });
+    for (const status of ["completed", "error"] satisfies WitnessState["tools"][number]["status"][]) {
+      state.tools[0].status = status;
+      const rejectedAtLoad = await review.propose(args, origin);
+      await expect.poll(() => updates.at(-1)?.status).toBe("rejected");
+      expect(registry.receipt(rejectedAtLoad.reviewId)).toMatchObject({ status: "rejected", sent: false });
+      state.tools[0].status = "running";
+      const staged = await review.propose(args, origin);
+      await expect.poll(() => updates.at(-1)?.status).toBe("pending_review");
+      state.tools[0].status = status;
+      const client = await createRouteSessionClient(target.endpoint, target.directory);
+      const rawQuestion = (await client.question.list({ directory: target.directory })).data?.find(request => request.id === question.id);
+      if (!rawQuestion) throw new Error("The witness must keep listing the zombie question");
+      expect(await questionFingerprint(rawQuestion)).toBe(args.fingerprint);
+      await review.confirm();
+      expect(registry.receipt(staged.reviewId)).toMatchObject({ status: "rejected", sent: false, acceptance: "not_sent" });
+      expect(posted).toEqual([]);
+    }
+  }));
+
+  test(`${engine}: transcript failure cannot report fresh zeros or authorize a question answer`, async () => witness(engine, async ({ target, state, posted, registry }) => {
+    state.questionLink = { messageID: "question-message", callID: "question-call" };
+    state.tools = [{ ...state.questionLink, sessionID: target.sessionId, status: "running" }];
+    const before = (await readSessionAttention(target)).questions.items[0];
+    const args = { workspaceId: target.workspaceId, sessionId: target.sessionId, requestId: question.id, fingerprint: before.fingerprint, answers: [["Checklist"]] };
+    const origin = { workspaceId: "origin", sessionId: "session-a", title: "Origin" };
+    const updates: QuestionReplyReview[] = [];
+    const review = createQuestionReplyReview({ registry, resolveTarget: () => target, changed: value => updates.push(value), settled: () => {} });
+    state.transcriptUnavailable = true;
+    await expect(readSessionAttention(target)).rejects.toThrow(/transcript_unavailable/);
+    state.pending = false;
+    await expect(readSessionAttention(target)).rejects.toThrow(/transcript_unavailable/);
+    state.pending = true;
+    const unavailableAtLoad = await review.propose(args, origin);
+    await expect.poll(() => updates.at(-1)?.status).toBe("rejected");
+    expect(registry.receipt(unavailableAtLoad.reviewId)).toMatchObject({ status: "rejected", sent: false });
+    state.transcriptUnavailable = false;
+    const staged = await review.propose(args, origin);
+    await expect.poll(() => updates.at(-1)?.status).toBe("pending_review");
+    state.transcriptUnavailable = true;
+    await review.confirm();
+    expect(registry.receipt(staged.reviewId)).toMatchObject({ status: "rejected", sent: false, acceptance: "not_sent" });
+    expect(posted).toEqual([]);
+  }));
+
   test(`${engine}: server-accepted canonical and symlink directory spellings are not reinterpreted by the browser`, async () => witness(engine, async ({ target, state, posted, registry }) => {
     const attention = await readSessionAttention(target);
     const updates: QuestionReplyReview[] = [];

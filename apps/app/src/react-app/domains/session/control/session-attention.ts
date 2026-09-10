@@ -5,6 +5,7 @@ import { isOpencodeV2Client, nativeQuestionFingerprintContent } from "@/app/lib/
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import { createRouteSessionClient } from "@/react-app/shell/route-workspaces";
 import { questionReplyOwnerKey, questionReplyRegistry, type QuestionReplyRegistry, type QuestionReplyStatus } from "./question-reply-registry";
+import { isOrphanedInteraction, terminalToolCallIds } from "../sync/orphaned-interactions";
 
 export const sessionAttentionArgs = z.object({
   workspaceId: z.string().min(1),
@@ -25,7 +26,7 @@ export type AttentionTarget = {
   endpoint: ResolvedWorkspaceEndpoint;
 };
 
-export async function readSessionQuestions(target: AttentionTarget) {
+export async function readSessionQuestions(target: AttentionTarget, includePermissions = false) {
   const client = await createRouteSessionClient(target.endpoint, target.directory);
   const session = unwrap(await client.session.get({ sessionID: target.sessionId, directory: target.directory }));
   // Both authenticated workspace mounts verify exact ownership on session.get,
@@ -35,7 +36,17 @@ export async function readSessionQuestions(target: AttentionTarget) {
   }
   const requests = unwrap(await client.question.list({ directory: target.directory }))
     .filter(request => request.sessionID === target.sessionId);
-  return { client, session, requests };
+  const [scoped, legacy] = await Promise.all([
+    includePermissions ? client.v2.session.permission.list({ sessionID: target.sessionId }).catch(() => null) : null,
+    includePermissions && !isOpencodeV2Client(client) ? client.permission.list({ directory: target.directory }).catch(() => null) : null,
+  ]);
+  // Lists can retain aborted/superseded asks. Read the owner's transcript AFTER
+  // the lists so a tool that ended during those reads cannot stay actionable.
+  // No cache fallback: a failed transcript read must also block a reply.
+  const messages = unwrap(await client.session.messages({ sessionID: target.sessionId, directory: target.directory }));
+  const terminalIds = terminalToolCallIds(messages.filter(message => message.info.sessionID === target.sessionId));
+  return { client, session, scoped, legacy, terminalIds,
+    requests: requests.filter(request => !isOrphanedInteraction(request.tool, terminalIds)) };
 }
 
 // SHA-256 avoids returning question text as an opaque receipt/fingerprint.
@@ -66,7 +77,7 @@ export function validateQuestionAnswers(request: QuestionRequest, answers: strin
 }
 
 export async function readSessionAttention(target: AttentionTarget) {
-  const { client, session, requests } = await readSessionQuestions(target);
+  const { client, session, requests, scoped, legacy, terminalIds } = await readSessionQuestions(target, true);
   const questionsObservedAt = Date.now();
   const questions = await Promise.all(requests.map(async request => ({
     requestId: request.id, sessionId: request.sessionID,
@@ -79,14 +90,12 @@ export async function readSessionAttention(target: AttentionTarget) {
   })));
   // No metadata, command bodies, resource patterns, credentials, or reply API.
   const nativeV2 = isOpencodeV2Client(client);
-  const [scoped, legacy] = await Promise.all([
-    client.v2.session.permission.list({ sessionID: target.sessionId }).catch(() => null),
-    nativeV2 ? null : client.permission.list({ directory: target.directory }).catch(() => null),
-  ]);
   const summaries = [
-    ...(scoped?.data?.data ?? []).filter(request => request.sessionID === target.sessionId)
+    // The adapter maps only a real native tool source. Unlinked permissions
+    // remain listed; matching IDs/metadata are not evidence of a tool ending.
+    ...(scoped?.data?.data ?? []).filter(request => request.sessionID === target.sessionId && !isOrphanedInteraction(request.source, terminalIds))
       .map(request => ({ requestId: request.id, permission: request.action })),
-    ...(legacy?.data ?? []).filter(request => request.sessionID === target.sessionId)
+    ...(legacy?.data ?? []).filter(request => request.sessionID === target.sessionId && !isOrphanedInteraction(request.tool, terminalIds))
       .map(request => ({ requestId: request.id, permission: request.permission })),
   ];
   const permissions = summaries.filter((request, index) => summaries.findIndex(other => other.requestId === request.requestId) === index);

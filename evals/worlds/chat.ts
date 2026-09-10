@@ -358,6 +358,7 @@ export async function sessionAttentionReview(seed: Seed) {
   const asking = { title: "Question owner", prompt: "Choose the report format", question: "Which report format should I use?", answer: "Checklist" };
   const permission = { title: "Permission owner", prompt: "Inspect the approval workspace", command: "printf ATTENTION_PERMISSION_WITNESS" };
   const origin = { title: "Review coordinator", prompt: "Prepare the report answer for my review" };
+  const followup = { prompt: "Continue the report without the previous question", reply: "The superseding report is finished." };
   const workloads: MockAgentWorkload[] = [
     { promptMarker: asking.prompt, latestUserTurn: true, finalReply: "Unused", finalReplyFrom: "last-tool-text", steps: [{ tool: "question", arguments: { questions: [{
       header: "Report format", question: asking.question, custom: false,
@@ -366,6 +367,7 @@ export async function sessionAttentionReview(seed: Seed) {
     { promptMarker: permission.prompt, latestUserTurn: true, finalReply: "Permission work finished.", steps: [{ tool: engine === "v2" ? "shell" : "bash", arguments: {
       command: permission.command, description: "Inspect the approval workspace", timeout: 30_000,
     } }] },
+    { promptMarker: followup.prompt, latestUserTurn: true, finalReply: followup.reply, steps: [] },
   ];
   // The desktop's default workspace already uses JSONC, which wins over a
   // second opencode.json. Do not silently test against the engine's allow default.
@@ -395,7 +397,7 @@ export async function sessionAttentionReview(seed: Seed) {
   const b = await seedSessionRetry(seed, base.app, { title: asking.title });
   const c = await seedSessionRetry(seed, base.app, { title: permission.title });
   const a = await seedSessionRetry(seed, base.app, { title: origin.title });
-  return { ...base, engine, asking: { ...asking, ...b }, permission: { ...permission, ...c }, origin: { ...origin, ...a },
+  return { ...base, engine, followup, asking: { ...asking, ...b }, permission: { ...permission, ...c }, origin: { ...origin, ...a },
     async prepareProposal(args: Record<string, unknown>) {
       // The model calls the real server tool, which stamps origin. No DOM-side
       // synthetic origin and no resource IDs hidden in the person's prompt.
@@ -408,6 +410,11 @@ export async function sessionAttentionReview(seed: Seed) {
       if (!response.ok) throw new Error(`Proposal witness setup failed: HTTP ${response.status}`);
     },
   };
+}
+
+export async function sessionAttentionZombie(seed: Seed) {
+  if (resolveEvalEngine() !== "v1") throw new SkipError("needs: v1 engine for the native aborted-question zombie reproduction");
+  return sessionAttentionReview(seed);
 }
 
 /** Real native permissions and a provider retry, without synthetic UI events. */

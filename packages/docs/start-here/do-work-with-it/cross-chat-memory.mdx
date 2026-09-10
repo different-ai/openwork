@@ -36,6 +36,8 @@ The orange sidebar indicator means a session needs input; it is separate from an
 
 Ask `Which sessions need my attention?` The agent can inspect the loaded inventory's workspace IDs and cached attention signals, then use `session.attention` with an exact workspace ID and session ID to read current questions and permission summaries. Unknown counts mean the app cannot establish the state, not that there are no requests. Requests belong to their originating session, including child sessions.
 
+Some engine versions continue listing requests from aborted or superseded work. Fresh attention reads cross-check the owning transcript and exclude a request whose linked tool has already completed or failed. The same check runs again before sending a reviewed answer. If the transcript cannot be read, OpenWork does not send the answer or claim there are no blockers.
+
 To answer a question in another session, the agent can use `session.question.reply.propose` after reading the current request. OpenWork shows a review containing the requesting and target conversations, the question, and the proposed answers. **Only your review button sends the answer.** This may resume the target agent under its existing permissions; it does not grant new permissions or approve tool requests.
 
 The proposal initially reports `loading`, not delivery. The agent can inspect `session.question.reply.status` using the returned review ID and exact target to distinguish acceptance, cancellation, stale rejection, and an uncertain result. A changed or already-resolved question must be read again; an uncertain submission must not be automatically retried.
