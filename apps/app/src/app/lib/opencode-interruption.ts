@@ -1,6 +1,7 @@
 import type { Client } from "../types";
 import type { Message, Part } from "@opencode-ai/sdk/v2/client";
 import { createPromptMessageID, isPromptAdmissionUnknown, PromptAdmissionUnknownError, unwrap } from "./opencode";
+import { engineDirectory } from "./session-ownership";
 
 type Submission = {
   messageID?: string;
@@ -195,18 +196,20 @@ async function stopForegroundTree(
   // Stop must reach the engine even when session/transcript reads are broken.
   // Read concurrently to retain child references, but never gate the root abort
   // on discovery. Failed discovery still prevents claiming a complete handoff.
-  const [aborted, rootResult, childResult] = await Promise.allSettled([
+  const [aborted, rootResult, childResult, ownerResult] = await Promise.allSettled([
     abort(rootID),
     client.session.get({ sessionID: rootID, directory }, options).then(unwrap),
     children(rootID),
+    directory === undefined ? undefined : engineDirectory(client, directory, options),
   ]);
   // Do not let a fast discovery failure cancel an abort still in flight.
   if (aborted.status === "rejected") throw aborted.reason;
   if (rootResult.status === "rejected") throw rootResult.reason;
   if (childResult.status === "rejected") throw childResult.reason;
+  if (ownerResult.status === "rejected") throw ownerResult.reason;
   const root = rootResult.value;
   const before = childResult.value;
-  if (root.id !== rootID || (directory !== undefined && root.directory !== directory)) {
+  if (root.id !== rootID || (ownerResult.value !== undefined && root.directory !== ownerResult.value)) {
     throw new Error("Could not verify the conversation's workspace. Stop was not confirmed.");
   }
   const targets = new Set<string>();

@@ -71,6 +71,12 @@ async function withSessionFetch(
     value: (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init);
       requests.push(request);
+      const url = new URL(request.url);
+      // The engine serves these fixtures' directories as given; no symlink resolution applies.
+      if (request.method === "GET" && url.pathname.endsWith("/path")) {
+        const directory = url.searchParams.get("directory") ?? "";
+        return Promise.resolve(Response.json({ home: "/", state: "/", config: "/", worktree: directory, directory }));
+      }
       return Promise.resolve(respond(request));
     },
   });
@@ -779,7 +785,7 @@ describe("native Stop and follow-up handoff", () => {
           .map((request) => new URL(request.url).pathname.split("/").at(-1)))
           .toEqual([root.id, "ses_child", "ses_nested", "ses_late"]);
         for (const request of requests) {
-          expect(request.url.startsWith(`${baseUrl}/session/`)).toBe(true);
+          expect(request.url.startsWith(`${baseUrl}/session/`) || request.url.startsWith(`${baseUrl}/path?`)).toBe(true);
           expect(request.headers.get("Authorization")).toBe(`Bearer ${endpoint.token}`);
           if (!request.url.endsWith("/prompt_async")) expect(new URL(request.url).searchParams.get("directory")).toBe(root.directory);
         }
