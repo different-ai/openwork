@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { ADVANCED_SETTINGS_SECTIONS } from "../src/react-app/domains/settings/advanced-sections";
 import { rankPaletteItems } from "../src/react-app/shell/command-palette-search";
 import { buildCommandPaletteSettingsItems } from "../src/react-app/shell/command-palette-settings";
 
@@ -42,6 +43,15 @@ describe("command palette settings", () => {
       "settings:extensions/agents",
       "settings:extensions/commands",
     ]);
+  });
+
+  test("lists every Advanced section in the empty developer-mode palette", () => {
+    const groups = rankPaletteItems("", build(true, true), []);
+    const settings = groups.find((group) => group.value === "settings");
+
+    expect(settings?.items.map((item) => item.id)).toEqual(expect.arrayContaining(
+      ADVANCED_SETTINGS_SECTIONS.map((section) => `settings:advanced/${section.id}`),
+    ));
   });
 
   test("finds recovery tools under Advanced", () => {
