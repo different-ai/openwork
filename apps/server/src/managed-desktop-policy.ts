@@ -144,12 +144,14 @@ class ManagedDesktopPolicy {
   }
   private async fetchCurrent(): Promise<DesktopConfig | null> {
     const session = this.session;
+    const generation = this.generation;
     if (!session) {
       const persisted = await readGlobalRuntimeOpencodeConfig(this.config);
+      // A local-only read cannot grant access after a managed identity arrives.
+      this.identityChanged(generation);
       if (persisted.managedPolicy) throw new ApiError(403, "policy_unavailable", "Sign in to verify your organization's policy before continuing.");
       return null;
     }
-    const generation = this.generation;
     let policy: DesktopConfig;
     try {
       policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
