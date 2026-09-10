@@ -15,6 +15,7 @@ import { normalizeEvent } from "@/app/utils";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
 import {
   attachmentNoteToUIParts,
+  textPartToUIPart,
   createSessionErrorUIMessage,
   snapshotToUIMessages,
 } from "./usechat-adapter";
@@ -797,13 +798,7 @@ function toFileUIParts(part: FilePart): UIMessage["parts"] {
 
 function toUIPart(part: Part): UIMessage["parts"][number] | null {
   if (part.type === "text") {
-    if (part.synthetic || part.ignored) return null;
-    return {
-      type: "text",
-      text: part.text,
-      state: "done",
-      providerMetadata: { opencode: { partId: part.id } },
-    };
+    return textPartToUIPart(part);
   }
   if (part.type === "reasoning") {
     return {

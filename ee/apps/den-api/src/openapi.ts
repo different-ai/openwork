@@ -95,6 +95,17 @@ export function jsonResponse(description: string, schema: z.ZodTypeAny) {
   }
 }
 
+export function scimJsonResponse(description: string, schema: z.ZodTypeAny) {
+  return {
+    description,
+    content: {
+      "application/scim+json": {
+        schema: resolver(schema),
+      },
+    },
+  }
+}
+
 export function htmlResponse(description: string) {
   return {
     description,

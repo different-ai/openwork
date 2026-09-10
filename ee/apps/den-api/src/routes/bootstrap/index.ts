@@ -175,6 +175,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
     "/v1/bootstrap/workspace",
     describeRoute({
       tags: ["Bootstrap"],
+      security: [],
       summary: "Create a provisional workspace for agent-first setup",
       description: "Creates a provisional workspace, setup member, starter skill, and short-lived claim links without requiring an email account first.",
       responses: {
@@ -404,6 +405,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
     "/v1/bootstrap/claims/accept",
     describeRoute({
       tags: ["Bootstrap"],
+      security: [{ bearerAuth: [] }],
       summary: "Claim a provisional workspace",
       description: "Lets a signed-in human claim ownership or membership of a provisional agent-created workspace.",
       responses: {

@@ -7,6 +7,7 @@ import { parseArgs } from "node:util"
 type NormalizationCounts = {
   descriptionsFilled: number
   hideKeysDropped: number
+  internalOperationsExcluded: number
 }
 
 const operationMethods = new Set<string>(["delete", "get", "head", "options", "patch", "post", "put", "trace"])
@@ -17,12 +18,23 @@ function setEnvDefault(name: string, value: string) {
   }
 }
 
-function seedSnapshotEnv() {
+function seedSnapshotEnv(snapshotVersion: string) {
+  // The snapshot never talks to a database or serves traffic; these values only
+  // satisfy env validation so the Hono app can be imported and asked for its
+  // OpenAPI document.
+  setEnvDefault("OPENWORK_DEV_MODE", "1")
   setEnvDefault("DB_MODE", "mysql")
   setEnvDefault("DATABASE_URL", "mysql://root:password@127.0.0.1:3306/openwork_den")
   setEnvDefault("DEN_DB_ENCRYPTION_KEY", "local-dev-db-encryption-key-please-change-1234567890")
   setEnvDefault("BETTER_AUTH_SECRET", "local-dev-secret-not-for-production-use!!")
   setEnvDefault("BETTER_AUTH_URL", "http://localhost:8790")
+  // Published contract metadata: `servers[0].url` must point at the hosted API
+  // so "Try it" works from the docs, and `info.version` must be deterministic
+  // (not a git SHA) so CI can diff the regenerated document against the
+  // committed one. Den API images are tagged with the app release version, so
+  // the pinned latest app version is the same value production reports.
+  setEnvDefault("DEN_API_PUBLIC_URL", "https://api.openworklabs.com")
+  setEnvDefault("DEN_API_VERSION", snapshotVersion)
   setEnvDefault("DEN_AUTOMATIONS_ENABLED", "true")
   setEnvDefault("DEN_AUTOMATIONS_RUNTIME_ENABLED", "true")
 }
@@ -84,15 +96,46 @@ function normalizePathItems(pathItems: unknown, counts: NormalizationCounts) {
   }
 }
 
+// Operations tagged Internal (Automation runner protocol, development-only
+// email outbox) stay in the served /openapi.json for debugging but are not part
+// of the published contract.
+const excludedTags = new Set<string>(["Internal"])
+
+function hasExcludedTag(operation: Record<string, unknown>) {
+  return Array.isArray(operation.tags) && operation.tags.some((tag) => typeof tag === "string" && excludedTags.has(tag))
+}
+
+function excludeInternalOperations(document: Record<string, unknown>, counts: NormalizationCounts) {
+  const paths = document.paths
+  if (!isRecord(paths)) return
+  for (const [path, pathItem] of Object.entries(paths)) {
+    if (!isRecord(pathItem)) continue
+    for (const [method, operation] of Object.entries(pathItem)) {
+      if (operationMethods.has(method.toLowerCase()) && isRecord(operation) && hasExcludedTag(operation)) {
+        delete pathItem[method]
+        counts.internalOperationsExcluded += 1
+      }
+    }
+    if (Object.keys(pathItem).every((key) => !operationMethods.has(key.toLowerCase()))) {
+      delete paths[path]
+    }
+  }
+  if (Array.isArray(document.tags)) {
+    document.tags = document.tags.filter((tag) => !(isRecord(tag) && typeof tag.name === "string" && excludedTags.has(tag.name)))
+  }
+}
+
 function normalizeOpenApiDocument(document: Record<string, unknown>) {
-  const counts: NormalizationCounts = { descriptionsFilled: 0, hideKeysDropped: 0 }
+  const counts: NormalizationCounts = { descriptionsFilled: 0, hideKeysDropped: 0, internalOperationsExcluded: 0 }
+  excludeInternalOperations(document, counts)
   normalizePathItems(document.paths, counts)
   normalizePathItems(document.webhooks, counts)
   return counts
 }
 
 async function main() {
-  seedSnapshotEnv()
+  const { denApiAppVersion } = await import("../src/version.js")
+  seedSnapshotEnv(denApiAppVersion.latestAppVersion)
 
   const app = (await import("../src/app.js")).default
   const response = await app.request("http://den-api.local/openapi.json")
@@ -119,10 +162,17 @@ async function main() {
     `Wrote ${relative(repoRoot, outputPath)}`,
     `descriptionsFilled=${counts.descriptionsFilled}`,
     `hideKeysDropped=${counts.hideKeysDropped}`,
+    `internalOperationsExcluded=${counts.internalOperationsExcluded}`,
   ].join(" "))
 }
 
-await main()
-// Importing the app starts background service timers; this one-shot exporter
-// must finish without waiting for those services after the file is written.
+try {
+  await main()
+} catch (error) {
+  console.error(error)
+  process.exit(1)
+}
+
+// Importing the app starts background service timers and opens pools that keep
+// the event loop alive; the document has been written, so exit explicitly.
 process.exit(0)

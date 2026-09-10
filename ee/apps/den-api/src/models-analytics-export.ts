@@ -6,7 +6,9 @@ import type { Hono } from "hono"
 import { z } from "zod"
 import { db } from "./db.js"
 import { postModelsAnalytics } from "./models-analytics-egress.js"
+import { describeRoute } from "hono-openapi"
 import { jsonValidator, orgRoleRoute } from "./middleware/index.js"
+import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "./openapi.js"
 import { ensureOrganizationAdmin, orgAccessFailureStatus, type OrgRouteVariables } from "./routes/org/shared.js"
 
 const configSchema = z.object({
@@ -63,8 +65,22 @@ export function modelsAnalyticsSpan(row: typeof Event.$inferSelect) {
 }
 
 export function registerModelsAnalyticsExportRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  const okSchema = z.object({ ok: z.literal(true) })
+  const analyticsUnavailableSchema = z.object({ error: z.string(), message: z.string().optional() })
   for (const action of ["test", "connect"]) {
-    app.post(`/v1/inference/analytics/langfuse/${action}`, orgRoleRoute(["admin"]), jsonValidator(configSchema), async (c) => {
+    app.post(`/v1/inference/analytics/langfuse/${action}`, describeRoute({
+      tags: ["Inference"],
+      summary: action === "test" ? "Test a Langfuse analytics export destination" : "Connect a Langfuse analytics export destination",
+      description: action === "test"
+        ? "Sends an empty batch to the given Langfuse host with the project keys to verify connectivity. Nothing is stored."
+        : "Verifies connectivity, then stores the Langfuse destination and starts exporting task analytics recorded from now on. Requires the organization to have opted into task analytics.",
+      responses: {
+        200: jsonResponse("The destination is reachable" + (action === "connect" ? " and was saved." : "."), okSchema),
+        400: jsonResponse("Invalid request, or Langfuse could not be reached with these credentials.", invalidRequestSchema),
+        401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        403: jsonResponse("Only workspace admins can configure analytics exports, or task analytics are not enabled.", analyticsUnavailableSchema),
+      },
+    }), orgRoleRoute(["admin"]), jsonValidator(configSchema), async (c) => {
       const permission = ensureOrganizationAdmin(c, "Only workspace admins can configure analytics exports.")
       if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
       const orgId = c.get("organizationContext").organization.id
@@ -88,7 +104,15 @@ export function registerModelsAnalyticsExportRoutes<T extends { Variables: OrgRo
       return c.json({ ok: true })
     })
   }
-  app.delete("/v1/inference/analytics/langfuse", orgRoleRoute(["admin"]), async (c) => {
+  app.delete("/v1/inference/analytics/langfuse", describeRoute({
+    tags: ["Inference"], summary: "Disconnect the Langfuse analytics export destination",
+    description: "Stops exporting and forgets the stored Langfuse host and project keys.",
+    responses: {
+      200: jsonResponse("Export disconnected.", okSchema),
+      401: jsonResponse("Sign-in required.", unauthorizedSchema),
+      403: jsonResponse("Only workspace admins can disconnect analytics exports.", forbiddenSchema),
+    },
+  }), orgRoleRoute(["admin"]), async (c) => {
     const permission = ensureOrganizationAdmin(c, "Only workspace admins can disconnect analytics exports.")
     if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
     await db.update(Settings).set({ export_enabled: false, langfuse_public_key: null, langfuse_secret_key: null, langfuse_host: null, export_enabled_at: null })

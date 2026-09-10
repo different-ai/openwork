@@ -9,7 +9,8 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { db } from "../../db.js"
 import { jsonValidator, orgMemberRoute, orgRoleRoute, queryValidator } from "../../middleware/index.js"
-import { jsonResponse } from "../../openapi.js"
+import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { z } from "zod"
 import { ensureOrganizationAdmin, orgAccessFailureStatus, type OrgRouteVariables } from "./shared.js"
 
 export function registerModelsAnalyticsRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
@@ -45,7 +46,16 @@ export function registerModelsAnalyticsRoutes<T extends { Variables: OrgRouteVar
     return c.json(await readModelsAnalyticsSettings(db, orgId))
   })
 
-  app.post("/v1/inference/analytics/events", orgMemberRoute(), jsonValidator(modelsTaskBatchSchema), async (c) => {
+  app.post("/v1/inference/analytics/events", describeRoute({
+    tags: ["Inference"], summary: "Report task analytics events for the calling member's OpenWork Models calls",
+    description: "Accepts runtime metadata for tasks the member actually ran through OpenWork Models; events for other members' tasks or BYOK calls are dropped. Answers 204 when the organization has not opted into task analytics.",
+    responses: {
+      202: jsonResponse("Accepted event ids.", z.object({ acceptedIds: z.array(z.string()) })),
+      204: { description: "Task analytics are not enabled for this organization; nothing was recorded." },
+      400: jsonResponse("Invalid request.", invalidRequestSchema),
+      401: jsonResponse("Sign-in required.", unauthorizedSchema),
+    },
+  }), orgMemberRoute(), jsonValidator(modelsTaskBatchSchema), async (c) => {
     const context = c.get("organizationContext")
     const orgId = context.organization.id
     const memberId = context.currentMember.id

@@ -393,7 +393,7 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
 
   app.get(
     "/v1/desktop-policies/by-key/:externalKey",
-    describeRoute({ tags: ["Desktop Policies"], summary: "Read desktop-policies by stable key", responses: {
+    describeRoute({ tags: ["Desktop Policies"], summary: "Read desktop-policies by stable key", description: "Reads the desktop policy identified by the stable externalKey assigned through declarative provisioning.", responses: {
       200: jsonResponse("Resource configuration.", desktopPolicyResponseSchema),
       404: jsonResponse("Resource not found.", notFoundSchema),
     } }),
@@ -411,7 +411,7 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
 
   app.get(
     "/v1/desktop-policies/:desktopPolicyId",
-    describeRoute({ tags: ["Desktop Policies"], summary: "Read desktop-policies by id", responses: {
+    describeRoute({ tags: ["Desktop Policies"], summary: "Read desktop-policies by id", description: "Reads a single desktop policy by id.", responses: {
       200: jsonResponse("Resource configuration.", desktopPolicyResponseSchema),
       404: jsonResponse("Resource not found.", notFoundSchema),
     } }),
@@ -473,6 +473,7 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
     describeRoute({
       tags: ["Desktop Policies"],
       summary: "Delete desktop-policies by stable key",
+      description: "Deletes the desktop policy identified by its stable externalKey. Idempotent: deleting a key that does not exist is reported as already removed.",
       responses: { 200: jsonResponse("Idempotent deletion result.", declarativeDeleteSchema) },
     }),
     orgRoleRoute(["super-admin"]),

@@ -967,8 +967,8 @@ export function AppSidebar(props: AppSidebarProps) {
             />
           </div>
         ) : (
-          <div data-sidebar-brand className="flex h-11 shrink-0 items-center gap-2 px-4 mac:titlebar-drag">
-            <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="" className="size-5 shrink-0 object-contain dark:invert" />
+          <div data-sidebar-brand className="flex h-11 shrink-0 items-center gap-1.5 px-4 mac:titlebar-drag">
+            <img src={resolveExtensionIconSrc("/openwork-sidebar-mark.svg")} alt="" className="size-5 shrink-0 object-contain dark:invert" />
             <span className="truncate text-[15px] font-medium tracking-[-0.4px]" title={brandAppName}>{brandAppName}</span>
           </div>
         )}
