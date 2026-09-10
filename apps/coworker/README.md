@@ -231,7 +231,8 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
 - **Identity and memory ride the engine's existing instruction loading**
   (`AGENTS.md` + `opencode.json` `instructions`); the coworker maintains
   `memory/working.md`, its long-term memories, and its soul through its own
-  memory and soul tools (see below) or ordinary file tools. No memory backend. The app
+  memory and soul tools (see below) or ordinary file tools. Automatic conversation
+  recall is a separate local store (see below), not a replacement for these files. The app
   shows memory as structure rather than raw files: Soul and Working memory
   render as pages with an editor behind them, and Long-term is the list the
   index describes (`electron/memory-index.mjs` parses the bullets a model
@@ -1433,6 +1434,51 @@ creating. When the cadence is ambiguous the coworker asks with the question
 tool, which renders as the lettered choice card.
 
 ## Memory and soul the coworker keeps
+
+### Automatic conversation recall
+
+Successful private tasks and published group replies also update a bounded local
+record without asking the replying model to call a memory tool. Private records
+live at `<coworker home>/.conversation-memory.json`, so retirement, restoration,
+and permanent deletion follow the coworker's home rather than a reusable name.
+Group records and inference reservations live under the team's `.conversation-memory/`.
+`electron/conversation-memory.mjs` owns these atomic, serialized stores.
+
+Each scope keeps 12 recent message excerpts (at most 800 characters each), 12
+short-term candidates and 40 durable candidates with evidence and attribution.
+Likely credential-bearing messages are excluded before clipping; this is a
+heuristic, not a guarantee of sensitive-data detection. Only the raw person's
+request and completed visible answer are captured, never tool output, reasoning,
+or generated handoff instructions attributed to the person. Durable candidates
+need a verbatim source in a user message; model summaries remain unverified.
+
+The background extractor (`electron/memory-model.mjs`) uses a fresh tool-free
+native session and the cheapest eligible connected, non-reasoning text model,
+or the person's explicitly chosen model. It runs only on changed memory, with
+at least 15 seconds between calls for a scope and at most 120 calls per UTC day
+across the app, including failed reservations and restarts. Each call has a
+20,000-byte input ceiling, 1,000 output tokens, a 15-second deadline, and one
+provider attempt. Prices must be known and no more than $0.50 input / $2 output
+per million tokens; unknown capabilities/prices do not qualify. An unavailable
+model leaves recent local recall working; it does not borrow the reply model.
+
+Before a new native turn, scoped recall is supplied as a bounded synthetic text
+part through `@openwork/headless-threads`, not displayed as the person's message.
+Private conversations can recall the same coworker's private scope and up to
+three current groups; group turns get only their own group's automatic memory.
+Manual global memory and existing transcript history keep their previous behavior.
+There is no historical transcript backfill, Worker/assignment capture, vector
+search, or automatic soul editing in this path.
+
+General settings controls automatic capture/model use (enabled by default).
+The Memory view shows automatic excerpts, short/long-term candidates, and their
+sources, with an explicit per-scope Clear confirmation. Clearing shared group
+memory affects the group, not other scopes; it preserves manual memory and chat
+history and invalidates in-flight extraction. Disabling stops new capture,
+inference and context injection, but does not delete stored data. Neither action
+erases memory already present in a native conversation's history.
+
+### Deliberate memory and soul edits
 
 As the person talks (*"call me J"*, *"I work in Product"*, *"be shorter"*,
 *"never email customers without asking"*), the coworker records what will

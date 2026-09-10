@@ -223,6 +223,27 @@ export type LongTermMemory = {
   updatedAt: number;
 };
 
+export type AutomaticMemoryExcerpt = {
+  id: string;
+  sourceId: string;
+  speaker: string;
+  text: string;
+  at: number;
+};
+
+export type AutomaticMemorySummary = {
+  text: string;
+  createdAt: number;
+  updatedAt: number;
+  sources: Array<Omit<AutomaticMemoryExcerpt, "text"> & { evidence: string }>;
+};
+
+export type AutomaticMemory = {
+  recent: AutomaticMemoryExcerpt[];
+  shortTerm: AutomaticMemorySummary[];
+  longTerm: AutomaticMemorySummary[];
+};
+
 export type LocalResponsibilityRun = {
   id: string;
   /** `queued` runs wait for a free slot on this Mac and start by themselves. */
@@ -266,6 +287,8 @@ export type CoworkerSettings = {
   maxRunsPerDay: number;
   progressSummariesEnabled: boolean;
   progressSummaryModelId: string;
+  automaticMemoryEnabled: boolean;
+  memoryModelId: string;
 };
 
 /** One recorded change to the coworker's memory or soul, by the coworker, the person, or an undo. */
@@ -570,6 +593,9 @@ export const coworkerBridge = {
       invoke<{ ok: boolean }>("coworkers.files.write", { slug, path, content }),
   },
   memory: {
+    automatic: (slug: string, groupId?: string) => invoke<AutomaticMemory | null>("coworkers.memory.automatic", { slug, groupId }),
+    clearAutomatic: (slug: string, groupId?: string) => invoke<boolean>("coworkers.memory.clearAutomatic", { slug, groupId }),
+    automaticGroups: (slug: string) => invoke<Array<{ id: string; name: string }>>("coworkers.memory.automaticGroups", { slug }),
     list: (slug: string) => invoke<LongTermMemory[]>("coworkers.memory.list", { slug }),
     create: (slug: string, input: { title: string; summary?: string }) =>
       invoke<LongTermMemory>("coworkers.memory.create", { slug, ...input }),

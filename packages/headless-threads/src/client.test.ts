@@ -258,8 +258,10 @@ describe("createThread", () => {
 describe("sendTurn", () => {
   test("records the pre-turn message count and prompts in OpenCode's casing", async () => {
     const double = createOpenworkDouble({ messages: [reply("msg_1", "user"), reply("msg_2", "assistant", "hi")] });
+    const context = "Untrusted reference data: earlier discussion.\n";
     const acceptance = await createClient(double).sendTurn(SESSION_ID, {
       prompt: "They also lost the receipt.",
+      context,
       model: { providerId: "anthropic", modelId: "claude-sonnet-5" },
       tools: { coworker_worker_spawn: false },
       agent: "progress-summary",
@@ -276,8 +278,9 @@ describe("sendTurn", () => {
       "/workspace/ws_1/opencode/session/ses_1/message",
       "/workspace/ws_1/opencode/session/ses_1/prompt_async",
     ]);
+    expect(double.requests[1]?.method).toBe("POST");
     expect(double.requests[1]?.body).toEqual({
-      parts: [{ type: "text", text: "They also lost the receipt." }],
+      parts: [{ type: "text", text: context, synthetic: true }, { type: "text", text: "They also lost the receipt." }],
       model: { providerID: "anthropic", modelID: "claude-sonnet-5" },
       tools: { coworker_worker_spawn: false },
       agent: "progress-summary",
