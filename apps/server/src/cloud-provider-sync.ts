@@ -454,7 +454,7 @@ async function requestJson(
   session: CloudProviderDenSession,
   path: string,
   signal: AbortSignal,
-  options: { allowNotFound?: boolean } = {},
+  options: { allowUnavailableResource?: boolean } = {},
 ): Promise<unknown> {
   let response: Response;
   try {
@@ -471,7 +471,8 @@ async function requestJson(
   } catch (error) {
     throw new Error(error instanceof Error ? `den_request_failed: ${error.message}` : "den_request_failed");
   }
-  if (response.status === 404 && options.allowNotFound) return null;
+  // JSON null is an invalid payload, not evidence that the resource is absent.
+  if (options.allowUnavailableResource && [404, 405, 501].includes(response.status)) return undefined;
   if (response.status === 409 && path.startsWith("/v1/inference-providers/")) {
     const conflict: unknown = await response.json().catch(() => null);
     const code = isRecord(conflict) ? (isRecord(conflict.error) ? conflict.error.code : conflict.error) : null;
@@ -508,10 +509,11 @@ async function fetchInferenceProviders(
   session: CloudProviderDenSession,
   signal: AbortSignal,
 ): Promise<DenProviderConnection[]> {
-  // Older Den servers have no inference-providers resource: a 404 here means
-  // "no gateway providers", never a failed sync of the llm-providers list.
-  const payload = await requestJson(fetchImpl, session, "/v1/inference-providers?scope=usable", signal, { allowNotFound: true });
-  if (payload === null) return [];
+  // Only an unavailable list resource permits legacy-only sync. Once Gateway
+  // advertises a row, connect failures must abort rather than retire owned rows
+  // or send Gateway IDs/credentials through the legacy provider API.
+  const payload = await requestJson(fetchImpl, session, "/v1/inference-providers?scope=usable", signal, { allowUnavailableResource: true });
+  if (payload === undefined) return [];
   const providers = parseInferenceProviderList(payload);
   return Promise.all(
     providers.map(async (provider) => {

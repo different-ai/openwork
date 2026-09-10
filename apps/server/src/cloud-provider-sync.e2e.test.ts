@@ -921,7 +921,7 @@ describe("cloud provider sync gateway", () => {
     }]);
   });
 
-  test("materializes gateway providers per row, skips unready ones, and tolerates an older Den without the endpoint", async () => {
+  test("backward compatibility: Gateway list fallback, strict connect failures, and legacy provider isolation", async () => {
     const root = await createRoot();
     const config = serverConfig(root, "https://engine.example.test");
     config.workspaces = [];
@@ -972,43 +972,51 @@ describe("cloud provider sync gateway", () => {
       modelIds: [],
       providerConfig: { env: ["IPR_PENDING_GOOGLE_GENERATIVE_AI_API_KEY"], npm: "@ai-sdk/google" },
     };
-    let inferenceEndpointMissing = false;
+    let inferenceListResponse: (() => Response) | undefined = () => new Response(null, { status: 404 });
+    let failure: { path: string; respond: () => Response } | undefined;
     const denPaths: string[] = [];
-    const den = Bun.serve({
-      port: 0,
-      fetch(request) {
-        const url = new URL(request.url);
-        denPaths.push(`${url.pathname}${url.search}`);
-        if (url.pathname === "/v1/llm-providers") return Response.json({ llmProviders: [llmProvider] });
-        if (url.pathname === `/v1/llm-providers/${llmProvider.id}/connect`) {
-          return Response.json({ llmProvider });
-        }
-        if (inferenceEndpointMissing) return Response.json({ error: "not_found" }, { status: 404 });
-        if (url.pathname === "/v1/inference-providers" && url.searchParams.get("scope") === "usable") {
-          return Response.json({ inferenceProviders: [readyGateway, pendingGateway] });
-        }
-        if (url.pathname === `/v1/inference-providers/${readyGateway.id}/connect`) {
-          return Response.json({
-            inferenceProvider: { ...readyGateway, apiKey: gatewayKey, apiKeys: { IPR_READY_ANTHROPIC_API_KEY: gatewayKey } },
-          });
-        }
-        if (url.pathname === `/v1/inference-providers/${pendingGateway.id}/connect`) {
-          return Response.json({ error: "forbidden" }, { status: 403 });
-        }
-        return Response.json({ error: "not_found" }, { status: 404 });
-      },
-    });
-    stops.push(() => den.stop(true));
+    const fetchImpl = Object.assign(async (
+      input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1],
+    ) => {
+      const url = new URL(String(input));
+      expect(url.origin).toBe("https://den.example.test");
+      expect(init?.method ?? "GET").toBe("GET");
+      expect(init?.body).toBeUndefined();
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer den-token");
+      expect(new Headers(init?.headers).get("x-openwork-legacy-org-id")).toBe("org_test");
+      expect(new Headers(init?.headers).get("x-openwork-org-id")).toBe("org_test");
+      const path = `${url.pathname}${url.search}`;
+      denPaths.push(path);
+      if (failure?.path === path) return failure.respond();
+      if (path === "/v1/llm-providers") return Response.json({ llmProviders: [llmProvider] });
+      if (path === `/v1/llm-providers/${llmProvider.id}/connect`) return Response.json({ llmProvider });
+      if (path === "/v1/inference-providers?scope=usable") {
+        return inferenceListResponse?.() ?? Response.json({ inferenceProviders: [readyGateway, pendingGateway] });
+      }
+      if (path === `/v1/inference-providers/${readyGateway.id}/connect`) {
+        return Response.json({
+          inferenceProvider: { ...readyGateway, apiKey: gatewayKey, apiKeys: { IPR_READY_ANTHROPIC_API_KEY: gatewayKey } },
+        });
+      }
+      throw new Error(`Unexpected Den request: ${path}`);
+    }, { preconnect: globalThis.fetch.preconnect });
     const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
     const sync = new CloudProviderSync({
       config,
       env,
+      fetchImpl,
       reloadEngine: async () => undefined,
       intervalMs: 3_600_000,
     });
     stops.push(() => sync.stop());
 
-    sync.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, token: "den-token", orgId: "org_test" });
+    await sync.setSession({ baseUrl: "https://den.example.test", token: "den-token", orgId: "org_test" });
+    expect((await sync.run("old-den-first-sync")).status).toBe("applied");
+    expect(sync.status().providers.map((entry) => entry.cloudProviderId)).toEqual(["lpr_test"]);
+    expect(denPaths.sort()).toEqual([
+      "/v1/inference-providers?scope=usable", "/v1/llm-providers", "/v1/llm-providers/lpr_test/connect",
+    ]);
+    inferenceListResponse = undefined;
     expect((await sync.run("gateway")).status).toBe("applied");
     expect(denPaths).toContain("/v1/inference-providers?scope=usable");
     expect(denPaths).toContain(`/v1/inference-providers/${readyGateway.id}/connect`);
@@ -1047,15 +1055,75 @@ describe("cloud provider sync gateway", () => {
     expect(storedEnv.some((entry) => entry.key === "IPR_PENDING_GOOGLE_GENERATIVE_AI_API_KEY")).toBe(false);
     expect(storedEnv.some((entry) => entry.key === "GOOGLE_GENERATIVE_AI_API_KEY")).toBe(false);
 
-    // An older Den has no inference-providers resource: llm-provider sync
-    // must keep working and the gateway rows simply disappear.
-    inferenceEndpointMissing = true;
-    expect((await sync.run("older-den")).status).toBe("applied");
-    expect(sync.status().lastRun?.status).toBe("applied");
-    expect(sync.status().providers.map((entry) => entry.cloudProviderId)).toEqual(["lpr_test"]);
-    expect(sync.status().skippedProviders).toEqual([]);
-    expect(Object.keys(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)))).toEqual(["lpr_test"]);
-    expect((await env.list()).some((entry) => entry.key === "IPR_READY_ANTHROPIC_API_KEY")).toBe(false);
+    const ownership = await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__");
+    for (const endpoint of [
+      { path: "/v1/inference-providers?scope=usable", invalid: "den_inference_provider_list_invalid_response", list: true },
+      { path: `/v1/inference-providers/${readyGateway.id}/connect`, invalid: `den_inference_provider_connect_invalid_response_${readyGateway.id}`, list: false },
+      { path: "/v1/llm-providers", invalid: "den_llm_provider_list_invalid_response", list: false },
+      { path: `/v1/llm-providers/${llmProvider.id}/connect`, invalid: `den_llm_provider_connect_invalid_response_${llmProvider.id}`, list: false },
+    ]) {
+      // Even with no Gateway resource, legacy errors cannot become an empty
+      // desired provider set and erase the last successfully owned providers.
+      inferenceListResponse = endpoint.path.startsWith("/v1/llm-providers")
+        ? () => new Response(null, { status: 404 }) : undefined;
+      const httpStatuses = endpoint.list ? [401, 403, 500, 502, 503, 504] : [401, 403, 404, 405, 500, 501, 502, 503, 504];
+      const cases = [
+        ...httpStatuses.map((code) => ({
+          respond: () => new Response(null, { status: code }), message: `den_request_failed_${code}`,
+        })),
+        { respond: () => new Response("not JSON"), message: "den_request_invalid_json" },
+        { respond: () => Response.json(null), message: endpoint.invalid },
+        { respond: () => Response.json({}), message: endpoint.invalid },
+        { respond: () => Response.json({ inferenceProviders: [null], llmProviders: [null], inferenceProvider: {}, llmProvider: {} }), message: endpoint.invalid },
+        { respond: () => { throw new Error("fixture offline"); }, message: "den_request_failed: fixture offline" },
+      ];
+      if (endpoint.path.startsWith("/v1/inference-providers")) {
+        const malformedGateway = { ...readyGateway, models: [{ ...readyGateway.models[0], credentialSetId: undefined }] };
+        cases.push({
+          respond: () => Response.json({ inferenceProviders: [malformedGateway], inferenceProvider: malformedGateway }),
+          message: endpoint.invalid,
+        });
+        if (!endpoint.list) cases.push({
+          respond: () => Response.json({ inferenceProvider: {
+            ...readyGateway, apiKey: "ow_inf_legacy-fixture", apiKeys: { IPR_READY_ANTHROPIC_API_KEY: "ow_inf_legacy-fixture" },
+          } }),
+          message: `den_inference_provider_unscoped_credentials_${readyGateway.id}`,
+        });
+      }
+      for (const entry of cases) {
+        failure = { path: endpoint.path, respond: entry.respond };
+        expect(await sync.run(`${endpoint.path}: ${entry.message}`)).toEqual({ status: "failed", message: entry.message });
+        expect(sync.status().lastRun?.status).toBe("failed");
+        expect(sync.status().providers).toEqual(status.providers);
+        expect(sync.status().skippedProviders).toEqual(status.skippedProviders);
+        expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))).toEqual(runtimeProviders);
+        expect(await env.list()).toEqual(storedEnv);
+        expect(await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__")).toEqual(ownership);
+      }
+    }
+    failure = undefined;
+    // Only list-route absence (or a valid empty list) retires Gateway rows.
+    // Reconcile again with a restored endpoint to prove the fallback is not sticky.
+    for (const code of [404, 405, 501, 200]) {
+      inferenceListResponse = () => code === 200
+        ? Response.json({ inferenceProviders: [] }) : new Response("route unavailable", { status: code });
+      const pathOffset = denPaths.length;
+      expect((await sync.run(`older-den-${code}`)).status).toBe("applied");
+      expect(sync.status().providers.map((entry) => entry.cloudProviderId)).toEqual(["lpr_test"]);
+      expect(sync.status().skippedProviders).toEqual([]);
+      expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))).toEqual({ lpr_test: runtimeProviders.lpr_test });
+      expect(await env.list()).toEqual(storedEnv.filter((entry) => entry.key !== "IPR_READY_ANTHROPIC_API_KEY"));
+      expect(denPaths.slice(pathOffset).sort()).toEqual([
+        "/v1/inference-providers?scope=usable", "/v1/llm-providers", "/v1/llm-providers/lpr_test/connect",
+      ]);
+      expect(await sync.run("old-den-unchanged")).toEqual({ status: "noop" });
+      inferenceListResponse = undefined;
+      expect((await sync.run("gateway-restored")).status).toBe("applied");
+      expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))).toEqual(runtimeProviders);
+      expect((await env.list()).map(({ key, value }) => ({ key, value })))
+        .toEqual(storedEnv.map(({ key, value }) => ({ key, value })));
+    }
+    expect(denPaths.some((path) => path.startsWith("/v1/llm-providers/ipr_"))).toBe(false);
   });
 
   test("materializes a credential-less Den provider from a matching local Desktop environment key", async () => {
