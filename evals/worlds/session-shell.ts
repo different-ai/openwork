@@ -1910,6 +1910,21 @@ export async function archiveSessions(seed: Seed) {
   }
 
   return { app, engine, workspace, workspacePath, candidate, neighbor, archivedAt, sidebar, undoToastSettled,
+    // The rename UI rejects blank input; arrange persisted legacy titles through the native API.
+    setCandidateTitle: (title: string) => seed.evalIn(app, browserScript(async (workspaceId, sessionId, title) => {
+      const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+      if (!info?.running || !info.baseUrl) throw new Error("OpenWork server is unavailable");
+      const response = await fetch(`${info.baseUrl.replace(/\/+$/, "")}/workspace/${encodeURIComponent(workspaceId)}/opencode/session/${encodeURIComponent(sessionId)}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${info.ownerToken ?? info.clientToken ?? ""}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error(`Setting fixture title failed with HTTP ${response.status}`);
+      const session = await response.json();
+      if (session.id !== sessionId || typeof session.title !== "string") throw new Error("Unexpected session title response");
+      return session.title;
+    }, [workspace.workspaceId, candidate.sessionId, title]), { awaitPromise: true, timeoutMs: 20_000 }),
     archiveToast: () => seed.evalIn(app, () => {
       const pill = document.querySelector<HTMLElement>("[data-undo-toast]");
       const message = pill?.querySelector("p");

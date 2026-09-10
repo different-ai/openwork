@@ -2048,7 +2048,7 @@ export default {
   "session_management.unarchive_session": "Unarchive session",
   "session_management.archive_failed": "Couldn't archive session",
   "session_management.unarchive_failed": "Couldn't unarchive session",
-  "session_management.session_archived": "Session archived",
+  "session_management.session_archived": "Session archived: {title}",
   "session_management.session_unarchived": "Session unarchived",
   "session_management.archive_working_title": "This session is still working",
   "session_management.archive_working_description": "Stop the current task and all its subtasks, cancel queued messages, and archive this conversation? Changes already made won't be undone. Actions already submitted to external services may still complete.",

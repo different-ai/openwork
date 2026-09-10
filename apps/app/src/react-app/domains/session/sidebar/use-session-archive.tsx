@@ -99,7 +99,7 @@ export function useSessionArchive(input: {
   }
 
   function showUndo(target: ArchiveTarget, archived: boolean, undo?: typeof undoNavigation.current) {
-    const message = archived ? `${t("session_management.session_archived")}: ${target.title}` : t("session_management.session_unarchived");
+    const message = archived ? t("session_management.session_archived", { title: target.title }) : t("session_management.session_unarchived");
     toast.undo(<span title={message}>{message}</span>, {
       id: `session-archive:${target.sessionId}`,
       icon: archived ? Archive : ArchiveRestore,

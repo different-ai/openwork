@@ -128,15 +128,24 @@ test("session archive is honest about availability and can be undone when suppor
     await user.notSee(undoButton);
   });
 
-  for (const title of ["Programmatic archive candidate", `Long archive candidate ${"identity-preserving-title-".repeat(30)}`]) {
-    await step("programmatic nonfocused archive names its target and Undo restores only that target", async () => {
-      expect(await agent.run("session.rename", { sessionId: candidateId, title })).toMatchObject({ ok: true });
+  for (const title of ["Programmatic archive candidate", `Long archive candidate ${"identity-preserving-title-".repeat(30)}`, "", " \t "]) {
+    const displayTitle = title.trim() || "New session";
+    const titleKind = title === "" ? "empty" : !title.trim() ? "whitespace-only" : title.startsWith("Long") ? "long" : "named";
+    await step(`programmatic nonfocused archive identifies the ${titleKind} target and Undo restores only that target`, async () => {
+      if (title.trim()) {
+        expect(await agent.run("session.rename", { sessionId: candidateId, title })).toMatchObject({ ok: true });
+      } else {
+        await agent.run("session.rename", { sessionId: candidateId, title: "Before blank title" });
+        await user.see(candidateRow, { text: "Before blank title" });
+        expect(await world.setCandidateTitle(title)).toBe(title);
+        await user.see(candidateRow, { text: displayTitle });
+      }
       expect(await agent.run("session.archive", { sessionId: candidateId, archived: true })).toMatchObject({ ok: true });
-      await user.see({ text: `Session archived: ${title}` });
+      await user.see({ text: `Session archived: ${displayTitle}` });
       await probe.eventually(() => world.undoToastSettled(), { within: 10_000, label: "programmatic toast settles", until: Boolean });
       expect(await world.archiveToast()).toMatchObject({
-        text: `Session archived: ${title}`,
-        fullTitle: `Session archived: ${title}`,
+        text: `Session archived: ${displayTitle}`,
+        fullTitle: `Session archived: ${displayTitle}`,
         fitsViewport: true,
         actionsInside: true,
         ...(title.startsWith("Long") ? { truncated: true } : {}),
