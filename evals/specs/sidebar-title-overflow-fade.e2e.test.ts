@@ -290,7 +290,9 @@ for (const mode of expansionModes) {
           for (const anchor of anchors) {
             const row = frame.rows.find(row => row.id === anchor.id);
             expect(row, `old row ${anchor.id} remains rendered`).toBeDefined();
-            expect(Math.abs(row!.top - anchor.top), `old row ${anchor.id} remains stationary`).toBeLessThanOrEqual(1);
+            expect(Math.abs(row!.top - anchor.top), `old row ${anchor.id} remains stationary: before ${JSON.stringify({
+              top: anchor.top, viewport: capture.before.viewport, scrollTop: capture.before.scrollTop,
+            })}, frame ${JSON.stringify({ top: row!.top, viewport: frame.viewport, scrollTop: frame.scrollTop })}`).toBeLessThanOrEqual(1);
           }
           const visible = frame.rows.filter(row => row.bottom > frame.viewport.top && row.top < frame.viewport.bottom);
           for (const [rowIndex, row] of visible.entries()) {
