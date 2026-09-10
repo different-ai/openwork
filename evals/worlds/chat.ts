@@ -1,4 +1,4 @@
-import { browserScript, reattachSurface, type Surface } from "@openwork/cdp";
+import { addInitScript, browserScript, reattachSurface, type Surface } from "@openwork/cdp";
 import { spawn } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -16,6 +16,7 @@ type AppSurface = "electron" | "web";
 
 declare global {
   interface Window {
+    __modelEffortRequests?: unknown[];
     __openworkSubmissionFault?: { attempts: number; release: () => void };
     __openworkStoppingFault?: {
       state: {
@@ -538,6 +539,20 @@ export async function modelPickerEffortWeb(seed: Seed) {
   }] });
   const workspacePath = seed.tmpPath("model-picker-effort");
   const app = await seed.appWeb({ name: "model-picker-effort", workspacePath, mocks: { agent: mock } });
+  // Observe model references without consuming or changing the app's requests.
+  await addInitScript(app.client, () => {
+    window.__modelEffortRequests = [];
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+      if (method === "POST" && /\/opencode2\/api\/session\/[^/]+\/model$/.test(new URL(url, location.href).pathname)) {
+        const body: unknown = await new Request(input instanceof Request ? input.clone() : input, init).json();
+        window.__modelEffortRequests?.push(body);
+      }
+      return originalFetch(input, init);
+    };
+  });
   const witness = app.mocks.agent;
   if (!witness) throw new Error("Missing effort provider witness");
   const workspace = await seed.workspace(app, workspacePath);
@@ -557,6 +572,7 @@ export async function modelPickerEffortWeb(seed: Seed) {
   } }, engine);
   const session = await seedSessionRetry(seed, app, { title: "Model effort contract" });
   return { app, engine, workspace, session, prompt, providerId, modelId,
+    modelRequests: () => seed.evalIn(app, () => window.__modelEffortRequests ?? []),
     runtimeFacts: async () => ({
       ...await seed.evalIn(app, () => ({ browser: navigator.userAgent, electronBridge: Boolean(window.__OPENWORK_ELECTRON__) })),
       sourceSha: app.actualSourceSha,

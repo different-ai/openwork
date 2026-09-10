@@ -64,6 +64,7 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     await user.see({ role: "button", label: "Low" });
     await user.notSee({ role: "button", label: /^Hidden/ });
     await user.click({ role: "button", label: "High" });
+    await user.see({ role: "button", label: "Change model" }, { text: /High/ });
   });
   await user.press("Escape");
   await user.type("composer", world.prompt);
@@ -74,6 +75,7 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     const requests = await world.requests();
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({ model: world.modelId, reasoningEffort: "high" });
+    expect(await world.modelRequests()).toEqual([{ model: { providerID: world.providerId, id: world.modelId, variant: "high" } }]);
     const native = await world.readNative(`${prefix}/session/${world.session.sessionId}`);
     expect(native.body).toMatchObject({ data: { model: { id: world.modelId, providerID: world.providerId, variant: "high" } } });
     evidence.recordJsonArtifact("MODEL-01 first request and native session", { requests, native });
@@ -93,6 +95,7 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     await user.click({ role: "button", label: "Change model" });
     await user.click({ role: "button", label: /^Effort/ });
     await user.click({ role: "button", label: "CustomExact" });
+    await user.see({ role: "button", label: "Change model" }, { text: /CustomExact/ });
     await user.press("Escape");
     await user.type("composer", world.prompt);
     await user.click("Run task");
@@ -108,6 +111,7 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     await user.click({ role: "button", label: /^Model\s+Reasoning witness/ });
     await user.type({ placeholder: "Search models..." }, "Standard witness");
     await user.click({ role: "option", label: /^Standard witness/ });
+    await user.see({ role: "button", label: "Change model" }, { text: /Standard witness/ });
     await user.notSee({ placeholder: "Search models..." });
     await user.click({ role: "button", label: "Change model" });
     await user.see({ role: "button", label: /^Effort\s+Unavailable/ });
@@ -124,9 +128,15 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     const requests = await world.requests();
     expect(requests[3]).toMatchObject({ model: "standard", reasoningEffort: null });
     const native = await world.readNative(`${prefix}/session/${world.session.sessionId}`);
-    expect(native.body).toMatchObject({ data: { model: { id: "standard", providerID: world.providerId } } });
-    expect(JSON.stringify(native.body)).not.toContain('"variant":');
-    evidence.recordJsonArtifact("MODEL-01 unsupported model request and native session", { requests, native });
+    const modelRequests = await world.modelRequests();
+    expect(modelRequests).toEqual([
+      { model: { providerID: world.providerId, id: world.modelId, variant: "high" } },
+      { model: { providerID: world.providerId, id: world.modelId, variant: "CustomExact" } },
+      { model: { providerID: world.providerId, id: "standard" } },
+    ]);
+    // Native v2 canonicalizes an omitted variant to its internal default ID.
+    expect(native.body).toMatchObject({ data: { model: { id: "standard", providerID: world.providerId, variant: "default" } } });
+    evidence.recordJsonArtifact("MODEL-01 unsupported model request and native session", { requests, modelRequests, native });
     await user.see("Run task", { timeoutMs: 30_000 });
   });
 });
