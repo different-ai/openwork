@@ -14,6 +14,7 @@ import type {
 import {
   CLOUD_MCP_SERVER_NAME,
   clearCloudMcpScopedMetadata,
+  clearCloudMcpSyncMarker,
   clearCloudMcpUserState,
   getCloudMcpScopeKey,
   isCloudMcpSyncMarkerFresh,
@@ -262,31 +263,41 @@ function shouldSkipForPrerequisite(input: CloudMcpReconcilerInput, scope: CloudM
   return null;
 }
 
-function writeUsableMarker(input: {
+function isLiveCloudMcpRegistrationCurrent(health: OpenworkCloudMcpHealth | null): boolean {
+  if (health?.engine.status !== "connected" || health.delivery.state !== "ready") return false;
+  return health.delivery.desiredRevision !== null &&
+    health.delivery.appliedRevision === health.delivery.desiredRevision;
+}
+
+function healthTokenExpiresAt(health: OpenworkCloudMcpHealth | null): string | null {
+  const expiresAt = health?.desired.token.metadata.expiresAt;
+  return typeof expiresAt === "string" && expiresAt.trim() ? expiresAt : null;
+}
+
+function writeConnectedMarker(input: {
   health: OpenworkCloudMcpHealth | null;
   scope: CloudMcpScope;
   expiresAt: string | null;
 }): boolean {
-  if (!input.health?.usable || !input.expiresAt) return false;
+  if (!isLiveCloudMcpRegistrationCurrent(input.health) || !input.expiresAt) {
+    clearCloudMcpSyncMarker(input.scope);
+    return false;
+  }
   writeCloudMcpSyncMarker({ ...input.scope, expiresAt: input.expiresAt });
   return true;
 }
 
-async function probeHealth(input: CloudMcpReconcilerInput, scope: CloudMcpScope, options?: { writeFreshnessMarker?: boolean }): Promise<CloudMcpOperationResult> {
+async function probeHealth(input: CloudMcpReconcilerInput, scope: CloudMcpScope): Promise<CloudMcpOperationResult> {
   const health = await input.client.getOpenworkCloudMcpHealth(
     scope.workspaceId,
     input.context.providerModel,
     input.probe ? { probe: true } : undefined,
   );
-  const marker = options?.writeFreshnessMarker ? readCloudMcpSyncMarker(scope) : null;
-  const markerWritten = options?.writeFreshnessMarker === true
-    ? writeUsableMarker({ health, scope, expiresAt: marker?.expiresAt ?? null })
-    : false;
   return {
     status: health.usable ? "ready" : "checked",
     health,
     attempts: 0,
-    markerWritten,
+    markerWritten: false,
     reminted: false,
   };
 }
@@ -308,18 +319,21 @@ async function mintAndPost(input: CloudMcpReconcilerInput, scope: CloudMcpScope)
 
 async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpScope): Promise<CloudMcpOperationResult> {
   if (!input.force) {
-    const healthResult = await probeHealth(input, scope, { writeFreshnessMarker: true });
-    if (healthResult.health?.usable) return { ...healthResult, status: "unchanged" };
-  }
-
-  const marker = readCloudMcpSyncMarker(scope);
-  if (!input.force && marker && isCloudMcpSyncMarkerFresh({
-    expiresAt: marker.expiresAt,
-    now: input.now ?? Date.now(),
-    refreshMarginMs: input.refreshMarginMs,
-  })) {
-    const health = await input.client.getOpenworkCloudMcpHealth(scope.workspaceId, input.context.providerModel);
-    if (health.usable) return { status: "unchanged", health, attempts: 0, markerWritten: false, reminted: false };
+    const healthResult = await probeHealth(input, scope);
+    const marker = readCloudMcpSyncMarker(scope);
+    const registrationCurrent = isLiveCloudMcpRegistrationCurrent(healthResult.health);
+    if (!registrationCurrent) clearCloudMcpSyncMarker(scope);
+    const expiresAt = marker?.expiresAt ?? healthTokenExpiresAt(healthResult.health);
+    if (registrationCurrent && expiresAt && isCloudMcpSyncMarkerFresh({
+      expiresAt,
+      now: input.now ?? Date.now(),
+      refreshMarginMs: input.refreshMarginMs,
+    })) {
+      const markerWritten = marker
+        ? false
+        : writeConnectedMarker({ health: healthResult.health, scope, expiresAt });
+      return { ...healthResult, status: "unchanged", markerWritten };
+    }
   }
 
   const first = await mintAndPost(input, scope);
@@ -339,7 +353,7 @@ async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpSco
     if (second.health) health = second.health;
   }
 
-  const markerWritten = writeUsableMarker({ health, scope, expiresAt: token.expiresAt });
+  const markerWritten = writeConnectedMarker({ health, scope, expiresAt: token.expiresAt });
   return {
     status: health?.usable ? "repaired" : "failed",
     health,

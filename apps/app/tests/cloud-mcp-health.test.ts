@@ -59,9 +59,21 @@ function failure(code: string): OpenworkCloudMcpFailure {
   };
 }
 
-function health(input: { usable: boolean; failure?: OpenworkCloudMcpFailure | null; projectionChecked?: boolean }): OpenworkCloudMcpHealth {
+function health(input: {
+  usable: boolean;
+  failure?: OpenworkCloudMcpFailure | null;
+  projectionChecked?: boolean;
+  engineStatus?: OpenworkCloudMcpHealth["engine"]["status"];
+  deliveryState?: OpenworkCloudMcpHealth["delivery"]["state"];
+  appliedRevision?: string | null;
+}): OpenworkCloudMcpHealth {
   const usable = input.usable;
   const projectionChecked = input.projectionChecked ?? usable;
+  const engineStatus = input.engineStatus ?? (usable ? "connected" : "failed");
+  const deliveryState = input.deliveryState ?? (usable ? "ready" : "pending");
+  const appliedRevision = input.appliedRevision === undefined
+    ? deliveryState === "ready" ? "rev_desired" : null
+    : input.appliedRevision;
   return {
     schemaVersion: 1,
     phase: usable ? "ready" : "engine_failed",
@@ -77,14 +89,14 @@ function health(input: { usable: boolean; failure?: OpenworkCloudMcpFailure | nu
       token: { present: true, metadata: { expiresAt: token.expiresAt, scopes: "mcp:read mcp:write" } },
     },
     delivery: {
-      state: usable ? "ready" : "pending",
+      state: deliveryState,
       desiredRevision: "rev_desired",
-      appliedRevision: usable ? "rev_desired" : null,
+      appliedRevision,
       updatedAt: NOW,
-      appliedAt: usable ? NOW : null,
+      appliedAt: deliveryState === "ready" ? NOW : null,
       lastAttemptAt: NOW,
     },
-    engine: { status: usable ? "connected" : "failed" },
+    engine: { status: engineStatus },
     tools: {
       expected: ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
       present: usable ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"] : [],
@@ -307,7 +319,50 @@ describe("OpenWork Cloud MCP reconciler", () => {
     expect(skipped.skippedReason).toBe("unsupported");
   });
 
-  test("writes marker only when returned health is usable", async () => {
+  test("a fresh marker short-circuits only when the live registration is connected", async () => {
+    for (const engineStatus of ["connected", "failed", "needs_auth", "needs_client_registration", "missing"] as const) {
+      installStorageStub();
+      writeCloudMcpSyncMarker({ ...scope, expiresAt: token.expiresAt });
+      let mintCount = 0;
+      let postCount = 0;
+      const liveHealth = health({
+        usable: engineStatus === "connected",
+        engineStatus,
+        deliveryState: engineStatus === "connected" ? "ready" : "failed",
+        appliedRevision: engineStatus === "connected" ? "rev_desired" : null,
+      });
+      const result = await runOpenworkCloudMcpReconciler({
+        mode: "repair",
+        client: {
+          baseUrl: scope.serverBaseUrl,
+          getOpenworkCloudMcpHealth: async () => liveHealth,
+          reconcileOpenworkCloudMcp: async () => {
+            postCount += 1;
+            return health({ usable: true });
+          },
+        },
+        context,
+        mintToken: async () => {
+          mintCount += 1;
+          return token;
+        },
+        now: NOW,
+        refreshMarginMs: 24 * 60 * 60 * 1000,
+      });
+
+      if (engineStatus === "connected") {
+        expect(result.status).toBe("unchanged");
+        expect(mintCount).toBe(0);
+        expect(postCount).toBe(0);
+      } else {
+        expect(result.status).toBe("repaired");
+        expect(mintCount).toBe(1);
+        expect(postCount).toBe(1);
+      }
+    }
+  });
+
+  test("writes the marker only after the desired config is live and connected", async () => {
     const client = {
       baseUrl: scope.serverBaseUrl,
       getOpenworkCloudMcpHealth: async () => health({ usable: false, failure: failure("cloud_status_missing") }),
@@ -326,6 +381,98 @@ describe("OpenWork Cloud MCP reconciler", () => {
       refreshMarginMs: 1,
     });
     expect(readCloudMcpSyncMarker(scope)?.expiresAt).toBe(token.expiresAt);
+  });
+
+  test("defers the marker across reload-required delivery until post-reload status is connected", async () => {
+    let liveHealth = health({
+      usable: false,
+      engineStatus: "connected",
+      deliveryState: "pending",
+      appliedRevision: "rev_previous",
+      failure: failure("cloud_registration_pending"),
+    });
+    let mintCount = 0;
+    let postCount = 0;
+    const client = {
+      baseUrl: scope.serverBaseUrl,
+      getOpenworkCloudMcpHealth: async () => liveHealth,
+      reconcileOpenworkCloudMcp: async () => {
+        postCount += 1;
+        return liveHealth;
+      },
+    };
+
+    const configured = await runOpenworkCloudMcpReconciler({
+      mode: "repair",
+      client,
+      context,
+      mintToken: async () => {
+        mintCount += 1;
+        return token;
+      },
+      force: true,
+      now: NOW,
+      refreshMarginMs: 24 * 60 * 60 * 1000,
+    });
+    expect(configured.markerWritten).toBe(false);
+    expect(readCloudMcpSyncMarker(scope)).toBeNull();
+
+    liveHealth = health({ usable: true });
+    const afterReload = await runOpenworkCloudMcpReconciler({
+      mode: "repair",
+      client,
+      context,
+      mintToken: async () => {
+        mintCount += 1;
+        return token;
+      },
+      now: NOW,
+      refreshMarginMs: 24 * 60 * 60 * 1000,
+    });
+    expect(afterReload.status).toBe("unchanged");
+    expect(afterReload.markerWritten).toBe(true);
+    expect(readCloudMcpSyncMarker(scope)?.expiresAt).toBe(token.expiresAt);
+    expect(mintCount).toBe(1);
+    expect(postCount).toBe(1);
+  });
+
+  test("coalesces concurrent reconciliation attempts for repeated mounts", async () => {
+    let releasePost: (() => void) | null = null;
+    const postBlocked = new Promise<void>((resolve) => {
+      releasePost = resolve;
+    });
+    let mintCount = 0;
+    let postCount = 0;
+    const input = {
+      mode: "repair" as const,
+      client: {
+        baseUrl: scope.serverBaseUrl,
+        getOpenworkCloudMcpHealth: async () => health({ usable: false }),
+        reconcileOpenworkCloudMcp: async () => {
+          postCount += 1;
+          await postBlocked;
+          return health({ usable: true });
+        },
+      },
+      context,
+      mintToken: async () => {
+        mintCount += 1;
+        return token;
+      },
+      force: true,
+      refreshMarginMs: 1,
+    };
+
+    const first = runOpenworkCloudMcpReconciler(input);
+    const second = runOpenworkCloudMcpReconciler(input);
+    await Promise.resolve();
+    expect(mintCount).toBe(1);
+    releasePost?.();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult).toEqual(secondResult);
+    expect(postCount).toBe(1);
+    expect(mintCount).toBe(1);
   });
 
   test("auth failures remint exactly once", async () => {
