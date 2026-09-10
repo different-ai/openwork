@@ -10,6 +10,7 @@ import {
   threadStatusOf,
 } from "./threads.ts";
 import { fixtureCatalog, fixtureModel, fixtureProvider } from "./provider-catalog.fixture.ts";
+import { MODEL_INTELLIGENCE_INDEX, normalizeModelIntelligence } from "./model-intelligence.ts";
 
 test("permissions and questions keep the thread waiting for the person", () => {
   const permission = { id: "p1", sessionID: "s1", protocol: "legacy" as const, action: "bash", resources: ["rm -rf build"], canAlways: true };
@@ -55,6 +56,7 @@ test("connectedModelCatalog only lists connected providers and marks provider de
 
 test("parseModelPreference accepts provider/model and rejects malformed values", () => {
   assert.deepEqual(parseModelPreference("anthropic/claude-haiku-4-5"), { providerId: "anthropic", modelId: "claude-haiku-4-5" });
+  assert.deepEqual(parseModelPreference("openrouter/vendor/model:free"), { providerId: "openrouter", modelId: "vendor/model:free" });
   assert.equal(parseModelPreference(""), undefined);
   assert.equal(parseModelPreference("anthropic/"), undefined);
   assert.equal(parseModelPreference("/model"), undefined);
@@ -72,6 +74,81 @@ test("catalog prices distinguish explicit free from missing, partial or invalid 
     assert.ok(option);
     assert.equal(option.knownPrice, missing === "none", missing);
     assert.equal(option.progressEligibility?.knownPrice, option.knownPrice, "summary pricing remains a separate eligibility check");
+  }
+});
+
+test("intelligence projects raw tri-state facts before display defaults and refreshes without claiming upstream freshness", () => {
+  const raw = fixtureModel("openrouter", "vendor/model:free", { name: "Model" });
+  const provider = fixtureProvider({ id: "openrouter", name: "Router", models: {} });
+  provider.models[raw.id] = raw;
+  const source = fixtureCatalog({ all: [provider], connected: [provider.id] });
+  Reflect.deleteProperty(raw.capabilities, "reasoning");
+  Reflect.deleteProperty(raw.capabilities, "toolcall");
+  Reflect.deleteProperty(raw.capabilities.input, "image");
+  Reflect.deleteProperty(raw, "status");
+  const [first] = connectedModelCatalog(source, null, 100).models;
+  assert.ok(first?.intelligence);
+  assert.equal(first.id, "openrouter/vendor/model:free");
+  assert.equal(first.toolCall, true, "legacy display stays permissive");
+  assert.equal(first.reasoning, false);
+  assert.equal(first.status, "active");
+  assert.equal(first.intelligence.tools, null);
+  assert.equal(first.intelligence.reasoning, null);
+  assert.equal(first.intelligence.status, null);
+  assert.equal(first.intelligence.input.image, null);
+  assert.equal(first.intelligence.output.image, false, "explicit false differs from unknown");
+  assert.equal(first.intelligence.observedAt, 100);
+  assert.equal(first.intelligence.provenance, "engine-catalog");
+  assert.equal("fetchedAt" in first.intelligence, false);
+  raw.capabilities.toolcall = true;
+  raw.capabilities.reasoning = false;
+  raw.status = "active";
+  raw.cost.input = 0.25;
+  raw.limit.context = 256_000;
+  const [second] = connectedModelCatalog(source, null, 200).models;
+  assert.ok(second?.intelligence);
+  assert.equal(second.intelligence.reasoning, false);
+  assert.equal(second.intelligence.tools, true);
+  assert.equal(second.intelligence.cost.input, 0.25, "engine per-million price is not converted again");
+  assert.equal(second.intelligence.limits.context, 256_000);
+  assert.equal(second.intelligence.observedAt, 200);
+  assert.equal(first.intelligence.reasoning, null, "previous observation remains independent");
+});
+
+test("service registry evidence is exact and separate from adapters, authentication, names and private provider options", () => {
+  const raw = {
+    name: "OpenAI Claude Gemini", api: { npm: "@ai-sdk/openai", id: "vendor/model" },
+    get options(): never { throw new Error("must not read options"); },
+    get headers(): never { throw new Error("must not read headers"); },
+  };
+  const custom = normalizeModelIntelligence(raw, "custom-gateway", 123);
+  assert.equal(custom.serviceFamily, null);
+  assert.equal(custom.serviceEvidence, null);
+  assert.equal(custom.adapterNpm, "@ai-sdk/openai");
+  assert.equal(custom.apiModelId, "vendor/model");
+  for (const key of ["options", "headers", "auth", "credentialKind", "url", "baseURL"]) assert.equal(key in custom, false);
+  for (const service of MODEL_INTELLIGENCE_INDEX.services) {
+    assert.ok(service.sourceKeys.length > 0);
+    for (const key of service.sourceKeys) assert.match(MODEL_INTELLIGENCE_INDEX.sources[key], /^https:\/\//);
+    for (const id of service.providerIds) {
+      const observed = normalizeModelIntelligence(raw, id, 123);
+      assert.equal(observed.serviceFamily, service.family);
+      assert.equal(observed.serviceEvidence, "provider-registry-default");
+      assert.equal(normalizeModelIntelligence(raw, `${id}-custom`, 123).serviceFamily, null);
+    }
+  }
+  assert.equal(MODEL_INTELLIGENCE_INDEX.reviewedAt, "2026-09-09");
+  assert.equal(MODEL_INTELLIGENCE_INDEX.adapters.find((adapter) => adapter.npm === "@ai-sdk/openai-compatible")?.family, null);
+});
+
+test("numeric intelligence facts reject invalid and raw per-token strings while preserving explicit zero", () => {
+  for (const value of [undefined, null, -1, Infinity, NaN, "0.000001", 0, 2]) {
+    const facts = normalizeModelIntelligence({ cost: { input: value, output: value }, limit: { context: value } }, "openrouter", 1);
+    const expected = typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+    assert.equal(facts.cost.input, expected);
+    assert.equal(facts.cost.output, expected);
+    assert.equal(facts.limits.context, expected);
+    assert.equal(facts.cost.unit, "per-million-tokens");
   }
 });
 

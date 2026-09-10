@@ -17,6 +17,7 @@ import type { GroupDocument, GroupDocumentSave, GroupDocumentSaved, GroupDocumen
 import type { LocalSchedule } from "./local-schedule.ts";
 import type { EffortStop } from "./effort.ts";
 import type { ModelMode } from "./model-choice.ts";
+import type { ModelSelectionPreferences } from "./model-intelligence-index.ts";
 import type { Personality } from "./personalities";
 import type { WorkerEvent, WorkerLifespan, WorkerSummary } from "./workers";
 import type { AssignedCoworkerTemplate } from "@openwork/types/coworker-template";
@@ -149,6 +150,8 @@ export type CoworkerSummary = {
   modelChosenBy: ModelChosenBy;
   /** `auto`: a quick, standard, or deep model per message around `model`; `fixed`: `model` every time. */
   modelMode: ModelMode;
+  /** Saved ranking preferences used only by Automatic; never change the fixed model or effort. */
+  modelSelectionPreferences?: ModelSelectionPreferences;
   /** The effort dial (Light … All in): a preference each turn's effort is derived from, never used as is. */
   effortPreference: EffortStop;
   automations: string[];
@@ -524,9 +527,9 @@ export const coworkerBridge = {
     list: () => invoke<CoworkerSummary[]>("coworkers.list"),
     get: (slug: string) => invoke<CoworkerSummary>("coworkers.get", { slug }),
     openFolder: (slug?: string) => invoke<void>("coworkers.openFolder", { slug }),
-    create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses; personality: Personality; roleId?: string; firstNote?: string }) =>
+    create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses; personality: Personality; roleId?: string; firstNote?: string; modelSelectionPreferences?: ModelSelectionPreferences }) =>
       invoke<CoworkerSummary>("coworkers.create", input),
-    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "thinkingModel" | "thinkingModelVariant" | "deliveryModel" | "deliveryModelVariant" | "modelChosenBy" | "modelMode" | "effortPreference" | "avatarColor" | "avatarGlasses" | "personality">>) =>
+    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "thinkingModel" | "thinkingModelVariant" | "deliveryModel" | "deliveryModelVariant" | "modelChosenBy" | "modelMode" | "modelSelectionPreferences" | "effortPreference" | "avatarColor" | "avatarGlasses" | "personality">>) =>
       invoke<CoworkerSummary>("coworkers.update", { slug, patch }),
     ensureWorkspace: (slug: string) => invoke<CoworkerSummary>("coworkers.ensureWorkspace", { slug }),
     /** Retire: archive the whole home under `.retired/`; nothing is deleted. */

@@ -235,7 +235,7 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
     running.armDeadline = (current) => { entry = current; armDeadline(); };
     try {
       const setupSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(setupTimeoutMs)]);
-      const client = await withAbort(track(clientFor(entry.owner.slug, { kind: entry.continuation ? "review" : "reply", requestText: entry.requestText, signal: setupSignal })), setupSignal);
+      const client = await withAbort(track(clientFor(entry.owner.slug, { kind: entry.continuation ? "review" : "reply", requestText: entry.requestText, model: entry.model, signal: setupSignal })), setupSignal);
       running.client = client;
       if (entry.workspaceId && client.workspaceId !== entry.workspaceId) throw new Error("The original workspace is no longer available. This execution will not be moved or replayed.");
       let snapshot = await withAbort(client.getThreadSnapshot(entry.owner.threadId, { signal: setupSignal }), setupSignal);
@@ -260,6 +260,8 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
         current.sentAt ??= now();
         if (current.state !== "waiting-person") current.state = "running";
         current.workspaceId = client.workspaceId ?? current.workspaceId;
+        // Pin the native selection at admission; recovery observes the same model.
+        current.model ??= client.resolvedModel ?? null;
         if (current.continuation) value.tasks[current.taskId].state = "resuming";
         return current;
       });

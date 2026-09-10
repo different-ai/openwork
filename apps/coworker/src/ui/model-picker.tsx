@@ -3,6 +3,7 @@ import type { CoworkerSummary, ModelChosenBy, ProviderSyncRun, RuntimeInfo } fro
 import { describeSkippedProvider, type DenSession } from "@/lib/den";
 import { carryVariant, describeModelPick, previewAutomaticChoice, type ModelMode } from "@/lib/model-choice";
 import { effortForTurn, effortStopLabel } from "@/lib/effort";
+import { chooseIndexedModel, MODEL_INTELLIGENCE_INDEX, type ModelSelectionPreferences } from "@/lib/model-intelligence";
 import {
   createCoworkerThreads,
   modelSourceLabel,
@@ -30,15 +31,39 @@ function selectedDescription(option: EngineModelOption | undefined, value: strin
  * What Automatic would do right now, in one line: "Quick GPT-5 mini · Standard
  * GPT-5 · Deep GPT-5 pro". Falls back to the blurb until the catalog is read.
  */
-export function describeAutomaticChoice(catalog: Pick<EngineModelCatalog, "models">, standard: string): string {
-  const preview = previewAutomaticChoice(catalog, standard);
+export function describeAutomaticChoice(catalog: Pick<EngineModelCatalog, "models">, standard: string, preferences?: ModelSelectionPreferences): string {
+  const preview = previewAutomaticChoice(catalog, standard, preferences);
   if (!preview.standard) return AUTOMATIC_BLURB;
   const parts = [
-    `Quick ${preview.quick?.modelLabel ?? preview.standard.modelLabel}`,
+    `Quick ${preview.quick?.modelLabel ?? "Unavailable"}`,
     `Standard ${preview.standard.modelLabel}`,
-    `Deep ${preview.deep?.modelLabel ?? preview.standard.modelLabel}`,
+    `Deep ${preview.deep?.modelLabel ?? "Unavailable"}`,
   ];
   return parts.join(" · ");
+}
+
+function ModelFacts({ model }: { model: EngineModelOption | undefined }) {
+  const facts = model?.intelligence;
+  const fact = (value: boolean | null | undefined) => value == null ? "Unknown" : value ? "Yes" : "No";
+  const number = (value: number | null | undefined) => value == null ? "Unknown" : String(value);
+  const service = MODEL_INTELLIGENCE_INDEX.services.find((entry) => entry.providerIds.includes(model?.providerId ?? ""));
+  const adapter = MODEL_INTELLIGENCE_INDEX.adapters.find((entry) => entry.npm === facts?.adapterNpm);
+  return (
+    <div className="space-y-2 break-words text-[11px] leading-relaxed text-mist" data-testid="model-intelligence-facts">
+      <p className="select-text font-mono text-snow">{model?.id ?? "No available model"}</p>
+      <p>Source: {facts?.provenance ?? "Unknown"}. Status: {facts?.status ?? "Unknown"}.</p>
+      <p>Tools: {fact(facts?.tools)}. Reasoning: {fact(facts?.reasoning)}.</p>
+      <p>Input modalities: {facts ? Object.entries(facts.input).map(([key, value]) => `${key}: ${fact(value)}`).join("; ") : "Unknown"}.</p>
+      <p>Output modalities: {facts ? Object.entries(facts.output).map(([key, value]) => `${key}: ${fact(value)}`).join("; ") : "Unknown"}.</p>
+      <p>Token limits: input {number(facts?.limits.input)}; context {number(facts?.limits.context)}; output {number(facts?.limits.output)}.</p>
+      <p>Catalog token prices per million tokens: input {number(facts?.cost.input)}; output {number(facts?.cost.output)}. Not an endpoint quote; missing prices are not free.</p>
+      <p>SDK adapter: {facts?.adapterNpm ?? "Unknown"}. API model ID: {facts?.apiModelId ?? "Unknown"}.</p>
+      <p>Registry service hint: {facts?.serviceFamily ?? "Unknown"} ({facts?.serviceEvidence ?? "Unknown"}). This is not authenticated service identity.</p>
+      {adapter ? <p>{adapter.caveat}</p> : null}
+      {service ? <p>{service.caveat}</p> : null}
+      <p>Observed: {facts && Number.isFinite(facts.observedAt) && !Number.isNaN(new Date(facts.observedAt).getTime()) ? new Date(facts.observedAt).toLocaleString() : "Unknown"}. This is local observation time, not upstream freshness. Refresh in the model list re-reads available metadata.</p>
+    </div>
+  );
 }
 
 function SourceTag({ source }: { source: EngineModelOption["source"] }) {
@@ -103,6 +128,7 @@ export function ModelPicker({
   const [loading, setLoading] = useState(false);
   const [syncNote, setSyncNote] = useState("");
   const [error, setError] = useState("");
+  const [inspectedId, setInspectedId] = useState("");
 
   const refresh = useCallback(async (options: { sync?: boolean } = {}) => {
     if (!threads || !runtime.engineManaged) return;
@@ -160,7 +186,8 @@ export function ModelPicker({
   const lastRunFailed = catalog.cloud?.lastRun?.status === "failed" ? catalog.cloud.lastRun : null;
 
   const automatic = modelMode === "auto";
-  const automaticLine = automatic ? describeAutomaticChoice(catalog, value) : "";
+  const automaticLine = automatic ? describeAutomaticChoice(catalog, value, coworker.modelSelectionPreferences) : "";
+  const inspected = inspectedId ? catalog.models.find((model) => model.id === inspectedId) : forWorker && !value ? inherited : selected;
 
   /** Change the main model without changing the person's fixed or Automatic policy. */
   function selectModel(model: EngineModelOption | null) {
@@ -202,7 +229,48 @@ export function ModelPicker({
         </span>
         <span className="text-xs text-mist" aria-hidden="true">{open ? "⌃" : "⌄"}</span>
       </button>
-      {automatic ? <p className="text-[11px] leading-relaxed text-mist" data-testid="model-option-automatic-preview">{automaticLine}</p> : null}
+      {automatic ? (
+        <details className="text-[11px] leading-relaxed text-mist" data-testid="model-option-automatic-preview">
+          <summary className="cursor-pointer">{automaticLine} <span className="text-snow">Why these models?</span></summary>
+          <div className="mt-2 space-y-3" data-testid="model-automatic-reasons">
+            {(["quick", "standard", "deep"] as const).map((lane) => {
+              const decision = chooseIndexedModel(catalog, lane, { standard: value, preferences: coworker.modelSelectionPreferences });
+              return (
+                <div key={lane} className="space-y-1 border-l border-line pl-3">
+                  <p className="font-medium capitalize text-snow">{lane}: {decision.model?.modelLabel ?? "Unavailable"}</p>
+                  <p>{decision.reason}</p>
+                  <details>
+                    <summary className="cursor-pointer">Catalog facts for this choice</summary>
+                    <ModelFacts model={decision.model ?? undefined} />
+                  </details>
+                </div>
+              );
+            })}
+          </div>
+        </details>
+      ) : null}
+      <details className="text-[11px] leading-relaxed text-mist" data-testid="model-intelligence-details">
+        <summary className="cursor-pointer font-medium">Inspect model facts</summary>
+        <div className="mt-2 space-y-3">
+          <select aria-label="Inspect connected model" className={`${inputClass} bg-panel text-xs`} value={inspectedId} onChange={(event) => setInspectedId(event.target.value)}>
+            <option value="">Selected model</option>
+            {catalog.models.map((model) => <option key={model.id} value={model.id}>{model.id}</option>)}
+            {inspectedId && !inspected ? <option value={inspectedId}>{inspectedId} (unavailable)</option> : null}
+          </select>
+          <p>Inspection does not change your model. Only the connected catalog supplies choices; registry entries are non-exhaustive documentation, not authorization.</p>
+          <ModelFacts model={inspected} />
+          <details>
+            <summary className="cursor-pointer">Selection policy {MODEL_INTELLIGENCE_INDEX.version} / reviewed {MODEL_INTELLIGENCE_INDEX.reviewedAt}</summary>
+            <div className="mt-2 space-y-2">
+              {Object.entries(MODEL_INTELLIGENCE_INDEX.tasks).map(([lane, policy]) => (
+                <p key={lane}><span className="font-medium capitalize text-snow">{lane}: </span>{policy.purpose} {policy.guard}</p>
+              ))}
+              {MODEL_INTELLIGENCE_INDEX.caveats.map((caveat) => <p key={caveat}>{caveat}</p>)}
+              <p>Policy sources: {Object.keys(MODEL_INTELLIGENCE_INDEX.sources).map((name) => name.replace(/([A-Z])/g, " $1")).join(", ")}. Review date describes this policy, not live catalog freshness.</p>
+            </div>
+          </details>
+        </div>
+      </details>
       {forWorker && !value ? <p className="text-[11px] leading-relaxed text-mist">Copies the main model and its effort setting when this Worker starts.</p> : null}
       {forWorker && !value && inheritedVariantUnavailable ? <ErrorNote>New Workers cannot start with this effort. Choose a supported effort for the main model, or select a different Worker model.</ErrorNote> : null}
       {chosenBy === "app" && selected ? (
@@ -274,7 +342,7 @@ export function ModelPicker({
                           <span className="shrink-0 rounded-full bg-spark/14 px-1.5 py-0.5 text-[8px] uppercase tracking-wide text-[#b8caff]" data-testid="model-standard-tag">Standard</span>
                         ) : null}
                       </span>
-                      <span className="mt-0.5 block truncate text-[10px] text-mist">{option.modelId}</span>
+                      <span className="mt-0.5 block break-all text-[10px] text-mist">{option.id}</span>
                     </span>
                   </button>
                 ))}

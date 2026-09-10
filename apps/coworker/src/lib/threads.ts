@@ -20,6 +20,7 @@ import { discussionIds, discussionIdsForWorkspace } from "./discussions.ts";
 import type { StreamEvent } from "./live-stream.ts";
 import { workerNameFromTitle } from "./workers.ts";
 import { PROGRESS_LIMITS } from "./progress-config.ts";
+import { normalizeModelIntelligence, type ModelIntelligence } from "./model-intelligence.ts";
 
 export type ThreadListItem = {
   id: string;
@@ -162,6 +163,8 @@ export type EngineModelOption = {
   cost: { input: number; output: number };
   /** Both prices were explicitly reported as finite, non-negative numbers (including free 0/0). */
   knownPrice?: boolean;
+  /** Raw catalog facts for automatic selection, separate from permissive display defaults. */
+  intelligence?: ModelIntelligence;
   /** Separate fail-closed projection: legacy cost/reasoning defaults are NOT evidence. */
   progressEligibility?: {
     transport: "openai" | "openai-compatible" | null;
@@ -256,6 +259,7 @@ export function threadStatusOf(status: SessionStatus | undefined, now = Date.now
 export function connectedModelCatalog(
   value: ProviderListResponse,
   cloud: CloudProviderSyncStatus | null = null,
+  now = Date.now(),
 ): EngineModelCatalog {
   const connected = new Set(value.connected ?? []);
   const cloudProviderIds = new Set(cloud?.providers.map((provider) => provider.providerId) ?? []);
@@ -268,6 +272,7 @@ export function connectedModelCatalog(
   );
   const models = providers.flatMap((provider) =>
     Object.entries(provider.models ?? {}).map(([modelId, model]) => {
+      const intelligence = normalizeModelIntelligence(model, provider.id, now);
       const providerLabel = provider.name?.trim() || provider.id;
       const modelLabel = model.name?.trim() || modelId;
       const source: ModelSource =
@@ -294,6 +299,7 @@ export function connectedModelCatalog(
         releaseDate: model.release_date ?? "",
         cost: { input: model.cost?.input ?? 0, output: model.cost?.output ?? 0 },
         knownPrice,
+        intelligence,
         progressEligibility: {
           transport: model.api?.npm === "@ai-sdk/openai" ? "openai" : model.api?.npm === "@ai-sdk/openai-compatible" ? "openai-compatible" : null,
           knownPrice,

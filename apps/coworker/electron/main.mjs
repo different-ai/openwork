@@ -80,7 +80,7 @@ import {
 } from "./documents.mjs";
 import { ensureCoordinatorHome, updateCoordinator } from "./coordinator.mjs";
 import { effortForTurn, effortStopOf, replyKindForLane, workerTurnsFor } from "../src/lib/effort.ts";
-import { classifyRequest } from "../src/lib/model-choice.ts";
+import { classifyRequest, resolveDiscussionModel } from "../src/lib/model-choice.ts";
 import {
   appendGroupEvent,
   archiveGroup,
@@ -666,6 +666,16 @@ async function localRunModel(coworker, kind = "assignment-run", requestText) {
   const preference = String(coworker?.model ?? "").trim();
   const separator = preference.indexOf("/");
   if (separator <= 0 || separator === preference.length - 1) return undefined;
+  if ((kind === "reply" || kind === "review") && typeof requestText === "string") {
+    const handle = await ensurePlatformServer();
+    const response = await fetch(`${handle.url}/workspace/${encodeURIComponent(coworker.workspaceId)}/opencode/provider`, {
+      headers: { Authorization: `Bearer ${ownerToken}` }, signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error("The current model catalog could not be read. No replacement model was selected.");
+    const decision = resolveDiscussionModel(connectedModelCatalog(await response.json()), coworker, requestText);
+    if (!decision.model) throw new Error(decision.reason);
+    return { providerId: decision.model.providerId, modelId: decision.model.modelId, ...(decision.variant ? { variant: decision.variant } : {}) };
+  }
   const fixedVariant = String(coworker?.modelVariant ?? "").trim();
   const variants = await modelVariantsFor(coworker);
   const variant = variants === null
@@ -995,7 +1005,7 @@ const groupDocuments = createGroupDocumentService({
   resolveContext: (slug, context, expected) => collaboration.context(slug, context, expected, assertGroupDocumentToolContext),
 });
 
-async function collaborationClient(slug, { kind = "reply", requestText, signal } = {}) {
+async function collaborationClient(slug, { kind = "reply", requestText, model, signal } = {}) {
   maintenanceAdmission.assertOpen();
   const coworker = slug === ".coordinator" ? await ensureCoordinatorWorkspace() : await getCoworker(coworkersDir, slug);
   const handle = await ensurePlatformServer();
@@ -1006,7 +1016,9 @@ async function collaborationClient(slug, { kind = "reply", requestText, signal }
     if (!toolsRegistered.has(slug)) await registerCoworkerTools(coworker);
   }
   signal?.throwIfAborted();
-  const client = createHeadlessThreadClient({ baseUrl: handle.url, workspaceId: coworker.workspaceId, token: ownerToken, defaultModel: await localRunModel(coworker, kind, requestText) });
+  const resolvedModel = model ?? await localRunModel(coworker, kind, requestText);
+  const client = createHeadlessThreadClient({ baseUrl: handle.url, workspaceId: coworker.workspaceId, token: ownerToken, defaultModel: resolvedModel });
+  client.resolvedModel = resolvedModel;
   const interactions = createCoworkerThreads({ serverUrl: handle.url, workspaceId: coworker.workspaceId, token: ownerToken });
   client.workspaceId = coworker.workspaceId;
   client.pendingInteractions = interactions.listThreadInteractions;

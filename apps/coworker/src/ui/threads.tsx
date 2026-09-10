@@ -51,12 +51,12 @@ import {
   registerDiscussion,
   rememberWorkspaceSlug,
 } from "@/lib/discussions";
-import { effortForTurn, laneWithPreference, replyKindForLane, type EffortStop } from "@/lib/effort";
+import { laneWithPreference, type EffortStop } from "@/lib/effort";
 import { EffortDial } from "@/ui/effort-dial";
 import { ComputerControl } from "@/ui/computer-control";
 import { DiscussionBrowser } from "@/ui/browser-panel";
 import { PopoverDisclosure, TechnicalText } from "@/ui/details-popover";
-import { carryVariant, chooseFallbackModel, chooseModelForLane, classifyRequest, describeModelChoice, markAutoPicked, wasAutoPicked, type ModelLane } from "@/lib/model-choice";
+import { carryVariant, chooseFallbackModel, classifyRequest, describeModelChoice, markAutoPicked, resolveDiscussionModel, wasAutoPicked, type ModelLane } from "@/lib/model-choice";
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
 import { WorkerDecisionCards } from "@/ui/worker-decision";
 import { WorkersPanel } from "@/ui/workers";
@@ -1478,7 +1478,7 @@ function ThreadView({
       try {
         const excluded = [...failedModels, turnModelId];
         const catalog = await threads.listModelCatalog();
-        const next = chooseFallbackModel(catalog, turnLane, { standard: coworker.model || turnModelId, exclude: excluded });
+        const next = chooseFallbackModel(catalog, turnLane, { standard: coworker.model || turnModelId, exclude: excluded, ...(automatic ? { preferences: coworker.modelSelectionPreferences } : {}) });
         const nextModel = next ? parseModelPreference(next.id) : undefined;
         if (!next || !nextModel) return false;
         markAutoPicked(coworker.slug, next.id);
@@ -1598,32 +1598,20 @@ function ThreadView({
             .then(onCoworkerChanged)
             .catch(() => undefined);
         }
-        // Automatic: the right brain for this message, from the standard model's own provider.
-        // The standard lane keeps the standard model and its thinking effort; a quick or deep
-        // pick is a sibling model, said in the live row and the rail so the choice is never hidden.
-        if (automatic && turnLane !== "standard") {
-          const pick = chooseModelForLane(catalog, turnLane, { standard: standardId, exclude: failedModels });
-          const chosen = pick ? parseModelPreference(pick.id) : undefined;
-          if (pick && chosen && pick.id !== standardId) {
-            turnModel = chosen;
-            turnModelId = pick.id;
-            markAutoPicked(coworker.slug, pick.id);
-            // The live row keeps to its shapes (Phase 10); the lane reads in the rail's line and the landed reply's tooltip.
-            onActivityChange({
-              state: "working",
-              label: "Working",
-              detail: describeModelChoice(turnLane, pick, { tense: "detail" }),
-              updatedAt: Date.now(),
-              threadId,
-            });
-          }
+        // One resolver serves this discussion and native group/review turns.
+        const decision = resolveDiscussionModel({ models: catalog.models.filter((model) => !failedModels.includes(model.id)) }, { ...coworker, model: standardId }, prompt);
+        if (!decision.model) {
+          // This is a selection-policy refusal, not a failed provider attempt.
+          // Do not retry it through the model-failure fallback path.
+          setFailure(decision.reason);
+          return;
         }
-        // The effort this turn is asked for: the dial through the message's lane, snapped to what the
-        // model offers; an exact effort the person fixed in Coworker settings wins. Never the dial's own value.
-        if (turnModel) {
-          const offered = catalog.models.find((model) => model.id === turnModelId)?.variants ?? [];
-          const variant = effortForTurn({ kind: replyKindForLane(messageLane), stop: coworker.effortPreference, fixedVariant: coworker.modelVariant, variants: offered });
-          turnModel = variant ? { ...turnModel, variant } : { providerId: turnModel.providerId, modelId: turnModel.modelId };
+        const pick = decision.model;
+        turnModelId = pick.id;
+        turnModel = { providerId: pick.providerId, modelId: pick.modelId, ...(decision.variant ? { variant: decision.variant } : {}) };
+        if (automatic && pick.id !== standardId) {
+          markAutoPicked(coworker.slug, pick.id);
+          onActivityChange({ state: "working", label: "Working", detail: describeModelChoice(decision.lane, pick, { tense: "detail" }), updatedAt: Date.now(), threadId });
         }
       }
       // A re-send waits for the engine to let go of the earlier attempt (a stop is still settling, say).
@@ -1715,7 +1703,7 @@ function ThreadView({
         setActiveTurn(null);
       }
     }
-  }, [abortUntilQuiet, commitTurnState, coworker.effortPreference, coworker.model, coworker.modelChosenBy, coworker.modelMode, coworker.modelVariant, coworker.name, coworker.slug, defaultDiscussionTitle, kind, onActivityChange, onCoworkerChanged, refresh, resolution?.messageId, session, threadId, threads, title, titleDiscussionAfterFirstMessage]);
+  }, [abortUntilQuiet, commitTurnState, coworker.effortPreference, coworker.model, coworker.modelChosenBy, coworker.modelMode, coworker.modelSelectionPreferences, coworker.modelVariant, coworker.name, coworker.slug, defaultDiscussionTitle, kind, onActivityChange, onCoworkerChanged, refresh, resolution?.messageId, session, threadId, threads, title, titleDiscussionAfterFirstMessage]);
 
   /**
    * After a quit or reload the engine may still be on the turn. Follow it to
