@@ -10,7 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { assertMaintenanceSender, createMaintenance, createMaintenanceAdmission, maintenanceHistoryScope, resolveMaintenanceHistoryDb, validateMaintenancePaths } from "./maintenance.mjs";
 import { normalizeSettings, readSettings, updateSettings } from "./settings.mjs";
-import { captureMaintenanceProcesses, maintenanceProcessIdentity, maintenanceLaunchArguments, prepareMaintenanceHandoff, readMaintenanceStartup, waitForMaintenanceExit as waitForCapturedExit } from "./maintenance-handoff.mjs";
+import { captureMaintenanceProcesses, maintenanceFailureDetail, maintenanceProcessIdentity, maintenanceLaunchArguments, prepareMaintenanceHandoff, readMaintenanceStartup, waitForMaintenanceExit as waitForCapturedExit } from "./maintenance-handoff.mjs";
 
 const waitForMaintenanceExit = (pids, timeout) => waitForCapturedExit(captureMaintenanceProcesses(pids), timeout);
 
@@ -337,6 +337,11 @@ test("post-exit helper waits for parent AND late writer, then resets or rolls ba
       const launched = JSON.parse(await readFile(path.join(f.root, "relaunched.json"), "utf8"));
       assert.equal(launched.notice.blocked, false);
       assert.equal(launched.notice.phase, failBackup ? "failed" : "completed");
+      if (failBackup) {
+        assert.deepEqual(launched.notice.diagnostics, { stage: "copying", code: "SHARED_HARDLINK" });
+        assert.match(maintenanceFailureDetail(launched.notice.diagnostics), /backing up.*hard link/);
+        assert.equal(maintenanceFailureDetail({ stage: "private-path", code: "private-error" }), "");
+      }
       assert.equal(launched.marker, "fixture-env-preserved");
       assert.equal(launched.runAsNode, null);
       assert.equal(launched.args.some((arg) => /discard|stale/.test(arg)), false);
@@ -409,8 +414,8 @@ test("a helper exit timeout never erases files and relaunches into a native clea
     try { assert.equal(db.prepare("SELECT count(*) AS n FROM session").get().n, 3); } finally { db.close(); }
     await writeFile(path.join(f.root, "release-writer"), "release");
     await waitForMaintenanceExit([prepared.helperPid, prepared.writerPid], 5000);
-    assert.deepEqual(readMaintenanceStartup(f.config.userData, { consume: false }), { blocked: false, phase: "failed", backupPath: null });
-    assert.deepEqual(readMaintenanceStartup(f.config.userData), { blocked: false, phase: "failed", backupPath: null });
+    assert.deepEqual(readMaintenanceStartup(f.config.userData, { consume: false }), { blocked: false, phase: "failed", backupPath: null, diagnostics: { stage: "waiting-for-exit" } });
+    assert.deepEqual(readMaintenanceStartup(f.config.userData), { blocked: false, phase: "failed", backupPath: null, diagnostics: { stage: "waiting-for-exit" } });
     assert.equal(readMaintenanceStartup(f.config.userData), null);
   } finally {
     await writeFile(path.join(f.root, "release-writer"), "release");

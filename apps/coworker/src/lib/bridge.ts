@@ -450,7 +450,7 @@ export const coworkerBridge = {
       const receipt = await invoke<{ phase: "handoff"; backupDirectory: string; handoffId: string }>("maintenance.factoryReset", input);
       // Native exit waits for this acknowledgement of the handoff, not for an
       // assumed IPC delivery delay. The relaunched app reports the actual result.
-      void invoke("maintenance.handoffReceived", { handoffId: receipt.handoffId }).catch(() => undefined);
+      await invoke("maintenance.handoffReceived", { handoffId: receipt.handoffId });
       return { phase: receipt.phase, backupDirectory: receipt.backupDirectory };
     },
     restoreDefaults: () => invoke<CoworkerSettings>("maintenance.restoreDefaults"),
