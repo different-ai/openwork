@@ -58,6 +58,13 @@ test('registered case metadata names exact files, supported execution axes, and 
   const entries = await catalog();
   assert.deepEqual(registeredCases.map(({ spec, id, engines, surfaces, defaultSurface }) => ({ spec, id, engines, surfaces, defaultSurface })), [
     {
+      spec: 'desktop-policy-restricted-mode.e2e.test.ts',
+      id: 'POLICY-ROLLBACK',
+      engines: ['v1', 'v2'],
+      surfaces: ['web'],
+      defaultSurface: 'web',
+    },
+    {
       spec: 'streamed-markdown-answer.e2e.test.ts',
       id: 'CONT-01',
       engines: ['v1', 'v2'],

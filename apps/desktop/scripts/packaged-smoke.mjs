@@ -77,6 +77,10 @@ try {
     const flavorBinary = join(flavorOutput(flavor), "linux-unpacked", executable);
     accessSync(flavorBinary, constants.X_OK);
     bootPackagedDesktop(`desktop-boot-${flavor}`, "packaged-first-launch", flavorBinary, 150_000);
+    // Only the enterprise flavor has an activation gate that must hold the updater back.
+    if (flavor === "enterprise") {
+      bootPackagedDesktop("desktop-updater-gate-enterprise", "packaged-preactivation-updater", flavorBinary, 300_000);
+    }
   }
   // The same enterprise artifact, booted as an already-activated install (the update path for existing customers).
   bootPackagedDesktop("desktop-boot-enterprise-activated", "packaged-activated-launch", join(flavorOutput("enterprise"), "linux-unpacked", "openwork-enterprise"), 150_000);
