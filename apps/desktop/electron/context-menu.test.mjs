@@ -114,6 +114,39 @@ test("renderer cancellation closes only its exact current popup, including editi
   assert.equal(await next, "rename");
 });
 
+test("inspection describes the open and last popups as plain data, and choose selects only an enabled leaf", async () => {
+  const { controller, menus } = fixture();
+  assert.deepEqual(controller.inspect(), { open: false, current: null, last: null });
+  assert.equal(controller.choose("rename"), false, "nothing to choose before a popup");
+  const items = [item("open"), item("group", { submenu: [item("nested")] }), { type: "separator" }, item("copy-url", { label: "Copy Link Address" }), item("blocked", { enabled: false })];
+  const result = controller.show(request(items));
+  const inspected = controller.inspect();
+  assert.equal(inspected.open, true);
+  assert.equal(inspected.last, null);
+  assert.deepEqual(inspected.current, { requestId: "request", point: { x: 21, y: 40 }, items: [
+    { type: "item", id: "open", label: "open", role: null, enabled: true },
+    { type: "item", id: "group", label: "group", role: null, enabled: true, submenu: [{ type: "item", id: "nested", label: "nested", role: null, enabled: true }] },
+    { type: "separator" },
+    { type: "item", id: "copy-url", label: "Copy Link Address", role: null, enabled: true },
+    { type: "item", id: "blocked", label: "blocked", role: null, enabled: false },
+  ] });
+  assert.ok(inspected.current.items.every((entry) => !("click" in entry)), "descriptions carry no callbacks");
+  assert.equal(controller.choose("blocked"), false, "disabled items cannot be chosen");
+  assert.equal(controller.choose("group"), false, "submenu parents cannot be chosen");
+  assert.equal(controller.choose("missing"), false);
+  assert.equal(controller.inspect().open, true, "refused choices leave the popup open");
+  assert.equal(controller.choose("copy-url"), true);
+  assert.equal(await result, "copy-url");
+  assert.equal(controller.inspect().open, false, "a choice closes the popup");
+  assert.equal(menus.length, 1, "choosing never rebuilds the menu");
+  assert.deepEqual(controller.inspect().last, { ...inspected.current, selectedId: "copy-url" });
+  const dismissed = controller.show(request());
+  controller.close();
+  assert.equal(await dismissed, null);
+  assert.equal(controller.inspect().open, false);
+  assert.equal(controller.inspect().last.selectedId, null, "dismissal records no selection");
+});
+
 test("formatting menus compose editing roles without renderer-supplied privileges", async () => {
   const { controller, menus } = fixture();
   const result = controller.show({ ...request(), includeEditing: true });

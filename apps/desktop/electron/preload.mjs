@@ -286,6 +286,14 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       testWitnessUrl() { return ipcRenderer.invoke("openwork:browser-logins:testWitnessUrl"); },
     } : {}),
   },
+  // Development-only observation of native popup menus; main registers no handler otherwise.
+  ...(process.env.OPENWORK_DEV_MODE === "1" ? {
+    contextMenu: {
+      inspect() { return ipcRenderer.invoke("openwork:context-menu:inspect"); },
+      choose(id) { return ipcRenderer.invoke("openwork:context-menu:choose", id); },
+      dismiss() { return ipcRenderer.invoke("openwork:context-menu:dismiss"); },
+    },
+  } : {}),
   terminal: {
     create(options) { return ipcRenderer.invoke("openwork:terminal:create", options); },
     write(terminalId, data) { return ipcRenderer.invoke("openwork:terminal:write", terminalId, data); },
