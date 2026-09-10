@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import type { Place, Seed } from '@openwork/env';
 import { recoveryBuild } from '../fixtures/crash-recovery/build.mjs';
-import type { RecoverySnapshot } from '../fixtures/crash-recovery/state';
+import type { RecoverySnapshot } from '../fixtures/crash-recovery/state.ts';
 
 function record(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null; }
 

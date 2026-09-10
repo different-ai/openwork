@@ -1,9 +1,9 @@
 import { expect } from 'vitest';
 import { spec, createBriefRun, claim } from '@openwork/testkit';
 import type { User } from '@openwork/testkit';
-import { crashRecoveryWorld } from '../worlds/crash-recovery';
-import type { CrashRecoveryWorld } from '../worlds/crash-recovery';
-import type { RecoverySnapshot } from '../fixtures/crash-recovery/state';
+import { crashRecoveryWorld } from '../worlds/crash-recovery.ts';
+import type { CrashRecoveryWorld } from '../worlds/crash-recovery.ts';
+import type { RecoverySnapshot } from '../fixtures/crash-recovery/state.ts';
 
 const test = spec.world(crashRecoveryWorld, {
   timeout: 90000,
