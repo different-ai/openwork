@@ -240,6 +240,9 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     const delayed = tools.tools?.find((tool) => tool.name === "delayed_save");
     if (!delayed) throw new Error("Missing delayed-discovery tool.");
     const pending = task("site_tool", { tabId, toolId: delayed.toolId });
+    // DIAGNOSTIC (temporary): surface an early settlement instead of timing out.
+    const early = await Promise.race([pending, new Promise<null>((resolve) => setTimeout(() => resolve(null), 4_000))]);
+    if (early) throw new Error(`DIAGNOSTIC site_tool settled early: ${JSON.stringify(early)} tools=${JSON.stringify(tools)} state=${JSON.stringify(await probe.browserState())}`);
     await user.see({ role: "button", label: "Allow once" });
     // The host's pre-approval revalidation has finished; delay the next getTools
     // inside actual dispatch, not discovery before the action is approved.
