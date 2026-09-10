@@ -160,14 +160,19 @@ export async function savedAppCreation(seed: Seed) {
       // Containers have no OS protocol registration. Navigate the real returned
       // link in an Electron browser tab, exercising main-process interception,
       // native IPC, preload forwarding, and the renderer's startup bridge.
-      const opened = await evaluate(app.client, browserScript(async () => {
-        const browser = window.__OPENWORK_ELECTRON__.browser;
-        const result: unknown = await Reflect.apply(browser.openUrl, browser, ["about:blank", "builtin"]);
-        return result;
-      }, []));
-      const tabId = field(opened, "tab_id");
-      const targetId = field(opened, "target_id");
-      const target = (await listTargets(app.handle.cdpUrl)).find((entry) => entry.id === targetId);
+      // The tab stands in for the person's own browser, so it is created the way
+      // a person opens a new tab; agent browser control (openUrl) belongs to a
+      // requesting conversation and only accepts http(s) destinations.
+      const before = new Set((await listTargets(app.handle.cdpUrl)).map((entry) => entry.id));
+      const opened = await evaluate(app.client, browserScript(() => window.__OPENWORK_ELECTRON__.browser.createTab("about:blank"), []));
+      const tabId = field(opened, "tabId");
+      const newPage = async () => (await listTargets(app.handle.cdpUrl)).find((entry) => entry.type === "page" && !before.has(entry.id));
+      const deadline = Date.now() + 15_000;
+      let target = await newPage();
+      while (!target && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        target = await newPage();
+      }
       if (!target) throw new Error("The native browser return tab was not created");
       const browser = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
       try {
