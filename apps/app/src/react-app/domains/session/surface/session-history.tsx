@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { queryOptions, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { LoaderCircle } from "lucide-react";
 import type { OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
@@ -53,6 +53,11 @@ export function useOpeningSessionHistory(input: {
     networkMode: "always",
   });
   const query = useQuery({ ...options, enabled: !hasFullSnapshot });
+  const ensureFullSnapshot = useCallback(() => client.ensureQueryData({
+    queryKey: input.snapshotQueryKey,
+    queryFn: ({ signal }) => input.readSnapshot(signal),
+    networkMode: "always",
+  }), [client, input.snapshotQueryKey, input.readSnapshot]);
   const [backgroundOwner, setBackgroundOwner] = useState<string | null>(null);
   useEffect(() => {
     if (!query.isSuccess || hasFullSnapshot) return;
@@ -71,6 +76,7 @@ export function useOpeningSessionHistory(input: {
     options,
     snapshot: hasFullSnapshot ? null : query.data?.snapshot ?? null,
     backgroundReady: hasFullSnapshot || backgroundOwner === input.owner,
+    ensureFullSnapshot,
   };
 }
 

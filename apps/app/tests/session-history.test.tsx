@@ -54,6 +54,7 @@ function fixture() {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
+  let ensureFullSnapshot: (() => Promise<OpenworkSessionSnapshot>) | undefined;
   const reads: { owner: string; window?: OpeningHistoryWindow; signal: AbortSignal; resolve: (snapshot: OpenworkSessionSnapshot) => void }[] = [];
   function Harness({ owner }: { owner: string }) {
     const key = ["snapshot", owner];
@@ -61,7 +62,8 @@ function fixture() {
       reads.push({ owner, window, signal, resolve });
     });
     const opening = useOpeningSessionHistory({ owner, sessionId: owner, snapshotQueryKey: key, readSnapshot });
-    const full = useQuery({ queryKey: key, queryFn: ({ signal }) => readSnapshot(signal), enabled: opening.backgroundReady });
+    ensureFullSnapshot = opening.ensureFullSnapshot;
+    const full = useQuery({ queryKey: key, queryFn: ({ signal }) => readSnapshot(signal), enabled: opening.backgroundReady, staleTime: 500 });
     const current = full.data ?? opening.snapshot;
     return <><span>Composer {owner}</span><SessionHistoryBoundary owner={owner} pending={!current} saved={opening.saved} options={opening.options}>
       <div>{current?.session.title}</div>
@@ -70,6 +72,10 @@ function fixture() {
   cleanups.push(async () => { await act(async () => root.unmount()); client.clear(); host.remove(); });
   return {
     reads, host, client,
+    ensureFullSnapshot() {
+      if (!ensureFullSnapshot) throw new Error("History is not mounted");
+      return ensureFullSnapshot();
+    },
     async render(owner = "a") { await act(async () => root.render(<QueryClientProvider client={client}><Harness owner={owner} /></QueryClientProvider>)); },
     async resolve(index: number, title: string) {
       await act(async () => reads[index].resolve(snapshot(reads[index].owner, title)));
@@ -79,6 +85,21 @@ function fixture() {
 }
 
 describe("opening a thread", () => {
+  test("explicit sends can finish the uncapped read without trusting or duplicating the preview", async () => {
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, "Reading preview");
+    const pending = view.ensureFullSnapshot();
+    expect(view.reads.map((read) => read.window)).toEqual([{ limit: 24 }, undefined]);
+    const sameRead = view.ensureFullSnapshot();
+    expect(view.reads).toHaveLength(2);
+    await view.resolve(1, "Full current turn");
+    expect((await pending).session.title).toBe("Full current turn");
+    expect((await sameRead).session.title).toBe("Full current turn");
+    expect((await view.ensureFullSnapshot()).session.title).toBe("Full current turn");
+    expect(view.reads).toHaveLength(2);
+  });
+
   test("Suspense shows feedback immediately, paints the newest window before the uncapped read, and keeps the composer mounted", async () => {
     const view = fixture();
     await view.render();
@@ -125,7 +146,7 @@ describe("opening a thread", () => {
     expect(openingHistoryWindow({ mode: "manual", scrollTop: 500, anchor: { messageId: "session-error:turn", offset: -20 }, topClippedMessageId: null }))
       .toEqual({ messageIds: ["turn"] });
     const view = fixture();
-    view.client.setQueryData(["snapshot", "a"], snapshot("a", "Cached history"));
+    view.client.setQueryData(["snapshot", "a"], snapshot("a", "Cached history"), { updatedAt: Date.now() - 1_000 });
     await view.render();
     expect(view.host.textContent).toContain("Cached history");
     expect(view.host.querySelector('[role="status"]')).toBeNull();
