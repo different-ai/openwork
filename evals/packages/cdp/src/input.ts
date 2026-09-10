@@ -157,6 +157,36 @@ function numberField(value: Record<string, unknown>, key: string): number | null
 
 export class TargetNotFoundError extends Error {}
 
+/** Upper bound on listed miss candidates; the message says when the page had more. */
+export const MISS_CANDIDATE_LIMIT = 40;
+
+/**
+ * Render the browser-side miss report (route, page roots, visible candidates of the requested
+ * role) as message text. Tolerates partial reports so older or mocked surfaces still produce
+ * a usable error.
+ */
+function describeMiss(value: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (typeof value.route === "string" && value.route.length > 0) parts.push(`Route ${value.route}.`);
+  if (isRecord(value.roots)) {
+    const flags = Object.entries(value.roots)
+      .filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean")
+      .map(([name, present]) => `${name}=${present}`);
+    if (flags.length > 0) parts.push(`Page roots: ${flags.join(" ")}.`);
+  }
+  const role = typeof value.candidateRole === "string" && value.candidateRole.length > 0 ? value.candidateRole : "button/link";
+  const candidates = Array.isArray(value.candidates)
+    ? value.candidates.filter((candidate): candidate is string => typeof candidate === "string")
+    : [];
+  if (candidates.length === 0) parts.push(`No visible ${role} candidates.`);
+  else {
+    const shown = candidates.slice(0, MISS_CANDIDATE_LIMIT);
+    const truncated = candidates.length > shown.length ? ` (showing first ${shown.length} of ${candidates.length})` : "";
+    parts.push(`Visible ${role} candidates (${candidates.length})${truncated}: ${shown.join(", ")}.`);
+  }
+  return parts.length > 0 ? ` ${parts.join(" ")}` : "";
+}
+
 export async function locate(surface: Surface, target: Target): Promise<Located> {
   const parsed = JSON.stringify(parseTarget(target));
   const value = await callFunctionOnSurface(surface, (serialized) => {
@@ -246,14 +276,29 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
     }
     const element = matches[target.nth];
     if (!element) {
-      const visibleCandidates = [...document.querySelectorAll<HTMLElement>('button, a[href], [role="button"], [role="link"]')]
-        .filter(rendered)
-        .slice(0, 8)
+      // Miss diagnostics: every rendered element of the requested role (or every rendered
+      // button/link for role-less targets), so a miss shows the page's real controls rather
+      // than the first few in DOM order, which are always the shell rail.
+      const candidateRole = target.role;
+      const diagnosticSelector = candidateRole
+        ? selector
+        : 'button, a[href], [role="button"], [role="link"]';
+      const visibleCandidates = [...document.querySelectorAll<HTMLElement>(diagnosticSelector)]
+        .filter((candidate: Element) => (!candidateRole || implicitRole(candidate) === candidateRole) && rendered(candidate))
         .map((candidate) => {
           const role = implicitRole(candidate) || candidate.tagName.toLowerCase();
           return role + " " + JSON.stringify(accessibleName(candidate));
         });
-      return { notFound: true, candidates: visibleCandidates };
+      return {
+        notFound: true,
+        candidates: visibleCandidates,
+        candidateRole: candidateRole ?? "button/link",
+        route: location.hash || location.pathname,
+        roots: {
+          appHeader: document.querySelector("[data-app-header]") !== null,
+          dashboardPage: document.querySelector("[data-dashboard-page]") !== null,
+        },
+      };
     }
     element.scrollIntoView({ block: "center", inline: "center" });
     const rect = element.getBoundingClientRect();
@@ -286,11 +331,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
     };
   }, [parsed]);
   if (isRecord(value) && value.notFound === true) {
-    const candidates = Array.isArray(value.candidates)
-      ? value.candidates.filter((candidate): candidate is string => typeof candidate === "string").slice(0, 8)
-      : [];
-    const candidateDetail = candidates.length > 0 ? ` Visible button/link candidates: ${candidates.join(", ")}.` : "";
-    throw new TargetNotFoundError(`Could not locate ${JSON.stringify(typeof target === "string" ? target : parseTarget(target))}.${candidateDetail}`);
+    throw new TargetNotFoundError(`Could not locate ${JSON.stringify(typeof target === "string" ? target : parseTarget(target))}.${describeMiss(value)}`);
   }
   if (!isRecord(value) || !isRecord(value.center) || !isRecord(value.rect)) {
     throw new Error(`Could not locate ${JSON.stringify(typeof target === "string" ? target : parseTarget(target))}.`);

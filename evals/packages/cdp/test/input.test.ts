@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
-import { assertAbsent, locate, TargetNotFoundError, mapKey, parseTarget, readDom, waitForLocated } from "../src/input.ts";
+import { assertAbsent, locate, MISS_CANDIDATE_LIMIT, TargetNotFoundError, mapKey, parseTarget, readDom, waitForLocated } from "../src/input.ts";
 import type { Surface } from "../src/surface.ts";
 
 function surfaceReturning(value: unknown): Surface {
@@ -68,7 +68,40 @@ test("locate reports visible button and link names when no target matches", asyn
   });
   await assert.rejects(
     locate(surface, { role: "button", text: "Missing" }),
-    /Visible button\/link candidates: button "Model · gpt-5", link "Provider docs"/,
+    /Visible button\/link candidates \(2\): button "Model · gpt-5", link "Provider docs"\./,
+  );
+});
+
+test("a miss names the route, the page roots, and every candidate of the requested role", async () => {
+  const surface = surfaceReturning({
+    notFound: true,
+    candidateRole: "menuitem",
+    candidates: ['menuitem "Remove Team briefing from dashboard"', 'menuitem "Delete Team briefing"'],
+    route: "#/dashboard",
+    roots: { appHeader: true, dashboardPage: false },
+  });
+  await assert.rejects(
+    locate(surface, { role: "menuitem", text: "Missing" }),
+    /Route #\/dashboard\. Page roots: appHeader=true dashboardPage=false\. Visible menuitem candidates \(2\): menuitem "Remove Team briefing from dashboard", menuitem "Delete Team briefing"\./,
+  );
+});
+
+test("a miss caps the candidate list and says how many the page really had", async () => {
+  const candidates = Array.from({ length: MISS_CANDIDATE_LIMIT + 3 }, (_, index) => `button "Control ${index}"`);
+  const surface = surfaceReturning({ notFound: true, candidateRole: "button", candidates });
+  await assert.rejects(
+    locate(surface, { role: "button", text: "Missing" }),
+    (error: unknown) => {
+      assert.ok(error instanceof TargetNotFoundError);
+      assert.match(error.message, new RegExp(`Visible button candidates \\(${MISS_CANDIDATE_LIMIT + 3}\\) \\(showing first ${MISS_CANDIDATE_LIMIT} of ${MISS_CANDIDATE_LIMIT + 3}\\): `));
+      assert.match(error.message, /button "Control 39"\.$/);
+      assert.doesNotMatch(error.message, /Control 40/);
+      return true;
+    },
+  );
+  await assert.rejects(
+    locate(surfaceReturning({ notFound: true, candidateRole: "tab", candidates: [] }), { role: "tab", text: "Missing" }),
+    /No visible tab candidates\./,
   );
 });
 
