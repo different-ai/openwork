@@ -8,8 +8,11 @@ import type {
 } from "@/components/tools/error-attribution"
 import * as React from "react"
 import type { ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
+import type { OpenworkServerClient } from "@/app/lib/openwork-server"
+import type { McpAppOrigin } from "./mcp-app-origin"
 
 interface MessageListContextValue {
+  mcpAppOrigin: McpAppOrigin | null
   readOnly: boolean
   workspaceId: string
   sessionId: string
@@ -47,6 +50,8 @@ interface MessageListContextValue {
 const MessageListContext = React.createContext<MessageListContextValue | null>(null)
 
 interface MessageListProviderProps {
+  client?: OpenworkServerClient
+  mcpAppEngine?: "v1" | "v2"
   readOnly?: boolean
   children: React.ReactNode
   workspaceId: string
@@ -82,6 +87,8 @@ export interface DispatchAction {
 }
 
 export function MessageListProvider({
+  client,
+  mcpAppEngine,
   readOnly = false,
   children,
   workspaceId,
@@ -162,8 +169,13 @@ export function MessageListProvider({
   }), [])
   const canOpenSubagentSession = Boolean(onOpenSubagentSession)
   const canResumeInterrupted = Boolean(onResumeInterrupted)
+  const mcpAppOrigin = React.useMemo<McpAppOrigin | null>(
+    () => client ? { client, workspaceId, sessionId, readOnly, ...(mcpAppEngine ? { engine: mcpAppEngine } : {}) } : null,
+    [client, workspaceId, sessionId, readOnly, mcpAppEngine],
+  )
   const value = React.useMemo(
     () => ({
+      mcpAppOrigin,
       readOnly,
       workspaceId,
       sessionId,
@@ -185,6 +197,7 @@ export function MessageListProvider({
         : undefined,
     }),
     [
+      mcpAppOrigin,
       readOnly,
       workspaceId,
       sessionId,

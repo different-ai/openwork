@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Play } from "lucide-react";
 
 import {
@@ -10,7 +10,7 @@ import {
 import { McpAppSandboxView, type PreservedMcpAppResult } from "@/components/chat/mcp-app-frame";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useWorkspace, WorkspaceProvider } from "@/react-app/shell/workspace-provider";
+import { useWorkspace } from "@/react-app/shell/workspace-provider";
 import { DashboardTileShell } from "./dashboard-tile-shell";
 import {
   DASHBOARD_AUTO_REFRESH_INTERVAL_MS,
@@ -120,7 +120,7 @@ export function McpAppTile({
     ...(openworkServerClient && workspaceId ? [{ client: openworkServerClient, workspaceId }] : []),
     ...(fallbackEndpoints ?? []),
   ].filter((endpoint, index, all) => (
-    all.findIndex((other) => other.workspaceId === endpoint.workspaceId) === index
+    all.findIndex((other) => other.workspaceId === endpoint.workspaceId && other.client === endpoint.client) === index
   )), [fallbackEndpoints, openworkServerClient, workspaceId]);
   // Cached app HTML is interactive, so it follows the same per-user launch
   // consent as a live call and never mounts on a first visit.
@@ -155,6 +155,16 @@ export function McpAppTile({
   // reuses the same in-flight promise; a null promise marks a settled nonce so
   // later re-renders cannot repeat an already-executed data-modifying call.
   const launchRef = useRef<{ nonce: number; promise: Promise<TileState> | null } | null>(null);
+  const lifetime = useMemo(() => ({ active: true }), [cacheScopeKey, entry.id, entry.projectedToolName, launchArguments, launchEndpoints]);
+  const ownedLaunches = useRef(new Map<string, DashboardLaunchEndpoint>());
+  const releaseLaunches = () => {
+    for (const [id, endpoint] of ownedLaunches.current) void endpoint.client.releaseMcpApp(endpoint.workspaceId, id).catch(() => undefined);
+    ownedLaunches.current.clear();
+  };
+  useLayoutEffect(() => {
+    lifetime.active = true;
+    return () => { lifetime.active = false; releaseLaunches(); };
+  }, [lifetime]);
 
   useEffect(() => {
     let cancelled = false;
@@ -180,6 +190,9 @@ export function McpAppTile({
       return;
     }
     const userInitiated = userInitiatedNonceRef.current === nonce;
+    const assertActive = () => {
+      if (!lifetime.active || launchRef.current?.nonce !== nonce) throw new Error("This App launch has closed or changed. Run the tile again.");
+    };
     const promise = currentLaunch?.promise ?? (async (): Promise<TileState> => {
       // Connect app-host apps resolve through their connection reference; the
       // host revalidates the live UI binding before returning the resource.
@@ -195,8 +208,13 @@ export function McpAppTile({
       let resolveFailure: unknown = null;
       for (const endpoint of candidates) {
         try {
-          const { app } = await endpoint.client.resolveMcpApp(endpoint.workspaceId, entry.projectedToolName, launch);
+          const { app } = await endpoint.client.resolveMcpApp(endpoint.workspaceId, entry.projectedToolName, launch, { sessionId: null, readOnly: false });
+          if (!lifetime.active || launchRef.current?.nonce !== nonce) {
+            if (app?.launchId) void endpoint.client.releaseMcpApp(endpoint.workspaceId, app.launchId).catch(() => undefined);
+            assertActive();
+          }
           if (app) {
+            if (app.launchId) ownedLaunches.current.set(app.launchId, endpoint);
             resolved = { endpoint, app };
             break;
           }
@@ -209,7 +227,11 @@ export function McpAppTile({
         return { phase: "error", message: "This tool no longer advertises an interactive app." };
       }
       const { endpoint, app } = resolved;
+      assertActive();
+      if (!app.launchId) throw new Error("This App has no live launch context. Update OpenWork and run the tile again.");
       const request = {
+        launchId: app.launchId,
+        sessionId: null,
         serverName: app.serverName,
         name: app.toolName,
         resourceUri: app.resourceUri,
@@ -224,6 +246,7 @@ export function McpAppTile({
       try {
         result = await endpoint.client.callMcpAppTool(endpoint.workspaceId, request);
       } catch (cause) {
+        assertActive();
         if (!(cause instanceof OpenworkServerError) || cause.code !== "tool_requires_approval") throw cause;
         approvalWasRequired = true;
         // A stored entry can go stale: a tool that was read-only at add time
@@ -234,6 +257,7 @@ export function McpAppTile({
           `Allow this MCP App to call ${app.toolName} on ${app.serverName}? `
           + "OpenWork remembers your choice for this tile until you remove it.",
         );
+        assertActive();
         if (!approved) return { phase: "error", message: "The app launch was declined." };
         result = await endpoint.client.callMcpAppTool(endpoint.workspaceId, { ...request, approved: true });
         launchApprovedRef.current = true;
@@ -278,6 +302,11 @@ export function McpAppTile({
       .then((next) => {
         if (cancelled) return;
         if (next.phase === "ready") {
+          for (const [id, endpoint] of ownedLaunches.current) {
+            if (id === next.app.launchId) continue;
+            void endpoint.client.releaseMcpApp(endpoint.workspaceId, id).catch(() => undefined);
+            ownedLaunches.current.delete(id);
+          }
           writeDashboardTileCache(cacheScopeKey, entry.id, {
             cachedAt: next.cachedAt,
             workspaceId: next.endpoint.workspaceId,
@@ -321,7 +350,7 @@ export function McpAppTile({
     return () => {
       cancelled = true;
     };
-  }, [cacheScopeKey, entry.connectionId, entry.id, entry.projectedToolName, entry.resourceUri, entry.toolName, launchArguments, launchEndpoints, manualLaunch, nonce, started]);
+  }, [cacheScopeKey, entry.connectionId, entry.id, entry.projectedToolName, entry.resourceUri, entry.toolName, launchArguments, launchEndpoints, manualLaunch, nonce, started, lifetime]);
 
   useEffect(() => {
     if (manualLaunch) return;
@@ -353,8 +382,11 @@ export function McpAppTile({
   };
 
   const interactiveEndpoint = state.phase === "ready"
-    ? launchEndpoints.find((endpoint) => endpoint.workspaceId === state.endpoint.workspaceId) ?? null
+    ? launchEndpoints.find((endpoint) => endpoint.workspaceId === state.endpoint.workspaceId && endpoint.client === state.endpoint.client) ?? null
     : null;
+  const origin = useMemo(() => interactiveEndpoint
+    ? { ...interactiveEndpoint, sessionId: null, readOnly: state.phase !== "ready" || !state.app.launchId }
+    : null, [interactiveEndpoint, state]);
   const badge = (() => {
     if (state.phase === "ready" && !interactiveEndpoint) return "Saved locally · workspace unavailable";
     if (state.phase === "ready" && refreshState === "refreshing") return "Saved locally · refreshing";
@@ -423,25 +455,18 @@ export function McpAppTile({
         </p>
       ) : null}
       {state.phase === "ready" ? (
-        // The sandbox bridge calls tools through the workspace context, so the
-        // view only runs while that exact workspace endpoint is connected.
-        interactiveEndpoint ? <WorkspaceProvider
-          client={workspace.client}
-          opencodeBaseUrl={workspace.opencodeBaseUrl}
-          openworkServerClient={interactiveEndpoint.client}
-          workspaceId={interactiveEndpoint.workspaceId}
-          selectedWorkspaceRoot={workspace.selectedWorkspaceRoot}
-        >
+        origin ?
           <McpAppSandboxView
+            origin={origin}
             key={nonce}
             app={state.app}
             toolName={entry.projectedToolName}
             inputArguments={launchArguments}
             result={state.result}
             unavailableNotice="This app view is unavailable."
-            onRequestTeardown={() => setState({ phase: "closed" })}
+            onRequestTeardown={() => { releaseLaunches(); setState({ phase: "closed" }); }}
           />
-        </WorkspaceProvider> : (
+        : (
           <p className="pt-3 text-xs text-muted-foreground" role="status">
             This saved app view is unavailable until its workspace reconnects.
           </p>

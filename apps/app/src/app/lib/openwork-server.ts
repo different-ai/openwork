@@ -457,6 +457,8 @@ export type OpenworkMcpItem = {
 };
 
 export type OpenworkMcpAppResource = {
+  /** Opaque, short-lived host context. Absent on generated previews and older servers. */
+  launchId?: string;
   serverName: string;
   toolName: string;
   resourceUri: string;
@@ -1991,6 +1993,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       workspaceId: string,
       projectedToolName: string,
       launch?: OpenworkMcpAppLaunchReference,
+      context?: { sessionId: string | null; readOnly: boolean; engine?: "v1" | "v2" },
     ) =>
       requestJson<{ app: OpenworkMcpAppResource | null }>(
         baseUrl,
@@ -1999,7 +2002,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           token,
           hostToken,
           method: "POST",
-          body: { projectedToolName, ...(launch ? { launch } : {}) },
+          body: { projectedToolName, ...(launch ? { launch } : {}), ...(context ? { context: { sessionId: context.sessionId, readOnly: context.readOnly, engine: context.engine } } : {}) },
           timeoutMs: timeouts.config,
         },
       ),
@@ -2015,6 +2018,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     callMcpAppTool: (
       workspaceId: string,
       payload: {
+        launchId?: string;
+        sessionId?: string | null;
+        engine?: "v1" | "v2";
         serverName: string;
         name: string;
         resourceUri: string;
@@ -2031,6 +2037,10 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         body: payload,
         timeoutMs: timeouts.binary,
       },
+    ),
+    releaseMcpApp: (workspaceId: string, launchId: string) => requestJson<{ released: boolean }>(
+      baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp-apps/release`,
+      { token, hostToken, method: "POST", body: { launchId } },
     ),
     getOpenworkCloudMcpHealth: (
       workspaceId: string,

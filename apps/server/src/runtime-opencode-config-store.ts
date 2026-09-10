@@ -148,6 +148,12 @@ export async function readRuntimeOpencodeConfig(config: ServerConfig, workspaceI
   return await runtimeOpencodeConfigStore.get(config, workspaceId) ?? {};
 }
 
+/** Host-observable generations; never expose the rows' configuration or credentials. */
+export async function readRuntimeOpencodeConfigRevisions(config: ServerConfig, workspaceId: string): Promise<Array<number | null>> {
+  return Promise.all([ENGINE_GLOBAL_RUNTIME_CONFIG_ID, workspaceId].map(async (id) =>
+    (await runtimeOpencodeConfigStore.getRow(config, id))?.updatedAt ?? null));
+}
+
 export async function readGlobalRuntimeOpencodeConfig(config: ServerConfig): Promise<RuntimeOpencodeConfig> {
   return await readRuntimeOpencodeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID);
 }
@@ -531,7 +537,7 @@ function updateRuntimeConfig(
     const next = normalizeRuntimeOpencodeConfig(updater(row?.value ?? {}));
     const configJson = runtimeOpencodeConfigStore.serialize(next);
     if (row?.valueJson === configJson) return { config: next, changed: false };
-    await runtimeOpencodeConfigStore.setSerialized(config, workspaceId, configJson, Date.now());
+    await runtimeOpencodeConfigStore.setSerialized(config, workspaceId, configJson, Math.max(Date.now(), (row?.updatedAt ?? 0) + 1));
     for (const listener of writeListeners) listener(config, workspaceId);
     return { config: next, changed: true };
   });
