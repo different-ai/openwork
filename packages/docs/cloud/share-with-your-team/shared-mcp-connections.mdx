@@ -81,6 +81,13 @@ Use the exact scheme, hostname, optional path prefix, and port configured in
 connections created with an older per-connection callback keep that registered
 URL automatically; do not change it just to reconnect.
 
+If a provider refuses to register OpenWork (members see "*Provider* hasn't
+approved OpenWork yet"), or its authorization server only accepts clients it
+has pre-registered, send them
+[Make your MCP server work with OpenWork](/cloud/share-with-your-team/mcp-server-compatibility).
+It lists the redirect URL, the client metadata document, and the registration
+methods OpenWork supports, plus a request template.
+
 ## Slack
 
 Slack's MCP server does not support automatic OAuth client registration, so a Slack admin creates a Slack app once and OpenWork Cloud uses its credentials for every member.

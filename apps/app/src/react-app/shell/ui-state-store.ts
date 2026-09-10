@@ -322,7 +322,9 @@ export function toggleWorkspaceRightSidebar(state: UiState): UiState {
 }
 
 function syncApplicationMenuVisible(visible: boolean): void {
-  void globalThis.window?.__OPENWORK_ELECTRON__?.invokeDesktop?.("__setApplicationMenuVisible", visible);
+  // Fire-and-forget window chrome: the shell refuses this before enterprise
+  // activation, and the menu simply keeps its default visibility then.
+  void globalThis.window?.__OPENWORK_ELECTRON__?.invokeDesktop?.("__setApplicationMenuVisible", visible)?.catch(() => undefined);
 }
 
 type UiStateStore = UiState & {

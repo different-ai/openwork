@@ -144,6 +144,7 @@ import {
 } from "./sidebar-lanes";
 import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
 import { isSameWorkbenchSession, useWorkbenchStore, workbenchSessionKey } from "../chat/workbench-store";
+import { useNewTaskDraftState } from "../sync/draft-store";
 import { SidebarDestination } from "./sidebar-destination";
 import { SessionTitle } from "./session-title";
 
@@ -752,6 +753,8 @@ export type AppSidebarProps = {
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
+  /** Account/organization scope of persisted composer drafts; null while unverified. */
+  newTaskDraftScope?: string | null;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
@@ -891,6 +894,7 @@ export function AppSidebar(props: AppSidebarProps) {
     showSessionActions: props.showSessionActions,
     sessionStatusById: props.sessionStatusById,
     newTaskDisabled: props.newTaskDisabled,
+    newTaskDraftScope: props.newTaskDraftScope ?? null,
     connectingWorkspaceId: props.connectingWorkspaceId,
     workspaceConnectionStateById: props.workspaceConnectionStateById,
     onSelectWorkspace: props.onSelectWorkspace,
@@ -1500,6 +1504,7 @@ function WorkspaceSidebarGroup({
 
             <CollapsibleContent className="pt-px">
               <SidebarMenuSub>
+                {showRemoteConnectionIssue ? null : <NewTaskDraftMenuItem workspaceId={workspace.id} />}
                 {showRemoteConnectionIssue ? (
                   <RemoteConnectionIssueCard
                     message={connectionIssueMessage}
@@ -1594,6 +1599,46 @@ function WorkspaceSidebarGroup({
 const SESSION_DRAG_TYPE = "application/x-openwork-session-id";
 const EMPTY_PINNED_IDS = new Set<string>();
 const UNGROUPED_GROUP_ID = "__openwork_ungrouped";
+
+/**
+ * The prompt typed in this workspace's new-task composer before its session
+ * exists. Opening another conversation unmounts that composer, so this row is
+ * the way back to the unsent text; it disappears once the task is sent.
+ */
+function NewTaskDraftMenuItem({ workspaceId }: { workspaceId: string }) {
+  const ctx = useSidebarContext();
+  const { snapshot } = useNewTaskDraftState(ctx.newTaskDraftScope, workspaceId);
+  const text = snapshot?.text.trim() ?? "";
+  if (!text) return null;
+  const isSelected = ctx.selectedWorkspaceId === workspaceId && ctx.selectedSessionId === null;
+  const label = t("workspace_list.new_task_draft");
+  const preview = text.split("\n")[0] ?? text;
+  return (
+    <SidebarMenuSubItem
+      className="flex items-center"
+      data-sidebar-new-task-draft={workspaceId}
+    >
+      <SidebarMenuSubButton
+        render={<button type="button" />}
+        isActive={isSelected}
+        data-testid={`sidebar-new-task-draft-${workspaceId}`}
+        onClick={() => ctx.onCreateTaskInWorkspace(workspaceId)}
+        aria-label={`${label}: ${preview}`}
+        title={text}
+        className="relative h-8 w-full rounded-md pe-2.5 text-start text-[13px] text-sidebar-foreground/80 transition-[background-color] duration-75 group-hover/menu-sub-item:bg-black/[0.05] dark:group-hover/menu-sub-item:bg-white/[0.09] data-active:bg-black/[0.07] dark:data-active:bg-white/[0.12] data-active:text-sidebar-foreground"
+        style={{ paddingInlineStart: sidebarRowPaddingInlineStart(0) }}
+      >
+        <SidebarGlyphSlot>
+          <SquarePen className="size-3.5 text-muted-foreground" aria-hidden />
+        </SidebarGlyphSlot>
+        <span className="min-w-0 flex-1 truncate">
+          <span className="text-muted-foreground">{label}: </span>
+          {preview}
+        </span>
+      </SidebarMenuSubButton>
+    </SidebarMenuSubItem>
+  );
+}
 
 function SessionGroupActions({ group, groups, workspaceId, count }: {
   group: SessionGroupDefinition;

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { managedPolicyPluginPath } from "./managed-policy-plugin.js";
 
 import {
   buildOpenworkRuntimeConfig,
@@ -58,6 +60,8 @@ async function readConfigFile(config: ServerConfig): Promise<Record<string, unkn
 describe("openwork runtime config file", () => {
   test("managed browser restrictions use scalar actions in global and agent permissions", () => {
     const parsed = buildOpenworkRuntimeConfigObjectFromSnapshot({
+      plugin: [managedPolicyPluginPath(), pathToFileURL(managedPolicyPluginPath(true)).href,
+        "ordinary-plugin", "/user/plugins/managed-policy.ts"],
       managedPolicy: {
         execution: {
           commands: "deny", blockedCommands: ["curl *"],
@@ -69,6 +73,10 @@ describe("openwork runtime config file", () => {
     expect(parsed.permission).toEqual(permission);
     expect(parsed.agent).toMatchObject({ openwork: { permission } });
     expect(parsed.managedPolicy).toBeUndefined();
+    expect(parsed.plugin).not.toContain(managedPolicyPluginPath());
+    expect(parsed.plugin).not.toContain(pathToFileURL(managedPolicyPluginPath(true)).href);
+    expect(parsed.plugin).toContain("ordinary-plugin");
+    expect(parsed.plugin).toContain("/user/plugins/managed-policy.ts");
     expect(buildOpenworkRuntimeConfigObjectFromSnapshot({}).permission).toEqual({});
   });
 

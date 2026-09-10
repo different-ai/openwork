@@ -19,9 +19,9 @@ Install Docker Engine or Docker Desktop with Docker Compose v2. The machine must
 
    ```bash
    curl -fsSLo docker-compose.eval.yml \
-     https://raw.githubusercontent.com/different-ai/openwork/9f8645ebc482c15ab99c0cf155aabaa411e1ca6a/packaging/docker/docker-compose.eval.yml
+     https://raw.githubusercontent.com/different-ai/openwork/79636623bfbed3e2e5daff48b8550cb2ba220d77/packaging/docker/docker-compose.eval.yml
    printf '%s  %s\n' \
-     '69cc7f2666157b7697ebf69b31b0c83887dd99e796c7d956f9ccaab8fa8bf2fc' \
+     '7b94efe1ac4be68d56b8ecb91206e9c005360b0f7954ba36c6f6ae7bd87a9430' \
      'docker-compose.eval.yml' | shasum -a 256 --check
    ```
 
@@ -52,6 +52,8 @@ Set variables in your shell before running `docker compose`, or save them in a `
 | `OPENWORK_DB_ENCRYPTION_KEY` | Required | Key of at least 32 random characters used to encrypt selected database values. |
 | `OPENWORK_ORG_NAME` | `OpenWork Evaluation` | Name of the single organization. |
 | `OPENWORK_ALLOW_SIGNUP` | `true` | Whether anyone who can reach the site can create an account. |
+| `OPENWORK_OWNER_EMAILS` | empty | Comma-separated emails allowed to claim the organization at `/setup`. Empty disables the private first-administrator flow. |
+| `OPENWORK_SETUP_CODE` | empty | One-time setup code entered at `/setup` together with an owner email. Empty disables the private first-administrator flow. |
 
 The setup command writes unique secrets to `.env` so subsequent Compose commands reuse them. Keep this file private and do not commit it. To rotate the secrets, replace their values before recreating the services.
 
@@ -64,6 +66,23 @@ umask 077
 printf 'OPENWORK_AUTH_SECRET=%s\nOPENWORK_DB_ENCRYPTION_KEY=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > .env
 ```
+
+## Create a private first administrator
+
+To evaluate the private-deployment onboarding instead of public signup, disable signup and set the owner email and a one-time setup code before the first start:
+
+```bash
+umask 077
+printf 'OPENWORK_AUTH_SECRET=%s\nOPENWORK_DB_ENCRYPTION_KEY=%s\n' \
+  "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > .env
+printf 'OPENWORK_ALLOW_SIGNUP=false\nOPENWORK_OWNER_EMAILS=%s\nOPENWORK_SETUP_CODE=%s\n' \
+  'admin@example.com' "$(openssl rand -hex 16)" >> .env
+docker compose -f docker-compose.eval.yml up -d --wait
+```
+
+Then open [http://localhost:3005/setup](http://localhost:3005/setup), enter the owner email and the setup code from `.env`, and choose the administrator's name and password. The [first-administrator guide](/self-host/deploy-to-your-cloud/first-administrator) describes the flow and the boundary it enforces; only the way the values reach Den API differs between Compose and Helm.
+
+Setup is available only while the database has no user, so set these variables before the first `up`. Once the administrator exists, `/setup` reports that setup is complete and the code cannot create another account. To start over, run `docker compose -f docker-compose.eval.yml down -v` and boot again.
 
 ## Connect from another machine
 
