@@ -32,7 +32,7 @@ function proposalReceipt(value: unknown): Record<string, unknown> {
 test("the focused coordinator discovers other owners' blockers and stages an exact human-reviewed answer without approving a permission", async ({ world, user, agent, probe, step }) => {
   const workspaceId = world.workspace.workspaceId;
   const open = async (session: { sessionId: string; title: string }) => {
-    await user.click({ text: session.title });
+    await user.click({ testId: `sidebar-session-${session.sessionId}` });
     await probe.eventually(() => probe.hash(), { within: 30_000, label: "the intended session is focused", until: hash => hash.includes(`/session/${session.sessionId}`) });
   };
   const send = async (prompt: string) => { await user.type("composer", prompt, { verify: true }); await user.press("Enter"); };
@@ -82,7 +82,7 @@ test("the focused coordinator discovers other owners' blockers and stages an exa
     await world.prepareProposal(proposal);
     expect(world.origin.prompt).not.toContain(world.asking.sessionId);
     await send(world.origin.prompt);
-    await user.see("Review question answer", { timeoutMs: 45_000 });
+    await user.see({ text: "Review question answer" }, { timeoutMs: 45_000 });
     await user.see("Send answer and resume", { timeoutMs: 30_000 });
     await user.see({ text: /Proposed by Review coordinator/ });
     await user.see({ text: /Answering Question owner/ });

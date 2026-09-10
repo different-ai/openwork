@@ -38,4 +38,8 @@ These are documented patterns, not independently exercised competitor tests. Bou
 
 ## Proof contract
 
+### Integration blocker found by the real-model journey
+
+The v1 journey reaches the production host tool and completes the reviewed answer flow. The native v2 journey reaches the pending-question and permission APIs, but the model is not offered `openwork_execute`. V1 registers the host-tools plugin in `openwork-runtime-config.ts`; native v2 startup mirrors provider/MCP configuration without registering that plugin. Direct test control queries do not prove model-visible tool exposure. No test-only UI call or fabricated origin is an acceptable substitute. Until native v2 has a trusted host-tool bridge and passes the same journey, cross-engine verification is incomplete.
+
 `evals/specs/session-attention.test.ts` exercises production request validation, ownership, conservative cached state, receipt lifetimes, storage failures, stale answers, and uncertain writes. `session-attention-review.e2e.test.ts` drives isolated questions and permissions through the app: another conversation stays selected, proposal alone does not resume work, human review resumes only the question owner, permissions remain pending, and receipt outcomes remain inspectable. Testkit receipts on the PR head determine the verdict; this document does not.

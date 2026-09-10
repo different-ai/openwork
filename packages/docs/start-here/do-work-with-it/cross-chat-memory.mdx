@@ -42,6 +42,8 @@ The proposal initially reports `loading`, not delivery. The agent can inspect `s
 
 Redacted receipts survive reloads within the same window session. They are not a permanent audit log or a cross-window coordination service. Question text and answer text are not stored in these receipts. A disconnected workspace or unavailable receipt storage can prevent sending safely.
 
+This workflow requires an engine that exposes OpenWork's host tools to the agent. Native v2 host-tool exposure is not yet verified; direct availability of the app controls alone does not establish that a v2 model can call them.
+
 ## Current limits
 
 - Session lookup is based on the sessions OpenWork has loaded for the current app and workspace context.
