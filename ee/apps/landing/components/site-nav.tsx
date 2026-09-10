@@ -75,7 +75,7 @@ export function SiteNav(props: Props) {
             onClick={() => setMobileOpen(false)}
           >
             <OpenWorkMark className="h-[30px] w-[38px] transition-opacity group-hover:opacity-80" />
-            <span className="text-[1.2rem] font-semibold tracking-tight text-[#011627] md:text-[1.3rem]">
+            <span className={props.active === "home" ? "sr-only" : "text-[1.2rem] font-semibold tracking-tight text-[#011627] md:text-[1.3rem]"}>
               OpenWork
             </span>
           </Link>
