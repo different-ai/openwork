@@ -527,6 +527,40 @@ export async function modelPicker(seed: Seed) {
   return { app, den, session };
 }
 
+/** Model picker contract through a real native engine and a synthetic provider. */
+export async function modelPickerEffortWeb(seed: Seed) {
+  const engine = resolveEvalEngine();
+  const providerId = "effort-witness";
+  const modelId = "reasoning-model";
+  const prompt = "Explain why the sky looks blue.";
+  const mock = seed.mock({ isolatedProcessEnv: true, agentWorkloads: [{
+    promptMarker: prompt, latestUserTurn: true, finalReply: "Air scatters blue light more strongly.", steps: [],
+  }] });
+  const workspacePath = seed.tmpPath("model-picker-effort");
+  const app = await seed.appWeb({ name: "model-picker-effort", workspacePath, mocks: { agent: mock } });
+  const witness = app.mocks.agent;
+  if (!witness) throw new Error("Missing effort provider witness");
+  const workspace = await seed.workspace(app, workspacePath);
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, { provider: {
+    [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Effort witness",
+      options: { baseURL: `${witness.url}/v1`, apiKey: "synthetic-effort-key" },
+      models: {
+        [modelId]: { name: "Reasoning witness", reasoning: true, variants: {
+          low: { reasoningEffort: "low" }, high: { reasoningEffort: "high" },
+          CustomExact: { reasoningEffort: "low" },
+          hidden: { disabled: true, reasoningEffort: "high" },
+        } },
+        standard: { name: "Standard witness", reasoning: false },
+      },
+    },
+  } }, engine);
+  const session = await seedSessionRetry(seed, app, { title: "Model effort contract" });
+  return { app, engine, workspace, session, prompt, providerId, modelId,
+    requests: async () => (await witness.agentRequests({ promptMarker: prompt })).filter((request) => request.kind === "final"),
+  };
+}
+
 export async function connectionsMenu(seed: Seed) {
   const connector = seed.mock();
   const den = await seed.den({ mocks: { connector } });

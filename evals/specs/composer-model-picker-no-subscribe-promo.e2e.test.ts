@@ -1,5 +1,6 @@
 import { spec } from "@openwork/testkit";
-import { modelPicker } from "../worlds/chat.ts";
+import { expect } from "vitest";
+import { modelPicker, modelPickerEffortWeb } from "../worlds/chat.ts";
 
 const test = spec.world(modelPicker);
 
@@ -32,5 +33,74 @@ test("the composer model pickers keep their controls without the OpenWork Models
     await user.notSee({ text: "Subscribe to use hosted frontier models in this workspace." });
     await user.notSee({ text: "Sign in to unlock hosted frontier models for your team." });
     await user.notSee({ role: "button", label: "Subscribe" });
+  });
+});
+
+const effortTest = spec.world(modelPickerEffortWeb, {
+  timeout: 420_000, resources: { surfaces: ["appWeb"], services: ["mock"] },
+});
+
+effortTest("MODEL-01 selected reasoning effort survives reload and reaches the native provider", async ({ world, user, probe, step, evidence }) => {
+  expect(world.engine).toBe("v2");
+  const prefix = `/workspace/${world.workspace.workspaceId}/opencode2/api`;
+  const status = await probe.desktopApi("/experimental/engine-v2-preview/status");
+  expect(status.body).toMatchObject({ running: true, chatRouting: true });
+  const catalog = await probe.desktopApi(`${prefix}/model`);
+  evidence.recordJsonArtifact("MODEL-01 native catalog", catalog);
+  expect(JSON.stringify(catalog.body)).toContain('"id":"high"');
+  await user.click({ role: "button", label: "Change model" });
+  await step("only advertised effort choices are selectable", async () => {
+    await user.click({ role: "button", label: /^Effort/ });
+    await user.see({ role: "button", label: "Low" });
+    await user.notSee({ role: "button", label: /^Hidden/ });
+    await user.click({ role: "button", label: "High" });
+  });
+  await user.press("Escape");
+  await user.type("composer", world.prompt);
+  await user.click("Run task");
+  await user.see({ text: "Air scatters blue light more strongly." }, { timeoutMs: 90_000 });
+  await user.see("Run task", { timeoutMs: 30_000 });
+  await step("High is persisted and reaches the real v2 provider request", async () => {
+    const requests = await world.requests();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ model: world.modelId, reasoningEffort: "high" });
+    const native = await probe.desktopApi(`${prefix}/session/${world.session.sessionId}`);
+    expect(native.body).toMatchObject({ data: { model: { id: world.modelId, providerID: world.providerId, variant: "high" } } });
+    evidence.recordJsonArtifact("MODEL-01 first request and native session", { requests, native });
+    await user.reload();
+    await user.see("Run task", { timeoutMs: 60_000 });
+    await user.click({ role: "button", label: "Change model" });
+    await user.see({ role: "button", label: /^Effort\s+High/ });
+    await user.press("Escape");
+    await user.type("composer", world.prompt);
+    await user.click("Run task");
+    await probe.eventually(() => world.requests(), { within: 90_000, label: "reloaded effort reaches provider", until: (requests) => requests.length === 2 });
+    expect((await world.requests()).map((request) => request.reasoningEffort)).toEqual(["high", "high"]);
+    evidence.recordJsonArtifact("MODEL-01 reloaded provider requests", await world.requests());
+  });
+  await user.see("Run task", { timeoutMs: 30_000 });
+  await step("a custom effort ID reaches native resolution without case changes", async () => {
+    await user.click({ role: "button", label: "Change model" });
+    await user.click({ role: "button", label: /^Effort/ });
+    await user.click({ role: "button", label: "CustomExact" });
+    await user.press("Escape");
+    await user.type("composer", world.prompt);
+    await user.click("Run task");
+    await probe.eventually(() => world.requests(), { within: 90_000, label: "custom effort reaches provider", until: (requests) => requests.length === 3 });
+    expect((await world.requests()).map((request) => request.reasoningEffort)).toEqual(["high", "high", "low"]);
+    const native = await probe.desktopApi(`${prefix}/session/${world.session.sessionId}`);
+    expect(native.body).toMatchObject({ data: { model: { id: world.modelId, providerID: world.providerId, variant: "CustomExact" } } });
+    evidence.recordJsonArtifact("MODEL-01 custom effort request and native session", { requests: await world.requests(), native });
+  });
+  await user.see("Run task", { timeoutMs: 30_000 });
+  await step("a model without advertised variants keeps effort unavailable", async () => {
+    await user.click({ role: "button", label: "Change model" });
+    await user.click({ role: "button", label: /^Model\s+Reasoning witness/ });
+    await user.type({ placeholder: "Search models..." }, "Standard witness");
+    await user.click({ role: "button", label: /Standard witness/ });
+    await user.click({ role: "button", label: "Change model" });
+    await user.see({ role: "button", label: /^Effort\s+Unavailable/ });
+    expect(await probe.eval(() => [...document.querySelectorAll("button")].some((button) =>
+      button.textContent?.includes("Effort") && button.textContent.includes("Unavailable") && button.disabled))).toBe(true);
   });
 });

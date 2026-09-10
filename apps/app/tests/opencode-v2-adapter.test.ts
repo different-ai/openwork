@@ -9,6 +9,7 @@ import {
 } from "../src/app/lib/opencode-v2-adapter";
 import { parseDynamicToolUIPart } from "../src/react-app/domains/session/sync/parse-tool-parts";
 import { codeModeToolCalls } from "../src/lib/code-mode-tools";
+import { getModelBehaviorOptions } from "../src/app/lib/model-behavior";
 
 const capturedPermissionAsked = {
   id: "evt_permission_asked",
@@ -2072,11 +2073,19 @@ describe("OpenCode v2 client compatibility", () => {
 });
 
 
-test("v2 provider catalog retains display names without exposing request settings", async () => {
+test("v2 provider catalog retains display names and advertised effort without exposing provider credentials", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
-    if (request.url.endsWith("/api/model")) return jsonResponse({ data: [{ id: "coding", providerID: "lpr_fixture", name: "Coding" }] });
+    if (request.url.endsWith("/api/model")) return jsonResponse({ data: [
+      { id: "coding", providerID: "lpr_fixture", name: "Coding", variants: [
+        { id: "low", settings: { reasoningEffort: "low" } },
+        { id: "high", settings: { reasoningEffort: "high" } },
+        { id: "CustomExact", settings: { thinking: { budgetTokens: 4096 } } },
+      ] },
+      { id: "standard", providerID: "lpr_fixture", name: "Standard", variants: [] },
+      { id: "builtin", providerID: "lpr_fixture", capabilities: { output: ["text", "reasoning"] } },
+    ] });
     if (request.url.endsWith("/api/provider")) return jsonResponse({ data: [{ id: "lpr_fixture", name: "Assigned Coding", settings: { apiKey: "fixture-private" } }] });
     if (request.url.endsWith("/api/model/default")) return jsonResponse({ data: {} });
     throw new Error(`Unexpected request: ${request.url}`);
@@ -2085,10 +2094,41 @@ test("v2 provider catalog retains display names without exposing request setting
     const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
     const result = await client.provider.list();
     expect(result.data?.all[0]?.name).toBe("Assigned Coding");
+    const models = result.data?.all[0]?.models;
+    expect(models?.coding?.variants).toEqual({ low: { reasoningEffort: "low" }, high: { reasoningEffort: "high" }, CustomExact: { thinking: { budgetTokens: 4096 } } });
+    if (!models?.coding || !models.standard || !models.builtin) throw new Error("Missing mapped models");
+    expect(getModelBehaviorOptions("lpr_fixture", models.coding).map((option) => option.value)).toEqual(["low", "high", "CustomExact"]);
+    expect(getModelBehaviorOptions("lpr_fixture", models.standard)).toEqual([]);
+    expect(getModelBehaviorOptions("lpr_fixture", models.builtin)).toEqual([]);
     expect(JSON.stringify(result.data)).not.toContain("fixture-private");
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("v2 prompts set the exact selected variant on the native model ref and omit it for Default", async () => {
+  const originalFetch = globalThis.fetch;
+  const writes: { path: string; body: unknown }[] = [];
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    writes.push({ path: new URL(request.url).pathname, body: await request.json() });
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const client = createClientV2("http://owner.test/opencode2", "/workspace", {});
+    for (const variant of ["high", "CustomExact", undefined]) {
+      const result = await client.session.promptAsync({ sessionID: "ses_effort", model: { providerID: "witness", modelID: "model" }, variant, parts: [{ type: "text", text: "Hello" }] });
+      expect(result.response.status).toBe(204);
+    }
+    expect(writes.filter((write) => write.path.endsWith("/model")).map((write) => write.body)).toEqual([
+      { model: { providerID: "witness", id: "model", variant: "high" } },
+      { model: { providerID: "witness", id: "model", variant: "CustomExact" } },
+      { model: { providerID: "witness", id: "model" } },
+    ]);
+    expect(writes.filter((write) => write.path.endsWith("/prompt")).map((write) => write.body)).toEqual([
+      { text: "Hello" }, { text: "Hello" }, { text: "Hello" },
+    ]);
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 describe("v2 question forms", () => {

@@ -3,6 +3,8 @@ import { describe, expect, test } from "bun:test";
 import type { ProviderListItem } from "../src/app/types";
 import {
   getModelBehaviorOptions,
+  getModelBehaviorSummary,
+  normalizeModelBehaviorValue,
   nextModelBehaviorValue,
   previousModelBehaviorValue,
 } from "../src/app/lib/model-behavior";
@@ -66,6 +68,18 @@ const model: ProviderModel = {
 };
 
 describe("model behavior options", () => {
+  test("preserves opaque variant IDs through selection and saved-value normalization", () => {
+    const custom = { ...model, variants: { CustomExact: {}, default: {}, high: {} } };
+    expect(getModelBehaviorOptions("openai", custom).map((option) => option.value)).toEqual(["high", "CustomExact", "default"]);
+    for (const value of ["CustomExact", "default"]) {
+      const restored = normalizeModelBehaviorValue(value);
+      expect(restored).toBe(value);
+      expect(getModelBehaviorSummary("openai", custom, restored).value).toBe(value);
+    }
+    expect(normalizeModelBehaviorValue(null)).toBeNull();
+    expect(normalizeModelBehaviorValue("")).toBeNull();
+  });
+
   test("uses only the raw effort values reported by the model", () => {
     const options = getModelBehaviorOptions("openai", model);
 

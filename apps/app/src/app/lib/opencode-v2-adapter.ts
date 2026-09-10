@@ -698,6 +698,12 @@ function mapV2Model(value: unknown): Model | null {
   const outputCapabilities = stringArray(rawCapabilities?.output);
   const toolcall = rawCapabilities?.tools === true;
   const released = readNumber(rawTime, "released");
+  // Native v2 advertises an array of named settings, while the picker consumes
+  // the v1 keyed variant map. Do not infer effort choices from the model name.
+  const variants = Object.fromEntries((Array.isArray(value.variants) ? value.variants : []).flatMap((variant) => {
+    const id = readString(variant, "id");
+    return id ? [[id, readRecord(variant, "settings") ?? {}]] : [];
+  }));
   return {
     id,
     providerID,
@@ -707,6 +713,7 @@ function mapV2Model(value: unknown): Model | null {
       npm: readString(rawApi, "npm") ?? readString(rawApi, "package") ?? "",
     },
     name: readString(value, "name") ?? id,
+    variants,
     capabilities: {
       temperature: false,
       reasoning: outputCapabilities.includes("reasoning"),
@@ -1864,7 +1871,11 @@ export function createClientV2(
       const modelResult = await request(
         "POST",
         `/api/session/${encodeURIComponent(parameters.sessionID)}/model`,
-        { model: { providerID: parameters.model.providerID, id: parameters.model.modelID } },
+        { model: {
+          providerID: parameters.model.providerID,
+          id: parameters.model.modelID,
+          ...(parameters.variant === undefined ? {} : { variant: parameters.variant }),
+        } },
         options?.signal,
       );
       if (!modelResult.response.ok) return failedResult(modelResult);
