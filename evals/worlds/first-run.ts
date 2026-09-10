@@ -1259,6 +1259,7 @@ export async function backgroundUpdateWorld(seed: Seed) {
       return {
         checks, downloads, installs, route: location.hash,
         installAttempts: window.__backgroundUpdateInstallAttempts,
+        automaticChecksEnabled: localStorage.getItem("openwork.react.settings.update-auto-check") !== "0",
         updateInTitlebar: Boolean(document.querySelector<HTMLElement>('header [data-update-button]')),
         updateInSidebar: Boolean(document.querySelector<HTMLElement>('[data-sidebar="footer"] [data-update-button]')),
         sidebarName: document.querySelector<HTMLElement>('[data-sidebar-brand]')?.textContent?.trim() ?? null,

@@ -110,7 +110,8 @@ test("updates download outside Settings and offer a persistent, optional restart
   // The background behavior above is proven. Isolate the manual install-error
   // retries below from another background check after a fresh policy arrives.
   await world.openSettings();
-  await user.click({ label: "Check automatically" });
+  await user.click({ role: "switch", label: "Check automatically" });
+  expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: false });
   await world.openWorkspace();
   await world.setCustomBranding();
   await probe.eventually(world.snapshot, {
