@@ -1289,3 +1289,56 @@ export async function backgroundUpdateWorld(seed: Seed) {
     openWorkspace: () => go(app, `/workspace/${workspace.workspaceId}/session`),
   };
 }
+
+/** A desktop signed in to a real Den whose organization pins allowed desktop
+ * versions. The updater feed is faked; the version policy is Den's own. */
+export async function revokedUpdateWorld(seed: Seed) {
+  const den = await seed.den({
+    org: { name: `Update policy ${Date.now()}`, admin: { name: "Update Policy Admin" } },
+  });
+  const allowVersions = async (versions: string[]) => {
+    const result = await seed.api(den.admin, "/v1/org", {
+      method: "PATCH", body: JSON.stringify({ allowedDesktopVersions: versions }),
+    });
+    if (!result.response.ok) throw new Error(`Setting allowed desktop versions failed: HTTP ${result.response.status} ${result.text.slice(0, 300)}`);
+  };
+  await allowVersions(["9.9.9"]);
+  const app = await seed.desktop({ name: "revoked-update", den, as: "admin" });
+  const workspace = await seed.workspace(app, seed.tmpPath("revoked-update"));
+  await evalIn(app, () => {
+    const currentVersion = "0.18.0";
+    const state: Window["__backgroundUpdateWitness"] = { checks: 0, downloads: 0, installs: 0, offset: 0, finishDownload: null, intervalCheck: null };
+    window.__backgroundUpdateWitness = state;
+    window.__openworkReadDesktopVersionMetadataEval = () => ({
+      minAppVersion: "0.1.0", latestAppVersion: "9.9.9", publishedDesktopVersions: ["9.9.9"],
+    });
+    window.__openworkUpdaterEvalBridge = {
+      getChannel: async () => ({ channel: "stable", currentVersion }),
+      setChannel: async (channel) => ({ channel, currentVersion }),
+      check: async () => {
+        state.checks++;
+        return { available: true, channel: "stable", currentVersion, latestVersion: "9.9.9" };
+      },
+      download: async () => {
+        state.downloads++;
+        return { ok: true };
+      },
+      installAndRestart: async () => {
+        state.installs++;
+        return { ok: true };
+      },
+      onDownloadProgress: () => () => {},
+    };
+  });
+  return {
+    app,
+    den,
+    allowVersions,
+    snapshot: () => evalIn(app, () => {
+      const { checks, downloads, installs } = window.__backgroundUpdateWitness;
+      return { checks, downloads, installs };
+    }),
+    openSettings: () => go(app, `/workspace/${workspace.workspaceId}/settings/updates`),
+    openWorkspace: () => go(app, `/workspace/${workspace.workspaceId}/session`),
+  };
+}

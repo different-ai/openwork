@@ -1,9 +1,48 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { backgroundUpdateWorld } from "../worlds/first-run.ts";
+import { backgroundUpdateWorld, revokedUpdateWorld } from "../worlds/first-run.ts";
 import { restartUpdateTaskWorld } from "../worlds/chat.ts";
 
 const test = spec.world(backgroundUpdateWorld);
+const revokedTest = spec.world(revokedUpdateWorld);
+
+revokedTest("a downloaded update is not installed once the organization revokes its version", async ({ world, user, probe }) => {
+  const readyText = "Ready to install: v9.9.9";
+  const blockedText = "OpenWork 9.9.9 is available, but this installation is not eligible for it yet.";
+  const downloaded = (count: number) => (value: unknown) =>
+    typeof value === "object" && value !== null && Reflect.get(value, "downloads") === count;
+
+  await world.openSettings();
+  await user.click({ role: "button", text: "Check now" });
+  await probe.eventually(world.snapshot, { within: 30_000, label: "the allowed version downloads", until: downloaded(1) });
+  await user.see({ text: readyText });
+  await user.see({ text: "Restart to update" });
+
+  // Negative half: the organization drops 9.9.9 after the download completed.
+  await world.allowVersions(["0.18.0"]);
+  await user.click("Restart to update");
+  await user.see({ text: "Restart OpenWork?" });
+  await user.click("Restart & update");
+  await user.see({ text: blockedText }, { timeoutMs: 30_000 });
+  await user.notSee({ text: readyText });
+  await user.notSee({ text: "Restart to update" });
+  await user.notSee({ text: "Install & restart" });
+  expect(await world.snapshot()).toMatchObject({ checks: 1, downloads: 1, installs: 0 });
+  await user.screenshot();
+
+  // Positive control: the same version approved again installs from Settings.
+  await world.allowVersions(["9.9.9"]);
+  await user.click({ role: "button", text: "Check now" });
+  await probe.eventually(world.snapshot, { within: 30_000, label: "the re-approved version downloads again", until: downloaded(2) });
+  await user.see({ text: readyText });
+  await user.notSee({ text: blockedText });
+  await user.click({ role: "button", text: "Install & restart" });
+  await probe.eventually(world.snapshot, {
+    within: 10_000, label: "install proceeds while the version stays allowed",
+    until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "installs") === 1,
+  });
+  expect(await world.snapshot()).toMatchObject({ checks: 2, downloads: 2, installs: 1 });
+});
 
 test("updates download outside Settings and offer a persistent, optional restart", async ({ world, user, probe }) => {
   await probe.eventually(world.snapshot, {
