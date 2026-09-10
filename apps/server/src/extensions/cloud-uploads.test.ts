@@ -76,6 +76,13 @@ test("cloud upload action schemas expose paths and metadata, never inline bytes"
     "to",
   ]);
   expect(fields.filter((field) => /base64|bytes|content|raw/i.test(field))).toEqual([]);
+  const drive = OPENWORK_CLOUD_UPLOAD_ACTIONS.find((action) => action.action === "drive_upload_file");
+  const gmail = OPENWORK_CLOUD_UPLOAD_ACTIONS.find((action) => action.action === "gmail_create_draft_with_attachments");
+  expect(drive?.description).toContain("This Drive bridge cannot select a different named connection");
+  expect(drive?.inputSchema.properties).not.toHaveProperty("connectionId");
+  expect(gmail?.description).toContain("Pass connectionId to preserve the selected Google Workspace connection");
+  expect(gmail?.description).not.toContain("cannot select");
+  expect(gmail?.inputSchema.properties).toHaveProperty("connectionId");
 });
 
 test("drive upload sends exact workspace bytes and server-derived Office metadata", async () => {
