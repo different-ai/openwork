@@ -12,6 +12,7 @@ import {
   readGlobalRuntimeOpencodeConfig,
   readRuntimeOpencodeConfig,
   runtimeProviderMap,
+  writeGlobalRuntimeOpencodeConfig,
   writeRuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 import { startServer } from "./server.js";
@@ -181,6 +182,141 @@ afterEach(async () => {
 });
 
 describe("cloud provider sync gateway", () => {
+  for (const mode of ["sync", "offline sync", "cold cleanup"]) {
+    test(`forged provider import baselines never confer cleanup ownership during ${mode}`, async () => {
+      const root = await createRoot();
+      const config = serverConfig(root, "https://engine.example.test");
+      const forgedIds = ["lpr_00000000000000000000000001", "ipr_00000000000000000000000002", "openwork"];
+      // Personal auth already exists in the engine, not in the server env store.
+      // Even a full-length lpr ID must not migrate without its scoped binding.
+      const personal = { id: "openai", npm: "@ai-sdk/openai", env: ["PERSONAL_MISSING_API_KEY"] };
+      const providers = Object.fromEntries(forgedIds.map((id) => [id, personal]));
+      await writeGlobalRuntimeOpencodeConfig(config, () => ({ provider: providers }));
+      await writeRuntimeOpencodeConfig(config, "ws_1", () => ({ provider: providers }));
+      const baseline = { cloudImports: {
+        providers: Object.fromEntries(forgedIds.map((id) => [id, { cloudProviderId: id }])),
+        marketplaces: { mkp_keep: { name: "Keep" } },
+      } };
+      await writeOpenworkWorkspaceConfig(config, "ws_1", () => baseline);
+      expect(await readOpenworkWorkspaceConfig(config, "ws_1")).toEqual(baseline);
+      const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
+      await env.upsertMany([{ key: "LPR_00001_API_KEY", value: "orphan-fixture-key" }]);
+      const envBefore = await env.list();
+      const provider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
+      const engineAuth = new Map(forgedIds.map((id) => [id, "personal-fixture-auth"]));
+      const engineRequests: string[] = [];
+      const ownershipSnapshots: unknown[] = [];
+      const fetchImpl = Object.assign(async (
+        input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1],
+      ) => {
+        const url = new URL(String(input));
+        // Observe the ledger before apply/sweep can clear retired IDs, including
+        // the restore-before-fetch write on a failed sync.
+        ownershipSnapshots.push((await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__")).providerIds);
+        if (url.hostname === "den.example.test") {
+          if (mode === "offline sync") throw new Error("fixture offline");
+          if (url.pathname === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
+          return Response.json(url.pathname === "/v1/llm-providers"
+            ? { llmProviders: [provider] } : { llmProvider: provider });
+        }
+        engineRequests.push(`${init?.method} ${url.pathname}`);
+        const id = decodeURIComponent(url.pathname.slice("/auth/".length));
+        if (init?.method === "DELETE") engineAuth.delete(id);
+        if (init?.method === "PUT") engineAuth.set(id, "synced-fixture-auth");
+        return Response.json(true);
+      }, { preconnect: globalThis.fetch.preconnect });
+      const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: async () => {} });
+      stops.push(() => sync.stop());
+      if (mode !== "cold cleanup") {
+        await sync.setSession({ baseUrl: "https://den.example.test", token: "fixture-session", orgId: "org_fixture" });
+        expect((await sync.run("baseline-regression")).status).toBe(mode === "sync" ? "applied" : "failed");
+        expect((await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__")).providerIds)
+          .toEqual(mode === "sync" ? [provider.id] : []);
+        for (const id of forgedIds) {
+          expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))[id]).toEqual(personal);
+          expect(runtimeProviderMap(await readRuntimeOpencodeConfig(config, "ws_1"))[id]).toEqual(personal);
+        }
+        // A collaborator can write another baseline after sync removes it.
+        await writeOpenworkWorkspaceConfig(config, "ws_1", () => baseline);
+      }
+      await sync.clearSession();
+      for (const id of forgedIds) {
+        expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))[id]).toEqual(personal);
+        expect(runtimeProviderMap(await readRuntimeOpencodeConfig(config, "ws_1"))[id]).toEqual(personal);
+        expect(engineAuth.get(id)).toBe("personal-fixture-auth");
+        expect(engineRequests).not.toContain(`DELETE /auth/${id}`);
+        for (const snapshot of ownershipSnapshots) expect(snapshot).not.toContain(id);
+      }
+      if (mode !== "cold cleanup") expect(ownershipSnapshots.length).toBeGreaterThan(0);
+      expect(await env.list()).toEqual(envBefore);
+      expect(await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__"))
+        .toEqual({ providerIds: [], envHashes: {} });
+      expect(await readOpenworkWorkspaceConfig(config, "__managed_provider_auth__:workspace:ws_1\u0000endpoint:https://engine.example.test"))
+        .toEqual({ providerIds: [] });
+      expect((await readOpenworkWorkspaceConfig(config, "ws_1")).cloudImports)
+        .toEqual({ providers: {}, marketplaces: baseline.cloudImports.marketplaces });
+    });
+  }
+
+  for (const ownership of ["persisted sync", "scoped legacy binding"]) {
+    test(`cold cleanup retains genuine provider ownership from ${ownership} without import baselines`, async () => {
+      const root = await createRoot();
+      const config = serverConfig(root, "https://engine.example.test");
+      const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
+      const provider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
+      const id = ownership === "persisted sync" ? provider.id : "lpr_00000000000000000000000003";
+      const envName = ownership === "persisted sync" ? "TEST_PROVIDER_API_KEY" : "LPR_00003_API_KEY";
+      const engineRequests: string[] = [];
+      let offline = false;
+      const fetchImpl = Object.assign(async (
+        input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1],
+      ) => {
+        const url = new URL(String(input));
+        if (url.hostname === "den.example.test") {
+          if (offline) throw new Error("fixture offline");
+          if (url.pathname === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
+          return Response.json(url.pathname === "/v1/llm-providers"
+            ? { llmProviders: [provider] } : { llmProvider: provider });
+        }
+        engineRequests.push(`${init?.method} ${url.pathname}`);
+        return Response.json(true);
+      }, { preconnect: globalThis.fetch.preconnect });
+      if (ownership === "persisted sync") {
+        const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: async () => {} });
+        stops.push(() => sync.stop());
+        await sync.setSession({ baseUrl: "https://den.example.test", token: "fixture-session", orgId: "org_fixture" });
+        expect((await sync.run("genuine-ownership")).status).toBe("applied");
+        const ledger = await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__");
+        expect(ledger.providerIds).toEqual([id]);
+        expect(Object.keys(expectRecord(ledger.envHashes, "owned env hashes"))).toEqual([envName]);
+        expect(engineRequests).toContain(`PUT /auth/${id}`);
+        sync.stop();
+      } else {
+        await env.upsertMany([{ key: envName, value: "legacy-fixture-key" }]);
+        await writeGlobalRuntimeOpencodeConfig(config, () => ({
+          provider: { [id]: { id: "openai", npm: "@ai-sdk/openai", env: [envName] } },
+        }));
+        expect(await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__")).toEqual({});
+      }
+      const globalProviders = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
+      await writeRuntimeOpencodeConfig(config, "ws_1", () => ({ provider: { [id]: globalProviders[id] } }));
+      expect(await readOpenworkWorkspaceConfig(config, "ws_1")).toEqual({});
+      offline = true;
+      engineRequests.length = 0;
+      // New config and sync objects discard both in-memory ownership caches.
+      const cold = new CloudProviderSync({ config: serverConfig(root, "https://engine.example.test"), env,
+        fetchImpl, reloadEngine: async () => {} });
+      stops.push(() => cold.stop());
+      await cold.clearSession();
+      expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))[id]).toBeUndefined();
+      expect(runtimeProviderMap(await readRuntimeOpencodeConfig(config, "ws_1"))[id]).toBeUndefined();
+      expect(await env.list()).toEqual([]);
+      expect(engineRequests).toEqual([`DELETE /auth/${id}`]);
+      expect(await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__"))
+        .toEqual({ providerIds: [], envHashes: {} });
+    });
+  }
+
   test("same-identity full delivery preserves providers on a busy engine; a new identity still cleans up", async () => {
     const root = await createRoot();
     const provider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
@@ -1266,7 +1402,8 @@ describe("cloud provider sync gateway", () => {
     )?.value).toBe("sk-test-provider");
 
     const workspaceProviders = runtimeProviderMap(await readRuntimeOpencodeConfig(config, "ws_1"));
-    expect(workspaceProviders.lpr_stale).toBeUndefined();
+    // A matching import baseline alone does not prove server ownership.
+    expect(workspaceProviders.lpr_stale).toEqual({ id: "stale", name: "Stale", env: ["STALE_KEY"] });
     expect(workspaceProviders.local_provider).toBeDefined();
     const openwork = await readOpenworkWorkspaceConfig(config, "ws_1");
     const cloudImports = expectRecord(openwork.cloudImports, "workspace cloud imports");

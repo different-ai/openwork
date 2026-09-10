@@ -561,10 +561,6 @@ function runtimeProviderId(provider: DenProvider): string {
   return provider.source === "openwork" ? "openwork" : provider.id;
 }
 
-function isCloudManagedProviderKey(providerId: string): boolean {
-  return /^(lpr|ipr)_/i.test(providerId) || providerId.trim() === "openwork";
-}
-
 function readProviderEnvNames(providerConfig: JsonRecord): string[] {
   return readStringList(providerConfig.env);
 }
@@ -1452,16 +1448,12 @@ export class CloudProviderSync {
       }
     }
     for (const id of readStringList(saved.providerIds)) this.managedProviderIds.add(id);
+    // Workspace import baselines are collaborator-writable metadata, not proof
+    // of ownership for runtime, credential, or auth cleanup.
     const storedEnv = new Map((await this.env.list()).map((entry) => [entry.key, entry.value]));
     const runtimes = [await readGlobalRuntimeOpencodeConfig(this.config)];
     for (const workspace of this.config.workspaces) {
       runtimes.push(await readRuntimeOpencodeConfig(this.config, workspace.id));
-      const openwork = await readOpenworkWorkspaceConfig(this.config, workspace.id);
-      const imports = isRecord(openwork.cloudImports) && isRecord(openwork.cloudImports.providers)
-        ? openwork.cloudImports.providers : {};
-      for (const [id, baseline] of Object.entries(imports)) {
-        if (isCloudManagedProviderKey(id) && isRecord(baseline) && baseline.cloudProviderId === id) this.managedProviderIds.add(id);
-      }
     }
     for (const runtime of runtimes) {
       for (const [id, provider] of Object.entries(runtimeProviderMap(runtime))) {
