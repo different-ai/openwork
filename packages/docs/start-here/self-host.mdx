@@ -27,11 +27,10 @@ For Kubernetes installs, use the published Helm chart:
 ```bash
 helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
   --version <chart-version> \
-  --set image.tag=<chart-version> \
   -f values.prod.yaml
 ```
 
-`--version` pins the chart only. The published chart defaults `image.tag` to `latest`, which floats to the newest release on every pull, so set `image.tag` (on the command line or in `values.prod.yaml`) to the same version as the chart. The images are `openwork-den-api`, `openwork-den-web`, and optional `openwork-inference` on GHCR unless you mirror them into an internal registry.
+`--version` pins the chart and its images: the published chart's `image.tag` defaults to the chart `appVersion`, which is the same release number. Charts 0.18.46 and earlier instead default `image.tag` to `latest`, which floats to the newest release on every pull; on those versions also pass `--set image.tag=<chart-version>`. The images are `openwork-den-api`, `openwork-den-web`, and optional `openwork-inference` on GHCR unless you mirror them into an internal registry.
 
 Choose a tested provider path in [Deploy to your cloud](/self-host/deploy-to-your-cloud/overview). The public guides cover AWS, Azure, and Google Cloud, including managed MySQL, ingress, DNS, TLS, migrations, and secure creation of the first administrator.
 

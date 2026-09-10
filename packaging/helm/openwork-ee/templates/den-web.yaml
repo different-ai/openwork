@@ -60,7 +60,7 @@ spec:
       {{- end }}
       containers:
         - name: den-web
-          image: "{{ .Values.denWeb.image.repository }}:{{ default .Values.image.tag .Values.denWeb.image.tag }}"
+          image: "{{ .Values.denWeb.image.repository }}:{{ include "openwork-ee.imageTag" (dict "root" . "componentTag" .Values.denWeb.image.tag) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

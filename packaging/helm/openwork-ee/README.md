@@ -16,21 +16,21 @@ Published releases are available as an OCI Helm chart:
 ```bash
 helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
   --version REPLACE_OPENWORK_VERSION \
-  --set image.tag=REPLACE_OPENWORK_VERSION \
   -f values.prod.yaml
 ```
 
-`--version` pins the chart only. The chart defaults `image.tag` to `latest`,
-which floats to the newest published release on every pull, so always set
-`image.tag` to the same version as `--version`, either with `--set` as above or
-in `values.prod.yaml`.
+`--version` pins the chart and the images: the published chart's `appVersion`
+equals its version and `image.tag` defaults to that `appVersion`, so
+`--version X` deploys the `X` images. Set `image.tag` only to deviate from the
+chart version, for example when you mirror a specific image build. Charts
+published before this default (0.18.46 and earlier) ship `image.tag: latest`,
+which floats to the newest release on every pull; check with
+`helm show values oci://ghcr.io/different-ai/charts/openwork-ee --version X | grep -A1 '^image:'`
+and, when it prints `tag: latest`, also pass `--set image.tag=X`.
 
 Create a values file for the target environment:
 
 ```yaml
-image:
-  tag: "REPLACE_OPENWORK_VERSION"
-
 config:
   tenancy:
     # Default chart behavior is single-org for private/self-hosted installs.
@@ -127,11 +127,16 @@ imagePullSecrets:
   - name: ghcr-pull-secret
 ```
 
-For local development from a repository checkout, render or install directly:
+For local development from a repository checkout, render or install directly.
+The checkout's `Chart.yaml` carries a placeholder `appVersion` (the publish
+workflow stamps the real one with `helm package --app-version`), so a checkout
+install must set `image.tag` explicitly:
 
 ```bash
 helm template openwork-ee ./packaging/helm/openwork-ee -f values.prod.yaml
-helm upgrade --install openwork-ee ./packaging/helm/openwork-ee -f values.prod.yaml
+helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
+  --set image.tag=REPLACE_OPENWORK_VERSION \
+  -f values.prod.yaml
 ```
 
 ### Automations rollout
@@ -489,7 +494,8 @@ For a Collector without authentication, use:
 Install or upgrade OpenWork with the values file:
 
 ```bash
-helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
+helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
+  --version REPLACE_OPENWORK_VERSION \
   --namespace openwork \
   --create-namespace \
   --values values-observability.yaml
@@ -873,6 +879,8 @@ migrations:
   enabled: true
   hook: true
   hookDeletePolicy: before-hook-creation,hook-succeeded
+  backoffLimit: 2
+  activeDeadlineSeconds: 1800
   command:
     - node
   args:
@@ -880,6 +888,34 @@ migrations:
 ```
 
 The default hook executes the precompiled Den DB bootstrap runner already built into the Den API image. On a completely empty database it applies the build-time current-schema SQL snapshot, records the committed migrations as the baseline, then runs pending migrations with Drizzle ORM. On an existing schema without a Drizzle ledger, it records the baseline before migrating.
+
+### First install on a cold cluster
+
+The hook Job runs the Den API image, and `activeDeadlineSeconds` counts from Job
+creation, so it includes pulling that image (about 800 MB) onto a node that has
+never run OpenWork. A `DeadlineExceeded` failure on a first install, with
+`kubectl describe pod` showing the pod still `Pulling`, means the pull took
+longer than the deadline, not that the migration failed. Two timers apply:
+
+- `migrations.activeDeadlineSeconds` (default `1800`): the Job's own limit.
+- Helm `--timeout` (default `5m0s`): how long Helm waits for the hook. Pass at
+  least `--timeout 30m` on a first install so Helm does not give up before the
+  Job does.
+
+To keep a cold install predictable, pre-pull or mirror the images so the hook
+starts immediately: mirror `openwork-den-api` and `openwork-den-web` into a
+registry near the cluster and set `denApi.image.repository` and
+`denWeb.image.repository` (see
+[Air-gapped deployment](../../../packages/docs/start-here/air-gapped-deployment.mdx)),
+or pull the tag on each node ahead of time with the node's container runtime
+(`crictl pull ghcr.io/different-ai/openwork-den-api:<version>`). The default
+`image.pullPolicy: IfNotPresent` reuses a pre-pulled image.
+
+To recover from a failed first install, rerun the same `helm upgrade --install`
+command: the `before-hook-creation` delete policy replaces the failed Job and
+Helm 3.2.1 or newer upgrades over a `failed` first revision. Only if Helm
+reports `has no deployed releases`, or `helm list` shows the release as
+`pending-install`, run `helm uninstall` and install again.
 
 For retained-log troubleshooting, temporarily disable hook behavior and reduce
 retries:
