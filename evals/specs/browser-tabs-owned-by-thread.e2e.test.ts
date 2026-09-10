@@ -422,7 +422,7 @@ test("a background conversation reads its owned page silently and requests atten
     await user.see({ text: /Browser tab is protected or busy/ });
     expect(await agent.run("browser.release_tab", { tabId: readingTab.tabId }))
       .toMatchObject({ tabId: readingTab.tabId, released: true });
-    expect((await world.readBrowserState()).tabs.map(tab => tab.id).sort())
+    expect((await probe.browserState()).tabs.map(tab => tab.id).sort())
       .toEqual([readingTab.tabId, researchTab.tabId].sort());
     expect(await witness()).toMatchObject({ records: [{ method: "dom", count: 1, signedIn: false }], inputValue: "ok", sessionReads: 0 });
   });
