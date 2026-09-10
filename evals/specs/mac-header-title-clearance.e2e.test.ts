@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { spec, type Probe } from "@openwork/testkit";
+import { browserScript, spec, type Probe } from "@openwork/testkit";
 import { macSidebar } from "../worlds/session-shell.ts";
 
 const test = spec.world(macSidebar);
@@ -33,7 +33,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 async function titlebar(probe: Probe): Promise<TitlebarGeometry> {
   // TODO(primitive): probe.geometry should compare the session title with the painted titlebar toggle.
-  const value = await probe.eval(`(() => {
+  const value = await probe.eval(() => {
     const heading = document.querySelector('[data-session-pane] header h1');
     const toggle = [...document.querySelectorAll('[data-slot="sidebar-trigger"]')]
       .find((element) => element.getBoundingClientRect().width > 0);
@@ -48,7 +48,7 @@ async function titlebar(probe: Probe): Promise<TitlebarGeometry> {
       titleLeft: heading.getBoundingClientRect().left,
       titleText: (heading.textContent ?? "").trim(),
     };
-  })()`);
+  });
   if (!isRecord(value)
     || typeof value.width !== "number"
     || typeof value.inlineSidebar !== "boolean"
@@ -76,12 +76,12 @@ test("the macOS session title stays clear of the titlebar controls in every side
   const [session] = world.sessions;
   if (!session) throw new Error("The mac sidebar world did not seed a session.");
   await user.see({ text: session.title });
-  const platformClasses = await seed.evalIn(world.app, `document.documentElement.className`);
+  const platformClasses = await seed.evalIn(world.app, () => document.documentElement.className);
   if (typeof platformClasses !== "string") throw new Error("Desktop platform classes were not readable.");
-  await seed.evalIn(world.app, `(() => {
+  await seed.evalIn(world.app, () => {
     document.documentElement.classList.remove('openwork-platform-linux', 'openwork-platform-windows');
     document.documentElement.classList.add('openwork-electron', 'openwork-platform-mac');
-  })()`);
+  });
   // TODO(primitive): user.resizeViewport should set a desktop surface's width.
   const resize = (width: number) => world.app.client.send("Emulation.setDeviceMetricsOverride", {
     width,
@@ -127,7 +127,7 @@ test("the macOS session title stays clear of the titlebar controls in every side
     const expanded = await settled((geometry) => geometry.width === 1400 && geometry.sidebarState === "expanded", "desktop window with the sidebar expanded");
     if (!expanded) throw new Error("Expanded titlebar geometry did not settle.");
     // TODO(primitive): probe.geometry should read the inline sidebar's right edge.
-    const sidebarRight = await probe.eval(`document.querySelector('[data-slot="sidebar-gap"]')?.getBoundingClientRect().right ?? null`);
+    const sidebarRight = await probe.eval(() => document.querySelector('[data-slot="sidebar-gap"]')?.getBoundingClientRect().right ?? null);
     if (typeof sidebarRight !== "number") throw new Error("The inline sidebar had no measurable width.");
     expect(sidebarRight).toBeGreaterThan(expanded.toggleRight);
     expect(expanded.titleLeft).toBeGreaterThan(sidebarRight);
@@ -141,5 +141,5 @@ test("the macOS session title stays clear of the titlebar controls in every side
     await settled((geometry) => geometry.sidebarState === "expanded", "desktop window after reopening the sidebar");
   });
 
-  await seed.evalIn(world.app, `(classes) => { document.documentElement.className = classes; }`, { args: [platformClasses] });
+  await seed.evalIn(world.app, browserScript((classes: string) => { document.documentElement.className = classes; }, [platformClasses]));
 });
