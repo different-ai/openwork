@@ -1,15 +1,19 @@
-import { attachSurface, evaluateOnSurface } from "@openwork/cdp";
+import { allocateFreePort, attachSurface, evaluateOnSurface } from "@openwork/cdp";
 import type { AttachedSurface } from "@openwork/cdp";
 import { SkipError } from "@openwork/env";
 import type { Seed } from "@openwork/env";
 import { localHost } from "@openwork/hosts";
+import type { ElectronSurfaceOptions } from "@openwork/hosts";
 
 /**
- * First launch of a packaged desktop flavor on a machine that has never run
- * OpenWork: no bootstrap, no activation, no sign-in. The cloud and enterprise
+ * Launch of a packaged desktop flavor on an isolated profile. The fresh world
+ * has no bootstrap, no activation, no sign-in: the cloud and enterprise
  * flavors render a gate above the routes here, which is the one code path
- * dogfooding never exercises. `desktop()` cannot be used because its readiness
- * probe only recognises signed-in surfaces, so this world attaches directly.
+ * dogfooding never exercises. The activated world seeds the bootstrap an
+ * enterprise installation carries after activation, so an update on an
+ * existing customer's machine is covered too. `desktop()` cannot be used
+ * because its readiness probe only recognises signed-in surfaces, so these
+ * worlds attach directly.
  */
 
 export type PackagedFlavor = "public" | "cloud" | "enterprise";
@@ -20,12 +24,57 @@ export interface RendererException {
 }
 
 /**
+ * Unhandled promise rejections a packaged launch is known to produce today,
+ * matched exactly against `rejectionMessage()`. Tracked debt: every entry
+ * names a boot-time caller that should not reject, and the list shrinks back
+ * to empty once that caller is fixed; anything not listed fails the launch
+ * specs.
+ *
+ * - The decorative `Dithering` background (`@paper-design/shaders-react`) on
+ *   the activation gate (enterprise-activation-gate.tsx) and the sign-in
+ *   surface (den-signin-surface.tsx) rejects when the GPU offers no WebGL,
+ *   which is every Xvfb CI runner and some VDI desktops. The page itself
+ *   still mounts. Clear when those surfaces skip the shader without WebGL.
+ *
+ * The renderer's fire-and-forget window-chrome IPC (theme.ts,
+ * ui-state-store.ts) used to add "Error: Error invoking remote method
+ * 'openwork:desktop': Error: OpenWork must be activated from your Den portal
+ * before this command is available." until it caught its own rejection.
+ */
+export const KNOWN_LAUNCH_REJECTIONS: readonly string[] = [
+  "Error: Paper Shaders: WebGL is not supported in this browser",
+];
+
+const UNHANDLED_REJECTION_PREFIX = /^Uncaught \(in promise\)\s*/i;
+
+/**
  * A synchronous uncaught exception is what unmounts the React tree and leaves a
  * blank window. Unhandled promise rejections surface as "Uncaught (in promise)"
- * and never take the UI down, so they are reported but do not gate.
+ * and are classified separately by `isKnownRejection`.
  */
 export function isRenderCrash(exception: RendererException): boolean {
-  return !/\(in promise\)/i.test(exception.text);
+  return !UNHANDLED_REJECTION_PREFIX.test(exception.text);
+}
+
+/**
+ * The rejection message as Chromium reports it: the summary text after the
+ * "Uncaught (in promise)" prefix when present, otherwise the first line of the
+ * rejected value's description (an Error rejection keeps its message there).
+ */
+export function rejectionMessage(exception: RendererException): string {
+  const summary = exception.text.replace(UNHANDLED_REJECTION_PREFIX, "").trim();
+  return summary || exception.description.split("\n", 1)[0].trim();
+}
+
+export function isKnownRejection(exception: RendererException): boolean {
+  return !isRenderCrash(exception) && KNOWN_LAUNCH_REJECTIONS.includes(rejectionMessage(exception));
+}
+
+/** Full text of an exception for a failure message: the summary plus the stack-bearing description. */
+export function describeException(exception: RendererException): string {
+  return exception.description && exception.description !== exception.text
+    ? `${exception.text}\n${exception.description}`
+    : exception.text;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,13 +133,14 @@ async function observeRendererExceptions(surface: AttachedSurface) {
   };
 }
 
-export async function packagedFirstLaunchWorld(_seed: Seed) {
+async function packagedLaunchWorld(name: string, bootstrap: ElectronSurfaceOptions["bootstrap"]) {
   if (!process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim()) {
     throw new SkipError("OPENWORK_EVAL_ELECTRON_BINARY points at a packaged desktop binary");
   }
   const host = localHost();
-  const handle = await host.spawnElectron("packaged-first-launch", {
+  const handle = await host.spawnElectron(name, {
     profile: "fresh",
+    bootstrap,
     prepareSharedResources: false,
     env: { OPENWORK_DEV_MODE: "0", OPENWORK_ELECTRON_START_URL: "", ELECTRON_START_URL: "" },
   });
@@ -131,4 +181,26 @@ export async function packagedFirstLaunchWorld(_seed: Seed) {
     exceptions: () => [...observed.exceptions],
     [Symbol.asyncDispose]: dispose,
   };
+}
+
+/** A machine that has never run OpenWork: no bootstrap file at all. */
+export function packagedFirstLaunchWorld(_seed: Seed) {
+  return packagedLaunchWorld("packaged-first-launch", undefined);
+}
+
+/**
+ * An enterprise installation that already activated against its Den, as an
+ * existing customer's machine looks after an update. The Den lives on a
+ * closed local port so the launch is deterministic offline: the app has to
+ * get past the activation gate on the seeded bootstrap alone.
+ */
+export async function packagedActivatedLaunchWorld(_seed: Seed) {
+  const denBaseUrl = `http://127.0.0.1:${await allocateFreePort()}`;
+  const world = await packagedLaunchWorld("packaged-activated-launch", {
+    baseUrl: denBaseUrl,
+    apiBaseUrl: denBaseUrl,
+    requireSignin: true,
+    enterpriseActivation: { activatedAt: new Date().toISOString(), denBaseUrl },
+  });
+  return { ...world, denBaseUrl };
 }

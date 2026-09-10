@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { openworkServerInfo, readDesktopDistributionInfo, revealDesktopItemInDir } from "@/app/lib/desktop";
+import { reportCaughtWebError } from "@/app/lib/error-monitoring";
 import { getOpenWorkDeployment } from "@/app/lib/openwork-deployment";
 
 const APP_VERSION = String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").trim();
@@ -21,12 +22,35 @@ interface AppErrorBoundaryState {
   crash: CrashDetails | null;
 }
 
+const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>()]+/gi;
+const SECRET_PAIR_PATTERN = /(token|grant|code|secret|key)=[^&\s]+/gi;
+
+/**
+ * Messages and stacks can quote URLs whose query strings carry sign-in grants
+ * or deep-link tokens. Same rule as the web error beacon (origin + path only:
+ * no userinfo, query or fragment), plus a mask for bare `token=…` pairs.
+ * file:// asset paths stay intact.
+ */
+export function redactCrashText(text: string): string {
+  return text
+    .replace(SECRET_PAIR_PATTERN, "$1=[redacted]")
+    .replace(URL_PATTERN, (url) => {
+      if (/^file:/i.test(url)) return url;
+      const withoutUserinfo = url.replace(/^([^/]*\/\/)[^/@]*@/, "$1");
+      const cut = withoutUserinfo.search(/[?#]/);
+      if (cut === -1) return withoutUserinfo;
+      // Keep the `:line:col` a stack frame appends after a dev-server URL.
+      const position = /(:\d+){1,2}$/.exec(withoutUserinfo)?.[0] ?? "";
+      return withoutUserinfo.slice(0, cut) + position;
+    });
+}
+
 /** React hands the boundary whatever was thrown; only Error carries a stack. */
 export function describeCrash(thrown: unknown): CrashDetails {
   if (thrown instanceof Error) {
-    return { message: thrown.message, stack: thrown.stack ?? "" };
+    return { message: redactCrashText(thrown.message), stack: redactCrashText(thrown.stack ?? "") };
   }
-  return { message: String(thrown), stack: "" };
+  return { message: redactCrashText(String(thrown)), stack: "" };
 }
 
 /** Clipboard payload: message, stack, app version and distribution flavor. */
@@ -174,6 +198,10 @@ export class AppErrorBoundary extends React.Component<
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error("[app] render failed", error, info.componentStack);
+    // A caught render throw never reaches the window "error" listener, so the
+    // web deployment's monitor is told directly, with the same redacted text
+    // the screen shows. Inert on desktop.
+    reportCaughtWebError({ name: error.name, ...describeCrash(error) });
   }
 
   render() {

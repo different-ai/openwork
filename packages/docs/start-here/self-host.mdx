@@ -104,12 +104,12 @@ OpenWork cloud-style self-hosting is composed of three main pieces:
 - Node.js backend (Hono) with MySQL DB
 - Electron/React desktop app
 
-The desktop app should be pointed at the Den web URL. On startup it reads `${DEN_BASE_URL}/api/runtime-config` from Den Web and uses the returned `denApiUrl` as the source of truth for Den API and MCP traffic. Den Web returns `DEN_API_BASE` when you set it; otherwise it deterministically derives the API origin as `api.${DEN_BASE_URL}`.
+The desktop app should be pointed at the Den web URL. On startup it reads `${DEN_BASE_URL}/api/runtime-config` from Den Web and uses the returned `denApiUrl` as the source of truth for Den API and MCP traffic. Den Web returns `DEN_API_PUBLIC_URL` when you set it; otherwise it deterministically derives the API origin as `api.${DEN_BASE_URL}`. `DEN_BASE_URL` is required on Den Web. `DEN_API_BASE` is the server-only URL Den Web uses to reach Den API internally; it is never returned to desktops.
 
 - API default: `https://api.<den-web-host>/v1/...`
 - MCP default: `https://api.<den-web-host>/mcp/...`
 
-For self-hosted deployments, configure the desktop `baseUrl` to the public Den web origin and make sure `${DEN_BASE_URL}/api/runtime-config` is reachable from member desktops. If the API is not available at `api.${DEN_BASE_URL}`, set `DEN_API_BASE` on Den Web to the externally reachable API origin or proxy path you want desktops to use.
+For self-hosted deployments, configure the desktop `baseUrl` to the public Den web origin and make sure `${DEN_BASE_URL}/api/runtime-config` is reachable from member desktops. If the API is not available at `api.${DEN_BASE_URL}`, set `DEN_API_PUBLIC_URL` on Den Web to the externally reachable API origin you want desktops to use.
 
 These three pieces cover most features, but do not include:
 
