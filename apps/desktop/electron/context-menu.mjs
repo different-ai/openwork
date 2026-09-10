@@ -47,7 +47,22 @@ export function editingMenuTemplate(contents, params) {
   return items;
 }
 
-export function createNativeContextMenus({ Menu, getWindow }) {
+export function contentMenuTemplate(contents, params, clipboard) {
+  const items = editingMenuTemplate(contents, params);
+  if (params.mediaType === "image" && params.hasImageContents) {
+    // Copy Chromium's decoded pixels. Never fetch a renderer-supplied URL.
+    items.push({ label: "Copy Image", click: () => contents.copyImageAt(params.x, params.y) });
+  }
+  if (params.mediaType === "image" && params.srcURL) {
+    items.push({ label: "Copy Image Address", click: () => clipboard.writeText(params.srcURL) });
+  }
+  if (params.linkURL) {
+    items.push({ label: "Copy Link Address", click: () => clipboard.writeText(params.linkURL) });
+  }
+  return items;
+}
+
+export function createNativeContextMenus({ Menu, getWindow, clipboard }) {
   let active = null;
   const close = () => active?.close();
 
@@ -143,7 +158,7 @@ export function createNativeContextMenus({ Menu, getWindow }) {
     showEditing(params) {
       const window = getWindow();
       if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return Promise.resolve(null);
-      return popup(window, () => editingMenuTemplate(window.webContents, params), {
+      return popup(window, () => contentMenuTemplate(window.webContents, params, clipboard), {
         ...(params.frame ? { frame: params.frame } : {}),
         sourceType: params.menuSourceType,
       });
