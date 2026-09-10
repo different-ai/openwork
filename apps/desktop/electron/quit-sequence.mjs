@@ -1,3 +1,5 @@
+/** @typedef {ReturnType<typeof setTimeout> | number} TimerHandle */
+
 /**
  * Bounded, single-shot teardown for Electron's `before-quit`.
  *
@@ -15,8 +17,8 @@
  *   stop: () => Promise<unknown>,
  *   quit: () => void,
  *   exit: () => void,
- *   schedule?: (fn: () => void, delayMs: number) => unknown,
- *   cancel?: (handle: unknown) => void,
+ *   schedule?: (fn: () => void, delayMs: number) => TimerHandle,
+ *   cancel?: (handle: TimerHandle) => void,
  *   stopDeadlineMs?: number,
  *   exitFailsafeMs?: number,
  *   report?: (message: string, error?: unknown) => void,
@@ -34,6 +36,7 @@ export function createQuitSequencer({
 }) {
   /** @type {"idle" | "stopping" | "quitting" | "gone"} */
   let phase = "idle";
+  /** @type {TimerHandle | null} */
   let failsafe = null;
 
   function resumeQuit(reason) {
