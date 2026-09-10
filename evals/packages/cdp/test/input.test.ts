@@ -105,6 +105,75 @@ test("a miss caps the candidate list and says how many the page really had", asy
   );
 });
 
+test("the browser-side miss report lists every rendered element of the requested role, not the first few buttons", async () => {
+  // Run the serialized page callback against a minimal DOM: a shell rail of buttons first in
+  // document order, then a dashboard page whose menu items are the controls a spec would look for.
+  class Element {
+    tagName: string;
+    attributes: Record<string, string>;
+    innerText: string;
+    textContent: string;
+    parentElement: Element | null = null;
+    children: Element[] = [];
+    labels = [];
+    constructor(tagName: string, attributes: Record<string, string>, text: string) {
+      this.tagName = tagName.toUpperCase();
+      this.attributes = attributes;
+      this.innerText = text;
+      this.textContent = text;
+    }
+    getAttribute(name: string) { return this.attributes[name] ?? null; }
+    hasAttribute(name: string) { return name in this.attributes; }
+    closest() { return null; }
+    getBoundingClientRect() { return { left: 0, top: 0, width: 10, height: 10, x: 0, y: 0 }; }
+  }
+  class HTMLElement extends Element { isContentEditable = false; }
+  class HTMLInputElement extends HTMLElement {}
+  class HTMLTextAreaElement extends HTMLElement {}
+  class HTMLSelectElement extends HTMLElement {}
+  class HTMLButtonElement extends HTMLElement {}
+  const button = (text: string) => new HTMLButtonElement("button", {}, text);
+  const menuItem = (text: string) => new HTMLElement("div", { role: "menuitem" }, text);
+  const rail = ["Home", "Sessions", "Library", "Dashboard", "Settings", "Help", "Account", "Toggle Sidebar", "Notifications"].map(button);
+  const menu = [menuItem("Remove Team briefing from dashboard"), menuItem("Delete Team briefing")];
+  const dashboardRoot = new HTMLElement("div", { "data-dashboard-page": "" }, "");
+  const interactive = [...rail, ...menu];
+  const document = {
+    querySelectorAll(selector: string) {
+      return selector.includes('[role="menuitem"]') ? interactive : rail;
+    },
+    querySelector(selector: string) {
+      return selector === "[data-dashboard-page]" ? dashboardRoot : null;
+    },
+    getElementById() { return null; },
+  };
+  const surface = surfaceReturning(null);
+  surface.client.send = async (method, params) => {
+    if (method === "Runtime.evaluate") return { result: { objectId: "global" } };
+    assert.equal(method, "Runtime.callFunctionOn");
+    assert.ok(params && typeof params.functionDeclaration === "string" && Array.isArray(params.arguments));
+    const [argument] = params.arguments;
+    assert.ok(argument && typeof argument === "object" && "value" in argument && typeof argument.value === "string");
+    const value = runInNewContext(`(${params.functionDeclaration})(${JSON.stringify(argument.value)})`, {
+      document,
+      location: { hash: "#/dashboard", pathname: "/" },
+      getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }),
+      Element, HTMLElement, HTMLInputElement, HTMLTextAreaElement, HTMLSelectElement, HTMLButtonElement,
+      JSON, String, Number, Boolean, Array, Object, RegExp,
+    });
+    return { result: { value } };
+  };
+  await assert.rejects(
+    locate(surface, { role: "menuitem", text: "Missing" }),
+    /Route #\/dashboard\. Page roots: appHeader=false dashboardPage=true\. Visible menuitem candidates \(2\): menuitem "Remove Team briefing from dashboard", menuitem "Delete Team briefing"\.$/,
+  );
+  // A role-less miss keeps the historical button/link list, now without the DOM-order cap.
+  await assert.rejects(
+    locate(surface, "Missing"),
+    /Visible button\/link candidates \(9\): button "Home", .*button "Notifications"\.$/,
+  );
+});
+
 test("waitForLocated identifies the element covering a visible target", async () => {
   const surface = surfaceReturning({
     center: { x: 50, y: 25 },
