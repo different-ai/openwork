@@ -113,6 +113,45 @@ and release are owned by `src/mcp-app-host.ts`, with HTTP/session checks in
 Internal callers of `callMcpAppTool` must supply `assertSessionActive` for a
 conversation lease; omitting the guard fails closed.
 
+### App conversation handoff
+
+The chat host supports SDK 1.7.5 `ui/update-model-context` (text blocks and plain
+structured JSON) separately from `ui/message` (user-role text blocks only).
+Dashboard, generated, archived, and disposed views cannot target the selected
+chat. `POST /workspace/:id/mcp-apps/validate` accepts the conversation lease's
+`launchId`, `sessionId`, `engine`, `serverName`, and `resourceUri`. It reuses the
+tool host's lease, live binding, policy, configuration, and session checks without
+executing a provider tool; it is not a messaging or resource-read API.
+
+Context is ephemeral renderer state, latest per server/tool/resource in its exact
+endpoint/workspace/engine/session. Updates do not send a prompt. The next normal
+user submission validates each retained lease and appends source-attributed,
+untrusted synthetic text to the user input, never to system instructions. Each
+update is limited to 16 KiB of JSON, 64 content blocks, 16 levels, and 4096 nodes;
+the renderer retains at most 16 Apps and 64 KiB of context payloads. Empty updates
+clear the previous value. Disposal, rejected lease validation, and origin changes
+fence pending context. Reloading loses it; prior submitted turns are not rewritten.
+Private tool-result `_meta` is not forwarded and nested `_meta` is rejected.
+
+Successful update ordering is shared by Views of the same source, including empty
+clears. Late validations cannot overwrite a newer accepted update. At native prompt
+dispatch the host reads the latest accepted payload for each validated live View;
+replacement Views are revalidated. The local SDK options hook runs after V2 model
+and instruction preparation, with a synchronous final ownership/context check
+before the prompt POST. Its callbacks are never serialized. Continued View churn
+fails preparation after bounded revalidation attempts instead of sending old data.
+
+Messages show a native confirmation with the entire proposed text and owning
+conversation before using that surface's existing immediate-send admission.
+Existing composer drafts stay unchanged. Text is literal, not parsed as commands,
+mentions, or local file attachments. Success is returned only for sent/accepted
+admission; cancellation, unsupported content, and stale ownership reject, while
+unknown admission explicitly warns against resending. A dispatched turn cannot
+be recalled by closing the App. No sampling, progress, View tools, or new tool
+execution surface is introduced.
+Freshly approved App messages use the composer's explicit user-retry admission
+transition after definite failure. That transition never releases unknown admission.
+
 ## Config file
 
 Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CONFIG` or `--config`).

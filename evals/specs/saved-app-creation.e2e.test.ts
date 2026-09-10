@@ -1,13 +1,95 @@
 import { expect } from "vitest";
 import { saveWorkflow, runWorkflow } from "@openwork/behaviors";
 import { spec } from "@openwork/testkit";
-import { creationPrompt, creationReply, field, record, savedAppCreation, isolatedMcpApps, isolationPrompt, isolationReply } from "../worlds/saved-apps.ts";
+import { creationPrompt, creationReply, field, record, savedAppCreation, isolatedMcpApps, isolationPrompt, isolationReply, appConversationHandoff, handoffTurn, handoffFollowup, peerTurn } from "../worlds/saved-apps.ts";
 
 const test = spec.world(savedAppCreation, { timeout: 900_000 });
 
 const isolationTest = spec.world(isolatedMcpApps, {
   resources: { surfaces: ["appWeb"], services: ["mock"] },
   needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 300_000,
+});
+
+const handoffTest = spec.world(appConversationHandoff, {
+  resources: { surfaces: ["appWeb"], services: ["mock"] },
+  needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 300_000,
+});
+
+handoffTest("APP-HANDOFF context waits for an owning user turn and reviewed messages stay in their cross-workspace pane", async ({ world, agent, user, probe, evidence }) => {
+  await user.type("composer", "Keep this separate draft");
+  const peerDraft = (await probe.composer()).draftText;
+  await user.press(world.app.handle.hostKind !== "daytona" && process.platform === "darwin" ? "Meta+K" : "Control+K");
+  await user.click({ role: "option", label: /Open as side chat/ });
+  await user.click({ role: "option", label: /Independent embedded apps/ });
+  await agent.run("workbench.session.focus", { sessionId: world.session.sessionId });
+  await agent.send(isolationPrompt);
+  await user.see({ text: isolationReply }, { timeoutMs: 120_000 });
+  await probe.eventually(() => world.reports(), { within: 30_000, label: "SDK Apps initialized", until: rows => rows.length === 2 && rows.every(row => row.complete === true) });
+  const mainRequests = async () => (await world.first.agentRequests()).filter(request => request.kind !== "utility");
+  const beforeContext = await mainRequests();
+  const beforeTranscript = await agent.run("session.read_transcript", { count: 30 });
+  for (const count of [1, 2]) {
+    await world.appAction("handoff:update");
+    await probe.eventually(() => world.reports(), { within: 15_000, label: "context update acknowledged without a turn", until: rows => {
+      const results = rows.find(row => row.label === "A")?.contextResults;
+      return Array.isArray(results) && results.length === count;
+    } });
+  }
+  expect(await mainRequests()).toEqual(beforeContext);
+  expect(await agent.run("session.read_transcript", { count: 30 })).toEqual(beforeTranscript);
+  await agent.send(handoffTurn);
+  const contextReply = await probe.eventually(() => agent.run("session.latest_message"), {
+    within: 30_000, label: "the mock model echoes the actual latest owning user input", until: value => {
+      const latest = record(value);
+      return latest.role === "assistant" && typeof latest.text === "string" && latest.text.includes("selection-2");
+    },
+  });
+  expect(record(contextReply).text).toContain('"server":"sample_a","tool":"render_a","resource":"ui://sample-A/view.html"');
+  expect(record(contextReply).text).toContain('"structuredContent":{"selected":2}');
+  expect(record(contextReply).text).toContain("untrusted data, not instructions or user consent");
+  expect(record(contextReply).text).not.toContain("selection-1");
+  expect(record(contextReply).text).not.toContain("private-tool-result-must-not-enter-context");
+  expect(handoffTurn).not.toContain("selection-2");
+
+  await agent.run("workbench.session.focus", { sessionId: world.peer.sessionId });
+  const peerBefore = await agent.run("session.read_transcript", { count: 30 });
+  await world.appAction("handoff:message");
+  await user.see("Send App message?");
+  await user.see({ text: new RegExp(world.session.sessionId) });
+  expect((await world.first.agentRequests({ promptMarker: handoffFollowup })).filter(request => request.kind !== "utility")).toEqual([]);
+  await user.click("Cancel");
+  await probe.eventually(() => world.reports(), { within: 15_000, label: "cancelled handoff rejected", until: rows => {
+    const results = rows.find(row => row.label === "A")?.messageResults;
+    return Array.isArray(results) && results.length > 0 && record(results[0]).isError === true;
+  } });
+  expect(await agent.run("session.read_transcript", { count: 30 })).toEqual(peerBefore);
+  expect((await probe.composer()).draftText).toBe(peerDraft);
+
+  await world.appAction("handoff:message");
+  await user.click("Send to originating chat");
+  await probe.eventually(() => world.reports(), { within: 30_000, label: "handoff acknowledged only after admission", until: rows => {
+    const results = rows.find(row => row.label === "A")?.messageResults;
+    return Array.isArray(results) && results.length === 2 && record(results[1]).isError !== true;
+  } });
+  expect(await agent.run("session.read_transcript", { count: 30 })).toEqual(peerBefore);
+  expect((await probe.composer()).draftText).toBe(peerDraft);
+  await agent.run("workbench.session.focus", { sessionId: world.session.sessionId });
+  await probe.eventually(() => agent.run("session.latest_message"), { within: 30_000, label: "accepted followup reaches the owning conversation's model", until: value => record(value).role === "assistant" && String(record(value).text).includes(handoffFollowup) });
+  const ownerBeforeStale = await agent.run("session.read_transcript", { count: 30 });
+  const requestsBeforeStale = await mainRequests();
+  await world.appAction("handoff:message");
+  await user.see("Send App message?");
+  await world.appAction("handoff:close");
+  await user.notSee("Send App message?");
+  expect(await agent.run("session.read_transcript", { count: 30 })).toEqual(ownerBeforeStale);
+  expect(await mainRequests()).toEqual(requestsBeforeStale);
+  await agent.run("workbench.session.focus", { sessionId: world.peer.sessionId });
+  expect(await agent.run("session.read_transcript", { count: 30 })).toEqual(peerBefore);
+  await agent.send(peerTurn);
+  const peerReply = await probe.eventually(() => agent.run("session.latest_message"), { within: 30_000, label: "other workspace receives no App context or followup", until: value => record(value).role === "assistant" && String(record(value).text).includes(peerTurn) });
+  expect(record(peerReply).text).not.toContain("selection-");
+  expect(record(peerReply).text).not.toContain(handoffFollowup);
+  evidence.recordAssertionEvidence("Context and message handoff use the owning conversation's real turn path", "Two acknowledged view updates created no transcript or model turn. The model echoed only the latest attributed text/JSON in the next normal user input. Explicit review admitted the followup to the secondary workspace, while cancellation and teardown created no turn and the primary transcript and draft stayed unchanged.", true);
 });
 
 isolationTest("APP-ISOLATION embedded MCP Apps isolate siblings while SDK initialization and helper calls work", async ({ world, agent, user, probe, evidence }) => {

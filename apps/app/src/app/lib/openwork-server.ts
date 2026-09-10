@@ -2038,6 +2038,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         timeoutMs: timeouts.binary,
       },
     ),
+    validateMcpApp: (workspaceId: string, payload: {
+      launchId: string; sessionId: string; engine?: "v1" | "v2"; serverName: string; resourceUri: string;
+    }) => requestJson<Record<string, never>>(
+      baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp-apps/validate`,
+      { token, hostToken, method: "POST", body: payload },
+    ),
     releaseMcpApp: (workspaceId: string, launchId: string) => requestJson<{ released: boolean }>(
       baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp-apps/release`,
       { token, hostToken, method: "POST", body: { launchId } },

@@ -128,6 +128,8 @@ import {
   permissionKey,
 } from "@/react-app/domains/session/sync/session-sync";
 import { draftToParts } from "@/react-app/domains/session/sync/draft-parts";
+import { createMcpAppPromptDispatch, sameMcpAppConversation, type McpAppHandoff } from "@/components/chat/mcp-app-conversation";
+import type { McpAppOrigin } from "@/components/chat/mcp-app-origin";
 import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
 import { getModelBehaviorSummary, nextModelBehaviorValue, previousModelBehaviorValue } from "@/app/lib/model-behavior";
@@ -1393,11 +1395,15 @@ export function SessionRoute() {
           openSettings: handleOpenSettings,
         });
       },
-      onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void): Promise<CloudMcpSubmissionResult> => {
+      onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void, appHandoff?: McpAppHandoff): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
+        const appOrigin: McpAppOrigin | null = selectedWorkspaceEndpoint ? { client: selectedWorkspaceEndpoint.client, workspaceId: selectedWorkspaceEndpoint.workspaceId,
+          sessionId: targetSessionId, engine: isOpencodeV2BaseUrl(opencodeBaseUrl) ? "v2" : "v1", readOnly: false } : null;
         const generation = getQueuedSendGeneration(targetSessionId);
         const assertCurrent = () => {
+          appHandoff?.assertCurrent();
+          if (appHandoff && (!appOrigin || !sameMcpAppConversation(appHandoff.origin, appOrigin))) throw new Error("App message origin does not match this conversation endpoint.");
           assertQueuedSendCurrent(targetSessionId, generation);
           if (sessionWorkHeld(opencodeBaseUrl, targetSessionId)) throw new Error("This conversation is being archived.");
         };
@@ -1494,7 +1500,7 @@ export function SessionRoute() {
                   return;
                 }
 
-                const parts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
+                const parts: Awaited<ReturnType<typeof draftToParts>> = appHandoff ? [{ type: "text", text }] : await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
                 assertCurrent();
                 const system = await buildOpenworkSessionSystemContext(client, {
                   workspaceId: selectedWorkspaceId,
@@ -1502,7 +1508,8 @@ export function SessionRoute() {
                   runtimeKey: environmentRuntimeKey,
                 });
                 assertCurrent();
-                onPrepared?.(v2PromptText(parts));
+                const openworkPrompt = createMcpAppPromptDispatch({ origin: appOrigin, parts, assertCurrent, handoff: appHandoff,
+                  onPrepared: (promptParts) => onPrepared?.(v2PromptText(promptParts)) });
                 const result = await opencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
                   messageID: draft.messageId,
@@ -1511,7 +1518,7 @@ export function SessionRoute() {
                   agent: selectedAgent ?? undefined,
                   ...(sendVariant ? { variant: sendVariant } : {}),
                   system,
-                });
+                }, { meta: { openworkPrompt } });
                 if (result.error) {
                   if (isPromptAdmissionUnknown(result.error)) throw result.error;
                   throw new Error(serializeSDKError(result.error));
@@ -1761,10 +1768,14 @@ export function SessionRoute() {
       isSandboxWorkspace: isSandboxWorkspace(workspace),
       environmentRuntimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
       onApplyEnvironmentChanges: undefined,
-      onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void): Promise<CloudMcpSubmissionResult> => {
+      onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void, appHandoff?: McpAppHandoff): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || session.sessionId;
+        const appOrigin: McpAppOrigin = { client: endpoint.client, workspaceId: endpoint.workspaceId, sessionId: targetSessionId,
+          engine: isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl) ? "v2" : "v1", readOnly: false };
         const generation = getQueuedSendGeneration(targetSessionId);
         const assertCurrent = () => {
+          appHandoff?.assertCurrent();
+          if (appHandoff && !sameMcpAppConversation(appHandoff.origin, appOrigin)) throw new Error("App message origin does not match this conversation endpoint.");
           assertQueuedSendCurrent(targetSessionId, generation);
           if (sessionWorkHeld(endpoint.opencodeBaseUrl, targetSessionId)) throw new Error("This conversation is being archived.");
         };
@@ -1836,7 +1847,7 @@ export function SessionRoute() {
                   if (result.error) throw new Error(serializeSDKError(result.error));
                   return;
                 }
-                const parts = await draftToParts(draft, workspaceRoot, targetSessionId, endpoint);
+                const parts: Awaited<ReturnType<typeof draftToParts>> = appHandoff ? [{ type: "text", text }] : await draftToParts(draft, workspaceRoot, targetSessionId, endpoint);
                 assertCurrent();
                 const system = await buildOpenworkSessionSystemContext(endpoint.client, {
                   workspaceId: workspace.id,
@@ -1844,7 +1855,8 @@ export function SessionRoute() {
                   runtimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
                 });
                 assertCurrent();
-                onPrepared?.(v2PromptText(parts));
+                const openworkPrompt = createMcpAppPromptDispatch({ origin: appOrigin, parts, assertCurrent, handoff: appHandoff,
+                  onPrepared: (promptParts) => onPrepared?.(v2PromptText(promptParts)) });
                 const result = await workspaceOpencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
                   messageID: draft.messageId,
@@ -1853,7 +1865,7 @@ export function SessionRoute() {
                   agent: selectedAgent ?? undefined,
                   ...(sendVariant ? { variant: sendVariant } : {}),
                   system,
-                });
+                }, { meta: { openworkPrompt } });
                 if (result.error) {
                   if (isPromptAdmissionUnknown(result.error)) throw result.error;
                   throw new Error(serializeSDKError(result.error));

@@ -47,7 +47,7 @@ export interface MockAgentWorkload {
   matchAll?: boolean;
   finalReply: string;
   /** Derive the final reply from the real tool result or model system instructions. */
-  finalReplyFrom?: "last-tool-text" | "system-text";
+  finalReplyFrom?: "last-tool-text" | "system-text" | "latest-user-text";
   /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
   finalReplyChunkSize?: number;
   /** Exact content-delta boundaries. Their concatenation must equal finalReply. */

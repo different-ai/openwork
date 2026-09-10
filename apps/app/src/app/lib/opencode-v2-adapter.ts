@@ -15,7 +15,7 @@ import type {
   UnknownError,
 } from "@opencode-ai/sdk/v2/client";
 
-import { createClient, createDesktopFetch, type FieldsResult } from "./opencode";
+import { createClient, createDesktopFetch, type FieldsResult, type PromptDispatch } from "./opencode";
 import { isDesktopRuntime } from "./runtime-env";
 import type { OpencodeEvent } from "../types";
 import { normalizeDirectoryPath } from "../utils";
@@ -23,6 +23,7 @@ import { normalizeDirectoryPath } from "../utils";
 type RequestOptions = {
   signal?: AbortSignal;
   throwOnError?: boolean;
+  meta?: { openworkPrompt?: PromptDispatch };
 };
 
 type DirectoryParameters = {
@@ -1900,7 +1901,18 @@ export function createClientV2(
           { value: parameters.system }, options?.signal);
         if (!instructions.response.ok) return failedResult(instructions);
       }
-      const text = v2PromptText(parameters.parts ?? []);
+      let parts = parameters.parts ?? [];
+      if (options?.meta?.openworkPrompt) {
+        // Model/instruction preparation may outlive the App. No await may separate
+        // this final reader (including its ownership fence) from native dispatch.
+        for (let attempt = 0; ; attempt++) {
+          const read = await options.meta.openworkPrompt();
+          const current = read();
+          if (current) { parts = current; break; }
+          if (attempt === 3) throw new Error("App views kept changing before dispatch. Try sending again.");
+        }
+      }
+      const text = v2PromptText(parts);
       const promptResult = await request(
         "POST",
         `/api/session/${encodeURIComponent(parameters.sessionID)}/prompt`,

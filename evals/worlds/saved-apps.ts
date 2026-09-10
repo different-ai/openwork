@@ -11,6 +11,9 @@ export const creationPrompt = "Create a reusable app for my dashboard that shows
 export const creationReply = "Your briefing app draft is ready. Try the preview, then choose Save.";
 export const isolationPrompt = "Open both independent sample apps, the second sample first.";
 export const isolationReply = "Both sample apps are open.";
+export const handoffTurn = "Explain my current sample selection.";
+export const handoffFollowup = "Continue with my sample selection.";
+export const peerTurn = "Check the separate conversation.";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -26,7 +29,8 @@ export function field(value: unknown, key: string): string {
   return found;
 }
 
-async function inAppDocuments(app: Surface, action: "read" | "details" | "isolation") {
+type AppDocumentAction = "read" | "details" | "isolation" | "handoff:update" | "handoff:message" | "handoff:close";
+async function inAppDocuments(app: Surface, action: AppDocumentAction) {
   const values: string[] = [];
   const seen = new Set<string>();
   const targets = (await listTargets(app.handle.cdpUrl)).filter(entry => entry.type === "iframe"
@@ -53,12 +57,18 @@ async function inAppDocuments(app: Surface, action: "read" | "details" | "isolat
         const value = await evaluate({ ...client, send: (method, params, options) => client.send(method, { ...params, contextId }, options) }, browserScript((action) => {
           if (action === "isolation") return document.body.dataset.isolationReport ?? "";
           if (action === "read") return document.body.innerText;
+          if (action.startsWith("handoff:")) {
+            const button = document.querySelector<HTMLButtonElement>(`[data-handoff-action="${action}"]`);
+            if (!button) return "";
+            button.click();
+            return "clicked";
+          }
           document.querySelector<HTMLButtonElement>("button")?.click();
           return "";
         }, [action]));
         seen.add(frameId);
         if (value) values.push(value);
-        if (action !== "isolation") return values;
+        if (action !== "isolation" && (!action.startsWith("handoff:") || value === "clicked")) return values;
       }
     } finally { client.close(); }
   }
@@ -66,7 +76,7 @@ async function inAppDocuments(app: Surface, action: "read" | "details" | "isolat
 }
 
 /** Two real SDK Apps in the shared renderer, with no Den or live provider. */
-export async function isolatedMcpApps(seed: Seed) {
+export async function isolatedMcpApps(seed: Seed, handoff = false) {
   const appRequire = createRequire(new URL("../../apps/app/package.json", import.meta.url));
   const { build } = await import(createRequire(appRequire.resolve("vite")).resolve("esbuild"));
   const appHtml = async (label: string) => {
@@ -74,9 +84,32 @@ export async function isolatedMcpApps(seed: Seed) {
       stdin: { resolveDir: fileURLToPath(new URL("../../apps/app", import.meta.url)), contents: `
         import { App } from "@modelcontextprotocol/ext-apps";
         const label = ${JSON.stringify(label)};
+        const handoff = ${JSON.stringify(handoff)};
         const app = new App({ name: "isolation-" + label, version: "1" }, {});
         const report = { label, input: null, result: null, helper: null, helperError: null, siblingReads: 0, siblingInjections: 0, readDenied: 0, injectionDenied: 0, forgedMessages: 0, complete: false };
         const publish = () => { document.body.dataset.isolationReport = JSON.stringify(report); };
+        if (handoff && label === "A") {
+          report.contextResults = [];
+          report.messageResults = [];
+          let selection = 0;
+          for (const action of ["update", "message", "close"]) {
+            const button = document.createElement("button");
+            button.dataset.handoffAction = "handoff:" + action;
+            button.textContent = action;
+            button.onclick = async () => {
+              try {
+                if (action === "update") {
+                  selection++;
+                  report.contextResults.push(await app.updateModelContext({ content: [{ type: "text", text: "selection-" + selection }], structuredContent: { selected: selection } }));
+                }
+                if (action === "message") report.messageResults.push(await app.sendMessage({ role: "user", content: [{ type: "text", text: ${JSON.stringify(handoffFollowup)} }] }, { timeout: 120000 }));
+                if (action === "close") await app.requestTeardown({});
+              } catch (error) { report.messageResults.push({ isError: true, message: error.message }); }
+              publish();
+            };
+            document.body.appendChild(button);
+          }
+        }
         app.ontoolinput = ({ arguments: args }) => { report.input = args; publish(); };
         let received = false;
         app.ontoolresult = async (result) => {
@@ -118,7 +151,7 @@ export async function isolatedMcpApps(seed: Seed) {
   const tools = async (label: string) => [
     { name: `render_${label.toLowerCase()}`, description: `Open sample ${label}`, inputSchema: { type: "object", properties: { marker: { type: "string" } } },
       annotations: { readOnlyHint: true, destructiveHint: false }, _meta: { ui: { resourceUri: `ui://sample-${label}/view.html` } },
-      appHtml: await appHtml(label), result: { content: [{ type: "text", text: `initial-${label}` }] } },
+      appHtml: await appHtml(label), result: { content: [{ type: "text", text: `initial-${label}` }], ...(handoff ? { _meta: { privateFixture: "private-tool-result-must-not-enter-context" } } : {}) } },
     { name: "read_detail", description: "Read this sample's detail", inputSchema: { type: "object", properties: { marker: { type: "string" } } },
       annotations: { readOnlyHint: true, destructiveHint: false }, _meta: { ui: { resourceUri: `ui://sample-${label}/view.html`, visibility: ["app"] } },
       result: { content: [{ type: "text", text: `helper-${label}` }] } },
@@ -126,23 +159,33 @@ export async function isolatedMcpApps(seed: Seed) {
   const workspacePath = seed.tmpPath("embedded-app-isolation");
   const app = await seed.appWeb({ name: "embedded-app-isolation", workspacePath, mocks: {
     first: seed.mock({ isolatedProcessEnv: true, allowUnauthenticatedMcp: true, tools: await tools("A"), agentWorkloads: [{
-      promptMarker: isolationPrompt, finalReply: isolationReply,
+      promptMarker: isolationPrompt, finalReply: isolationReply, latestUserTurn: true,
       steps: [{ tool: "render_b", arguments: { marker: "input-B" } }, { tool: "render_a", arguments: { marker: "input-A" } }],
-    }] }),
+    }, ...(handoff ? [handoffTurn, handoffFollowup, peerTurn].map(promptMarker => ({ promptMarker, latestUserTurn: true, finalReply: "Echo latest user input", finalReplyFrom: "latest-user-text" as const, steps: [] })) : [])] }),
     second: seed.mock({ isolatedProcessEnv: true, allowUnauthenticatedMcp: true, tools: await tools("B") }),
   } });
   const workspace = await seed.workspace(app, workspacePath);
-  await configureProvider(seed, app, workspace.workspaceId, "sample-model", "sample-model", {
+  const providerConfig = {
     provider: { "sample-model": { npm: "@ai-sdk/openai-compatible", name: "Sample model", options: { baseURL: `${app.mocks.first.url}/v1`, apiKey: "sk-sample-fixture" }, models: { "sample-model": { name: "Sample model" } } } },
     mcp: {
       sample_a: { type: "remote", url: app.mocks.first.mcpUrl, enabled: true, oauth: false },
       sample_b: { type: "remote", url: app.mocks.second.mcpUrl, enabled: true, oauth: false },
     },
-  });
+  };
+  await configureProvider(seed, app, workspace.workspaceId, "sample-model", "sample-model", providerConfig);
   const session = await seed.session(app, { title: "Independent embedded apps" });
-  return { app, session, first: app.mocks.first, second: app.mocks.second,
+  return { app, session, workspace, providerConfig, first: app.mocks.first, second: app.mocks.second,
+    appAction: (action: AppDocumentAction) => inAppDocuments(app, action),
     reports: async () => (await inAppDocuments(app, "isolation")).map(value => record(JSON.parse(value))),
   };
+}
+
+export async function appConversationHandoff(seed: Seed) {
+  const world = await isolatedMcpApps(seed, true);
+  const peerWorkspace = await seed.workspace(world.app, seed.tmpPath("app-handoff-peer"), { create: true });
+  await configureProvider(seed, world.app, peerWorkspace.workspaceId, "sample-model", "sample-model", world.providerConfig);
+  const peer = await seed.session(world.app, { title: "Separate conversation" });
+  return { ...world, peerWorkspace, peer };
 }
 
 export async function savedAppCreation(seed: Seed) {

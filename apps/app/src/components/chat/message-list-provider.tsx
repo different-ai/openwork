@@ -10,8 +10,10 @@ import * as React from "react"
 import type { ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
 import type { OpenworkServerClient } from "@/app/lib/openwork-server"
 import type { McpAppOrigin } from "./mcp-app-origin"
+import type { McpAppMessageHandler } from "./mcp-app-conversation"
 
 interface MessageListContextValue {
+  onMcpAppMessage?: McpAppMessageHandler
   mcpAppOrigin: McpAppOrigin | null
   readOnly: boolean
   workspaceId: string
@@ -50,6 +52,7 @@ interface MessageListContextValue {
 const MessageListContext = React.createContext<MessageListContextValue | null>(null)
 
 interface MessageListProviderProps {
+  onMcpAppMessage?: McpAppMessageHandler
   client?: OpenworkServerClient
   mcpAppEngine?: "v1" | "v2"
   readOnly?: boolean
@@ -87,6 +90,7 @@ export interface DispatchAction {
 }
 
 export function MessageListProvider({
+  onMcpAppMessage,
   client,
   mcpAppEngine,
   readOnly = false,
@@ -175,6 +179,7 @@ export function MessageListProvider({
   )
   const value = React.useMemo(
     () => ({
+      onMcpAppMessage,
       mcpAppOrigin,
       readOnly,
       workspaceId,
@@ -197,6 +202,7 @@ export function MessageListProvider({
         : undefined,
     }),
     [
+      onMcpAppMessage,
       mcpAppOrigin,
       readOnly,
       workspaceId,

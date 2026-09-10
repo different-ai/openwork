@@ -868,7 +868,7 @@ export async function resolveSameServerMcpAppResource(input: {
   return bindLaunch(input, matches[0].app, matches[0].fingerprint);
 }
 
-export async function callMcpAppTool(input: {
+export type McpAppActionOrigin = {
   launchId?: string;
   sessionId?: string | null;
   engine?: "v1" | "v2";
@@ -876,13 +876,13 @@ export async function callMcpAppTool(input: {
   workspaceId: string;
   workspaceRoot: string;
   serverName: string;
-  name: string;
   resourceUri?: string;
-  arguments?: Record<string, unknown>;
-  approved?: boolean;
   /** Required for conversation leases; the HTTP host checks current ownership/archive state. */
   assertSessionActive?: () => Promise<void>;
-}): Promise<CallToolResult> {
+};
+
+/** Shared lease/config fence for tool actions and conversation handoffs. */
+async function prepareMcpAppLaunch(input: McpAppActionOrigin) {
   if (!input.launchId) throw new McpAppHostError("missing_launch_context", "This App has no live launch context. Update OpenWork and reopen the App before using its actions.");
   const launchId = input.launchId;
   const launch = liveLaunches(input.serverConfig).get(launchId);
@@ -916,16 +916,42 @@ export async function callMcpAppTool(input: {
     return item.config;
   };
   const config = await currentConfig();
+  if (launch.sessionId !== null && !input.assertSessionActive) {
+    throw new McpAppHostError("inactive_session", "The original conversation cannot be verified. Reopen it before using App actions.");
+  }
+  assertLive();
+  return { launch, config, currentConfig, assertLive };
+}
+
+async function assertMcpAppBinding(input: McpAppActionOrigin, client: Client, launch: McpAppLaunch, tools: Tool[]) {
+  const original = tools.find((candidate) => candidate.name === launch.toolName);
+  if (!original || !toolVisibility(original, "app") || toolUiResourceUri(original) !== launch.resourceUri) throw staleLaunch();
+  findHtmlResource(launch.resourceUri, await client.readResource({ uri: launch.resourceUri }).catch(() => {
+    throw new McpAppHostError("resource_read_failed", "The original App resource is no longer available. Reopen the App before using its actions.");
+  }));
+  if ((await diagnoseMcpToolDenies(input.workspaceRoot, input.serverName, [projectedMcpToolName(input.serverName, original.name)])).length > 0) {
+    throw new McpAppHostError("tool_denied", "The originating App tool is denied. Reopen it after reviewing the workspace tool policy.");
+  }
+}
+
+/** Validate the same live binding as tool calls, without executing a provider tool. */
+export async function validateMcpAppLaunch(input: McpAppActionOrigin): Promise<void> {
+  const { launch, config, currentConfig, assertLive } = await prepareMcpAppLaunch(input);
+  await withRemoteClient(config, async (client) => assertMcpAppBinding(input, client, launch, await listTools(client)));
+  await input.assertSessionActive?.();
+  await currentConfig();
+  assertLive();
+}
+
+export async function callMcpAppTool(input: McpAppActionOrigin & {
+  name: string;
+  arguments?: Record<string, unknown>;
+  approved?: boolean;
+}): Promise<CallToolResult> {
+  const { launch, config, currentConfig, assertLive } = await prepareMcpAppLaunch(input);
   return await withRemoteClient(config, async (client) => {
     const tools = await listTools(client);
-    const original = tools.find((candidate) => candidate.name === launch.toolName);
-    if (!original || !toolVisibility(original, "app") || toolUiResourceUri(original) !== launch.resourceUri) throw staleLaunch();
-    findHtmlResource(launch.resourceUri, await client.readResource({ uri: launch.resourceUri }).catch(() => {
-      throw new McpAppHostError("resource_read_failed", "The original App resource is no longer available. Reopen the App before using its actions.");
-    }));
-    if ((await diagnoseMcpToolDenies(input.workspaceRoot, input.serverName, [projectedMcpToolName(input.serverName, original.name)])).length > 0) {
-      throw new McpAppHostError("tool_denied", "The originating App tool is denied. Reopen it after reviewing the workspace tool policy.");
-    }
+    await assertMcpAppBinding(input, client, launch, tools);
     const tool = tools.find((candidate) => candidate.name === input.name);
     if (!tool) throw new McpAppHostError("tool_not_found", "The requested same-server MCP tool was not found.");
     if (!toolVisibility(tool, "app")) {

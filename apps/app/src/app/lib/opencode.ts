@@ -1,4 +1,5 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import type { AgentPartInput, FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2/client";
 
 import { desktopFetch } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
@@ -6,6 +7,10 @@ import { isDesktopRuntime } from "./runtime-env";
 export type FieldsResult<T> =
   | ({ data: T; error?: undefined } & { request: Request; response: Response })
   | ({ data?: undefined; error: unknown } & { request: Request; response: Response });
+
+/** Local SDK options metadata, never HTTP payload. Null asks to revalidate a replacement view. */
+export type PromptDispatch = () => Promise<() => Array<TextPartInput | FilePartInput | AgentPartInput> | null>;
+type PromptRequestOptions = { throwOnError?: boolean; meta?: { openworkPrompt?: PromptDispatch } };
 
 type PromptAsyncParameters = {
   sessionID: string;
@@ -343,12 +348,20 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   const session = client.session as typeof client.session;
   const openworkMount = auth?.mode === "openwork" ? resolveOpenworkWorkspaceMount(baseUrl) : null;
   const sessionOverrides = session as any as {
-    promptAsync: (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
+    promptAsync: (parameters: PromptAsyncParameters, options?: PromptRequestOptions) => Promise<FieldsResult<{}>>;
     command: (parameters: CommandParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
   };
 
-  sessionOverrides.promptAsync = async (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => {
+  sessionOverrides.promptAsync = async (parameters: PromptAsyncParameters, options?: PromptRequestOptions) => {
     const { sessionID, directory: requestDirectory, ...body } = parameters;
+    if (options?.meta?.openworkPrompt) {
+      for (let attempt = 0; ; attempt++) {
+        const read = await options.meta.openworkPrompt();
+        const parts = read();
+        if (parts) { body.parts = parts; break; }
+        if (attempt === 3) throw new Error("App views kept changing before dispatch. Try sending again.");
+      }
+    }
     try {
       // Keep the tagged transport failure intact instead of serializing it
       // through the SDK's error result. Native still receives prompt_async.
