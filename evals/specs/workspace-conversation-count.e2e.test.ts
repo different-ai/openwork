@@ -1,15 +1,20 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { sidebarExpansion } from "../worlds/session-shell.ts";
 
-const test = spec.world(seed => sidebarExpansion(seed, "workspace"), {
-  resources: { surfaces: ["desktop"], services: [] },
+const test = spec.world(async seed => {
+  const workspacePath = seed.tmpPath("workspace-inventory");
+  const app = await seed.appWeb({ name: "workspace-inventory", workspacePath });
+  const workspace = await seed.workspace(app, workspacePath);
+  const sessions = await seed.sessions(app, Array.from({ length: 21 }, (_, index) => `Inventory conversation ${index + 1}`));
+  return { app, workspace, sessions };
+}, {
+  resources: { surfaces: ["appWeb"], services: [] },
 });
 
 test("workspace inventory counts survive previews, pins, groups and drafts, and follow archive and Undo", async ({ world, user, agent, probe, step }) => {
   const workspaceId = world.workspace.workspaceId;
   const count = { testId: `workspace-conversation-count-${workspaceId}` };
-  const session = world.sessions[0];
+  const session = world.sessions.at(-1);
   if (!session) throw new Error("Missing inventory fixture session");
   await step("the full inventory is named accessibly before Show more", async () => {
     await user.see(count, { text: "21", timeoutMs: 90_000 });
