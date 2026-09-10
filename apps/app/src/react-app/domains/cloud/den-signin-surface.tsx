@@ -5,11 +5,11 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
-import { Dithering } from "@paper-design/shaders-react";
 
 import { t } from "../../../i18n";
 import { resolveExtensionIconSrc } from "../../design-system/extension-icon-src";
 import { DEFAULT_DEN_BASE_URL } from "../../../app/lib/den";
+import { DitherBackdrop } from "@/components/dither-backdrop";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "../../design-system/text-input";
 import { OrganizationServerAffordance } from "../settings/cloud/organization-server-affordance";
@@ -221,17 +221,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
       <div className="relative min-h-dvh bg-background text-foreground">
         {/* Pixel-dither mosaic background (dark:invert keeps it visible in dark mode) */}
         <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden opacity-[0.1] dark:invert">
-          <Dithering
-            className="size-full"
-            speed={0.01}
-            shape="warp"
-            type="2x2"
-            size={20.3}
-            scale={1.19}
-            frame={264559.21}
-            colorBack="#00000000"
-            colorFront="#000000"
-          />
+          <DitherBackdrop />
         </div>
 
         {/* Titlebar drag region */}

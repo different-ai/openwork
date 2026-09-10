@@ -34,12 +34,14 @@ export type RouteSession = Session & {
   slug?: string | null;
 };
 
-type RouteSessionListResult =
+// Absent for v1 prefix reads; null means an exhausted v2 cursor traversal.
+type RouteSessionListResult = { nextCursor?: string | null } & (
   | { data: RouteSession[]; error?: undefined; request: Request; response: Response }
-  | { data?: undefined; error: unknown; request: Request; response: Response };
+  | { data?: undefined; error: unknown; request: Request; response: Response });
 export type RouteSessionListTransport = (input: {
   endpoint: ResolvedWorkspaceEndpoint;
   limit: number;
+  cursor?: string;
 }) => Promise<RouteSessionListResult>;
 
 const nativeRouteSessionList: RouteSessionListTransport = async ({ endpoint, limit }) => {
@@ -50,10 +52,10 @@ const nativeRouteSessionList: RouteSessionListTransport = async ({ endpoint, lim
   return client.session.list({ limit });
 };
 
-export const v2RouteSessionList: RouteSessionListTransport = async ({ endpoint, limit }) =>
+export const v2RouteSessionList: RouteSessionListTransport = async ({ endpoint, limit, cursor }) =>
   createClientV2(`${endpoint.mountedBaseUrl}/opencode2`, undefined, {
     token: endpoint.token,
-  }).session.list({ limit });
+  }).listSessionsPage({ limit, cursor });
 
 /** Resolve the owning server's engine even when this workspace isn't selected. */
 async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promise<ResolvedWorkspaceEndpoint> {
@@ -67,12 +69,25 @@ async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promis
     : endpoint;
 }
 
-export async function createRouteSession(endpoint: ResolvedWorkspaceEndpoint, directory?: string): Promise<Session> {
+/**
+ * Create a session and report the engine endpoint that owns it. Callers that
+ * key follow-up state by `opencodeBaseUrl` (the hero's one-step auto-send) must
+ * use this endpoint, not the workspace's default v1 one, or the mounted
+ * session surface never finds that state when chat is routed to v2.
+ */
+export async function createRouteSessionOnEngine(
+  endpoint: ResolvedWorkspaceEndpoint,
+  directory?: string,
+): Promise<{ session: Session; endpoint: ResolvedWorkspaceEndpoint }> {
   const native = await routeSessionEndpoint(endpoint);
   const client = isOpencodeV2BaseUrl(native.opencodeBaseUrl)
     ? createClientV2(native.opencodeBaseUrl, directory, { token: native.token })
     : createClient(native.opencodeBaseUrl, directory, { token: native.token, mode: "openwork" });
-  return unwrap(await client.session.create({ directory }));
+  return { session: unwrap(await client.session.create({ directory })), endpoint: native };
+}
+
+export async function createRouteSession(endpoint: ResolvedWorkspaceEndpoint, directory?: string): Promise<Session> {
+  return (await createRouteSessionOnEngine(endpoint, directory)).session;
 }
 
 export async function deleteRouteSession(endpoint: ResolvedWorkspaceEndpoint, sessionId: string): Promise<boolean> {
@@ -83,17 +98,40 @@ export async function listRouteSessions(
   endpoint: ResolvedWorkspaceEndpoint,
   transport: RouteSessionListTransport = nativeRouteSessionList,
 ): Promise<RouteSession[]> {
-  const result = await transport({ endpoint, limit: 200 });
-  try {
-    return unwrap(result);
-  } catch (error) {
-    if (error instanceof Error) {
-      Object.assign(error, { status: result.response.status });
-      if (result.error && typeof result.error === "object" && "code" in result.error && typeof result.error.code === "string") {
-        Object.assign(error, { code: result.error.code });
+  let limit = 200;
+  let cursor: string | undefined;
+  const cursors = new Set<string>();
+  const sessions = new Map<string, RouteSession>();
+  for (;;) {
+    const result = await transport({ endpoint, limit, ...(cursor === undefined ? {} : { cursor }) });
+    let items: RouteSession[];
+    try {
+      items = unwrap(result);
+    } catch (error) {
+      if (error instanceof Error) {
+        Object.assign(error, { status: result.response.status });
+        if (result.error && typeof result.error === "object" && "code" in result.error && typeof result.error.code === "string") {
+          Object.assign(error, { code: result.error.code });
+        }
       }
+      throw error;
     }
-    throw error;
+    if (result.nextCursor !== undefined) {
+      // v2's workspace proxy can filter an entire page. Only its native cursor
+      // establishes exhaustion, never the number of visible rows.
+      for (const session of items) {
+        if (!sessions.has(session.id)) sessions.set(session.id, session);
+      }
+      if (result.nextCursor === null) return [...sessions.values()];
+      if (cursors.has(result.nextCursor)) throw new Error("Session list cursor did not advance.");
+      cursors.add(result.nextCursor);
+      cursor = result.nextCursor;
+    } else {
+      // v1 has no older-page cursor and defaults to 100 without an explicit
+      // limit. Replace the prefix on each read; do not append stale duplicates.
+      if (items.length < limit) return items;
+      limit *= 2;
+    }
   }
 }
 
@@ -481,10 +519,12 @@ export function toSessionGroups(
   sessionsByWorkspaceId: Record<string, RouteSession[]>,
   errorsByWorkspaceId: Record<string, string | null>,
   loadingWorkspaceIds: Set<string>,
+  loadedWorkspaceIds: ReadonlySet<string>,
 ): WorkspaceSessionGroup[] {
   return workspaces.map((workspace) => ({
     workspace,
     sessions: sessionsByWorkspaceId[workspace.id] ?? [],
+    sessionsLoaded: loadedWorkspaceIds.has(workspace.id),
     status: loadingWorkspaceIds.has(workspace.id)
       ? "loading"
       : errorsByWorkspaceId[workspace.id]

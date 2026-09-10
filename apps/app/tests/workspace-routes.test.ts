@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   classifyRouteSessionReadError,
   createRouteSession,
+  createRouteSessionOnEngine,
   deleteRouteSession,
   mergeRouteWorkspaces,
   readRouteSessionsWithRetry,
@@ -52,7 +53,10 @@ describe("workspace session mutations", () => {
           baseUrl: "http://owner.test", token: "fixture-token",
         });
         if (!endpoint) throw new Error("Workspace endpoint missing");
-        expect((await createRouteSession(endpoint, "/existing")).id).toBe("ses_created");
+        const created = await createRouteSessionOnEngine(endpoint, "/existing");
+        expect(created.session.id).toBe("ses_created");
+        expect(created.endpoint.opencodeBaseUrl).toBe(`http://owner.test/workspace/ws_existing/${engine === "v2" ? "opencode2" : "opencode"}`);
+        expect(endpoint.opencodeBaseUrl).toBe("http://owner.test/workspace/ws_existing/opencode");
         expect(await deleteRouteSession(endpoint, "ses_created")).toBe(true);
         expect(requests).toEqual([
           "GET /experimental/engine-v2-preview/status",

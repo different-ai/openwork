@@ -3,8 +3,12 @@ import type { Target } from "@openwork/testkit";
 import { spec } from "@openwork/testkit";
 import { browserGeometryWorld, browserViewportWorld, CAPTURE_VIEWPORT, INPUT_PROBE_PAGE } from "../worlds/browser-panel.ts";
 
-const test = spec.world(browserViewportWorld);
-const geometryTest = spec.world(browserGeometryWorld);
+const test = spec.world(browserViewportWorld, {
+  resources: { surfaces: ["desktop"], services: [], nativeReason: "Electron WebContentsView must recover its real panel viewport after CDP emulation." },
+});
+const geometryTest = spec.world(browserGeometryWorld, {
+  resources: { surfaces: ["desktop"], services: [], nativeReason: "Native WebContentsView bounds follow Electron zoom and panel resizing without replacing the page." },
+});
 
 // Screenshot and docs-shots clients emulate a capture viewport on the visible
 // built-in browser tab over CDP. Chromium keeps that emulated size after the

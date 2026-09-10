@@ -384,7 +384,6 @@ async function attemptDrain(sessionId: string) {
       return;
     }
     if (getQueuedSendGeneration(sessionId) !== generation) return;
-    useComposerStateStore.getState().appendHistory(sessionId, draft.text);
     useSessionActivityStore.getState().setRunStatus(
       context.workspaceId,
       sessionId,
