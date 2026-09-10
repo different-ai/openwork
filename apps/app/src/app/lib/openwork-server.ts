@@ -1595,6 +1595,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       const suffix = query.size ? `?${query.toString()}` : "";
       return requestJson<OpenworkConnectState>(baseUrl, `/experimental/connect/state${suffix}`, { token, hostToken, timeoutMs: timeouts.config });
     },
+    putDenIdentity: async (body: { baseUrl: string; token: string; orgId: string }, signal?: AbortSignal) => {
+      await requestJson<unknown>(baseUrl, "/den-session/identity", { hostToken, method: "PUT", body, signal, timeoutMs: timeouts.config });
+    },
     putDenSession: async (body: { baseUrl: string; token: string; orgId: string }, signal?: AbortSignal) => {
       await requestJson<unknown>(baseUrl, "/den-session", { hostToken, method: "PUT", body, signal, timeoutMs: timeouts.config });
     },

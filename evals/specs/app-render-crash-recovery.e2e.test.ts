@@ -10,6 +10,7 @@ const heading = { text: /OpenWork hit an unexpected error/ };
 
 test("a render throw shows a recovery screen with the error instead of a blank window", async ({ world, user, agent, probe, step }) => {
   await step("the app is healthy and shows no recovery screen", async () => {
+    await user.see("composer", { editable: true, timeoutMs: 120_000 });
     expect((await probe.text()).trim().length).toBeGreaterThan(40);
     await user.notSee(heading);
   });
@@ -51,12 +52,15 @@ test("a render throw shows a recovery screen with the error instead of a blank w
   });
 
   await step("reload brings the app back", async () => {
+    const route = await probe.hash();
     await user.click({ role: "button", label: /^reload$/i });
     await probe.eventually(() => probe.text(), {
       within: 120_000,
       label: "app content after reload",
       until: (text) => text.trim().length > 40 && !/OpenWork hit an unexpected error/.test(text),
     });
+    await user.see("composer", { editable: true, timeoutMs: 120_000 });
+    expect(await probe.hash()).toBe(route);
     await user.notSee(heading);
   });
 });

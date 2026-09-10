@@ -345,6 +345,7 @@ async function requestJson(
   fetchImpl: typeof globalThis.fetch,
   session: CloudProviderDenSession,
   path: string,
+  signal: AbortSignal,
 ): Promise<unknown> {
   let response: Response;
   try {
@@ -354,7 +355,7 @@ async function requestJson(
         Authorization: `Bearer ${session.token}`,
         "x-openwork-legacy-org-id": session.orgId,
       },
-      signal: AbortSignal.timeout(requestTimeoutMs),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(requestTimeoutMs)]),
     });
   } catch (error) {
     throw new Error(error instanceof Error ? `den_request_failed: ${error.message}` : "den_request_failed");
@@ -371,12 +372,13 @@ async function requestJson(
 async function fetchProviders(
   fetchImpl: typeof globalThis.fetch,
   session: CloudProviderDenSession,
+  signal: AbortSignal,
 ): Promise<DenProviderConnection[]> {
-  const providers = parseProviderList(await requestJson(fetchImpl, session, "/v1/llm-providers"));
+  const providers = parseProviderList(await requestJson(fetchImpl, session, "/v1/llm-providers", signal));
   return Promise.all(
     providers.map(async (provider) =>
       parseProviderConnection(
-        await requestJson(fetchImpl, session, `/v1/llm-providers/${encodeURIComponent(provider.id)}/connect`),
+        await requestJson(fetchImpl, session, `/v1/llm-providers/${encodeURIComponent(provider.id)}/connect`, signal),
         provider,
       )),
   );
@@ -623,6 +625,7 @@ export class CloudProviderSync {
   private providers: CloudProviderSyncStatusProvider[] = [];
   private skippedProviders: CloudProviderSyncSkippedProvider[] = [];
   private fingerprint: string | null = null;
+  private materializationContextKey: string | null = null;
   private ownedEnvKeys = new Set<string>();
   private managedProviderIds = new Set<string>();
   private importedAtByCloudProviderId = new Map<string, number>();
@@ -634,6 +637,8 @@ export class CloudProviderSync {
   private trailingRun: CloudProviderSyncTrailingRun | null = null;
   private interval: ReturnType<typeof setInterval> | null = null;
   private pendingReloadRetry: ReturnType<typeof setTimeout> | null = null;
+  private suspended = false;
+  private providerFetchController = new AbortController();
   private readonly reloadRetryMs: number;
 
   constructor(options: CloudProviderSyncOptions) {
@@ -653,11 +658,13 @@ export class CloudProviderSync {
     if (this.pendingSession?.contextKey === contextKey) return this.pendingSession.promise;
 
     const hasMaterializedContext = this.session !== null
+      || this.activeRun !== null
       || this.managedProviderIds.size > 0
       || this.ownedEnvKeys.size > 0;
     this.contextGeneration += 1;
+    this.stopReloadRetry();
 
-    if (!hasMaterializedContext) {
+    if (!hasMaterializedContext && !this.suspended) {
       this.session = session;
       this.startInterval();
       void this.run("den_session_updated");
@@ -667,7 +674,6 @@ export class CloudProviderSync {
     const generation = this.contextGeneration;
     this.session = null;
     this.stopInterval();
-    this.stopReloadRetry();
     const trailing = this.trailingRun;
     this.trailingRun = null;
     trailing?.resolve({ status: "no_session" });
@@ -677,10 +683,13 @@ export class CloudProviderSync {
 
     const promise = this.enqueue(async () => {
       if (generation !== this.contextGeneration) return;
-      await this.sweep({ forceReload: true });
-      this.resetMaterializationState();
+      if (this.materializationContextKey !== null && this.materializationContextKey !== contextKey) {
+        await this.sweep({ forceReload: true });
+        this.resetMaterializationState();
+      }
       if (generation !== this.contextGeneration) return;
       this.session = session;
+      this.suspended = false;
       this.startInterval();
       void this.run("den_session_updated");
     });
@@ -697,7 +706,30 @@ export class CloudProviderSync {
     return promise;
   }
 
+  async suspend(): Promise<void> {
+    // Identity delivery must not materialize providers or reload an unready
+    // engine. Keep cleanup ownership for the next full session (or sign-out).
+    this.suspended = true;
+    this.providerFetchController.abort();
+    this.providerFetchController = new AbortController();
+    this.contextGeneration += 1;
+    this.pendingSession = null;
+    this.session = null;
+    this.stopInterval();
+    this.stopReloadRetry();
+    const trailing = this.trailingRun;
+    this.trailingRun = null;
+    trailing?.resolve({ status: "no_session" });
+    this.lastRun = null;
+    this.providers = [];
+    this.skippedProviders = [];
+    // Let already-started writes finish before acknowledging the identity;
+    // queued/fetching runs are invalidated by contextGeneration.
+    await this.enqueue(async () => undefined);
+  }
+
   async clearSession(): Promise<void> {
+    this.suspended = false;
     this.contextGeneration += 1;
     this.pendingSession = null;
     this.session = null;
@@ -781,6 +813,7 @@ export class CloudProviderSync {
   }
 
   private resetMaterializationState(): void {
+    this.materializationContextKey = null;
     this.lastRun = null;
     this.providers = [];
     this.skippedProviders = [];
@@ -849,13 +882,16 @@ export class CloudProviderSync {
    * session idles. Serialized on the same queue as sync passes.
    */
   private scheduleReloadRetry(): void {
-    if (this.pendingReloadRetry) return;
+    if (this.suspended || this.pendingReloadRetry) return;
+    const generation = this.contextGeneration;
     const timer = setTimeout(() => {
       this.pendingReloadRetry = null;
       if (!this.reloadPending) return;
       void this.enqueue(async () => {
-        if (!this.reloadPending) return;
-        if (await this.reloadDeferredByActivity()) {
+        if (this.suspended || generation !== this.contextGeneration || !this.reloadPending) return;
+        const busy = await this.reloadDeferredByActivity();
+        if (this.suspended || generation !== this.contextGeneration) return;
+        if (busy) {
           this.scheduleReloadRetry();
           return;
         }
@@ -910,9 +946,10 @@ export class CloudProviderSync {
 
   private async runPass(request: CloudProviderSyncRequest): Promise<CloudProviderSyncRunResult> {
     const { reason, session } = request;
+    if (request.generation !== this.contextGeneration) return { status: "no_session" };
     try {
       const [providers, storedEnv] = await Promise.all([
-        fetchProviders(this.fetchImpl, session),
+        fetchProviders(this.fetchImpl, session, this.providerFetchController.signal),
         this.env.list(),
       ]);
       // Local credentials only satisfy materialization eligibility. Never add
@@ -922,7 +959,11 @@ export class CloudProviderSync {
         .map((entry) => entry.key);
       const prepared = prepareMaterialization(providers, localEnvNames);
       if (request.generation !== this.contextGeneration) return { status: "no_session" };
+      // Ownership follows the apply that can write, not a pending session.
+      // Retain it through suspension, including a partially completed apply.
+      this.materializationContextKey = request.contextKey;
       const { changed, detail, reloadError } = await this.apply(prepared);
+      if (request.generation !== this.contextGeneration) return { status: "no_session" };
       // The materialization itself succeeded (config + env writes landed), so
       // record it even when the engine reload failed: hiding the providers
       // made a reload-only failure indistinguishable from "nothing synced".

@@ -51,6 +51,7 @@ import { ShellConfigProvider } from "./shell-config";
 import { WelcomeRoute } from "./welcome-route";
 import { readOrgSelectionPending } from "../../app/lib/den-sign-in-intent";
 import { signedInRoute } from "./den-signin-routing";
+import { StartupScreen } from "./startup-screen";
 
 
 type DenSigninGateProps = {
@@ -76,7 +77,7 @@ const subscribeToDenBootstrap = (onStoreChange: () => void) => {
  * never let users land on `/signin` — redirect them to `/session` instead.
  *
  * While we're still checking the Den session AND sign-in is required, we
- * render nothing so the transcript/settings never flash behind the gate.
+ * show startup progress without mounting transcript/settings behind the gate.
  */
 function DenSigninGate({ children }: DenSigninGateProps) {
   const denAuth = useDenAuth();
@@ -186,7 +187,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   }, [navigate]);
 
   if (requireSignin && denAuth.status === "checking") {
-    return null;
+    return <StartupScreen message="Checking your sign-in" />;
   }
 
   if (redirectingPreparedWorkspace) return <Navigate to="/onboarding" replace />;

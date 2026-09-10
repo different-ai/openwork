@@ -1,4 +1,7 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { act, StrictMode, Suspense, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
@@ -6,6 +9,9 @@ import {
   buildCrashReport,
   describeCrash,
 } from "../src/react-app/shell/app-error-boundary";
+import { StartupApp, StartupScreen } from "../src/react-app/shell/startup-screen";
+import { ArchitectureMismatchGate } from "../src/react-app/shell/architecture-mismatch-gate";
+import { BootStateProvider } from "../src/react-app/shell/boot-state";
 
 // react-dom/server rethrows instead of running error boundaries, so the catch
 // path is exercised by driving the state transition directly:
@@ -73,4 +79,91 @@ test("children render untouched when nothing throws", () => {
   );
 
   expect(html).toBe("<p>session surface</p>");
+});
+
+test("the architecture check shows progress without mounting the gated application", async () => {
+  const ownedDom = typeof window === "undefined";
+  if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
+  const bridge = window.__OPENWORK_ELECTRON__;
+  Reflect.set(window, "__OPENWORK_ELECTRON__", { system: {} });
+  try {
+    const html = renderToStaticMarkup(
+      <BootStateProvider>
+        <ArchitectureMismatchGate><p>private workspace</p></ArchitectureMismatchGate>
+      </BootStateProvider>,
+    );
+    expect(html).toContain("Checking this OpenWork installation");
+    expect(html).toContain("Reload");
+    expect(html).not.toContain("private workspace");
+  } finally {
+    if (bridge === undefined) Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__");
+    else Reflect.set(window, "__OPENWORK_ELECTRON__", bridge);
+    if (ownedDom) await GlobalRegistrator.unregister();
+  }
+});
+
+test.each(["ready", "error"])("pending startup remains actionable and settles to %s without clearing continuity", async (outcome) => {
+  const ownedDom = typeof window === "undefined";
+  if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/#/workspace/ws/session/thread" });
+  const actEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+  Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const reload = spyOn(window.location, "reload").mockImplementation(() => {});
+  const logError = spyOn(console, "error").mockImplementation(() => {});
+  const startup = Promise.withResolvers<ReactNode>();
+  const hash = window.location.hash;
+  const stored = window.localStorage.getItem("openwork.server.active");
+  window.localStorage.setItem("openwork.server.active", "https://self-hosted.example.test/opencode");
+  let mounted = 0;
+  function Session() {
+    mounted += 1;
+    return <p>restored thread</p>;
+  }
+  try {
+    await act(async () => {
+      root.render(
+        <StrictMode>
+          <AppErrorBoundary>
+            <Suspense fallback={<StartupScreen />}>
+              <StartupApp startup={startup.promise} />
+            </Suspense>
+          </AppErrorBoundary>
+        </StrictMode>,
+      );
+    });
+    expect(container.textContent).toContain("Starting OpenWork");
+    expect(mounted).toBe(0);
+    const retry = container.querySelector("button");
+    expect(retry?.textContent).toBe("Reload");
+    await act(async () => { retry?.click(); });
+    expect(reload).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      if (outcome === "ready") startup.resolve(<Session />);
+      else startup.reject(new Error("bootstrap IPC failed"));
+    });
+    expect(container.textContent).not.toContain("Starting OpenWork");
+    if (outcome === "ready") {
+      expect(container.textContent).toBe("restored thread");
+      expect(mounted).toBeGreaterThan(0);
+    } else {
+      expect(container.textContent).toContain("OpenWork hit an unexpected error");
+      expect(container.textContent).toContain("Reload");
+      expect(container.textContent).not.toContain("bootstrap IPC failed");
+      expect(mounted).toBe(0);
+    }
+    expect(window.location.hash).toBe(hash);
+    expect(window.localStorage.getItem("openwork.server.active")).toBe("https://self-hosted.example.test/opencode");
+  } finally {
+    await act(async () => { root.unmount(); });
+    container.remove();
+    reload.mockRestore();
+    logError.mockRestore();
+    if (stored === null) window.localStorage.removeItem("openwork.server.active");
+    else window.localStorage.setItem("openwork.server.active", stored);
+    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+    if (ownedDom) await GlobalRegistrator.unregister();
+  }
 });
