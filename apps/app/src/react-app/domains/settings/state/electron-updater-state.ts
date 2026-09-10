@@ -603,6 +603,35 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
           return;
         }
       }
+      // The download was allowed by the policy in force at check time; the
+      // organization may have revoked that version since, so re-run the policy
+      // allow decision against a fresh desktop config before installing. An
+      // absent allowlist still means unrestricted. Offline, the refresh fails:
+      // fall back to the last known config rather than block an approved
+      // install purely on a network error.
+      const downloadedVersion = updateStatusRef.current?.version;
+      if (downloadedVersion) {
+        const currentDesktopConfig = await refreshDesktopConfig()
+          .catch(() => desktopConfigRef.current);
+        if (!isCurrentReleaseChannel()) return;
+        const stillAllowed = downloadedReleaseChannelRef.current === "alpha"
+          ? await isAlphaUpdateAllowed(downloadedVersion, currentDesktopConfig, appVersion)
+          : isUpdateAllowedByDesktopConfig(downloadedVersion, currentDesktopConfig);
+        if (!isCurrentReleaseChannel()) return;
+        if (!stillAllowed) {
+          downloadedReleaseChannelRef.current = null;
+          availableReleaseChannelRef.current = null;
+          setUpdateStatus({
+            state: "blocked",
+            lastCheckedAt: Date.now(),
+            version: downloadedVersion,
+            message: t("settings.update_blocked_policy", undefined, {
+              version: downloadedVersion,
+            }),
+          });
+          return;
+        }
+      }
       const result = await bridge.installAndRestart();
       if (!isCurrentReleaseChannel()) return;
       if (!result?.ok) {
@@ -632,7 +661,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       });
       setError(message);
     }
-  }, [onReleaseChannelChange, resolvePolicyReleaseChannel, runCheckForUpdates, setError]);
+  }, [appVersion, onReleaseChannelChange, refreshDesktopConfig, resolvePolicyReleaseChannel, runCheckForUpdates, setError]);
 
   const setReleaseChannel = useCallback(
     async (next: ReleaseChannel) => {

@@ -12,6 +12,7 @@ import {
   type OpenWorkConnectMcpServerIndex,
   readOpenWorkConnectMcpAppHostCatalog,
   readOpenWorkConnectMcpServerIndex,
+  readOpenWorkConnectMcpServerIndexWithDiagnostics,
   reconcileOpenWorkConnectMcpServers,
   refreshOpenWorkConnectMcpAppHostCatalog,
   writeOpenWorkConnectMcpAppHostAuthorization,
@@ -141,6 +142,7 @@ describe("OpenWork Connect MCP server catalog", () => {
     const runtime = await readRuntimeOpencodeConfig(config, "ws_1");
     expect(result).toEqual({
       status: "synced",
+      diagnostic: "ready",
       appHostNames: [connectMcpAppHostName(connectionId)],
       directNames: [],
       removedNames: ["openwork-connect-stale"],
@@ -194,6 +196,7 @@ describe("OpenWork Connect MCP server catalog", () => {
 
     expect(result).toEqual({
       status: "synced",
+      diagnostic: "ready",
       appHostNames: [connectMcpAppHostName(boundedId), connectMcpAppHostName(directId)].sort(),
       directNames: [directName],
       removedNames: ["openwork-direct-revoked-abc123"],
@@ -256,6 +259,7 @@ describe("OpenWork Connect MCP server catalog", () => {
     });
     expect(result).toEqual({
       status: "unavailable",
+      diagnostic: "missing_app_host_auth",
       appHostNames: [],
       directNames: [],
       removedNames: ["openwork-direct-linear-abc123"],
@@ -281,7 +285,7 @@ describe("OpenWork Connect MCP server catalog", () => {
 
     const result = await refreshOpenWorkConnectMcpAppHostCatalog(config, "ws_1", indexFetcher(requests));
 
-    expect(result).toEqual({ status: "synced", appHostNames: [connectMcpAppHostName(connectionId)] });
+    expect(result).toEqual({ status: "synced", diagnostic: "ready", appHostNames: [connectMcpAppHostName(connectionId)] });
     expect((await readOpenWorkConnectMcpAppHostCatalog(config, "ws_1")).servers[0]?.connectionId).toBe(connectionId);
     expect(requests.every((request) => request.headers.get("authorization") === "Bearer private-app-host-token")).toBe(true);
   });
@@ -317,7 +321,7 @@ describe("OpenWork Connect MCP server catalog", () => {
       async () => new Response(null, { status: 503 }),
     );
 
-    expect(result).toEqual({ status: "unavailable", appHostNames: [] });
+    expect(result).toEqual({ status: "unavailable", diagnostic: "discovery_unavailable", appHostNames: [] });
     expect((await readOpenWorkConnectMcpAppHostCatalog(config, "ws_1")).servers[0]?.connectionId).toBe(connectionId);
   });
 
@@ -334,6 +338,7 @@ describe("OpenWork Connect MCP server catalog", () => {
     });
     expect(result).toEqual({
       status: "unavailable",
+      diagnostic: "missing_app_host_auth",
       appHostNames: [],
       directNames: [],
       removedNames: ["openwork-connect-existing"],
@@ -360,6 +365,7 @@ describe("OpenWork Connect MCP server catalog", () => {
 
     expect(result).toEqual({
       status: "synced",
+      diagnostic: "empty",
       appHostNames: [],
       directNames: [],
       removedNames: ["openwork-connect-existing"],
@@ -394,6 +400,7 @@ describe("OpenWork Connect MCP server catalog", () => {
 
     expect(untrustedRequests).toBe(0);
     expect(result.status).toBe("unavailable");
+    expect(result.diagnostic).toBe("untrusted_origin");
     expect((await readOpenWorkConnectMcpAppHostCatalog(config, "ws_1")).servers).toEqual([]);
   });
 
@@ -412,7 +419,7 @@ describe("OpenWork Connect MCP server catalog", () => {
       }]),
     });
 
-    expect(result).toEqual({ status: "unavailable", appHostNames: [], directNames: [], removedNames: [] });
+    expect(result).toEqual({ status: "unavailable", diagnostic: "invalid_proxy_descriptor", appHostNames: [], directNames: [], removedNames: [] });
     expect((await readOpenWorkConnectMcpAppHostCatalog(config, "ws_1")).servers).toEqual([]);
   });
 
@@ -431,7 +438,32 @@ describe("OpenWork Connect MCP server catalog", () => {
       }]),
     });
 
-    expect(result).toEqual({ status: "unavailable", appHostNames: [], directNames: [], removedNames: [] });
+    expect(result).toEqual({ status: "unavailable", diagnostic: "invalid_proxy_descriptor", appHostNames: [], directNames: [], removedNames: [] });
     expect((await readOpenWorkConnectMcpAppHostCatalog(config, "ws_1")).servers).toEqual([]);
+  });
+  test("attributes malformed JSON and invalid index schemas without returning provider data", async () => {
+    for (const text of ["not-json", JSON.stringify({ schemaVersion: "unsupported", servers: [] })]) {
+      const result = await readOpenWorkConnectMcpServerIndexWithDiagnostics(
+        { type: "remote", url: "https://api.openworklabs.com/mcp/agent" },
+        "Bearer private-app-host-token",
+        async (url, init) => {
+          const response = await indexFetcher([])(url, init);
+          if (JSON.parse(String(init?.body)).method !== "resources/read") return response;
+          return Response.json({ jsonrpc: "2.0", id: 2, result: { contents: [{ uri: CONNECT_MCP_SERVER_INDEX_URI, text }] } });
+        },
+      );
+      expect(result).toEqual({ index: null, diagnostic: "invalid_catalog" });
+    }
+  });
+
+  test("does not mislabel HTTP failures as missing auth or a successful empty catalog", async () => {
+    for (const status of [401, 403, 404, 503]) {
+      const result = await readOpenWorkConnectMcpServerIndexWithDiagnostics(
+        { type: "remote", url: "https://api.openworklabs.com/mcp/agent" },
+        "Bearer private-app-host-token",
+        async () => new Response(null, { status }),
+      );
+      expect(result).toEqual({ index: null, diagnostic: "discovery_unavailable" });
+    }
   });
 });

@@ -1,11 +1,38 @@
 import { journeyFiles, filesUnder, testName } from "../bin/test-files.mjs";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { discoverWorlds } from "./world-plan.ts";
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const evalsRoot = fileURLToPath(new URL("..", import.meta.url));
 const specsDirectory = resolve(evalsRoot, "specs");
 const baselinePath = resolve(specsDirectory, "channel-ratchet.baseline.json");
+const repoRoot = resolve(evalsRoot, "..");
+
+export function compareWorldContracts(file, source, baseSource = "") {
+  const bindings = text => discoverWorlds(file, text, true).filter(world => !["legacy test", "legacy/unresolved"].includes(world.world));
+  const previous = new Map(bindings(baseSource).map(world => [world.binding, world]));
+  return bindings(source).flatMap(world => {
+    if (world.resources) return [];
+    const old = previous.get(world.binding);
+    if (!old) return [`${file}:${world.line}: new spec.world binding ${world.binding} must declare explicit resources`];
+    if (old.resources) return [`${file}:${world.line}: explicit resources removed from ${world.binding}`];
+    return [];
+  });
+}
+
+export function checkWorldContracts() {
+  const git = args => execFileSync("git", args, { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const base = git(["merge-base", "HEAD", "origin/dev"]);
+  const baseFiles = new Set(git(["ls-tree", "-r", "--name-only", base]).split("\n"));
+  return journeyFiles().flatMap(path => {
+    const file = relative(repoRoot, path);
+    const source = readFileSync(path, "utf8");
+    const baseSource = baseFiles.has(file) ? git(["show", `${base}:${file}`]) : "";
+    return compareWorldContracts(file, source, baseSource);
+  });
+}
 
 function occurrences(source, pattern) {
   return [...source.matchAll(pattern)].length;
@@ -75,6 +102,7 @@ if (invokedDirectly) {
     console.log(JSON.stringify(current, null, 2));
   } else {
     const { errors, warnings } = compareBaseline(current, readBaseline(), files, newLayerFiles);
+    errors.push(...checkWorldContracts());
     for (const warning of warnings) console.warn(`WARNING: ${warning}`);
     if (errors.length > 0) {
       console.error(`spec-channel-ratchet failed:\n- ${errors.join("\n- ")}\nFix with: pnpm --dir evals exec node scripts/spec-channel-ratchet.mjs --print-baseline > evals/specs/channel-ratchet.baseline.json`);

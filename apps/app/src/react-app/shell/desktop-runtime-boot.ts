@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect } from "react";
+import { createElement, useEffect } from "react";
 
 import {
   engineInfo,
@@ -23,6 +23,7 @@ import {
   writeOpenworkServerSettings,
 } from "../../app/lib/openwork-server";
 import { isDesktopRuntime, isElectronRuntime, safeStringify } from "../../app/utils";
+import { useEnterpriseActivationRequired } from "../domains/cloud/enterprise-activation-gate";
 import { useServer } from "../kernel/server-provider";
 import { useBootState } from "./boot-state";
 
@@ -117,6 +118,21 @@ export function useDesktopRuntimeBoot() {
         };
 
         const startServerWithoutDesktopWorkspace = async () => {
+          // A renderer reload lands here whenever the selected workspace only
+          // exists in the server registry (workspaces created from the app are
+          // server-owned). The server is already serving it: restarting would
+          // kill the engine and every in-flight run for nothing.
+          const running = await openworkServerInfo().catch(() => null);
+          if (
+            isOpenworkServerInfoLike(running)
+            && isOpenworkServerReady(running)
+            && (running.remoteAccessEnabled === true) === preferredRemoteAccess
+          ) {
+            publishOpenworkServerInfo(running);
+            await window.__OPENWORK_ELECTRON__?.recovery?.recordHealthy?.().catch(() => undefined);
+            markReady();
+            return;
+          }
           setPhase("starting-engine", "Starting OpenWork server");
           const serverInfo = await openworkServerRestart({ remoteAccessEnabled: preferredRemoteAccess }).catch((error) => {
             console.warn("[desktop-boot] openworkServerRestart failed:", error);
@@ -324,12 +340,18 @@ export function useDesktopRuntimeBoot() {
   }, [markReady, setActive, setError, setPhase]);
 }
 
+function ActivatedDesktopRuntimeBoot(): null {
+  useDesktopRuntimeBoot();
+  return null;
+}
+
 /**
  * Component wrapper that must be rendered inside <BootStateProvider>. It runs
  * the boot hook exactly once per app mount so callers don't have to think
- * about React Strict-Mode double-invocation.
+ * about React Strict-Mode double-invocation. Enterprise builds stay unbooted
+ * until Den activation completes.
  */
-export function DesktopRuntimeBoot(): null {
-  useDesktopRuntimeBoot();
-  return null;
+export function DesktopRuntimeBoot() {
+  if (useEnterpriseActivationRequired()) return null;
+  return createElement(ActivatedDesktopRuntimeBoot);
 }
