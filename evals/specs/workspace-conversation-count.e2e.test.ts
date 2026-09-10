@@ -44,7 +44,10 @@ test("workspace inventory counts survive previews, pins, groups and drafts, and 
     await user.see(count, { text: "21" });
   });
   await step("archiving a pinned conversation reduces ownership once and Undo restores it", async () => {
-    expect(await agent.run("session.archive", { sessionId: session.sessionId, archived: true })).toMatchObject({ ok: true });
+    await user.click({ testId: `sidebar-session-${session.sessionId}` });
+    await user.see("composer", { editable: true });
+    await user.hover({ testId: `sidebar-session-${session.sessionId}` });
+    await user.click({ testId: `session-archive-${session.sessionId}` });
     await user.see(count, { text: "20" });
     await user.see({ text: "Session archived" });
     await user.click({ role: "button", label: "Undo" });
