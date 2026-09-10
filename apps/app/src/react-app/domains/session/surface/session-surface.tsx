@@ -66,6 +66,7 @@ import { createPastedTextChip, resolvePastedTextPlaceholders } from "./composer/
 import {
   canAdmitNextQueuedItem,
   claimQueuedSend,
+  claimUserSend,
   dispatchQueuedDrain,
   getQueuedDrainState,
   getQueuedSendGeneration,
@@ -2091,7 +2092,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
     assertCurrent();
     const messageId = createPromptMessageID();
-    if (!claimQueuedSend(props.sessionId, messageId, true)) throw new Error("Another message is being admitted in the originating conversation. Try again after it settles.");
+    if (!claimUserSend(props.sessionId, messageId)) throw new Error("Another message is being admitted in the originating conversation. Try again after it settles.");
     // Literal text only: App content must not become a slash command, mention, or file attachment.
     const result = await sendDraft({ mode: "prompt", text, resolvedText: text, parts: [{ type: "text", text }], attachments: [], messageId }, messageId, undefined, { appHandoff: { ...handoff, assertCurrent } });
     if (result.outcome === "unknown") throw new Error("Message acceptance is unknown. Check the originating chat before trying again; it may already be running.");
@@ -2124,8 +2125,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       messageId: createPromptMessageID(),
     };
     // Immediate sends and queued sends share the same slot across all panes.
-    dispatchQueuedDrain(props.sessionId, { type: "user_retry" });
-    if (!claimQueuedSend(props.sessionId, nextDraft.messageId, true)) return;
+    if (!claimUserSend(props.sessionId, nextDraft.messageId)) return;
     for (const attachment of sentAttachments) {
       if (attachment.kind === "image" && !attachment.previewUrl) attachment.previewUrl = URL.createObjectURL(attachment.file);
     }

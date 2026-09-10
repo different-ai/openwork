@@ -128,7 +128,7 @@ import {
   permissionKey,
 } from "@/react-app/domains/session/sync/session-sync";
 import { draftToParts } from "@/react-app/domains/session/sync/draft-parts";
-import { prepareMcpAppContext, sameMcpAppConversation, type McpAppHandoff } from "@/components/chat/mcp-app-conversation";
+import { createMcpAppPromptDispatch, sameMcpAppConversation, type McpAppHandoff } from "@/components/chat/mcp-app-conversation";
 import type { McpAppOrigin } from "@/components/chat/mcp-app-origin";
 import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
@@ -1508,20 +1508,17 @@ export function SessionRoute() {
                   runtimeKey: environmentRuntimeKey,
                 });
                 assertCurrent();
-                const appContext = appOrigin ? await prepareMcpAppContext(appOrigin) : () => [];
-                await appHandoff?.validate();
-                assertCurrent();
-                const promptParts = [...parts, ...appContext()];
-                onPrepared?.(v2PromptText(promptParts));
+                const openworkPrompt = createMcpAppPromptDispatch({ origin: appOrigin, parts, assertCurrent, handoff: appHandoff,
+                  onPrepared: (promptParts) => onPrepared?.(v2PromptText(promptParts)) });
                 const result = await opencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
                   messageID: draft.messageId,
-                  parts: promptParts,
+                  parts,
                   model: sendModel ?? undefined,
                   agent: selectedAgent ?? undefined,
                   ...(sendVariant ? { variant: sendVariant } : {}),
                   system,
-                });
+                }, { meta: { openworkPrompt } });
                 if (result.error) {
                   if (isPromptAdmissionUnknown(result.error)) throw result.error;
                   throw new Error(serializeSDKError(result.error));
@@ -1858,20 +1855,17 @@ export function SessionRoute() {
                   runtimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
                 });
                 assertCurrent();
-                const appContext = await prepareMcpAppContext(appOrigin);
-                await appHandoff?.validate();
-                assertCurrent();
-                const promptParts = [...parts, ...appContext()];
-                onPrepared?.(v2PromptText(promptParts));
+                const openworkPrompt = createMcpAppPromptDispatch({ origin: appOrigin, parts, assertCurrent, handoff: appHandoff,
+                  onPrepared: (promptParts) => onPrepared?.(v2PromptText(promptParts)) });
                 const result = await workspaceOpencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
                   messageID: draft.messageId,
-                  parts: promptParts,
+                  parts,
                   model: sendModel ?? undefined,
                   agent: selectedAgent ?? undefined,
                   ...(sendVariant ? { variant: sendVariant } : {}),
                   system,
-                });
+                }, { meta: { openworkPrompt } });
                 if (result.error) {
                   if (isPromptAdmissionUnknown(result.error)) throw result.error;
                   throw new Error(serializeSDKError(result.error));

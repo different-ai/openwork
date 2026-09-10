@@ -286,6 +286,12 @@ export function claimQueuedSend(sessionId: string, itemId: string, steer = false
   return next !== current && next.phase.kind === "sending" && next.phase.itemId === itemId;
 }
 
+/** Explicit composer send or approved App message, never an automatic queue retry. */
+export function claimUserSend(sessionId: string, itemId: string): boolean {
+  dispatchQueuedDrain(sessionId, { type: "user_retry" });
+  return claimQueuedSend(sessionId, itemId, true);
+}
+
 export function subscribeQueuedDrain(sessionId: string, listener: () => void): () => void {
   const listeners = drainListenersBySession.get(sessionId) ?? new Set();
   drainListenersBySession.set(sessionId, listeners);

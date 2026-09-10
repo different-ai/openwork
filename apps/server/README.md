@@ -133,6 +133,14 @@ clear the previous value. Disposal, rejected lease validation, and origin change
 fence pending context. Reloading loses it; prior submitted turns are not rewritten.
 Private tool-result `_meta` is not forwarded and nested `_meta` is rejected.
 
+Successful update ordering is shared by Views of the same source, including empty
+clears. Late validations cannot overwrite a newer accepted update. At native prompt
+dispatch the host reads the latest accepted payload for each validated live View;
+replacement Views are revalidated. The local SDK options hook runs after V2 model
+and instruction preparation, with a synchronous final ownership/context check
+before the prompt POST. Its callbacks are never serialized. Continued View churn
+fails preparation after bounded revalidation attempts instead of sending old data.
+
 Messages show a native confirmation with the entire proposed text and owning
 conversation before using that surface's existing immediate-send admission.
 Existing composer drafts stay unchanged. Text is literal, not parsed as commands,
@@ -141,6 +149,8 @@ admission; cancellation, unsupported content, and stale ownership reject, while
 unknown admission explicitly warns against resending. A dispatched turn cannot
 be recalled by closing the App. No sampling, progress, View tools, or new tool
 execution surface is introduced.
+Freshly approved App messages use the composer's explicit user-retry admission
+transition after definite failure. That transition never releases unknown admission.
 
 ## Config file
 
