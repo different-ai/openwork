@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
+import type { Tool } from "@modelcontextprotocol/sdk/types.js"
 import { expect, mock, test } from "bun:test"
 
 process.env.DEN_DB_ENCRYPTION_KEY ??= "x".repeat(32)
@@ -97,8 +98,10 @@ async function withClient<T>(
   appHostClient = true,
   proxiedConnection: unknown = connection,
   directExposureEnabled = true,
+  scopes = new Set(["mcp:read", "mcp:write"]),
 ) {
   const server = createExternalConnectionProxyServer({
+    scopes,
     descriptor: {
       capabilities,
       serverInfo: { name: "fixture", version: "1.0.0" },
@@ -233,10 +236,66 @@ test("direct exposure stays closed while the organization has member-facing MCP 
   }, false, directConnection, false)
 })
 
+test.each(["direct", "compatibility", "app", "app-compatibility"])("%s execution enforces scopes against the fresh provider descriptor", async (mode) => {
+  const cases: Array<{ annotations?: Tool["annotations"]; requiredScope: string }> = [
+    { requiredScope: "mcp:write" },
+    { annotations: {}, requiredScope: "mcp:write" },
+    { annotations: { readOnlyHint: false }, requiredScope: "mcp:write" },
+    { annotations: { destructiveHint: false, idempotentHint: true }, requiredScope: "mcp:write" },
+    { annotations: { readOnlyHint: true, destructiveHint: true }, requiredScope: "mcp:write" },
+    { annotations: { readOnlyHint: true }, requiredScope: "mcp:read" },
+  ]
+  for (const scopes of [new Set(["mcp:read"]), new Set(["mcp:read", "mcp:write"]), new Set(["mcp:write"]), new Set(["mcp:app-host"])]) {
+    let downstreamCalls = 0
+    let liveTool: Tool | undefined = {
+      name: "scope_fixture",
+      inputSchema: { type: "object" },
+      annotations: { readOnlyHint: true },
+      _meta: { ui: { resourceUri, visibility: ["model", "app"] } },
+    }
+    await withClient({ tools: {} }, async (client) => {
+      await client.listTools()
+      const call = () => client.callTool(mode.endsWith("compatibility")
+        ? { name: "execute_capability", arguments: { name: "scope_fixture", body: { marker: "scoped" } } }
+        : { name: "scope_fixture", arguments: { marker: "scoped" } })
+      for (const entry of cases) {
+        if (!liveTool) throw new Error("Missing fixture descriptor")
+        liveTool = { ...liveTool, annotations: entry.annotations }
+        const before = downstreamCalls
+        const result = await call()
+        if (scopes.has(entry.requiredScope)) {
+          expect(result.isError).not.toBe(true)
+          expect(result.structuredContent).toEqual({ marker: "scoped" })
+          expect(downstreamCalls).toBe(before + 1)
+        } else {
+          expect(result.isError).toBe(true)
+          expect(result.content).toEqual([{ type: "text", text: JSON.stringify({
+            error: "insufficient_mcp_scope",
+            requiredScope: entry.requiredScope,
+            message: `scope_fixture requires the ${entry.requiredScope} scope.`,
+          }) }])
+          expect(downstreamCalls).toBe(before)
+        }
+      }
+      liveTool = undefined
+      const before = downstreamCalls
+      await expect(call()).rejects.toThrow()
+      expect(downstreamCalls).toBe(before)
+    }, {
+      listTools: async () => liveTool ? [liveTool] : [],
+      callTool: async (input: { args: Record<string, unknown> }) => {
+        downstreamCalls += 1
+        return { content: [], structuredContent: input.args }
+      },
+    }, mode.startsWith("app"), mode === "direct" ? directConnection : connection, true, scopes)
+  }
+})
+
 test("the request handler never enables direct exposure unless the route confirms the organization flag", async () => {
   let toolNames: string[] = []
   const request = new Request("https://openwork.example/mcp/agent/connections/fixture", { method: "POST" })
   await handleExternalConnectionProxyRequest({
+    scopes: new Set(["mcp:read", "mcp:write"]),
     context: requestContext(request),
     operation: { ...(operation as Record<string, unknown>), connection: directConnection } as never,
     runtime: runtime(),
@@ -281,6 +340,7 @@ test("a forged App-host audience header cannot unlock the provider surface", asy
     headers: { "x-openwork-mcp-client-audience": "app-host" },
   })
   await handleExternalConnectionProxyRequest({
+    scopes: new Set(["mcp:read", "mcp:write"]),
     context: requestContext(request),
     operation,
     runtime: runtime(),
@@ -457,6 +517,7 @@ test("OAuth registration and network failures become sanitized protocol errors",
     body: JSON.stringify({ jsonrpc: "2.0", id: 41, method: "initialize", params: {} }),
   })
   const oauthResponse = await handleExternalConnectionProxyRequest({
+    scopes: new Set(["mcp:read", "mcp:write"]),
     context: requestContext(oauthRequest),
     operation,
     dependencies: { describe: async () => { throw oauthFailure } },
@@ -485,6 +546,7 @@ test("OAuth registration and network failures become sanitized protocol errors",
     body: JSON.stringify({ jsonrpc: "2.0", id: "network", method: "initialize", params: {} }),
   })
   const networkResponse = await handleExternalConnectionProxyRequest({
+    scopes: new Set(["mcp:read", "mcp:write"]),
     context: requestContext(networkRequest),
     operation: { ...operation, diagnosticReferenceId: "req_network" },
     dependencies: {
@@ -503,6 +565,7 @@ test("unsupported GET requests never trigger downstream discovery", async () => 
   let discoveryCalls = 0
   const request = new Request("https://openwork.example/mcp", { method: "GET" })
   const response = await handleExternalConnectionProxyRequest({
+    scopes: new Set(["mcp:read", "mcp:write"]),
     context: requestContext(request),
     operation,
     dependencies: {

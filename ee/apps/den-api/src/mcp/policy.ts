@@ -84,3 +84,12 @@ export function isMcpOperationAllowed(input: {
 export function requiredScopeForMethod(method: string) {
   return method.toUpperCase() === "GET" ? "mcp:read" : "mcp:write"
 }
+
+export function requiredScopeForExternalTool(tool: {
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean }
+}) {
+  // Missing or contradictory provider hints never authorize a read-scoped call.
+  return tool.annotations?.readOnlyHint === true && tool.annotations?.destructiveHint !== true
+    ? "mcp:read"
+    : "mcp:write"
+}

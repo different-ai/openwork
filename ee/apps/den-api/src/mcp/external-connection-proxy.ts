@@ -41,6 +41,7 @@ import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { EXECUTE_CAPABILITY_TOOL_NAME, scoreText, SEARCH_CAPABILITIES_TOOL_NAME, tokenize } from "./search.js"
 import { DEN_MCP_APP_HOST_SCOPE } from "./scopes.js"
+import { requiredScopeForExternalTool } from "./policy.js"
 
 function toolArguments(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}
@@ -158,6 +159,7 @@ function appOnlyProxyTool(tool: ExternalMcpProxyTool): ExternalMcpProxyTool | nu
 export function createExternalConnectionProxyServer(input: {
   descriptor: ExternalMcpProxyDescriptor
   operation: ExternalMcpProxyOperation
+  scopes: ReadonlySet<string>
   runtime?: ExternalMcpProxyRuntime
   appHostClient?: boolean
   /**
@@ -169,6 +171,20 @@ export function createExternalConnectionProxyServer(input: {
 }) {
   const { connection } = input.operation
   const runtime = input.runtime ?? externalMcpProxyRuntime
+  const callTool = (tool: ExternalMcpProxyTool, args: Record<string, unknown>) => {
+    const requiredScope = requiredScopeForExternalTool(tool)
+    if (!input.scopes.has(requiredScope)) {
+      return {
+        isError: true,
+        content: [{ type: "text" as const, text: JSON.stringify({
+          error: "insufficient_mcp_scope",
+          requiredScope,
+          message: `${tool.name} requires the ${requiredScope} scope.`,
+        }) }],
+      }
+    }
+    return runtime.callTool({ ...input.operation, toolName: tool.name, args })
+  }
   // An administrator opted this connection into direct exposure: ordinary MCP
   // clients receive the provider's own catalog instead of the bounded
   // search/execute pair. The App host keeps its private app-only surface.
@@ -225,15 +241,11 @@ export function createExternalConnectionProxyServer(input: {
     server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const args = toolArguments(request.params.arguments)
       if (directClient) {
-        const allowed = (await listDirectTools()).some((tool) => tool.name === request.params.name)
-        if (!allowed) {
+        const tool = (await listDirectTools()).find((tool) => tool.name === request.params.name)
+        if (!tool) {
           throw new McpError(ErrorCode.InvalidRequest, `Tool ${request.params.name} is not available on ${connection.name}.`)
         }
-        return runtime.callTool({
-          ...input.operation,
-          toolName: request.params.name,
-          args,
-        })
+        return callTool(tool, args)
       }
       if (request.params.name === SEARCH_CAPABILITIES_TOOL_NAME) {
         const query = typeof args.query === "string" ? args.query.trim() : ""
@@ -270,11 +282,7 @@ export function createExternalConnectionProxyServer(input: {
         const toolName = typeof args.name === "string" ? args.name.trim() : ""
         const tool = (await listProviderTools()).find((candidate) => candidate.name === toolName)
         if (!tool) throw new McpError(ErrorCode.InvalidRequest, "The capability is unavailable. Call search_capabilities again.")
-        return runtime.callTool({
-          ...input.operation,
-          toolName,
-          args: toolArguments(args.body),
-        })
+        return callTool(tool, toolArguments(args.body))
       }
       if (!input.appHostClient) {
         throw new McpError(
@@ -282,18 +290,14 @@ export function createExternalConnectionProxyServer(input: {
           `Direct provider tool ${request.params.name} is unavailable. Use search_capabilities and execute_capability.`,
         )
       }
-      const allowed = (await listAppTools()).some((tool) => tool.name === request.params.name)
-      if (!allowed) {
+      const tool = (await listAppTools()).find((tool) => tool.name === request.params.name)
+      if (!tool) {
         throw new McpError(
           ErrorCode.InvalidRequest,
           `Tool ${request.params.name} is not available on the MCP Apps endpoint. Use search_capabilities and execute_capability.`,
         )
       }
-      return runtime.callTool({
-        ...input.operation,
-        toolName: request.params.name,
-        args,
-      })
+      return callTool(tool, args)
     })
   }
 
@@ -384,6 +388,7 @@ const externalMcpProxyRequestDependencies: ExternalMcpProxyRequestDependencies =
 export async function handleExternalConnectionProxyRequest(input: {
   context: Context
   operation: ExternalMcpProxyOperation
+  scopes: ReadonlySet<string>
   appHostClient?: boolean
   directExposureEnabled?: boolean
   runtime?: ExternalMcpProxyRuntime
@@ -398,6 +403,7 @@ export async function handleExternalConnectionProxyRequest(input: {
     const server = createExternalConnectionProxyServer({
       descriptor,
       operation: input.operation,
+      scopes: input.scopes,
       runtime: input.runtime,
       appHostClient: input.appHostClient === true,
       directExposureEnabled: input.directExposureEnabled === true,
@@ -480,6 +486,7 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
     return handleExternalConnectionProxyRequest({
       context: c,
       operation,
+      scopes: principal.scopes,
       appHostClient: principal.scopes.has(DEN_MCP_APP_HOST_SCOPE),
       directExposureEnabled,
     })

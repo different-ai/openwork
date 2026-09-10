@@ -41,6 +41,7 @@ import {
 } from "./external-mcp-tool-arguments.js"
 import { compareCapabilityMatches, tokenize } from "./search.js"
 import type { CapabilityMatch } from "./search.js"
+import { requiredScopeForExternalTool } from "./policy.js"
 import {
   codemodeScriptPath,
   resolveCodemodeConnectionNamespaceContext,
@@ -915,7 +916,9 @@ export type ExternalCapabilityExecuteResult =
         | "provider_error"
         | "invalid_capability_arguments"
         | "policy_blocked"
+        | "insufficient_mcp_scope"
       message: string
+      requiredScope?: "mcp:read" | "mcp:write"
       referenceId?: string
       retryable?: boolean
       providerError?: ExternalMcpProviderError
@@ -1092,6 +1095,7 @@ export async function probeExternalConnectionStatus(input: {
 export async function executeExternalCapability(input: {
   organizationId: string
   member: McpMemberIdentity | null
+  scopes: ReadonlySet<string>
   connectionId: string
   toolName: string
   args: unknown
@@ -1224,7 +1228,17 @@ export async function executeExternalCapability(input: {
       }
     }
 
-    if (input.requireReadOnly && (tool.annotations?.readOnlyHint !== true || tool.annotations?.destructiveHint === true)) {
+    const requiredScope = requiredScopeForExternalTool(tool)
+    if (!input.scopes.has(requiredScope)) {
+      return {
+        ok: false,
+        error: "insufficient_mcp_scope",
+        requiredScope,
+        message: `${input.toolName} requires the ${requiredScope} scope.`,
+      }
+    }
+
+    if (input.requireReadOnly && requiredScope !== "mcp:read") {
       return {
         ok: false,
         error: "policy_blocked",

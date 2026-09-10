@@ -1,4 +1,7 @@
-import { beforeAll, expect, test } from "bun:test"
+import { beforeAll, expect, mock, spyOn, test } from "bun:test"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import type { Tool as McpTool } from "@modelcontextprotocol/sdk/types.js"
+import type { ExternalMcpConnectionRow } from "../src/capability-sources/external-mcp-connections.js"
 import { Tool } from "@openwork/codemode"
 import { Effect } from "effect"
 import { Hono } from "hono"
@@ -224,4 +227,90 @@ test("native manifest capability names round-trip through the native parser", ()
     connectionId: "native-connection",
     toolName: "getCapabilitiesGoogleWorkspaceGmailMessages",
   })
+})
+
+test("generic and Code Mode execution check caller scopes against the live external tool", async () => {
+  const connections = await import("../src/capability-sources/external-mcp-connections.js")
+  const runtime = await import("../src/capability-sources/external-mcp-client-runtime.js")
+  const { buildExternalMcpToolTree } = await import("../src/mcp/codemode-tools.js")
+  const { createCapabilityRegistryContext, executeCapability } = await import("../src/mcp/capability-registry.js")
+  const { runCodemodeScript } = await import("../src/mcp/codemode-run.js")
+  const organizationId = createDenTypeId("organization")
+  const memberId = createDenTypeId("member")
+  const connection: ExternalMcpConnectionRow = {
+    id: createDenTypeId("externalMcpConnection"), organizationId,
+    name: "Scope fixture", url: "https://scope.example.test/mcp",
+    authType: "none", kind: "external_mcp", credentialMode: "shared",
+    externalKey: null, nativeProviderKey: null, oauthConfiguration: null,
+    toolPolicy: null, exposeDirectly: false, apiKey: null, accessToken: null,
+    refreshToken: null, tokenType: null, scope: null, expiresAt: null,
+    pendingCodeVerifier: null, credentialHealth: null, oauthIssuerReviewRequiredAt: null,
+    connectedAt: null, createdByOrgMembershipId: memberId, createdAt: new Date(), updatedAt: new Date(),
+  }
+  let allowed = true
+  let calls = 0
+  let liveTool: McpTool = { name: "scope_tool", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }
+  spyOn(connections, "getExternalMcpConnection").mockImplementation(async () => connection)
+  spyOn(connections, "memberCanUseExternalMcpConnection").mockImplementation(async () => allowed)
+  spyOn(runtime, "listExternalMcpTools").mockImplementation(async () => [liveTool])
+  spyOn(runtime, "callExternalMcpTool").mockImplementation(async () => {
+    calls += 1
+    return { content: [{ type: "text", text: "scope result" }] }
+  })
+  try {
+    const cases: Array<{ annotations?: McpTool["annotations"]; requiredScope: string }> = [
+      { requiredScope: "mcp:write" },
+      { annotations: { readOnlyHint: false }, requiredScope: "mcp:write" },
+      { annotations: { destructiveHint: false }, requiredScope: "mcp:write" },
+      { annotations: { readOnlyHint: true, destructiveHint: true }, requiredScope: "mcp:write" },
+      { annotations: { readOnlyHint: true }, requiredScope: "mcp:read" },
+    ]
+    for (const scopes of [new Set(["mcp:read"]), new Set(["mcp:read", "mcp:write"]), new Set(["mcp:write"])]) {
+      const member = { orgMembershipId: memberId, teamIds: [] }
+      const context = createCapabilityRegistryContext({
+        app: new Hono(), env: undefined, catalog: [], organizationId, member,
+        principal: { userId: createDenTypeId("user"), organizationId, scopes, payload: {} },
+        redirectUriBase: "https://openwork.example", generatedArtifactViewsEnabled: false,
+        organizationMetadata: null, mcpConnectionsGatingEnabled: false,
+      })
+      liveTool = { ...liveTool, annotations: { readOnlyHint: true } }
+      const built = await buildExternalMcpToolTree({
+        organizationId, member, scopes, redirectUriBase: context.redirectUriBase,
+        namespaceContext: {
+          nativeProviderEntries: [], codemodeNativeProviderEntries: [],
+          externalMcpConnections: [connection], codemodeExternalMcpConnections: [connection],
+          namespaces: buildCodemodeConnectionNamespaceMaps({ native: [], externalMcp: [connection] }),
+        },
+      })
+      const leaf = built.manifest[0]
+      if (!leaf) throw new Error("Missing external Code Mode leaf")
+      for (const entry of cases) {
+        // Keep the already-built tree: dispatch must not trust its read-only snapshot.
+        liveTool = { ...liveTool, annotations: entry.annotations }
+        const before = calls
+        const generic = await executeCapability(context, { name: leaf.capabilityName, body: {} })
+        const script = await runCodemodeScript({ code: `return await ${leaf.scriptPath}({})`, tools: built.tools, timeoutMs: 1_000 })
+        if (scopes.has(entry.requiredScope)) {
+          expect(generic.isError).not.toBe(true)
+          expect(script).toMatchObject({ ok: true, value: "scope result" })
+          expect(calls).toBe(before + 2)
+        } else {
+          expect(generic.isError).toBe(true)
+          const text = generic.content.find((part) => part.type === "text")
+          if (!text || text.type !== "text") throw new Error("Missing scope error")
+          expect(JSON.parse(text.text)).toMatchObject({ error: "insufficient_mcp_scope", requiredScope: entry.requiredScope })
+          expect(script).toMatchObject({ ok: false, error: { message: expect.stringContaining(entry.requiredScope) } })
+          expect(calls).toBe(before)
+        }
+      }
+      allowed = false
+      const before = calls
+      expect((await executeCapability(context, { name: leaf.capabilityName, body: {} })).isError).toBe(true)
+      expect((await runCodemodeScript({ code: `return await ${leaf.scriptPath}({})`, tools: built.tools, timeoutMs: 1_000 })).ok).toBe(false)
+      expect(calls).toBe(before)
+      allowed = true
+    }
+  } finally {
+    mock.restore()
+  }
 })
