@@ -1,6 +1,8 @@
 import { resolveEvalEngine, type Seed } from "@openwork/env";
 import { browserScript } from "@openwork/cdp";
 import { evalIn } from "@openwork/behaviors";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 /** The existing overlapping long-tool/queued-turn workloads on a real app-web stack. */
 export async function queuedSessionSwitchWeb(seed: Seed) {
@@ -77,7 +79,10 @@ export async function queuedSessionSwitchWeb(seed: Seed) {
       return { path, status: response.status, body };
     }));
   }, [workspaceId, engine]));
-  return { app, agentMock, workspaceA, workspaceB, providerState, runId, promptMarker, firstMarker, firstToolDescription, toolDescription,
+  return { app, agentMock, workspaceA, workspaceB, providerState,
+    devLog: () => readFile(resolve(import.meta.dirname, "../../tmp/worlds/runtime", app.handle.name, "web.log"), "utf8")
+      .catch(() => "Local development log unavailable; see the fixture's placement receipt."),
+    runId, promptMarker, firstMarker, firstToolDescription, toolDescription,
     completionMarker, replyA, promptB, replyB, progressA, continuedProgressA, progressB,
     queuedA, queuedB, queuedRepliesA, queuedReplyB, commandB, firstCommand, command, continuedCommand };
 }

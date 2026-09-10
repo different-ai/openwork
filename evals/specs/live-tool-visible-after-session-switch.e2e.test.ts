@@ -300,6 +300,7 @@ queueSwitchTest(
     const workspaceB = scope === "same workspace" ? workspaceA : world.workspaceB;
     expect(workspaceA.workspaceId === workspaceB.workspaceId).toBe(scope === "same workspace");
     await configureWorkspaces(desktopApp, [...new Set([workspaceA.workspaceId, workspaceB.workspaceId])], agentMock.url);
+    const arrangedTimeOrigin = await evalIn(desktopApp, () => performance.timeOrigin);
     evidence.recordJsonArtifact("Configured native workspace providers", {
       a: await world.providerState(workspaceA.workspaceId),
       b: await world.providerState(workspaceB.workspaceId),
@@ -470,6 +471,19 @@ queueSwitchTest(
     expect(liveContinuation.assistantText).not.toContain(replyA);
     expect((await readSessionFacts(desktopApp, workspaceA.workspaceId, chatA)).tools
       .some((tool) => tool.callId === continuedCall.callId && tool.status === "running")).toBe(true);
+    const pendingA = await readTranscript(desktopApp, chatA);
+    evidence.recordJsonArtifact("Queue A remains pending through its next native tool", {
+      transcript: pendingA,
+      native: await readSessionFacts(desktopApp, workspaceA.workspaceId, chatA),
+      provider: await agentMock.agentRequests(),
+      arrangedTimeOrigin,
+      currentTimeOrigin: await evalIn(desktopApp, () => performance.timeOrigin),
+    });
+    expect(pendingA.text).toContain("2 queued");
+    for (const prompt of queuedA) {
+      expect(pendingA.text).toContain(prompt);
+      expect(pendingA.userText).not.toContain(prompt);
+    }
     await screenshot(desktopApp);
 
     const completed = await eventually(
@@ -499,7 +513,28 @@ queueSwitchTest(
       intervalMs: 250,
       label: "both queued A follow-ups execute as separate turns in order",
       until: (fact) => queuedRepliesA.every((reply) => fact.assistantText.includes(reply)),
+    }).catch(async (error) => {
+      evidence.recordJsonArtifact("Queue A failed drain diagnostics", {
+        arrangedTimeOrigin,
+        currentTimeOrigin: await evalIn(desktopApp, () => performance.timeOrigin),
+        devLog: await world.devLog(),
+        error: String(error),
+        native: await readSessionFacts(desktopApp, workspaceA.workspaceId, chatA),
+        provider: await agentMock.agentRequests(),
+        inspector: await evalIn(desktopApp, browserScript(() => ({ composer: window.__openwork?.slice("composer"), events: window.__openwork?.events(200) }), [])),
+      });
+      throw error;
     });
+    const drainedTimeOrigin = await evalIn(desktopApp, () => performance.timeOrigin);
+    evidence.recordJsonArtifact("Queue A native deliveries and renderer continuity", {
+      arrangedTimeOrigin,
+      currentTimeOrigin: drainedTimeOrigin,
+      devLog: await world.devLog(),
+      native: await readSessionFacts(desktopApp, workspaceA.workspaceId, chatA),
+      provider: await agentMock.agentRequests(),
+      events: await evalIn(desktopApp, browserScript(() => window.__openwork?.events(200), [])),
+    });
+    expect(drainedTimeOrigin).toBe(arrangedTimeOrigin);
     for (const prompt of queuedA) expect(drainedA.userText.split(prompt)).toHaveLength(2);
     for (const reply of queuedRepliesA) expect(drainedA.assistantText.split(reply)).toHaveLength(2);
     expect(drainedA.assistantText.indexOf(replyA)).toBeLessThan(drainedA.assistantText.indexOf(queuedRepliesA[0]));
