@@ -14,6 +14,8 @@ import {
   validateWorldSurfaceSelection,
 } from "@openwork/env";
 import type { Den, WorldResources } from "@openwork/env";
+import type { DenRef, DenSession } from "@openwork/behaviors";
+import type { MockMcpHandle } from "@openwork/labs";
 import { BufferedEvidenceSink, SeedChannel, SpecRuntime, copyWorldResources, registerWorldDisposable } from "../src/spec/runtime.ts";
 
 test("world resource validation rejects malformed and conflicting contracts", () => {
@@ -75,10 +77,10 @@ test("arrangement and body enforce immutable resource snapshots before spawning"
 
 // Access beyond the declaration gate would fail without touching infrastructure.
 const guardedDen: Den = {
-  get ref() { throw new Error("Den ref accessed before guard"); },
-  get admin() { throw new Error("Den admin accessed before guard"); },
+  get ref(): DenRef { throw new Error("Den ref accessed before guard"); },
+  get admin(): DenSession { throw new Error("Den admin accessed before guard"); },
   members: {},
-  mocks: { get fixture() { throw new Error("Mock accessed before guard"); } },
+  mocks: { get fixture(): MockMcpHandle { throw new Error("Mock accessed before guard"); } },
   async apiLog() { return ""; },
   async [Symbol.asyncDispose]() {},
 };
