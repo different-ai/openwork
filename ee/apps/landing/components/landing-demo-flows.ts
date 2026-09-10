@@ -164,4 +164,4 @@ export const landingDemoFlowTimes: Record<string, string> = {
   "outreach-creation": "22h ago"
 };
 
-export const defaultLandingDemoFlowId = landingDemoFlows[0]?.id ?? "";
+export const defaultLandingDemoFlowId = "data-analysis";

@@ -71,6 +71,8 @@ export function desktopActivationRequired(distribution, config) {
 }
 
 const ENTERPRISE_PREACTIVATION_COMMANDS = new Set([
+  "__showContextMenu",
+  "__cancelContextMenu",
   "__fetch",
   "appBuildInfo",
   "connectLinkAccept",

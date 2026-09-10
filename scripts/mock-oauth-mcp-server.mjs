@@ -8,17 +8,40 @@ const issuer = process.env.ISSUER || `http://${host}:${port}`;
 const extraToolCount = Number(process.env.MOCK_EXTRA_TOOL_COUNT || 0);
 const autoApprove = process.env.AUTO_APPROVE !== "0";
 const disableDcr = process.env.DISABLE_DCR === "1";
+const rejectDcrRedirectUris = process.env.MOCK_REJECT_DCR_REDIRECT_URIS || "";
 const strictOAuth = process.argv.includes("--strict") || process.env.STRICT_OAUTH === "1";
 // Strict mode rejects refresh tokens this instance did not issue (and
 // rotates on every refresh grant). Off by default: eval flows restart the
 // mock mid-scenario and legitimately present pre-restart refresh tokens.
-const strictRefreshTokens = process.env.STRICT_REFRESH_TOKENS === "1";
+let strictRefreshTokens = process.env.STRICT_REFRESH_TOKENS === "1";
 const mockClientId = process.env.MOCK_CLIENT_ID || "mock-preregistered-client";
 const mockClientSecret = process.env.MOCK_CLIENT_SECRET || "mock-preregistered-secret";
 const preregisteredRedirectUris = (process.env.MOCK_REDIRECT_URIS || "")
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
+// Clients whose token requests fail the way a provider rejects a client whose
+// configured authentication does not match its registration. An entry is a
+// client id, or "id:secret" to reject only when that exact secret is presented
+// (so a request that lost the secret is observable). "@dynamic" rejects every
+// client this mock registered dynamically.
+const rejectedTokenClients = (process.env.MOCK_REJECT_TOKEN_CLIENT_IDS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean)
+  .map((entry) => {
+    const separator = entry.indexOf(":");
+    return separator === -1
+      ? { clientId: entry, clientSecret: null }
+      : { clientId: entry.slice(0, separator), clientSecret: entry.slice(separator + 1) };
+  });
+
+function rejectsTokenClient(clientId, clientSecret) {
+  return rejectedTokenClients.some((entry) => (
+    (entry.clientId === "@dynamic" && clients.has(clientId))
+    || (entry.clientId === clientId && (entry.clientSecret === null || entry.clientSecret === clientSecret))
+  ));
+}
 const advertisedScopes = ["mcp:read", "mcp:write"];
 const extraToolName = (process.env.MOCK_EXTRA_TOOL_NAME || "").trim();
 const extraToolTitle = (process.env.MOCK_EXTRA_TOOL_TITLE || extraToolName).trim();
@@ -48,10 +71,17 @@ const clients = new Map();
 const codes = new Map();
 const tokens = new Set();
 const refreshTokens = new Set();
+let holdRefreshResponses = false;
+let nextRefreshResponseId = 0;
+const pendingRefreshResponses = new Map();
 const requests = [];
 const drafts = [];
 let agentWorkloads = [];
 let agentRequiredHeader = null;
+const agentReplyGates = new Map();
+const AGENT_REPLY_GATE_TIMEOUT_MS = 60_000;
+let agentRepliesHeld = false;
+const heldAgentReplies = new Set();
 let configuredTools = [];
 
 const gmailThreadId = "thread-q3-launch";
@@ -188,6 +218,21 @@ function validateAgentWorkloads(value) {
     if (finalReplyChunkSize !== null && (!Number.isInteger(finalReplyChunkSize) || finalReplyChunkSize < 1)) {
       throw new Error(`agent workload ${promptMarker} finalReplyChunkSize must be a positive integer`);
     }
+    const finalReplyChunks = workload.finalReplyChunks === undefined ? null : workload.finalReplyChunks;
+    if (finalReplyChunks !== null && (!Array.isArray(finalReplyChunks) || finalReplyChunks.length === 0
+      || finalReplyChunks.some((chunk) => typeof chunk !== "string") || finalReplyChunks.join("") !== finalReply)) {
+      throw new Error(`agent workload ${promptMarker} finalReplyChunks must concatenate to finalReply`);
+    }
+    if (finalReplyChunks !== null && finalReplyChunkSize !== null) {
+      throw new Error(`agent workload ${promptMarker} cannot set both finalReplyChunks and finalReplyChunkSize`);
+    }
+    const finalReplyInitiallyReleasedChunks = workload.finalReplyInitiallyReleasedChunks === undefined
+      ? null : workload.finalReplyInitiallyReleasedChunks;
+    if (finalReplyInitiallyReleasedChunks !== null && (finalReplyChunks === null
+      || !Number.isInteger(finalReplyInitiallyReleasedChunks) || finalReplyInitiallyReleasedChunks < 1
+      || finalReplyInitiallyReleasedChunks > finalReplyChunks.length || workload.finalReplyFrom !== undefined)) {
+      throw new Error(`agent workload ${promptMarker} gated replies require exact static chunks and a valid initial release count`);
+    }
     if (workload.finalReasoning !== undefined && typeof workload.finalReasoning !== "string") {
       throw new Error(`agent workload ${promptMarker} finalReasoning must be a string`);
     }
@@ -216,20 +261,124 @@ function validateAgentWorkloads(value) {
       return { tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom,
         text: step.text, allowUnadvertisedTool: step.allowUnadvertisedTool === true };
     });
+    if (workload.matchAll !== undefined && typeof workload.matchAll !== "boolean")
+      throw new Error(`agent workload ${promptMarker} matchAll must be a boolean`);
     const finalReplyDelayMs = workload.finalReplyDelayMs ?? 0;
     if (!Number.isInteger(finalReplyDelayMs) || finalReplyDelayMs < 0 || finalReplyDelayMs > 10000)
       throw new Error("finalReplyDelayMs must be between 0 and 10000");
-    return { promptMarker, finalReply, finalReplyFrom: workload.finalReplyFrom, finalReplyChunkSize, finalReplyDelayMs, finalReasoning: workload.finalReasoning, steps, latestUserTurn: workload.latestUserTurn === true };
+    const rateLimitAttempts = workload.rateLimitAttempts ?? 0;
+    if (!Number.isInteger(rateLimitAttempts) || rateLimitAttempts < 0 || rateLimitAttempts > 3)
+      throw new Error("rateLimitAttempts must be between 0 and 3");
+    return { promptMarker, matchAll: workload.matchAll === true, finalReply, finalReplyFrom: workload.finalReplyFrom, finalReplyChunkSize, finalReplyChunks,
+      finalReplyInitiallyReleasedChunks, finalReplyDelayMs, finalReasoning: workload.finalReasoning, steps,
+      latestUserTurn: workload.latestUserTurn === true, rateLimitAttempts };
   });
 }
 
 function finalReplyChunks(workload) {
+  if (workload.finalReplyChunks !== null) return workload.finalReplyChunks;
   if (workload.finalReplyChunkSize === null) return [workload.finalReply];
   const chunks = [];
   for (let offset = 0; offset < workload.finalReply.length; offset += workload.finalReplyChunkSize) {
     chunks.push(workload.finalReply.slice(offset, offset + workload.finalReplyChunkSize));
   }
   return chunks;
+}
+
+function publicAgentReplyState(state) {
+  return {
+    promptMarker: state.promptMarker,
+    releasedChunks: state.releasedChunks,
+    deliveredChunks: state.deliveredChunks,
+    totalChunks: state.totalChunks,
+    prefix: state.prefix,
+    complete: state.complete,
+    waiting: state.waiters.length,
+    aborted: state.aborted,
+    timedOut: state.timedOut,
+  };
+}
+
+function createAgentReplyGate(workload, chunks) {
+  const previous = agentReplyGates.get(workload.promptMarker);
+  if (previous && !previous.complete) throw new Error(`agent reply ${workload.promptMarker} already has an active stream`);
+  const state = {
+    promptMarker: workload.promptMarker,
+    releasedChunks: workload.finalReplyInitiallyReleasedChunks,
+    deliveredChunks: 0,
+    totalChunks: chunks.length,
+    prefix: "",
+    complete: false,
+    aborted: false,
+    timedOut: false,
+    waiters: [],
+  };
+  agentReplyGates.set(workload.promptMarker, state);
+  return state;
+}
+
+function releaseAgentReplyWaiters(gate, released) {
+  for (const waiter of gate.waiters.splice(0)) waiter(released);
+}
+
+function waitForAgentReplyRelease(gate) {
+  if (gate.aborted || gate.timedOut) return Promise.resolve(false);
+  if (gate.deliveredChunks < gate.releasedChunks) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (released) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const index = gate.waiters.indexOf(finish);
+      if (index >= 0) gate.waiters.splice(index, 1);
+      resolve(released);
+    };
+    const timer = setTimeout(() => {
+      gate.timedOut = true;
+      finish(false);
+    }, AGENT_REPLY_GATE_TIMEOUT_MS);
+    gate.waiters.push(finish);
+  });
+}
+
+async function gatedAgentStream(res, model, workload, finalReply) {
+  const chunks = finalReplyChunks({ ...workload, finalReply });
+  const gate = createAgentReplyGate(workload, chunks);
+  res.writeHead(200, {
+    "access-control-allow-origin": "*",
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  const abort = () => {
+    if (gate.complete) return;
+    gate.aborted = true;
+    releaseAgentReplyWaiters(gate, false);
+  };
+  res.once("close", abort);
+  res.write(`data: ${JSON.stringify(agentChunk(model, { role: "assistant" }))}\n\n`);
+  if (workload.finalReasoning) {
+    res.write(`data: ${JSON.stringify(agentChunk(model, { reasoning_content: workload.finalReasoning }))}\n\n`);
+  }
+  for (const content of chunks) {
+    while (gate.deliveredChunks >= gate.releasedChunks) {
+      if (!await waitForAgentReplyRelease(gate)) {
+        if (!res.destroyed) res.destroy();
+        return;
+      }
+    }
+    if (gate.aborted || gate.timedOut || res.writableEnded || res.destroyed) return;
+    res.write(`data: ${JSON.stringify(agentChunk(model, { content }))}\n\n`);
+    gate.deliveredChunks += 1;
+    gate.prefix += content;
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
+  if (gate.aborted || gate.timedOut || res.writableEnded || res.destroyed) return;
+  res.write(`data: ${JSON.stringify(agentChunk(model, {}, "stop"))}\n\n`);
+  gate.complete = true;
+  res.off("close", abort);
+  res.end("data: [DONE]\n\n");
 }
 
 function offeredAgentTool(body, wanted) {
@@ -273,23 +422,34 @@ function skillCatalogArguments(messages, skillName) {
 
 }
 
-function agentStream(res, model, chunks) {
+function agentStream(res, model, chunks, hold = false) {
   res.writeHead(200, {
     "access-control-allow-origin": "*",
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
     connection: "keep-alive",
   });
-  let delayMs = 150;
-  for (const chunk of chunks) {
+  const send = () => {
+    heldAgentReplies.delete(send);
+    if (res.destroyed) return;
+    let delayMs = 150;
+    for (const chunk of hold ? chunks.slice(1) : chunks) {
+      setTimeout(() => {
+        if (!res.destroyed && !res.writableEnded) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      }, delayMs);
+      delayMs += 150;
+    }
     setTimeout(() => {
-      if (!res.writableEnded) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      if (!res.destroyed && !res.writableEnded) res.end("data: [DONE]\n\n");
     }, delayMs);
-    delayMs += 150;
+  };
+  if (hold) {
+    res.write(`data: ${JSON.stringify(chunks[0])}\n\n`);
+    heldAgentReplies.add(send);
+    res.once("close", () => heldAgentReplies.delete(send));
+  } else {
+    send();
   }
-  setTimeout(() => {
-    if (!res.writableEnded) res.end("data: [DONE]\n\n");
-  }, delayMs);
 }
 
 function agentChunk(model, delta, finishReason = null) {
@@ -391,7 +551,7 @@ async function handleAgentCompletion(req, res, entry) {
   const latestUserIndex = messages.findLastIndex((message) => message?.role === "user");
   const latestUserText = latestUserIndex < 0 ? "" : agentContentText(messages[latestUserIndex]);
   const matched = agentWorkloads.filter((workload) =>
-    (workload.latestUserTurn ? latestUserText : conversationText).includes(workload.promptMarker));
+    workload.matchAll || (workload.latestUserTurn ? latestUserText : conversationText).includes(workload.promptMarker));
   const matchedMarkers = matched.map((workload) => workload.promptMarker);
   const workload = matched[0];
   const scopedMessages = workload?.latestUserTurn ? messages.slice(latestUserIndex + 1) : messages;
@@ -413,6 +573,13 @@ async function handleAgentCompletion(req, res, entry) {
     return;
   }
   if (!workload) throw new Error("matched agent workload disappeared");
+  if (workload.rateLimitAttempts > 0) {
+    workload.rateLimitAttempts -= 1;
+    entry.agentCompletion = { ...baseRequest, kind: "error", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
+    res.setHeader("retry-after", "5");
+    json(res, 429, { error: { message: "Rate limited for lifecycle verification" } });
+    return;
+  }
   if (completedTools >= workload.steps.length) {
     if (workload.finalReplyDelayMs) await new Promise(resolve => setTimeout(resolve, workload.finalReplyDelayMs));
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
@@ -421,12 +588,16 @@ async function handleAgentCompletion(req, res, entry) {
         .filter((message) => message.role === "system" || message.role === "developer")
         .map(agentContentText).join("\n") || "No system instructions"
       : workload.finalReply;
-    agentStream(res, model, [
-      agentChunk(model, { role: "assistant" }),
-      ...(workload.finalReasoning ? [agentChunk(model, { reasoning_content: workload.finalReasoning })] : []),
-      ...finalReplyChunks({ ...workload, finalReply }).map((content) => agentChunk(model, { content })),
-      agentChunk(model, {}, "stop"),
-    ]);
+    if (workload.finalReplyInitiallyReleasedChunks !== null) {
+      await gatedAgentStream(res, model, workload, finalReply);
+    } else {
+      agentStream(res, model, [
+        agentChunk(model, { role: "assistant" }),
+        ...(workload.finalReasoning ? [agentChunk(model, { reasoning_content: workload.finalReasoning })] : []),
+        ...finalReplyChunks({ ...workload, finalReply }).map((content) => agentChunk(model, { content })),
+        agentChunk(model, {}, "stop"),
+      ], agentRepliesHeld);
+    }
     return;
   }
   const step = workload.steps[completedTools];
@@ -658,6 +829,29 @@ async function registerClient(req, res, entry) {
       token_endpoint_auth_method: body.token_endpoint_auth_method ?? null,
     };
   }
+  if (rejectDcrRedirectUris === "invalid_redirect_uri") {
+    json(res, 400, {
+      error: "invalid_redirect_uri",
+      error_description: "The provided redirect URIs are not approved for use by this authorization server.",
+    });
+    return;
+  }
+  if (rejectDcrRedirectUris === "invalid_request") {
+    const firstRedirectUri = Array.isArray(body.redirect_uris) && typeof body.redirect_uris[0] === "string"
+      ? body.redirect_uris[0]
+      : "";
+    let redirectHost = "";
+    try {
+      redirectHost = new URL(firstRedirectUri).host;
+    } catch {
+      // The mock still returns its deterministic rejection for malformed input.
+    }
+    json(res, 400, {
+      error: "invalid_request",
+      error_description: `Invalid redirect_uri: redirect_uri host '${redirectHost}' is not in the allowed list`,
+    });
+    return;
+  }
   const clientId = `mock-client-${randomUUID()}`;
   const client = {
     client_id: clientId,
@@ -676,7 +870,33 @@ async function issueToken(req, res, entry) {
   const form = await readForm(req);
   const grantType = form.grant_type || "authorization_code";
   if (entry) entry.grantType = grantType;
+  const respond = async (status, body) => {
+    if (grantType === "refresh_token" && holdRefreshResponses) {
+      const id = ++nextRefreshResponseId;
+      await new Promise((resolve) => {
+        const release = () => {
+          clearTimeout(timer);
+          pendingRefreshResponses.delete(id);
+          if (pendingRefreshResponses.size === 0) holdRefreshResponses = false;
+          resolve();
+        };
+        const timer = setTimeout(release, 30_000);
+        pendingRefreshResponses.set(id, {
+          id, status, tokenId: createHash("sha256").update(form.refresh_token || "").digest("hex").slice(0, 16), release,
+        });
+      });
+    }
+    json(res, status, body);
+  };
   let grantedScope = "mcp:read mcp:write";
+
+  const requestedClient = basicClient(req);
+  const requestedClientId = requestedClient?.clientId || form.client_id || "";
+  const requestedClientSecret = requestedClient?.clientSecret ?? form.client_secret ?? null;
+  if (rejectsTokenClient(requestedClientId, requestedClientSecret)) {
+    json(res, 400, { error: "invalid_client", error_description: "Unsupported client authentication method" });
+    return;
+  }
 
   if (grantType === "authorization_code") {
     const grant = codes.get(form.code);
@@ -705,7 +925,7 @@ async function issueToken(req, res, entry) {
     }
     if (strictRefreshTokens) {
       if (!form.refresh_token || !refreshTokens.has(form.refresh_token)) {
-        json(res, 400, { error: "invalid_grant", error_description: "unknown refresh token" });
+        await respond(400, { error: "invalid_grant", error_description: "unknown refresh token" });
         return;
       }
       // Rotate, like real providers (and the Den) do: the old refresh token
@@ -721,7 +941,7 @@ async function issueToken(req, res, entry) {
   tokens.add(accessToken);
   const refreshToken = `mock-refresh-${randomUUID()}`;
   refreshTokens.add(refreshToken);
-  json(res, 200, {
+  await respond(200, {
     access_token: accessToken,
     refresh_token: refreshToken,
     token_type: "Bearer",
@@ -1025,7 +1245,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/health") {
-      json(res, 200, { ok: true, issuer, autoApprove, disableDcr, requests: requests.length });
+      json(res, 200, { ok: true, host, issuer, autoApprove, disableDcr, requests: requests.length });
       return;
     }
 
@@ -1046,6 +1266,15 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/admin/agent-hold" && req.method === "POST") {
+      const body = await readJson(req);
+      if (typeof body?.held !== "boolean") throw new Error("held must be a boolean");
+      agentRepliesHeld = body.held;
+      if (!agentRepliesHeld) for (const send of [...heldAgentReplies]) send();
+      json(res, 200, { held: agentRepliesHeld, pending: heldAgentReplies.size });
+      return;
+    }
+
     if (url.pathname === "/admin/agent-workloads" && req.method === "POST") {
       const body = await readJson(req);
       const requiredHeader = body?.requiredHeader;
@@ -1055,8 +1284,42 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       agentWorkloads = validateAgentWorkloads(body?.workloads);
+      for (const state of agentReplyGates.values()) {
+        state.aborted = true;
+        releaseAgentReplyWaiters(state, false);
+      }
+      agentReplyGates.clear();
       agentRequiredHeader = requiredHeader ?? null;
       json(res, 200, { configured: agentWorkloads.length });
+      return;
+    }
+
+    if (url.pathname === "/admin/agent-reply" && req.method === "GET") {
+      const promptMarker = url.searchParams.get("promptMarker") ?? "";
+      const state = agentReplyGates.get(promptMarker);
+      if (!state) {
+        json(res, 404, { error: "agent_reply_not_started" });
+        return;
+      }
+      json(res, 200, publicAgentReplyState(state));
+      return;
+    }
+
+    if (url.pathname === "/admin/agent-reply" && req.method === "POST") {
+      const body = await readJson(req);
+      const state = agentReplyGates.get(body?.promptMarker);
+      if (!state) {
+        json(res, 404, { error: "agent_reply_not_started" });
+        return;
+      }
+      const count = body?.count ?? 1;
+      if (!Number.isInteger(count) || count < 1) {
+        json(res, 400, { error: "count_must_be_positive" });
+        return;
+      }
+      state.releasedChunks = Math.min(state.totalChunks, state.releasedChunks + count);
+      releaseAgentReplyWaiters(state, true);
+      json(res, 200, publicAgentReplyState(state));
       return;
     }
 
@@ -1128,14 +1391,36 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Test hook: invalidate both access and refresh credentials. With
-    // STRICT_REFRESH_TOKENS=1 the next authenticated MCP operation follows
-    // the production-shaped 401 -> refresh -> invalid_grant path.
+    // Hold completed refresh responses so a journey can commit a successful
+    // rotation before delivering another request's rejection of the old grant.
+    if (url.pathname === "/admin/refresh-responses" && req.method === "POST") {
+      tokens.clear();
+      strictRefreshTokens = true;
+      holdRefreshResponses = true;
+      json(res, 200, { holding: true });
+      return;
+    }
+    if (url.pathname === "/admin/refresh-responses" && req.method === "GET") {
+      json(res, 200, { responses: [...pendingRefreshResponses.values()].map(({ id, status, tokenId }) => ({ id, status, tokenId })) });
+      return;
+    }
+    const refreshRelease = url.pathname.match(/^\/admin\/refresh-responses\/(\d+)\/release$/);
+    if (refreshRelease && req.method === "POST") {
+      const pending = pendingRefreshResponses.get(Number(refreshRelease[1]));
+      if (!pending) { json(res, 404, { error: "unknown_refresh_response" }); return; }
+      pending.release();
+      json(res, 200, { released: true });
+      return;
+    }
+
+    // Test hook: revoke both grants and enforce that revocation on refresh,
+    // producing the 401 -> refresh -> invalid_grant path in every test lane.
     if (url.pathname === "/admin/expire-oauth-tokens" && req.method === "POST") {
       const expiredAccessTokens = tokens.size;
       const expiredRefreshTokens = refreshTokens.size;
       tokens.clear();
       refreshTokens.clear();
+      strictRefreshTokens = true;
       json(res, 200, { expiredAccessTokens, expiredRefreshTokens });
       return;
     }

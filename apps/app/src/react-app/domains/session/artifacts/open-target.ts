@@ -342,76 +342,93 @@ function addFileValues(map: Map<string, OpenTarget>, values: string[], confidenc
   }
 }
 
+// Session sync replaces changed parts; unchanged tools survive text-only deltas.
+const partOpenTargets = new WeakMap<UIMessage["parts"][number], Map<string, OpenTarget[]>>();
+
+function extractPartOpenTargets(part: UIMessage["parts"][number], confidence: number, includeFileMentions: boolean) {
+  // Only text extraction depends on message role or file-mention options.
+  const key = part.type === "text" ? `${confidence}:${includeFileMentions}` : "default";
+  let variants = partOpenTargets.get(part);
+  const cached = variants?.get(key);
+  if (cached) return cached;
+
+  const targets = new Map<string, OpenTarget>();
+  if (part.type === "text" && typeof part.text === "string") {
+    scanText(targets, part.text, confidence, "message", {
+      includeFiles: includeFileMentions || (confidence === 65 && shouldScanAssistantFileMentions(part.text)),
+    });
+  } else if (part.type === "file") {
+    const path = filePathFromFileUrl(part.url);
+    if (path) {
+      const target = targetFromFile(path, 95, "chat attachment");
+      addTarget(targets, target && part.filename ? { ...target, name: part.filename } : target);
+    }
+  } else if (part.type === "source-document") {
+    addTarget(
+      targets,
+      part.filename
+        ? targetFromFile(part.filename, 95, "attachment source")
+        : URI_PATTERN.test(part.title)
+          ? targetFromUrl(part.title, 95, "attachment source")
+          : targetFromFile(part.title, 95, "attachment source"),
+    );
+  } else if (part.type === "dynamic-tool") {
+    const discoveryTool = isDiscoveryTool(part.toolName);
+    const writeTool = isWriteTool(part.toolName);
+    const artifactMetadataTool = isArtifactMetadataTool(part.toolName);
+
+    if (writeTool) {
+      addFileValues(
+        targets,
+        [part.input, part.output].flatMap(collectFileMetadataValues),
+        95,
+        "write tool metadata",
+      );
+      addFileValues(targets, collectPatchFileValues(part.input), 95, "patch metadata");
+      if (typeof part.output === "string") {
+        scanText(targets, part.output, 90, "write tool output", { includeFiles: true });
+      }
+    }
+
+    if (artifactMetadataTool) {
+      addFileValues(
+        targets,
+        [part.input, part.output].flatMap(collectNestedFileMetadataValues),
+        95,
+        "artifact tool metadata",
+      );
+    }
+
+    if (!discoveryTool) {
+      scanText(targets, JSON.stringify(part.output ?? part.input ?? ""), 75, "tool output", { includeFiles: false });
+    }
+  }
+
+  const extracted = Array.from(targets.values());
+  if (!variants) {
+    variants = new Map();
+    partOpenTargets.set(part, variants);
+  }
+  variants.set(key, extracted);
+  return extracted;
+}
+
 export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTargetsOptions = {}): OpenTarget[] {
   const targets = new Map<string, OpenTarget>();
+  const includeFileMentions = options.includeFileMentions === true;
 
   for (const message of messages) {
+    const confidence = message.role === "assistant" ? 65 : 40;
     for (const part of message.parts) {
-      if (part.type === "text" && typeof part.text === "string") {
-        scanText(targets, part.text, message.role === "assistant" ? 65 : 40, "message", {
-          includeFiles: options.includeFileMentions === true || (message.role === "assistant" && shouldScanAssistantFileMentions(part.text)),
-        });
-        continue;
-      }
-
-      if (part.type === "file") {
-        const path = filePathFromFileUrl(part.url);
-        if (path) {
-          const target = targetFromFile(path, 95, "chat attachment");
-          addTarget(targets, target && part.filename ? { ...target, name: part.filename } : target);
-        }
-        continue;
-      }
-
-      if (part.type === "source-document") {
-        addTarget(
-          targets,
-          part.filename
-            ? targetFromFile(part.filename, 95, "attachment source")
-            : URI_PATTERN.test(part.title)
-              ? targetFromUrl(part.title, 95, "attachment source")
-              : targetFromFile(part.title, 95, "attachment source"),
-        );
-        continue;
-      }
-
-      if (part.type !== "dynamic-tool") {
-        continue;
-      }
-
-      const discoveryTool = isDiscoveryTool(part.toolName);
-      const writeTool = isWriteTool(part.toolName);
-      const artifactMetadataTool = isArtifactMetadataTool(part.toolName);
-
-      if (writeTool) {
-        addFileValues(
-          targets,
-          [part.input, part.output].flatMap(collectFileMetadataValues),
-          95,
-          "write tool metadata",
-        );
-        addFileValues(targets, collectPatchFileValues(part.input), 95, "patch metadata");
-        if (typeof part.output === "string") {
-          scanText(targets, part.output, 90, "write tool output", { includeFiles: true });
-        }
-      }
-
-      if (artifactMetadataTool) {
-        addFileValues(
-          targets,
-          [part.input, part.output].flatMap(collectNestedFileMetadataValues),
-          95,
-          "artifact tool metadata",
-        );
-      }
-
-      if (!discoveryTool) {
-        scanText(targets, JSON.stringify(part.output ?? part.input ?? ""), 75, "tool output", { includeFiles: false });
+      for (const target of extractPartOpenTargets(part, confidence, includeFileMentions)) {
+        addTarget(targets, target);
       }
     }
   }
 
   return Array.from(targets.values())
     .filter(isArtifactTarget)
-    .sort((left, right) => right.confidence - left.confidence);
+    .sort((left, right) => right.confidence - left.confidence)
+    // Callers may attach verification metadata or otherwise mutate their targets.
+    .map((target) => ({ ...target }));
 }

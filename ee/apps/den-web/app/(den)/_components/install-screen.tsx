@@ -25,7 +25,7 @@ type InstallConfig = {
   distribution: "cloud" | "enterprise";
 };
 
-const RETURN_TO_OPENWORK_URL = "openwork://open";
+const DESKTOP_SIGN_IN_PATH = "/?mode=sign-in&desktopAuth=1&desktopScheme=openwork";
 const INSTALL_PLATFORMS: InstallPlatform[] = ["mac-arm64", "mac-x64", "win-x64", "linux-x64", "linux-arm64"];
 
 
@@ -439,7 +439,8 @@ export function InstallScreen() {
             ) : (
               <div className="grid gap-5 text-left">
                 <DownloadPlatformGrid groups={downloadGroups} />
-                <a className="den-button-secondary w-fit" href={RETURN_TO_OPENWORK_URL}>
+                {/* Reload so the auth provider reads the desktop handoff parameters on mount. */}
+                <a className="den-button-secondary w-fit" href={token ? new URL(DESKTOP_SIGN_IN_PATH, config.webUrl).toString() : DESKTOP_SIGN_IN_PATH}>
                   I already installed OpenWork
                 </a>
               </div>

@@ -47,7 +47,7 @@ function defaultOpenDatabase(filePath) {
 
 function defaultReadKeychainPassword(service) {
   return new Promise((resolve, reject) => {
-    execFile("/usr/bin/security", ["find-generic-password", "-wa", service], { timeout: 120_000 }, (error, stdout, stderr) => {
+    execFile("/usr/bin/security", ["find-generic-password", "-w", "-s", service], { timeout: 120_000 }, (error, stdout, stderr) => {
       if (error) {
         const detail = String(stderr || error.message || "");
         if (/could not be found/i.test(detail)) {
@@ -444,13 +444,11 @@ export function createBrowserLoginSync({
         throw new Error("sync-cancelled");
       }
     };
-    const selected = new Set(state.selectedSites);
     const sourceCookies = cookiesForSites(cookies, state.selectedSites)
       .filter((cookie) => cookie.httpOnly === true)
       .filter((cookie) => cookie.expiresAt === null || cookie.expiresAt * 1000 >= now());
     const sourceByIdentity = new Map(sourceCookies.map((cookie) => [cookieIdentity(cookie), cookie]));
-    const previousByIdentity = new Map(state.managedCookies.map((cookie) => [managedCookieIdentity(cookie), cookie]));
-    const nextManaged = new Map();
+    const managedByIdentity = new Map(state.managedCookies.map((cookie) => [managedCookieIdentity(cookie), cookie]));
     const tallies = new Map(state.selectedSites.map((site) => [site, { site, synced: 0, failed: 0, removed: 0 }]));
     let writeFailed = false;
 
@@ -461,39 +459,37 @@ export function createBrowserLoginSync({
       tallies.set(site, tally);
       try {
         await getSession().cookies.set(toElectronCookie(cookie));
+        // Revocation waits for this write; record what it installed even if cancelled.
+        managedByIdentity.set(identity, managedCookie(cookie));
+        state.managedCookies = [...managedByIdentity.values()];
         assertCurrent();
-        nextManaged.set(identity, managedCookie(cookie));
         tally.synced += 1;
       } catch (error) {
         if (isSyncCancelled(error)) throw error;
         writeFailed = true;
         tally.failed += 1;
-        const previous = previousByIdentity.get(identity);
-        if (previous) nextManaged.set(identity, previous);
       }
     }
 
     if (complete && !writeFailed) {
-      for (const [identity, cookie] of previousByIdentity) {
-        if (nextManaged.has(identity)) continue;
+      for (const [identity, cookie] of managedByIdentity) {
+        if (sourceByIdentity.has(identity)) continue;
         assertCurrent();
         const tally = tallies.get(cookie.site) ?? { site: cookie.site, synced: 0, failed: 0, removed: 0 };
         tallies.set(cookie.site, tally);
         try {
           await removeManagedCookie(cookie);
+          managedByIdentity.delete(identity);
+          state.managedCookies = [...managedByIdentity.values()];
           assertCurrent();
           tally.removed += 1;
         } catch (error) {
           if (isSyncCancelled(error)) throw error;
           tally.failed += 1;
-          nextManaged.set(identity, cookie);
         }
       }
-    } else {
-      for (const [identity, cookie] of previousByIdentity) if (!nextManaged.has(identity) && selected.has(cookie.site)) nextManaged.set(identity, cookie);
     }
 
-    state.managedCookies = [...nextManaged.values()].filter((cookie) => selected.has(cookie.site));
     await getSession().cookies.flushStore?.();
     return { sites: [...tallies.values()].filter((tally) => tally.synced > 0 || tally.failed > 0 || tally.removed > 0) };
   }

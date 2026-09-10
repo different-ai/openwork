@@ -1,10 +1,45 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { connectionActionMcpApp, connectionActionPrompt, connectionActionReply, ordinaryDiscoveryPrompt, ordinaryDiscoveryReply } from "../worlds/library.ts";
+import { connectionActionMcpApp, connectionActionPrompt, connectionActionReply, connectionStatusPrompt, ordinaryDiscoveryPrompt, ordinaryDiscoveryReply } from "../worlds/library.ts";
 
 const test = spec.world(connectionActionMcpApp, { timeout: 600_000 });
 
-test("desktop connects an account directly with the provider and confirms authorization in chat", async ({ world, agent, user, probe, evidence }) => {
+function record(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Expected an object");
+  return value;
+}
+
+for (const entry of [
+  { name: "connection search", prompt: connectionActionPrompt, tools: ["search_capabilities"] },
+  { name: "connection status execution", prompt: connectionStatusPrompt, tools: ["search_capabilities", "execute_capability"] },
+]) {
+test(`desktop connects through ${entry.name} with one native card and confirms authorization in chat`, async ({ world, agent, user, probe, evidence }) => {
+  let requestId = 0;
+  async function gateway(method: string, params: Record<string, unknown> = {}) {
+    const response = await fetch(`${world.den.ref.apiUrl}/mcp/agent`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${world.appHostSession.token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: ++requestId, method, params }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    expect(response.status).toBe(200);
+    const raw = await response.text();
+    const line = raw.split("\n").find(value => value.startsWith("data:"));
+    return record(JSON.parse(line ? line.slice(5) : raw));
+  }
+  const tools = record((await gateway("tools/list")).result).tools;
+  expect(Array.isArray(tools)).toBe(true);
+  expect(tools).toEqual(expect.arrayContaining([expect.objectContaining({ name: "execute_capability" })]));
+  expect(tools).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "connection_action" })]));
+  const legacyUri = "ui://openwork/connection-action/v1/view.html";
+  const resources = record((await gateway("resources/list")).result).resources;
+  expect(Array.isArray(resources)).toBe(true);
+  expect(resources).not.toEqual(expect.arrayContaining([expect.objectContaining({ uri: legacyUri })]));
+  const retiredResource = await gateway("resources/read", { uri: legacyUri });
+  expect(retiredResource.error).toBeDefined();
+  expect(retiredResource.result).toBeUndefined();
+  evidence.recordAssertionEvidence("The gateway no longer exposes the legacy connection app", "App-host tools include execute_capability but omit connection_action; resources omit the retired URI and a direct read returns an error without HTML", true);
+
   await agent.send(ordinaryDiscoveryPrompt);
   await user.see({ text: ordinaryDiscoveryReply }, { timeoutMs: 120_000 });
   await user.notSee({ testId: "desktop-connection-card" });
@@ -15,28 +50,27 @@ test("desktop connects an account directly with the provider and confirms author
   expect(discoveryCalls.filter(call => call.kind === "tool")).toHaveLength(1);
   await user.screenshot();
   evidence.recordAssertionEvidence("Ordinary discovery of an unconnected service stays quiet", "Dashboard capability search completed without a connection card, catalog, Connect button, or provider authorization request", true);
-  await user.click({ role: "button", label: "New session" });
-  await user.see({ text: "Try one of these:" });
-  expect(connectionActionPrompt).not.toContain(world.connection.id);
-  await agent.send(connectionActionPrompt);
+  expect(entry.prompt).not.toContain(world.connection.id);
+  await agent.send(entry.prompt);
   await user.see({ text: connectionActionReply }, { timeoutMs: 120_000 });
   await user.see({ testId: "desktop-connection-card" });
   await user.see({ role: "button", label: "Connect Notion" });
   await user.notSee({ text: "Connected" });
   await user.notSee({ text: "Finish sign-in in your browser" });
-  const calls = await world.den.mocks.connector.agentRequests({ promptMarker: connectionActionPrompt });
-  expect(calls.filter(call => call.kind === "tool").every(call => call.toolName?.endsWith("search_capabilities"))).toBe(true);
-  expect(calls.filter(call => call.kind === "tool")).toHaveLength(1);
+  const calls = await world.den.mocks.connector.agentRequests({ promptMarker: entry.prompt });
+  const toolCalls = calls.filter(call => call.kind === "tool");
+  expect(toolCalls).toHaveLength(entry.tools.length);
+  for (const [index, tool] of entry.tools.entries()) expect(toolCalls[index]?.toolName).toMatch(new RegExp(`${tool}$`));
   expect((await world.den.mocks.connector.requests()).filter(request => request.path === "/authorize")).toHaveLength(0);
   const compact = await probe.eval(() => {
     const card = document.querySelector<HTMLElement>('[data-testid="desktop-connection-card"]');
-    return { height: card?.getBoundingClientRect().height, width: card?.getBoundingClientRect().width, hasChecklist: Boolean(card?.querySelector('ol')), embeddedApp: Boolean(document.querySelector<HTMLElement>('[data-mcp-app-resource="ui://openwork/connection-action/v1/view.html"]')) };
+    return { count: document.querySelectorAll('[data-testid="desktop-connection-card"]').length, height: card?.getBoundingClientRect().height, width: card?.getBoundingClientRect().width, hasChecklist: Boolean(card?.querySelector('ol')), embeddedApp: Boolean(document.querySelector<HTMLElement>('[data-mcp-app-resource="ui://openwork/connection-action/v1/view.html"]')) };
   });
-  expect(compact).toMatchObject({ hasChecklist: false, embeddedApp: false });
+  expect(compact).toMatchObject({ count: 1, hasChecklist: false, embeddedApp: false });
   if (!compact || typeof compact !== "object" || !("height" in compact) || typeof compact.height !== "number" || !("width" in compact) || typeof compact.width !== "number") throw new Error("The connection card was not rendered.");
   expect(compact.height).toBeLessThan(88);
   await user.screenshot();
-  evidence.recordAssertionEvidence("Search shows one native connection card without a checklist or embedded setup", JSON.stringify(compact), true);
+  evidence.recordAssertionEvidence(`${entry.name} shows one native connection card without a checklist or embedded setup`, JSON.stringify(compact), true);
   evidence.recordAssertionEvidence("Authorization does not start before the user clicks Connect", "No provider authorization request before Connect", true);
 
   await probe.eval(() => {
@@ -74,3 +108,4 @@ test("desktop connects an account directly with the provider and confirms author
   await user.screenshot();
   evidence.recordAssertionEvidence("Desktop opens the provider directly and confirms completion without a Den screen", "Provider /authorize received the browser handoff; the native card shows Connected and removes Connect", true);
 });
+}

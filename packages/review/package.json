@@ -1,0 +1,14 @@
+{
+  "name": "@openwork/review",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/schema.ts",
+    "./storage": "./src/storage.ts"
+  },
+  "dependencies": {
+    "@vercel/blob": "^2.3.0",
+    "zod": "4.3.6"
+  }
+}

@@ -26,6 +26,7 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   ssoConnectionDeleted: "organization.sso.connection_deleted",
   openWorkWebComplimentaryAccessGranted: "organization.openwork_web.complimentary_access_granted",
   openWorkWebComplimentaryAccessRevoked: "organization.openwork_web.complimentary_access_revoked",
+  dpaSignedUpdated: "organization.dpa_signed.updated",
 }
 
 type OrganizationAuditAction = typeof ORGANIZATION_AUDIT_ACTIONS[keyof typeof ORGANIZATION_AUDIT_ACTIONS]
@@ -71,6 +72,7 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
     case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted:
     case ORGANIZATION_AUDIT_ACTIONS.openWorkWebComplimentaryAccessGranted:
     case ORGANIZATION_AUDIT_ACTIONS.openWorkWebComplimentaryAccessRevoked:
+    case ORGANIZATION_AUDIT_ACTIONS.dpaSignedUpdated:
       return true
     case ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun:
       return false

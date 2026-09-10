@@ -3,11 +3,26 @@ import { readdir, readFile } from 'node:fs/promises';
 // One home for CI grouping, readable names, and execution requirements.
 // Unlisted specs are discovered automatically as full-regression journeys.
 const definitions = {
+  // Fixes a fault proxy in front of den-api before Den boots; only the local lane can do that.
+  'mcp-oauth-start-unreadable-response.e2e.test.ts': { name: 'Read why a connection sign-in could not start', placement: 'local' },
   'app-smoke.e2e.test.ts': { name: 'Open a working desktop', critical: true },
+  // Boots the packaged cloud and enterprise artifacts; only packaged-smoke provides those binaries.
+  'packaged-first-launch.e2e.test.ts': { name: 'Open a fresh cloud or enterprise install', placement: 'local' },
   'org-team-lifecycle-critical-path.e2e.test.ts': { name: 'Set up a working two-person team', critical: true, model: 'live' },
   'desktop-policy-restricted-mode.e2e.test.ts': { name: 'Apply organization and team permissions', critical: true },
   'cross-server-handoff-atomic-commit.e2e.test.ts': { name: 'Switch servers and recover enrollment', critical: true, placement: 'local' },
+  'workspace-new-task-hit-target.e2e.test.ts': { name: 'Keep new tasks and sends instantly responsive', placement: 'local' },
+  'streamed-markdown-answer.e2e.test.ts': {
+    cases: [{ id: 'CONT-01', engines: ['v1', 'v2'], surfaces: ['web', 'electron'], defaultSurface: 'web', optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2', surface: 'web' } }],
+  },
+  'live-tool-visible-after-session-switch.e2e.test.ts': {
+    cases: [{ id: 'SWITCH-10', engines: ['v1', 'v2'], surfaces: ['web'], defaultSurface: 'web', optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--daytona', engine: 'v1', surface: 'web' } }],
+  },
 };
+
+export const registeredCases = Object.freeze(Object.entries(definitions).flatMap(([spec, definition]) =>
+  (definition.cases ?? []).map(value => Object.freeze({ spec, ...value }))
+));
 
 export async function catalog(root = new URL('../specs/', import.meta.url)) {
   const files = (await readdir(root)).filter(file => file.endsWith('.e2e.test.ts')).sort();

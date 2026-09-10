@@ -15,3 +15,5 @@ Today, the supported path is the first-party `OpenWork Browser` extension.
 - Keep `OpenWork Browser` enabled in `Settings > Library`.
 
 Then go back to the session view and ask OpenWork to open a website.
+
+In the desktop browser toolbar, **Suspend** frees a tab's memory after a warning. This is manual, not a page snapshot: form input, scroll position, and page history are lost. **Reload** or selecting the suspended tab opens its saved URL again. Tabs opened or restored for browser work stay protected until `browser.release_tab` declares all running and queued work complete. Release does not suspend or invalidate the current target; there is no automatic reclamation. For later work, `browser.restore_tab` checks conversation ownership and returns a fresh protected handle to use.

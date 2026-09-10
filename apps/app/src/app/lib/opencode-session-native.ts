@@ -1,5 +1,6 @@
 import type { Message, Part, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
+import { closeSessionBrowserTabs } from "./desktop";
 import { createClient, unwrap, type FieldsResult } from "./opencode";
 import { createClientV2, isOpencodeV2BaseUrl } from "./opencode-v2-adapter";
 import type { OpenworkSessionSnapshot } from "./openwork-server";
@@ -7,6 +8,12 @@ import type { ResolvedWorkspaceEndpoint } from "./workspace-endpoint";
 
 type NativeSessionEndpoint = Pick<ResolvedWorkspaceEndpoint, "opencodeBaseUrl" | "token">;
 type RequestOptions = { signal?: AbortSignal };
+
+export type NativeSessionSnapshotTarget = {
+  owner: string;
+  endpoint: NativeSessionEndpoint;
+  sessionId: string;
+};
 
 export type NativeSessionOperations = {
   get: (sessionId: string, options?: RequestOptions) => Promise<FieldsResult<Session>>;
@@ -18,7 +25,36 @@ export type NativeSessionOperations = {
 
 export type NativeSessionDependencies = {
   createOperations?: (endpoint: NativeSessionEndpoint) => NativeSessionOperations;
+  waitForSnapshotRetry?: (delayMs: number, signal: AbortSignal) => Promise<void>;
 };
+
+const SNAPSHOT_RETRY_DELAYS_MS = [100, 250, 500];
+
+function waitForSnapshotRetry(delayMs: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function readOwnedSnapshotTarget(
+  expectedOwner: string,
+  readCurrentTarget: () => NativeSessionSnapshotTarget,
+) {
+  const target = readCurrentTarget();
+  if (target.owner !== expectedOwner) {
+    throw new Error("Session snapshot owner changed before the local read completed.");
+  }
+  return target;
+}
 
 function createNativeOperations(endpoint: NativeSessionEndpoint): NativeSessionOperations {
   const client = isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)
@@ -94,6 +130,39 @@ export async function composeNativeSessionSnapshot(
   return { session, messages, todos, status: statuses[sessionId] ?? { type: "idle" } };
 }
 
+export async function composeNativeSessionSnapshotWithRetry(
+  expectedOwner: string,
+  readCurrentTarget: () => NativeSessionSnapshotTarget,
+  options: RequestOptions & { limit?: number },
+  dependencies?: NativeSessionDependencies,
+): Promise<OpenworkSessionSnapshot> {
+  const signal = options.signal ?? new AbortController().signal;
+  const waitForRetry = dependencies?.waitForSnapshotRetry ?? waitForSnapshotRetry;
+  let attempt = 0;
+  while (true) {
+    signal.throwIfAborted();
+    const target = readOwnedSnapshotTarget(expectedOwner, readCurrentTarget);
+    try {
+      const snapshot = await composeNativeSessionSnapshot(
+        target.endpoint,
+        target.sessionId,
+        options,
+        dependencies,
+      );
+      signal.throwIfAborted();
+      readOwnedSnapshotTarget(expectedOwner, readCurrentTarget);
+      return snapshot;
+    } catch (error) {
+      signal.throwIfAborted();
+      readOwnedSnapshotTarget(expectedOwner, readCurrentTarget);
+      const delayMs = SNAPSHOT_RETRY_DELAYS_MS[attempt];
+      if (delayMs === undefined) throw error;
+      attempt += 1;
+      await waitForRetry(delayMs, signal);
+    }
+  }
+}
+
 export async function deleteNativeSession(
   endpoint: NativeSessionEndpoint,
   sessionId: string,
@@ -101,5 +170,7 @@ export async function deleteNativeSession(
   dependencies?: NativeSessionDependencies,
 ) {
   const result = await sessionOperations(endpoint, dependencies).delete(sessionId, options);
-  return unwrapSessionResult(result, "session_not_found");
+  const deleted = unwrapSessionResult(result, "session_not_found");
+  if (deleted) void closeSessionBrowserTabs(sessionId);
+  return deleted;
 }

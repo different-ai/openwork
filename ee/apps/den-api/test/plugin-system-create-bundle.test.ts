@@ -197,6 +197,32 @@ let schemas: typeof import("../src/routes/org/plugin-system/schemas.js")
 beforeAll(async () => {
   seedRequiredEnv()
 
+  // Store imports reach auth startup, but this suite does not exercise auth.
+  // Match agent-plugin-import-policy.test.ts to avoid unrelated OAuth DB seeding.
+  mock.module("../src/auth.js", () => ({
+    auth: {
+      api: {
+        getSession: () => Promise.resolve(null),
+        verifyApiKey: () => Promise.resolve({
+          valid: false,
+          error: { message: "INVALID_API_KEY", code: "KEY_NOT_FOUND" },
+          key: null,
+        }),
+      },
+      handler: () => Promise.resolve(new Response(JSON.stringify({ keys: [] }), { status: 200 })),
+    },
+    DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX: "ow_mcp_at_",
+    DEN_MCP_FIRST_PARTY_CLIENT_ID: "openwork-desktop",
+    DEN_MCP_FIRST_PARTY_RESOURCES: ["http://127.0.0.1:8790/mcp"],
+    DEN_MCP_GRANT_ID_CLAIM: "https://openworklabs.com/grant_id",
+    DEN_MCP_ORG_ID_CLAIM: "https://openworklabs.com/org_id",
+    DEN_MCP_OAUTH_RESOURCE: "http://127.0.0.1:8790/mcp",
+    DEN_MCP_RESOURCE: "http://127.0.0.1:8790/mcp",
+    DEN_MCP_RESOURCE_CLAIM: "https://openworklabs.com/resource",
+    DEN_MCP_RESOURCES: ["http://127.0.0.1:8790/mcp"],
+    DEN_MCP_TOKEN_USE_CLAIM: "https://openworklabs.com/token_use",
+  }))
+
   mock.module("../src/db.js", () => ({
     db: {
       insert: insertBuilder,
@@ -298,6 +324,79 @@ test("pluginCreateSchema accepts legacy and bundle bodies while rejecting empty 
       input: { rawSourceText: "---\nname: invalid-skill-connection\ndescription: Invalid skill connection.\n---\nInstructions." },
     }],
   }).success).toBe(false)
+})
+
+test("historical Google Workspace plugins serialize inert Cloud-only guidance without writes", async () => {
+  const context = ownerContext()
+  const now = new Date("2026-07-05T00:00:00.000Z")
+  const plugin = {
+    id: createDenTypeId("plugin"),
+    organizationId: context.organizationContext.organization.id,
+    name: "Google Workspace",
+    description: "Let OpenWork help with meetings, selected Drive files, and Gmail drafts.",
+    status: "active",
+    createdByOrgMembershipId: context.organizationContext.currentMember.id,
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: null,
+  }
+  const grant = {
+    id: createDenTypeId("pluginAccessGrant"),
+    pluginId: plugin.id,
+    orgWide: true,
+    role: "viewer",
+    removedAt: now,
+  }
+  resetDb({ plugin: [plugin], plugin_access_grant: [grant] })
+  const stored = structuredClone(rowsByTable)
+
+  const detail = await storeModule.getPluginDetail(context, plugin.id)
+  expect(detail).toMatchObject({ id: plugin.id, name: plugin.name, description: plugin.description })
+  const manifest = detail.extension.manifest
+  expect(manifest.id).toBe("google-workspace")
+  expect(manifest.resources).toEqual([])
+  expect(manifest.contributions).toEqual([
+    { type: "setup-instructions", ref: "openwork.googleWorkspace.setup", location: "settings-detail" },
+  ])
+  expect(manifest.setup.instructions).toContain("OpenWork Cloud only")
+  expect(manifest.setup.instructions).toContain("Settings > Library > Connections")
+  expect(manifest).not.toHaveProperty("composer")
+  expect(manifest).not.toHaveProperty("enablement")
+  expect(manifest).not.toHaveProperty("lifecycle")
+  expect(JSON.stringify(manifest)).not.toMatch(/local-service|google-oauth|openwork\.googleWorkspace\.settings|mcp-connected/)
+  expect(insertCalls).toBe(0)
+  expect(updateCalls).toBe(0)
+  expect(rowsByTable).toEqual(stored)
+})
+
+test("unrelated built-in plugin descriptors keep their resources and settings", async () => {
+  const context = ownerContext()
+  const now = new Date("2026-07-05T00:00:00.000Z")
+  const builtins = [
+    { name: "OpenWork Browser", description: "Automate the built-in browser panel that stays visible inside OpenWork.", id: "openwork-browser", resource: "opencode-chrome-devtools", settings: "openwork.browser.settings" },
+    { name: "Computer Use", description: "Mac only: control Mac apps through semantic accessibility refs, screenshots, background-safe clicks, keyboard input, and strict mode.", id: "computer-use", resource: "computer-use-mcp", settings: "openwork.computerUse.setup" },
+    { name: "OpenAI Image Gen", description: "Generate image artifacts with gpt-image-2.", id: "openai-image-gen", resource: "openai-image-generation-service", settings: "openwork.imageGen.settings" },
+    { name: "Ollama", description: "Local model provider at http://localhost:11434.", id: "ollama", resource: "ollama-api", settings: "openwork.ollama.settings" },
+  ]
+  for (const builtin of builtins) {
+    const id = createDenTypeId("plugin")
+    resetDb({ plugin: [{
+      id,
+      organizationId: context.organizationContext.organization.id,
+      name: builtin.name,
+      description: builtin.description,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    }] })
+    const { extension } = await storeModule.getPluginDetail(context, id)
+    expect(extension.manifest.id).toBe(builtin.id)
+    expect(extension.manifest.resources).toContainEqual(expect.objectContaining({ id: builtin.resource }))
+    expect(extension.manifest.contributions).toContainEqual(expect.objectContaining({ ref: builtin.settings }))
+    expect(extension.manifest).toHaveProperty("lifecycle")
+    expect(insertCalls).toBe(0)
+    expect(updateCalls).toBe(0)
+  }
 })
 
 test("createPluginBundle rejects invalid standard SKILL.md content before any write", async () => {

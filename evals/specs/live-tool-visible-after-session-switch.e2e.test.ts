@@ -21,9 +21,11 @@ import {
   mcpMock,
   needs,
   server,
+  spec,
   test,
 } from "@openwork/testkit";
 import type { App } from "@openwork/testkit";
+import { sessionSwitchLatency } from "../worlds/session-switch-latency.ts";
 
 const providerId = "live-tool-switch-mock";
 const modelId = "live-tool-switch-model";
@@ -698,3 +700,274 @@ test.skipIf(!runnable)(
   },
 );
 }
+
+const latencyTest = spec.world(sessionSwitchLatency, { timeout: 8 * 60_000 });
+
+latencyTest("SWITCH-10 opens ten persisted conversations within the normal and warm latency ceilings", {
+  timeout: 12 * 60_000,
+}, async ({ world, user, probe, step, evidence }) => {
+  const measurements: Awaited<ReturnType<typeof world.readMeasurement>>[] = [];
+  type SidebarTargetState = Awaited<ReturnType<typeof world.sidebarTargetState>>;
+  const sidebarExpansions: Array<{
+    phase: string;
+    clickedLabels: string[];
+    states: SidebarTargetState[];
+    before: SidebarTargetState;
+    after: SidebarTargetState;
+  }> = [];
+  const normalized = (text: string) => text.split("\n").map((line) => line.trim()).filter(Boolean).join("\n");
+  const nativeBodies = (state: Awaited<ReturnType<typeof world.nativeState>>) => state.sessions
+    .map(({ sessionId, status, body }) => ({ sessionId, status, body }));
+  const exposeOldestSidebarRow = async (phase: string) => {
+    const oldest = world.targets[0]!;
+    const states: SidebarTargetState[] = [];
+    const clickedLabels: string[] = [];
+    try {
+      let current = await probe.eventually(() => world.sidebarTargetState(oldest.sessionId), {
+        within: 15_000,
+        intervalMs: 50,
+        label: `${phase} oldest row or scoped Show N more control available`,
+        until: (state) => state.targetPresent || state.showMoreControls.length > 0,
+      });
+      states.push(current);
+      const before = current;
+      for (let attempt = 0; !current.targetPresent && attempt < 20; attempt += 1) {
+        expect(current.showMoreControls).toHaveLength(1);
+        const control = current.showMoreControls[0];
+        if (!control) throw new Error(`${phase}: the scoped Show N more control disappeared`);
+        expect(control).toMatchObject({
+          tagName: "a",
+          dataSidebar: "menu-sub-button",
+          dataSlot: "sidebar-menu-sub-button",
+          ariaDisabled: null,
+        });
+        expect(control.label).toMatch(/^Show \d+ more$/);
+        const visibleBefore = current.visibleSessionCount;
+        const controlsBefore = JSON.stringify(current.showMoreControls);
+        clickedLabels.push(control.label);
+        await user.click({ text: control.label });
+        current = await probe.eventually(() => world.sidebarTargetState(oldest.sessionId), {
+          within: 10_000,
+          intervalMs: 25,
+          label: `${phase} explicit ${control.label} click advances the capped sidebar`,
+          until: (state) => state.targetPresent || state.visibleSessionCount > visibleBefore
+            || JSON.stringify(state.showMoreControls) !== controlsBefore,
+        });
+        states.push(current);
+      }
+      if (!current.targetPresent) throw new Error(`${phase}: oldest row stayed hidden after ${clickedLabels.length} bounded Show N more clicks`);
+      await user.see({ text: oldest.title }, { timeoutMs: 10_000 });
+      expect(clickedLabels.length).toBeGreaterThan(0);
+      const expansion = { phase, clickedLabels, states, before, after: current };
+      sidebarExpansions.push(expansion);
+      console.info(`[SWITCH-10] sidebar-expansion=${JSON.stringify(expansion)}`);
+      return expansion;
+    } catch (error) {
+      const current = await world.sidebarTargetState(oldest.sessionId);
+      evidence.recordJsonArtifact(`SWITCH-10 ${phase} sidebar exposure failure`, {
+        error: error instanceof Error ? error.message : String(error),
+        oldest: { sessionId: oldest.sessionId, title: oldest.title },
+        clickedLabels,
+        states,
+        current,
+      });
+      await user.screenshot();
+      throw error;
+    }
+  };
+  const measure = async (target: (typeof world.targets)[number], phase: "first" | "warm" | "reload", ceilingMs: number) => {
+    await user.see({ text: target.title }, { timeoutMs: 10_000 });
+    const outgoing = await world.current();
+    expect(outgoing.sessionId, `${phase} target ${target.index + 1} was already current`).not.toBe(target.sessionId);
+    await world.armMeasurement(target, phase);
+    await user.click({ text: target.title });
+    const observation = await probe.eventually(() => world.readMeasurement(), {
+      within: 7_000,
+      intervalMs: 10,
+      label: `${phase} conversation ${target.index + 1} latest answer visibly restored`,
+      until: (sample) => sample.completed || sample.expired,
+    });
+    measurements.push(observation);
+    console.info(`[SWITCH-10] ${phase} target=${target.index + 1} firstDisplay=${observation.firstDisplayMs ?? "missing"}ms stable=${observation.elapsedMs ?? "missing"}ms frames=${observation.stableFrames}`);
+    const valid = observation.actionCaptured && observation.completed && !observation.expired
+      && observation.ownerSessionId === target.sessionId
+      && observation.ownerWorkspaceId === world.workspace.workspaceId
+      && observation.finalAnswerCount === 1
+      && observation.lastAssistantText === normalized(target.answer)
+      && observation.lastLineVisible
+      && observation.violations.length === 0
+      && observation.promptPostsAtEnd === observation.promptPostsAtArm
+      && observation.firstDisplayMs !== null && observation.firstDisplayMs < ceilingMs
+      && observation.stableFrames >= 2;
+    if (!valid) evidence.recordJsonArtifact(`SWITCH-10 ${phase} failure`, {
+      target: { index: target.index, sessionId: target.sessionId, lastLine: target.lastLine },
+      outgoing,
+      ceilingMs,
+      observation,
+      sidebarExpansions,
+      controllerCounts: await world.controllerCounts(),
+    });
+    expect([
+      `[data-sidebar-session-id="${target.sessionId}"]`,
+      `[data-session-tab-id="${target.sessionId}"]`,
+    ]).toContain(observation.matchedClickTarget);
+    expect(observation.actionCaptured).toBe(true);
+    expect(observation.completed).toBe(true);
+    expect(observation.expired).toBe(false);
+    expect(observation.ownerSessionId).toBe(target.sessionId);
+    expect(observation.ownerWorkspaceId).toBe(world.workspace.workspaceId);
+    expect(observation.finalAnswerCount).toBe(1);
+    expect(observation.lastAssistantText).toBe(normalized(target.answer));
+    expect(observation.lastLineVisible).toBe(true);
+    expect(observation.violations).toEqual([]);
+    expect(observation.promptPostsAtEnd).toBe(observation.promptPostsAtArm);
+    expect(observation.stableFrames).toBeGreaterThanOrEqual(2);
+    expect(observation.snapshots.length).toBeLessThanOrEqual(20);
+    expect(observation.sampleIntervalsMs.length).toBeLessThanOrEqual(20);
+    if (observation.firstDisplayMs === null) throw new Error(`${phase} target ${target.index + 1} did not capture first-display latency.`);
+    expect(observation.firstDisplayMs).toBeLessThan(ceilingMs);
+    return observation;
+  };
+
+  const arranged = await step("the real web engine restores one of ten completed native histories after reload", async () => {
+    await user.reload();
+    const sidebarExpansion = await exposeOldestSidebarRow("first reload");
+    const restored = world.targets.at(-1)!;
+    await user.see({ text: restored.lastLine }, { timeoutMs: 60_000 });
+    const current = await world.current();
+    const runtime = await world.runtimeFacts();
+    const native = await world.nativeState();
+    const counts = await world.controllerCounts();
+    evidence.recordJsonArtifact("SWITCH-10 arrangement", {
+      runtime,
+      restoredSessionId: current.sessionId,
+      targets: world.targets.map(({ index, sessionId, title, prompt, lastLine }) => ({ index, sessionId, title, prompt, lastLine })),
+      sidebarExpansion,
+      native: world.compactNativeState(native),
+      nativeIndex0HistoryDiagnostic: native.sessions[0]?.rawDiagnostic ?? [],
+      nativeIndex0ResponseBodyDiagnostic: native.sessions[0]?.body.slice(0, 32_000) ?? "",
+      controllerCounts: counts,
+    });
+    expect(runtime).toMatchObject({
+      surface: "web",
+      electronBridge: false,
+      origin: runtime.expectedOrigin,
+      engine: world.engine,
+      healthStatus: 200,
+      engineStatus: 200,
+      engineEnabled: world.engine === "v2",
+      chatRouting: world.engine === "v2",
+      nativeStatus: 200,
+      nativeRoute: world.engine === "v2" ? "/opencode2/api/model" : "/opencode/session",
+      modelVisible: true,
+      viewport: { width: 1280, height: 900, devicePixelRatio: 1 },
+    });
+    expect(runtime.requestedPlacement).toBe(runtime.resolvedPlacement);
+    expect(runtime.actualHostKind).toBe(runtime.resolvedPlacement);
+    if (runtime.actualHostKind === "daytona") expect(runtime.actualSandboxId).toMatch(/^.+$/);
+    else expect(runtime.actualSandboxId).toBeNull();
+    if (runtime.hostKind === "daytona") expect(runtime.actualSourceSha).toMatch(/^[0-9a-f]{40,64}$/);
+    else if (runtime.actualSourceSha !== null) expect(runtime.actualSourceSha).toMatch(/^[0-9a-f]{40,64}$/);
+    if (world.engine === "v2") expect(runtime.engineRunning).toBe(true);
+    expect(current.sessionId).toBe(restored.sessionId);
+    expect(current.workspaceId).toBe(world.workspace.workspaceId);
+    expect(new Set(world.targets.map((target) => target.sessionId)).size).toBe(10);
+    expect(new Set(world.targets.map((target) => target.prompt)).size).toBe(10);
+    expect(new Set(world.targets.map((target) => target.answer)).size).toBe(10);
+    expect(world.targets.every((target) => !target.prompt.includes(target.lastLine))).toBe(true);
+    expect(native.inventory.status).toBe(200);
+    expect(native.active.status).toBe(200);
+    expect(native.activeTargetIds).toEqual([]);
+    for (const nativeSession of native.sessions) {
+      const target = world.targets[nativeSession.index];
+      if (!target) throw new Error(`Missing SWITCH-10 target ${nativeSession.index}`);
+      expect(nativeSession.status).toBe(200);
+      expect(nativeSession.promptOccurrences).toBe(1);
+      expect(nativeSession.finalLineOccurrences).toBe(1);
+      expect(nativeSession.expectedMessagesPresent).toBe(true);
+      expect(nativeSession.expectedMessageCount).toBe(target.expectedMessages.length);
+      expect(nativeSession.expectedMessageIdsUnique).toBe(true);
+      expect(nativeSession.userTurnCount).toBe(nativeSession.index === 0 ? 2 : 1);
+      expect(nativeSession.assistantTurnCount).toBe(nativeSession.index === 0 ? 2 : 1);
+      if (nativeSession.timestampsAvailable) expect(nativeSession.timestampsChronological).toBe(true);
+      if (nativeSession.parentRelationshipsAvailable) expect(nativeSession.parentRelationshipsValid).toBe(true);
+    }
+    const firstNativeSession = native.sessions[0];
+    if (!firstNativeSession) throw new Error("The oldest SWITCH-10 native history disappeared");
+    expect(firstNativeSession.oldAnswerOccurrences).toBe(1);
+    expect(firstNativeSession.expectedMatches.map((message) => message.count)).toEqual([1, 1, 1, 1]);
+    expect(firstNativeSession.rawDiagnostic.length).toBeGreaterThanOrEqual(4);
+    expect(counts.providerFinalRequests).toBe(world.expectedProviderFinalRequests);
+    expect(counts.providerModels).toEqual([world.modelId]);
+    expect(Object.values(counts.providerByMarker).every((count) => count === 1)).toBe(true);
+    expect(counts.promptPosts).toBe(0);
+    return { restored, current, runtime, native, counts };
+  });
+
+  const firstSamples = await step("nine unvisited histories and the already-restored history each display in under two seconds", async () => {
+    const order = world.firstVisitOrder(arranged.current.sessionId);
+    expect(order.map((target) => target.index)).toEqual([0, 8, 1, 7, 2, 6, 3, 5, 4, 9]);
+    const samples = [];
+    for (const target of order) samples.push(await measure(target, "first", 2_000));
+    expect(samples.filter((sample) => sample.targetSessionId === arranged.current.sessionId)).toHaveLength(1);
+    expect(samples.filter((sample) => sample.targetSessionId !== arranged.current.sessionId)).toHaveLength(9);
+    return samples;
+  });
+  const countsAfterFirst = await world.controllerCounts();
+  expect(countsAfterFirst.providerRequests).toBe(arranged.counts.providerRequests);
+  expect(countsAfterFirst.promptPosts).toBe(0);
+
+  const warmSamples = await step("all ten warm revisits visibly restore in under 500 milliseconds", async () => {
+    const order = world.warmVisitOrder();
+    expect(order[0]?.sessionId).not.toBe(firstSamples.at(-1)?.targetSessionId);
+    const samples = [];
+    for (const target of order) samples.push(await measure(target, "warm", 500));
+    return samples;
+  });
+
+  const countsAfterWarm = await world.controllerCounts();
+  const nativeAfterWarm = await world.nativeState();
+  expect(countsAfterWarm.providerRequests).toBe(arranged.counts.providerRequests);
+  expect(countsAfterWarm.providerFinalRequests).toBe(arranged.counts.providerFinalRequests);
+  expect(countsAfterWarm.promptPosts).toBe(0);
+  expect(nativeBodies(nativeAfterWarm)).toEqual(nativeBodies(arranged.native));
+
+  const reloadSample = await step("after another reload an old conversation still visibly restores its latest answer in under two seconds", async () => {
+    await user.reload();
+    await user.see({ text: world.targets.at(-1)!.lastLine }, { timeoutMs: 60_000 });
+    await exposeOldestSidebarRow("second reload");
+    return measure(world.targets[0]!, "reload", 2_000);
+  });
+  const finalCounts = await world.controllerCounts();
+  const finalNative = await world.nativeState();
+  expect(finalCounts.providerRequests).toBe(arranged.counts.providerRequests);
+  expect(finalCounts.providerFinalRequests).toBe(arranged.counts.providerFinalRequests);
+  expect(finalCounts.promptPosts).toBe(0);
+  expect(nativeBodies(finalNative)).toEqual(nativeBodies(arranged.native));
+
+  const coldSamples = firstSamples.filter((sample) => sample.targetSessionId !== arranged.current.sessionId);
+  const summaries = {
+    first: world.summary(firstSamples),
+    cold: world.summary(coldSamples),
+    warm: world.summary(warmSamples),
+    reload: world.summary([reloadSample]),
+    all: world.summary(measurements),
+  };
+  const report = {
+    engine: world.engine,
+    viewport: arranged.runtime.viewport,
+    restoredSessionId: arranged.current.sessionId,
+    sidebarExpansions,
+    samples: measurements,
+    summaries,
+    controllerCounts: { arranged: arranged.counts, afterFirst: countsAfterFirst, afterWarm: countsAfterWarm, final: finalCounts },
+    native: { arranged: world.compactNativeState(arranged.native), final: world.compactNativeState(finalNative) },
+  };
+  console.info(`[SWITCH-10] measurements=${JSON.stringify(report)}`);
+  evidence.recordJsonArtifact("SWITCH-10 measurements and controller counts", report);
+  evidence.recordAssertionEvidence(
+    "SWITCH-10 ten persisted conversations meet strict first-visit and warm switch latency ceilings",
+    `Twenty-one capture-phase first-display measurements, each retained for two stable paint frames: first max/p50/p95=${summaries.first.max}/${summaries.first.p50}/${summaries.first.p95}ms, warm=${summaries.warm.max}/${summaries.warm.p50}/${summaries.warm.p95}ms, reload=${summaries.reload.max}ms; nine first visits were cold and one was already restored; no prompt POST, provider replay, foreign-owner paint, starter, duplicate, reversal, or post-display regression. Observer snapshots are diagnostic references, not visual validation.`,
+    true,
+  );
+});

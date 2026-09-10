@@ -195,9 +195,9 @@ export async function shellInSession(
   client: Client,
   sessionID: string,
   command: string,
-  options?: { model?: { providerID: string; modelID: string }; agent?: string; variant?: string },
+  options?: { model?: { providerID: string; modelID: string }; agent?: string; variant?: string; messageID?: string },
 ): Promise<void> {
-  const result = await client.session.shell({ sessionID, command });
+  const result = await client.session.shell({ sessionID, command, messageID: options?.messageID });
   assertNoClientError(result);
 }
 

@@ -71,12 +71,13 @@ function decodeDraftRaw(): string {
   return Buffer.from(raw, "base64url").toString("utf8")
 }
 
-function decodeDraftTextBody(): string {
-  const encoded = decodeDraftRaw().match(/Content-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+)/)?.[1] ?? ""
+function decodeDraftTextBody(kind: "plain" | "html" = "plain"): string {
+  const encoded = decodeDraftRaw().match(new RegExp(`Content-Type: text/${kind}; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+)`))?.[1] ?? ""
   return Buffer.from(encoded.replace(/\r\n/g, ""), "base64").toString("utf8")
 }
 
 const GMAIL_READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+const GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
 const CALENDAR_READ_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 const CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
@@ -105,11 +106,19 @@ let forceDriveAuthorizationError = false
 let forceDriveShareForbidden = false
 let largeDriveContentHitCount = 0
 let gmailListMessageIds = ["msg_1"]
+let gmailNextPageToken: unknown = undefined
+let driveNextPageToken: unknown = undefined
+let driveIncompleteSearch: unknown = undefined
 let gmailMetadataDelayMs = 0
 let gmailMetadataFailureId: string | null = null
 let activeGmailMetadataRequests = 0
 let maxActiveGmailMetadataRequests = 0
 let gmailMessageBody = "Plain Gmail body"
+let gmailThreadBody = "Original line\n> previous quote"
+let gmailThreadMimeType = "text/plain"
+let gmailThreadMessageId = "<orig-2@mail.gmail.com>"
+let gmailThreadReferences = "<orig-1@mail.gmail.com>"
+let gmailDraftReturnedThreadId: string | undefined = "thread_1"
 let driveFileText = "Drive file text"
 let driveDocumentText = "Exported doc text"
 
@@ -135,11 +144,19 @@ function resetFakeGoogle() {
   forceDriveShareForbidden = false
   largeDriveContentHitCount = 0
   gmailListMessageIds = ["msg_1"]
+  gmailNextPageToken = undefined
+  driveNextPageToken = undefined
+  driveIncompleteSearch = undefined
   gmailMetadataDelayMs = 0
   gmailMetadataFailureId = null
   activeGmailMetadataRequests = 0
   maxActiveGmailMetadataRequests = 0
   gmailMessageBody = "Plain Gmail body"
+  gmailThreadBody = "Original line\n> previous quote"
+  gmailThreadMimeType = "text/plain"
+  gmailThreadMessageId = "<orig-2@mail.gmail.com>"
+  gmailThreadReferences = "<orig-1@mail.gmail.com>"
+  gmailDraftReturnedThreadId = "thread_1"
   driveFileText = "Drive file text"
   driveDocumentText = "Exported doc text"
 }
@@ -191,7 +208,7 @@ const fakeGoogleServer = Bun.serve({
     }
 
     if (url.pathname === "/gmail/v1/users/me/messages") {
-      return json({ messages: gmailListMessageIds.map((id) => ({ id, threadId: `thread_${id.replace(/^msg_/, "")}` })) })
+      return json({ messages: gmailListMessageIds.map((id) => ({ id, threadId: `thread_${id.replace(/^msg_/, "")}` })), nextPageToken: gmailNextPageToken })
     }
     const gmailMessageMatch = url.pathname.match(/^\/gmail\/v1\/users\/me\/messages\/([^/]+)$/)
     if (gmailMessageMatch?.[1]) {
@@ -234,13 +251,13 @@ const fakeGoogleServer = Bun.serve({
             id: "msg_2",
             payload: {
               headers: [
-                { name: "Message-ID", value: "<orig-2@mail.gmail.com>" },
-                { name: "References", value: "<orig-1@mail.gmail.com>" },
+                { name: "Message-ID", value: gmailThreadMessageId },
+                { name: "References", value: gmailThreadReferences },
                 { name: "Subject", value: "Quarterly plan" },
                 { name: "From", value: "Ada <ada@example.com>" },
                 { name: "Date", value: "Thu, 16 Jul 2026 15:21:00 +0000" },
               ],
-              parts: [{ mimeType: "text/plain", body: { data: base64Url("Original line\n> previous quote") } }],
+              parts: [{ mimeType: gmailThreadMimeType, body: { data: base64Url(gmailThreadBody) } }],
             },
           },
         ],
@@ -249,7 +266,7 @@ const fakeGoogleServer = Bun.serve({
     if (url.pathname === "/gmail/v1/users/me/drafts" && request.method === "POST") {
       const body: unknown = await request.json()
       lastDraftPayload = body
-      return json({ id: "draft_1", message: { id: "draft_msg_1", threadId: "thread_1" } })
+      return json({ id: "draft_1", message: { id: "draft_msg_1", threadId: gmailDraftReturnedThreadId } })
     }
 
     if (url.pathname === "/calendar/v3/calendars/primary/events" && request.method === "GET") {
@@ -317,6 +334,8 @@ const fakeGoogleServer = Bun.serve({
         }, 403)
       }
       return json({
+        nextPageToken: driveNextPageToken,
+        incompleteSearch: driveIncompleteSearch,
         files: [
           {
             id: "file_1",
@@ -450,6 +469,18 @@ const fakeGoogleServer = Bun.serve({
     if (url.pathname === "/drive/v3/files/doc_1/export") {
       return new Response(driveDocumentText, { headers: { "content-type": "text/plain" } })
     }
+    if (url.pathname === "/drive/v3/files/sheet_1") {
+      return json({
+        id: "sheet_1",
+        name: "Planning workbook",
+        mimeType: "application/vnd.google-apps.spreadsheet",
+        webViewLink: "https://docs.google.com/spreadsheets/d/sheet_1/edit",
+      })
+    }
+    if (url.pathname === "/drive/v3/files/sheet_1/export") {
+      if (url.searchParams.get("mimeType") !== "text/csv") return new Response("Unsupported export type", { status: 400 })
+      return new Response("Task,Status\r\nPlanning,Ready\r\n", { headers: { "content-type": "text/csv" } })
+    }
 
     return new Response(`Unhandled fake Google route: ${url.pathname}`, { status: 404 })
   },
@@ -470,9 +501,80 @@ let searchCapabilities: typeof import("../src/mcp/search.js").searchCapabilities
 const userId = createDenTypeId("user")
 const organizationId = createDenTypeId("organization")
 const memberId = createDenTypeId("member")
+const otherUserId = createDenTypeId("user")
+const otherMemberId = createDenTypeId("member")
 const authSessionId = createDenTypeId("session")
 const authSessionToken = `gws-caps-session-${authSessionId}`
 let directUploadMcpToken = ""
+
+const workspaceDraft = {
+  to: "sam@acme.test",
+  subject: "Workspace notes",
+  body: "Please review the attached notes.",
+  attachments: ["notes.txt"],
+}
+const expectedFileInputPreflight = {
+  ok: false,
+  error: "file_input_requires_host",
+  created: false,
+  message: "Workspace attachments require a supporting OpenWork host. No draft was created. Do not retry without attachments.",
+}
+
+function gmailUploadForm(payload: Record<string, unknown> = {}) {
+  const form = new FormData()
+  form.append("payload", JSON.stringify({
+    to: workspaceDraft.to,
+    subject: workspaceDraft.subject,
+    body: workspaceDraft.body,
+    ...payload,
+  }))
+  form.append("file", new File(["workspace notes"], "notes.txt", { type: "text/plain" }))
+  return form
+}
+
+async function seedUploadConnection(options: {
+  providerKey?: string
+  restricted?: boolean
+  otherAccountOnly?: boolean
+} = {}) {
+  const { createExternalMcpConnection } = await import("../src/capability-sources/external-mcp-connections.js")
+  const { upsertOrgOAuthClient } = await import("../src/capability-sources/oauth-credentials.js")
+  const connection = await createExternalMcpConnection({
+    organizationId,
+    name: "Workspace Mail",
+    url: "https://workspace.google.com",
+    authType: "oauth",
+    kind: "native_provider",
+    nativeProviderKey: options.providerKey ?? "google-workspace",
+    credentialMode: "per_member",
+    createdByOrgMembershipId: otherMemberId,
+    access: { orgWide: !options.restricted, memberIds: options.restricted ? [otherMemberId] : [], teamIds: [] },
+  })
+  await upsertOrgOAuthClient({
+    organizationId,
+    providerId: connection.id,
+    clientId: `client-${connection.id}`,
+    clientSecret: "test-client-secret",
+    createdByOrgMembershipId: otherMemberId,
+  })
+  // Both members can own an account on the same connector; only the caller's
+  // credential may be used, even when another member configured it.
+  for (const accountMemberId of options.otherAccountOnly ? [otherMemberId] : [memberId, otherMemberId]) {
+    await upsertConnectedAccount({
+      organizationId,
+      orgMembershipId: accountMemberId,
+      providerId: connection.id,
+      externalAccountId: `${accountMemberId}@acme.test`,
+      scopes: FULL_SCOPES,
+      accessToken: `${connection.id}-${accountMemberId}`,
+      refreshToken: "test-refresh-token",
+      tokenType: "Bearer",
+      expiresAt: new Date("2037-01-01T00:00:00Z"),
+      pendingCodeVerifier: null,
+    })
+  }
+  return connection.id
+}
 
 async function seedConnectedAccount(scopes: string[] | null = FULL_SCOPES) {
   await upsertConnectedAccount({
@@ -517,12 +619,12 @@ function requestForm(path: string, form: FormData) {
   })
 }
 
-async function mcpToolCall(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function mcpToolCall(name: string, args: Record<string, unknown>, token = directUploadMcpToken): Promise<Record<string, unknown>> {
   const response = await app.request("http://den-api.local/mcp/agent", {
     method: "POST",
     headers: {
       accept: "application/json, text/event-stream",
-      authorization: `Bearer ${directUploadMcpToken}`,
+      authorization: `Bearer ${token}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
@@ -581,6 +683,11 @@ beforeAll(async () => {
     name: "Google Workspace Capabilities User",
     email: `gws-caps+${userId}@test.local`,
   })
+  await db.insert(schema.AuthUserTable).values({
+    id: otherUserId,
+    name: "Other Workspace Member",
+    email: `gws-caps+${otherUserId}@test.local`,
+  })
   await db.insert(schema.OrganizationTable).values({
     id: organizationId,
     name: "Google Workspace Capabilities Org",
@@ -590,6 +697,12 @@ beforeAll(async () => {
     id: memberId,
     organizationId,
     userId,
+    role: "member",
+  })
+  await db.insert(schema.MemberTable).values({
+    id: otherMemberId,
+    organizationId,
+    userId: otherUserId,
     role: "member",
   })
   await db.insert(schema.AuthSessionTable).values({
@@ -622,18 +735,26 @@ beforeAll(async () => {
 beforeEach(async () => {
   resetFakeGoogle()
   await db.delete(schema.ConnectedAccountTable).where(drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId))
+  await db.delete(schema.OrgOAuthClientTable).where(drizzle.and(
+    drizzle.eq(schema.OrgOAuthClientTable.organizationId, organizationId),
+    drizzle.sql`${schema.OrgOAuthClientTable.providerId} <> ${"google-workspace"}`,
+  ))
+  await db.delete(schema.ExternalMcpConnectionAccessGrantTable).where(drizzle.eq(schema.ExternalMcpConnectionAccessGrantTable.organizationId, organizationId))
+  await db.delete(schema.ExternalMcpConnectionTable).where(drizzle.eq(schema.ExternalMcpConnectionTable.organizationId, organizationId))
   await seedConnectedAccount()
 })
 
 afterAll(async () => {
   await db.delete(schema.ConnectedAccountTable).where(drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId))
   await db.delete(schema.OrgOAuthClientTable).where(drizzle.eq(schema.OrgOAuthClientTable.organizationId, organizationId))
+  await db.delete(schema.ExternalMcpConnectionAccessGrantTable).where(drizzle.eq(schema.ExternalMcpConnectionAccessGrantTable.organizationId, organizationId))
+  await db.delete(schema.ExternalMcpConnectionTable).where(drizzle.eq(schema.ExternalMcpConnectionTable.organizationId, organizationId))
   await db.delete(schema.OAuthAccessTokenTable).where(drizzle.eq(schema.OAuthAccessTokenTable.referenceId, organizationId))
   await db.delete(schema.AuthSessionTable).where(drizzle.eq(schema.AuthSessionTable.id, authSessionId))
   await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, organizationId))
   await db.delete(schema.OrganizationRoleTable).where(drizzle.eq(schema.OrganizationRoleTable.organizationId, organizationId))
   await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, organizationId))
-  await db.delete(schema.AuthUserTable).where(drizzle.eq(schema.AuthUserTable.id, userId))
+  await db.delete(schema.AuthUserTable).where(drizzle.inArray(schema.AuthUserTable.id, [userId, otherUserId]))
   fakeGoogleServer.stop(true)
   mock.restore()
 })
@@ -680,6 +801,15 @@ test("calendar events list accepts RFC 3339 offsets and forwards them verbatim",
   const url = new URL(expectString(lastCalendarUrl, "calendar list URL"))
   expect(url.searchParams.get("timeMin")).toBe("2026-09-03T00:00:00+02:00")
   expect(url.searchParams.get("timeMax")).toBe("2026-09-04T00:00:00+02:00")
+  expect(url.searchParams.get("maxResults")).toBe("25")
+  expect(googleCallCount).toBe(1)
+
+  const mixedOffsets = new URLSearchParams({ timeMin: "2026-09-03T17:00:00+02:00", timeMax: "2026-09-03T16:00:00Z", maxResults: "100" })
+  expect((await request(`/v1/capabilities/google-workspace/calendar-events?${mixedOffsets}`)).status).toBe(200)
+  const mixedOffsetUrl = new URL(expectString(lastCalendarUrl, "mixed-offset calendar URL"))
+  expect(mixedOffsetUrl.searchParams.get("timeMin")).toBe(mixedOffsets.get("timeMin"))
+  expect(mixedOffsetUrl.searchParams.get("timeMax")).toBe(mixedOffsets.get("timeMax"))
+  expect(mixedOffsetUrl.searchParams.get("maxResults")).toBe("100")
 
   resetFakeGoogle()
   const invalidResponse = await request("/v1/capabilities/google-workspace/calendar-events?timeMin=2026-09-03%2000%3A00&timeMax=2026-09-04%2000%3A00")
@@ -687,6 +817,21 @@ test("calendar events list accepts RFC 3339 offsets and forwards them verbatim",
   const invalidBody = expectRecord(await invalidResponse.json(), "invalid calendar list response")
   expect(invalidBody.error).toBe("invalid_request")
   expect(googleCallCount).toBe(0)
+})
+
+test("calendar list preserves published range forwarding and provider errors", async () => {
+  for (const timeMax of ["2026-09-03T17:00:00+02:00", "2026-09-03T15:00:00Z", "2026-09-03T14:59:59Z", "2026-09-03T18:00:00+04:00"]) {
+    resetFakeGoogle()
+    forceGoogleError = true
+    const query = new URLSearchParams({ timeMin: "2026-09-03T17:00:00+02:00", timeMax })
+    const response = await request(`/v1/capabilities/google-workspace/calendar-events?${query}`)
+    expect(response.status).toBe(502)
+    expect(expectRecord(await response.json(), "calendar provider error").error).toBe("google_api_error")
+    expect(googleCallCount).toBe(1)
+    const url = new URL(expectString(lastCalendarUrl, "calendar list URL"))
+    expect(url.searchParams.get("timeMin")).toBe(query.get("timeMin"))
+    expect(url.searchParams.get("timeMax")).toBe(timeMax)
+  }
 })
 
 test("calendar create requests a Google Meet link when asked", async () => {
@@ -835,6 +980,60 @@ test("gmail list overlaps metadata requests with bounded concurrency and preserv
   expect(maxActiveGmailMetadataRequests).toBeLessThanOrEqual(4)
 })
 
+test("gmail list forwards opaque page tokens and preserves the provider's next page", async () => {
+  gmailNextPageToken = "next+/= page"
+  const query = new URLSearchParams({ q: "from:ada", maxResults: "5", pageToken: "current+/= page" })
+  const response = await request(`/v1/capabilities/google-workspace/gmail-messages?${query}`)
+  expect(response.status).toBe(200)
+  const url = new URL(expectString(googleCallUrls[0], "Gmail list URL"))
+  expect(url.pathname).toBe("/gmail/v1/users/me/messages")
+  expect(url.searchParams.get("q")).toBe("from:ada")
+  expect(url.searchParams.get("maxResults")).toBe("5")
+  expect(url.searchParams.get("pageToken")).toBe("current+/= page")
+  const body = expectRecord(await response.json(), "paginated Gmail response")
+  expect(body.nextPageToken).toBe(gmailNextPageToken)
+  expect(body.messages).toHaveLength(1)
+  expect(googleCallCount).toBe(2)
+})
+
+test("gmail empty pages retain continuation without requesting message metadata", async () => {
+  gmailListMessageIds = []
+  gmailNextPageToken = "next-empty-page"
+  const response = await request("/v1/capabilities/google-workspace/gmail-messages")
+  expect(response.status).toBe(200)
+  expect(await response.json()).toEqual({ ok: true, messages: [], nextPageToken: "next-empty-page" })
+  expect(googleCallCount).toBe(1)
+  expect(new URL(expectString(googleCallUrls[0], "Gmail list URL")).searchParams.get("pageToken")).toBeNull()
+})
+
+test.each(["", "x".repeat(2049)])("gmail rejects invalid page token (case %#) before calling Google", async (pageToken) => {
+  const response = await request(`/v1/capabilities/google-workspace/gmail-messages?${new URLSearchParams({ pageToken })}`)
+  expect(response.status).toBe(400)
+  expect(expectRecord(await response.json(), "invalid Gmail pagination").error).toBe("invalid_request")
+  expect(googleCallCount).toBe(0)
+})
+
+test.each([
+  "/v1/capabilities/google-workspace/gmail-messages",
+  "/v1/capabilities/google-workspace/gmail-message/msg_1",
+  "/v1/capabilities/google-workspace/gmail-attachment/msg_1/att_1",
+])("gmail.modify authorizes existing read route %s", async (path) => {
+  await seedConnectedAccount([GMAIL_MODIFY_SCOPE])
+  const response = await request(path)
+  expect(response.status).toBe(200)
+  expect(expectRecord(await response.json(), "Gmail modify-scope read").ok).toBe(true)
+  expect(lastAuthorization).toBe("Bearer gws-token")
+  expect(googleCallCount).toBe(path.endsWith("gmail-messages") ? 2 : 1)
+})
+
+test("gmail scope implications reject lookalike grants before calling Google", async () => {
+  await seedConnectedAccount([`${GMAIL_MODIFY_SCOPE}.lookalike`, `prefix.${GMAIL_READ_SCOPE}`])
+  const response = await request("/v1/capabilities/google-workspace/gmail-messages")
+  expect(response.status).toBe(409)
+  expect(expectRecord(await response.json(), "Gmail lookalike grant response").error).toBe("needs_connection")
+  expect(googleCallCount).toBe(0)
+})
+
 test("gmail metadata failure stops new work and returns the existing upstream error shape", async () => {
   gmailListMessageIds = ["msg_1", "msg_2", "msg_3", "msg_4", "msg_5", "msg_6", "msg_7", "msg_8"]
   gmailMetadataFailureId = "msg_2"
@@ -895,6 +1094,75 @@ test("gmail attachment download returns google_api_error when Google rejects the
   expect(expectMessage(body).startsWith("Gmail attachment download failed: 404")).toBe(true)
 })
 
+for (const transport of ["JSON", "multipart"]) {
+  test(`gmail ${transport} draft normalizes legacy caller headers without injecting MIME fields and keeps validation`, async () => {
+    const body = "Reply body\n\nBcc: body-only@example.com\nKeep this line"
+    const draft = { to: "recipient@example.com", cc: '"Review, Team" <review@example.com>, second@example.com', bcc: "hidden@example.com", subject: "Reply", threadId: "thread_1", body }
+    const sendDraft = (payload: Record<string, unknown>) => {
+      if (transport === "JSON") return request("/v1/capabilities/google-workspace/gmail-drafts", { method: "POST", body: payload })
+      const form = new FormData()
+      form.append("payload", JSON.stringify(payload))
+      form.append("file", new File([attachmentBytes], "notes.pdf", { type: "application/pdf" }))
+      return requestForm("/v1/direct-uploads/google-workspace/gmail-drafts", form)
+    }
+    for (const { field, min, max } of [{ field: "to", min: 3, max: 320 }, { field: "cc", min: 3, max: 1_000 }, { field: "bcc", min: 3, max: 1_000 }, { field: "subject", min: 1, max: 500 }]) {
+      for (const [value, normalized] of [
+        ["safe@example.com\r\nBcc: injected@example.com", "safe@example.com Bcc: injected@example.com"],
+        ["safe@example.com\rBcc: injected@example.com", "safe@example.com Bcc: injected@example.com"],
+        ["safe@example.com\nBcc: injected@example.com", "safe@example.com Bcc: injected@example.com"],
+        [" \r\nsafe@example.com\r\n\r\nBcc: injected@example.com\r\n ", "safe@example.com Bcc: injected@example.com"],
+        ["\r\nsafe@example.com", "safe@example.com"],
+        ["safe@example.com\r\n", "safe@example.com"],
+      ]) {
+        resetFakeGoogle()
+        gmailThreadMessageId = "<orig-2@mail.gmail.com>\r\nBcc: provider@example.com"
+        gmailThreadReferences = "<orig-1@mail.gmail.com>\nX-Injected: provider"
+        const response = await sendDraft({ ...draft, [field]: value })
+        expect(response.status).toBe(200)
+        expect(googleCallCount).toBe(2)
+        const result = expectRecord(await response.json(), "normalized draft response")
+        const expected = { ...draft, [field]: normalized }
+        expect(result).toMatchObject({ ok: true, to: expected.to, subject: expected.subject, quotedHistoryIncluded: true })
+        expect(expectDraftMessage().threadId).toBe("thread_1")
+        const decoded = decodeDraftRaw()
+        const headers = decoded.split("\r\n\r\n")[0]!.replace(/\r\n(?=[ \t])/g, "").split("\r\n")
+        expect(headers).toHaveLength(8)
+        expect(headers.slice(0, 7)).toEqual([
+          `To: ${expected.to}`,
+          `Cc: ${expected.cc}`,
+          `Bcc: ${expected.bcc}`,
+          `Subject: ${expected.subject}`,
+          "In-Reply-To: <orig-2@mail.gmail.com> Bcc: provider@example.com",
+          "References: <orig-1@mail.gmail.com> X-Injected: provider <orig-2@mail.gmail.com> Bcc: provider@example.com",
+          "MIME-Version: 1.0",
+        ])
+        expect(headers[7]).toStartWith(`Content-Type: multipart/${transport === "JSON" ? "alternative" : "mixed"};`)
+        expect(headers.filter((header) => /^Bcc:/i.test(header))).toHaveLength(1)
+        expect(headers.join("\r\n")).not.toMatch(/(?:^|\r\n)(?:X-Injected:|Bcc: (?:injected|provider)@)/i)
+        expect(decoded.replace(/\r\n/g, "")).not.toMatch(/[\r\n]/)
+        expect(decodeDraftTextBody()).toBe(`${body}\n\nOn Thu, 16 Jul 2026 at 15:21 UTC, Ada <ada@example.com> wrote:\n> Original line\n> > previous quote`)
+        if (transport === "multipart") {
+          expect(decoded).toContain('Content-Type: application/pdf; name="notes.pdf"')
+          expect(decoded).toContain('Content-Disposition: attachment; filename="notes.pdf"')
+          expect(decoded).toContain(attachmentBytes.toString("base64"))
+          expect(result.attachments).toEqual([{ filename: "notes.pdf", mimeType: "application/pdf", size: attachmentBytes.byteLength }])
+        } else {
+          expect(decoded).not.toContain("Content-Disposition: attachment;")
+          expect(result).not.toHaveProperty("attachments")
+        }
+      }
+      for (const value of ["\r\n ", "x".repeat(min - 1), "x".repeat(max + 1)]) {
+        resetFakeGoogle()
+        const response = await sendDraft({ ...draft, [field]: value })
+        expect(response.status).toBe(400)
+        expect(expectRecord(await response.json(), "invalid draft header length").error).toBe("invalid_request")
+        expect(googleCallCount).toBe(0)
+        expect(lastDraftPayload).toBeNull()
+      }
+    }
+  })
+}
+
 test("gmail plain draft supports cc without requiring a thread", async () => {
   const to = "sam@acme.test"
   const subject = "Quarterly plan"
@@ -921,12 +1189,199 @@ test("gmail plain draft supports cc without requiring a thread", async () => {
     draftId: "draft_1",
     messageId: "draft_msg_1",
     draftUrl: "https://mail.google.com/mail/u/?authuser=google-user-1%40example.com#drafts?compose=draft_msg_1",
-    threadUrl: null,
+    threadUrl: "https://mail.google.com/mail/u/?authuser=google-user-1%40example.com#all/thread_1",
     to,
     subject,
-    threadId: null,
+    threadId: "thread_1",
     quotedHistoryIncluded: false,
   })
+})
+
+test("Gmail JSON attachments return the exact no-write host preflight before reading a thread", async () => {
+  for (const body of [workspaceDraft, { ...workspaceDraft, threadId: "thread_1" }]) {
+    const response = await request("/v1/capabilities/google-workspace/gmail-drafts", { method: "POST", body })
+    expect(response.status).toBe(422)
+    expect(await response.json()).toEqual(expectedFileInputPreflight)
+    expect(googleCallCount).toBe(0)
+    expect(lastDraftPayload).toBeNull()
+  }
+})
+
+test("Gmail JSON attachment paths must be a nonempty bounded array of nonempty strings", async () => {
+  for (const attachments of [[], [""], ["  "], Array.from({ length: 11 }, () => "notes.txt"), "notes.txt", [null]]) {
+    const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+      method: "POST", body: { ...workspaceDraft, attachments },
+    })
+    expect(response.status).toBe(400)
+    expect(googleCallCount).toBe(0)
+  }
+  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST", body: { ...workspaceDraft, attachments: Array.from({ length: 10 }, () => "notes.txt") },
+  })
+  expect(response.status).toBe(422)
+  expect(await response.json()).toEqual(expectedFileInputPreflight)
+  expect(googleCallCount).toBe(0)
+})
+
+test("Gmail attachment preflight preserves authentication, account and threaded scope gates", async () => {
+  const unauthenticated = await app.request("http://den-api.local/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(workspaceDraft),
+  })
+  expect(unauthenticated.status).toBe(401)
+  await seedConnectedAccount([DRIVE_READ_SCOPE])
+  const missingScope = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST", body: { ...workspaceDraft, threadId: "thread_1" },
+  })
+  expect(missingScope.status).toBe(409)
+  expect(expectMessage(await missingScope.json())).toContain("missing the Gmail read permission")
+  await db.delete(schema.ConnectedAccountTable).where(drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId))
+  const missingAccount = await request("/v1/capabilities/google-workspace/gmail-drafts", { method: "POST", body: workspaceDraft })
+  expect(missingAccount.status).toBe(409)
+  expect(expectRecord(await missingAccount.json(), "missing account").error).toBe("needs_connection")
+  expect(googleCallCount).toBe(0)
+})
+
+test("only direct native Gmail execution returns the non-error host handoff; Code Mode remains an error", async () => {
+  const search = await mcpToolCall("search_capabilities", { query: "gmail draft attachments", limit: 10 })
+  const matches = expectRecord(search.structuredContent, "search result").matches
+  if (!Array.isArray(matches)) throw new Error("Expected capability matches")
+  const draft = expectRecord(matches.find((match) => isRecord(match)
+    && match.name === "native:google-workspace:postCapabilitiesGoogleWorkspaceGmailDrafts"), "draft capability")
+  const name = expectString(draft.name, "draft name")
+  const direct = await mcpToolCall("execute_capability", { name, body: JSON.stringify(workspaceDraft) })
+  expect(direct.isError).toBe(false)
+  expect(JSON.parse(mcpText(direct))).toEqual(expectedFileInputPreflight)
+  expect(googleCallCount).toBe(0)
+
+  const scriptPath = expectString(draft.scriptPath, "draft script path")
+  const script = await mcpToolCall("execute_capability_script", {
+    code: `return await ${scriptPath}({ body: input });`, input: workspaceDraft,
+  })
+  expect(script.isError).toBe(true)
+  expect(mcpText(script)).toContain("file_input_requires_host")
+  expect(googleCallCount).toBe(0)
+  expect(lastDraftPayload).toBeNull()
+
+  const invalid = await mcpToolCall("execute_capability", { name, body: { ...workspaceDraft, attachments: [] } })
+  expect(invalid.isError).toBe(true)
+  expect(mcpText(invalid)).not.toContain("file_input_requires_host")
+  for (const unrelatedName of [
+    `mcp:${createDenTypeId("externalMcpConnection")}:postCapabilitiesGoogleWorkspaceGmailDrafts`,
+    "native:microsoft-365:postCapabilitiesGoogleWorkspaceGmailDrafts",
+    `${name}:other`,
+  ]) {
+    const result = await mcpToolCall("execute_capability", { name: unrelatedName, body: workspaceDraft })
+    expect(result.isError).toBe(true)
+    expect(mcpText(result)).not.toContain("file_input_requires_host")
+    expect(googleCallCount).toBe(0)
+  }
+  const unrelated = await mcpToolCall("execute_capability", {
+    name: "native:google-workspace:getCapabilitiesGoogleWorkspaceGmailAttachment",
+    path: { messageId: "msg_1", attachmentId: "missing" },
+  })
+  expect(unrelated.isError).toBe(true)
+  expect(mcpText(unrelated)).toContain("google_api_error")
+  expect(lastDraftPayload).toBeNull()
+})
+
+test("direct Gmail uploads select the exact native connection and calling member account", async () => {
+  const selectedId = await seedUploadConnection()
+  await seedUploadConnection()
+  const preflight = await mcpToolCall("execute_capability", {
+    name: `native:${selectedId}:postCapabilitiesGoogleWorkspaceGmailDrafts`, body: workspaceDraft,
+  })
+  expect(preflight.isError).toBe(false)
+  expect(JSON.parse(mcpText(preflight))).toEqual(expectedFileInputPreflight)
+  expect(googleCallCount).toBe(0)
+  const response = await requestForm("/v1/direct-uploads/google-workspace/gmail-drafts", gmailUploadForm({ connectionId: selectedId }))
+  expect(response.status).toBe(200)
+  expect(googleCallCount).toBe(1)
+  expect(lastAuthorization).toBe(`Bearer ${selectedId}-${memberId}`)
+  expect(decodeDraftRaw()).toContain(Buffer.from("workspace notes").toString("base64"))
+  expect(expectRecord(await response.json(), "selected draft").draftUrl).toContain(encodeURIComponent(`${memberId}@acme.test`))
+})
+
+test("explicit unavailable, wrong-provider, restricted and other-member Gmail upload selections never fall back", async () => {
+  const selectedIds = [
+    createDenTypeId("externalMcpConnection"),
+    "unknown-provider",
+    await seedUploadConnection({ providerKey: "microsoft-365" }),
+    await seedUploadConnection({ restricted: true }),
+    await seedUploadConnection({ otherAccountOnly: true }),
+  ]
+  for (const connectionId of selectedIds) {
+    const response = await requestForm("/v1/direct-uploads/google-workspace/gmail-drafts", gmailUploadForm({ connectionId }))
+    expect(response.status).toBe(409)
+    expect(expectRecord(await response.json(), "unavailable selection").error).toBe("needs_connection")
+    expect(googleCallCount).toBe(0)
+    expect(lastDraftPayload).toBeNull()
+  }
+})
+
+test("explicit legacy Gmail upload uses only the legacy credential, never a usable connector fallback", async () => {
+  await seedUploadConnection()
+  const response = await requestForm("/v1/direct-uploads/google-workspace/gmail-drafts", gmailUploadForm({ connectionId: "google-workspace" }))
+  expect(response.status).toBe(200)
+  expect(lastAuthorization).toBe("Bearer gws-token")
+  await db.delete(schema.ConnectedAccountTable).where(drizzle.and(
+    drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId),
+    drizzle.eq(schema.ConnectedAccountTable.providerId, "google-workspace"),
+  ))
+  resetFakeGoogle()
+  const unavailable = await requestForm("/v1/direct-uploads/google-workspace/gmail-drafts", gmailUploadForm({ connectionId: "google-workspace" }))
+  expect(unavailable.status).toBe(409)
+  expect(googleCallCount).toBe(0)
+  expect(lastDraftPayload).toBeNull()
+})
+
+test("direct Gmail multipart payload rejects model attachment paths and empty connection selection", async () => {
+  for (const payload of [{ attachments: ["notes.txt"] }, { connectionId: "" }, { connectionId: null }]) {
+    const response = await requestForm("/v1/direct-uploads/google-workspace/gmail-drafts", gmailUploadForm(payload))
+    expect(response.status).toBe(400)
+    expect(googleCallCount).toBe(0)
+  }
+})
+
+test("Gmail attachment preflight and direct upload preserve MCP write-scope enforcement", async () => {
+  const tokenResponse = await app.request("http://den-api.local/v1/mcp/token", {
+    method: "POST",
+    headers: { authorization: `Bearer ${authSessionToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ scopes: ["mcp:read"] }),
+  })
+  expect(tokenResponse.status).toBe(200)
+  const readToken = expectString(expectRecord(await tokenResponse.json(), "read token").token, "read token value")
+  const preflight = await mcpToolCall("execute_capability", {
+    name: "native:google-workspace:postCapabilitiesGoogleWorkspaceGmailDrafts", body: workspaceDraft,
+  }, readToken)
+  expect(preflight.isError).toBe(true)
+  expect(JSON.parse(mcpText(preflight))).toEqual({ error: "insufficient_mcp_scope", requiredScope: "mcp:write" })
+  const upload = await app.request("http://den-api.local/v1/direct-uploads/google-workspace/gmail-drafts", {
+    method: "POST", headers: { authorization: `Bearer ${readToken}` }, body: gmailUploadForm(),
+  })
+  expect(upload.status).toBe(403)
+  expect(await upload.json()).toEqual({ error: "insufficient_mcp_scope", requiredScope: "mcp:write" })
+  expect(googleCallCount).toBe(0)
+  expect(lastDraftPayload).toBeNull()
+})
+
+test("direct Gmail upload does not accept signed internal headers as host authentication or selection", async () => {
+  const selectedId = await seedUploadConnection()
+  const headers = authHeaders()
+  headers.set("x-den-internal-capability-connector", session.createInternalCapabilityConnectorHeader({
+    userId, organizationId, connectorId: selectedId,
+  }))
+  const unauthenticated = await app.request("http://den-api.local/v1/direct-uploads/google-workspace/gmail-drafts", {
+    method: "POST", headers, body: gmailUploadForm(),
+  })
+  expect(unauthenticated.status).toBe(401)
+  expect(googleCallCount).toBe(0)
+  headers.set("authorization", `Bearer ${directUploadMcpToken}`)
+  const response = await app.request("http://den-api.local/v1/direct-uploads/google-workspace/gmail-drafts", {
+    method: "POST", headers, body: gmailUploadForm(),
+  })
+  expect(response.status).toBe(200)
+  expect(lastAuthorization).toBe("Bearer gws-token")
+  expect(googleCallCount).toBe(1)
 })
 
 test("direct Gmail upload attaches exact workspace bytes without model-facing base64", async () => {
@@ -959,6 +1414,7 @@ test("direct Gmail upload keeps threaded reply metadata and attachment bytes", a
   form.append("payload", JSON.stringify({
     to: "sam@acme.test",
     cc: "ada@acme.test",
+    bcc: "hidden@acme.test",
     subject: "Quarterly plan",
     threadId: "thread_1",
     body: "Reply body",
@@ -977,6 +1433,7 @@ test("direct Gmail upload keeps threaded reply metadata and attachment bytes", a
   const message = expectDraftMessage()
   expect(message.threadId).toBe("thread_1")
   const decoded = decodeDraftRaw()
+  expect(decoded).toContain("Cc: ada@acme.test\r\nBcc: hidden@acme.test\r\n")
   expect(decoded).toContain("In-Reply-To: <orig-2@mail.gmail.com>\r\n")
   expect(decoded).toContain("References: <orig-1@mail.gmail.com> <orig-2@mail.gmail.com>\r\n")
   expect(decodeDraftTextBody()).toBe([
@@ -986,6 +1443,11 @@ test("direct Gmail upload keeps threaded reply metadata and attachment bytes", a
     "> Original line",
     "> > previous quote",
   ].join("\n"))
+  const html = decodeDraftTextBody("html")
+  expect(html).toContain('<div>Reply body</div><div><br></div><div class="gmail_quote"><div dir="ltr" class="gmail_attr">On Thu, 16 Jul 2026 at 15:21 UTC, Ada &lt;ada@example.com&gt; wrote:</div><blockquote class="gmail_quote"')
+  expect(html).toContain('<div>Original line</div><div>&gt; previous quote</div></blockquote></div>')
+  expect(html).not.toContain("&gt; Original line")
+  expect(html).not.toContain("&gt; &gt; previous quote")
   expect(decoded).toContain('Content-Disposition: attachment; filename="notes.txt"')
   expect(decoded).toContain(Buffer.from("workspace notes", "utf8").toString("base64"))
   const body: unknown = await response.json()
@@ -994,6 +1456,54 @@ test("direct Gmail upload keeps threaded reply metadata and attachment bytes", a
   expect(responseBody.draftUrl).toBe("https://mail.google.com/mail/u/?authuser=google-user-1%40example.com#drafts?compose=draft_msg_1")
   expect(responseBody.threadUrl).toBe("https://mail.google.com/mail/u/?authuser=google-user-1%40example.com#all/thread_1")
   expect(responseBody.quotedHistoryIncluded).toBe(true)
+})
+
+test("gmail JSON reply quotes HTML-only originals as escaped text", async () => {
+  gmailThreadMimeType = "text/html"
+  gmailThreadBody = '<p>Original &amp; &lt;IMG src=x onerror=unsafe()&gt; &lt;ImG src=x onerror=unsafe()&gt;<br>Next</p><ScRiPt>hidden()</ScRiPt>'
+  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST",
+    body: { to: "sam@acme.test", subject: "Quarterly plan", threadId: "thread_1", body: "Reply <SCRIPT>unsafe()</SCRIPT> <ScRiPt>unsafe()</ScRiPt>" },
+  })
+  expect(response.status).toBe(200)
+  expect(expectDraftMessage().threadId).toBe("thread_1")
+  expect(decodeDraftTextBody()).toContain("\n> Original & <IMG src=x onerror=unsafe()> <ImG src=x onerror=unsafe()>\n> Next")
+  const html = decodeDraftTextBody("html")
+  expect(html).toContain('<div>Reply &lt;SCRIPT&gt;unsafe()&lt;/SCRIPT&gt; &lt;ScRiPt&gt;unsafe()&lt;/ScRiPt&gt;</div>')
+  expect(html).toContain('<blockquote class="gmail_quote"')
+  expect(html).toContain('<div>Original &amp; &lt;IMG src=x onerror=unsafe()&gt; &lt;ImG src=x onerror=unsafe()&gt;</div><div>Next</div>')
+  expect(html).not.toMatch(/<script|<img|hidden\(\)|<div>&gt;/i)
+  expect(expectRecord(await response.json(), "HTML reply response").quotedHistoryIncluded).toBe(true)
+})
+
+test("gmail reply preserves caller-supplied quoted history without duplicating it", async () => {
+  const body = "Reply\n\nAda wrote:\n> Already quoted <text>"
+  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST",
+    body: { to: "sam@acme.test", subject: "Quarterly plan", threadId: "thread_1", body },
+  })
+  expect(response.status).toBe(200)
+  expect(decodeDraftTextBody()).toBe(body)
+  expect(decodeDraftTextBody("html")).not.toContain("gmail_quote")
+  expect(decodeDraftTextBody("html")).not.toContain("Original line")
+  expect(expectRecord(await response.json(), "already quoted response").quotedHistoryIncluded).toBe(true)
+})
+
+test("gmail draft reports only returned thread metadata, not the requested target", async () => {
+  for (const returnedThreadId of ["different_thread", undefined]) {
+    gmailDraftReturnedThreadId = returnedThreadId
+    const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+      method: "POST",
+      body: { to: "sam@acme.test", subject: "Quarterly plan", threadId: "thread_1", body: "Reply" },
+    })
+    expect(response.status).toBe(200)
+    expect(expectDraftMessage().threadId).toBe("thread_1")
+    const result = expectRecord(await response.json(), "returned thread response")
+    expect(result.threadId).toBe(returnedThreadId ?? null)
+    expect(result.threadUrl).toBe(returnedThreadId
+      ? "https://mail.google.com/mail/u/?authuser=google-user-1%40example.com#all/different_thread"
+      : null)
+  }
 })
 
 test("gmail reply-looking draft requires threadId before calling Google", async () => {
@@ -1123,7 +1633,71 @@ test("drive search returns mapped files", async () => {
   expect(url.searchParams.get("supportsAllDrives")).toBe("true")
   expect(url.searchParams.get("includeItemsFromAllDrives")).toBe("true")
   expect(url.searchParams.get("orderBy")).toBeNull()
-  expect(url.searchParams.get("fields")).toBe("files(id,name,mimeType,modifiedTime,webViewLink,size)")
+  expect(url.searchParams.get("fields")).toBe("files(id,name,mimeType,modifiedTime,webViewLink,size),nextPageToken,incompleteSearch")
+  expect(url.searchParams.get("pageToken")).toBeNull()
+})
+
+test("Drive lists files without search text and retains continuation and incomplete coverage", async () => {
+  driveNextPageToken = "drive-next+/= page"
+  driveIncompleteSearch = true
+  const response = await request("/v1/capabilities/google-workspace/drive-files")
+  expect(response.status).toBe(200)
+  expect(lastDriveQuery).toBe("trashed = false")
+  const url = new URL(expectString(googleCallUrls[0], "Drive list URL"))
+  expect(url.searchParams.get("pageSize")).toBe("10")
+  expect(url.searchParams.get("pageToken")).toBeNull()
+  const body = expectRecord(await response.json(), "Drive list response")
+  expect(body.ok).toBe(true)
+  expect(body.files).toHaveLength(1)
+  expect(body.nextPageToken).toBe(driveNextPageToken)
+  expect(body.incompleteSearch).toBe(true)
+  expect(googleCallCount).toBe(1)
+})
+
+test.each([undefined, "quarterly"])("Drive combines date and folder filters with optional search (case %#)", async (query) => {
+  driveIncompleteSearch = false
+  const params = new URLSearchParams({
+    modifiedAfter: "2026-09-03T17:00:00+02:00", folderId: "folder_1-a", pageToken: "drive-current+/= page", maxResults: "3",
+  })
+  if (query) params.set("query", query)
+  const response = await request(`/v1/capabilities/google-workspace/drive-files?${params}`)
+  expect(response.status).toBe(200)
+  expect(lastDriveQuery).toBe(`${query ? "trashed = false and (name contains 'quarterly' or fullText contains 'quarterly')" : "trashed = false"} and modifiedTime > '2026-09-03T17:00:00+02:00' and 'folder_1-a' in parents`)
+  const url = new URL(expectString(googleCallUrls[0], "filtered Drive URL"))
+  expect(url.searchParams.get("pageToken")).toBe("drive-current+/= page")
+  expect(url.searchParams.get("pageSize")).toBe("3")
+  const body = expectRecord(await response.json(), "filtered Drive response")
+  expect(body.incompleteSearch).toBe(false)
+  expect(body).not.toHaveProperty("nextPageToken")
+  expect(googleCallCount).toBe(1)
+})
+
+test.each([
+  ["modifiedAfter", "2026-09-03"],
+  ["modifiedAfter", "2026-09-03T17:00:00"],
+  ["modifiedAfter", "2026-09-03T17:00:00Z' or trashed = true"],
+  ["folderId", "folder_1' or 'x' in parents"],
+  ["folderId", "folder/child"],
+  ["pageToken", ""],
+  ["pageToken", "x".repeat(2049)],
+])("Drive rejects invalid %s (case %#) before calling Google", async (key, value) => {
+  const response = await request(`/v1/capabilities/google-workspace/drive-files?${new URLSearchParams({ [key]: value })}`)
+  expect(response.status).toBe(400)
+  expect(expectRecord(await response.json(), "invalid Drive filter response").error).toBe("invalid_request")
+  expect(googleCallCount).toBe(0)
+})
+
+test("listing responses omit malformed provider pagination fields", async () => {
+  gmailNextPageToken = 123
+  driveNextPageToken = 123
+  driveIncompleteSearch = "false"
+  for (const path of ["gmail-messages", "drive-files"]) {
+    const response = await request(`/v1/capabilities/google-workspace/${path}`)
+    expect(response.status).toBe(200)
+    const body = expectRecord(await response.json(), "malformed provider pagination response")
+    expect(body).not.toHaveProperty("nextPageToken")
+    expect(body).not.toHaveProperty("incompleteSearch")
+  }
 })
 
 test("Google Drive authorization failures become an actionable connector response", async () => {
@@ -1288,6 +1862,27 @@ test("drive file read keeps the Google Apps text export branch", async () => {
   const file = expectRecord(expectRecord(body, "Google Apps response").file, "Google Apps file")
   expect(file.encoding).toBe("text")
   expect(file.content).toBe("Exported doc text")
+  const url = new URL(expectString(googleCallUrls[1], "Google Docs export URL"))
+  expect(url.pathname).toBe("/drive/v3/files/doc_1/export")
+  expect(url.searchParams.get("mimeType")).toBe("text/plain")
+})
+
+test("generic Drive spreadsheet read exports first-tab CSV rather than plain text", async () => {
+  const response = await request("/v1/capabilities/google-workspace/drive-file/sheet_1")
+  expect(response.status).toBe(200)
+  expect(lastAuthorization).toBe("Bearer gws-token")
+  expect(googleCallCount).toBe(2)
+  const file = expectRecord(expectRecord(await response.json(), "spreadsheet export response").file, "spreadsheet file")
+  expect(file.id).toBe("sheet_1")
+  expect(file.mimeType).toBe("application/vnd.google-apps.spreadsheet")
+  expect(file.encoding).toBe("text")
+  expect(file.content).toBe("Task,Status\r\nPlanning,Ready\r\n")
+  expect(file.contentBase64).toBeNull()
+  expect(file.truncated).toBe(false)
+  const url = new URL(expectString(googleCallUrls[1], "spreadsheet export URL"))
+  expect(url.pathname).toBe("/drive/v3/files/sheet_1/export")
+  expect(url.searchParams.get("mimeType")).toBe("text/csv")
+  expect(googleCallUrls.some((value) => new URL(value).pathname.startsWith("/v4/spreadsheets"))).toBe(false)
 })
 
 test("drive text retains the existing retrieval limit before MCP serialization", async () => {
@@ -1520,6 +2115,31 @@ test("legacy accounts without recorded scopes retain existing non-Drive behavior
   expect(googleCallCount).toBe(1)
 })
 
+test("new Google actions fail closed on unknown grants independently of legacy routes", async () => {
+  const grants: (string[] | null)[] = [null, [], ["openid"]]
+  const actions = [
+    { path: "gmail-labels" },
+    { path: "gmail-labels", method: "POST", body: { name: "Planning" } },
+    { path: "gmail-message/msg_1/modify", method: "POST", body: { removeLabelIds: ["UNREAD"] } },
+    { path: "spreadsheets/sheet_1" },
+    { path: "spreadsheets/sheet_1/values?range=A1:B2" },
+    { path: "spreadsheets/sheet_1/values", method: "PUT", body: { range: "A1", values: [["Planning"]] } },
+    { path: "drive-files/file_1" },
+    { path: "drive-folders", method: "POST", body: { name: "Planning" } },
+    { path: "calendar-events/event_1" },
+  ]
+  for (const scopes of grants) {
+    await seedConnectedAccount(scopes)
+    for (const action of actions) {
+      resetFakeGoogle()
+      const response = await request(`/v1/capabilities/google-workspace/${action.path}`, action)
+      expect(response.status).toBe(409)
+      expect(expectRecord(await response.json(), "unknown-grant action response").error).toBe("needs_connection")
+      expect(googleCallCount).toBe(0)
+    }
+  }
+})
+
 test("no connected account returns needs_connection", async () => {
   await db.delete(schema.ConnectedAccountTable).where(drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId))
   const response = await request("/v1/capabilities/google-workspace/calendar-events?timeMin=2026-07-08T00%3A00%3A00Z&timeMax=2026-07-11T00%3A00%3A00Z")
@@ -1528,7 +2148,7 @@ test("no connected account returns needs_connection", async () => {
   const body: unknown = await response.json()
   expect(body).toEqual({
     error: "needs_connection",
-    message: "Connect your Google account first: open Settings > Connect and use Connect your account on the Google Workspace row, or connect from the OpenWork Cloud dashboard.",
+    message: "Connect your Google account first: open Settings > Library > Connections and connect the Google Workspace connection, or use OpenWork Cloud > Your Connections.",
   })
 })
 
@@ -1561,6 +2181,11 @@ test("Google Workspace capability tools are discoverable and keep readable names
     throw new Error("openapi.json did not look like an OpenAPI document")
   }
 
+  const descriptions = JSON.stringify(document)
+  expect(descriptions).toContain("decode to a workspace file")
+  expect(descriptions).toContain("if that action is available in the current client")
+  expect(descriptions).not.toContain("passed directly to the Drive upload capability's dataBase64 field")
+
   const catalog = buildMcpCatalog(document)
   const calendarMatch = searchCapabilities(catalog, "calendar events list", 10)[0]
   expect(calendarMatch?.name).toBe("getCapabilitiesGoogleWorkspaceCalendarEvents")
@@ -1568,17 +2193,17 @@ test("Google Workspace capability tools are discoverable and keep readable names
   expect(searchCapabilities(catalog, "add meet link existing event", 10)[0]?.name).toBe("patchCapabilitiesGoogleWorkspaceCalendarEvent")
   const driveMatch = searchCapabilities(catalog, "drive files", 10)[0]
   expect(driveMatch?.name).toBe("getCapabilitiesGoogleWorkspaceDriveFiles")
-  expect(driveMatch?.queryParams).toEqual(["query", "maxResults"])
+  expect(driveMatch?.queryParams).toEqual(["query", "maxResults", "pageToken", "modifiedAfter", "folderId"])
   expect(catalog.some((tool) => tool.name === "postCapabilitiesGoogleWorkspaceDriveFiles")).toBe(false)
   expect(catalog.some((tool) => tool.name.includes("DirectUploads"))).toBe(false)
   expect(searchCapabilities(catalog, "share drive file", 10)[0]?.name).toBe("postCapabilitiesGoogleWorkspaceDriveFileShare")
   const gmailMatch = searchCapabilities(catalog, "gmail search read messages", 10)[0]
   expect(gmailMatch?.name).toBe("getCapabilitiesGoogleWorkspaceGmailMessages")
-  expect(gmailMatch?.queryParams).toEqual(["q", "maxResults"])
+  expect(gmailMatch?.queryParams).toEqual(["q", "maxResults", "pageToken"])
   expect(searchCapabilities(catalog, "outlook mail messages", 20).find((match) => match.name === "getCapabilitiesMicrosoft365MailMessages")?.queryParams).toEqual(["search", "maxResults"])
-  const draftMatch = searchCapabilities(catalog, "gmail draft without attachments", 10)[0]
+  const draftMatch = searchCapabilities(catalog, "gmail draft attachments", 10)[0]
   expect(draftMatch?.name).toBe("postCapabilitiesGoogleWorkspaceGmailDrafts")
-  expect(draftMatch?.summary).toContain("without attachments")
+  expect(draftMatch?.summary).toContain("optional workspace attachments")
   expect(searchCapabilities(catalog, "download gmail attachment bytes", 10)[0]?.name).toBe("getCapabilitiesGoogleWorkspaceGmailAttachment")
 
   const expectedNames = [
@@ -1639,7 +2264,7 @@ test("search_capabilities exposes query parameter constraints as JSON schema ins
   expect(timeMinSchema.format).toBe("date-time")
   expect(expectString(timeMinSchema.description, "calendar timeMin description")).toContain("+02:00")
 
-  const draftSearch = await mcpToolCall("search_capabilities", { query: "gmail draft without attachments", limit: 10 })
+  const draftSearch = await mcpToolCall("search_capabilities", { query: "gmail draft attachments", limit: 10 })
   const draftStructuredContent = expectRecord(draftSearch.structuredContent, "Gmail draft capability search structured content")
   if (!Array.isArray(draftStructuredContent.matches)) {
     throw new Error("Expected Gmail draft capability search matches to be an array")
@@ -1650,4 +2275,20 @@ test("search_capabilities exposes query parameter constraints as JSON schema ins
     "Gmail draft capability match",
   )
   expect(draftMatch).not.toHaveProperty("querySchema")
+  expect(draftMatch.summary).toContain("optional workspace attachments")
+  const bodySchema = expectRecord(draftMatch.bodySchema, "draft body schema")
+  expect(bodySchema.required).not.toContain("attachments")
+  const properties = expectRecord(bodySchema.properties, "draft properties")
+  const attachments = expectRecord(properties.attachments, "attachment input schema")
+  expect(attachments).toMatchObject({ type: "array", minItems: 1, maxItems: 10, items: { type: "string", minLength: 1 } })
+  const description = expectString(attachments.description, "attachment description")
+  for (const guidance of ["workspace file paths", "4 MiB", "outside model context", "direct execute_capability", "supporting OpenWork host", "Code Mode", "no draft"]) {
+    expect(description).toContain(guidance)
+  }
+  expect(properties).not.toHaveProperty("connectionId")
+  expect(attachments).not.toHaveProperty("x-mcp-file")
+  expect(properties.to).toMatchObject({ type: "string", minLength: 3, maxLength: 320 })
+  expect(properties.cc).toMatchObject({ type: "string", minLength: 3, maxLength: 1_000 })
+  expect(properties.bcc).toMatchObject({ type: "string", minLength: 3, maxLength: 1_000 })
+  expect(properties.subject).toMatchObject({ type: "string", minLength: 1, maxLength: 500 })
 })

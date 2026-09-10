@@ -123,6 +123,8 @@ export type SlashCommandOption = {
 };
 
 export type ComposerDraft = {
+  /** Client identity for reconciling the pending user turn with server events. */
+  messageId?: string;
   mode: PromptMode;
   parts: ComposerPart[];
   attachments: ComposerAttachment[];

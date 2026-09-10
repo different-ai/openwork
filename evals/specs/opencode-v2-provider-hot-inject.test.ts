@@ -52,6 +52,8 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
   const binary = await resolveOpencodeV2Bin();
   const nonce = `WITNESS-OK-${randomBytes(12).toString("hex")}`;
   const requests: WitnessRequest[] = [];
+  const policyChecks: Array<{ action: string; input: Record<string, unknown> }> = [];
+  let blockProviderB = true;
   let impersonatorRequests = 0;
   const witness = createServer(async (request, response) => {
     if (request.url === "/api/health") {
@@ -131,9 +133,16 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
         OPENCODE_CONFIG: baseConfig, OPENCODE_MODELS_URL: opencodeModelsUrl,
         OPENWORK_ENCRYPTION_KEY: "fixture-server-only", OPENWORK_TOKEN: "fixture-server-only",
         OPENWORK_HOST_TOKEN: "fixture-server-only", OPENWORK_SERVER_TOKEN: "fixture-server-only",
+        OPENWORK_POLICY_TOKEN: "fixture-server-only",
         OPENAI_API_KEY: "fixture-server-only", ANTHROPIC_API_KEY: "fixture-server-only",
         AWS_SECRET_ACCESS_KEY: "fixture-server-only", GITHUB_TOKEN: "fixture-server-only",
         DATABASE_URL: "fixture-server-only", CUSTOM_SERVICE_SECRET: "fixture-server-only",
+      },
+      checkPolicy: async (action, input) => {
+        policyChecks.push({ action, input });
+        if (blockProviderB && action === "model" && input.providerID === "openwork-witness-b") {
+          throw new Error("Witness B is blocked by team policy.");
+        }
       },
     });
     const initialHealth = await server.health();
@@ -151,7 +160,7 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
       expect(names).toContain("PATH");
       evidence.recordAssertionEvidence(
         "server credentials do not cross the sidecar process boundary",
-        "The live Linux sidecar retained PATH but contained none of the ten synthetic control-plane, provider, cloud, database, or arbitrary service credentials supplied through spawn options. Unknown environment keys were not inherited.",
+        "The live Linux sidecar retained PATH but contained none of the synthetic policy, control-plane, provider, cloud, database, or arbitrary service credentials supplied through spawn options. Unknown environment keys were not inherited.",
         true,
       );
     }
@@ -173,7 +182,7 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
     console.info(`[opencode-v2-spec] cold catalog readiness: ${catalogReadinessMs}ms`);
     evidence.recordAssertionEvidence(
       "C1 positive baseline and negative provider absence",
-      `The cold-cache v2 engine listed models after ${catalogReadinessMs}ms while containing neither witness A nor witness B before injection.`,
+      `The freshly booted v2 engine listed models after ${catalogReadinessMs}ms while containing neither witness A nor witness B before injection. The package cache is shared; this is not cold-cache installation proof.`,
       true,
     );
 
@@ -222,6 +231,28 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
     const idA = sessionId(sessionA.json);
     expect(idA).toBeTypeOf("string");
     if (idA === undefined) throw new Error("Provider A session response did not contain data.id");
+    const shellProbe = join(directory, "policy-boundary.cjs");
+    await writeFile(shellProbe, `console.log(JSON.stringify({ policy: Object.hasOwn(process.env, "OPENWORK_POLICY_TOKEN"), client: Object.hasOwn(process.env, "OPENWORK_SERVER_TOKEN"), ipc: typeof process.send === "function" }));\n`);
+    const command = `node "${shellProbe}"`;
+    const shell = await server.fetchJson(`/api/session/${idA}/shell`, {
+      method: "POST", directory, body: { command }, timeoutMs: 15_000,
+    });
+    expect(shell.status).toBe(204);
+    const shellMessages = await server.fetchJson(`/api/session/${idA}/message`, { directory });
+    const shellMessage: unknown = isRecord(shellMessages.json) && Array.isArray(shellMessages.json.data)
+      ? shellMessages.json.data.find((message: unknown) => isRecord(message) && message.type === "shell" && message.command === command)
+      : undefined;
+    expect(shellMessage).toMatchObject({ status: "exited", exit: 0 });
+    if (!isRecord(shellMessage) || !isRecord(shellMessage.output) || typeof shellMessage.output.output !== "string") {
+      throw new Error("The policy boundary shell probe did not return output");
+    }
+    expect(JSON.parse(shellMessage.output.output.trim())).toEqual({ policy: false, client: false, ipc: false });
+    expect(policyChecks).toContainEqual({ action: "shell", input: { command } });
+    evidence.recordAssertionEvidence(
+      "shell execution cannot inherit the host policy credential or IPC channel",
+      "The real v2 shell completed a presence-only probe: neither policy nor client credentials nor a process IPC capability were inherited, while its shell policy hook reached the host.",
+      true,
+    );
     const promptA = await server.fetchJson(`/api/session/${idA}/prompt`, {
       method: "POST",
       directory,
@@ -234,6 +265,7 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
     );
     expect(requests.some((entry) => entry.auth === "Bearer witness-key-a" && entry.model === "witness-model-a")).toBe(true);
     expect(requests.some((entry) => entry.model === "witness-model-b")).toBe(false);
+    expect(policyChecks).toContainEqual({ action: "model", input: expect.objectContaining({ providerID: "openwork-witness-a", id: "witness-model-a" }) });
     evidence.recordAssertionEvidence(
       "C3 positive provider A execution and negative wrong-credential routing",
       "The A session received the witness nonce, and the witness observed model A paired with only the expected Bearer key A assertion.",
@@ -282,6 +314,29 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
       body: { text: "reply with anything" },
     });
     expect(promptB.status).toBe(200);
+    await eventually(async () => {
+      const result = await server?.fetchJson(`/api/session/${idB}`, { directory });
+      return isRecord(result?.json) && isRecord(result.json.data) ? result.json.data.outcome : undefined;
+    }, { within: 15_000, intervalMs: 100, label: "blocked model execution to fail", until: (outcome) => outcome === "failed" });
+    await eventually(async () => {
+      const result = await server?.fetchJson("/api/session/active", { directory });
+      return isRecord(result?.json) && isRecord(result.json.data) && result.json.data[idB] === undefined;
+    }, { within: 15_000, intervalMs: 100, label: "blocked model execution to settle", until: (idle) => idle });
+    expect(policyChecks.some((entry) => entry.action === "model" && entry.input.providerID === "openwork-witness-b")).toBe(true);
+    expect(requests.some((entry) => entry.model === "witness-model-b")).toBe(false);
+    evidence.recordAssertionEvidence(
+      "policy checks stay in the host without a policy credential in the engine",
+      "The v2 model hook reached the host over private IPC: A was permitted, B reached a failed idle outcome after the host denied it, and the provider witness received no B request.",
+      true,
+    );
+    // Removing the restriction uses the same host callback and same engine.
+    blockProviderB = false;
+    const allowedPromptB = await server.fetchJson(`/api/session/${idB}/prompt`, {
+      method: "POST",
+      directory,
+      body: { text: "reply with anything" },
+    });
+    expect(allowedPromptB.status).toBe(200);
     await eventually(
       async () => JSON.stringify((await server?.fetchJson(`/api/session/${idB}/message`, { directory }))?.json),
       { within: 60_000, intervalMs: 250, label: "provider B witness response", until: (text) => text.includes(nonce) },

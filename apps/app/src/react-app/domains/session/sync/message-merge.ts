@@ -12,7 +12,20 @@ function messageSignature(message: UIMessage) {
 }
 
 function mergeMessageParts(snapshotMessage: UIMessage, cachedMessage: UIMessage) {
+  const cachedTools = new Map(cachedMessage.parts.flatMap((part) =>
+    part.type === "dynamic-tool" ? [[part.toolCallId, part] as const] : []));
+  const snapshotToolIds = new Set(snapshotMessage.parts.flatMap((part) =>
+    part.type === "dynamic-tool" ? [part.toolCallId] : []));
   const parts = snapshotMessage.parts.map((part, index) => {
+    if (part.type === "dynamic-tool") {
+      const cached = cachedTools.get(part.toolCallId);
+      // A call cannot return from a terminal result to streaming input. Keep
+      // snapshot authority for terminal-to-terminal updates and other calls.
+      if (cached?.toolName === part.toolName
+        && (cached.state === "output-available" || cached.state === "output-error")
+        && (part.state === "input-streaming" || part.state === "input-available")) return cached;
+      return part;
+    }
     const cachedPart = cachedMessage.parts[index];
     if (!cachedPart) return part;
 
@@ -27,9 +40,9 @@ function mergeMessageParts(snapshotMessage: UIMessage, cachedMessage: UIMessage)
     return part;
   });
 
-  if (cachedMessage.parts.length > snapshotMessage.parts.length) {
-    parts.push(...cachedMessage.parts.slice(snapshotMessage.parts.length));
-  }
+  parts.push(...cachedMessage.parts.filter((part, index) => part.type === "dynamic-tool"
+    ? !snapshotToolIds.has(part.toolCallId)
+    : index >= snapshotMessage.parts.length));
 
   return parts;
 }
@@ -111,6 +124,27 @@ function sortFullyTimestampedMessages(messages: UIMessage[]) {
     .map((item) => item.message);
 }
 
+function mergeMissingMessagesByChronology(messages: UIMessage[], missing: UIMessage[], sourceOrder: UIMessage[]) {
+  if (missing.length > 0) {
+    const byCreated = new Map<number, UIMessage>();
+    for (const message of [...messages, ...missing]) {
+      const created = messageCreated(message);
+      if (created === null || !Number.isFinite(created) || byCreated.has(created)) break;
+      byCreated.set(created, message);
+    }
+    // Unique finite timestamps make the final order independent of insertion order.
+    // Ties and missing/invalid timestamps must retain the source-neighbor insertion rules.
+    if (byCreated.size === messages.length + missing.length) {
+      return [...byCreated]
+        .sort(([a], [b]) => a - b)
+        .map(([, message]) => message);
+    }
+  }
+
+  for (const message of missing) insertMessageByChronology(messages, message, sourceOrder);
+  return sortFullyTimestampedMessages(messages);
+}
+
 export function messageListContainsAll(container: UIMessage[], required: UIMessage[]) {
   if (required.length === 0) return true;
   const ids = new Set(container.map((message) => message.id));
@@ -132,13 +166,10 @@ export function mergeSnapshotAndLiveMessages(
     return liveMessage ? mergeSnapshotMessageWithCached(snapshotMessage, liveMessage) : snapshotMessage;
   });
 
-  if (options.appendLiveOnlyMessages) {
-    for (const liveMessage of liveMessages) {
-      if (!snapshotIds.has(liveMessage.id)) insertMessageByChronology(merged, liveMessage, liveMessages);
-    }
-  }
-
-  return sortFullyTimestampedMessages(merged);
+  const missing = options.appendLiveOnlyMessages
+    ? liveMessages.filter((message) => !snapshotIds.has(message.id))
+    : [];
+  return mergeMissingMessagesByChronology(merged, missing, liveMessages);
 }
 
 export function mergeSnapshotIntoCachedMessages(snapshotMessages: UIMessage[], cachedMessages: UIMessage[]) {
@@ -157,11 +188,12 @@ export function mergeSnapshotIntoCachedMessages(snapshotMessages: UIMessage[], c
       : message;
   });
 
+  const missing: UIMessage[] = [];
   for (const message of cachedMessages) {
     if (seen.has(message.id)) continue;
     seen.add(message.id);
-    insertMessageByChronology(merged, message, cachedMessages);
+    missing.push(message);
   }
 
-  return sortFullyTimestampedMessages(merged);
+  return mergeMissingMessagesByChronology(merged, missing, cachedMessages);
 }

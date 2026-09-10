@@ -30,6 +30,7 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
 import { isPluginArchOrgAdmin, PluginArchAuthorizationError, pluginArchResourceHasExpandedAudience, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchResourceRole } from "./access.js"
+import { CONTENT_EDIT_SESSION_MAX_AGE_MS } from "../shared.js"
 import { clampCodePoints, clampUtf8Bytes, PROJECTION_TEXT_MAX_BYTES, PROJECTION_TITLE_MAX_CHARS } from "./projection-text.js"
 import {
   AGENT_PLUGIN_V1_VERSION,
@@ -71,6 +72,7 @@ import {
   type DefaultMarketplacePluginEntry,
 } from "./default-marketplaces.js"
 import { db } from "../../../db.js"
+import { resolveOrganizationMemberAuthority } from "../../../organization-team-roles.js"
 import { env } from "../../../env.js"
 import { appLogger } from "../../../observability/logger.js"
 import { roleIncludesOwner } from "../../../orgs.js"
@@ -105,6 +107,7 @@ import { openworkYourConnectionsUrl } from "../../../mcp/connection-navigation.j
 import {
   declaredPluginMcpAuthType,
   requiredPluginMcpAuthType,
+  pluginMcpAuthTypeCompatible,
   resolveGithubPluginMcpImportAuthType,
   type PluginMcpAuthType,
 } from "../../../capability-sources/external-mcp-auth-policy.js"
@@ -832,32 +835,6 @@ const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = [
   },
   {
     schemaVersion: 1,
-    id: "google-workspace",
-    name: "Google Workspace",
-    description: "Let OpenWork help with meetings, selected Drive files, and Gmail drafts.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { simpleIconSlug: "google" },
-    composer: { prompt: "Use Google Workspace to " },
-    setup: { instructions: "Connect your Google account to use Calendar, Drive, and Gmail drafts in OpenWork." },
-    resources: [
-      { type: "provider", id: "google-oauth", label: "Google account", providerId: "google-workspace", required: true },
-      { type: "local-service", id: "google-workspace-connector", label: "Secure local connection", required: true },
-      { type: "tool", id: "google-calendar-read", label: "Calendar", required: true },
-      { type: "tool", id: "google-gmail-drafts", label: "Gmail drafts", required: true },
-      { type: "tool", id: "google-drive-selected-files", label: "Selected Drive files", required: true },
-      { type: "tool", id: "google-gmail-read", label: "Gmail read (opt-in)", required: false },
-      { type: "tool", id: "google-drive-full", label: "Full Drive access (opt-in)", required: false },
-      { type: "tool", id: "google-calendar-events", label: "Calendar events (opt-in)", required: false },
-      { type: "tool", id: "google-chat", label: "Google Chat (opt-in)", required: false },
-    ],
-    contributions: [
-      { type: "settings-panel", ref: "openwork.googleWorkspace.settings", location: "settings-detail" },
-      { type: "composer-prompt", prompt: "Use Google Workspace to ", location: "composer" },
-    ],
-    lifecycle: { reload: ["config"], detection: ["provider:google-workspace"] },
-  },
-  {
-    schemaVersion: 1,
     id: "ollama",
     name: "Ollama",
     description: "Local model provider at http://localhost:11434.",
@@ -877,6 +854,21 @@ const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = [
     lifecycle: { reload: ["config"], detection: ["provider:ollama"] },
   },
 ] as const
+
+// Render historical seeded records without re-seeding them or reviving local setup.
+const RETIRED_GOOGLE_WORKSPACE_MANIFEST = {
+  schemaVersion: 1,
+  id: "google-workspace",
+  name: "Google Workspace",
+  description: "Let OpenWork help with meetings, selected Drive files, and Gmail drafts.",
+  source: { format: "openwork-builtin", origin: "builtin", trusted: true },
+  icon: { simpleIconSlug: "google" },
+  setup: { instructions: "Google Workspace is available through OpenWork Cloud only. Sign in to OpenWork Cloud, then use Settings > Library > Connections to set up your Google Workspace connection. This retired local extension does not connect your account or indicate Cloud connection readiness." },
+  resources: [],
+  contributions: [
+    { type: "setup-instructions", ref: "openwork.googleWorkspace.setup", location: "settings-detail" },
+  ],
+} as const
 
 function defaultOpenWorkManifestForPlugin(row: PluginRow) {
   return DEFAULT_OPENWORK_EXTENSION_MANIFESTS.find((manifest) => manifest.name === row.name && manifest.description === row.description) ?? null
@@ -912,7 +904,9 @@ function serializedPluginSourceFormat(row: PluginRow) {
 }
 
 function serializePluginExtension(row: PluginRow, componentCounts: Record<string, number>) {
-  const builtInManifest = defaultOpenWorkManifestForPlugin(row)
+  const builtInManifest = row.name === RETIRED_GOOGLE_WORKSPACE_MANIFEST.name && row.description === RETIRED_GOOGLE_WORKSPACE_MANIFEST.description
+    ? RETIRED_GOOGLE_WORKSPACE_MANIFEST
+    : defaultOpenWorkManifestForPlugin(row)
   if (builtInManifest) {
     return {
       description: builtInManifest.description,
@@ -1305,6 +1299,7 @@ async function ensureEditablePlugin(
   context: PluginArchActorContext,
   pluginId: PluginId,
   requireFreshSession?: boolean,
+  sessionMaxAgeMs?: number,
 ) {
   const row = await getPluginRow(context.organizationContext.organization.id, pluginId)
   if (!row) {
@@ -1313,6 +1308,7 @@ async function ensureEditablePlugin(
   await requirePluginArchResourceRole({
     context,
     requireFreshSession,
+    sessionMaxAgeMs,
     resourceId: row.id,
     resourceKind: "plugin",
     role: "editor",
@@ -1671,7 +1667,8 @@ export async function createConfigObject(input: {
     pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: pluginId, resourceKind: "plugin" })))
   const requireFreshSession = input.requireFreshSession ?? targetExposure.some(Boolean)
   for (const pluginId of input.pluginIds ?? []) {
-    await ensureEditablePlugin(input.context, pluginId, requireFreshSession)
+    await ensureEditablePlugin(input.context, pluginId, requireFreshSession,
+      input.objectType === "skill" ? CONTENT_EDIT_SESSION_MAX_AGE_MS : undefined)
   }
 
   const now = new Date()
@@ -1803,7 +1800,10 @@ export async function createConfigObjectVersion(input: { context: PluginArchActo
     throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
   }
   const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
-  await requirePluginArchResourceRole({ context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "config_object", role: "editor" })
+  await requirePluginArchResourceRole({
+    context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "config_object", role: "editor",
+    sessionMaxAgeMs: row.objectType === "skill" ? CONTENT_EDIT_SESSION_MAX_AGE_MS : undefined,
+  })
 
   const now = new Date()
   const projection = deriveProjection({ objectType: row.objectType, value: input.value })
@@ -2889,7 +2889,7 @@ export async function createPluginBundle(input: {
 
 export async function updatePlugin(input: { context: PluginArchActorContext; description?: string | null; name?: string; pluginId: PluginId }) {
   const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: input.pluginId, resourceKind: "plugin" })
-  const row = await ensureEditablePlugin(input.context, input.pluginId, requireFreshSession)
+  const row = await ensureEditablePlugin(input.context, input.pluginId, requireFreshSession, CONTENT_EDIT_SESSION_MAX_AGE_MS)
   const updatedAt = new Date()
   await db.update(PluginTable).set({
     description: input.description === undefined ? row.description : normalizeOptionalString(input.description ?? undefined),
@@ -5458,15 +5458,23 @@ async function ensureImportedExternalMcpConnection(input: {
     .find((connection) => connection.kind === "external_mcp" && comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(serverUrl))
 
   if (existing) {
+    const authType = resolveGithubPluginMcpImportAuthType({
+      declaredAuthType: input.server.authType,
+      // Legacy none always used shared mode, regardless of the import's OAuth
+      // mode default. A shared PAT must not replace per-member OAuth.
+      existingAuthType: existing.authType === "none" || existing.credentialMode === input.credentialMode ? existing.authType : undefined,
+      requestedAuthType: input.authType,
+      url: serverUrl,
+    })
     await requireExistingExternalMcpConnectionMatchesImport({
-      authType: input.authType,
+      authType,
       credentialMode: input.credentialMode,
       existingAuthType: existing.authType,
       existingCredentialMode: existing.credentialMode,
     })
-    if (input.authType === "none") {
+    if (authType === "none") {
       try {
-        await validateConfiguredPluginMcpConnection({ authType: input.authType, connection: existing })
+        await validateConfiguredPluginMcpConnection({ authType, connection: existing })
       } catch (error) {
         await db.update(ExternalMcpConnectionTable).set({ connectedAt: null }).where(and(
           eq(ExternalMcpConnectionTable.organizationId, organizationId),
@@ -5586,11 +5594,13 @@ export async function configureMarketplacePluginMcpRequirement(input: {
     declaredAuthType: declaredPluginMcpAuthType(server.config),
     url: server.url,
   })
-  if (declaredRequiredAuthType && declaredRequiredAuthType !== input.authType) {
+  if (!pluginMcpAuthTypeCompatible({ authType: input.authType, requiredAuthType: declaredRequiredAuthType, url: server.url })) {
     throw new PluginArchRouteFailure(
       409,
       "mcp_auth_type_mismatch",
-      `This MCP requirement must use ${declaredRequiredAuthType} authentication.`,
+      declaredRequiredAuthType
+        ? `This MCP requirement must use ${declaredRequiredAuthType} authentication.`
+        : "This authentication type is not supported by the MCP server.",
     )
   }
   const requiredAuthType = declaredRequiredAuthType ?? input.authType
@@ -5780,19 +5790,20 @@ export async function importGithubPluginMcps(input: {
   const imported: Array<{ connectionId: string; name: string; url: string }> = []
   const importedSkills: Array<{ configObjectId: ConfigObjectId; name: string; sourcePath: string }> = []
   for (const server of supportedServers) {
-    const authType = resolveGithubPluginMcpImportAuthType({
+    const defaultAuthType = resolveGithubPluginMcpImportAuthType({
       declaredAuthType: server.authType,
       requestedAuthType: input.authType,
       url: server.url ?? "",
     })
     const importedConnection = await ensureImportedExternalMcpConnection({
       access,
-      authType,
+      authType: defaultAuthType,
       context: input.context,
       credentialMode: input.credentialMode,
       server,
     })
     const connection = importedConnection.connection
+    const authType = connection.authType
     if (importedConnection.ownedByImportedPlugin) importedOwnedConnectionIds.add(connection.id)
     const payload = importedConnectionBackedMcpPayload({
       authType,
@@ -6019,16 +6030,10 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
     throw new PluginArchRouteFailure(404, "organization_not_found", "Organization not found for connector instance.")
   }
 
-  const memberRows = await db
-    .select()
-    .from(MemberTable)
-    .where(and(
-      eq(MemberTable.organizationId, input.connectorInstance.organizationId),
-      eq(MemberTable.id, input.connectorInstance.createdByOrgMembershipId),
-      isNull(MemberTable.removedAt),
-    ))
-    .limit(1)
-  const member = memberRows[0] as MemberRow | undefined
+  const member = await resolveOrganizationMemberAuthority({
+    organizationId: input.connectorInstance.organizationId,
+    memberId: input.connectorInstance.createdByOrgMembershipId,
+  })
   if (!member) {
     throw new PluginArchRouteFailure(404, "member_not_found", "Connector creator member not found.")
   }
@@ -6048,6 +6053,8 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
         isOwner: roleIncludesOwner(member.role),
         joinedAt: member.joinedAt,
         role: member.role,
+        directRole: member.directRole,
+        adminTeams: member.adminTeams,
         userId: member.userId,
       },
       invitations: [],

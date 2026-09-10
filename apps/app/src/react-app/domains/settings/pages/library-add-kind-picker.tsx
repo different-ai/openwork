@@ -24,8 +24,6 @@ const PICKER_KIND_ORDER: LibraryAddKind[] = [
   "skill",
   "command",
   "agent",
-  "plugin",
-  "mcp",
   "workspace-mcp",
   "connection",
 ];
@@ -188,17 +186,16 @@ export function LibraryAddKindPicker(props: {
   onClose: () => void;
   onSelect: (kind: LibraryAddKind) => void;
 }) {
-  const firstKind = props.kinds[0];
+  const orderedKinds = PICKER_KIND_ORDER.filter((kind) => props.kinds.includes(kind));
+  const firstKind = orderedKinds[0];
   const [selected, setSelected] = useState<LibraryAddKind | null>(firstKind ?? null);
 
   useEffect(() => {
     if (!props.open) return;
     setSelected((current) => (
-      current && props.kinds.includes(current) ? current : props.kinds[0] ?? null
+      current && PICKER_KIND_ORDER.includes(current) && props.kinds.includes(current) ? current : firstKind ?? null
     ));
-  }, [props.open, props.kinds]);
-
-  const orderedKinds = PICKER_KIND_ORDER.filter((kind) => props.kinds.includes(kind));
+  }, [props.open, props.kinds, firstKind]);
 
   const handleContinue = () => {
     if (!selected) return;

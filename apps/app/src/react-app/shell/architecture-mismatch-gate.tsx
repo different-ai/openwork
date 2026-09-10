@@ -3,6 +3,7 @@ import { useCallback, useEffect, useReducer, type ReactNode } from "react";
 
 import { isDesktopRuntime } from "../../app/utils";
 import { useBootState } from "./boot-state";
+import { StartupScreen } from "./startup-screen";
 
 type ArchitectureInfo = {
   appArch: string;
@@ -94,7 +95,7 @@ export function ArchitectureMismatchGate({ children }: ArchitectureMismatchGateP
     void window.__OPENWORK_ELECTRON__?.shell?.openExternal?.(info.releaseUrl);
   }, [info?.releaseUrl]);
 
-  if (!checked) return null;
+  if (!checked) return <StartupScreen message="Checking this OpenWork installation" />;
   if (!info?.mismatch) return <>{children}</>;
 
   return (

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import net from "node:net";
 import { randomUUID } from "node:crypto";
+import { appendEngineOutputTail, createEngineStartupLineReader } from "./engine-output.js";
 
 export type ManagedChildProcess = {
   exitCode: number | null;
@@ -131,17 +132,19 @@ type ManagedOpencodeServerOptions = {
 
 class ManagedOpencodeExitError extends Error {
   readonly exitCode: number | null;
+  readonly addressInUse: boolean;
 
-  constructor(exitCode: number | null, output: string) {
-    super(`OpenCode server exited with code ${exitCode}${output.trim() ? `\n${output}` : ""}`);
+  constructor(exitCode: number | null, output: string, addressInUse: boolean) {
+    super(`OpenCode server exited with code ${exitCode}${addressInUse ? " (EADDRINUSE)" : ""}${output.trim() ? `\n${output}` : ""}`);
     this.exitCode = exitCode;
+    this.addressInUse = addressInUse;
   }
 }
 
 function isRetryableAddressInUseExit(error: unknown): boolean {
   return error instanceof ManagedOpencodeExitError &&
     error.exitCode === 1 &&
-    /\bEADDRINUSE\b/.test(error.message);
+    error.addressInUse;
 }
 
 async function startManagedOpencodeServer(
@@ -192,32 +195,62 @@ async function startManagedOpencodeServer(
   let url: string;
   try {
     url = await new Promise<string>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error(`Timeout waiting for OpenCode server after ${options.timeoutMs ?? 15000}ms`)), options.timeoutMs ?? 15000);
-      let output = "";
-      const done = (value: string) => {
+      let settled = false;
+      let stdout = "";
+      let stderr = "";
+      let addressInUse = false;
+      const output = () => `stdout:\n${stdout}\nstderr:\n${stderr}`;
+      const collect = (tail: string, text: string) => {
+        // Remember the retry signal even if later diagnostics evict it. Keep
+        // stream boundaries separate, including a token split across chunks.
+        // Do not invent a word boundary where the overlap was cut.
+        addressInUse ||= /\bEADDRINUSE\b[\s\S]/.test((tail.length > 16 ? "_" : "") + tail.slice(-16) + text);
+        return appendEngineOutputTail(tail, text);
+      };
+      const finish = () => {
+        settled = true;
         clearTimeout(timeout);
+        lines.stop();
+        stdout = "";
+        stderr = "";
+        child.removeListener("close", onClose);
+      };
+      const done = (value: string) => {
+        if (settled) return;
+        finish();
         resolve(value);
       };
       const fail = (error: Error) => {
-        clearTimeout(timeout);
+        if (settled) return;
+        finish();
         reject(error);
       };
+      const lines = createEngineStartupLineReader((line) => {
+        if (!line.startsWith("opencode server listening")) return;
+        const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
+        if (!match?.[1]) return fail(new Error(`Failed to parse OpenCode server URL from: ${line}\n${output()}`));
+        done(match[1]);
+      });
+      const timeout = setTimeout(() => fail(new Error(`Timeout waiting for OpenCode server after ${options.timeoutMs ?? 15000}ms\n${output()}`)), options.timeoutMs ?? 15000);
+      const onClose = (code: number | null) => {
+        if (!settled) fail(new ManagedOpencodeExitError(code, output(),
+          addressInUse || /\bEADDRINUSE$/.test(stdout) || /\bEADDRINUSE$/.test(stderr)));
+      };
       child.stdout?.on("data", (chunk) => {
-        output += chunk.toString();
-        for (const line of output.split("\n")) {
-          if (!line.startsWith("opencode server listening")) continue;
-          const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
-          if (!match?.[1]) return fail(new Error(`Failed to parse OpenCode server URL from: ${line}`));
-          done(match[1]);
-        }
+        // Keep draining both pipes after startup, without decoding or parsing.
+        if (settled) return;
+        const text = chunk.toString();
+        stdout = collect(stdout, text);
+        lines.write(text);
       });
       child.stderr?.on("data", (chunk) => {
-        output += chunk.toString();
+        if (settled) return;
+        stderr = collect(stderr, chunk.toString());
       });
-      child.once("error", fail);
+      child.on("error", fail);
       // ChildProcess can emit "exit" before its stdio pipes have drained. Wait
       // for "close" so retry classification includes every diagnostic line.
-      child.once("close", (code) => fail(new ManagedOpencodeExitError(code, output)));
+      child.once("close", onClose);
     });
   } catch (error) {
     await processLifecycle.close();

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { judgeJourneys } from './judge-journeys.mjs';
 import assert from 'node:assert/strict';
-import { catalog, selectJourneys } from './journey-catalog.mjs';
+import { catalog, registeredCases, selectJourneys } from './journey-catalog.mjs';
 import { aggregate, classify, markdown } from './journey-report.mjs';
 import { notification, deliver, validateReport, findStateRun } from './notify-journeys.mjs';
 
@@ -45,7 +45,36 @@ test('changed additional journey joins critical selection; manual filters work f
   const handoff = selectJourneys(entries, { only: 'cross-server-handoff-atomic-commit' });
   assert.equal(handoff.length, 1);
   assert.equal(handoff[0].placement, 'local');
+  const instantSend = selectJourneys(entries, { only: 'workspace-new-task-hit-target' });
+  assert.equal(instantSend.length, 1);
+  assert.equal(instantSend[0].name, 'Keep new tasks and sends instantly responsive');
+  assert.equal(instantSend[0].placement, 'local');
+  assert.equal(instantSend[0].model, 'mock');
+  assert.equal(instantSend[0].critical, false);
   assert.equal(selectJourneys(entries, { only: 'does-not-exist' }).length, 0);
+});
+
+test('registered case metadata names exact files, supported execution axes, and defaults', async () => {
+  const entries = await catalog();
+  assert.deepEqual(registeredCases.map(({ spec, id, engines, surfaces, defaultSurface }) => ({ spec, id, engines, surfaces, defaultSurface })), [
+    {
+      spec: 'streamed-markdown-answer.e2e.test.ts',
+      id: 'CONT-01',
+      engines: ['v1', 'v2'],
+      surfaces: ['web', 'electron'],
+      defaultSurface: 'web',
+    },
+    {
+      spec: 'live-tool-visible-after-session-switch.e2e.test.ts',
+      id: 'SWITCH-10',
+      engines: ['v1', 'v2'],
+      surfaces: ['web'],
+      defaultSurface: 'web',
+    },
+  ]);
+  for (const registered of registeredCases) {
+    assert(entries.some(entry => entry.spec === registered.spec));
+  }
 });
 
 test('skips, no tests, missing summaries, setup and judging failures never pass', () => {

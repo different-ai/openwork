@@ -26,11 +26,14 @@ import { registerUpdaterIpc } from "./updater.mjs";
 import {
   checkComputerUsePermissions,
   getComputerUseMcpCommand,
+  getComputerUseState,
+  computerUseAction,
   listRunningApps,
   openComputerUseSetupApp,
 } from "./computer-use.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
+import { createNativeContextMenus } from "./context-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserLoginSync } from "./browser-login-sync.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
@@ -100,6 +103,7 @@ const {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
   nativeImage,
   nativeTheme,
   net: electronNet,
@@ -164,11 +168,22 @@ const applicationMenu = createApplicationMenu({
   getWindow: () => createMainWindow(),
 });
 
+let browserPanel = null;
+
 const uiControlServer = createUiControlServer({
   app,
   appName: APP_NAME,
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
+  browserTask: (args, options) => browserPanel?.browserTask(args, options) ?? { ok: false, code: "browser_unavailable" },
+  listWebMcpTools: (args, options) => browserPanel?.listWebMcpTools(args, options) ?? {
+    ok: false,
+    error: "The built-in browser is not ready.",
+  },
+  executeWebMcpTool: (args, options) => browserPanel?.executeWebMcpTool(args, options) ?? {
+    ok: false,
+    error: "The built-in browser is not ready.",
+  },
 });
 
 const terminalProcesses = new Map();
@@ -1058,21 +1073,32 @@ const IDLE_ROUTER_INFO = Object.freeze({
 
 let mainWindow = null;
 const pendingDeepLinks = [];
+const nativeContextMenus = createNativeContextMenus({ Menu, getWindow: () => mainWindow });
 
-const browserPanel = createBrowserPanel({
+browserPanel = createBrowserPanel({
+  showNativeContextMenu: nativeContextMenus.show,
+  closeNativeContextMenu: nativeContextMenus.close,
   remoteDebugPort,
   getWindow: () => mainWindow,
   onDeepLink: (urls) => queueDeepLinks(urls),
   checkPolicy: async (input) => {
-    const server = await runtimeManager.openworkServerInfo();
-    if (!server.baseUrl || !(server.clientToken ?? server.ownerToken)) throw new Error("OpenWork policy service is unavailable.");
-    // loopback-fetch: the policy service is the locally managed OpenWork server.
-    const response = await fetch(`${server.baseUrl}/managed-policy/evaluate`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ action: input.external ? "browser_external" : "browser", input }), signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) throw new Error("Your organization's policy blocked this browser request.");
+    let code = "policy_unavailable";
+    try {
+      const server = await runtimeManager.openworkServerInfo();
+      if (!server.baseUrl || !(server.clientToken ?? server.ownerToken)) throw new Error("Policy service unavailable");
+      // loopback-fetch: the policy service is the locally managed OpenWork server.
+      const response = await fetch(`${server.baseUrl}/managed-policy/evaluate`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: input.external ? "browser_external" : "browser", input }), signal: AbortSignal.timeout(15_000),
+      });
+      if (response.ok) return;
+      const payload = await response.json();
+      if (payload?.code === "organization_policy_denied" || payload?.code === "policy_unavailable") code = payload.code;
+    } catch { /* Fail closed without exposing transport or response details. */ }
+    throw Object.assign(new Error(code === "organization_policy_denied"
+      ? "Your organization's policy blocked this browser request."
+      : "Your organization's policy could not be verified."), { code });
   },
 });
 
@@ -1893,6 +1919,11 @@ const desktopCommandHandlers = {
       }
       return ["npx", "-y", "openwork-ui-mcp"];
   },
+  "getComputerUseState": async () => getComputerUseState(),
+  "computerUseAction": async (event, value) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("Computer Use controls require the main OpenWork window.");
+    return computerUseAction(value);
+  },
   "getComputerUseMcpCommand": async (event, ...args) => {
       return getComputerUseMcpCommand();
   },
@@ -2360,10 +2391,17 @@ const desktopCommandHandlers = {
         return false;
       }
       window.webContents.setZoomFactor(factor);
+      window.webContents.send("openwork:browser:bounds-invalidated");
       return true;
   },
   "__setNativeTheme": async (event, ...args) => {
       return applyNativeTheme(String(args[0]));
+  },
+  "__showContextMenu": async (event, ...args) => {
+      return nativeContextMenus.showFromRenderer(event, args[0]);
+  },
+  "__cancelContextMenu": async (event, ...args) => {
+      return nativeContextMenus.cancelFromRenderer(event, args[0]);
   },
   "__setApplicationMenuVisible": async (event, ...args) => {
       return applicationMenu.setVisible(args[0]);
@@ -2524,6 +2562,12 @@ async function createMainWindow() {
     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
   }
   applicationMenu.applyVisibility(mainWindow);
+
+  mainWindow.webContents.on("context-menu", (_event, params) => {
+    void nativeContextMenus.showEditing(params).catch((error) => {
+      console.warn("[context-menu] Could not open editing menu", error);
+    });
+  });
 
   mainWindow.on("page-title-updated", (event) => {
     event.preventDefault();
@@ -2846,6 +2890,14 @@ or use: pnpm dev:worktree`);
     // Electron see the same workspace list. Import the short-lived
     // Electron-only filename only when the shared file is missing.
     await workspaceStore.migrateLegacyElectronWorkspaceStateIfNeeded();
+    // Public first launch uses the same folder as the chat-first composer.
+    // Provision it before the renderer and runtime read the workspace list.
+    const firstLaunchWorkspaceFailure = DESKTOP_DISTRIBUTION.flavor === "public" && !bootstrapConfig.fromFile && !bootstrapConfig.requireSignin
+      ? await workspaceStore.bootstrapFirstLaunchWorkspace()
+      : null;
+    if (firstLaunchWorkspaceFailure) {
+      console.warn("[workspace] default folder unavailable; continuing without a workspace", firstLaunchWorkspaceFailure);
+    }
     // The UI-control bridge evaluates arbitrary JavaScript in the renderer, so
     // it stays down until the installation is activated. Otherwise it is a
     // local bypass of the pre-activation restriction.
@@ -2863,6 +2915,14 @@ or use: pnpm dev:worktree`);
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const win = await createMainWindow();
+    if (firstLaunchWorkspaceFailure) {
+      runDetachedTask("show default workspace warning", () => dialog.showMessageBox(win, {
+        type: "warning",
+        message: "OpenWork could not prepare its default folder",
+        detail: `OpenWork is open without a workspace. Use Add workspace in the sidebar to choose another folder.\n\n${firstLaunchWorkspaceFailure.error}`,
+        buttons: ["Continue"],
+      }));
+    }
     if (process.platform === "linux" && !BLANK_SLATE_LAUNCH.enabled) {
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
     }

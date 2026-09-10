@@ -1578,7 +1578,8 @@ export function writeDenSettings(
     (previous.authToken ?? "") === authToken &&
     (previous.activeOrgId ?? "") === activeOrgId &&
     (previous.activeOrgSlug ?? "") === activeOrgSlug &&
-    (previous.activeOrgName ?? "") === activeOrgName
+    (previous.activeOrgName ?? "") === activeOrgName &&
+    (isDesktopRuntime() || window.localStorage.getItem(STORAGE_BASE_URL) === baseUrl)
   ) {
     return;
   }

@@ -135,6 +135,35 @@ describe("workbench store", () => {
     expect(unchanged).toBe(state);
   });
 
+  test("archive drops persisted pairs without promoting a side chat or disturbing unrelated pairs", () => {
+    const owner = { workspaceId: "workspace-a", sessionId: "owner" };
+    const side = { workspaceId: "workspace-b", sessionId: "side" };
+    const other = { workspaceId: "workspace-a", sessionId: "other" };
+    const otherSide = { workspaceId: "workspace-b", sessionId: "other-side" };
+    let state = syncWorkbenchSnapshot(emptyWorkbench, {
+      workspaceId: owner.workspaceId, primarySessionId: owner.sessionId,
+      sessionsKnown: true, sessions: [owner, other],
+    });
+    for (const tab of [side, other, otherSide]) state = openWorkbenchTab(state, tab);
+    state = setWorkbenchSideChat(state, other, otherSide);
+    state = setWorkbenchSideChat(state, owner, side);
+    const archivedSide = closeWorkbenchTab(state, side, false);
+    expect(archivedSide.primary?.sessionId).toBe(owner.sessionId);
+    expect(archivedSide.secondary).toBeNull();
+    expect(Object.values(archivedSide.sideChats)).toEqual([otherSide]);
+    const archivedOwner = closeWorkbenchTab(state, owner, false);
+    expect(archivedOwner.primary).toBeNull();
+    expect(archivedOwner.secondary).toBeNull();
+    expect(archivedOwner.focusedPane).toBe("primary");
+    expect(Object.values(archivedOwner.sideChats)).toEqual([otherSide]);
+    const restored = syncWorkbenchSnapshot(archivedOwner, {
+      workspaceId: owner.workspaceId, primarySessionId: owner.sessionId,
+      sessionsKnown: true, sessions: [owner, other],
+    });
+    expect(restored.secondary).toBeNull();
+    expect(closeWorkbenchTab(state, otherSide, false).secondary).toEqual(side);
+  });
+
   test("does not prune retained same-workspace tabs while the session index reloads", () => {
     let state = syncWorkbenchSnapshot(emptyWorkbench, {
       workspaceId: "workspace-a",

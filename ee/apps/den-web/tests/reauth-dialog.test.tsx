@@ -40,7 +40,9 @@ beforeEach(async () => {
   spyOn(window, "open").mockImplementation(() => blocked ? null : popup);
   spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    return Response.json(path.includes("/sso/resolve") ? { signInUrl: "/sso/test-org" } : { user: responseUser });
+    // The API can still see a cached bearer identity after the popup changes the cookie.
+    return Response.json(path.includes("/sso/resolve") ? { signInUrl: "/sso/test-org" }
+      : { user: path.includes("/api/auth/get-session") ? responseUser : user });
   });
   container = document.createElement("div");
   document.body.append(container);

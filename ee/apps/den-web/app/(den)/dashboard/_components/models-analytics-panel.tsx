@@ -116,7 +116,6 @@ export function ModelsAnalyticsPanel() {
   const [tab, setTab] = useState<Tab>("Activity");
   const [days, setDays] = useState(30);
   const [selected, setSelected] = useState<Activity | null>(null);
-  const [extra, setExtra] = useState<Activity | null>(null);
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [groupBy, setGroupBy] = useState("model");
@@ -129,6 +128,10 @@ export function ModelsAnalyticsPanel() {
     },
   });
   const activity = dataQuery.data?.activity;
+  const [pagination, setPagination] = useState<{ firstPage: Activity | undefined; extra: Activity | null }>({ firstPage: activity, extra: null });
+  // Reset before committing a new first page, never mixing old and new cursors.
+  if (pagination.firstPage !== activity) setPagination({ firstPage: activity, extra: null });
+  const extra = pagination.firstPage === activity ? pagination.extra : null;
   const consumption = dataQuery.data?.consumption;
   const busy = mutating || dataQuery.isFetching;
   const loading = !dataQuery.data && dataQuery.isPending;
@@ -144,7 +147,7 @@ export function ModelsAnalyticsPanel() {
         await queryClient.cancelQueries({ queryKey: [...key, "data"] });
         queryClient.removeQueries({ queryKey: [...key, "data"] });
         queryClient.setQueryData(settingsKey, updated);
-        setSelected(null); setExtra(null);
+        setSelected(null); setPagination({ firstPage: undefined, extra: null });
       });
     } catch (error) { setError(error instanceof Error ? error.message : "Could not save your choice."); }
     finally { setMutating(false); }
@@ -164,7 +167,10 @@ export function ModelsAnalyticsPanel() {
       const query = new URLSearchParams({ days: String(days), ...cursor, ...(first ? { memberId: first.memberId, sessionId: first.sessionId, taskId: first.taskId } : {}) });
       const next = modelsAnalyticsActivitySchema.parse(await request(`activity?${query}`));
       if (selected) setSelected({ events: [...selected.events, ...next.events], next: next.next });
-      else setExtra({ events: [...(extra?.events ?? []), ...next.events], next: next.next });
+      // A poll may have replaced the pagination state while this request waited.
+      else setPagination((current) => current === pagination ? {
+        ...current, extra: { events: [...(extra?.events ?? []), ...next.events], next: next.next },
+      } : current);
     } catch (error) { setError(error instanceof Error ? error.message : "Could not load more activity."); }
     finally { setMutating(false); }
   }
@@ -224,7 +230,7 @@ export function ModelsAnalyticsPanel() {
       {tab !== "Integrations" ? <>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            <DenSelect aria-label="Analytics period" className="h-9 w-40" value={String(days)} onChange={(event) => { setDays(Number(event.target.value)); setExtra(null); setSelected(null); }}>
+            <DenSelect aria-label="Analytics period" className="h-9 w-40" value={String(days)} onChange={(event) => { setDays(Number(event.target.value)); setPagination({ firstPage: undefined, extra: null }); setSelected(null); }}>
               <option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option>
             </DenSelect>
             {tab === "Consumption" ? <DenSelect aria-label="Group consumption by" className="h-9 w-40" value={groupBy} onChange={(event) => setGroupBy(event.target.value)}>
@@ -232,7 +238,7 @@ export function ModelsAnalyticsPanel() {
             </DenSelect> : null}
           </div>
           <div className="flex items-center gap-3"><span className="text-xs text-[#637291]">Updates automatically</span>
-            <DenButton variant="secondary" size="sm" disabled={busy} onClick={() => { setExtra(null); void dataQuery.refetch(); }}><RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${dataQuery.isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh analytics</DenButton>
+            <DenButton variant="secondary" size="sm" disabled={busy} onClick={() => void dataQuery.refetch()}><RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${dataQuery.isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh analytics</DenButton>
           </div>
         </div>
         {!dataQuery.isError || dataQuery.data ? <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">

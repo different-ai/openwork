@@ -476,6 +476,8 @@ export type DesktopCommandMap = {
   getUiControlBridgeInfo: { args: []; result: UiControlBridgeInfo | null };
   getOpenworkUiMcpCommand: { args: []; result: string[] };
   getComputerUseMcpCommand: { args: []; result: string[] };
+  getComputerUseState: { args: []; result: unknown };
+  computerUseAction: { args: [value: { connectionId: string; id: string; action: string; windowId?: number }]; result: void };
   getOpenworkUiMcpEnvironment: { args: []; result: Record<string, string> };
 
   // Computer use
@@ -576,6 +578,8 @@ export type DesktopCommandMap = {
   setWindowDecorations: { args: [decorated: boolean]; result: unknown };
 
   // Window / OS utilities (dunder commands)
+  __showContextMenu: { args: [request: NativeContextMenuRequest]; result: string | null };
+  __cancelContextMenu: { args: [requestId: string]; result: boolean };
   __openPath: { args: [target: string]; result: unknown };
   __revealItemInDir: { args: [target: string]; result: unknown };
   __getFileIcon: { args: [target: string, size?: "small" | "normal" | "large"]; result: string | null };
@@ -594,6 +598,22 @@ export type DesktopCommandMap = {
   __setZoomFactor: { args: [factor: number]; result: boolean };
   __setNativeTheme: { args: [theme: string]; result: unknown };
   __setApplicationMenuVisible: { args: [visible: boolean]; result: unknown };
+};
+
+/** Data-only context menu contract; callbacks and privileged Electron roles never cross IPC. */
+export type NativeContextMenuItem = { type: "separator" } | {
+  type: "item";
+  id: string;
+  label: string;
+  enabled?: boolean;
+  submenu?: NativeContextMenuItem[];
+};
+
+export type NativeContextMenuRequest = {
+  requestId?: string;
+  items: NativeContextMenuItem[];
+  point: { x: number; y: number };
+  includeEditing?: boolean;
 };
 
 export type DesktopCommandName = keyof DesktopCommandMap;

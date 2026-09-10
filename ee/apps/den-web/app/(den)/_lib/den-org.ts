@@ -18,6 +18,8 @@ export type DenOrgMember = {
   userId: string | null;
   inviteId: string | null;
   role: string;
+  effectiveRole: string;
+  adminTeams: { id: string; name: string }[];
   createdAt: string | null;
   joinedAt: string | null;
   isOwner: boolean;
@@ -46,6 +48,7 @@ export type DenOrgTeam = {
   updatedAt: string | null;
   memberIds: string[];
   managedByScim: boolean;
+  grantsOrganizationAdmin: boolean;
 };
 
 export type DenCurrentMemberTeam = {
@@ -217,6 +220,8 @@ export type DenOrgContext = {
     role: string;
     createdAt: string | null;
     isOwner: boolean;
+    directRole: string;
+    adminTeams: { id: string; name: string }[];
   };
   members: DenOrgMember[];
   invitations: DenOrgInvitation[];
@@ -298,6 +303,13 @@ function asIsoString(value: unknown): string | null {
 
 function asBoolean(value: unknown): boolean {
   return value === true;
+}
+
+function parseAdminTeams(value: unknown): { id: string; name: string }[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((team) => isRecord(team) && typeof team.id === "string" && typeof team.name === "string"
+    ? [{ id: team.id, name: team.name }]
+    : []);
 }
 
 function asString(value: unknown): string | null {
@@ -675,6 +687,20 @@ export function getMcpConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/mcp-connections`;
 }
 
+export function getConfiguredMcpConnectionsRoute(orgSlug?: string | null, connectionId?: string | null): string {
+  const base = `${getMcpConnectionsRoute(orgSlug)}/configured`;
+  return connectionId ? `${base}?connectionId=${encodeURIComponent(connectionId)}` : base;
+}
+
+/**
+ * Detail page for one connector. `connectorId` is a configured connection id
+ * or, for connectors nobody has added yet, the catalog id (`gmail`, `notion`,
+ * `microsoft-365`) so the page can explain the connector and start setup.
+ */
+export function getMcpConnectionRoute(orgSlug: string | null | undefined, connectorId: string): string {
+  return `${getMcpConnectionsRoute(orgSlug)}/${encodeURIComponent(connectorId)}`;
+}
+
 export function getYourConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/your-connections`;
 }
@@ -792,6 +818,8 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
             userId,
             inviteId: asString(entry.inviteId),
             role,
+            effectiveRole: asString(entry.effectiveRole) ?? role,
+            adminTeams: parseAdminTeams(entry.adminTeams),
             createdAt: asIsoString(entry.createdAt),
             joinedAt: asIsoString(entry.joinedAt),
             isOwner: asBoolean(entry.isOwner),
@@ -878,6 +906,7 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
             updatedAt: asIsoString(entry.updatedAt),
             memberIds,
             managedByScim: asBoolean(entry.managedByScim),
+            grantsOrganizationAdmin: asBoolean(entry.grantsOrganizationAdmin),
           } satisfies DenOrgTeam;
         })
         .filter((entry): entry is DenOrgTeam => entry !== null)
@@ -932,6 +961,8 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
       id: currentMemberId,
       userId: currentMemberUserId,
       role: currentMemberRole,
+      directRole: asString(currentMember.directRole) ?? currentMemberRole,
+      adminTeams: parseAdminTeams(currentMember.adminTeams),
       createdAt: asIsoString(currentMember.createdAt),
       isOwner: asBoolean(currentMember.isOwner),
     },

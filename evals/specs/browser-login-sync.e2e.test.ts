@@ -6,7 +6,7 @@ const test = spec.world(browserLoginSyncWorld, {
   needs: { optIn: ["OPENWORK_EVAL_BROWSER_LOGIN_SYNC"] },
 });
 
-test("selected browser logins stay synced until the user pauses them", async ({ world, user, step }) => {
+test("selected browser logins stay synced until the user pauses or forgets them", async ({ world, user, step }) => {
   const nowSeconds = Math.trunc(Date.now() / 1000);
   const sourceCookies = (value: string | null) => [
     ...(value === null ? [] : [{
@@ -33,7 +33,9 @@ test("selected browser logins stay synced until the user pauses them", async ({ 
     },
   ];
   const store = await world.seedLoginStore("chosen", sourceCookies("login-v1-fixture"));
-  const tab = await world.openLoginWitnessTab("sync");
+  const opening = world.openLoginWitnessTab("sync");
+  await user.click({ role: "button", label: "Allow origin in this tab" });
+  const tab = await opening;
   expect(await world.readLoginWitness(tab)).toBe("signed-out");
 
   await step("Personal Desktop offers setup but reads nothing until the user acts", async () => {
@@ -74,8 +76,14 @@ test("selected browser logins stay synced until the user pauses them", async ({ 
 
     const backgroundSession = await world.openSession("Background login work");
     await world.showSession(world.session.sessionId);
-    const backgroundTab = await world.openLoginWitnessTabAs("background-sync", backgroundSession.sessionId);
-    expect(backgroundTab.visible).toBe(false);
+    const opening = world.openLoginWitnessTabAs("background-sync", backgroundSession.sessionId);
+    await user.click({ text: backgroundSession.title });
+    await user.click({ role: "button", label: "Allow origin in this tab" });
+    const backgroundTab = await opening;
+    expect(backgroundTab.visible).toBe(true);
+    await world.showSession(world.session.sessionId);
+    expect((await world.readBrowserState()).nativeViews.find((view) => view.tabId === backgroundTab.tabId))
+      .toMatchObject({ attached: false, aboveApp: false });
     await eventually(() => world.readLoginWitness(backgroundTab), {
       within: 15_000,
       until: (value) => value === "signed-in-v1",
@@ -125,5 +133,45 @@ test("selected browser logins stay synced until the user pauses them", async ({ 
     expect(await world.readLoginWitness(tab)).toBe("signed-out");
     expect(state.active).toBe(false);
     expect(state.status).toBe("paused");
+  });
+
+  await step("Disconnect and forget signs out the page and source changes cannot restore its login", async () => {
+    await world.openSettingsPanel("permissions");
+    await user.click({ testId: "login-sync-resume" });
+    await world.showSession(world.session.sessionId);
+    await eventually(async () => {
+      await world.reloadTab(tab);
+      return world.readLoginWitness(tab);
+    }, {
+      within: 15_000,
+      until: (value) => value === "signed-in-v1",
+      label: "resuming restores the selected login before it is forgotten",
+    });
+    await world.openSettingsPanel("permissions");
+    await user.click({ testId: "login-sync-disconnect" });
+    await user.see({ testId: "login-sync-setup" });
+    expect(await world.loginSyncState()).toMatchObject({ configured: false, active: false, managedCookieCount: 0 });
+    await world.showSession(world.session.sessionId);
+    await eventually(async () => {
+      await world.reloadTab(tab);
+      return world.readLoginWitness(tab);
+    }, {
+      within: 15_000,
+      until: (value) => value === "signed-out",
+      label: "forgetting removes the login from the actual browser page",
+    });
+    await world.updateLoginStore(store.path, sourceCookies("login-v2-fixture"));
+    const changedAt = Date.now();
+    await eventually(async () => {
+      expect(await world.loginSyncState()).toMatchObject({ configured: false, active: false, managedCookieCount: 0 });
+      await world.reloadTab(tab);
+      expect(await world.readLoginWitness(tab)).toBe("signed-out");
+      expect(await world.signedInSites()).toEqual([]);
+      return Date.now() - changedAt;
+    }, {
+      within: 10_000,
+      until: (elapsed) => elapsed >= 6_000,
+      label: "the forgotten login stays absent beyond watcher and poll intervals",
+    });
   });
 });

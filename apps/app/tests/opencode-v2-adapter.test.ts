@@ -160,7 +160,39 @@ function jsonResponse(value: unknown, status = 200): Response {
   });
 }
 
+function eventStream() {
+  let send = (..._events: unknown[]) => {};
+  let close = () => {};
+  let fail = (_error: Error) => {};
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      send = (...events) => controller.enqueue(new TextEncoder().encode(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")));
+      close = () => controller.close();
+      fail = (error) => controller.error(error);
+    },
+    cancel() { cancelled = true; },
+  });
+  return { response: new Response(body), send, close, fail, body, get cancelled() { return cancelled; } };
+}
+
 describe("OpenCode v2 event translation", () => {
+  test("preserves native retry detail and sequenced interruption reasons without claiming success", () => {
+    const state = createV2EventTranslationState();
+    expect(translateV2Event({ type: "session.retry.scheduled", durable: { seq: 12 }, data: {
+      sessionID: "s", assistantMessageID: "m", attempt: 3, at: 10_000, error: { message: "Rate limited" },
+    } }, state)).toEqual([{ type: "session.status", properties: {
+      sessionID: "s", sequence: 12, status: { type: "retry", attempt: 3, message: "Rate limited", next: 10_000 },
+    } }]);
+    for (const reason of ["user", "shutdown", "superseded", "future-reason"]) {
+      expect(translateV2Event({ type: "session.execution.interrupted", durable: { seq: 13 },
+        data: { sessionID: "s", reason } }, state)).toEqual([{
+        type: "session.execution.interrupted", properties: { sessionID: "s", reason, sequence: 13 },
+      }]);
+    }
+    expect(translateV2Event({ type: "session.step.started", durable: { seq: 14 }, data: { sessionID: "s" } }, state))
+      .toEqual([{ type: "session.execution.progress", properties: { sessionID: "s", sequence: 14 } }]);
+  });
   test("renders an admitted user message before execution using its persisted identity", () => {
     const state = createV2EventTranslationState();
     const admitted = {
@@ -351,7 +383,7 @@ describe("OpenCode v2 event translation", () => {
     ]));
   });
 
-  test("translates captured v2 text lifecycle events through terminal idle", () => {
+  test("translates captured v2 text lifecycle events through explicit execution success", () => {
     const state = createV2EventTranslationState();
     const captured = [
       { type: "session.text.started", data: { sessionID: "s", assistantMessageID: "m", ordinal: 0 } },
@@ -395,9 +427,12 @@ describe("OpenCode v2 event translation", () => {
           part: { id: "m:0", messageID: "m", sessionID: "s", type: "text", text: "hello world" },
         },
       },
-      { type: "session.status", properties: { sessionID: "s", status: { type: "idle" } } },
-      { type: "session.idle", properties: { sessionID: "s" } },
+      { type: "session.execution.succeeded", properties: { sessionID: "s", sequence: undefined } },
     ]);
+    expect(state.streams.size).toBe(0);
+    expect(state.latestStreamKeyBySession.size).toBe(0);
+    expect(state.nextOrdinalByMessage.size).toBe(0);
+    expect(state.executionBySession.size).toBe(0);
   });
 
   test("translates the captured v2 shell lifecycle using the bash presentation", () => {
@@ -567,6 +602,13 @@ describe("OpenCode v2 event translation", () => {
           type: `session.next.${kind}.ended`, created: 20,
           data: { sessionID: identity.sessionID, [`${kind}ID`]: `shared_${ordinal}` },
         }, state)).toMatchObject([{ properties: { part: { id, text: "legacy" } } }]);
+        expect(translateV2Event(started, state)).toBeNull();
+        expect(translateV2Event({
+          type: `session.next.${kind}.ended`, data: { sessionID: identity.sessionID },
+        }, state)).toBeNull();
+        expect(translateV2Event({
+          type: `session.next.${kind}.delta`, data: { sessionID: identity.sessionID, delta: "LATE" },
+        }, state)).toBeNull();
         expect(translateV2Event({
           type: `session.next.${kind}.delta`,
           data: { ...identity, assistantMessageID: "msg_other", [`${kind}ID`]: `shared_${ordinal}`, delta: "WRONG" },
@@ -579,21 +621,264 @@ describe("OpenCode v2 event translation", () => {
     }
   });
 
-  test("emits an error before terminal idle events for failed execution", () => {
+  test("releases completed payloads across thousands of parts and turns without disturbing active streams", () => {
+    const state = createV2EventTranslationState();
+    const other = { sessionID: "s:other", assistantMessageID: "m" };
+    const input = { command: "keep this active input" };
+    for (const kind of ["text", "reasoning"]) {
+      translateV2Event({ type: `session.${kind}.started`, data: { ...other, ordinal: 0 } }, state);
+      translateV2Event({ type: `session.${kind}.delta`, data: { ...other, ordinal: 0, delta: "still " } }, state);
+    }
+    translateV2Event({ type: "session.tool.input.started", data: { ...other, id: "call", name: "shell" } }, state);
+    translateV2Event({ type: "session.tool.called", created: 5, data: { ...other, id: "call", input } }, state);
+    const activeStreams = [...state.streams.values()];
+    const activeTool = state.tools.get(JSON.stringify([other.sessionID, "call"]));
+    const payload = "completed payload ".repeat(4_096);
+
+    for (let turn = 0; turn < 500; turn += 1) {
+      const identity = { sessionID: "s", assistantMessageID: `m_${turn}` };
+      translateV2Event({ type: "session.execution.started", data: identity }, state);
+      for (let step = 0; step < 3; step += 1) {
+        // Each kind keeps its own implicit ordinal through tool steps and retries.
+        for (const kind of ["reasoning", "text"]) {
+          const data = { ...identity, [`${kind}ID`]: `${turn}_${step}` };
+          const id = `${identity.assistantMessageID}:${kind === "reasoning" ? "reasoning:" : ""}${step}`;
+          const text = `${turn}:${step}:${kind}:${payload}`;
+          const started = { type: `session.next.${kind}.started`, created: 10, data };
+          expect(translateV2Event(started, state)?.[1]).toMatchObject({ properties: { part: { id, text: "" } } });
+          translateV2Event({ type: `session.next.${kind}.delta`, data: { ...data, delta: text } }, state);
+          const ended = { type: `session.next.${kind}.ended`, created: 20, data };
+          const completed = translateV2Event(ended, state);
+          expect(completed).toMatchObject([{ properties: { part: { id, text } } }]);
+          expect([...state.streams.values()].filter((stream) => stream.sessionID === "s").every((stream) => stream.text === undefined)).toBe(true);
+          expect(translateV2Event(ended, state)).toBeNull();
+          expect(translateV2Event(started, state)).toBeNull();
+          expect(translateV2Event({ type: `session.next.${kind}.delta`, data: { ...data, delta: "LATE" } }, state)).toBeNull();
+          expect(completed).toMatchObject([{ properties: { part: { id, text } } }]);
+        }
+
+        const data = { ...identity, id: `call_${step}` };
+        const toolInput = { command: `${turn}:${step}:${payload}` };
+        const raw = JSON.stringify(toolInput);
+        const started = { type: "session.tool.input.started", data: { ...data, name: "shell" } };
+        translateV2Event(started, state);
+        translateV2Event({ type: "session.tool.input.delta", data: { ...data, delta: raw } }, state);
+        const pending = translateV2Event({ type: "session.tool.input.ended", data: { ...data, text: raw } }, state);
+        expect(pending).toMatchObject([{ properties: { part: { state: { input: toolInput, raw } } } }]);
+        expect(state.tools.get(JSON.stringify(["s", data.id]))).toMatchObject({ raw: "", input: toolInput });
+        translateV2Event({ type: "session.tool.called", created: 30, data: { ...data, input: toolInput } }, state);
+        translateV2Event({ type: "session.tool.progress", data: { ...data, metadata: { detail: payload } } }, state);
+        const terminal = {
+          type: step === 1 ? "session.tool.failed" : "session.tool.success", created: 40,
+          data: { ...data, content: [{ type: "text", text: payload }], error: { message: "tool failed" } },
+        };
+        const completed = translateV2Event(terminal, state);
+        const expected = [{ properties: { part: { id: data.id, tool: "bash", state: {
+          input: toolInput, metadata: { detail: payload }, time: { start: 30, end: 40 },
+          ...(step === 1 ? { status: "error", error: "tool failed" } : { status: "completed", output: payload }),
+        } } } }];
+        expect(completed).toMatchObject(expected);
+        expect(state.tools.get(JSON.stringify(["s", data.id]))).toBeNull();
+        expect(translateV2Event(terminal, state)).toBeNull();
+        expect(translateV2Event(started, state)).toBeNull();
+        expect(translateV2Event({ type: "session.tool.progress", data: { ...data, metadata: { detail: "LATE" } } }, state)).toBeNull();
+        expect(completed).toMatchObject(expected);
+        translateV2Event({ type: "session.retry.scheduled", data: { ...identity, attempt: 2, at: 100, error: "retry" } }, state);
+        translateV2Event({ type: "session.step.started", data: identity }, state);
+      }
+      // Only small identity markers survive within the execution, never its output.
+      expect(state.streams.size).toBe(8);
+      expect(state.tools.size).toBe(4);
+      expect(state.nextOrdinalByMessage.get(JSON.stringify(["s", identity.assistantMessageID, "text"]))).toBe(3);
+      expect(state.nextOrdinalByMessage.get(JSON.stringify(["s", identity.assistantMessageID, "reasoning"]))).toBe(3);
+      translateV2Event({ type: "session.execution.succeeded", data: identity }, state);
+      expect([...state.streams.values()]).toEqual(activeStreams);
+      expect([...state.tools.values()]).toEqual([activeTool]);
+      expect(state.latestStreamKeyBySession.size).toBe(2);
+      expect(state.nextOrdinalByMessage.size).toBe(2);
+      expect([...state.executionBySession.keys()]).toEqual([other.sessionID]);
+    }
+
+    for (const kind of ["text", "reasoning"]) {
+      const data = { ...other, ordinal: 0 };
+      translateV2Event({ type: `session.${kind}.delta`, data: { ...data, delta: "active" } }, state);
+      expect(translateV2Event({ type: `session.${kind}.ended`, data }, state))
+        .toMatchObject([{ properties: { part: { text: "still active", sessionID: other.sessionID } } }]);
+    }
+    expect(translateV2Event({ type: "session.tool.success", created: 50, data: { ...other, id: "call", result: "kept" } }, state))
+      .toMatchObject([{ properties: { part: { state: { input, output: "kept", time: { start: 5, end: 50 } } } } }]);
+    translateV2Event({ type: "session.execution.succeeded", data: other }, state);
+    for (const map of [state.streams, state.tools, state.latestStreamKeyBySession, state.nextOrdinalByMessage, state.executionBySession]) {
+      expect(map.size).toBe(0);
+    }
+  });
+
+  test.each(["succeeded", "failed", "interrupted", "deleted"])("cleans up settled %s execution state and ignores late terminals for a successor", (terminal) => {
+    const state = createV2EventTranslationState();
+    const identity = { sessionID: "s", assistantMessageID: "m", ordinal: 0 };
+    const started = { type: "session.execution.started", created: 10, durable: { seq: 1 }, data: { sessionID: "s" } };
+    const ended = terminal === "deleted"
+      ? { type: "session.deleted", created: 20, durable: { seq: 2 }, data: { info: { id: "s" } } }
+      : { type: `session.execution.${terminal}`, created: 20, durable: { seq: 2 }, data: { sessionID: "s", reason: "shutdown" } };
+    translateV2Event(started, state);
+    translateV2Event({ type: "session.text.started", created: 11, data: identity }, state);
+    translateV2Event({ type: "session.text.delta", data: { ...identity, delta: "unfinished" } }, state);
+    translateV2Event({ type: "session.tool.input.started", data: { ...identity, id: "call", name: "shell" } }, state);
+    if (terminal !== "deleted") {
+      translateV2Event({ type: "session.text.ended", data: identity }, state);
+      translateV2Event({ type: "session.tool.failed", data: { ...identity, id: "call", error: "settled" } }, state);
+    }
+    translateV2Event(ended, state);
+    translateV2Event(ended, state);
+    for (const map of [state.streams, state.tools, state.latestStreamKeyBySession, state.nextOrdinalByMessage, state.executionBySession]) {
+      expect(map.size).toBe(0);
+    }
+    expect(translateV2Event({ type: "session.text.ended", data: { ...identity, text: "late" } }, state)).toBeNull();
+    expect(translateV2Event({ type: "session.tool.failed", data: { ...identity, id: "call", error: "late" } }, state)).toBeNull();
+    if (terminal === "deleted") return;
+
+    for (const sequenced of [true, false]) {
+      const data = { ...identity, assistantMessageID: `successor_${sequenced}` };
+      const created = sequenced ? 30 : 50;
+      translateV2Event({ ...started, created, durable: sequenced ? { seq: 3 } : undefined }, state);
+      translateV2Event({ type: "session.text.started", created: created + 1, data }, state);
+      translateV2Event({ type: "session.text.delta", data: { ...data, delta: "new " } }, state);
+      translateV2Event({ ...ended, durable: sequenced ? ended.durable : undefined }, state);
+      translateV2Event({ type: "session.text.delta", data: { ...data, delta: "execution" } }, state);
+      expect(translateV2Event({ type: "session.text.ended", created: created + 9, data }, state))
+        .toMatchObject([{ properties: { part: { id: `${data.assistantMessageID}:0`, text: "new execution" } } }]);
+      translateV2Event({ ...ended, created: created + 10, durable: sequenced ? { seq: 4 } : undefined }, state);
+      expect(state.streams.size).toBe(0);
+      expect(state.executionBySession.size).toBe(0);
+    }
+  });
+
+  test.each(["sequence", "created", "timestamp"])("rejects post-terminal replay using %s without touching a successor or another active stream", (ordering) => {
+    const state = createV2EventTranslationState();
+    const event = (type: string, data: Record<string, unknown>, sequence: number) => ({
+      type,
+      // Native sequence is authoritative even when every event shares a clock tick.
+      ...(ordering === "timestamp" ? {} : { created: ordering === "sequence" ? 10 : sequence * 10 }),
+      ...(ordering === "sequence" ? { durable: { aggregateID: data.sessionID, seq: sequence, version: 1 } } : {}),
+      data: { ...data, ...(ordering === "timestamp" ? { timestamp: sequence * 10 } : {}) },
+    });
+    const other = { sessionID: "other", assistantMessageID: "m_other", ordinal: 0 };
+    translateV2Event(event("session.text.started", other, 1), state);
+    translateV2Event({ type: "session.text.delta", data: { ...other, delta: "other " } }, state);
+    const identity = { sessionID: "s", assistantMessageID: "m", ordinal: 0 };
+    const started = event("session.text.started", identity, 1);
+    translateV2Event(started, state);
+    const ended = event("session.text.ended", { ...identity, text: "final answer" }, 2);
+    const final = translateV2Event(ended, state);
+    expect(final).toMatchObject([{ properties: { part: { id: "m:0", text: "final answer" } } }]);
+    const toolStarted = event("session.tool.input.started", { ...identity, id: "call", name: "shell" }, 3);
+    translateV2Event(toolStarted, state);
+    translateV2Event(event("session.tool.called", { ...identity, id: "call", input: { command: "result" } }, 4), state);
+    const toolEnded = event("session.tool.success", { ...identity, id: "call", result: "final tool output" }, 5);
+    expect(translateV2Event(toolEnded, state)).toMatchObject([{ properties: { part: { state: {
+      status: "completed", input: { command: "result" }, output: "final tool output",
+    } } } }]);
+    const terminal = event("session.execution.succeeded", { sessionID: "s" }, 6);
+    translateV2Event(terminal, state);
+    expect(state.streams.size).toBe(1);
+    expect(state.tools.size).toBe(0);
+    expect(state.executionBySession.has("s")).toBe(false);
+    for (const replay of [started, ended, toolStarted, toolEnded]) expect(translateV2Event(replay, state)).toBeNull();
+
+    const successor = { sessionID: "s", assistantMessageID: "m_next", ordinal: 0 };
+    translateV2Event(event("session.execution.started", { sessionID: "s" }, 7), state);
+    expect(translateV2Event(event("session.text.started", successor, 8), state)?.[1])
+      .toMatchObject({ properties: { part: { id: "m_next:0", text: "" } } });
+    translateV2Event({ type: "session.text.delta", data: { ...successor, delta: "new " } }, state);
+
+    // Only the idle replay window is bounded. Evicting it must not unprotect
+    // the still-active successor or cause unbounded terminal-history growth.
+    for (let index = 0; index < 1_000; index += 1) {
+      translateV2Event(event("session.execution.succeeded", { sessionID: `retired_${index}` }, 1), state);
+      expect(state.terminalBySession.size).toBeLessThanOrEqual(256);
+    }
+    expect(state.terminalBySession.has("s")).toBe(false);
+    expect(state.executionBySession.size).toBe(2);
+    for (const replay of [started, ended, toolStarted, toolEnded, event("session.execution.started", { sessionID: "s" }, 0)]) {
+      expect(translateV2Event(replay, state)).toBeNull();
+    }
+    translateV2Event(terminal, state);
+    translateV2Event({ type: "session.text.delta", data: { ...successor, delta: "answer" } }, state);
+    expect(translateV2Event(event("session.text.ended", successor, 9), state))
+      .toMatchObject([{ properties: { part: { id: "m_next:0", text: "new answer" } } }]);
+    translateV2Event(event("session.execution.succeeded", { sessionID: "s" }, 10), state);
+    translateV2Event({ type: "session.text.delta", data: { ...other, delta: "answer" } }, state);
+    expect(translateV2Event(event("session.text.ended", other, 2), state))
+      .toMatchObject([{ properties: { part: { id: "m_other:0", text: "other answer" } } }]);
+    expect(final).toMatchObject([{ properties: { part: { id: "m:0", text: "final answer" } } }]);
+    translateV2Event(event("session.execution.succeeded", { sessionID: "other" }, 3), state);
+    expect(state.streams.size).toBe(0);
+    expect(state.executionBySession.size).toBe(0);
+  });
+
+  test.each(["succeeded", "failed", "interrupted"])("keeps unresolved parts through execution.%s until late final content arrives", (terminal) => {
+    const state = createV2EventTranslationState();
+    const data = { sessionID: "s", assistantMessageID: "m", ordinal: 0 };
+    const other = { sessionID: "other", assistantMessageID: "m_other", ordinal: 0 };
+    translateV2Event({ type: "session.text.started", created: 10, data: other }, state);
+    translateV2Event({ type: "session.text.delta", data: { ...other, delta: "unrelated" } }, state);
+    for (const kind of ["text", "reasoning"]) {
+      translateV2Event({ type: `session.${kind}.started`, created: 10, durable: { seq: 1 }, data }, state);
+      translateV2Event({ type: `session.${kind}.delta`, data: { ...data, delta: "partial " } }, state);
+    }
+    const tool = { ...data, id: "call", name: "shell" };
+    const input = { command: "kept input" };
+    translateV2Event({ type: "session.tool.input.started", created: 20, durable: { seq: 2 }, data: tool }, state);
+    translateV2Event({ type: "session.tool.input.ended", created: 21, data: { ...tool, text: JSON.stringify(input) } }, state);
+    const ended = { type: `session.execution.${terminal}`, created: 100, durable: { seq: 10 }, data: { sessionID: "s" } };
+    translateV2Event(ended, state);
+    translateV2Event(ended, state);
+    expect(state.streams.size).toBe(3);
+    expect(state.tools.size).toBe(1);
+    expect(state.executionBySession.get("s")?.terminal).toBe(true);
+
+    // Neither old timestamps nor a retired execution may suppress final content
+    // for an already-known part. Text.Ended's full value also repairs a late delta.
+    for (const kind of ["text", "reasoning"]) {
+      translateV2Event({ type: `session.${kind}.delta`, created: 30, data: { ...data, delta: "tail" } }, state);
+      const completed = translateV2Event({ type: `session.${kind}.ended`, created: 40, durable: { seq: 3 },
+        data: { ...data, ...(kind === "text" ? { text: "authoritative final answer" } : {}) } }, state);
+      expect(completed).toMatchObject([{ properties: { part: {
+        type: kind, text: kind === "text" ? "authoritative final answer" : "partial tail",
+      } } }]);
+      expect(translateV2Event({ type: `session.${kind}.delta`, created: 30, data: { ...data, delta: "late duplicate" } }, state)).toBeNull();
+    }
+    expect(translateV2Event({ type: "session.tool.called", created: 50, durable: { seq: 4 }, data: { ...tool, input } }, state))
+      .toMatchObject([{ properties: { part: { state: { status: "running", input } } } }]);
+    translateV2Event({ type: "session.tool.progress", created: 60, data: { ...tool, metadata: { detail: "kept metadata" } } }, state);
+    const completed = translateV2Event({ type: terminal === "failed" ? "session.tool.failed" : "session.tool.success",
+      created: 70, durable: { seq: 5 }, data: { ...tool, result: "final output", error: "final error" } }, state);
+    expect(completed).toMatchObject([{ properties: { part: { state: {
+      input, metadata: { detail: "kept metadata" }, time: { start: 50, end: 70 },
+      ...(terminal === "failed" ? { status: "error", error: "final error" } : { status: "completed", output: "final output" }),
+    } } } }]);
+    expect(state.tools.size).toBe(0);
+    expect([...state.streams.values()]).toMatchObject([{ sessionID: "other", text: "unrelated" }]);
+    expect(state.nextOrdinalByMessage.size).toBe(1);
+    expect(state.latestStreamKeyBySession.size).toBe(1);
+    expect(state.executionBySession.has("s")).toBe(false);
+    expect(translateV2Event({ type: "session.tool.input.started", created: 20, durable: { seq: 2 }, data: tool }, state)).toBeNull();
+  });
+
+  test("preserves execution failure for sequenced terminal handling", () => {
     const state = createV2EventTranslationState();
     expect(translateV2Event({
       type: "session.execution.failed",
       properties: { sessionID: "ses_2", error: { message: "provider failed" } },
     }, state)).toEqual([
       {
-        type: "session.error",
+        type: "session.execution.failed",
         properties: {
           sessionID: "ses_2",
+          sequence: undefined,
           error: { name: "UnknownError", data: { message: "provider failed" } },
         },
       },
-      { type: "session.status", properties: { sessionID: "ses_2", status: { type: "idle" } } },
-      { type: "session.idle", properties: { sessionID: "ses_2" } },
     ]);
   });
 
@@ -607,7 +892,7 @@ describe("OpenCode v2 event translation", () => {
     ].flatMap((event) => translateV2Event(event, state) ?? []);
 
     expect(translated).toEqual([
-      { type: "session.status", properties: { sessionID: "ses_child", status: { type: "busy" } } },
+      { type: "session.execution.started", properties: { sessionID: "ses_child", sequence: undefined } },
       {
         type: "permission.asked",
         properties: {
@@ -624,8 +909,7 @@ describe("OpenCode v2 event translation", () => {
         type: "permission.replied",
         properties: { sessionID: "ses_child", requestID: "per_child", reply: "once" },
       },
-      { type: "session.status", properties: { sessionID: "ses_child", status: { type: "idle" } } },
-      { type: "session.idle", properties: { sessionID: "ses_child" } },
+      { type: "session.execution.succeeded", properties: { sessionID: "ses_child", sequence: undefined } },
     ]);
   });
 });
@@ -655,6 +939,28 @@ describe("OpenCode v2 client compatibility", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test.each([true, false])("returns the actual native interrupt acknowledgement %s", async (interrupted) => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      expect(input instanceof Request && input.url.endsWith("/api/session/s/interrupt")).toBe(true);
+      return jsonResponse({ interrupted });
+    };
+    try {
+      expect((await createClientV2("http://opencode.test/opencode2", undefined, {}).session.abort({ sessionID: "s" })).data)
+        .toBe(interrupted);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("rejects a malformed native interrupt acknowledgement", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => jsonResponse({ data: {} });
+    try {
+      const result = await createClientV2("http://opencode.test/opencode2", undefined, {}).session.abort({ sessionID: "s" });
+      expect(result.data).toBeUndefined();
+      expect(result.error).toEqual({ name: "InvalidV2InterruptResponse" });
+    } finally { globalThis.fetch = originalFetch; }
   });
 
   test("saved native instruction updates stay out of the visible conversation", async () => {
@@ -763,7 +1069,7 @@ describe("OpenCode v2 client compatibility", () => {
         translateV2Event({ type: `session.${kind}.delta`, data: { ...data, delta: "partial" } }, state);
         const ended = { type: `session.${kind}.ended`, created: end, data: { ...data, text } };
         expect(translateV2Event(ended, state)).toEqual([{ type: "message.part.updated", properties: { part: parts?.[index] } }]);
-        expect(translateV2Event(ended, state)).toEqual([{ type: "message.part.updated", properties: { part: parts?.[index] } }]);
+        expect(translateV2Event(ended, state)).toBeNull();
       }
     } finally {
       globalThis.fetch = originalFetch;
@@ -803,10 +1109,10 @@ describe("OpenCode v2 client compatibility", () => {
             { id: `${tool.id}:file:1`, sessionID: "ses_files", messageID: "msg_files", type: "file", url: content[3]?.uri, mime: "image/png" },
           ],
         } });
-        // Repeated completion retains IDs, including identical URIs on distinct calls.
+        // Repeated completion is a no-op, not an empty-input overwrite of the final part.
         expect(translateV2Event({
           type: "session.tool.success", created: 30, data: { ...identity, content },
-        }, state)).toEqual(completed);
+        }, state)).toBeNull();
       }
     } finally {
       globalThis.fetch = originalFetch;
@@ -840,21 +1146,23 @@ describe("OpenCode v2 client compatibility", () => {
           tool: expectedTool, state: { input: expectedInput, ...(index > 0 ? { metadata: expectedMetadata } : {}) },
         });
       }
-      const state = createV2EventTranslationState();
       const identity = { sessionID: "ses_parent", assistantMessageID: "msg_parent", id: "call_child" };
-      translateV2Event({ type: "session.tool.input.started", created: 10, data: { ...identity, name } }, state);
-      for (const type of ["session.tool.input.delta", "session.tool.input.ended"]) {
-        expect(translateV2Event({ type, data: { ...identity, delta: JSON.stringify(input), text: JSON.stringify(input) } }, state))
-          .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[0]?.parts[0] } }]);
+      for (const terminal of ["success", "failed"]) {
+        const state = createV2EventTranslationState();
+        translateV2Event({ type: "session.tool.input.started", created: 10, data: { ...identity, name } }, state);
+        for (const type of ["session.tool.input.delta", "session.tool.input.ended"]) {
+          expect(translateV2Event({ type, data: { ...identity, delta: JSON.stringify(input), text: JSON.stringify(input) } }, state))
+            .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[0]?.parts[0] } }]);
+        }
+        expect(translateV2Event({ type: "session.tool.called", created: 20, data: { ...identity, input, executed: false } }, state))
+          .toMatchObject([{ properties: { part: { tool: expectedTool, state: { input: expectedInput, status: "running" } } } }]);
+        expect(translateV2Event({ type: "session.tool.progress", created: 25, data: { ...identity, metadata } }, state))
+          .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[1]?.parts[0] } }]);
+        expect(translateV2Event({ type: `session.tool.${terminal}`, created: 30, data: { ...identity, metadata, content, error, executed: false } }, state))
+          .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[terminal === "success" ? 2 : 3]?.parts[0] } }]);
+        expect(translateV2Event({ type: `session.tool.${terminal === "success" ? "failed" : "success"}`, created: 31,
+          data: { ...identity, metadata, content, error, executed: false } }, state)).toBeNull();
       }
-      expect(translateV2Event({ type: "session.tool.called", created: 20, data: { ...identity, input, executed: false } }, state))
-        .toMatchObject([{ properties: { part: { tool: expectedTool, state: { input: expectedInput, status: "running" } } } }]);
-      expect(translateV2Event({ type: "session.tool.progress", created: 25, data: { ...identity, metadata } }, state))
-        .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[1]?.parts[0] } }]);
-      expect(translateV2Event({ type: "session.tool.success", created: 30, data: { ...identity, metadata, content, executed: false } }, state))
-        .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[2]?.parts[0] } }]);
-      expect(translateV2Event({ type: "session.tool.failed", created: 30, data: { ...identity, metadata, error, executed: false } }, state))
-        .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[3]?.parts[0] } }]);
       expect(result.data?.[3]?.parts[0]).toMatchObject({ state: { error: "child failed" } });
       expect(input).not.toHaveProperty("subagent_type");
       expect(metadata).not.toHaveProperty("sessionId");
@@ -1122,6 +1430,43 @@ describe("OpenCode v2 client compatibility", () => {
     }
   });
 
+  test("a reconnected subscription rebuilds the same completed parts without retaining old payloads or tombstones", async () => {
+    const originalFetch = globalThis.fetch;
+    const identity = { sessionID: "s", assistantMessageID: "m", ordinal: 0 };
+    const events = [
+      { type: "session.execution.started", data: { sessionID: "s" } },
+      { type: "session.text.started", created: 10, data: identity },
+      { type: "session.text.delta", data: { ...identity, delta: "hello " } },
+      { type: "session.text.delta", data: { ...identity, delta: "world" } },
+      { type: "session.text.ended", data: identity },
+      { type: "session.execution.succeeded", created: 20, data: { sessionID: "s" } },
+      { type: "session.text.started", created: 10, data: identity },
+      { type: "session.text.ended", data: identity },
+      ...capturedV2ToolEvents,
+    ];
+    globalThis.fetch = async () => new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""));
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", undefined, {});
+      // Duplicate wire frames after completion must not replace the final answer.
+      const first = await client.event.subscribe();
+      const received = [];
+      for await (const event of first.stream) received.push(event);
+      expect(received).toContainEqual({ type: "message.part.updated", properties: { part: {
+        id: "m:0", messageID: "m", sessionID: "s", type: "text", text: "hello world",
+      } } });
+      expect(received.filter((event) => event.type === "message.updated")).toHaveLength(2);
+      expect(received.at(-1)).toMatchObject({ properties: { part: { id: "call_captured_shell", state: {
+        status: "completed", input: { command: "printf 'TOOL_RESULT_OK\\n'", timeout: 30_000 },
+        output: "TOOL_RESULT_OK\n\nCommand exited with code 0.",
+      } } } });
+      // A new subscription has a fresh replay window and may rebuild the parts.
+      const reconnected = await client.event.subscribe();
+      const replayed = [];
+      for await (const event of reconnected.stream) replayed.push(event);
+      expect(replayed).toEqual(received);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
   test("discovers external forks from authoritative sessions once, without fetching foreign events or the source", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Request[] = [];
@@ -1149,11 +1494,11 @@ describe("OpenCode v2 client compatibility", () => {
       const received = [];
       for await (const event of subscription.stream) received.push(event);
       expect(received).toHaveLength(2);
-      expect(received[0]).toEqual({ type: "session.created", properties: { info: {
+      expect(received.find((event) => event.type === "session.created")).toEqual({ type: "session.created", properties: { info: {
         id: info.id, title: info.title, slug: info.slug, projectID: info.projectID,
         directory: info.location.directory, version: info.version, time: info.time,
       } } });
-      expect(received[1]?.type).toBe("permission.asked");
+      expect(received[0]?.type).toBe("permission.asked");
       expect(requests.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
         ["GET", "/workspace/owned/opencode2/api/event"], ["GET", "/workspace/owned/opencode2/api/session/ses_fork"],
       ]);
@@ -1163,17 +1508,130 @@ describe("OpenCode v2 client compatibility", () => {
     } finally { globalThis.fetch = originalFetch; }
   });
 
+  test("held fork discovery does not block permission or text, wakes a waiting reader, and deduplicates replays", async () => {
+    const originalFetch = globalThis.fetch;
+    const source = eventStream();
+    const controller = new AbortController();
+    const lookup = Promise.withResolvers<Response>();
+    const requests: Request[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.endsWith("/api/event")) return source.response;
+      requests.push(request);
+      return lookup.promise;
+    };
+    try {
+      const subscription = await createClientV2("http://opencode.test/opencode2", "/workspace", {}).event.subscribe({}, { signal: controller.signal });
+      source.send(nativeForkEvent);
+      source.send(nativeForkEvent);
+      source.send(capturedPermissionAsked);
+      const started = Date.now();
+      expect((await subscription.stream.next()).value?.type).toBe("permission.asked");
+      const data = { sessionID: "ses_other", assistantMessageID: "msg_other", ordinal: 0 };
+      source.send({ type: "session.text.started", location: { directory: "/workspace" }, data });
+      expect((await subscription.stream.next()).value?.type).toBe("message.updated");
+      expect((await subscription.stream.next()).value?.type).toBe("message.part.updated");
+      for (let index = 0; index < 100; index += 1) {
+        source.send({ type: "session.text.delta", location: { directory: "/workspace" }, data: { ...data, delta: "text" } });
+        expect((await subscription.stream.next()).value).toMatchObject({
+          type: "message.part.delta", properties: { sessionID: "ses_other", delta: "text" },
+        });
+      }
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.signal.aborted).toBe(false);
+
+      const pending = subscription.stream.next();
+      await delay(0);
+      lookup.resolve(jsonResponse({ data: { id: "ses_fork", title: "Late fork", location: { directory: "/workspace" } } }));
+      expect((await pending).value).toMatchObject({
+        type: "session.created", properties: { info: { id: "ses_fork", title: "Late fork" } },
+      });
+      // Discovery must not discard the outstanding SSE read or refetch success.
+      source.send(nativeForkEvent);
+      source.send(capturedPermissionReplied);
+      expect((await subscription.stream.next()).value?.type).toBe("permission.replied");
+      expect(requests).toHaveLength(1);
+      await subscription.stream.return(undefined);
+      expect(source.cancelled).toBe(true);
+      expect(source.body.locked).toBe(false);
+    } finally {
+      controller.abort();
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test.each(["pending", "queued"])("deletion discards %s fork discovery without affecting another lookup", async (phase) => {
+    const originalFetch = globalThis.fetch;
+    const source = eventStream();
+    const controller = new AbortController();
+    const lookup = Promise.withResolvers<Response>();
+    const otherLookup = Promise.withResolvers<Response>();
+    const requests: Request[] = [];
+    const info = { id: "ses_fork", title: "Deleted fork", location: { directory: "/workspace" } };
+    const deleted = {
+      type: "session.deleted", location: { directory: "/workspace" },
+      data: phase === "pending" ? { sessionID: "ses_fork" } : { info: { id: "ses_fork" } },
+    };
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.endsWith("/api/event")) return source.response;
+      requests.push(request);
+      if (request.url.endsWith("/api/session/ses_fork")) return lookup.promise;
+      if (request.url.endsWith("/api/session/ses_other")) return otherLookup.promise;
+      throw new Error(`Unexpected request: ${request.url}`);
+    };
+    try {
+      const subscription = await createClientV2("http://opencode.test/opencode2", "/workspace", {}).event.subscribe({}, { signal: controller.signal });
+      // One SSE chunk lets lookup completion queue while parsing is paused at
+      // the permission yield, before the matching deletion is translated.
+      source.send(
+        nativeForkEvent,
+        { ...nativeForkEvent, data: { ...nativeForkEvent.data, sessionID: "ses_other" } },
+        { ...deleted, location: { directory: "/other" } },
+        { ...deleted, location: undefined },
+        capturedPermissionAsked, deleted, capturedPermissionReplied,
+      );
+      expect((await subscription.stream.next()).value?.type).toBe("permission.asked");
+      expect(requests).toHaveLength(2);
+      expect(requests.every((request) => !request.signal.aborted)).toBe(true);
+      if (phase === "queued") {
+        lookup.resolve(jsonResponse({ data: info }));
+        await delay(0);
+      }
+      expect((await subscription.stream.next()).value).toMatchObject({
+        type: "session.deleted", properties: { sessionID: "ses_fork" },
+      });
+      if (phase === "pending") expect(requests[0]?.signal.aborted).toBe(true);
+      expect(requests[1]?.signal.aborted).toBe(false);
+      expect((await subscription.stream.next()).value?.type).toBe("permission.replied");
+      // The deleted lookup's transport ignores cancellation and returns stale
+      // metadata; only the unrelated fork may still be discovered.
+      lookup.resolve(jsonResponse({ data: info }));
+      otherLookup.resolve(jsonResponse({ data: { ...info, id: "ses_other", title: "Kept fork" } }));
+      expect((await subscription.stream.next()).value).toMatchObject({
+        type: "session.created", properties: { info: { id: "ses_other", title: "Kept fork" } },
+      });
+      source.send(nativeForkEvent, capturedPermissionAsked);
+      expect((await subscription.stream.next()).value?.type).toBe("permission.asked");
+      expect(requests).toHaveLength(2);
+      source.close();
+      expect(await subscription.stream.next()).toEqual({ done: true, value: undefined });
+      expect(source.body.locked).toBe(false);
+    } finally { controller.abort(); globalThis.fetch = originalFetch; }
+  });
+
   test.each(["deleted", "unavailable", "network", "missing", "wrong-id", "foreign", "unscoped", "timeout"])(
     "skips a %s fork lookup, continues the stream, and allows recovery on replay", async (failure) => {
       const originalFetch = globalThis.fetch;
+      const source = eventStream();
+      const controller = new AbortController();
       let lookups = 0;
       let lookupSignal: AbortSignal | undefined;
       const info = { id: "ses_fork", title: "Recovered fork", location: { directory: "/workspace" }, time: { created: 100, updated: 200 } };
       globalThis.fetch = async (input, init) => {
         const request = input instanceof Request ? input : new Request(input, init);
-        if (request.url.endsWith("/api/event")) return new Response(
-          [nativeForkEvent, capturedPermissionAsked, nativeForkEvent].map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
-        );
+        if (request.url.endsWith("/api/event")) return source.response;
         lookups += 1;
         if (lookups > 1) return jsonResponse({ data: info });
         lookupSignal = request.signal;
@@ -1189,39 +1647,63 @@ describe("OpenCode v2 client compatibility", () => {
       };
       try {
         const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
-        const subscription = await client.event.subscribe();
+        const subscription = await client.event.subscribe({}, { signal: controller.signal });
+        source.send(nativeForkEvent);
+        source.send(capturedPermissionAsked);
         const started = Date.now();
         expect((await subscription.stream.next()).value?.type).toBe("permission.asked");
-        expect(Date.now() - started).toBeLessThan(3_000);
-        if (failure === "timeout") expect(lookupSignal?.aborted).toBe(true);
+        expect(Date.now() - started).toBeLessThan(1_000);
+        if (failure === "timeout") {
+          expect(lookupSignal?.aborted).toBe(false);
+          await new Promise<void>((resolve) => lookupSignal?.addEventListener("abort", () => resolve(), { once: true }));
+          expect(Date.now() - started).toBeLessThan(3_000);
+        }
+        // Replay after failure has settled, not while the first lookup is live.
+        await delay(0);
+        source.send(nativeForkEvent);
         expect((await subscription.stream.next()).value).toMatchObject({
           type: "session.created", properties: { info: { id: info.id, title: info.title } },
         });
+        source.close();
         expect(await subscription.stream.next()).toEqual({ done: true, value: undefined });
+        expect(source.body.locked).toBe(false);
         expect(lookups).toBe(2);
-      } finally { globalThis.fetch = originalFetch; }
+      } finally { controller.abort(); globalThis.fetch = originalFetch; }
     },
   );
 
-  test("aborting a subscription cancels its fork lookup without emitting a session", async () => {
+  test.each(["abort", "return", "read error"])("%s cleans up a waiting subscription and its fork lookup without emitting a session", async (action) => {
     const originalFetch = globalThis.fetch;
     const controller = new AbortController();
+    const source = eventStream();
     const dispatched = Promise.withResolvers<Request>();
+    const lookup = Promise.withResolvers<Response>();
     globalThis.fetch = async (input, init) => {
       const request = input instanceof Request ? input : new Request(input, init);
-      if (request.url.endsWith("/api/event")) return new Response(`data: ${JSON.stringify(nativeForkEvent)}\n\n`);
+      if (request.url.endsWith("/api/event")) return source.response;
       dispatched.resolve(request);
-      return new Promise<Response>((_resolve, reject) => {
-        request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
-      });
+      return lookup.promise;
     };
     try {
       const subscription = await createClientV2("http://opencode.test/opencode2", "/workspace", {}).event.subscribe({}, { signal: controller.signal });
+      source.send(nativeForkEvent);
       const pending = subscription.stream.next();
       const request = await dispatched.promise;
-      controller.abort();
-      expect(await pending).toEqual({ done: true, value: undefined });
+      await delay(0);
+      if (action === "read error") {
+        const error = new Error("SSE read failed");
+        source.fail(error);
+        await expect(pending).rejects.toBe(error);
+      } else {
+        if (action === "abort") controller.abort();
+        else expect(await subscription.stream.return(undefined)).toEqual({ done: true, value: undefined });
+        expect(await pending).toEqual({ done: true, value: undefined });
+      }
       expect(request.signal.aborted).toBe(true);
+      expect(source.cancelled).toBe(action !== "read error");
+      expect(source.body.locked).toBe(false);
+      lookup.resolve(jsonResponse({ data: { id: "ses_fork", location: { directory: "/workspace" } } }));
+      expect(await subscription.stream.next()).toEqual({ done: true, value: undefined });
     } finally { controller.abort(); globalThis.fetch = originalFetch; }
   });
 

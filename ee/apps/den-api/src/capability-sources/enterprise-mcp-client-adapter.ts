@@ -34,7 +34,8 @@ import {
 
 function toEnterpriseConnection(
   connection: ExternalMcpConnectionRow,
-  member?: ExternalMcpMemberContext,
+  member: ExternalMcpMemberContext | undefined,
+  tracker: ExternalMcpDiagnosticTracker,
 ): EnterpriseMcpConnection {
   if (connection.kind !== "external_mcp") {
     throw new Error("Native provider connectors do not expose an MCP server.")
@@ -46,7 +47,7 @@ function toEnterpriseConnection(
       serverUrl: connection.url,
       authorization: {
         type: "oauth",
-        persistence: new DenEnterpriseMcpOAuthPersistence(connection, member),
+        persistence: new DenEnterpriseMcpOAuthPersistence(connection, member, tracker),
         configuration: {
           applicationType: "web",
           // CIMD client identifiers must be HTTPS URLs. Local HTTP development
@@ -106,18 +107,9 @@ function diagnosticSink(tracker: ExternalMcpDiagnosticTracker) {
     // authorization challenges and network causes. Package request events are
     // still available to package consumers, but must not overwrite that richer
     // Den evidence after a response settles.
-    if (event.kind === "request") return
-    if (event.kind === "credential-invalidation") {
-      console.error("external_mcp_credential_invalidated", {
-        referenceId: tracker.referenceId,
-        connectionId: event.connectionId,
-        operationPhase: event.operationPhase,
-        requestPhase: event.requestPhase,
-        httpStatus: event.httpStatus,
-        invalidToken: event.invalidToken,
-      })
-      return
-    }
+    // The persistence boundary logs committed invalidations, including SDK
+    // paths that do not emit the package event. Do not log them twice here.
+    if (event.kind === "request" || event.kind === "credential-invalidation") return
     const phase = diagnosticPhase(event)
     if (event.outcome === "started") {
       tracker.begin(phase)
@@ -239,11 +231,11 @@ async function runEnterpriseMcpOperation<T>(input: {
   lifecycleDeadline?: ExternalMcpLifecycleDeadline
   operationTimeoutMs?: number
   toolCallInspector?: ExternalMcpToolCallInspector
-  operation: (client: EnterpriseMcpClient) => Promise<T>
+  operation: (client: EnterpriseMcpClient, tracker: ExternalMcpDiagnosticTracker) => Promise<T>
 }): Promise<T> {
   const { client, tracker } = createOperationClient(input)
   try {
-    return await input.operation(client)
+    return await input.operation(client, tracker)
   } catch (error) {
     throw translateEnterpriseMcpError(error, tracker)
   }
@@ -259,8 +251,8 @@ export async function connectExternalMcp(
   return runEnterpriseMcpOperation({
     connection,
     diagnosticReferenceId,
-    operation: (client) => client.connect({
-      connection: toEnterpriseConnection(connection, member),
+    operation: (client, tracker) => client.connect({
+      connection: toEnterpriseConnection(connection, member, tracker),
       redirectUri,
       authorizationId: signedState,
     }),
@@ -280,8 +272,8 @@ export async function completeExternalMcpAuth(
   await runEnterpriseMcpOperation({
     connection,
     diagnosticReferenceId,
-    operation: (client) => client.completeAuthorization({
-      connection: toEnterpriseConnection(connection, member),
+    operation: (client, tracker) => client.completeAuthorization({
+      connection: toEnterpriseConnection(connection, member, tracker),
       redirectUri,
       code,
       authorizationId: signedState,
@@ -299,8 +291,8 @@ export async function abandonExternalMcpAuth(
   await runEnterpriseMcpOperation({
     connection,
     diagnosticReferenceId,
-    operation: (client) => client.abandonAuthorization({
-      connection: toEnterpriseConnection(connection, member),
+    operation: (client, tracker) => client.abandonAuthorization({
+      connection: toEnterpriseConnection(connection, member, tracker),
       authorizationId: signedState,
       reason: "provider-rejected",
     }),
@@ -320,8 +312,8 @@ export async function listExternalMcpTools(
     diagnosticReferenceId,
     lifecycleDeadline,
     operationTimeoutMs,
-    operation: (client) => client.listTools({
-      connection: toEnterpriseConnection(connection, member),
+    operation: (client, tracker) => client.listTools({
+      connection: toEnterpriseConnection(connection, member, tracker),
       redirectUri,
     }),
   })
@@ -347,8 +339,8 @@ function runExternalMcpToolCall(
     lifecycleDeadline: input.lifecycleDeadline,
     operationTimeoutMs: EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
     toolCallInspector,
-    operation: (client) => client.callTool({
-      connection: toEnterpriseConnection(input.connection, input.member),
+    operation: (client, tracker) => client.callTool({
+      connection: toEnterpriseConnection(input.connection, input.member, tracker),
       redirectUri: input.redirectUri,
       toolName: input.toolName,
       arguments: input.args,
@@ -366,8 +358,8 @@ export function callExternalMcpToolRaw(input: ExternalMcpToolCallInput) {
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
     operationTimeoutMs: EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
-    operation: (client) => client.callToolRaw({
-      connection: toEnterpriseConnection(input.connection, input.member),
+    operation: (client, tracker) => client.callToolRaw({
+      connection: toEnterpriseConnection(input.connection, input.member, tracker),
       redirectUri: input.redirectUri,
       toolName: input.toolName,
       arguments: input.args,
@@ -388,8 +380,8 @@ export function describeExternalMcpServer(input: ExternalMcpResourceInput) {
     connection: input.connection,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
-    operation: (client) => client.describeServer({
-      connection: toEnterpriseConnection(input.connection, input.member),
+    operation: (client, tracker) => client.describeServer({
+      connection: toEnterpriseConnection(input.connection, input.member, tracker),
       redirectUri: input.redirectUri,
     }),
   })
@@ -400,8 +392,8 @@ export function listExternalMcpResources(input: ExternalMcpResourceInput) {
     connection: input.connection,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
-    operation: (client) => client.listResources({
-      connection: toEnterpriseConnection(input.connection, input.member),
+    operation: (client, tracker) => client.listResources({
+      connection: toEnterpriseConnection(input.connection, input.member, tracker),
       redirectUri: input.redirectUri,
     }),
   })
@@ -412,8 +404,8 @@ export function listExternalMcpResourceTemplates(input: ExternalMcpResourceInput
     connection: input.connection,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
-    operation: (client) => client.listResourceTemplates({
-      connection: toEnterpriseConnection(input.connection, input.member),
+    operation: (client, tracker) => client.listResourceTemplates({
+      connection: toEnterpriseConnection(input.connection, input.member, tracker),
       redirectUri: input.redirectUri,
     }),
   })
@@ -424,8 +416,8 @@ export function readExternalMcpResource(input: ExternalMcpResourceInput & { uri:
     connection: input.connection,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
-    operation: (client) => client.readResource({
-      connection: toEnterpriseConnection(input.connection, input.member),
+    operation: (client, tracker) => client.readResource({
+      connection: toEnterpriseConnection(input.connection, input.member, tracker),
       redirectUri: input.redirectUri,
       uri: input.uri,
     }),

@@ -264,7 +264,7 @@ export function expectedConnectBranch(snapshot: ConnectSnapshot): AgentContextDi
   const health = snapshot.cloudHealth;
   if (health?.usable === true && health.usableByCurrentModel !== false) return "cloud-active";
   if (health) return "cloud-disconnected";
-  if (!snapshot.connectCatalogEnabled || snapshot.googleWorkspace.legacyConfigured) return "extensions-only";
+  if (!snapshot.connectCatalogEnabled) return "extensions-only";
   return "cloud-disconnected";
 }
 
@@ -1384,7 +1384,6 @@ export async function runAgentContextDiagnostics(input: {
         directory: null,
         reason: "Passive Connect inspection was unavailable",
       },
-      googleWorkspace: { legacyConfigured: false },
     };
   }
   const selectedCloudMcpPresent = Object.hasOwn(runtimeMcpMap(runtime), OPENWORK_CLOUD_MCP_NAME);
@@ -1598,7 +1597,6 @@ export async function runAgentContextDiagnostics(input: {
         expectedBranch: branch,
         connectStateStatus,
         connectEnabled: connectSnapshot.connectEnabled,
-        legacyGoogleWorkspaceConfigured: connectSnapshot.googleWorkspace.legacyConfigured,
         globalCloudMcpPresent: connectSnapshot.cloudMcpPresent,
         selectedWorkspaceCloudMcpPresent: selectedCloudMcpPresent,
       },
@@ -1991,7 +1989,6 @@ export async function runAgentContextDiagnostics(input: {
     connect: {
       stateStatus: connectSnapshot.status,
       connectEnabled: connectSnapshot.connectEnabled,
-      legacyGoogleWorkspaceConfigured: connectSnapshot.googleWorkspace.legacyConfigured,
       expectedBranch: branch,
       globalCloudMcpPresent: connectSnapshot.cloudMcpPresent,
       selectedWorkspaceCloudMcpPresent: selectedCloudMcpPresent,

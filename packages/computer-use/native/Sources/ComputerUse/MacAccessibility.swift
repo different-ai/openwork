@@ -33,6 +33,45 @@ struct AppIdentity {
         guard isAllowed(app) else { throw UseError("protected_app", "This app cannot be operated through Computer Use.", next: "use_structured_tool") }
         return AppIdentity(app: app, bundleID: bundleID, executable: executable, launched: launched)
     }
+    @MainActor static func open(_ bundleID: String, pid: pid_t?) async throws -> AppIdentity {
+        guard isAllowed(bundleID: bundleID) else { throw UseError("protected_app", "This app cannot be operated through Computer Use.", next: "use_structured_tool") }
+        // A PID pins a running instance. Never replace it with a newly launched app.
+        if pid != nil || NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).count > 0 {
+            let identity = try resolve(bundleID, pid: pid)
+            identity.app.unhide()
+            return identity
+        }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID),
+              Bundle(url: url)?.bundleIdentifier == bundleID else {
+            throw UseError("app_unavailable", "This app is not installed. Choose an app from computer_discover.", next: "discover")
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        let launched = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+        // Launch Services can complete before the app enters its UI run loop.
+        for _ in 0..<30 {
+            try Task.checkCancellation()
+            if let identity = try? resolve(bundleID, pid: launched.processIdentifier) { return identity }
+            if launched.isTerminated { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return try resolve(bundleID, pid: launched.processIdentifier)
+    }
+    static func installedApps() -> [[String: Any]] {
+        // Enumerate app bundles only, never documents or window content.
+        let roots = ["/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities",
+                     NSHomeDirectory() + "/Applications"]
+        var apps: [String: String] = [:]
+        for root in roots {
+            for url in (try? FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: root), includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? [] {
+                guard url.pathExtension == "app", let bundle = Bundle(url: url), let id = bundle.bundleIdentifier,
+                      isAllowed(bundleID: id) else { continue }
+                apps[id] = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                    ?? bundle.object(forInfoDictionaryKey: "CFBundleName") as? String ?? url.deletingPathExtension().lastPathComponent
+            }
+        }
+        return apps.map { ["app_id": $0.key, "name": $0.value] }
+    }
     func validate() throws {
         guard !app.isTerminated, let current = NSRunningApplication(processIdentifier: pid),
               current.bundleIdentifier == bundleID, current.executableURL == executable, ProcessStart(pid: pid) == launched,
@@ -42,6 +81,9 @@ struct AppIdentity {
     }
     static func isAllowed(_ app: NSRunningApplication) -> Bool {
         guard let id = app.bundleIdentifier, app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return false }
+        return isAllowed(bundleID: id)
+    }
+    static func isAllowed(bundleID id: String) -> Bool {
         // These surfaces can change the permission boundary or execute arbitrary commands.
         let protected: Set<String> = ["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
             "com.mitchellh.ghostty", "com.apple.ScriptEditor2", "com.apple.systempreferences",
@@ -141,7 +183,7 @@ final class MacAccessibility {
             let root = AXUIElementCreateApplication(app.pid)
             guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.pid,
                   let focused = elementAttribute(root, kAXFocusedWindowAttribute), CFEqual(focused, target.element) else {
-                throw UseError("window_not_frontmost", "Bring the approved window to the front, then resume in the Computer Use panel.", next: "human_takeover")
+                throw UseError("window_not_frontmost", "Choose Continue in the Computer Use controls to return to the approved window.", next: "human_takeover")
             }
         }
         return bounds

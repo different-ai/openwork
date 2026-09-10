@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 const fixtureUpstreamKey = "models-analytics-fixture-upstream";
 export function modelsFixtureKey(memberId) { return `ow_inf_models-analytics-fixture-${memberId}`; }
 async function arrange(command, orgId, inferenceUrl) {
@@ -33,6 +34,23 @@ async function arrange(command, orgId, inferenceUrl) {
     }
     else if (command === "resume-analytics") {
         await db.execute(sql.raw("RENAME TABLE models_analytics_event_unavailable TO models_analytics_event"));
+    }
+    else if (command === "pagination" || command === "pagination-newest") {
+        const [settings] = await db.select().from(schema.ModelsAnalyticsSettingsTable).where(eq(schema.ModelsAnalyticsSettingsTable.org_id, id));
+        if (!settings?.enabled || !settings.consented_by) throw new Error("Pagination needs an opted-in fixture member");
+        const now = Date.now();
+        await db.insert(schema.ModelsAnalyticsEventTable).values(Array.from({ length: command === "pagination" ? 400 : 1 }, (_, index) => {
+            const suffix = command === "pagination" ? String(index + 1) : "newest";
+            const eventId = `pagination-${suffix}`;
+            const timestamp = new Date(now - index);
+            const event = { id: eventId, type: "model.call", timestamp: timestamp.toISOString(), sessionId: "pagination",
+                taskId: eventId, model: `pagination-model-${suffix}`, status: "completed", usageComplete: false };
+            return {
+                id: createHash("sha256").update(JSON.stringify([id, settings.consented_by, "inference", eventId])).digest("hex"),
+                event_id: eventId, org_id: id, member_id: settings.consented_by, source: "inference", type: event.type,
+                timestamp, session_id: event.sessionId, task_id: event.taskId, model: event.model, usage_complete: false, payload: event,
+            };
+        }));
     }
     else if (command === "subscription") {
         await db.insert(schema.OrgSubscriptionTable).values({
@@ -68,6 +86,64 @@ async function serveWitness() {
     const exports = [];
     let holdExport = false;
     let releaseExport = null;
+    const stripeRequests = [];
+    let holdStripe = false;
+    let releaseStripe = null;
+    let dpa = null;
+    const usageFixture = process.env.MODELS_USAGE_FIXTURE === "1"
+        ? await (await import("./paid-usage-fixture.mjs")).paidUsageFixture() : null;
+    if (process.env.MODELS_DPA_FIXTURE === "1") {
+        const url = new URL(process.env.DATABASE_URL);
+        if (url.hostname !== "127.0.0.1" || !/^\/(openwork_eval_|openwork_den$)/.test(url.pathname)) throw new Error("DPA witness requires an isolated testkit database");
+        const { createConnection } = createRequire(new URL("../../env/package.json", import.meta.url))("mysql2/promise");
+        const connection = await createConnection(process.env.DATABASE_URL);
+        const lock = await createConnection(process.env.DATABASE_URL);
+        const orgId = process.env.MODELS_DPA_ORG_ID;
+        const [rows] = await connection.execute("SELECT metadata FROM organization WHERE id = ?", [orgId]);
+        const metadata = typeof rows[0].metadata === "string" ? JSON.parse(rows[0].metadata) : rows[0].metadata;
+        const baseline = { ...metadata, plan: { tier: "enterprise", source: "manual" }, fixtureNested: { keep: { value: "unchanged" } } };
+        await connection.execute("UPDATE organization SET metadata = ? WHERE id = ?", [JSON.stringify(baseline), orgId]);
+        dpa = async (action, input) => {
+            if (action === "metadata") {
+                const value = input.mode === "restore" ? baseline : input.mode === "string-true" ? JSON.stringify({ ...baseline, dpaSigned: true }) : input.mode === "nonboolean" ? { ...baseline, dpaSigned: "true" } : input.value;
+                await connection.execute("UPDATE organization SET metadata = ? WHERE id = ?", [JSON.stringify(value), orgId]);
+            } else if (action === "hold") {
+                await lock.query("LOCK TABLES inference_org_limit_policies WRITE");
+            } else if (action === "release") {
+                await lock.query("UNLOCK TABLES");
+            } else if (action === "read-failure") {
+                await connection.query("ALTER TABLE organization RENAME COLUMN metadata TO fixture_metadata_unavailable");
+            } else if (action === "read-restore") {
+                await connection.query("ALTER TABLE organization RENAME COLUMN fixture_metadata_unavailable TO metadata");
+            } else if (action === "audit-failure") {
+                await connection.query("ALTER TABLE audit_event RENAME COLUMN payload TO fixture_payload_unavailable");
+            } else if (action === "audit-restore") {
+                await connection.query("ALTER TABLE audit_event RENAME COLUMN fixture_payload_unavailable TO payload");
+            } else if (action === "rename-managed") {
+                await connection.execute("UPDATE llm_provider SET name = 'Customer-looking renamed provider' WHERE organization_id = ? AND source = 'openwork'", [orgId]);
+            } else if (action === "stripe-hold") {
+                holdStripe = true;
+            } else if (action === "stripe-release") {
+                holdStripe = false;
+                releaseStripe?.();
+                releaseStripe = null;
+            } else if (action === "remove-member-access") {
+                // Arrange missing access for the non-admin member, never for the warm test key.
+                await connection.execute("UPDATE inference_keys SET status = 'revoked' WHERE organization_id = ? AND org_membership_id = ?", [orgId, input.memberId]);
+                await connection.execute("DELETE FROM llm_provider WHERE organization_id = ? AND created_by_org_membership_id = ? AND source = 'openwork'", [orgId, input.memberId]);
+            } else if (action !== "state") throw new Error("Unknown DPA witness action");
+            if (action !== "state") return { ok: true };
+            const [organizations] = await connection.execute("SELECT metadata FROM organization WHERE id = ?", [orgId]);
+            const stored = typeof organizations[0].metadata === "string" ? JSON.parse(organizations[0].metadata) : organizations[0].metadata;
+            const [audits] = await connection.execute("SELECT id, actor_user_id AS actorUserId, action, payload FROM audit_event WHERE org_id = ? AND action = 'organization.dpa_signed.updated' ORDER BY created_at, id", [orgId]);
+            const [keys] = await connection.execute("SELECT org_membership_id AS memberId, status FROM inference_keys WHERE organization_id = ? ORDER BY id", [orgId]);
+            const [providers] = await connection.execute("SELECT id, created_by_org_membership_id AS memberId, source, name FROM llm_provider WHERE organization_id = ? ORDER BY id", [orgId]);
+            const [subscriptions] = await connection.execute("SELECT type, status, quantity, last_event_id AS lastEventId FROM org_subscriptions WHERE organization_id = ? ORDER BY id", [orgId]);
+            const [pending] = await connection.query("SELECT COUNT(*) AS count FROM information_schema.processlist WHERE ID <> CONNECTION_ID() AND INFO LIKE 'select%inference_org_limit_policies%' AND STATE LIKE '%lock%'");
+            const egress = await readFile(process.env.MODELS_EGRESS_FILE, "utf8").catch((error) => { if (error.code === "ENOENT") return ""; throw error; });
+            return { metadata: stored, audits: audits.map((row) => ({ ...row, payload: typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload })), keys, providers, subscriptions, stripeRequests, stripeInFlight: releaseStripe !== null, waitingForLimits: Number(pending[0].count) > 0, egress: egress.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) };
+        };
+    }
     const upstream = createServer(async (req, res) => {
         if (req.url === "/fixture/requests") {
             res.setHeader("content-type", "application/json");
@@ -83,6 +159,47 @@ async function serveWitness() {
                 res.writeHead(413).end();
                 return;
             }
+        }
+        if (dpa && req.url?.startsWith("/fixture/dpa/")) {
+            try {
+                res.setHeader("content-type", "application/json");
+                res.end(JSON.stringify(await dpa(req.url.slice("/fixture/dpa/".length), text ? JSON.parse(text) : {})));
+            } catch (error) {
+                res.writeHead(500).end(JSON.stringify({ error: String(error.message) }));
+            }
+            return;
+        }
+        if (usageFixture && req.url?.startsWith("/fixture/usage/")) {
+            try {
+                res.setHeader("content-type", "application/json");
+                res.end(JSON.stringify(await usageFixture(req.url.slice("/fixture/usage/".length), text ? JSON.parse(text) : {})));
+            } catch (error) { res.writeHead(500).end(JSON.stringify({ error: error.message })); }
+            return;
+        }
+        if (dpa && req.url?.startsWith("/stripe/")) {
+            const authenticated = req.headers.authorization === "Bearer sk_test_models_dpa_fixture_not_real";
+            const path = new URL(req.url, "http://fixture.test").pathname.slice("/stripe".length);
+            stripeRequests.push({ method: req.method, path, authenticated });
+            res.setHeader("content-type", "application/json");
+            if (!authenticated) { res.writeHead(401).end("{}"); return; }
+            const orgId = process.env.MODELS_DPA_ORG_ID;
+            const metadata = { org_id: orgId, subscription_type: "inference" };
+            const subscription = {
+                id: `sub_fixture_${orgId}`, object: "subscription", customer: `cus_fixture_${orgId}`, status: "active", metadata,
+                items: { object: "list", data: [{ id: "si_fixture_dpa", quantity: 7, price: { id: "price_fixture_dpa" } }] },
+                cancel_at_period_end: false, current_period_start: 1788825600, current_period_end: 1791417600,
+            };
+            if (req.method === "GET" && path === "/v1/checkout/sessions/cs_fixture_dpa") {
+                if (holdStripe) await new Promise((resolve) => { releaseStripe = resolve; });
+                res.end(JSON.stringify({ id: "cs_fixture_dpa", object: "checkout.session", status: "complete", mode: "subscription", payment_status: "paid", subscription: subscription.id, metadata }));
+            } else if (req.method === "GET" && path === `/v1/subscriptions/${subscription.id}`) {
+                res.end(JSON.stringify(subscription));
+            } else if (req.method === "DELETE" && path === `/v1/subscriptions/${subscription.id}`) {
+                res.end(JSON.stringify({ ...subscription, status: "canceled" }));
+            } else {
+                res.writeHead(400).end(JSON.stringify({ error: { message: "Unexpected fixture Stripe operation", type: "invalid_request_error" } }));
+            }
+            return;
         }
         if (req.url === "/api/public/otel/v1/traces") {
             if (req.headers.authorization !== `Basic ${Buffer.from("fixture-public:fixture-secret").toString("base64")}`) {
@@ -102,7 +219,10 @@ async function serveWitness() {
         const prompt = JSON.stringify(latest?.content ?? "");
         const error = prompt.includes("fixture:error");
         const missing = prompt.includes("fixture:missing-usage");
-        calls.push({ model: String(payload.model), authenticated: req.headers.authorization === `Bearer ${fixtureUpstreamKey}`, kind: error ? "error" : missing ? "incomplete" : "success" });
+        const byok = req.url === "/byok/chat/completions";
+        const authenticated = req.headers.authorization === `Bearer ${byok ? "fixture-customer-owned-key" : fixtureUpstreamKey}`;
+        calls.push({ model: String(payload.model), authenticated, ...(dpa ? { route: byok ? "byok" : "managed" } : {}), ...(usageFixture ? { trace: payload.trace } : {}), kind: error ? "error" : missing ? "incomplete" : "success" });
+        if (dpa && !authenticated) { res.writeHead(401).end("{}"); return; }
         if (error) {
             res.writeHead(503, { "content-type": "application/json" });
             res.end(JSON.stringify({ error: { message: "Fixture upstream unavailable" } }));

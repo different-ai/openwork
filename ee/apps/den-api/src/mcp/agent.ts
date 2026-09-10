@@ -30,7 +30,7 @@ import {
   SEARCH_CAPABILITIES_TOOL_NAME,
   type CapabilityMatch,
 } from "./search.js"
-import { probeExternalConnectionStatus, resolveMcpMemberIdentity } from "./external-capabilities.js"
+import { resolveMcpMemberIdentity } from "./external-capabilities.js"
 import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, parseMarketplaceCapabilityName, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { automationService } from "../automations/service.js"
@@ -60,6 +60,8 @@ import {
 } from "./capability-registry.js"
 import { runCodemodeScript } from "./codemode-run.js"
 import { normalizeToolBody } from "./invoke.js"
+import { parseNativeCapabilityName } from "./native-capabilities.js"
+import { gmailFileInputPreflightSchema } from "../capability-sources/gmail-file-input.js"
 import { recordWorkflowResult } from "../workflow-runs.js"
 import {
   activateArtifactViewRevision,
@@ -88,12 +90,9 @@ import {
 } from "./connect-mcp-server-index.js"
 import { registerAgentSkillCreatedApp } from "./skill-created-app.js"
 import {
-  connectedConnectionActionPayload,
   connectionActionSearchCard,
   connectionActionPayloadSchema,
-  connectionActionPayloadFromStatus,
-  registerAgentConnectionActionApp,
-} from "./connection-action-app.js"
+} from "./connection-action.js"
 import { registerAgentPluginFlowApp } from "./plugin-flow-app.js"
 import {
   createConfigObjectVersion,
@@ -245,13 +244,12 @@ export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T
   const result = {
     matches,
     ...(hint ? { hint } : {}),
-    ...(card ? { connectionAction: card.connectionAction } : {}),
+    ...(card ? { connectionAction: card } : {}),
     ...(connectorCatalog ? { connectorCatalog } : {}),
   }
   return {
     content: textContent(JSON.stringify(result, null, 2)),
     structuredContent: result,
-    ...(card ? { _meta: card.meta } : {}),
   }
 }
 
@@ -595,6 +593,24 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             executeCapability(capabilityContext, { name, schemaDigest, path, query, body })
           ),
         })
+        // Only this direct call may hand off to the host's fixed Gmail upload
+        // action. Keep the explicit no-draft failure body; scripts stay errors.
+        const native = parseNativeCapabilityName(name)
+        if (result.isError === true
+          && native?.toolName === "postCapabilitiesGoogleWorkspaceGmailDrafts"
+          && (native.connectionId === "google-workspace" || /^emc_[0-9a-hjkmnp-tv-z]{26}$/.test(native.connectionId))
+          && result.content.length === 1) {
+          const part = result.content[0]
+          if (part?.type === "text") {
+            try {
+              if (gmailFileInputPreflightSchema.safeParse(JSON.parse(part.text)).success) {
+                return { ...result, isError: false }
+              }
+            } catch {
+              // Non-JSON and unrelated errors retain their original transport.
+            }
+          }
+        }
         return result
       },
     )
@@ -729,26 +745,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             return { ok: false, error: error.error, message: error.message }
           }
           throw error
-        }
-      },
-    })
-
-    registerAgentConnectionActionApp({
-      server,
-      probe: async ({ connectionId }) => {
-        const probe = await probeExternalConnectionStatus({
-          organizationId: principal.organizationId,
-          member: memberIdentity,
-          connectionId,
-        })
-        if (!probe.ok) {
-          return { ok: false, error: probe.error, message: probe.message }
-        }
-        return {
-          ok: true,
-          payload: probe.connected
-            ? connectedConnectionActionPayload({ connectionId: probe.connection.id, connectionName: probe.connection.name })
-            : connectionActionPayloadFromStatus(probe.status),
         }
       },
     })

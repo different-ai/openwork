@@ -20,6 +20,8 @@ import {
 import {
   declaredPluginMcpAuthType,
   requiredPluginMcpAuthType,
+  existingPluginMcpAuthTypeCompatible,
+  pluginMcpRequiresPreRegisteredOAuthClient,
   type PluginMcpAuthType,
 } from "../capability-sources/external-mcp-auth-policy.js"
 import { EXTERNAL_MCP_PRESETS } from "../capability-sources/external-mcp-presets.js"
@@ -1005,12 +1007,16 @@ function matchingConnectionForRequirement(input: {
 
 async function statusForRequirement(input: {
   allConnections: ExternalMcpConnectionRow[]
+  mode: "readiness" | "execution"
   member: McpMemberIdentity
   requirement: MarketplacePluginMcpRequirement
   usableConnections: ExternalMcpConnectionRow[]
 }): Promise<MarketplaceMcpRequirementStatus> {
   const connection = matchingConnectionForRequirement(input)
-  const authTypeMismatch = Boolean(connection && input.requirement.requiredAuthType && connection.authType !== input.requirement.requiredAuthType)
+  const authTypeMismatch = Boolean(connection && !existingPluginMcpAuthTypeCompatible({
+    authType: connection.authType,
+    requiredAuthType: input.requirement.requiredAuthType,
+  }))
   const usable = connection && !authTypeMismatch
     ? connectionIsUsable({ connectionId: connection.id, usableConnections: input.usableConnections })
     : false
@@ -1023,7 +1029,13 @@ async function statusForRequirement(input: {
     ...(connection && usable ? { connectionId: connection.id, connectionName: connection.name, credentialMode: connection.credentialMode } : {}),
   }
 
-  if (!connection || !usable) {
+  // Discovery preserves legacy credential readiness; execution still requires the mandatory client.
+  if (!connection || !usable || (
+    input.mode === "execution"
+    && connection.authType === "oauth"
+    && pluginMcpRequiresPreRegisteredOAuthClient(connection.url)
+    && !await getOrgOAuthClient(connection.organizationId, connection.id)
+  )) {
     const state = "needs_admin_setup"
     return {
       ...base,
@@ -1145,6 +1157,7 @@ async function marketplacePluginMcpRequirements(input: {
 }
 
 async function marketplacePluginMcpRequirementStatuses(input: {
+  mode: "readiness" | "execution"
   member: McpMemberIdentity
   organizationId: OrganizationId
   pluginIds: PluginId[]
@@ -1163,6 +1176,7 @@ async function marketplacePluginMcpRequirementStatuses(input: {
   for (const requirement of requirements) {
     const status = await statusForRequirement({
       allConnections,
+      mode: input.mode,
       member: input.member,
       requirement,
       usableConnections,
@@ -1209,8 +1223,13 @@ async function resolveMcpReadinessConnections(input: {
       connectedCache.set(matched.id, connectedForMe)
     }
     let oauthClientConfigured: boolean | undefined
+    const authTypeMismatch = !existingPluginMcpAuthTypeCompatible({
+      authType: matched.authType,
+      requiredAuthType: dependency.requiredAuthType,
+    })
+    // Keep the published desktop readiness URL comparison, including query parameters.
+    // Execution and new setup use the stricter preset policy independently.
     const preset = EXTERNAL_MCP_PRESETS.find((candidate) => comparablePluginMcpRequirementUrl(candidate.url) === comparablePluginMcpRequirementUrl(matched.url))
-    const authTypeMismatch = Boolean(dependency.requiredAuthType && matched.authType !== dependency.requiredAuthType)
     const oauthClientRequired = dependency.requiredAuthType === "oauth" && preset?.requiresOAuthClient === true
     if (dependency.requiredAuthType === "oauth" || matched.authType === "oauth") {
       oauthClientConfigured = oauthClientConfiguredCache.get(matched.id)
@@ -1433,6 +1452,7 @@ export async function searchMarketplaceCapabilities(input: {
     rows: await listActiveCapabilityRows(organizationId),
   })
   const requirementStatusesByPluginId = await marketplacePluginMcpRequirementStatuses({
+    mode: "readiness",
     organizationId,
     member: input.member,
     pluginIds: unique(rows.map((row) => row.plugin.id)),
@@ -1646,6 +1666,7 @@ export async function executeMarketplaceCapability(input: {
 
   if (marketplaceConfigObjectExecutionMode(row.configObject.objectType) === "instructional") {
     const requirementStatuses = await marketplacePluginMcpRequirementStatuses({
+      mode: "execution",
       organizationId,
       member: input.member,
       pluginIds: [row.plugin.id],

@@ -13,7 +13,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-test("attaching an image shows its chip instantly and sends with a visible uploading state", async ({ world, user, seed, probe, step }) => {
+for (const entryPoint of ["existing chat", "new task"]) {
+test(`sending an image in ${entryPoint} immediately moves it into the thread while upload is pending`, async ({ world, user, seed, probe, step }) => {
   await step("manual approval exempts only chat-attachment inbox uploads", async () => {
     expect(world.uploadStatus).toBe(200);
     expect(world.uploadElapsedMs).toBeLessThan(world.approvalTimeoutMs);
@@ -21,9 +22,10 @@ test("attaching an image shows its chip instantly and sends with a visible uploa
     expect(world.writeElapsedMs).toBeGreaterThanOrEqual(world.approvalTimeoutMs - 100);
   });
 
+  if (entryPoint === "new task") await user.click({ role: "button", label: "New session" });
   await user.type("composer", "Describe the attached image.");
   // TODO(primitive): attach an in-memory file through the composer's file chooser.
-  const attached = await seed.evalIn(world.app, browserScript(async (attachmentName) => {
+  const attached = await seed.evalIn(world.app, browserScript(async (attachmentName: string) => {
       const canvas = document.createElement("canvas");
       canvas.width = 2400;
       canvas.height = 2400;
@@ -65,6 +67,34 @@ test("attaching an image shows its chip instantly and sends with a visible uploa
   expect(attached.chipStatus).toBe("ready");
   await user.screenshot();
 
+  await step("clicking the draft image thumbnail opens it full-size and Escape returns to the draft", async () => {
+    const thumbnail = (await probe.dom("[data-attachment-id] img")).elements[0];
+    if (!thumbnail) throw new Error("draft image thumbnail missing");
+    await user.click({ role: "button", label: `Expand ${attachmentName}` });
+    const lightbox = await probe.eventually(() => probe.dom("[data-image-lightbox] img"), {
+      within: 10_000,
+      label: "draft image lightbox",
+      until: (dom) => dom.elements.length === 1,
+    });
+    const preview = lightbox.elements[0];
+    if (!preview) throw new Error("lightbox image missing");
+    expect(preview.rect.width).toBeGreaterThan(thumbnail.rect.width * 4);
+    expect(await probe.eval(() => {
+      const chip = document.querySelector<HTMLImageElement>("[data-attachment-id] img");
+      const large = document.querySelector<HTMLImageElement>("[data-image-lightbox] img");
+      return Boolean(chip && large && chip.src === large.src);
+    })).toBe(true);
+    await user.screenshot();
+    await user.press("Escape");
+    await probe.eventually(() => probe.dom("[data-image-lightbox]"), {
+      within: 10_000,
+      label: "draft image lightbox closed",
+      until: (dom) => dom.elements.length === 0,
+    });
+    expect((await probe.dom("[data-attachment-id]")).elements).toHaveLength(1);
+    await user.see("composer", { text: /Describe the attached image\./ });
+  });
+
   await step("paste a video alongside the image", async () => {
     expect(await seed.evalIn(world.app, () => {
       const editor = document.querySelector<HTMLElement>('[contenteditable="true"]');
@@ -88,15 +118,39 @@ test("attaching an image shows its chip instantly and sends with a visible uploa
     record();
     return true;
   });
+  await world.holdUploads();
   await user.click("Run task");
 
   // TODO(primitive): await a transient attachment-status witness.
-  expect(await probe.eventually(() => probe.eval(() => (globalThis.__attachmentUploadingSeen === true)), {
+  expect(await probe.eventually(() => probe.eval(() => {
+    const rows = document.querySelectorAll('[data-message-role="user"]');
+    const image = rows[0]?.querySelector<HTMLImageElement>("img");
+    return globalThis.__attachmentUploadingSeen === true && window.__openworkSubmissionFault?.attempts === 1
+      && rows.length === 1 && Boolean(image?.complete && image.naturalWidth > 0)
+      && !document.querySelector("[data-attachment-id]")
+      && document.querySelector('[contenteditable="true"]')?.textContent === "";
+  }), {
     within: 30_000,
     intervalMs: 50,
-    label: "attachment uploading state observed",
+    label: "one decoded thread preview and cleared composer while upload is held",
     until: (value) => value === true,
   })).toBe(true);
+  await step("Send moves the attachments immediately and preserves the next draft", async () => {
+    await user.see("composer", { text: "" });
+    expect((await probe.dom('[data-message-role="user"]')).elements).toHaveLength(1);
+    expect((await probe.dom('[data-message-role="user"] img')).elements).toHaveLength(1);
+    await user.see({ text: "pasted-recording.mp4" });
+    await user.type("composer", "Continue after upload.");
+    await user.press("Enter");
+    await user.press("Meta+Enter");
+    await user.see("composer", { text: "Continue after upload." });
+    expect((await probe.dom('[data-message-role="user"]')).elements).toHaveLength(1);
+    await user.notSee({ text: /1 queued/ });
+  });
+  await world.releaseUploads();
+  await user.see({ text: "attachment upload loading proof" });
+  await user.see("composer", { text: "Continue after upload." });
+  expect((await probe.dom('[data-message-role="user"]')).elements).toHaveLength(1);
   await user.notSee({ text: /1 queued/ });
   expect((await probe.hash()).includes("/session/ses_")).toBe(true);
   // TODO(primitive): inspect attachment cleanup and error-toast state after send.
@@ -112,3 +166,4 @@ test("attaching an image shows its chip instantly and sends with a visible uploa
   expect(await probe.eval(() => (document.querySelectorAll<HTMLButtonElement>('button[title="Open pasted-recording.mp4 in Artifacts"]').length))).toBe(1);
   await user.screenshot();
 });
+}

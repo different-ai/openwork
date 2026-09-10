@@ -2,6 +2,7 @@ import * as React from "react";
 import { activeBrowserTabIdForSession, browserTabsForSession } from "@openwork/browser-tabs";
 
 import type { BrowserStatePayload } from "@/app/lib/desktop";
+import { toast } from "@/components/ui/sonner";
 
 import {
   type PanelTab,
@@ -56,8 +57,12 @@ export function useSidePanelTabs(sessionId: string) {
 }
 
 export function useCreateTab() {
-  return React.useCallback((url?: string, sessionId?: string | null) => {
-    void getElectronBrowser()?.createTab?.(url, sessionId);
+  return React.useCallback(async (url?: string, sessionId?: string | null) => {
+    try {
+      await getElectronBrowser()?.createTab?.(url, sessionId);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
   }, []);
 }
 
@@ -80,7 +85,9 @@ export function useCloseTab() {
       const nextTab = usePanelTabStore.getState().sessions[sessionId]?.tabs.find((entry) => entry.id === nextTabId);
 
       if (nextTab?.type === "browser") {
-        void getElectronBrowser()?.selectTab?.(nextTab.id);
+        void getElectronBrowser()?.selectTab?.(nextTab.id).catch((error: unknown) => {
+          toast.error(error instanceof Error ? error.message : String(error));
+        });
       }
     }
   }, [closeTab]);
@@ -100,7 +107,9 @@ export function useSelectTab() {
     selectTab(sessionId, tabId);
 
     if (tab.type === "browser") {
-      void getElectronBrowser()?.selectTab?.(tabId);
+      void getElectronBrowser()?.selectTab?.(tabId).catch((error: unknown) => {
+        toast.error(error instanceof Error ? error.message : String(error));
+      });
     }
   }, [selectTab]);
 }

@@ -1,9 +1,9 @@
-import { browserScript } from "@openwork/cdp";
+import { browserScript, listTargets } from "@openwork/cdp";
 import { spawn } from "node:child_process";
 import { chmod, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { app as startApp, server as startServer } from "@openwork/env";
+import { app as startApp, server as startServer, resolveEvalEngine } from "@openwork/env";
 import { SkipError } from "@openwork/env";
 import type { Place, Seed } from "@openwork/env";
 import { createAndSelectWorkspace, evalIn, go, waitFor as waitForBehavior } from "@openwork/behaviors";
@@ -24,7 +24,6 @@ import { diagnoseEgressLabProduct } from "@openwork/behaviors";
 import { matchVerdictExpectations } from "@openwork/matchers";
 import {
   assignPluginToMarketplace,
-  captureOpenedUrls,
   completeDesktopHandoff,
   createDesktopHandoffGrant,
   createMarketplace,
@@ -84,44 +83,88 @@ export async function appSmokeWorld(seed: Seed) {
         const info = await bridge.invokeDesktop("openworkServerInfo");
         const health = await fetch(info.baseUrl + "/health", { signal: AbortSignal.timeout(5000) });
         return { bridge: true, protocol: location.protocol, health: health.status,
-          welcome: location.hash === "#/welcome" && [...document.querySelectorAll("button")]
-            .some(button => button.textContent.trim() === "Use Without Cloud" && !button.disabled),
+          emptySession: /^#\/workspace\/[^/]+\/session$/.test(location.hash)
+            && Boolean(document.querySelector('[contenteditable="true"][data-lexical-editor="true"]')),
+          signedOut: !localStorage.getItem("openwork.den.authToken") && !localStorage.getItem("openwork.den.activeOrgId"),
+          onboarding: /Welcome to OpenWork|Power your first task|How did you hear about OpenWork\?/.test(document.body.innerText),
           crash: /Something went wrong|Cannot find module|Maximum update depth exceeded/.test(document.body.innerText) };
       }, { awaitPromise: true });
     },
     async packagedToolIds() {
-      return evalIn(app, browserScript(async (value, inputValue) => {
-        await window.__OPENWORK_ELECTRON__.invokeDesktop("engineStart", value, { runtime: "direct" });
+      return evalIn(app, async () => {
+        const workspaces = await window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceBootstrap");
+        const workspace = workspaces.workspaces.find((entry) => entry.id === workspaces.selectedId);
+        if (workspaces.workspaces.length !== 1 || !workspace?.path?.endsWith("OpenWork Chat")) {
+          throw new Error("Packaged startup did not select its default chat workspace.");
+        }
         const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
         const headers = { Authorization: "Bearer " + info.ownerToken, "Content-Type": "application/json" };
-        const created = await fetch(info.baseUrl + "/workspaces/local", {
-          method: "POST", headers, signal: AbortSignal.timeout(15000),
-          body: JSON.stringify({ folderPath: inputValue }),
-        });
-        if (created.status !== 201) throw new Error("Workspace creation failed: " + created.status);
-        const workspace = await created.json();
-        const tools = await fetch(info.baseUrl + "/workspace/" + workspace.activeId + "/opencode/experimental/tool/ids", {
+        const tools = await fetch(info.baseUrl + "/workspace/" + workspace.id + "/opencode/experimental/tool/ids", {
           headers, signal: AbortSignal.timeout(30000),
         });
         if (!tools.ok) throw new Error("Engine tool discovery failed: " + tools.status);
         return tools.json();
-      }, [seed.tmpPath("packaged-plugin-smoke"), seed.tmpPath("packaged-plugin-smoke")]), { awaitPromise: true, timeoutMs: 60_000 });
+      }, { awaitPromise: true, timeoutMs: 60_000 });
     },
     async [Symbol.asyncDispose]() { await app[Symbol.asyncDispose](); },
   };
 }
 
 export async function bareFirstRunWorld(seed: Seed, { place }: { place: Place }) {
-  const capture = process.platform === "linux" && place.kind === "local" ? await captureOpenedUrls() : null;
-  const app = capture
-    ? await desktop({ name: "first-run", host: place.host(), env: { PATH: `${capture.binDir}:${process.env.PATH ?? ""}` } })
-    : await seed.desktop({ name: "first-run", signIn: false });
+  const app = await seed.desktop({ name: "first-run", signIn: false });
+  const url = new URL(await evalIn(app, () => location.href));
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("The non-desktop welcome journey requires the source app's HTTP surface.");
+  }
+  url.hash = "/welcome";
+  const web = await chrome({ name: "first-run-welcome", host: place.host(), startUrl: url.href, headless: true });
   return {
     app,
-    capture,
-    workspacePath: seed.tmpPath("first-run-workspace"),
-    async [Symbol.asyncDispose]() { await app[Symbol.asyncDispose](); },
+    web,
+    async openedUrls() { return (await listTargets(web.handle.cdpUrl)).map((target) => target.url); },
+    async [Symbol.asyncDispose]() { await web[Symbol.asyncDispose](); },
   };
+}
+
+export async function localFirstRunWorld(seed: Seed) {
+  const prompt = "Create a short welcome checklist for this OpenWork workspace. Use exactly three bullets and mention one thing I can do next.";
+  const reply = "Your workspace is ready. You can draft a document next.";
+  const den = await seed.den({
+    provision: false,
+    mocks: { starter: seed.mock({ agentWorkloads: [{ promptMarker: prompt, finalReply: reply, steps: [] }] }) },
+  });
+  const mock = den.mocks.starter;
+  // Only replace the provider transport. Do not seed a workspace, session,
+  // sign-in, onboarding preference, or selected model: the app must supply them.
+  const app = await seed.desktop({
+    name: "first-run-local",
+    signIn: false,
+    env: {
+      DAYTONA_SECRETS_ENV: "/tmp/openwork-first-run-no-secrets",
+      OPENWORK_DESKTOP_DISTRIBUTION: "public",
+      OPENWORK_EVAL_MODEL: "",
+      VITE_DISABLE_OPENWORK_MODELS: "0",
+      OPENCODE_CONFIG: "",
+      OPENCODE_CONFIG_CONTENT: JSON.stringify({
+        enabled_providers: ["opencode"],
+        small_model: "opencode/big-pickle",
+        provider: {
+          opencode: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: `${mock.url}/v1`, apiKey: "sk-eval-fixture" },
+            whitelist: ["big-pickle"],
+            models: {
+              "big-pickle": {
+                name: "Big Pickle",
+                provider: { npm: "@ai-sdk/openai-compatible", api: `${mock.url}/v1` },
+              },
+            },
+          },
+        },
+      }),
+    },
+  });
+  return { app, mock, prompt, reply };
 }
 
 export async function workspaceWorld(seed: Seed) {
@@ -153,6 +196,97 @@ export async function parentChildPermissionWorld(seed: Seed) {
     throw new Error(`Child permission seed failed: ${JSON.stringify(seeded)}`);
   }
   return base;
+}
+
+export async function scopedPermissionRefreshWorld(seed: Seed) {
+  const base = await workspaceWorld(seed);
+  const sessions = await seed.sessions(base.app, Array.from({ length: 8 }, (_, index) => `Permission scope ${index}`));
+  const [unrelated, selected] = sessions;
+  if (!unrelated || !selected) throw new Error("Permission scope sessions were not created");
+  const engine = resolveEvalEngine();
+  const prefix = `/workspace/${encodeURIComponent(base.workspace.workspaceId)}/${engine === "v2" ? "opencode2" : "opencode"}`;
+  const debuggerUrl = base.app.client.webSocketDebuggerUrl;
+  if (!debuggerUrl) throw new Error("Permission witness needs a desktop CDP endpoint");
+  const socket = new WebSocket(debuggerUrl);
+  const ready = Promise.withResolvers<void>();
+  const commands = new Map<number, ReturnType<typeof Promise.withResolvers<void>>>();
+  const reads: { sessionId: string; networkId: string; calibration: boolean; held: boolean }[] = [];
+  const finished = new Set<string>();
+  let nextId = 1;
+  let failure: Error | undefined;
+  const command = async (method: string, params = {}) => {
+    const id = nextId++;
+    const result = Promise.withResolvers<void>();
+    commands.set(id, result);
+    const timeout = setTimeout(() => result.reject(new Error(`Permission witness timed out: ${method}`)), 15_000);
+    try {
+      socket.send(JSON.stringify({ id, method, params }));
+      await result.promise;
+    } finally {
+      clearTimeout(timeout);
+      commands.delete(id);
+    }
+  };
+  const readyTimeout = setTimeout(() => ready.reject(new Error("Permission witness did not connect")), 15_000);
+  socket.addEventListener("open", () => ready.resolve());
+  socket.addEventListener("error", () => {
+    failure = new Error("Permission witness connection failed");
+    ready.reject(failure);
+  });
+  socket.addEventListener("message", (event) => {
+    const message: unknown = JSON.parse(String(event.data));
+    if (!isRecord(message)) return;
+    if (typeof message.id === "number") {
+      const pending = commands.get(message.id);
+      if (message.error) pending?.reject(new Error("Permission witness command failed"));
+      else pending?.resolve();
+    }
+    const params = message.params;
+    if (!isRecord(params)) return;
+    if (message.method === "Network.loadingFinished" && typeof params.requestId === "string") finished.add(params.requestId);
+    if (message.method !== "Fetch.requestPaused" || typeof params.requestId !== "string") return;
+    const request = params.request;
+    if (!isRecord(request) || typeof request.url !== "string") return;
+    const url = new URL(request.url);
+    const match = url.pathname.slice(prefix.length).match(/^\/api\/session\/([^/]+)\/permission$/);
+    const sessionId = match?.[1] ? decodeURIComponent(match[1]) : "";
+    if (request.method === "GET" && sessionId && typeof params.networkId === "string") {
+      // Hold every read of one unrelated root, not just a single lucky request.
+      // The calibration proves the fault is active without relying on timing.
+      const held = sessionId === unrelated.sessionId;
+      reads.push({ sessionId, networkId: params.networkId, calibration: url.searchParams.has("scope-calibration"), held });
+      if (held) return;
+    }
+    void command("Fetch.continueRequest", { requestId: params.requestId }).catch((error: Error) => { failure = error; });
+  });
+  const dispose = async () => {
+    clearTimeout(readyTimeout);
+    try { if (socket.readyState === WebSocket.OPEN) await command("Fetch.disable"); }
+    finally { socket.close(); }
+  };
+  try {
+    await ready.promise;
+    clearTimeout(readyTimeout);
+    await command("Network.enable");
+    await command("Fetch.enable", { patterns: [{ urlPattern: `*${prefix}/api/session/*/permission*`, requestStage: "Request" }] });
+    await seed.evalIn(base.app, browserScript(async (path) => {
+      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+      void fetch(info.baseUrl + path, {
+        headers: { Authorization: `Bearer ${info.ownerToken}` }, signal: AbortSignal.timeout(120_000),
+      }).catch(() => undefined);
+    }, [`${prefix}/api/session/${encodeURIComponent(unrelated.sessionId)}/permission?scope-calibration=1`]), { awaitPromise: true });
+    return {
+      ...base, selected, unrelated, engine,
+      permissionReads() {
+        if (failure) throw failure;
+        return reads.map((read) => ({ sessionId: read.sessionId, calibration: read.calibration, held: read.held, completed: finished.has(read.networkId) }));
+      },
+      async [Symbol.asyncDispose]() { await dispose(); },
+    };
+  } catch (error) {
+    await dispose();
+    throw error;
+  }
 }
 
 export async function artifactCodeBrowserWorld(seed: Seed) {
@@ -486,6 +620,19 @@ export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Pla
       await host[Symbol.asyncDispose]();
       if (provisioned?.created) await deleteSandboxes([provisioned.sandbox]);
     },
+  };
+}
+
+/**
+ * A healthy desktop whose render tree is about to throw. The spec triggers the
+ * throw through the dev-only `eval.app.render_throw` control action and reads
+ * back what the recovery screen put on the clipboard.
+ */
+export async function renderCrashWorld(seed: Seed) {
+  const app = await seed.desktop({ name: "render-crash" });
+  return {
+    app,
+    readClipboard: () => seed.evalIn(app, () => (navigator.clipboard.readText()), { awaitPromise: true }),
   };
 }
 
@@ -1045,6 +1192,12 @@ export async function managedVaultWorld(_seed: Seed, { place }: { place: Place }
   };
 }
 
+declare global {
+  interface Window {
+    __backgroundUpdateInstallAttempts: number;
+  }
+}
+
 export async function backgroundUpdateWorld(seed: Seed) {
   const app = await seed.desktop({ name: "background-update", signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("background-update"));
@@ -1053,6 +1206,7 @@ export async function backgroundUpdateWorld(seed: Seed) {
     const now = Date.now.bind(Date);
     const state: Window["__backgroundUpdateWitness"] = { checks: 0, downloads: 0, installs: 0, offset: 0, finishDownload: null, intervalCheck: null };
     window.__backgroundUpdateWitness = state;
+    window.__backgroundUpdateInstallAttempts = 0;
     const schedule = window.setInterval.bind(window);
     // The browser timer returns a numeric handle; Node's merged ambient overload does not apply here.
     const browserWindow: Window = window;
@@ -1075,9 +1229,24 @@ export async function backgroundUpdateWorld(seed: Seed) {
       },
       download: async () => {
         state.downloads++;
-        return new Promise(resolve => { state.finishDownload = () => resolve({ ok: true }); });
+        const attempt = state.downloads;
+        return new Promise((resolve, reject) => {
+          state.finishDownload = () => {
+            state.finishDownload = null;
+            if (attempt === 1) resolve({ ok: false, reason: "Update native preparation failed." });
+            else if (attempt === 2) reject(new Error("Update download connection failed."));
+            else resolve({ ok: true });
+          };
+        });
       },
-      installAndRestart: async () => { state.installs++; return { ok: true }; },
+      // Witness renderer handling of bridge outcomes, not native installer behavior.
+      installAndRestart: async () => {
+        const attempt = ++window.__backgroundUpdateInstallAttempts;
+        if (attempt === 1) return { ok: false, reason: "Update installer could not start." };
+        if (attempt === 2) throw new Error("Update installer connection failed.");
+        state.installs++;
+        return { ok: true };
+      },
       onDownloadProgress: () => () => {},
     };
     state.offset += 16 * 60 * 1000;
@@ -1089,6 +1258,7 @@ export async function backgroundUpdateWorld(seed: Seed) {
       const { checks, downloads, installs } = window.__backgroundUpdateWitness;
       return {
         checks, downloads, installs, route: location.hash,
+        installAttempts: window.__backgroundUpdateInstallAttempts,
         updateInTitlebar: Boolean(document.querySelector<HTMLElement>('header [data-update-button]')),
         updateInSidebar: Boolean(document.querySelector<HTMLElement>('[data-sidebar="footer"] [data-update-button]')),
         sidebarName: document.querySelector<HTMLElement>('[data-sidebar-brand]')?.textContent?.trim() ?? null,
@@ -1105,7 +1275,11 @@ export async function backgroundUpdateWorld(seed: Seed) {
       state.offset += 15 * 60 * 1000;
       state.intervalCheck();
     }),
-    finishDownload: () => evalIn(app, () => (window.__backgroundUpdateWitness.finishDownload?.())),
+    finishDownload: () => evalIn(app, () => {
+      const finish = window.__backgroundUpdateWitness.finishDownload;
+      if (!finish) throw new Error("No update download is pending");
+      finish();
+    }),
     returnToApp: () => evalIn(app, () => {
       window.__backgroundUpdateWitness.offset += 16 * 60 * 1000;
       window.dispatchEvent(new Event("focus"));

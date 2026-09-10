@@ -1,10 +1,8 @@
 import type { DynamicToolUIPart, JSONValue, ProviderMetadata, TextUIPart } from "ai";
 import type { ToolPart } from "@opencode-ai/sdk/v2/client";
 import {
-  connectionActionAppResourceUri,
   connectionActionAppSchemaVersion,
   connectionActionPayloadSchema,
-  connectionActionToolName,
 } from "@openwork/types/connection-action-app";
 
 import { safeStringify } from "@/app/utils";
@@ -55,13 +53,6 @@ function connectionActionMcpResultFromError(error: string): JSONValue | null {
   return {
     content: [{ type: "text", text: error }],
     structuredContent: payload.data,
-    _meta: {
-      "openwork/mcpApp": {
-        toolName: connectionActionToolName,
-        resourceUri: connectionActionAppResourceUri,
-        arguments: { connectionId: payload.data.connectionId },
-      },
-    },
   };
 }
 

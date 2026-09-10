@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { and, asc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   LlmProviderModelTable,
   LlmProviderTable,
@@ -8,6 +8,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { db } from "../db.js"
 import { env } from "../env.js"
+import { organizationAllowsManagedModels } from "../inference.js"
 import { appLogger } from "../observability/logger.js"
 import { fetchPreviewNoRedirect, fetchWithConnectRetry, previewFetch } from "../workers/preview-fetch.js"
 import {
@@ -155,10 +156,14 @@ const modelConfigPassthroughKeys = [
 
 const databaseMaterializationStore: CloudProviderMaterializationStore = {
   async listProviders(organizationId) {
+    const managedModelsAllowed = await organizationAllowsManagedModels(organizationId)
     const providers = await db
       .select()
       .from(LlmProviderTable)
-      .where(eq(LlmProviderTable.organizationId, organizationId))
+      .where(and(
+        eq(LlmProviderTable.organizationId, organizationId),
+        managedModelsAllowed ? undefined : sql`${LlmProviderTable.source} <> 'openwork'`,
+      ))
       .orderBy(asc(LlmProviderTable.id))
 
     if (providers.length === 0) {

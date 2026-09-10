@@ -105,6 +105,8 @@ export interface ServerConfig {
   logRequests: boolean;
   /** In-memory secure key custody supplied by an embedding host such as OpenWork Desktop. */
   localManagedMcpVaultKey?: LocalManagedMcpVaultKeyProvider;
+  /** Desktop-owned managed engines only; never enabled by remote clients. */
+  resumeInterruptedTasks?: boolean;
 }
 
 export interface Capabilities {

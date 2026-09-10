@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
-import { InferenceKeyTable, InferenceOrgUpstreamProviderKeyTable, MemberTable } from "@openwork-ee/den-db"
+import { InferenceKeyTable, InferenceOrgUpstreamProviderKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
+import { assertManagedModelsAllowed, ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import {
   inferenceBearerKeyLookupDigests,
   type InferenceBearerKey,
@@ -31,6 +32,20 @@ export async function findActiveInferenceKey(key: InferenceBearerKey) {
     return null
   }
   return row.inferenceKey
+}
+
+export async function assertOrganizationManagedModelsAllowed(organizationId: string): Promise<void> {
+  try {
+    const [organization] = await db.select({ metadata: OrganizationTable.metadata })
+      .from(OrganizationTable)
+      .where(eq(OrganizationTable.id, normalizeDenTypeId("organization", organizationId)))
+      .limit(1)
+    if (!organization) throw new ManagedModelsPolicyError("managed_models_policy_unavailable")
+    assertManagedModelsAllowed(organization.metadata)
+  } catch (error) {
+    if (error instanceof ManagedModelsPolicyError) throw error
+    throw new ManagedModelsPolicyError("managed_models_policy_unavailable")
+  }
 }
 
 export async function getOpenRouterProviderKey(organizationId: string) {

@@ -1,5 +1,7 @@
 import type { Hono } from "hono"
 import type { MiddlewareHandler } from "hono"
+import { bodyLimit } from "hono/body-limit"
+import { contextStorage, getContext } from "hono/context-storage"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
@@ -7,12 +9,18 @@ import { env } from "../../env.js"
 import { jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
-import { MicrosoftGraphClient, MicrosoftGraphRequestError } from "../../capability-sources/microsoft-graph.js"
+import { MicrosoftGraphClient, MicrosoftGraphMutationOutcomeUnknownError, MicrosoftGraphRequestError } from "../../capability-sources/microsoft-graph.js"
 import { getOrgOAuthClient } from "../../capability-sources/oauth-credentials.js"
+import { listNativeProviderUsableEntries, resolveDefaultNativeProviderCredentialId } from "../../capability-sources/native-provider-connections.js"
 import { clientSelectedFeatures, getNativeOAuthProvider, providerScopesSatisfy } from "../../capability-sources/provider-registry.js"
+import { listTeamsForMember } from "../../orgs.js"
+import { INTERNAL_CAPABILITY_CONNECTOR_HEADER, readInternalCapabilityConnectorId } from "../../session.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const CONNECT_MICROSOFT_ACCOUNT_MESSAGE = "Connect your Microsoft work account first: open Settings > Connect and use Connect your account on the Microsoft 365 row, or connect from the OpenWork Cloud dashboard."
+
+const graphItemIdSchema = z.string().trim().min(1).max(512)
+  .refine((value) => value !== "." && value !== ".." && !/[\s/\\?#]/.test(value), "Use a Microsoft Graph item id, not a path or URL.")
 
 const emailAddressSchema = z.object({
   name: z.string(),
@@ -32,6 +40,10 @@ const mailMessageSummarySchema = z.object({
 }).meta({ ref: "Microsoft365MailMessageSummary" })
 
 const mailMessageSchema = mailMessageSummarySchema.extend({
+  isDraft: z.boolean(),
+  isRead: z.boolean(),
+  categories: z.array(z.string()),
+  parentFolderId: z.string(),
   cc: z.array(emailAddressSchema),
   body: z.string(),
   bodyContentType: z.string(),
@@ -44,7 +56,7 @@ const mailMessagesQuerySchema = z.object({
 })
 
 const mailMessageParamSchema = z.object({
-  messageId: z.string().trim().min(1).max(512).describe("Microsoft Graph message id."),
+  messageId: graphItemIdSchema.describe("Microsoft Graph message id."),
 })
 
 const mailMessagesResponseSchema = z.object({
@@ -69,6 +81,34 @@ const mailDraftResponseSchema = z.object({
   ok: z.literal(true),
   draft: mailMessageSchema,
 }).meta({ ref: "Microsoft365MailDraftResponse" })
+
+const mailSendBodySchema = z.object({
+  confirmSend: z.literal(true).describe("Must be true only after the user explicitly requests sending this existing draft. Creating or reviewing a draft is not send authorization."),
+}).strict().meta({ ref: "Microsoft365MailSendBody" })
+
+const mailSendResponseSchema = z.object({
+  ok: z.literal(true),
+  draftId: z.string(),
+  status: z.literal("accepted").describe("Graph accepted the send request. This is not confirmation of delivery."),
+}).meta({ ref: "Microsoft365MailSendResponse" })
+
+const mailReplyDraftBodySchema = z.object({
+  comment: z.string().trim().min(1).max(20_000).describe("Reply text to save in a draft for user review; this does not send mail."),
+}).strict().meta({ ref: "Microsoft365MailReplyDraftBody" })
+
+const mailMessageUpdateBodySchema = z.object({
+  isRead: z.boolean().optional(),
+  categories: z.array(z.string().trim().min(1).max(255)).max(25).optional()
+    .describe("Replace the message's categories with this list; an empty list clears them."),
+}).strict().refine((value) => value.isRead !== undefined || value.categories !== undefined, "Provide isRead or categories.")
+  .meta({ ref: "Microsoft365MailMessageUpdateBody" })
+
+const mailMessageMoveBodySchema = z.object({
+  destination: z.enum(["archive", "deleteditems", "inbox"]).describe("Named folder in the caller's mailbox. deleteditems moves to trash, never permanently deletes."),
+  confirmTrash: z.literal(true).optional().describe("Required when destination is deleteditems. Set true only when the user explicitly requested moving this message to trash."),
+}).strict().refine((value) => value.destination !== "deleteditems" || value.confirmTrash === true, {
+  message: "Moving a message to deleteditems requires confirmTrash: true.", path: ["confirmTrash"],
+}).meta({ ref: "Microsoft365MailMessageMoveBody" })
 
 const calendarEventsQuerySchema = z.object({
   timeMin: z.string().datetime().describe("Inclusive lower bound for event start time."),
@@ -115,13 +155,44 @@ const calendarEventResponseSchema = z.object({
   event: calendarEventSchema,
 }).meta({ ref: "Microsoft365CalendarEventResponse" })
 
+const calendarEventParamSchema = z.object({ eventId: graphItemIdSchema })
+const calendarEventUpdateBodySchema = z.object({
+  confirmNotifications: z.literal(true).describe("The user explicitly authorized this update and potential attendee email notifications from Microsoft Graph."),
+  subject: z.string().trim().min(1).max(255).optional(),
+  body: z.string().max(20_000).optional(),
+  start: z.string().max(40).datetime().optional().describe("New UTC start, with Z suffix. Rescheduling requires both start and end."),
+  end: z.string().max(40).datetime().optional().describe("New UTC end, with Z suffix."),
+  location: z.string().trim().max(255).optional(),
+}).strict()
+  .refine(({ confirmNotifications: _confirmation, ...fields }) => Object.values(fields).some((entry) => entry !== undefined), "Provide at least one event field.")
+  .refine((value) => (value.start === undefined && value.end === undefined)
+    || (value.start !== undefined && value.end !== undefined && Date.parse(value.end) > Date.parse(value.start)),
+  "Rescheduling requires both start and end, with end after start.")
+  .meta({ ref: "Microsoft365CalendarEventUpdateBody" })
+
+const calendarCancelBodySchema = z.object({
+  confirmCancel: z.literal(true).describe("The user explicitly requested cancellation, including attendee notifications."),
+  comment: z.string().max(20_000).optional(),
+}).strict().meta({ ref: "Microsoft365CalendarCancelBody" })
+
+const calendarDeleteBodySchema = z.object({
+  confirmDelete: z.literal(true).describe("The user explicitly requested deleting this event; organizer deletion can notify attendees."),
+}).strict().meta({ ref: "Microsoft365CalendarDeleteBody" })
+
+const calendarCancelResponseSchema = z.object({
+  ok: z.literal(true), eventId: z.string(), status: z.literal("accepted"),
+}).meta({ ref: "Microsoft365CalendarCancelResponse" })
+const calendarDeleteResponseSchema = z.object({
+  ok: z.literal(true), eventId: z.string(), status: z.literal("deleted"),
+}).meta({ ref: "Microsoft365CalendarDeleteResponse" })
+
 const driveFilesQuerySchema = z.object({
   query: z.string().trim().min(1).max(500).describe("Text to search in OneDrive file names and content."),
   maxResults: z.coerce.number().int().min(1).max(25).default(10).describe("Maximum files to return, capped at 25."),
 })
 
 const driveFileParamSchema = z.object({
-  itemId: z.string().trim().min(1).max(512).describe("Microsoft Graph drive item id."),
+  itemId: graphItemIdSchema.describe("Microsoft Graph drive item id."),
 })
 
 const driveItemSchema = z.object({
@@ -161,6 +232,18 @@ const driveFileWriteResponseSchema = z.object({
   ok: z.literal(true),
   file: driveItemSchema,
 }).meta({ ref: "Microsoft365DriveFileWriteResponse" })
+
+const driveItemNameSchema = z.string().trim().min(1).max(255)
+  .refine((value) => value !== "." && value !== ".." && !/["*:<>?\/\\|\u0000-\u001f]/.test(value) && !value.endsWith("."), "Use one valid OneDrive file or folder name, not a path.")
+const driveItemUpdateBodySchema = z.object({
+  name: driveItemNameSchema.optional(),
+  parentId: graphItemIdSchema.optional().describe("Destination folder id within the calling member's same OneDrive; cross-drive moves are not supported."),
+}).strict().refine((value) => value.name !== undefined || value.parentId !== undefined, "Provide name or parentId.")
+  .meta({ ref: "Microsoft365DriveItemUpdateBody" })
+const driveFolderBodySchema = z.object({
+  parentId: graphItemIdSchema.describe("Existing parent folder id in the calling member's OneDrive."),
+  name: driveItemNameSchema,
+}).strict().meta({ ref: "Microsoft365DriveFolderBody" })
 
 const teamsChatsQuerySchema = z.object({
   maxResults: z.coerce.number().int().min(1).max(50).default(20),
@@ -217,6 +300,8 @@ const needsConnectionSchema = z.object({
 const upstreamErrorSchema = z.object({
   error: z.literal("microsoft_graph_error"),
   message: z.string(),
+  outcome: z.literal("unknown").optional(),
+  retryable: z.literal(false).optional(),
 }).meta({ ref: "Microsoft365GraphError" })
 
 export type Microsoft365AccessToken =
@@ -244,13 +329,31 @@ async function defaultAccessTokenResolver(input: {
   if (!provider) {
     return { kind: "microsoft_graph_error", message: "microsoft-365 provider is not registered." }
   }
-  const client = await getOrgOAuthClient(input.organizationId, provider.providerId)
+  const headers = getContext().req.raw.headers
+  const requestedConnectorId = readInternalCapabilityConnectorId(headers)
+  if (headers.has(INTERNAL_CAPABILITY_CONNECTOR_HEADER) && !requestedConnectorId) {
+    return { kind: "needs_connection", message: CONNECT_MICROSOFT_ACCOUNT_MESSAGE }
+  }
+  const memberTeams = await listTeamsForMember({ organizationId: input.organizationId, memberId: input.orgMembershipId })
+  const teamIds = memberTeams.map((team) => team.id)
+  let credentialProviderId: string | null
+  if (requestedConnectorId) {
+    const entries = await listNativeProviderUsableEntries({ ...input, teamIds })
+    const selected = entries.find((entry) => entry.id === requestedConnectorId)
+    credentialProviderId = selected?.nativeProviderKey === provider.providerId ? selected.id : null
+  } else {
+    credentialProviderId = await resolveDefaultNativeProviderCredentialId({ ...input, nativeProviderKey: provider.providerId, teamIds })
+  }
+  if (!credentialProviderId) {
+    return { kind: "needs_connection", message: CONNECT_MICROSOFT_ACCOUNT_MESSAGE }
+  }
+  const client = await getOrgOAuthClient(input.organizationId, credentialProviderId)
   if (!client) {
     return { kind: "needs_connection", message: CONNECT_MICROSOFT_ACCOUNT_MESSAGE }
   }
   let token: Awaited<ReturnType<typeof getValidAccessToken>>
   try {
-    token = await getValidAccessToken({ provider, credentialProviderId: provider.providerId, ...input })
+    token = await getValidAccessToken({ provider, credentialProviderId, ...input })
   } catch (error) {
     return { kind: "microsoft_graph_error", message: error instanceof Error ? error.message : "Microsoft OAuth token refresh failed." }
   }
@@ -270,12 +373,13 @@ function featureEnabled(token: Extract<Microsoft365AccessToken, { kind: "ok" }>,
 }
 
 function featureGranted(token: Extract<Microsoft365AccessToken, { kind: "ok" }>, features: readonly string[]): boolean {
-  if (!token.scopes || token.scopes.length === 0) return true
+  if (!token.scopes || token.scopes.length === 0) return false
   const provider = getNativeOAuthProvider("microsoft-365")
   if (!provider) return false
   return features.some((feature) => {
     if (!token.enabledFeatures.includes(feature)) return false
-    const requiredScopes = provider.optionalFeatures?.[feature] ?? []
+    const requiredScopes = provider.optionalFeatures?.[feature]
+    if (!requiredScopes || requiredScopes.length === 0) return false
     return requiredScopes.every((scope) => providerScopesSatisfy(provider, token.scopes, scope))
   })
 }
@@ -288,7 +392,10 @@ function disabledFeatureMessage(label: string): string {
   return `The workspace administrator has disabled ${label} for the Microsoft 365 connection.`
 }
 
-function graphError(error: unknown): { error: "microsoft_graph_error"; message: string } {
+function graphError(error: unknown): { error: "microsoft_graph_error"; message: string; outcome?: "unknown"; retryable?: false } {
+  if (error instanceof MicrosoftGraphMutationOutcomeUnknownError) {
+    return { error: "microsoft_graph_error", message: error.message, outcome: "unknown", retryable: false }
+  }
   if (error instanceof MicrosoftGraphRequestError) {
     return { error: "microsoft_graph_error", message: error.message }
   }
@@ -296,6 +403,22 @@ function graphError(error: unknown): { error: "microsoft_graph_error"; message: 
     error: "microsoft_graph_error",
     message: error instanceof Error ? error.message : "Microsoft Graph request failed.",
   }
+}
+
+function describeMutation(operationId: string, summary: string, description: string, responseSchema: z.ZodType) {
+  return describeRoute({
+    operationId,
+    tags: ["Capability Sources"],
+    summary,
+    description: `${description} Uses only the calling member's delegated Microsoft 365 connection. Never automatically retry a mutation after a timeout, cancellation, or ambiguous response; inspect current state first.`,
+    responses: {
+      200: jsonResponse("Microsoft Graph mutation receipt returned.", responseSchema),
+      401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+      409: jsonResponse("The selected feature or delegated permission is missing.", needsConnectionSchema),
+      413: jsonResponse("Request body exceeds 1 MiB.", z.object({ error: z.literal("invalid_request"), message: z.string() })),
+      502: jsonResponse("Microsoft Graph rejected the request or the outcome is unknown.", upstreamErrorSchema),
+    },
+  })
 }
 
 /**
@@ -308,16 +431,149 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
   app: Hono<T>,
   options: Microsoft365RouteOptions = {},
 ) {
+  app.use("/v1/capabilities/microsoft-365/*", contextStorage())
   const resolveAccessToken = options.resolveAccessToken ?? defaultAccessTokenResolver
   const orgMemberRouteMiddleware = options.memberRoute ?? orgMemberRoute()
+  const boundedMutationBody = bodyLimit({
+    maxSize: 1024 * 1024,
+    onError: (c) => c.json({ error: "invalid_request", message: "Request exceeds 1 MiB." }, 413),
+  })
 
-  function graphClient(accessToken: string) {
+  function graphClient(accessToken: string, signal?: AbortSignal) {
     return new MicrosoftGraphClient({
       accessToken,
       baseUrl: options.graphBaseUrl ?? env.microsoftGraphBaseUrl,
       fetch: options.fetch,
+      signal,
     })
   }
+
+  async function mutationClient(payload: OrgRouteVariables["organizationContext"], signal: AbortSignal, features: readonly string[], label: string) {
+    if (!payload) return Response.json({ error: "unauthorized" }, { status: 401 })
+    const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
+    if (token.kind === "microsoft_graph_error") return Response.json({ error: token.kind, message: token.message }, { status: 502 })
+    if (token.kind === "needs_connection") return Response.json({ error: token.kind, message: token.message }, { status: 409 })
+    if (!featureEnabled(token, features)) return Response.json({ error: "needs_connection", message: disabledFeatureMessage(label) }, { status: 409 })
+    if (!featureGranted(token, features)) return Response.json({ error: "needs_connection", message: missingPermissionMessage(label) }, { status: 409 })
+    return graphClient(token.accessToken, signal)
+  }
+
+  app.post(
+    "/v1/capabilities/microsoft-365/mail-drafts/:messageId/send",
+    describeMutation("sendMicrosoft365MailDraft", "Send an existing Outlook draft after explicit user confirmation", "Requires Mail.Send and the mailSend feature. Only send an existing draft the user explicitly requested to send. Graph HTTP 202 means accepted, not delivered.", mailSendResponseSchema),
+    orgMemberRouteMiddleware, boundedMutationBody, paramValidator(mailMessageParamSchema), jsonValidator(mailSendBodySchema),
+    async (c) => {
+      const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["mailSend"], "Outlook mail sending")
+      if (client instanceof Response) return client
+      try {
+        return c.json({ ok: true, ...await client.sendMailDraft(c.req.valid("param").messageId) })
+      } catch (error) { return c.json(graphError(error), 502) }
+    },
+  )
+
+  app.post(
+    "/v1/capabilities/microsoft-365/mail-message/:messageId/reply-draft",
+    describeMutation("createMicrosoft365ReplyDraft", "Create a reply draft for a selected Outlook message", "Uses Graph createReply with Mail.ReadWrite and mailDraft. Preserves the selected message's reply context. Saves a draft for user review and never sends it.", mailDraftResponseSchema),
+    orgMemberRouteMiddleware, boundedMutationBody, paramValidator(mailMessageParamSchema), jsonValidator(mailReplyDraftBodySchema),
+    async (c) => {
+      const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["mailDraft"], "Outlook draft creation")
+      if (client instanceof Response) return client
+      try {
+        return c.json({ ok: true, draft: await client.createMailReplyDraft(c.req.valid("param").messageId, c.req.valid("json").comment) })
+      } catch (error) { return c.json(graphError(error), 502) }
+    },
+  )
+
+  app.patch(
+    "/v1/capabilities/microsoft-365/mail-message/:messageId",
+    describeMutation("updateMicrosoft365MailMessage", "Update Outlook message read state or categories", "Requires Mail.ReadWrite and mailManage. Only changes isRead and/or replaces categories; cannot alter recipients or send messages.", mailMessageResponseSchema),
+    orgMemberRouteMiddleware, boundedMutationBody, paramValidator(mailMessageParamSchema), jsonValidator(mailMessageUpdateBodySchema),
+    async (c) => {
+      const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["mailManage"], "Outlook mail management")
+      if (client instanceof Response) return client
+      try {
+        return c.json({ ok: true, message: await client.updateMailMessage(c.req.valid("param").messageId, c.req.valid("json")) })
+      } catch (error) { return c.json(graphError(error), 502) }
+    },
+  )
+
+  app.post(
+    "/v1/capabilities/microsoft-365/mail-message/:messageId/move",
+    describeMutation("moveMicrosoft365MailMessage", "Move an Outlook message to archive, deleted items, or inbox", "Requires Mail.ReadWrite and mailManage. Moves one message to a fixed named folder, never permanently deletes it. Moving to deleteditems also requires confirmTrash: true. Use the returned message id after moving, since Graph can change it.", mailMessageResponseSchema),
+    orgMemberRouteMiddleware, boundedMutationBody, paramValidator(mailMessageParamSchema), jsonValidator(mailMessageMoveBodySchema),
+    async (c) => {
+      const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["mailManage"], "Outlook mail management")
+      if (client instanceof Response) return client
+      try {
+        return c.json({ ok: true, message: await client.moveMailMessage(c.req.valid("param").messageId, c.req.valid("json").destination) })
+      } catch (error) { return c.json(graphError(error), 502) }
+    },
+  )
+
+  app.patch(
+    "/v1/capabilities/microsoft-365/calendar-events/:eventId",
+    describeMutation("updateMicrosoft365CalendarEvent", "Edit or reschedule an Outlook calendar event", "Requires Calendars.ReadWrite and calendarWrite. Updates only supplied subject, body, location, or paired UTC start/end. Requires confirmNotifications: true because updates may email attendees.", calendarEventResponseSchema),
+    orgMemberRouteMiddleware, boundedMutationBody, paramValidator(calendarEventParamSchema), jsonValidator(calendarEventUpdateBodySchema),
+    async (c) => {
+      const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["calendarWrite"], "Outlook calendar read/write")
+      if (client instanceof Response) return client
+      try {
+        return c.json({ ok: true, event: await client.updateCalendarEvent(c.req.valid("param").eventId, c.req.valid("json")) })
+      } catch (error) { return c.json(graphError(error), 502) }
+    },
+  )
+
+  app.post(
+    "/v1/capabilities/microsoft-365/calendar-events/:eventId/cancel",
+    describeMutation("cancelMicrosoft365CalendarEvent", "Cancel an Outlook meeting and notify attendees", "Requires Calendars.ReadWrite and calendarWrite. Only the meeting organizer can cancel via Graph. Requires explicit user cancellation confirmation; a 202 receipt means cancellation was accepted.", calendarCancelResponseSchema),
+    orgMemberRouteMiddleware, boundedMutationBody, paramValidator(calendarEventParamSchema), jsonValidator(calendarCancelBodySchema),
+    async (c) => {
+      const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["calendarWrite"], "Outlook calendar read/write")
+      if (client instanceof Response) return client
+      try {
+        return c.json({ ok: true, ...await client.cancelCalendarEvent(c.req.valid("param").eventId, c.req.valid("json").comment) })
+      } catch (error) { return c.json(graphError(error), 502) }
+    },
+  )
+
+  app.delete(
+    "/v1/capabilities/microsoft-365/calendar-events/:eventId",
+    describeMutation("deleteMicrosoft365CalendarEvent", "Delete a selected Outlook calendar event", "Requires Calendars.ReadWrite and calendarWrite, plus explicit user deletion confirmation. Deleting an organizer's meeting can send cancellations to attendees. Graph 204 confirms deletion.", calendarDeleteResponseSchema),
+    orgMemberRouteMiddleware, boundedMutationBody, paramValidator(calendarEventParamSchema), jsonValidator(calendarDeleteBodySchema),
+    async (c) => {
+      const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["calendarWrite"], "Outlook calendar read/write")
+      if (client instanceof Response) return client
+      try {
+        return c.json({ ok: true, ...await client.deleteCalendarEvent(c.req.valid("param").eventId) })
+      } catch (error) { return c.json(graphError(error), 502) }
+    },
+  )
+
+  app.patch(
+    "/v1/capabilities/microsoft-365/drive-file/:itemId",
+    describeMutation("updateMicrosoft365DriveItem", "Rename or move a OneDrive item within the same drive", "Requires Files.ReadWrite (or Files.ReadWrite.All) and filesWrite (or filesFull). Updates only the name and/or parent folder id in the caller's OneDrive; cannot move across drives or upload content.", driveFileWriteResponseSchema),
+    orgMemberRouteMiddleware, boundedMutationBody, paramValidator(driveFileParamSchema), jsonValidator(driveItemUpdateBodySchema),
+    async (c) => {
+      const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["filesWrite", "filesFull"], "OneDrive write")
+      if (client instanceof Response) return client
+      try {
+        return c.json({ ok: true, file: await client.updateDriveItem(c.req.valid("param").itemId, c.req.valid("json")) })
+      } catch (error) { return c.json(graphError(error), 502) }
+    },
+  )
+
+  app.post(
+    "/v1/capabilities/microsoft-365/drive-folders",
+    describeMutation("createMicrosoft365DriveFolder", "Create a folder in the calling member's OneDrive", "Requires Files.ReadWrite (or Files.ReadWrite.All) and filesWrite (or filesFull). Creates one folder under an existing parent id. Name conflicts fail without overwriting or silently renaming anything.", driveFileWriteResponseSchema),
+    orgMemberRouteMiddleware, boundedMutationBody, jsonValidator(driveFolderBodySchema),
+    async (c) => {
+      const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["filesWrite", "filesFull"], "OneDrive write")
+      if (client instanceof Response) return client
+      try {
+        return c.json({ ok: true, file: await client.createDriveFolder(c.req.valid("json")) })
+      } catch (error) { return c.json(graphError(error), 502) }
+    },
+  )
 
   app.get(
     "/v1/capabilities/microsoft-365/mail-messages",

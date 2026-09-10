@@ -73,7 +73,33 @@ judging is deferred by default; add `--with-llm-vision` to judge inline. Use
 `--local` to force isolated local resources, `--daytona` to require Daytona,
 `--den <url>` to reuse Den, or `--publish --pr <number>` to judge and publish
 existing evidence. Without a placement flag, the CLI probes Daytona auth and
-prints `placement: <daytona|local> (<reason>)` for its selection.
+prints `placement: <daytona|local> (<reason>)` for the placement asserted in the
+runtime environment. `--local` and `--daytona` override inherited placement;
+transport, engine, and surface selectors are never inferred as source opt-ins.
+
+Registered cases can select their engine and surface without raw environment
+variables. `--case` uses the surface default in the catalog; `CONT-01` and
+`SWITCH-10` default to web. `--surface` is optional disambiguation, though the
+copyable examples remain explicit. Use `pnpm evals:e2e --list` to see them.
+
+```bash
+pnpm evals:e2e streamed-markdown-answer --local --engine v2 --surface web --case CONT-01
+pnpm evals:e2e live-tool-visible-after-session-switch --daytona --engine v1 --surface web --case SWITCH-10
+```
+
+A focused web case avoids legacy Den/Electron suite preparation, but still
+boots the real Vite app, server, engine, and Chrome; install dependencies first.
+This fast path is not a guarantee for the duration of a first cold install.
+Explicit `--local` placement cannot be overridden by source consent or inherited
+Daytona settings. `--daytona` uses provided slot environment as advanced
+configuration, runs one selected case per sandbox, and checks the immutable
+ref/source guard before launch.
+
+`--case` filters Vitest by the registered literal case prefix. A passing result
+means that selected case passed; other cases in the file are reported as not
+run. A selected skip, unknown result, zero matches, or missing JSON report is
+incomplete; any non-selected case that executes is a contract failure.
+Daytona slot IDs and refs remain advanced environment configuration.
 
 | Exit | Named test | Unfiltered E2E suite | Publish |
 | --- | --- | --- | --- |
@@ -206,6 +232,11 @@ current value. `user.see(target, { text })` compares contenteditable inner text
 and accepts a string or regular expression. Clicks require center-point hit
 testing; `{ hitTest: false }` is a last resort for an intentionally covered
 target and still performs a trusted CDP click at that element's center.
+
+`probe.dom(selector)` reads a fixed DOM snapshot: matching elements in document
+order with text, focus and rectangles, plus viewport/document widths. It never
+returns input values or accepts executable callbacks. Use it for geometry and
+focus assertions after trusted `user.press("Tab")` actions, rather than raw eval.
 
 Worlds can arrange a shaped Den connection with `seed.denLink(den, options)`;
 the returned link is fixture-owned. `probe.connectState(app)` reads the
@@ -421,11 +452,11 @@ Without a placement flag, the CLI uses Daytona when `daytona snapshot list`
 succeeds and local otherwise, then prints the placement and reason. `--daytona`
 requires Daytona; `--local` forces local.
 
-Set `OPENWORK_EVAL_ENGINE=v2` to run any named spec with the app's chat routed
-through the OpenCode v2 sidecar, locally or on Daytona; unset it (or use `v1`)
-for the unchanged default. For example,
-`OPENWORK_EVAL_ENGINE=v2 pnpm evals:e2e <slug> [--daytona]`. The test-evidence
-header records the selected engine.
+Use `--engine v1|v2` for a named spec. A registered `--case` uses its catalog
+surface default; pass `--surface web|electron` to disambiguate explicitly as in
+the recommended examples above. Files run without `--case` retain their legacy
+environment-driven behavior. The test-evidence header records the selected
+engine.
 
 Use direct CDP tools only to explore or debug. Convert repeatable coverage into
 a testkit test.

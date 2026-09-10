@@ -9,18 +9,23 @@ import {
   evalIn,
   listSessions,
   readComposerState,
+  readBrowserState,
+  readBrowserTabMetrics,
+  readConnectorCatalog,
   renameSessionAndWait,
   signInDesktopAs,
   waitUntilInteractive,
 } from "@openwork/behaviors";
 import {
   callFunctionOnSurface,
+  addInitScript,
   callFunction, connect, debuggerUrlFor, listTargets,
   clickAt,
   dumpScreenState,
   evaluateOnSurface,
   hoverAt,
   locate,
+  readDom,
   assertAbsent,
   navigate,
   pressKey,
@@ -32,9 +37,13 @@ import {
 import type { Located, Surface, Target } from "@openwork/cdp";
 import {
   app as startApp,
+  appWeb as startAppWeb,
   faultProxy as startFaultProxy,
   mcpMock,
   server,
+  requestBrowserTask,
+  readBrowserFixtureState,
+  setBrowserFixtureDiscovery,
 } from "@openwork/env";
 import type { Den, Place } from "@openwork/env";
 import { chrome, desktop } from "@openwork/hosts";
@@ -58,6 +67,7 @@ import type {
   Probe,
   ProbeEvalOptions,
   Seed,
+  SeedAppWebOptions,
   SeedDesktopOptions,
   SeedWebOptions,
   SeeOptions,
@@ -463,12 +473,23 @@ export class SeedChannel implements Seed {
     });
   }
 
+  appWeb(options: SeedAppWebOptions) {
+    const requestedSurface = process.env.OPENWORK_EVAL_APP_SURFACE;
+    if (requestedSurface !== undefined && requestedSurface.trim() !== "web") {
+      throw new Error(`seed.appWeb() requires OPENWORK_EVAL_APP_SURFACE=web when a surface is explicitly requested; received ${JSON.stringify(requestedSurface)}.`);
+    }
+    return this.#runtime.call("seed", "appWeb", `appWeb(${this.#runtime.place.kind})`, null, async () => {
+      const web = await startAppWeb({ ...options, place: this.#runtime.place });
+      return this.#runtime.stack.use(web);
+    });
+  }
+
   web(options: SeedWebOptions) {
     return this.#runtime.call("seed", "web", `web(${options.signedInAs ? "signed in" : "signed out"})`, null, async () => {
       const web = this.#runtime.stack.use(await chrome({
         name: "spec-web",
         host: this.#runtime.place.host(),
-        startUrl: options.den.ref.webUrl,
+        startUrl: options.signedInAs === undefined ? options.den.ref.webUrl : "about:blank",
         headless: options.headless,
       }));
       if (options.viewport) await setViewport(web, {
@@ -478,22 +499,15 @@ export class SeedChannel implements Seed {
       if (options.signedInAs !== undefined) {
         const session = sessionFromWebOptions(options);
         const denOrigin = new URL(options.den.ref.webUrl).origin;
-        let lastHref = "unobserved";
-        const waitForDen = () => eventually(async () => {
-          const observation = await evaluateOnSurface(web, browserScript((denOrigin) => (location.origin === denOrigin && document.readyState !== "loading" ? "" : location.href), [denOrigin]));
-          if (typeof observation === "string") lastHref = observation;
-          return observation === "";
-        }, { within: 30_000, intervalMs: 250, label: "Den origin document" });
-        try {
-          await waitForDen();
-        } catch {
-          await navigate(web.client, options.den.ref.webUrl);
-          await waitForDen().catch(() => { throw new Error(`Den origin document did not load; last observed location.href: ${lastHref}`); });
-        }
-        await callFunctionOnSurface(web, (token) => {
-          localStorage.setItem("openwork:web:auth-token", token);
-          return true;
-        }, [session.token]);
+        // Seed before hydration: a running anonymous page can otherwise clear the token.
+        await using initialSession = await addInitScript(web.client, browserScript((origin, token) => {
+          if (location.origin === origin) localStorage.setItem("openwork:web:auth-token", token);
+        }, [denOrigin, session.token]));
+        await navigate(web.client, new URL(options.startPath ?? "/", options.den.ref.webUrl).toString());
+        await eventually(() => evaluateOnSurface(web, browserScript((origin) =>
+          location.origin === origin && document.readyState !== "loading", [denOrigin])),
+        { within: 30_000, intervalMs: 250, label: "Seeded Den origin document" });
+        return web;
       }
       const startPath = options.startPath ?? "/";
       await navigate(web.client, new URL(startPath, options.den.ref.webUrl).toString());
@@ -594,6 +608,20 @@ export class SeedChannel implements Seed {
       await waitForControlAction(app, "composer.set_text");
       await control(app, "composer.set_text", { text });
     });
+  }
+
+  deepLink(app: Surface, url: string) {
+    return this.#runtime.call("seed", "deepLink", "deepLink(renderer ingress)", app, async () => {
+      if (new URL(url).protocol !== "openwork:") throw new Error("Expected an OpenWork deep link.");
+      await callFunctionOnSurface(app, (url) => {
+        window.dispatchEvent(new CustomEvent("openwork:deep-link", { detail: { urls: [url] } }));
+      }, [url]);
+    });
+  }
+
+  browserFixtureDiscovery(app: Surface, origin: string, action: "hold" | "release") {
+    return this.#runtime.call("seed", "browserFixtureDiscovery", `browserFixtureDiscovery(${action})`, app,
+      () => setBrowserFixtureDiscovery(app, origin, action));
   }
 
   evalIn<T>(surface: Surface, expression: BrowserEvaluation<T>, options: EvaluateOptions = {}): Promise<Awaited<T>> {
@@ -765,6 +793,12 @@ export class AgentChannel implements Agent {
     return new AgentChannel(this.#runtime, surface);
   }
 
+  browserTask(input: import("@openwork/behaviors").BrowserTaskInput) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("agent", "browserTask", `browserTask(${input.operation}, session=${input.sessionId}, tab=${input.args?.tabId ?? "owned"})`, surface,
+      () => requestBrowserTask(surface, input));
+  }
+
   run(action: string, args?: unknown): Promise<unknown> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("agent", "run", `run(${action})`, surface, async () => {
@@ -777,7 +811,13 @@ export class AgentChannel implements Agent {
   browserRequest(input: { url: string; method?: string; body?: string }): Promise<{ reached: boolean; error?: string }> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("agent", "browserRequest", `browserRequest(${input.method ?? "GET"} ${input.url})`, surface, async () => {
-      const handle = await callFunctionOnSurface(surface, async () => window.__OPENWORK_ELECTRON__.browser.openUrl("about:blank"), [], { awaitPromise: true });
+      const handle = await callFunctionOnSurface(surface, async () => {
+        const browser = window.__OPENWORK_ELECTRON__.browser;
+        const state = await browser.getState();
+        const tab = state.tabs.find(tab => tab.id === state.activeTabId);
+        if (!tab?.ownerSessionId || !tab.url?.startsWith('http')) throw new Error('Select an owned website tab first');
+        return browser.openUrl(tab.url, 'builtin', { sessionId: tab.ownerSessionId });
+      }, [], { awaitPromise: true });
       if (!isRecord(handle) || typeof handle.target_id !== "string") throw new Error("Browser did not return a target");
       const target = (await listTargets(surface.handle.cdpUrl)).find((entry) => entry.id === handle.target_id);
       if (!target) throw new Error("Browser target missing");
@@ -866,6 +906,39 @@ export class ProbeChannel implements Probe {
     return new ProbeChannel(this.#runtime, surface);
   }
 
+  zoom(): Promise<number> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "zoom", "zoom(Page.getLayoutMetrics)", surface, async () => {
+      const metrics = await surface.client.send("Page.getLayoutMetrics");
+      if (!isRecord(metrics) || !isRecord(metrics.cssVisualViewport)
+        || typeof metrics.cssVisualViewport.zoom !== "number"
+        || !Number.isFinite(metrics.cssVisualViewport.zoom) || metrics.cssVisualViewport.zoom <= 0) {
+        throw new Error("Chromium did not report its applied page zoom.");
+      }
+      return metrics.cssVisualViewport.zoom;
+    });
+  }
+
+  dom(selector: string) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "dom", `dom(${JSON.stringify(redacted(selector))})`, surface, () => readDom(surface, selector));
+  }
+
+  browserState() {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "browserState", "browserState", surface, () => readBrowserState(surface));
+  }
+
+  browserTabMetrics(targetId: string) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "browserTabMetrics", `browserTabMetrics(${targetId})`, surface, () => readBrowserTabMetrics(surface, targetId));
+  }
+
+  browserFixtureState(origin: string) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "browserFixtureState", "browserFixtureState(GET /state)", surface, () => readBrowserFixtureState(surface, origin));
+  }
+
   text(): Promise<string> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "text", "text", surface, async () => {
@@ -888,6 +961,11 @@ export class ProbeChannel implements Probe {
   composer() {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "composer", "composer", surface, () => readComposerState(surface));
+  }
+
+  connectorCatalog() {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "connectorCatalog", "connectorCatalog", surface, () => readConnectorCatalog(surface));
   }
 
   storage(key: string): Promise<unknown>;

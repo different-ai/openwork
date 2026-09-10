@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { EnvService } from "./env-file.js";
 import { CloudProviderSync } from "./cloud-provider-sync.js";
+import { openworkRuntimeConfigFilePath } from "./openwork-runtime-config.js";
 import { clearEnginePoolForConfig, setEnginePoolForConfig, type EnginePool } from "./engine-pool.js";
 import { readOpenworkWorkspaceConfig, writeOpenworkWorkspaceConfig } from "./openwork-workspace-config-store.js";
 import {
@@ -180,6 +181,191 @@ afterEach(async () => {
 });
 
 describe("cloud provider sync gateway", () => {
+  test("same-identity full delivery preserves providers on a busy engine; a new identity still cleans up", async () => {
+    const root = await createRoot();
+    const provider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
+    let busy = false;
+    const engineRequests: string[] = [];
+    const engine = Bun.serve({ port: 0, fetch(request) {
+      const path = new URL(request.url).pathname;
+      engineRequests.push(`${request.method} ${path}`);
+      if (path === "/session/status") return Response.json(busy ? { ses_live: { type: "busy" } } : {});
+      return Response.json(true);
+    } });
+    stops.push(() => engine.stop(true));
+    let denyPolicyB = true;
+    const den = Bun.serve({ port: 0, fetch(request) {
+      const path = new URL(request.url).pathname;
+      const org = request.headers.get("x-openwork-legacy-org-id");
+      if (path === "/v1/me/desktop-config") return org === "org_b" && denyPolicyB
+        ? Response.json({ error: "denied" }, { status: 401 }) : Response.json({});
+      if (org === "org_b") return Response.json({ error: "not_found" }, { status: 404 });
+      return Response.json(path === "/v1/llm-providers" ? { llmProviders: [provider] } : { llmProvider: provider });
+    } });
+    stops.push(() => den.stop(true));
+    const config = serverConfig(root, `http://127.0.0.1:${engine.port}`);
+    const server = await startServer(config);
+    stops.push(() => server.stop());
+    const base = `http://127.0.0.1:${server.port}`;
+    const put = (path: string, orgId: string) => fetch(`${base}${path}`, {
+      method: "PUT", headers: hostHeaders(),
+      body: JSON.stringify({ baseUrl: `http://127.0.0.1:${den.port}`, token: "den-token", orgId }),
+    });
+    expect((await put("/den-session", "org_a")).status).toBe(204);
+    await waitForLastRun(base, "applied");
+    const readEnv = () => new EnvService({ path: process.env.OPENWORK_ENV_STORE }).list();
+    const envBefore = await readEnv();
+    const configBefore = await readFile(openworkRuntimeConfigFilePath(config), "utf8");
+    expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_test).toBeDefined();
+    expect(envBefore.some((entry) => entry.key === "TEST_PROVIDER_API_KEY")).toBe(true);
+    busy = true;
+    engineRequests.length = 0;
+
+    // Repeated early A delivery and a rejected B identity must both retain A's
+    // actual ownership. Resuming A is reconciliation, never forced cleanup.
+    for (const org of ["org_a", "org_a", "org_b"]) {
+      expect((await put("/den-session/identity", org)).status).toBe(org === "org_b" ? 403 : 204);
+      expect(await runSync(base, "suspended")).toEqual({ status: "no_session" });
+    }
+    expect((await put("/den-session", "org_a")).status).toBe(204);
+    expect(await runSync(base, "resumed")).toEqual({ status: "noop" });
+    expect(await readEnv()).toEqual(envBefore);
+    expect(await readFile(openworkRuntimeConfigFilePath(config), "utf8")).toBe(configBefore);
+    expect(engineRequests.filter((request) => !request.startsWith("GET "))).toEqual([]);
+
+    denyPolicyB = false;
+    expect((await put("/den-session/identity", "org_b")).status).toBe(204);
+    expect((await put("/den-session", "org_b")).status).toBe(204);
+    await waitForLastRun(base, "failed");
+    expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_test).toBeUndefined();
+    expect(await readEnv()).toEqual([]);
+    expect(engineRequests).toContain("DELETE /auth/lpr_test");
+    expect(engineRequests).toContain("POST /instance/dispose");
+
+    expect((await put("/den-session", "org_a")).status).toBe(204);
+    await waitForLastRun(base, "applied");
+    expect((await put("/den-session/identity", "org_a")).status).toBe(204);
+    expect((await fetch(`${base}/den-session`, { method: "DELETE", headers: hostHeaders() })).status).toBe(204);
+    expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_test).toBeUndefined();
+    expect(await readEnv()).toEqual([]);
+  });
+
+  for (const resumeOrg of ["org_a", "org_b"]) {
+    test(`suspension during apply retains the actual owner, not the pending session, before resuming ${resumeOrg}`, async () => {
+      const root = await createRoot();
+      const config = serverConfig(root, "https://engine.example.test");
+      const provider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
+      const reached = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      let reloads = 0;
+      let holdAuth = true;
+      const fetchImpl = Object.assign(async (
+        input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1],
+      ) => {
+        const url = new URL(String(input));
+        if (url.hostname === "den.example.test") return Response.json(url.pathname === "/v1/llm-providers"
+          ? { llmProviders: [provider] } : { llmProvider: provider });
+        if (init?.method === "PUT" && holdAuth) {
+          reached.resolve();
+          await release.promise;
+        }
+        return Response.json(true);
+      }, { preconnect: globalThis.fetch.preconnect });
+      const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
+      const sync = new CloudProviderSync({ config, env, fetchImpl, engineBusy: async () => true,
+        reloadEngine: async () => { reloads += 1; }, intervalMs: 3_600_000 });
+      stops.push(() => sync.stop());
+      const session = { baseUrl: "https://den.example.test", token: "token-a", orgId: "org_a" };
+      try {
+        await sync.setSession(session);
+        await Promise.race([reached.promise, Bun.sleep(1_000).then(() => { throw new Error("Apply did not reach auth delivery"); })]);
+        const pendingB = sync.setSession({ ...session, orgId: "org_b" });
+        const suspended = sync.suspend();
+        holdAuth = false;
+        release.resolve();
+        await Promise.all([pendingB, suspended]);
+        await sync.suspend();
+        expect(reloads).toBe(0);
+        expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_test).toBeDefined();
+        const before = await env.list();
+        await sync.setSession({ ...session, orgId: resumeOrg });
+        expect((await sync.run("resumed")).status).toBe("applied");
+        if (resumeOrg === "org_a") expect(await env.list()).toEqual(before);
+        else expect((await env.list()).map(({ key, value }) => ({ key, value })))
+          .toEqual(before.map(({ key, value }) => ({ key, value })));
+        expect(reloads).toBe(resumeOrg === "org_a" ? 0 : 1);
+      } finally {
+        holdAuth = false;
+        release.resolve();
+      }
+    });
+  }
+
+  test("early identity cancels a previous provider fetch and stays dormant across timer ticks", async () => {
+    const root = await createRoot();
+    process.env.OPENWORK_CLOUD_PROVIDER_SYNC_INTERVAL_MS = "20";
+    process.env.OPENWORK_ENGINE_RELOAD_RETRY_MS = "20";
+    const reached = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const provider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
+    const denRequests: string[] = [];
+    const den = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const path = new URL(request.url).pathname;
+        const org = request.headers.get("x-openwork-legacy-org-id");
+        denRequests.push(`${org} ${path}`);
+        if (path === "/v1/me/desktop-config") return Response.json({ allowCustomProviders: false });
+        if (path === "/v1/llm-providers") {
+          if (org === "org_old") {
+            reached.resolve();
+            await release.promise;
+          }
+          return Response.json({ llmProviders: [provider] });
+        }
+        return Response.json({ llmProvider: provider });
+      },
+    });
+    stops.push(() => den.stop(true));
+    const engineRequests: string[] = [];
+    const engine = Bun.serve({ port: 0, fetch(request) {
+      engineRequests.push(`${request.method} ${new URL(request.url).pathname}`);
+      return Response.json({});
+    } });
+    stops.push(() => engine.stop(true));
+    const config = serverConfig(root, `http://127.0.0.1:${engine.port}`);
+    const server = await startServer(config);
+    stops.push(() => server.stop());
+    const base = `http://127.0.0.1:${server.port}`;
+    const put = (path: string, orgId: string) => fetch(`${base}${path}`, {
+      method: "PUT", headers: hostHeaders(),
+      body: JSON.stringify({ baseUrl: `http://127.0.0.1:${den.port}`, token: "den-token", orgId }),
+    });
+    try {
+      expect((await put("/den-session", "org_old")).status).toBe(204);
+      await Promise.race([reached.promise, Bun.sleep(1_000).then(() => { throw new Error("Old provider fetch did not start"); })]);
+      expect((await put("/den-session/identity", "org_new")).status).toBe(204);
+      // This succeeds while the old Den response is still held: delivery does
+      // not depend on the obsolete provider service or the engine recovering.
+      release.resolve();
+      const baseline = [...engineRequests];
+      await Bun.sleep(80);
+      expect(await runSync(base, "not-ready")).toEqual({ status: "no_session" });
+      expect(denRequests.filter((path) => path.includes("llm-providers"))).toEqual(["org_old /v1/llm-providers"]);
+      expect(engineRequests).toEqual(baseline);
+      expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))).toEqual({});
+      expect(await new EnvService({ path: process.env.OPENWORK_ENV_STORE }).list()).toEqual([]);
+      expect((await responseRecord(await fetch(`${base}/cloud-provider-sync/status`, { headers: clientHeaders() }), "status")))
+        .toMatchObject({ hasSession: false, providers: [], lastRun: null });
+      expect((await put("/den-session", "org_new")).status).toBe(204);
+      await waitForLastRun(base, "applied");
+      expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_test).toBeDefined();
+      expect(denRequests).toContain("org_new /v1/llm-providers/lpr_test/connect");
+    } finally {
+      release.resolve();
+    }
+  });
+
   test("joins concurrent runs, keeps identical sessions inert, and runs one latest-session trailing pass", async () => {
     const root = await createRoot();
     let markFirstListReached: () => void = () => undefined;
@@ -464,6 +650,24 @@ describe("cloud provider sync gateway", () => {
     expect(sync.status().reloadPending).toBe(false);
     await Bun.sleep(100);
     expect(reloads).toBe(1);
+
+    // A new early identity must also cancel a reload owed by the old one,
+    // without sweeping credentials into an engine that is not ready yet.
+    draining = true;
+    provider.apiKey = "sk-rotated-before-identity";
+    expect((await sync.run("rotation")).status).toBe("applied");
+    expect(sync.status().reloadPending).toBe(true);
+    const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
+    const before = await env.list();
+    await sync.suspend();
+    draining = false;
+    await Bun.sleep(100);
+    expect(reloads).toBe(1);
+    expect(await env.list()).toEqual(before);
+    expect(await sync.run("not-ready")).toEqual({ status: "no_session" });
+    await sync.setSession({ baseUrl: "https://den.example.test", token: "token-b", orgId: "org_b" });
+    expect((await sync.run("ready")).status).toBe("applied");
+    expect(reloads).toBeGreaterThan(1);
   });
 
   test("materializes providers before the first workspace exists and finishes setup later", async () => {
@@ -747,6 +951,7 @@ describe("cloud provider sync gateway", () => {
 
   test("materializes Den providers globally, reconciles changes, and sweeps the session", async () => {
     const root = await createRoot();
+    process.env.OPENWORK_ENGINE_RELOAD_RETRY_MS = "20";
     const engineRequests: string[] = [];
     const engine = Bun.serve({
       port: 0,
@@ -765,6 +970,7 @@ describe("cloud provider sync gateway", () => {
     stops.push(() => engine.stop(true));
 
     let denFailure = false;
+    let policyFailure = false;
     let denProviders = [
       buildProvider([
         { id: "model-z", name: "Model Z", config: { reasoning: true } },
@@ -784,7 +990,8 @@ describe("cloud provider sync gateway", () => {
         });
         // This fixture isolates provider-catalog outages; policy verification
         // remains available when the provider service fails.
-        if (url.pathname === "/v1/me/desktop-config") return Response.json({});
+        if (url.pathname === "/v1/me/desktop-config") return policyFailure
+          ? Response.json({ error: "denied" }, { status: 401 }) : Response.json({});
         if (denFailure) return Response.json({ error: "unavailable" }, { status: 503 });
         if (url.pathname === "/v1/llm-providers") return Response.json({ llmProviders: denProviders });
         const match = url.pathname.match(/^\/v1\/llm-providers\/([^/]+)\/connect$/);
@@ -825,6 +1032,43 @@ describe("cloud provider sync gateway", () => {
     expect((await responseRecord(capabilitiesResponse, "capabilities")).providerSync).toBe(true);
 
     expect(await runSync(base, "before-session")).toEqual({ status: "no_session" });
+
+    const identity = {
+      baseUrl: `http://127.0.0.1:${den.port}`,
+      token: "den-token",
+      orgId: "org_test",
+    };
+    const deliverIdentity = (body = identity, headers: Record<string, string> = hostHeaders()) => fetch(`${base}/den-session/identity`, {
+      method: "PUT", headers, body: JSON.stringify(body),
+    });
+    for (const headers of [{}, clientHeaders(), { ...hostHeaders(), "x-openwork-host-token": "wrong" }]) {
+      expect((await deliverIdentity(identity, headers)).status).toBe(401);
+    }
+    for (const body of [{ ...identity, baseUrl: "file:///tmp/den" }, { ...identity, token: "" }]) {
+      expect((await deliverIdentity(body)).status).toBe(400);
+    }
+    expect(denRequests).toEqual([]);
+    config.readOnly = true;
+    expect((await deliverIdentity()).status).toBe(403);
+    config.readOnly = false;
+    policyFailure = true;
+    expect((await deliverIdentity()).status).toBe(403);
+    expect(await runSync(base, "unverified-identity")).toEqual({ status: "no_session" });
+    policyFailure = false;
+    const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
+    const envBefore = await env.list();
+    const providersBefore = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
+    const fileBefore = await readFile(openworkRuntimeConfigFilePath(config), "utf8").catch(() => null);
+    const engineBefore = [...engineRequests];
+    expect((await deliverIdentity()).status).toBe(204);
+    await Bun.sleep(80);
+    expect(await runSync(base, "identity-is-not-ready")).toEqual({ status: "no_session" });
+    expect(denRequests.every((request) => request.path === "/v1/me/desktop-config")).toBe(true);
+    expect((await readGlobalRuntimeOpencodeConfig(config)).managedPolicy).toBeDefined();
+    expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))).toEqual(providersBefore);
+    expect(await env.list()).toEqual(envBefore);
+    expect(await readFile(openworkRuntimeConfigFilePath(config), "utf8").catch(() => null)).toBe(fileBefore);
+    expect(engineRequests).toEqual(engineBefore);
 
     const sessionResponse = await fetch(`${base}/den-session`, {
       method: "PUT",

@@ -1,16 +1,14 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { ArrowRight, Globe, Monitor, SquareTerminal } from "lucide-react";
-import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { BrandLogo } from "./lp-brand-logos";
 import { LandingAppDemoPanel } from "./landing-app-demo-panel";
 import {
   defaultLandingDemoFlowId,
-  landingDemoFlows,
-  landingDemoFlowTimes
+  landingDemoFlows
 } from "./landing-demo-flows";
 import { LandingFaq } from "./landing-faq";
 import { LandingHeroPrompt } from "./landing-hero-prompt";
@@ -27,6 +25,7 @@ import {
 } from "./lp-primitives";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
+import { DownloadLink } from "./download-link";
 
 type Props = {
   stars: string;
@@ -64,7 +63,7 @@ export function LandingHome(props: Props) {
     () => landingDemoFlows.find((flow) => flow.id === activeDemoId) ?? landingDemoFlows[0],
     [activeDemoId]
   );
-  const primaryHref = props.isMobileVisitor ? CLOUD_SIGNUP_URL : props.downloadHref;
+  const primaryHref = props.isMobileVisitor ? CLOUD_SIGNUP_URL : "/download";
   const callExternal = /^https?:\/\//.test(props.callHref);
 
   return (
@@ -74,7 +73,6 @@ export function LandingHome(props: Props) {
       <div className="relative z-10">
         <SiteNav
           stars={props.stars}
-          downloadHref={props.downloadHref}
           callUrl={props.callHref}
           mobilePrimaryHref={CLOUD_SIGNUP_URL}
           mobilePrimaryLabel="Get started for free"
@@ -82,23 +80,39 @@ export function LandingHome(props: Props) {
         />
 
         <main className="mx-auto w-full max-w-[1176px] px-6 pb-8">
-          <section className="max-w-4xl pt-8 md:pt-12">
-            <h1 className="mb-5 text-4xl font-medium leading-[1.1] tracking-tight md:text-5xl lg:text-6xl">
-              The open source
-              <br />
-              Claude Cowork
-              <br />
-              <span className="font-pixel inline-block align-middle text-[1.05em] font-normal">
-                alternative.
-              </span>
-            </h1>
-            <p className="mb-6 max-w-4xl text-lg leading-relaxed text-gray-700 md:mb-7 md:text-xl">
-              OpenWork is the desktop app that lets you use 50+ LLMs, bring your
-              own keys, and share your setups seamlessly with your team.
-            </p>
+          <div
+            aria-hidden="true"
+            className="font-pixel flex justify-between pb-10 pt-6 text-[clamp(3rem,16vw,12rem)] leading-none tracking-[-0.06em] sm:pb-12 sm:pt-8 lg:pb-16"
+          >
+            {Array.from("OpenWork").map((letter, index) => (
+              <span key={index}>{letter}</span>
+            ))}
+          </div>
 
-            <div className="mt-6 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
-              <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
+          <section
+            aria-labelledby="sovereign-hero-heading"
+            className="grid items-start gap-10 lg:grid-cols-[minmax(0,1.08fr)_minmax(0,1fr)] lg:gap-12"
+          >
+            <div className="min-w-0 lg:order-2 lg:pt-2">
+              <p className="mono mb-5 text-[11px] leading-relaxed tracking-[0.1em] text-[var(--lp-body)] sm:text-xs">
+                SOVEREIGN AI FOR KNOWLEDGE WORKERS
+              </p>
+              <h1
+                id="sovereign-hero-heading"
+                className="text-[clamp(2.5rem,4.4vw,3.25rem)] font-medium leading-[1.08] tracking-[-0.045em]"
+              >
+                Your AI workspace.
+                <br />
+                Without
+                <br />
+                <span className="whitespace-nowrap">vendor lock-in.</span>
+              </h1>
+              <p className="mt-6 max-w-xl text-[17px] leading-[1.6] text-[var(--lp-body)] lg:text-lg">
+                An open-source alternative to Claude Cowork, built for knowledge
+                workers who want the freedom to choose their AI.
+              </p>
+
+              <div className="mt-8 flex flex-wrap items-center gap-3">
                 {props.isMobileVisitor ? (
                   <a
                     href={CLOUD_SIGNUP_URL}
@@ -109,106 +123,71 @@ export function LandingHome(props: Props) {
                     Get Started for Free <ArrowRight size={18} />
                   </a>
                 ) : (
-                  <Link
-                    href="/download"
-                    className="doc-button inline-flex items-center gap-2"
-                  >
+                  <DownloadLink className="doc-button inline-flex items-center gap-2">
                     Download for free <ArrowRight size={18} />
-                  </Link>
+                  </DownloadLink>
                 )}
-                <a
-                  href={props.callHref}
-                  className="secondary-button"
-                  target={callExternal ? "_blank" : undefined}
-                  rel={callExternal ? "noreferrer" : undefined}
-                >
-                  Contact sales
+                <a href="/enterprise" className="secondary-button">
+                  Explore enterprise
                 </a>
               </div>
 
-              <div className="flex items-center gap-2 opacity-80 sm:ml-4">
-                <span className="text-[13px] font-medium text-gray-500">
-                  Backed by
-                </span>
-                <div className="flex items-center gap-1.5">
-                  <div className="flex h-[18px] w-[18px] items-center justify-center rounded-[4px] bg-[#ff6600] text-[11px] font-bold leading-none text-white">
-                    Y
+              <div className="mt-4 flex flex-wrap items-center gap-x-1.5 gap-y-2 text-xs text-[var(--lp-muted)]">
+                <span>Free desktop app</span>
+                <span aria-hidden="true">·</span>
+                <a href="/download" className="underline-offset-4 hover:underline">macOS</a>
+                <span aria-hidden="true">·</span>
+                <a href={props.windowsDownloadHref} className="underline-offset-4 hover:underline">Windows</a>
+                <span aria-hidden="true">·</span>
+                <a href={props.linuxDownloadHref} className="underline-offset-4 hover:underline">Linux</a>
+              </div>
+
+              {props.isMobileVisitor ? null : (
+                <div className="mt-7 flex flex-wrap items-center gap-3 border-t border-[var(--lp-border)] pt-5">
+                  <p className="text-xs text-[var(--lp-muted)]">Already use an AI agent? Let it set up OpenWork.</p>
+                  <LandingHeroPrompt compact />
+                </div>
+              )}
+
+              <div className="mt-7 flex items-center gap-2 text-xs text-[var(--lp-muted)]">
+                <span>Backed by</span>
+                <span className="flex h-[18px] w-[18px] items-center justify-center rounded-[4px] bg-[#ff6600] text-[11px] text-white">Y</span>
+                <span className="font-medium">Combinator</span>
+              </div>
+            </div>
+
+            <div id="product" className="min-w-0 scroll-mt-24 lg:order-1" aria-label="OpenWork product demo">
+              <div className="landing-shell overflow-hidden rounded-2xl">
+                <div className="relative flex h-10 items-center border-b border-white/50 bg-gradient-to-b from-white/90 to-white/60 px-4">
+                  <div className="flex gap-1.5" aria-hidden="true">
+                    <div className="h-2.5 w-2.5 rounded-full border border-[#e0443e]/20 bg-[#ff5f56]/90" />
+                    <div className="h-2.5 w-2.5 rounded-full border border-[#dea123]/20 bg-[#ffbd2e]/90" />
+                    <div className="h-2.5 w-2.5 rounded-full border border-[#1aab29]/20 bg-[#27c93f]/90" />
                   </div>
-                  <span className="text-[13px] font-semibold tracking-tight text-gray-600">
-                    Combinator
-                  </span>
+                  <span className="absolute left-1/2 -translate-x-1/2 text-xs font-medium text-[var(--lp-muted)]">OpenWork</span>
                 </div>
-              </div>
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center gap-x-1.5 gap-y-2 text-[13px] text-gray-500">
-              <span>Also available:</span>
-              <a
-                href={props.windowsDownloadHref}
-                className="text-[var(--lp-ink)] underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
-              >
-                Windows
-              </a>
-              <span>·</span>
-              <a
-                href={props.linuxDownloadHref}
-                className="text-[var(--lp-ink)] underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
-              >
-                Linux
-              </a>
-            </div>
-
-            {props.isMobileVisitor ? null : (
-              <LandingHeroPrompt className="mt-10 hidden md:block" />
-            )}
-          </section>
-
-          <section
-            className="relative mt-16 flex flex-col gap-6 overflow-hidden md:mt-20 md:gap-8"
-            aria-label="OpenWork product demo"
-          >
-            <div className="landing-shell relative flex flex-col overflow-hidden rounded-2xl">
-              <div className="relative z-20 flex h-10 w-full shrink-0 items-center border-b border-white/50 bg-gradient-to-b from-white/90 to-white/60 px-4">
-                <div className="flex gap-1.5">
-                  <div className="h-3 w-3 rounded-full border border-[#e0443e]/20 bg-[#ff5f56]/90 shadow-sm"></div>
-                  <div className="h-3 w-3 rounded-full border border-[#dea123]/20 bg-[#ffbd2e]/90 shadow-sm"></div>
-                  <div className="h-3 w-3 rounded-full border border-[#1aab29]/20 bg-[#27c93f]/90 shadow-sm"></div>
+                <div className="p-3">
+                  <LandingAppDemoPanel
+                    flows={landingDemoFlows}
+                    activeFlowId={activeDemo.id}
+                    onSelectFlow={setActiveDemoId}
+                  />
                 </div>
-                <div className="absolute left-1/2 -translate-x-1/2 text-[12px] font-medium tracking-wide text-gray-500">
-                  OpenWork
-                </div>
-              </div>
-
-              <div className="bg-white p-4 md:p-6">
-                <LandingAppDemoPanel
-                  flows={landingDemoFlows}
-                  activeFlowId={activeDemo.id}
-                  onSelectFlow={setActiveDemoId}
-                  timesById={landingDemoFlowTimes}
-                />
-              </div>
-
-              <div className="relative z-10 mb-4 flex w-full flex-col items-start justify-between gap-4 px-2 md:flex-row md:items-center">
-                <div className="landing-chip flex w-full flex-wrap gap-2 overflow-x-auto rounded-full p-1.5 md:w-[600px]">
+                <div className="flex flex-wrap gap-1 border-t border-[var(--lp-border)] px-3 py-3" aria-label="Example tasks">
                   {landingDemoFlows.map((flow) => {
                     const isActive = flow.id === activeDemo.id;
-
                     return (
                       <button
                         key={flow.id}
                         type="button"
                         onClick={() => setActiveDemoId(flow.id)}
                         aria-pressed={isActive}
-                        className={`relative cursor-pointer whitespace-nowrap rounded-full px-5 py-2 text-sm font-medium transition-colors ${
-                          isActive
-                            ? "text-[#011627]"
-                            : "text-gray-600 hover:text-gray-900"
-                        }`}
+                        className={`relative cursor-pointer rounded-full px-3 py-2 text-xs transition-colors ${isActive ? "text-[var(--lp-ink)]" : "text-[var(--lp-muted)] hover:text-[var(--lp-ink)]"}`}
                       >
                         {isActive ? (
                           <motion.div
                             layoutId="active-pill"
-                            className="absolute inset-0 rounded-full border border-gray-100 bg-white shadow-sm"
+                            className="absolute inset-0 rounded-full border border-[var(--lp-border)] bg-white shadow-sm"
                             transition={{ type: "spring", stiffness: 400, damping: 30 }}
                           />
                         ) : null}
@@ -217,30 +196,26 @@ export function LandingHome(props: Props) {
                     );
                   })}
                 </div>
-
-                <div className="min-h-[44px] text-left md:text-right">
-                  <AnimatePresence mode="wait">
-                    <motion.div
-                      key={activeDemo.id}
-                      initial={{ opacity: 0, y: 5 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -5 }}
-                      transition={{ duration: 0.2 }}
-                    >
-                      <div className="text-lg font-medium text-[#011627]">
-                        {activeDemo.title}
-                      </div>
-                      <div className="ml-auto mt-1 max-w-md text-sm text-gray-500">
-                        {activeDemo.description}
-                      </div>
-                    </motion.div>
-                  </AnimatePresence>
-                </div>
               </div>
+              <p className="mt-4 text-[13px] leading-relaxed text-[var(--lp-muted)]" aria-live="polite">
+                {activeDemo.description}
+              </p>
             </div>
           </section>
 
-          <section className="mt-[120px]">
+          <div className="mt-12 grid gap-4 border-y border-[var(--lp-border)] py-6 text-[13px] text-[var(--lp-body)] sm:grid-cols-3 sm:gap-0 lg:mt-16">
+            <a href="#models" className="flex items-center justify-between gap-3 transition-colors hover:text-[var(--lp-ink)] sm:pr-6">
+              Choose your models <ArrowRight size={15} aria-hidden="true" />
+            </a>
+            <a href="/enterprise" className="flex items-center justify-between gap-3 transition-colors hover:text-[var(--lp-ink)] sm:border-x sm:border-[var(--lp-border)] sm:px-6">
+              Control your deployment <ArrowRight size={15} aria-hidden="true" />
+            </a>
+            <a href="#comparison" className="flex items-center justify-between gap-3 transition-colors hover:text-[var(--lp-ink)] sm:pl-6">
+              Own your setup <ArrowRight size={15} aria-hidden="true" />
+            </a>
+          </div>
+
+          <section className="mt-20 scroll-mt-24 lg:mt-[120px]" id="models">
             <div className="mb-8">
               <h2 className="max-w-[680px] text-[16px] font-normal text-[var(--lp-ink)]">
                 Bring any model — or provision centrally for your whole org

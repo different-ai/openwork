@@ -110,7 +110,7 @@ test("stale-session authoring follows the private versus exposed route matrix", 
   const exposedVersionId = createDenTypeId("configObjectVersion")
   const marketplaceId = createDenTypeId("marketplace")
   const now = new Date()
-  const staleCreatedAt = new Date(now.getTime() - 20 * 60_000)
+  const staleCreatedAt = new Date(now.getTime() - 65 * 60_000)
   const organizationContext: PluginArchActorContext["organizationContext"] = {
     organization: {
       id: organizationId,
@@ -324,6 +324,35 @@ test("stale-session authoring follows the private versus exposed route matrix", 
         message: "For security, confirm it's you before changing workspace settings.",
       })
     }
+    // Content editing gets a longer window; extending it must not extend grants
+    // or deletion, or permit editing other config types such as MCP settings.
+    staleCreatedAt.setTime(Date.now() - 20 * 60_000)
+    expect((await request("PATCH", `/v1/plugins/${exposedPluginId}`, { name: "Exposed Plugin" })).status).toBe(200)
+    const sharedSkill = await request("POST", "/v1/config-objects", {
+      type: "skill", pluginIds: [exposedPluginId], sourceMode: "cloud",
+      input: { rawSourceText: "---\nname: editing-window\ndescription: Editing window fixture.\n---\nInstructions." },
+    })
+    expect(sharedSkill.status).toBe(201)
+    const sharedSkillId = String(responseItem(await sharedSkill.json()).id)
+    expect((await request("POST", `/v1/config-objects/${sharedSkillId}/versions`, {
+      input: { rawSourceText: "---\nname: editing-window\ndescription: Editing window fixture.\n---\nUpdated instructions." },
+    })).status).toBe(201)
+    await expectFreshAuthRequired(await request("POST", `/v1/plugins/${privatePluginId}/access`, { orgWide: true, role: "viewer" }))
+    await expectFreshAuthRequired(await request("POST", `/v1/config-objects/${sharedSkillId}/delete`, {}))
+    await expectFreshAuthRequired(await request("POST", "/v1/config-objects", {
+      type: "mcp", pluginIds: [exposedPluginId], sourceMode: "cloud",
+      input: { rawSourceText: '{"mcpServers":{"fixture":{"url":"https://example.test/mcp"}}}' },
+    }))
+    const sharedVersions = await database.select().from(ConfigObjectVersionTable)
+      .where(eq(ConfigObjectVersionTable.configObjectId, sharedSkillId))
+    expect(sharedVersions).toHaveLength(2)
+    const sharedRows = await database.select().from(ConfigObjectTable).where(eq(ConfigObjectTable.id, sharedSkillId))
+    expect(sharedRows[0]?.deletedAt).toBeNull()
+    const privateGrants = await database.select().from(PluginAccessGrantTable).where(and(
+      eq(PluginAccessGrantTable.pluginId, privatePluginId), eq(PluginAccessGrantTable.orgWide, true),
+    ))
+    expect(privateGrants).toHaveLength(0)
+    staleCreatedAt.setTime(Date.now() - 65 * 60_000)
     const blockedPluginName = `Blocked Org-wide ${organizationId}`
     const blockedSkillName = `blocked-exposed-${organizationId.slice(-8)}`
     const blockedCases = [

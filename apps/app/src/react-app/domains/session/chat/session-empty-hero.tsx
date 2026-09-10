@@ -15,7 +15,12 @@ import {
   useOpenWorkModelsPromoEligibility,
 } from "@/react-app/domains/cloud/openwork-models-promo";
 import { usePlatform } from "@/react-app/kernel/platform";
-import { NewTaskComposer, type NewTaskComposerContext } from "./new-task-composer";
+import {
+  NewTaskComposer,
+  type NewTaskComposerContext,
+  type NewTaskComposerHandoff,
+} from "./new-task-composer";
+import { consumePendingChatSeed, pendingChatSeedEvent } from "./pending-chat-seed";
 
 type HeroSuggestion = {
   title: string;
@@ -51,7 +56,11 @@ export type SessionEmptyHeroProps = {
   /** Disable submission while a default workspace is being prepared. */
   busy?: boolean;
   /** Called with the task prompt and attachments; the caller creates the session (and workspace if needed). */
-  onRunTask: (prompt: string, attachments: ComposerAttachment[]) => void;
+  onRunTask: (
+    prompt: string,
+    attachments: ComposerAttachment[],
+    handoff?: NewTaskComposerHandoff,
+  ) => void | Promise<void>;
   onOpenProviderAuth?: () => void;
   /** Workspace-scoped wiring for the full composer (skills, agents, models). */
   composer?: NewTaskComposerContext | null;
@@ -79,6 +88,20 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
   }, []);
 
+  // A chat deep link (Den's connector "Chat" action) seeds the composer with
+  // the connector chip and its starter prompt; the person reviews and sends.
+  useEffect(() => {
+    const seed = () => {
+      const draft = consumePendingChatSeed();
+      if (draft === null) return;
+      setPrompt(draft);
+      window.dispatchEvent(new Event("openwork:focusPrompt"));
+    };
+    seed();
+    window.addEventListener(pendingChatSeedEvent, seed);
+    return () => window.removeEventListener(pendingChatSeedEvent, seed);
+  }, []);
+
   // Quiet inline lead to OpenWork Models: replaces the old startup dialog
   // interrupt. Shown only while the session runs on the free starter model
   // (the built-in `opencode` provider) and the hosted offering applies.
@@ -101,10 +124,14 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     })
     : DEFAULT_SUGGESTIONS;
 
-  const submit = (resolvedPrompt: string, attachments: ComposerAttachment[]) => {
+  const submit = (
+    resolvedPrompt: string,
+    attachments: ComposerAttachment[],
+    handoff?: NewTaskComposerHandoff,
+  ) => {
     const trimmedPrompt = resolvedPrompt.trim();
-    if (!trimmedPrompt || props.busy) return;
-    props.onRunTask(trimmedPrompt, attachments);
+    if ((!trimmedPrompt && !attachments.length) || props.busy) return;
+    return props.onRunTask(trimmedPrompt, attachments, handoff);
   };
 
   const fillPrompt = (value: string) => {

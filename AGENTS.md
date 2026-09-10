@@ -36,6 +36,25 @@ escalate any leak instead of rewriting history.
 - `Passed` requires an observable assertion for every claim; skips are never passed.
 - Docs/comments, types-only, and inert agent config may skip runtime proof — say so.
 - Skill chain: `write-a-spec` → `run-tests` → `diagnose-a-red-run` when red → `publish-evidence`.
+- After journey checks, one owner runs the final local Warden review; see
+  `.warden/README.md`. Record `git HEAD` and `origin/dev` before and after it,
+  use bare `pnpm warden:check` against the clean committed branch, and report
+  expected versus actually reviewed skills. Unstaged and untracked files are
+  not reviewed. Do not require a commit unless the user authorized one; for
+  uncommitted work, `--staged` is diagnostic only and its limits must be stated.
+- Only completed expected applicable skills, verified scope, and no blockers
+  means reviewed with no blockers. Exit 0 with no files or no matching triggers
+  is `Not reviewed` or `Not applicable`, with scope explicit, never clear.
+  Missing credentials, errors, cancellation, or partial coverage are
+  `Incomplete`. After the last edit, rebase,
+  base update, policy change, or model change, rerun the full final review with
+  all applicable skills. `--skill <name>` and `--staged` are scoped diagnostics,
+  not final clearance. Do not use `--fix` or run Warden in every parallel
+  subagent.
+- Finish with finding IDs, classification, evidence, `Clear when`, disposition,
+  exact command/exit code/scope/run reference, and the recorded refs. A local
+  result never authorizes GitHub approval. A suggested repro is not an executed
+  test.
 
 ## Pull requests
 

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { DownloadLink } from "./download-link";
 
 type LpSectionHeaderProps = {
   label: string;
@@ -73,8 +74,9 @@ type LpArrowLinkProps = {
 };
 
 export function LpArrowLink({ href, children }: LpArrowLinkProps) {
+  const Component = href === "/download" ? DownloadLink : "a";
   return (
-    <a
+    <Component
       href={href}
       className="group inline-flex items-center gap-1.5 text-[14px] font-medium text-[var(--lp-ink)]"
     >
@@ -85,6 +87,6 @@ export function LpArrowLink({ href, children }: LpArrowLinkProps) {
       >
         →
       </span>
-    </a>
+    </Component>
   );
 }

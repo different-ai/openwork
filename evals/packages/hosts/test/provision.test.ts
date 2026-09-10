@@ -1,12 +1,22 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import {
+  DESKTOP_RELEASE_ARCHIVE_INSTALLER,
   deleteSandboxes,
   desktopSandboxName,
   encodeDenExtraEnv,
   parseConnectorE2eTestEnv,
+  prepareSandboxRepo,
   provisionDesktopSandbox,
+  publishedDesktopReleaseInstallCommand,
+  resolvePublishedDesktopRelease,
   renderConnectorE2eTestEnv,
   serverSandboxName,
   startFaultProxyOnSandbox,
@@ -15,10 +25,15 @@ import {
 import type { ConnectorE2eTestEnv } from "../src/provision.ts";
 import type { DaytonaExec } from "../src/daytona.ts";
 
+const execFileAsync = promisify(execFile);
+
 interface ExecCall {
   args: string[];
   opts?: { input?: string; timeoutMs?: number };
 }
+
+const SOURCE_SHA = "a".repeat(40);
+const DEPENDENCY_FINGERPRINT = "b".repeat(64);
 
 function desktopFake(diskUse = "40%"):
   { exec: DaytonaExec; calls: ExecCall[] } {
@@ -34,7 +49,11 @@ function desktopFake(diskUse = "40%"):
     if (args[0] !== "exec") return { stdout: "", stderr: "", code: 0 };
 
     const script = args[3] ?? "";
-    if (script.includes("git rev-parse")) return { stdout: "abc1234\n", stderr: "", code: 0 };
+    if (script.includes("git status") || script.includes("git fetch")) {
+      return { stdout: `${SOURCE_SHA}\n`, stderr: "", code: 0 };
+    }
+    if (script.includes("git ls-tree")) return { stdout: `${DEPENDENCY_FINGERPRINT}\n`, stderr: "", code: 0 };
+    if (script.includes("SOURCE_PREPARED")) return { stdout: "SOURCE_STALE\n", stderr: "", code: 0 };
     if (script.includes("df -P")) {
       return { stdout: `/dev/root 100 40 60 ${diskUse} /workspace\n`, stderr: "", code: 0 };
     }
@@ -43,6 +62,9 @@ function desktopFake(diskUse = "40%"):
     if (script.includes("xdg-open-proof")) return { stdout: "XDG_OPEN_WORKS\n", stderr: "", code: 0 };
     if (script.includes("json/version")) return { stdout: '{"Browser":"Chrome/144"}', stderr: "", code: 0 };
     if (script.includes("%{http_code}")) return { stdout: "200", stderr: "", code: 0 };
+    if (script.includes("install.py")) {
+      return { stdout: "OPENWORK_RELEASE_BINARY=/workspace/.openwork-daytona/releases/enterprise-0.18.44/app/openwork-enterprise\n", stderr: "", code: 0 };
+    }
     return { stdout: "", stderr: "", code: 0 };
   };
   return { exec, calls };
@@ -110,12 +132,121 @@ test("provisionDesktopSandbox reuses a sandbox and keeps every remote command in
 
   assert.equal(result.sandbox, "existing-a");
   assert.equal(result.created, false);
+  assert(result.source);
+  assert.equal(result.source.actualSha, SOURCE_SHA);
+  assert.equal(result.release, undefined);
   assert.deepEqual(calls[0]?.args, ["sandbox", "start", "existing-a"]);
   assert.equal(calls.filter((call) => call.args[0] === "create").length, 0);
   assert.equal(calls.filter((call) => call.args[0] === "snapshot").length, 0);
   const lastFirstBootCall = calls.findLastIndex((call) => call.args[3]?.includes("/tmp/warmup-profile"));
   assert(lastFirstBootCall >= 0);
+  const sourceReceiptCall = calls.findIndex((call) => call.args[3]?.includes("source-receipt.json"));
+  assert(sourceReceiptCall >= 0 && sourceReceiptCall < lastFirstBootCall, "source receipt must be verified before any app warmup starts");
   assertRemoteCommandsAreSingleArgument(calls);
+});
+
+test("prepareSandboxRepo updates a wrong HEAD and verifies it before caller launch", async () => {
+  const oldSha = "c".repeat(40);
+  const expectedSha = "d".repeat(40);
+  let actualSha = oldSha;
+  const events: string[] = [];
+  const calls: ExecCall[] = [];
+  const exec: DaytonaExec = async (args, opts) => {
+    calls.push({ args: [...args], opts });
+    const script = args[3] ?? "";
+    if (script.includes("git status")) {
+      events.push("verify");
+      return { stdout: `${actualSha}\n`, stderr: "", code: 0 };
+    }
+    if (script.includes("git fetch")) {
+      events.push("resolve");
+      return { stdout: `${expectedSha}\n`, stderr: "", code: 0 };
+    }
+    if (script.includes("git checkout --detach")) {
+      events.push("checkout");
+      actualSha = expectedSha;
+      return { stdout: "", stderr: "", code: 0 };
+    }
+    if (script.includes("git ls-tree")) {
+      events.push("fingerprint");
+      return { stdout: `${DEPENDENCY_FINGERPRINT}\n`, stderr: "", code: 0 };
+    }
+    if (script.includes("SOURCE_PREPARED")) return { stdout: "SOURCE_STALE\n", stderr: "", code: 0 };
+    if (script.includes("pnpm install --frozen-lockfile")) {
+      events.push("install");
+      return { stdout: "", stderr: "", code: 0 };
+    }
+    if (script.includes("source-receipt.json")) events.push("receipt");
+    return { stdout: "", stderr: "", code: 0 };
+  };
+
+  const receipt = await prepareSandboxRepo({ sandbox: "prepared-a", ref: expectedSha, exec, log: () => undefined });
+  events.push("launch");
+
+  assert.equal(receipt.expectedSha, expectedSha);
+  assert.equal(receipt.actualSha, expectedSha);
+  assert.equal(receipt.dependenciesInstalled, true);
+  assert.deepEqual(events, ["verify", "resolve", "checkout", "verify", "fingerprint", "install", "verify", "receipt", "launch"]);
+  const resolveCall = calls.find((call) => call.args[3]?.includes("git fetch"));
+  assert(resolveCall?.args[3]?.includes(`${expectedSha}^{commit}`));
+  assert(!resolveCall?.args[3]?.includes("FETCH_HEAD"), "an immutable requested SHA must not resolve through stale FETCH_HEAD");
+  assert(calls.some((call) => call.args[3]?.includes(`git checkout --detach \"${expectedSha}\"`)));
+  assertRemoteCommandsAreSingleArgument(calls);
+});
+
+test("prepareSandboxRepo fails closed on dirty source before fetch or checkout", async () => {
+  const calls: ExecCall[] = [];
+  const exec: DaytonaExec = async (args, opts) => {
+    calls.push({ args: [...args], opts });
+    return { stdout: "", stderr: "Refusing source preparation because /workspace is dirty:\n M package.json\n", code: 42 };
+  };
+
+  await assert.rejects(
+    prepareSandboxRepo({ sandbox: "dirty-a", ref: SOURCE_SHA, exec, log: () => undefined }),
+    /workspace is dirty/,
+  );
+  assert.equal(calls.length, 1);
+  assert(!calls[0]?.args[3]?.includes("git fetch"));
+});
+
+test("prepareSandboxRepo skips checkout and install when source is already prepared", async () => {
+  const calls: ExecCall[] = [];
+  const exec: DaytonaExec = async (args, opts) => {
+    calls.push({ args: [...args], opts });
+    const script = args[3] ?? "";
+    if (script.includes("git status") || script.includes("git fetch")) {
+      return { stdout: `${SOURCE_SHA}\n`, stderr: "", code: 0 };
+    }
+    if (script.includes("git ls-tree")) return { stdout: `${DEPENDENCY_FINGERPRINT}\n`, stderr: "", code: 0 };
+    if (script.includes("SOURCE_PREPARED")) return { stdout: "SOURCE_PREPARED\n", stderr: "", code: 0 };
+    return { stdout: "", stderr: "", code: 0 };
+  };
+
+  const receipt = await prepareSandboxRepo({ sandbox: "prepared-a", ref: SOURCE_SHA, exec, log: () => undefined });
+
+  assert.equal(receipt.dependenciesInstalled, false);
+  assert(!calls.some((call) => call.args[3]?.includes("git checkout --detach")));
+  assert(!calls.some((call) => call.args[3]?.includes("pnpm install")));
+});
+
+test("prepareSandboxRepo rejects a post-checkout source mismatch before install", async () => {
+  const oldSha = "e".repeat(40);
+  const expectedSha = "f".repeat(40);
+  const calls: ExecCall[] = [];
+  const exec: DaytonaExec = async (args, opts) => {
+    calls.push({ args: [...args], opts });
+    const script = args[3] ?? "";
+    if (script.includes("git status")) return { stdout: `${oldSha}\n`, stderr: "", code: 0 };
+    if (script.includes("git fetch")) return { stdout: `${expectedSha}\n`, stderr: "", code: 0 };
+    return { stdout: "", stderr: "", code: 0 };
+  };
+
+  await assert.rejects(
+    prepareSandboxRepo({ sandbox: "mismatch-a", ref: expectedSha, exec, log: () => undefined }),
+    new RegExp(`expected ${expectedSha}, received ${oldSha}`),
+  );
+  assert(calls.some((call) => call.args[3]?.includes("git checkout --detach")));
+  assert(!calls.some((call) => call.args[3]?.includes("pnpm install")));
 });
 
 test("provisionDesktopSandbox resolves the snapshot id and creates with connector flags", async () => {
@@ -128,10 +259,292 @@ test("provisionDesktopSandbox resolves the snapshot id and creates with connecto
   assert(create);
   assert(create.args.includes("snapshot-123"));
   assert(!create.args.includes("--volume"), "eval secrets must not be mounted next to an untrusted ref by default");
-  assert(create.args.includes("--auto-stop"));
+  assert.equal(create.args[create.args.indexOf("--auto-stop") + 1], "60");
   assert(create.args.includes("--public"));
   assert.equal(calls.filter((call) => call.args[0] === "sandbox" && call.args[1] === "start").length, 0);
   assertRemoteCommandsAreSingleArgument(calls);
+});
+
+test("published desktop provisioning resolves exact GitHub metadata and skips every source build gate", async () => {
+  const digest = `sha256:${"a".repeat(64)}`;
+  const assetName = "openwork-enterprise-linux-x64-0.18.44.tar.gz";
+  const metadata = {
+    tag_name: "v0.18.44",
+    draft: false,
+    assets: [{
+      name: assetName,
+      state: "uploaded",
+      size: 123,
+      digest,
+      browser_download_url: `https://github.com/different-ai/openwork/releases/download/v0.18.44/${assetName}`,
+    }],
+  };
+  const releaseFetch: typeof fetch = async () => new Response(JSON.stringify(metadata), { status: 200 });
+  const resolved = await resolvePublishedDesktopRelease({ version: "0.18.44", distribution: "enterprise" }, releaseFetch);
+  assert.equal(resolved.assetName, assetName);
+  assert.equal(resolved.digest, digest);
+
+  const { exec, calls } = desktopFake();
+  const result = await provisionDesktopSandbox({
+    ref: "this-ref-must-not-be-used",
+    name: "release",
+    release: { version: "0.18.44", distribution: "enterprise" },
+    releaseFetch,
+    autoStopMinutes: 0,
+    exec,
+    log: () => undefined,
+  });
+
+  assert.equal(result.release?.digest, digest);
+  assert.equal(result.source, undefined);
+  assert.equal(result.release?.binaryPath, "/workspace/.openwork-daytona/releases/enterprise-0.18.44/app/openwork-enterprise");
+  const create = calls.find((call) => call.args[0] === "create");
+  assert(create);
+  assert.equal(create.args[create.args.indexOf("--auto-stop") + 1], "0");
+  const remote = calls.map((call) => call.args[3] ?? "").join("\n");
+  assert.match(remote, /install\.py/);
+  assert.match(remote, /openwork-enterprise-linux-x64-0\.18\.44\.tar\.gz/);
+  for (const forbidden of ["git fetch", "pnpm install", "warmup-electron", "vite-prewarm", "dev:electron"]) {
+    assert(!remote.includes(forbidden), `release provisioning must not run ${forbidden}`);
+  }
+  assert(!calls.some((call) => call.args.includes("--volume")));
+});
+
+test("published desktop install rejects an invalid digest before extracting or returning an executable", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openwork-release-digest-"));
+  const archive = join(root, "source.tar.gz");
+  const fakeBin = join(root, "bin");
+  const fakeCurl = join(fakeBin, "curl");
+  const createArchive = `
+import io
+import tarfile
+import sys
+payload = b"#!/bin/sh\\nexit 0\\n"
+with tarfile.open(sys.argv[1], "w:gz") as bundle:
+    binary = tarfile.TarInfo("openwork-enterprise")
+    binary.size = len(payload)
+    bundle.addfile(binary, io.BytesIO(payload))
+`;
+  try {
+    await mkdir(fakeBin);
+    await execFileAsync("python3", ["-c", createArchive, archive]);
+    await writeFile(fakeCurl, `#!/bin/sh
+set -eu
+output=
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output" ]; then
+    output=$2
+    shift 2
+  else
+    shift
+  fi
+done
+test -n "$output"
+cp "$FAKE_RELEASE_ARCHIVE" "$output"
+`);
+    await chmod(fakeCurl, 0o755);
+    const archiveStat = await stat(archive);
+    const install = publishedDesktopReleaseInstallCommand({
+      version: "0.18.44",
+      distribution: "enterprise",
+      assetName: "openwork-enterprise-linux-x64-0.18.44.tar.gz",
+      binaryName: "openwork-enterprise",
+      browserDownloadUrl: "https://example.test/openwork-enterprise-linux-x64-0.18.44.tar.gz",
+      digest: `sha256:${"0".repeat(64)}`,
+      size: archiveStat.size,
+    }, join(root, "install"));
+
+    await assert.rejects(
+      execFileAsync("bash", ["-c", install.command], {
+        env: {
+          ...process.env,
+          FAKE_RELEASE_ARCHIVE: archive,
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        },
+      }),
+      (error: unknown) => {
+        assert(error instanceof Error);
+        assert.match(error.message, /Published release SHA-256 mismatch/);
+        if ("stdout" in error) assert.doesNotMatch(String(error.stdout), /OPENWORK_RELEASE_BINARY=/);
+        return true;
+      },
+    );
+    await assert.rejects(access(install.appRoot));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("published desktop metadata and shared secrets are rejected before sandbox allocation", async () => {
+  const { exec, calls } = desktopFake();
+  await assert.rejects(
+    provisionDesktopSandbox({
+      ref: "unused",
+      name: "release",
+      release: { version: "0.18.44", distribution: "enterprise" },
+      secrets: true,
+      exec,
+      log: () => undefined,
+    }),
+    /cannot mount the shared eval secrets volume/,
+  );
+  assert.equal(calls.length, 0);
+  const missingFetch: typeof fetch = async () => new Response(JSON.stringify({ tag_name: "v0.18.44", draft: false, assets: [] }), { status: 200 });
+  await assert.rejects(
+    provisionDesktopSandbox({
+      ref: "unused",
+      name: "release",
+      release: { version: "0.18.44", distribution: "enterprise" },
+      releaseFetch: missingFetch,
+      exec,
+      log: () => undefined,
+    }),
+    /must contain exactly one/,
+  );
+  assert.equal(calls.length, 0);
+});
+
+test("a failed published release install deletes its partially allocated sandbox", async () => {
+  const assetName = "openwork-enterprise-linux-x64-0.18.44.tar.gz";
+  const releaseFetch: typeof fetch = async () => new Response(JSON.stringify({
+    tag_name: "v0.18.44",
+    draft: false,
+    assets: [{
+      name: assetName,
+      state: "uploaded",
+      size: 123,
+      digest: `sha256:${"a".repeat(64)}`,
+      browser_download_url: `https://github.com/different-ai/openwork/releases/download/v0.18.44/${assetName}`,
+    }],
+  }), { status: 200 });
+  const base = desktopFake();
+  const exec: DaytonaExec = async (args, options) => {
+    if ((args[3] ?? "").includes("install.py")) {
+      base.calls.push({ args: [...args], opts: options });
+      return { stdout: "", stderr: "checksum mismatch", code: 1 };
+    }
+    return base.exec(args, options);
+  };
+
+  await assert.rejects(
+    provisionDesktopSandbox({
+      ref: "unused",
+      name: "release-failure",
+      release: { version: "0.18.44", distribution: "enterprise" },
+      releaseFetch,
+      exec,
+      log: () => undefined,
+    }),
+    /checksum mismatch/,
+  );
+  const create = base.calls.find((call) => call.args[0] === "create");
+  const remove = base.calls.find((call) => call.args[0] === "delete");
+  assert.ok(create);
+  assert.deepEqual(remove?.args, ["delete", create.args[2]]);
+});
+
+test("published release allocation and readiness failures clean up only newly owned sandboxes", async () => {
+  const assetName = "openwork-enterprise-linux-x64-0.18.44.tar.gz";
+  const releaseFetch: typeof fetch = async () => new Response(JSON.stringify({
+    tag_name: "v0.18.44",
+    draft: false,
+    assets: [{
+      name: assetName,
+      state: "uploaded",
+      size: 123,
+      digest: `sha256:${"a".repeat(64)}`,
+      browser_download_url: `https://github.com/different-ai/openwork/releases/download/v0.18.44/${assetName}`,
+    }],
+  }), { status: 200 });
+
+  for (const failure of ["create", "ready"]) {
+    const calls: ExecCall[] = [];
+    const exec: DaytonaExec = async (args, opts) => {
+      calls.push({ args: [...args], opts });
+      if (args[0] === "snapshot") {
+        return { stdout: JSON.stringify([{ name: "openwork-eval-vnc", id: "snapshot-123" }]), stderr: "", code: 0 };
+      }
+      if (args[0] === "create") {
+        return failure === "create"
+          ? { stdout: "", stderr: "creation failed", code: 1 }
+          : { stdout: "", stderr: "", code: 0 };
+      }
+      if (args[0] === "exec") return { stdout: "", stderr: "not ready", code: 1 };
+      return { stdout: "", stderr: "", code: 0 };
+    };
+
+    await assert.rejects(
+      provisionDesktopSandbox({
+        ref: "unused",
+        name: `release-${failure}`,
+        release: { version: "0.18.44", distribution: "enterprise" },
+        releaseFetch,
+        sandboxReadyTimeoutMs: 0,
+        exec,
+        log: () => undefined,
+      }),
+      failure === "create" ? /creation failed/ : /exec-ready gate failed/,
+    );
+    const create = calls.find((call) => call.args[0] === "create");
+    assert(create);
+    assert.deepEqual(calls.find((call) => call.args[0] === "delete")?.args, ["delete", create.args[2]]);
+  }
+
+  const reusedCalls: ExecCall[] = [];
+  const reusedExec: DaytonaExec = async (args, opts) => {
+    reusedCalls.push({ args: [...args], opts });
+    if (args[0] === "exec") return { stdout: "", stderr: "not ready", code: 1 };
+    return { stdout: "", stderr: "", code: 0 };
+  };
+  await assert.rejects(
+    provisionDesktopSandbox({
+      ref: "unused",
+      name: "release-reused",
+      reuse: "caller-owned",
+      release: { version: "0.18.44", distribution: "enterprise" },
+      releaseFetch,
+      sandboxReadyTimeoutMs: 0,
+      exec: reusedExec,
+      log: () => undefined,
+    }),
+    /exec-ready gate failed/,
+  );
+  assert(!reusedCalls.some((call) => call.args[0] === "delete"));
+});
+
+test("published desktop archive installer rejects traversal and escaping links", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openwork-release-archive-"));
+  const archive = join(root, "malicious.tar.gz");
+  const extract = join(root, "extract");
+  const createArchive = `
+import io
+import tarfile
+import sys
+with tarfile.open(sys.argv[1], "w:gz") as bundle:
+    traversal = tarfile.TarInfo("../escaped")
+    traversal.size = 1
+    bundle.addfile(traversal, io.BytesIO(b"x"))
+    link = tarfile.TarInfo("openwork-enterprise")
+    link.type = tarfile.SYMTYPE
+    link.linkname = "../../outside"
+    bundle.addfile(link)
+`;
+  try {
+    await execFileAsync("python3", ["-c", createArchive, archive]);
+    const archiveBytes = await readFile(archive);
+    const digest = createHash("sha256").update(archiveBytes).digest("hex");
+    await assert.rejects(
+      execFileAsync("python3", ["-c", DESKTOP_RELEASE_ARCHIVE_INSTALLER, archive, extract, "openwork-enterprise", digest, String(archiveBytes.byteLength)]),
+      (error: unknown) => {
+        assert(error instanceof Error);
+        assert("stderr" in error);
+        assert.match(String(error.stderr), /Archive member escapes extraction root/);
+        return true;
+      },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("rendered values are shell-quoted, because the env file is meant to be sourced", () => {

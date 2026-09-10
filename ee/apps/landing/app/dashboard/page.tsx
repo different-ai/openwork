@@ -64,7 +64,6 @@ export default async function DashboardPage() {
       <div className="relative z-10">
         <SiteNav
           stars={github.stars}
-          downloadHref={github.downloads.macos}
           callUrl={callHref}
           mobilePrimaryHref={CLOUD_SIGNUP_URL}
           mobilePrimaryLabel="Open OpenWork Cloud"

@@ -220,7 +220,14 @@ async function updateExistingConnectedAccountForActiveMember(
 
     await tx
       .update(ConnectedAccountTable)
-      .set(connectedAccountChanges(input))
+      .set({
+        ...connectedAccountChanges(input),
+        // Only a completed authorization advances the member's connection marker.
+        // Keep it distinct even if two completions share a millisecond.
+        ...(input.expectedPendingCodeVerifier !== undefined
+          ? { connectedAt: new Date(Math.max(Date.now(), existing.connectedAt.getTime() + 1)) }
+          : {}),
+      })
       .where(eq(ConnectedAccountTable.id, existing.id))
 
     const saved = await tx

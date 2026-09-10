@@ -7,7 +7,7 @@ description: "Sign in to OpenWork and connect the accounts your agent can use"
 **OpenWork Cloud organization setup.** This path requires an OpenWork Cloud sign-in and an organization that has made services available to you. To stay local, keep using OpenWork for free and [add a custom MCP server](/start-here/connect-your-stack/add-an-mcp-server) to your workspace. Admins can manage team connections with [Connectors](/cloud/share-with-your-team/shared-mcp-connections).
 </Info>
 
-Use `Settings` > `OpenWork Connect` for services your organization makes available,
+Use `Settings` > `Library` > `Connections` for services your organization makes available,
 including Gmail, Google Calendar, Google Drive, Slack, Notion, and Linear. This
 is the recommended setup for everyday integrations.
 
@@ -18,7 +18,7 @@ that has Connect enabled. This is separate from signing in to an LLM provider
 such as ChatGPT.
 
 1. Open the OpenWork desktop app.
-2. Click `Sign in`, or open `Settings` > `OpenWork Connect` and choose `Sign in`.
+2. Click `Sign in` to OpenWork Cloud.
 3. Complete sign-in in your browser and return to OpenWork.
 4. Choose the OpenWork organization you want to use if prompted.
 
@@ -27,14 +27,32 @@ to enable it.
 
 ## Connect an account
 
-1. Open `Settings` > `OpenWork Connect`.
-2. Find the service under `Needs your sign-in`.
+1. Open `Settings` > `Library` > `Connections`.
+2. Open the service that needs your sign-in.
 3. Click `Connect` and approve access on the provider's sign-in page.
-4. Return to OpenWork. The service moves to `Ready to use` automatically.
+4. Return to OpenWork. The connection's status updates automatically.
 
 Some connections are managed by your organization. If a service is not
 listed, ask an organization admin to publish it from the OpenWork Cloud
 `Connectors` page and grant you access.
+
+## Google Workspace
+
+Gmail, Google Calendar, and Google Drive use only the Google Workspace connection
+in OpenWork Cloud. Follow **Connect an account** above and choose the Google
+connection your organization made available. If it needs administrator setup,
+an admin configures it in Cloud `Connectors`; members then click `Connect` for
+their own account. `Library` > `Add` > `Connection` opens the existing Cloud
+connection setup page.
+
+There is no local Google Workspace extension, desktop OAuth client form, or
+environment-variable setup path. Previously stored local Google credentials are
+not deleted or migrated to Cloud, and do not enable local Google API access.
+Existing Cloud Google connections continue to work without reconnecting solely
+because the local integration was removed.
+
+Google and Gemini under **AI Providers** are separate model-provider integrations
+and are unchanged. Custom MCP servers and other connectors are also unchanged.
 
 ## Ask your agent to use it
 
@@ -47,13 +65,79 @@ you want, for example:
 
 The agent searches the live capabilities available to your signed-in account,
 then executes an exact match. If an account still needs attention, it should
-send you back to `Settings` > `OpenWork Connect` with the action to take instead of
+send you back to `Settings` > `Library` > `Connections` with the action to take instead of
 telling you to add an MCP server.
+
+### Gmail drafts with attachments
+
+Ask for a draft with files from your workspace, for example: “Draft an email
+with `report.pdf` and `summary.csv` attached. Do not send it.” The same Gmail
+draft capability accepts optional `attachments` paths; a supporting OpenWork
+host uploads the files using your selected Google connection. File bytes stay
+outside the model's context. Review the returned Gmail draft link before sending.
+
+You can attach 1–10 files totaling at most 4 MiB. The files must be inside an
+authorized workspace or folder on the host running the conversation. A remote
+workspace cannot read files that exist only on your desktop.
+
+Attachment fulfillment requires a direct capability call from a compatible
+OpenWork host. Code Mode, saved Workflows, and MCP clients without that host
+support return `file_input_requires_host` and create no draft. Do not retry
+without the requested attachments. If an upload's result is uncertain, check
+Gmail Drafts before attempting creation again.
+
+## Manage connected services
+
+Google Workspace and Microsoft 365 connections can perform service actions, not
+only retrieve information. An administrator chooses the enabled permissions;
+each member authorizes their own account. Additional sending, mailbox-management,
+and spreadsheet permission choices are **off by default**. Existing draft-only
+access does not automatically enable sending.
+
+| Service | Available actions |
+| --- | --- |
+| Gmail | Search/read messages and attachments; create/read/update drafts; send an existing draft, including its reply threading and attachments; archive/unarchive, mark read/unread, star, trash/restore, and manage user labels. |
+| Google Calendar | List/create events; read, edit/reschedule, and cancel events in a selected calendar; add Meet to an existing event. |
+| Drive | Search/list with date, folder, and pagination controls; read files, upload/share, create folders, rename/move, and trash/restore. |
+| Sheets | Create spreadsheets, inspect their tabs, read cell ranges, write cells, and append rows. Writes default to literal values; formula parsing requires explicit approval. |
+| Outlook | Read mail, create drafts and reply drafts, send existing drafts, change read status/categories, and move messages between inbox/archive/deleted items. |
+| Outlook Calendar | List/create, edit/reschedule, cancel, and delete events. |
+| OneDrive | Search/read, write text files, create folders, and rename/move items. |
+
+For Gmail mailbox management enable **Manage Gmail**; for sending without mailbox
+management enable **Send email drafts after confirmation**. Google uses the same
+OAuth grant for draft editing and draft sending, but OpenWork enforces the
+administrator's separate action choices. For Sheets, enable spreadsheet read or
+write access, or use the applicable selected-file Drive access. Microsoft mail
+sending and mailbox management have separate permission choices as well.
+
+After enabling a new provider permission, reconnect and grant the requested
+access. Disabling a write permission in OpenWork blocks the new management
+actions even when an older provider token still carries that grant. A selected
+connection always uses that member's selected account, not another available
+account.
+
+Ask for an outcome, for example “Archive this thread and mark it read,” “Move
+tomorrow's meeting to 3 pm,” or “Append these rows to the budget spreadsheet.”
+Sending mail, deleting/trashing content, notifying meeting guests, and enabling
+spreadsheet formula parsing require explicit requests and the corresponding
+confirmation inputs. Creating or selecting a connector does not authorize them.
+If a write times out, check the service before retrying: it may already have
+completed. Microsoft accepts sends asynchronously, so its receipt means
+**accepted**, not delivered.
+
+Drive's generic file reader exports the first Sheets tab as CSV. Use the Sheets
+metadata and range operations to work with other tabs. Cell operations are
+bounded to 5,000 cells per request; split larger work into explicit ranges.
+These operations do not claim every provider feature: rich Docs/Slides editing,
+spreadsheet formatting/pivots, and permanent mailbox/file deletion are separate
+from the actions above. External MCP connectors expose their provider's actual
+tools and remain subject to that provider's account, plan, and approval rules.
 
 ## Connect, connectors, and connections
 
-- **Connect** is the member-facing page in the desktop app for signing in to
-  services and checking connection readiness.
+- **Connect** is the Cloud service for discovering and using connections. In the
+  desktop app, `Library` > `Connections` shows accounts and their readiness.
 - A **connector** is an MCP service your organization adds on its own, without
   wrapping it in a plugin. Organization admins publish connectors from the
   OpenWork Cloud `Connectors` page and grant member or team access.

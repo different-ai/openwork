@@ -3,7 +3,7 @@ import type { UIMessage } from "ai";
 import { safeStringify } from "../../../../app/utils";
 import { normalizeErrorText } from "../../../../lib/error-text";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "free-model-limit" | "disk-full" | "database-error" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "free-model-limit" | "disk-full" | "database-error" | "generic";
 
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
@@ -80,6 +80,7 @@ function sessionErrorKind(
   ) {
     return "provider-timeout";
   }
+  if (/upstream_(?:incomplete|interrupted|malformed_stream|malformed_response|timeout)/.test(searchable)) return "provider-incomplete";
   if (responseBody?.includes("FreeUsageLimitError") || message?.includes("FreeUsageLimitError")) {
     return "free-model-limit";
   }
@@ -87,17 +88,18 @@ function sessionErrorKind(
 }
 
 function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
-  if (kind === "disk-full") return "Not enough disk space";
+  if (kind === "disk-full") return "Storage error reported";
   if (kind === "database-error") return "OpenWork couldn’t access its saved data";
   if (kind === "aborted") return "Task interrupted";
   if (kind === "provider-timeout") return "Provider did not respond in time";
+  if (kind === "provider-incomplete") return "The model response was interrupted";
   if (kind === "free-model-limit") return "The free starter model is busy right now";
   return fallback;
 }
 
 function errorDescription(kind: OpencodeSessionErrorKind) {
   if (kind === "disk-full") {
-    return "The device running this task has run out of storage. Free up some disk space, then try again. If this is a cloud workspace, ask its administrator to check the storage.";
+    return "A storage limit was reported by the task runtime or a connected service. This does not necessarily mean your computer is full. Check the affected service or workspace before freeing local disk space.";
   }
   if (kind === "database-error") {
     return "Try again. If this keeps happening, check the available disk space on the device running this task and restart OpenWork. For a cloud workspace, contact its administrator.";
@@ -108,6 +110,7 @@ function errorDescription(kind: OpencodeSessionErrorKind) {
   if (kind === "provider-timeout") {
     return "The provider connection timed out before a response began. Output and files already produced are kept.";
   }
+  if (kind === "provider-incomplete") return "The response may contain partial text or incomplete tool calls. Review them before continuing.";
   if (kind === "free-model-limit") {
     return "Too many people are using the free model at once. Wait a few minutes and try again, or connect your own model provider in Settings → AI Providers to keep working.";
   }
@@ -115,7 +118,7 @@ function errorDescription(kind: OpencodeSessionErrorKind) {
 }
 
 function errorRecoveryPrompt(kind: OpencodeSessionErrorKind) {
-  return kind === "aborted" || kind === "provider-timeout"
+  return kind === "aborted" || kind === "provider-timeout" || kind === "provider-incomplete"
     ? interruptedTaskRecoveryPrompt
     : null;
 }

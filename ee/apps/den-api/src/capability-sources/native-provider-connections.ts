@@ -32,7 +32,7 @@ export type NativeProviderConnectionEntry = {
   /** Native providers are implemented by Den itself and never have a standard MCP catalog to expose. */
   exposeDirectly: false
   connected: boolean
-  connectedAt: null
+  connectedAt: string | null
   connectedForMe: boolean
   needsReconnect: boolean
   missingFeatures: string[]
@@ -75,6 +75,7 @@ export function buildNativeProviderEntry(
   state: {
     clientConfigured: boolean
     connectedForMe: boolean
+    connectedAt?: Date
     externalAccountId?: string | null
     grantedScopes?: string[] | null
     reconnect?: NativeProviderReconnectState
@@ -95,7 +96,7 @@ export function buildNativeProviderEntry(
     exposeDirectly: false,
     nativeProviderKey: provider.providerId,
     connected: true,
-    connectedAt: null,
+    connectedAt: state.connectedForMe && state.connectedAt ? state.connectedAt.toISOString() : null,
     connectedForMe: state.connectedForMe,
     needsReconnect: state.reconnect?.needsReconnect ?? false,
     missingFeatures: state.reconnect?.missingFeatures ?? [],
@@ -132,6 +133,7 @@ export async function listNativeProviderUsableEntries(input: {
     const entry = buildNativeProviderEntry(provider, {
       clientConfigured: true,
       connectedForMe: Boolean(account?.accessToken),
+      connectedAt: account?.connectedAt,
       credentialProviderId: connection.id,
       name: connection.name,
       ...(account?.externalAccountId ? { externalAccountId: account.externalAccountId } : {}),
@@ -160,6 +162,7 @@ export async function listNativeProviderUsableEntries(input: {
     const entry = buildNativeProviderEntry(provider, {
       clientConfigured: true,
       connectedForMe: Boolean(account?.accessToken),
+      connectedAt: account?.connectedAt,
       ...(account?.externalAccountId ? { externalAccountId: account.externalAccountId } : {}),
       ...(account?.scopes ? { grantedScopes: account.scopes } : {}),
       ...(provider.tenantIdExtraKey

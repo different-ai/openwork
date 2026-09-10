@@ -21,13 +21,14 @@ test.skipIf(!available)(
         return fetch(new Request(`${den.ref.apiUrl}${new URL(request.url).pathname}`, request));
       },
     });
-    const defaultHealth = await defaultClient.getHealth();
+    const defaultHealth = await defaultClient.getHealth({ throwOnError: true });
     expect(defaultUrl).toBe("https://api.openworklabs.com/health");
     expect(defaultHealth.response.status).toBe(200);
     const anonymous = createDenClient({ baseUrl: den.ref.apiUrl });
-    const health = await anonymous.getHealth();
+    const health = await anonymous.getHealth({ throwOnError: true });
     expect(health.response.status).toBe(200);
     const denied = await anonymous.getV1Me();
+    if (!denied.response) throw new Error("Identity request failed before receiving an HTTP response.");
     expect(denied.response.status).toBe(401);
     expect(denied.data).toBeUndefined();
     evidence.recordAssertionEvidence("Public health and protected identity", "Health succeeds without credentials; identity returns 401 with no data.",
@@ -109,6 +110,7 @@ test.skipIf(!available)(
       const overridden = await keyed.patchV1TeamsByTeamId({ teamId, name: "Must not apply" }, {
         headers: { "x-api-key": "invalid-sdk-key" },
       });
+      if (!overridden.response) throw new Error("Override request failed before receiving an HTTP response.");
       expect(overridden.response.status).toBe(401);
       expect(overridden.data).toBeUndefined();
       evidence.recordAssertionEvidence("Typed body, path, and request overrides", "A team is created in the selected org and renamed by ID; an invalid per-request key rejects the mutation.",
@@ -119,6 +121,7 @@ test.skipIf(!available)(
       expect(removed.response.status).toBe(204);
     }
     const missing = await keyed.patchV1TeamsByTeamId({ teamId, name: "Deleted" });
+    if (!missing.response) throw new Error("Deleted-team request failed before receiving an HTTP response.");
     expect(missing.response.status).toBe(404);
     expect(missing.data).toBeUndefined();
     evidence.recordAssertionEvidence("Deletion and error responses", "The deleted team cannot be updated: HTTP 404 and no success data.",

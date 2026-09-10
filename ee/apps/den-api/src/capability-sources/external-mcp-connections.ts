@@ -21,7 +21,8 @@ import {
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { env } from "../env.js"
-import { declaredPluginMcpAuthType, requiredPluginMcpAuthType } from "./external-mcp-auth-policy.js"
+import { declaredPluginMcpAuthType, existingPluginMcpAuthTypeCompatible, requiredPluginMcpAuthType } from "./external-mcp-auth-policy.js"
+import { isExternalMcpSharedCallbackRedirectUri } from "./external-mcp-oauth-contract.js"
 import {
   createExternalMcpIdentityBinding,
   normalizeExternalMcpIdentityUrl,
@@ -71,7 +72,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function isSdkRegisteredOAuthClient(extra: Record<string, unknown> | null): boolean {
+export function isSdkRegisteredOAuthClient(extra: Record<string, unknown> | null): boolean {
   const source = extra?.enterpriseMcpRegistrationSource
   return source === "dynamic"
     || source === "client-metadata"
@@ -347,7 +348,10 @@ async function sourcedUsableExternalMcpConnections(input: {
     const requiredAuthType = entry
       ? requiredPluginMcpAuthType({ declaredAuthType: declaredPluginMcpAuthType(entry.config), url: declaredUrl })
       : null
-    if (!input.includeAuthMismatches && requiredAuthType && row.connection.authType !== requiredAuthType) return []
+    if (!input.includeAuthMismatches && !existingPluginMcpAuthTypeCompatible({
+      authType: row.connection.authType,
+      requiredAuthType,
+    })) return []
     return normalizeExternalMcpIdentityUrl(row.connection.url) === normalizeExternalMcpIdentityUrl(declaredUrl)
       ? [row.connection]
       : []
@@ -620,6 +624,63 @@ export async function isolateExternalMcpOAuthCallback(input: {
       connectedAt: null,
       updatedAt,
     }
+  })
+}
+
+/**
+ * Callback isolation kept admin-registered clients, so an isolated row can
+ * still send its client's recorded shared redirect while signing a
+ * per-connection callback mode that the shared route rejects. Record the mode
+ * the registered redirect already uses. The redirect, client, credentials,
+ * grants, and bindings are unchanged; transactions signed with the stale mode
+ * keep failing closed.
+ */
+export async function adoptRegisteredSharedExternalMcpOAuthCallback(input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+}): Promise<ExternalMcpConnectionRow | null> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(ExternalMcpConnectionTable)
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+      .limit(1)
+      .for("update")
+    const connection = rows[0]
+    if (!connection || connection.authType !== "oauth" || !connection.oauthConfiguration) return null
+    if (connection.oauthConfiguration.callbackMode === "shared-v1") return null
+
+    const clients = await tx
+      .select({ extra: OrgOAuthClientTable.extra })
+      .from(OrgOAuthClientTable)
+      .where(and(
+        eq(OrgOAuthClientTable.organizationId, input.organizationId),
+        eq(OrgOAuthClientTable.providerId, input.connectionId),
+      ))
+      .limit(1)
+    const clientExtra = normalizeOAuthClientExtra(clients[0]?.extra)
+    const registeredRedirectUri = clientExtra?.registeredRedirectUri
+    if (
+      clientExtra?.enterpriseMcpRegistrationSource !== "pre-registered"
+      || typeof registeredRedirectUri !== "string"
+      || !isExternalMcpSharedCallbackRedirectUri(registeredRedirectUri)
+    ) {
+      return null
+    }
+
+    const oauthConfiguration: ExternalMcpOAuthConfiguration = { ...connection.oauthConfiguration, callbackMode: "shared-v1" }
+    const updatedAt = new Date(Math.max(Date.now(), connection.updatedAt.getTime() + 1))
+    await tx
+      .update(ExternalMcpConnectionTable)
+      .set({ oauthConfiguration, updatedAt })
+      .where(and(
+        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionTable.id, input.connectionId),
+      ))
+    return { ...connection, oauthConfiguration, updatedAt }
   })
 }
 

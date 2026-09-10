@@ -3,6 +3,7 @@ import { lstat, realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { renderPrMarkdown } from "./render.ts";
 import { readTestRunDirectory } from "./scan.ts";
+import type { uploadReview } from "@openwork/review/storage";
 
 const MARKER = "<!-- test-evidence -->";
 const LEGACY_MARKERS = ["<!-- photo-roll -->", "<!-- fraimz -->"];
@@ -23,6 +24,7 @@ export type CommandRunner = (command: string, args: string[], opts?: CommandOpti
 export interface PublishDependencies {
   exec?: CommandRunner;
   stdout?: (markdown: string) => void;
+  upload?: typeof uploadReview;
 }
 
 export interface PublishPrOptions {
@@ -173,6 +175,9 @@ export async function publishPr(
   options: PublishPrOptions,
   dependencies: PublishDependencies = {},
 ): Promise<PublishPrResult> {
+  if (process.env.OPENWORK_REVIEW_URL && !options.force) {
+    return publishReviewPr({ ...options, testRunDirs: [options.testRunDir] }, dependencies);
+  }
   const stored = await readTestRunDirectory(options.testRunDir);
   if (!stored) throw new Error(`No valid test-run.json or legacy result found in ${options.testRunDir}`);
   const { format, testRun } = stored;
@@ -222,4 +227,98 @@ export async function publishPr(
   });
   const updated = postStickyComment(String(options.pr), markdown, postedAttachments, exec);
   return { markdown, posted: true, updated, urls };
+}
+
+export async function publishReviewPr(
+  options: {
+    pr?: string | number;
+    testRunDirs: string[];
+    docShots?: string[];
+    title?: string;
+    gaps?: string[];
+    reviewUrl?: string;
+    dryRun?: boolean;
+    preserveCurrentReport?: boolean;
+  },
+  dependencies: PublishDependencies = {},
+): Promise<PublishPrResult> {
+  // Testkit imports this package too. Load the report stack only when publishing.
+  const { assembleReview, renderReviewComment } = await import("./review.ts");
+  const { report, assets } = await assembleReview(options);
+  if (options.dryRun) {
+    const markdown = renderReviewComment(report);
+    (dependencies.stdout ?? ((body) => process.stdout.write(`${body}\n`)))(
+      markdown,
+    );
+    return { markdown, posted: false, updated: false, urls: {} };
+  }
+  if (options.pr === undefined)
+    throw new Error("Publishing requires --pr <n>.");
+  const pr = String(options.pr);
+  const exec = dependencies.exec ?? commandRunner;
+  const base = options.reviewUrl ?? process.env.OPENWORK_REVIEW_URL;
+  if (!base) throw new Error("Set OPENWORK_REVIEW_URL to the review app URL.");
+  const url = new URL(base);
+  if (
+    url.username ||
+    url.password ||
+    (url.protocol !== "https:" &&
+      !(
+        url.protocol === "http:" &&
+        ["localhost", "127.0.0.1"].includes(url.hostname)
+      ))
+  )
+    throw new Error("Review URL must use HTTPS (or local HTTP).");
+  const requireCurrentHead = () => {
+    if (resolvePrHeadSha(pr, exec).toLowerCase() !== report.gitSha)
+      throw new Error(
+        "Refusing stale evidence: every selected source must match the current PR head.",
+      );
+  };
+  requireCurrentHead();
+  if (options.preserveCurrentReport) {
+    const current = exec("gh", ["pr", "view", pr, "--json", "comments"]);
+    requireSuccess(current, "Reading current evidence");
+    const payload: unknown = JSON.parse(current.stdout);
+    if (isRecord(payload) && Array.isArray(payload.comments)) {
+      const existing = payload.comments.find((comment) => isRecord(comment)
+        && typeof comment.body === "string" && comment.body.includes(MARKER)
+        && comment.body.includes(`Commit \`${report.gitSha}\``) && comment.body.includes("[Open review report]("));
+      if (isRecord(existing) && typeof existing.body === "string") {
+        return { markdown: existing.body, posted: false, updated: false, urls: {} };
+      }
+    }
+  }
+  const upload = dependencies.upload ?? (await import("@openwork/review/storage")).uploadReview;
+  const id = await upload(report, assets);
+  const reportUrl = new URL(`/r/${id}`, url).href;
+  // A push while media was uploading must not replace current evidence with an older report.
+  requireCurrentHead();
+  const markdown = renderReviewComment(report, reportUrl);
+  const viewed = exec("gh", ["pr", "view", pr, "--json", "comments"]);
+  requireSuccess(viewed, "Reading PR comments");
+  const commentId = stickyCommentId(viewed.stdout);
+  const posted = commentId
+    ? exec(
+        "gh",
+        [
+          "api",
+          "--method",
+          "PATCH",
+          `repos/{owner}/{repo}/issues/comments/${commentId}`,
+          "--input",
+          "-",
+        ],
+        { input: JSON.stringify({ body: markdown }) },
+      )
+    : exec("gh", ["pr", "comment", pr, "--body-file", "-"], {
+        input: markdown,
+      });
+  requireSuccess(posted, "Publishing review link");
+  return {
+    markdown,
+    posted: true,
+    updated: commentId !== null,
+    urls: { report: reportUrl },
+  };
 }

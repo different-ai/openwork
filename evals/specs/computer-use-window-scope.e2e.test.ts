@@ -1,3 +1,5 @@
+import { screenshot } from "@openwork/test-evidence";
+import { reload } from "@openwork/cdp";
 import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
@@ -49,6 +51,7 @@ test("Computer Use respects window consent, fresh observations and the person's 
   });
 
   await step("The floating controls show the task, selected window and remaining access", async () => {
+    await expect.poll(async () => JSON.stringify(await world.panel())).toContain("Edit the disposable fixture draft and increment its counter.");
     const panel = JSON.stringify(await world.panel());
     expect(panel).toContain("Edit the disposable fixture draft and increment its counter.");
     expect(panel).toContain("Workspace window");
@@ -80,7 +83,17 @@ test("Computer Use respects window consent, fresh observations and the person's 
     expect(busy.code).toBe("computer_busy");
   });
 
-  const observe = async () => toolState(await world.call("computer_observe", { session_id: session }));
+  const observe = async () => {
+    // Activation and resize animations can exhaust one capture's retry budget.
+    // Follow the read-only requery contract; never retry a paused session or action.
+    for (let attempt = 0; ; attempt++) {
+      const observed = toolState(await world.call("computer_observe", { session_id: session }));
+      if (observed.ok === true) return observed;
+      if (observed.code !== "stale_observation" || attempt === 4) throw new Error(`Observation failed: ${JSON.stringify(observed)}`);
+      expect(observed.next).toBe("observe");
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  };
   const refFor = (state: Record<string, unknown>, text: string) => {
     if (!Array.isArray(state.elements)) throw new Error("No accessible elements");
     const match = state.elements.find((value: unknown) => typeof value === "object" && value !== null && "label" in value && value.label === text);
@@ -91,8 +104,9 @@ test("Computer Use respects window consent, fresh observations and the person's 
     world.call("computer_act", { session_id: session, observation_id: observation.observation_id, request_id: request, action: input });
 
   await step("Only the approved window is read and its protected field is omitted", async () => {
+    await world.front();
     const observed = await observe();
-    expect(observed.ok).toBe(true);
+    expect(observed).toMatchObject({ ok: true });
     expect(JSON.stringify(observed)).not.toContain("Other increment");
     expect(JSON.stringify(observed)).not.toContain("private-fixture-value");
     expect(observed.protected_fields).toBe(1);
@@ -114,7 +128,7 @@ test("Computer Use respects window consent, fresh observations and the person's 
     expect(toolState(await action(settled, "after-failed-refresh", { type: "press", ref: refFor(settled, "Increment") })).code).toBe("observation_required");
     expect(await world.state()).toEqual({ count: 0, otherCount: 0, draft: "Initial draft" });
     await world.refreshStable();
-    expect((await observe()).ok).toBe(true);
+    expect(await observe()).toMatchObject({ ok: true });
   });
 
   await step("Accessible actions update the selected window once and leave the other window alone", async () => {
@@ -144,7 +158,7 @@ test("Computer Use respects window consent, fresh observations and the person's 
     expect(JSON.stringify(await world.panel())).toContain("Refreshing the approved window");
     expect(resumed).not.toHaveProperty("pause_reason");
     expect(toolState(await action(observed, "pre-pause-observation", { type: "press", ref: refFor(observed, "Increment") })).code).toBe("observation_required");
-    expect((await observe()).ok).toBe(true);
+    expect(await observe()).toMatchObject({ ok: true });
     expect(await world.state()).toEqual({ count: 1, otherCount: 0, draft: "Reviewed 👋🏽" });
   });
 
@@ -157,6 +171,9 @@ test("Computer Use respects window consent, fresh observations and the person's 
     await expect.poll(() => world.state()).toEqual({ count: 1, otherCount: 0, draft: "Edited by person" });
     await expect.poll(async () => toolState(await world.call("computer_session_status", { session_id: session })).phase).toBe("ready_to_continue");
     expect(toolState(await world.call("computer_session_status", { session_id: session })).state).toBe("paused");
+    expect(await world.panel()).toMatchObject({ continue_enabled: true });
+    await world.hover();
+    expect(toolState(await world.call("computer_session_status", { session_id: session })).phase).toBe("ready_to_continue");
     expect(await world.panel()).toMatchObject({ continue_enabled: true });
     expect(toolState(await action(before, "after-human-edit", { type: "press", ref: refFor(before, "Increment") })).code).toBe("session_paused");
     await world.pressControl("Continue");
@@ -180,15 +197,14 @@ test("Computer Use respects window consent, fresh observations and the person's 
     await world.prepareDrag();
     const pending = world.call("computer_open_session", { app_id: world.appId, pid: world.appPid, mode: "control", purpose: "Drag inside the disposable fixture, then hand control back." });
     await world.selectWindow();
-    await world.pressControl("Allow this session");
+    await world.pressControl("Allow and start");
     const opened = toolState(await pending);
-    expect(opened).toMatchObject({ ok: true, state: "paused", window_title: "Workspace window" });
+    expect(opened).toMatchObject({ ok: true, state: "active", window_title: "Workspace window" });
     const id = opened.session_id;
-    expect(await world.foregroundWindow()).toEqual({ title: "" });
-    await world.pressControl("Continue");
     await expect.poll(() => world.foregroundWindow()).toEqual({ title: "Workspace window" });
     await expect.poll(async () => toolState(await world.call("computer_session_status", { session_id: id })).state).toBe("active");
     const observed = toolState(await world.call("computer_observe", { session_id: id }));
+    expect(observed, JSON.stringify(observed)).toMatchObject({ ok: true });
     const elements = observed.elements;
     if (!Array.isArray(elements)) throw new Error("No controls in drag observation");
     const surface = elements.find((element: unknown) => typeof element === "object" && element !== null && "label" in element && element.label === "Drag surface");
@@ -232,6 +248,12 @@ test("Computer Use respects window consent, fresh observations and the person's 
 
 test("Computer Use enables workspace tools from the desktop setup page", async ({ world, step }) => {
   await using app = await world.desktop();
+  const reloadApp = async () => {
+    const previous = await evalIn(app, () => performance.timeOrigin);
+    await reload(app);
+    // Do not let an assertion pass against the page being replaced.
+    await waitFor(app, browserScript((origin) => performance.timeOrigin !== origin && document.readyState === "complete", [previous]));
+  };
   const { workspaceId } = await createAndSelectWorkspace(app, { path: world.workspacePath });
   await step("Granted macOS access still requires explicit workspace enablement", async () => {
     await evalIn(app, browserScript((value) => (location.hash = value), [`#/workspace/${workspaceId}/extensions/computer-use`]));
@@ -240,8 +262,182 @@ test("Computer Use enables workspace tools from the desktop setup page", async (
   });
   await step("Enable resolves the bundled helper and reaches Ready", async () => {
     await evalIn(app, () => ([...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Enable Computer Use")?.click()));
-    await waitFor(app, () => (document.body.innerText.includes("Ready · app access is approved when a session starts")), { timeoutMs: 60_000 });
+    await waitFor(app, () => (document.body.innerText.includes("Ready · app access is approved when a session starts")), { timeoutMs: 60_000 }).catch(async (error) => {
+      throw new Error(`${String(error)}; setup: ${await evalIn(app, () => document.body.innerText)}`);
+    });
     expect(await evalIn(app, () => ([...document.querySelectorAll("button")].some(b => /^(Enable|Reconnect) Computer Use$/.test(b.textContent.trim()))))).toBe(false);
+  });
+  const workspaceMcp = (body?: unknown) => evalIn(app, browserScript(async (id, body) => {
+    const server = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    if (!server.running || !server.baseUrl || !server.clientToken) throw new Error("Isolated workspace server is not running");
+    const response = await fetch(`${server.baseUrl}/workspace/${id}/mcp`, {
+      method: body === null ? "GET" : "POST",
+      headers: { Authorization: `Bearer ${server.clientToken}`, "Content-Type": "application/json" },
+      body, signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`Workspace MCP request failed: ${response.status}`);
+    return response.json();
+  }, [workspaceId, body === undefined ? null : JSON.stringify(body)]), { awaitPromise: true });
+  const configuredCommand = async () => {
+    const value = await workspaceMcp();
+    if (typeof value !== "object" || value === null || !("items" in value) || !Array.isArray(value.items)) throw new Error("Missing workspace MCP configuration");
+    const computer = value.items.find((entry: unknown) => typeof entry === "object" && entry !== null && "name" in entry && entry.name === "computer-use");
+    if (typeof computer !== "object" || computer === null || !("config" in computer) || typeof computer.config !== "object" || computer.config === null || !("command" in computer.config)) throw new Error("Missing Computer Use command");
+    return computer.config.command;
+  };
+  const command = await configuredCommand();
+  expect(command).toEqual(await evalIn(app, () => window.__OPENWORK_ELECTRON__.invokeDesktop("getComputerUseMcpCommand")));
+  await using computer = await world.hostedClient(command);
+  const observeWhenQuiet = async (sessionId: unknown) => {
+    const deadline = Date.now() + 5_000;
+    while (true) {
+      const state = toolState(await computer.call("computer_observe", { session_id: sessionId }));
+      // A local Mac can receive person input during setup. Follow the tool's
+      // wait/requery contract, but never retry input or mask other errors.
+      if (state.code !== "user_interacting" || Date.now() >= deadline) return state;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  };
+  const session = await step("Main-app approval starts the selected window without a second Continue", async () => {
+    const pending = computer.call("computer_open_session", { app_id: world.appId, pid: world.appPid, mode: "control", purpose: "Use the disposable workspace from OpenWork." });
+    await Promise.race([
+      waitFor(app, () => Boolean(document.querySelector('select[aria-label="Window to allow"]')), { timeoutMs: 15_000 }).catch(async (error) => {
+        throw new Error(`${String(error)}; host state: ${JSON.stringify(await evalIn(app, () => window.__OPENWORK_ELECTRON__.invokeDesktop("getComputerUseState")))}`);
+      }),
+      pending.then((reply) => { throw new Error(`Session ended before approval: ${JSON.stringify(toolState(reply))}`); }),
+    ]);
+    await expect(computer.request("openwork/ui", { action: "approve" })).rejects.toThrow("Method not available to the agent");
+    expect(await evalIn(app, () => document.body.innerText.includes("Allow and start"))).toBe(true);
+    await screenshot(app);
+    await evalIn(app, () => {
+      const picker = document.querySelector('select[aria-label="Window to allow"]');
+      if (!(picker instanceof HTMLSelectElement)) throw new Error("No window picker");
+      const option = [...picker.options].find((item) => item.text === "Workspace window");
+      if (!option) throw new Error("Missing fixture window");
+      picker.value = option.value; picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await evalIn(app, () => [...document.querySelectorAll("button")].find((button) => button.textContent.trim() === "Allow and start")?.click());
+    const opened = toolState(await pending);
+    expect(opened).toMatchObject({ ok: true, state: "active", window_title: "Workspace window" });
+    expect(await world.foregroundWindow()).toEqual({ title: "Workspace window" });
+    return opened.session_id;
+  });
+  const host = await evalIn(app, () => window.__OPENWORK_ELECTRON__.invokeDesktop("getComputerUseState"));
+  if (!Array.isArray(host) || typeof host[0] !== "object" || host[0] === null || !("helperPid" in host[0])) throw new Error("Missing native preview owner");
+  const previewPid = host[0].helperPid;
+  await step("Normal work has a native preview and no persistent control dashboard", async () => {
+    const observed = await observeWhenQuiet(session);
+    expect(observed).toMatchObject({ ok: true });
+    expect(JSON.stringify(observed)).not.toContain("Other increment");
+    const preview = JSON.stringify(await world.hostedPanel(previewPid));
+    expect(preview).toContain("Latest approved window observation");
+    expect(preview).toContain("Stop");
+    expect(preview).not.toContain("Take over");
+    await waitFor(app, () => ![...document.querySelectorAll('[aria-label="Computer Use controls"] button')].some((b) => /Continue|Take over|Stop/.test(b.textContent)));
+    await screenshot(app);
+    await world.hostedControl(previewPid, "Hide");
+    expect(toolState(await computer.call("computer_session_status", { session_id: session }))).toMatchObject({ state: "active", panel_visible: false });
+    await waitFor(app, () => [...document.querySelectorAll("button")].some((b) => /^Show .+ preview$/.test(b.textContent.trim())));
+    await evalIn(app, () => [...document.querySelectorAll("button")].find((b) => /^Show .+ preview$/.test(b.textContent.trim()))?.click());
+    await expect.poll(async () => toolState(await computer.call("computer_session_status", { session_id: session })).panel_visible).toBe(true);
+  });
+  await step("Person input requires a quiet period and fresh state, without a Continue click", async () => {
+    const before = await observeWhenQuiet(session);
+    expect(before, JSON.stringify(before)).toMatchObject({ ok: true });
+    await world.humanEdit();
+    await expect.poll(async () => toolState(await computer.call("computer_session_status", { session_id: session })).phase).toBe("person_interacting");
+    expect(toolState(await computer.call("computer_observe", { session_id: session }))).toMatchObject({ code: "user_interacting", next: "wait_then_observe" });
+    expect(toolState(await computer.call("computer_act", { session_id: session, observation_id: before.observation_id, request_id: "interrupted-input", action: { type: "click", x: 20, y: 20 } })).code).toBe("user_interacting");
+    await expect.poll(async () => toolState(await computer.call("computer_session_status", { session_id: session })).phase, { timeout: 5_000 }).toBe("requery_required");
+    // Time passing alone must not resume or reuse the old observation.
+    expect(toolState(await computer.call("computer_session_status", { session_id: session })).state).toBe("paused");
+    expect(toolState(await computer.call("computer_act", { session_id: session, observation_id: before.observation_id, request_id: "after-quiet-input", action: { type: "click", x: 20, y: 20 } })).code).toBe("requery_required");
+    const refreshed = toolState(await computer.call("computer_observe", { session_id: session }));
+    expect(refreshed).toMatchObject({ ok: true });
+    expect(JSON.stringify(refreshed)).toContain("Edited by person");
+    expect(refreshed.observation_id).not.toBe(before.observation_id);
+    expect(toolState(await computer.call("computer_session_status", { session_id: session }))).toMatchObject({ state: "active", phase: "working" });
+    expect(await world.state()).toEqual({ count: 0, otherCount: 0, draft: "Edited by person" });
+  });
+  await step("New person input during the state requery interrupts recovery again", async () => {
+    await world.humanEdit();
+    await expect.poll(async () => toolState(await computer.call("computer_session_status", { session_id: session })).phase, { timeout: 5_000 }).toBe("requery_required");
+    await world.interruptNextRead();
+    expect(toolState(await computer.call("computer_observe", { session_id: session })).code).toBe("user_interacting");
+    expect(toolState(await computer.call("computer_session_status", { session_id: session })).state).toBe("paused");
+    await expect.poll(async () => toolState(await computer.call("computer_session_status", { session_id: session })).phase, { timeout: 5_000 }).toBe("requery_required");
+    const refreshed = toolState(await computer.call("computer_observe", { session_id: session }));
+    expect(refreshed, JSON.stringify(refreshed)).toMatchObject({ ok: true });
+    expect(await world.state()).toEqual({ count: 0, otherCount: 0, draft: "Edited by person" });
+  });
+  await step("Unavailable-window recovery requires a person and cannot be cleared by more input", async () => {
+    await world.humanEdit();
+    await expect.poll(async () => toolState(await computer.call("computer_session_status", { session_id: session })).phase, { timeout: 5_000 }).toBe("requery_required");
+    await world.minimize();
+    await expect.poll(() => world.minimized()).toEqual({ minimized: true });
+    expect(toolState(await computer.call("computer_observe", { session_id: session })).code).toBe("session_paused");
+    await waitFor(app, () => [...document.querySelectorAll('[aria-label="Computer Use controls"] button')].some((b) => b.textContent.trim() === "Continue"));
+    await world.restore();
+    await world.humanEdit();
+    expect(toolState(await computer.call("computer_observe", { session_id: session })).code).toBe("session_paused");
+    await evalIn(app, () => [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Computer Use controls"] button')].find((b) => b.textContent.trim() === "Continue")?.click());
+    await expect.poll(async () => toolState(await computer.call("computer_session_status", { session_id: session })).state).toBe("active");
+    expect(await observeWhenQuiet(session)).toMatchObject({ ok: true });
+    expect(await world.state()).toEqual({ count: 0, otherCount: 0, draft: "Edited by person" });
+  });
+  await step("Explicit Stop ends access; observing cannot restart the stopped session", async () => {
+    await world.hostedControl(previewPid, "Stop");
+    await expect.poll(async () => toolState(await computer.call("computer_session_status", { session_id: session })).code).toBe("session_unavailable");
+    expect(toolState(await computer.call("computer_observe", { session_id: session })).code).toBe("session_unavailable");
+    await waitFor(app, () => !document.querySelector('[aria-label="Computer Use controls"]'));
+    expect(await world.state()).toEqual({ count: 0, otherCount: 0, draft: "Edited by person" });
+  });
+  await step("Cancelling pending approval clears the request without granting access", async () => {
+    const pending = computer.call("computer_open_session", { app_id: world.appId, pid: world.appPid, mode: "observe", purpose: "Cancel this disposable approval request." });
+    await waitFor(app, () => Boolean(document.querySelector('select[aria-label="Window to allow"]')));
+    computer.cancelPending();
+    expect(toolState(await pending).ok).toBe(false);
+    await waitFor(app, () => !document.querySelector('[aria-label="Computer Use controls"]'));
+    expect(await world.state()).toEqual({ count: 0, otherCount: 0, draft: "Edited by person" });
+  });
+  await step("Disconnecting the owning client removes its preview and releases the grant", async () => {
+    const pending = computer.call("computer_open_session", { app_id: world.appId, pid: world.appPid, mode: "observe", purpose: "Close the disposable client after approval." });
+    await waitFor(app, () => Boolean(document.querySelector('select[aria-label="Window to allow"]')));
+    await evalIn(app, () => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Allow and start")?.click());
+    expect(toolState(await pending).ok).toBe(true);
+    await computer.close();
+    await waitFor(app, () => !document.querySelector('[aria-label="Computer Use controls"]'));
+    // A new request reaching consent proves the global lease was released.
+    await using next = await world.hostedClient(command);
+    const approval = next.call("computer_open_session", { app_id: world.appId, pid: world.appPid, mode: "observe", purpose: "Check released control without granting access." });
+    await waitFor(app, () => Boolean(document.querySelector('select[aria-label="Window to allow"]')));
+    next.cancelPending();
+    expect(toolState(await approval).ok).toBe(false);
+    await waitFor(app, () => !document.querySelector('[aria-label="Computer Use controls"]'));
+    expect(await world.state()).toEqual({ count: 0, otherCount: 0, draft: "Edited by person" });
+  });
+  await step("Reopening a workspace upgrades its enabled bundled connection to main-app controls", async () => {
+    if (!Array.isArray(command) || typeof command[0] !== "string") throw new Error("Missing bundled executable");
+    await workspaceMcp({ name: "computer-use", config: { type: "local", command: [command[0], "mcp"], enabled: true } });
+    expect(await configuredCommand()).toEqual([command[0], "mcp"]);
+    await reloadApp();
+    await expect.poll(configuredCommand, { timeout: 30_000 }).toEqual(command);
+    await waitFor(app, () => document.body.innerText.includes("Ready · app access is approved when a session starts"), { timeoutMs: 15_000 });
+  });
+  await step("Reload preserves disabled bundled commands and enabled custom commands", async () => {
+    if (!Array.isArray(command) || typeof command[0] !== "string") throw new Error("Missing bundled executable");
+    const disabled = { type: "local", command: [command[0], "mcp"], enabled: false };
+    await workspaceMcp({ name: "computer-use", config: disabled });
+    await reloadApp();
+    await waitFor(app, () => [...document.querySelectorAll("button")].some((b) => b.textContent.trim() === "Enable Computer Use"));
+    expect(await evalIn(app, () => [...document.querySelectorAll("span")].some((s) => s.textContent.trim() === "Ready"))).toBe(false);
+    expect(await workspaceMcp()).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ name: "computer-use", config: disabled })]) });
+    const custom = { type: "local", command: [command[0], "mcp", "custom-fixture-argument"], enabled: true };
+    await workspaceMcp({ name: "computer-use", config: custom });
+    await reloadApp();
+    await waitFor(app, () => document.body.innerText.includes("Ready · app access is approved when a session starts"), { timeoutMs: 15_000 });
+    expect(await evalIn(app, () => [...document.querySelectorAll("button")].some((b) => /^(Enable|Reconnect) Computer Use$/.test(b.textContent.trim())))).toBe(false);
+    expect(await workspaceMcp()).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ name: "computer-use", config: custom })]) });
   });
 });
 
@@ -252,16 +448,42 @@ test("Computer Use prepares an Electron accessibility tree before window consent
   });
   const session = await step("Opening a session enables the tree and still requires window approval", async () => {
     const pending = world.call("computer_open_session", { app_id: electron.appId, pid: electron.pid, mode: "observe", purpose: "Read the disposable Electron fixture." });
-    const [reply] = await Promise.all([pending, world.pressControl("Allow this session")]);
-    const result = toolState(reply);
+    await Promise.race([
+      world.pressControl("Allow this session"),
+      pending.then((reply) => {
+        const state = toolState(reply);
+        if (state.ok !== true) throw new Error(`Electron session did not request consent: ${JSON.stringify(state)}`);
+        return new Promise<never>(() => {});
+      }),
+    ]);
+    const result = toolState(await pending);
     expect(result).toMatchObject({ ok: true, mode: "observe", window_title: "Electron Fixture" });
     return result.session_id;
   });
   await step("The approved Electron window exposes its rendered controls", async () => {
+    // Chromium's accessibility flag can precede its rendered subtree.
+    await expect.poll(async () => JSON.stringify(toolState(await world.call("computer_observe", { session_id: session, include_image: false })))).toContain("Fixture action");
     const observation = toolState(await world.call("computer_observe", { session_id: session }));
     expect(observation.ok).toBe(true);
     expect(JSON.stringify(observation)).toContain("Fixture action");
     expect(JSON.stringify(observation)).toContain("Fixture draft value");
     expect(toolState(await world.call("computer_close_session", { session_id: session }))).toMatchObject({ ok: true });
+  });
+  await step("An installed but closed app launches before requesting window consent", async () => {
+    await using launchable = await world.launchableFixture();
+    const before = toolState(await world.call("computer_discover"));
+    expect(before.apps).not.toEqual(expect.arrayContaining([expect.objectContaining({ app_id: launchable.appId })]));
+    const pending = world.call("computer_open_session", { app_id: launchable.appId, mode: "observe", purpose: "Open and read the disposable launch fixture." });
+    await Promise.race([
+      world.pressControl("Allow this session"),
+      pending.then((reply) => { if (toolState(reply).ok !== true) throw new Error(`App launch failed: ${JSON.stringify(toolState(reply))}`); return new Promise<never>(() => {}); }),
+    ]);
+    const reply = await pending;
+    const opened = toolState(reply);
+    expect(opened).toMatchObject({ ok: true, app_id: launchable.appId, mode: "observe" });
+    expect(toolState(await world.call("computer_discover")).apps).toEqual(expect.arrayContaining([expect.objectContaining({ app_id: launchable.appId, pid: opened.pid })]));
+    expect(toolState(await world.call("computer_observe", { session_id: opened.session_id })).ok).toBe(true);
+    expect(toolState(await world.call("computer_close_session", { session_id: opened.session_id })).ok).toBe(true);
+    expect(toolState(await world.call("computer_open_session", { app_id: "com.apple.Terminal", mode: "observe", purpose: "Reject a protected app." })).code).toBe("protected_app");
   });
 });

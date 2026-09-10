@@ -242,7 +242,7 @@ declare global {
         use?: (id: string) => Promise<RecoveryActionResult>;
       };
       browser?: {
-        show?: (bounds: { x: number; y: number; width: number; height: number }, sessionId?: string | null) => Promise<void>;
+        show?: (bounds: { x: number; y: number; width: number; height: number }, sessionId?: string | null) => Promise<boolean | void>;
         hide?: () => Promise<void>;
         openUrl?: (
           url: string,
@@ -254,16 +254,25 @@ declare global {
         back?: () => Promise<void>;
         forward?: () => Promise<void>;
         reload?: () => Promise<void>;
-        setBounds?: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
+        setBounds?: (bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean | void>;
         getState?: () => Promise<BrowserStatePayload | null>;
         createTab?: (url?: string, sessionId?: string | null) => Promise<{ tabId: string }>;
         closeTab?: (tabId: string) => Promise<string | null>;
+        suspendTab?: (tabId: string) => Promise<string | null>;
+        restoreTab?: (tabId: string, sessionId: string | null) => Promise<OpenBrowserUrlResult>;
+        releaseTab?: (tabId: string, sessionId: string | null) => Promise<{ tabId: string; released: true }>;
         closeAllTabs?: () => Promise<string[]>;
+        closeSessionTabs?: (sessionId: string) => Promise<string[]>;
         selectTab?: (tabId: string) => Promise<string>;
         reorderTabs?: (tabIds: string[]) => Promise<BrowserPanelTab[]>;
+        approve?: (tabId: string, approvalId: string, allowed: boolean) => Promise<boolean>;
+        taskControl?: (tabId: string, action: "pause" | "resume") => Promise<void>;
         listTabs?: () => Promise<BrowserPanelTab[]>;
+        listWebMcpTools?: (args?: { tabId?: string }) => Promise<unknown>;
+        executeWebMcpTool?: (args: { toolId: string; input?: unknown }) => Promise<unknown>;
         setProxy?: (proxy?: string | null) => Promise<BrowserProxyState>;
         getProxy?: () => Promise<BrowserProxyState>;
+        setControlEnabled?: (enabled: boolean) => Promise<boolean>;
         showTabContextMenu?: (tabId: string, point?: { x: number; y: number }) => Promise<void>;
         destroy?: () => Promise<void>;
         onStateChange?: (callback: (state: BrowserStatePayload) => void) => () => void;
@@ -294,6 +303,15 @@ declare global {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+export async function closeSessionBrowserTabs(sessionId: string): Promise<void> {
+  if (typeof window === "undefined" || !sessionId.trim()) return;
+  try {
+    await window.__OPENWORK_ELECTRON__?.browser?.closeSessionTabs?.(sessionId);
+  } catch {
+    // Cleanup is idempotent and must not undo a confirmed session deletion.
+  }
+}
 
 async function invokeElectronHelper<C extends DesktopCommandName>(
   command: C,

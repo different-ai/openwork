@@ -1831,6 +1831,16 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [providerAuthStore, route.tab]);
 
   useEffect(() => {
+    providerAuthStore.syncFromOptions();
+  }, [
+    providerAuthStore,
+    openworkServerSnapshot.openworkServerStatus,
+    openworkServerSnapshot.openworkServerCapabilities?.providerSync,
+    openworkServerSnapshot.openworkServerClient,
+    openworkServerSnapshot.openworkServerHostInfo?.generation,
+  ]);
+
+  useEffect(() => {
     openworkServerStore.syncFromOptions();
     connectionsStore.syncFromOptions();
     providerAuthStore.syncFromOptions();

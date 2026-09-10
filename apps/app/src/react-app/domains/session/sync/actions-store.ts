@@ -8,6 +8,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { t } from "../../../../i18n";
+import { closeSessionBrowserTabs } from "../../../../app/lib/desktop";
 import { unwrap } from "../../../../app/lib/opencode";
 import {
   abortSession as abortSessionTyped,
@@ -797,7 +798,8 @@ export function createSessionActionsStore(options: {
     const root = options.selectedWorkspaceRoot().trim();
     const directory = toSessionTransportDirectory(root);
     const params = directory ? { sessionID: trimmed, directory } : { sessionID: trimmed };
-    unwrap(await c.session.delete(params));
+    const deleted = unwrap(await c.session.delete(params));
+    if (deleted) void closeSessionBrowserTabs(trimmed);
     clearSessionDraft(LOCAL_SESSION_DRAFT_SCOPE, options.selectedWorkspaceId().trim(), trimmed);
 
     options.setSessions(options.sessions().filter((s) => s.id !== trimmed));

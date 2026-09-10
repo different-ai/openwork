@@ -6,7 +6,6 @@ import { z } from "zod"
 import { auth } from "../../auth.js"
 import { deleteScimProvisionedAccessForProvider, recordScimSyncFailure, recordScimSyncFailureFromBearerToken, resolveScimProviderFromBearerToken, syncExternalIdentityFromScimResource, syncExternalIdentityFromScimUserId } from "../../scim.js"
 import {
-  applyScimGroupPatch,
   createScimGroup,
   deleteScimGroup,
   getScimGroup,
@@ -33,8 +32,8 @@ const logger = appLogger.child({ component: "scim_auth_routes" })
 
 const scimGroupMemberSchema = z.object({
   value: z.string().trim().min(1),
-  display: z.string().optional(),
-  $ref: z.string().optional(),
+  display: z.preprocess((value) => value === null ? undefined : value, z.string().optional()),
+  $ref: z.preprocess((value) => value === null ? undefined : value, z.string().optional()),
 }).passthrough()
 
 const scimGroupInputSchema = z.object({
@@ -468,12 +467,8 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
     if (!parsed.success || (parsed.data.schemas && !parsed.data.schemas.includes(SCIM_PATCH_SCHEMA))) {
       return scimError("Invalid SCIM PATCH request", 400)
     }
-    const group = await getScimGroup({ provider, groupId: c.req.param("groupId") })
-    if (!group) return scimError("Group not found", 404)
     const baseUrl = c.req.url.replace(/\/Groups\/[^/]+$/, "")
-    const current = await serializeScimGroup(group, baseUrl)
-    const value = applyScimGroupPatch({ current, operations: parsed.data.Operations })
-    const result = await updateScimGroup({ provider, groupId: group.id, value })
+    const result = await updateScimGroup({ provider, groupId: c.req.param("groupId"), operations: parsed.data.Operations })
     if (!result.ok) return scimError(result.detail, result.status)
     return scimJson(await serializeScimGroup(result.group, baseUrl))
   })

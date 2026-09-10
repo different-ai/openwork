@@ -23,7 +23,9 @@ describe("Den auth landing contract", () => {
     expect(source).toContain("Logged in as");
     expect(source).toContain("showCopyLinkByDefault");
     expect(source).toContain('data-testid="desktop-handoff-copy-link"');
-    expect(source).toContain("desktopAuthRequested && user && !authError");
+    expect(source).toContain("desktopAuthRequested && user && !setupPending");
+    expect(source).toContain("Retry opening OpenWork");
+    expect(source).toContain("onClick={retryDesktopAuthHandoff}");
     expect(source).not.toContain("showAuthFeedback && authInfo && !authError");
   });
 });

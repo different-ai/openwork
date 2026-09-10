@@ -194,9 +194,12 @@ test("screenshot automatically records an artifact in ambient test evidence", as
   const dir = await mkdtemp(join(tmpdir(), "openwork-test-evidence-screenshot-"));
   try {
     const png = Buffer.from("ambient screenshot pixels");
+    const methods: string[] = [];
     const client: CdpClient = {
       close() {},
       async send(method) {
+        methods.push(method);
+        if (method === "Page.bringToFront") return {};
         if (method === "Page.captureScreenshot") return { data: png.toString("base64") };
         if (method === "Runtime.evaluate") {
           return { result: { value: { route: "#/ambient", visibleText: "Ambient screenshot" } } };
@@ -210,6 +213,7 @@ test("screenshot automatically records an artifact in ambient test evidence", as
     };
     const testEvidence = createTestEvidence({ name: "ambient screenshot", outDir: dir });
     const captured = await withTestEvidence(testEvidence, () => screenshot(app));
+    assert.deepEqual(methods.slice(0, 2), ["Page.bringToFront", "Page.captureScreenshot"]);
     assert.equal(captured.route, "#/ambient");
     await testEvidence.close();
 

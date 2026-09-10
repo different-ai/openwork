@@ -18,6 +18,26 @@ export type DenApiReadinessResponse = {
   };
 };
 
+export type InvalidRequestError = {
+  error: "invalid_request";
+  details: Array<{
+    message: string;
+    path?: Array<string | number>;
+    [key: string]: unknown;
+  }>;
+  capability?: string;
+};
+
+export type UnauthorizedError = {
+  error: "unauthorized";
+};
+
+export type ForbiddenError = {
+  error: "forbidden" | "reauth";
+  reason?: string;
+  message?: string;
+};
+
 export type AdminPageInfo = {
   total: number;
   limit: number;
@@ -40,26 +60,6 @@ export type AdminUsersPageResponse = {
     billingUnavailableUsers: number | null;
   };
   generatedAt: string;
-};
-
-export type InvalidRequestError = {
-  error: "invalid_request";
-  details: Array<{
-    message: string;
-    path?: Array<string | number>;
-    [key: string]: unknown | string | Array<string | number> | undefined;
-  }>;
-  capability?: string;
-};
-
-export type UnauthorizedError = {
-  error: "unauthorized";
-};
-
-export type ForbiddenError = {
-  error: "forbidden" | "reauth";
-  reason?: string;
-  message?: string;
 };
 
 export type AdminOrganizationsPageResponse = {
@@ -191,9 +191,9 @@ export type DesktopHandoffGrantCreateBody = {
    */
   next?: string;
   /**
-   * Optional desktop URL scheme to use when building the OpenWork deep link.
+   * The registered OpenWork desktop URL scheme.
    */
-  desktopScheme?: string;
+  desktopScheme?: "openwork";
   /**
    * Optional HTTPS OpenWork Cloud web return URL. Accepted only for multi-organization Cloud instances after server-side origin validation.
    */
@@ -325,7 +325,7 @@ export type CurrentUserOrganizationsResponse = {
      */
     id: string;
     isActive: boolean;
-    [key: string]: unknown | string | boolean;
+    [key: string]: unknown;
   }>;
   activeOrgId: string | null;
   activeOrgSlug: string | null;
@@ -550,7 +550,7 @@ export type OrganizationOwner = {
 export type OrganizationContextResponse = {
   organization: {
     owner?: OrganizationOwner | null;
-    [key: string]: unknown | OrganizationOwner | null | undefined;
+    [key: string]: unknown;
   };
   currentMember: {
     [key: string]: unknown;
@@ -558,18 +558,7 @@ export type OrganizationContextResponse = {
   currentMemberTeams: Array<{
     [key: string]: unknown;
   }>;
-  [key: string]:
-    | unknown
-    | {
-        owner?: OrganizationOwner | null;
-        [key: string]: unknown | OrganizationOwner | null | undefined;
-      }
-    | {
-        [key: string]: unknown;
-      }
-    | Array<{
-        [key: string]: unknown;
-      }>;
+  [key: string]: unknown;
 };
 
 export type DeleteOrganizationResponse = {
@@ -952,7 +941,7 @@ export type ScimInvalidRequestError = {
   details: Array<{
     message: string;
     path?: Array<string | number>;
-    [key: string]: unknown | string | Array<string | number> | undefined;
+    [key: string]: unknown;
   }>;
 };
 
@@ -1041,7 +1030,7 @@ export type SsoInvalidRequestError = {
   details: Array<{
     message: string;
     path?: Array<string | number>;
-    [key: string]: unknown | string | Array<string | number> | undefined;
+    [key: string]: unknown;
   }>;
 };
 
@@ -1212,12 +1201,7 @@ export type LlmProviderResponse = {
     memberCredential?: {
       state: "missing" | "active" | "blocked" | "stale" | "error";
     };
-    [key: string]:
-      | unknown
-      | {
-          state: "missing" | "active" | "blocked" | "stale" | "error";
-        }
-      | undefined;
+    [key: string]: unknown;
   };
 };
 
@@ -1382,7 +1366,7 @@ export type GoogleWorkspaceDraftResponse = {
    */
   draftUrl: string | null;
   /**
-   * Gmail URL for the conversation thread when this draft is a threaded reply.
+   * Gmail URL for the conversation thread returned by Gmail for this draft.
    */
   threadUrl: string | null;
   to: string;
@@ -1413,6 +1397,7 @@ export type GoogleWorkspaceGmailMessageSummary = {
 export type GoogleWorkspaceGmailMessagesResponse = {
   ok: true;
   messages: Array<GoogleWorkspaceGmailMessageSummary>;
+  nextPageToken?: string;
 };
 
 export type GoogleWorkspaceGmailAttachment = {
@@ -1537,6 +1522,11 @@ export type GoogleWorkspaceUpdateCalendarEventBody = {
 export type GoogleWorkspaceDriveFilesResponse = {
   ok: true;
   files: Array<GoogleWorkspaceDriveFileSummary>;
+  nextPageToken?: string;
+  /**
+   * Google reports some drives were not searched; do not claim these are all matching files.
+   */
+  incompleteSearch?: boolean;
 };
 
 export type GoogleWorkspaceDriveFileResponse = {
@@ -1550,7 +1540,7 @@ export type GoogleWorkspaceDriveFileResponse = {
     size: string | null;
     content: string | null;
     /**
-     * Standard base64-encoded file bytes for binary files; decode locally. Same encoding as the gmail-attachment capability's dataBase64 — it can be passed directly to the Drive upload capability's dataBase64 field.
+     * Standard base64-encoded file bytes for binary files; decode to a workspace file. To upload, use the host's Google Workspace upload action with the workspace file path, if that action is available in the current client. There is no dataBase64 Drive upload capability.
      */
     contentBase64: string | null;
     encoding: "text" | "base64" | "none";
@@ -1595,9 +1585,190 @@ export type GoogleWorkspaceMissingThreadIdError = {
   message: string;
 };
 
+export type Microsoft365MailSendResponse = {
+  ok: true;
+  draftId: string;
+  /**
+   * Graph accepted the send request. This is not confirmation of delivery.
+   */
+  status: "accepted";
+};
+
+export type Microsoft365NeedsConnectionError = {
+  error: "needs_connection";
+  message: string;
+};
+
+export type Microsoft365GraphError = {
+  error: "microsoft_graph_error";
+  message: string;
+  outcome?: "unknown";
+  retryable?: false;
+};
+
+export type Microsoft365MailSendBody = {
+  /**
+   * Must be true only after the user explicitly requests sending this existing draft. Creating or reviewing a draft is not send authorization.
+   */
+  confirmSend: true;
+};
+
 export type Microsoft365EmailAddress = {
   name: string;
   address: string;
+};
+
+export type Microsoft365MailMessage = {
+  id: string;
+  conversationId: string;
+  subject: string;
+  receivedDateTime: string;
+  preview: string;
+  from: Microsoft365EmailAddress | null;
+  to: Array<Microsoft365EmailAddress>;
+  webLink: string;
+  hasAttachments: boolean;
+  isDraft: boolean;
+  isRead: boolean;
+  categories: Array<string>;
+  parentFolderId: string;
+  cc: Array<Microsoft365EmailAddress>;
+  body: string;
+  bodyContentType: string;
+  bodyTruncated: boolean;
+};
+
+export type Microsoft365MailDraftResponse = {
+  ok: true;
+  draft: Microsoft365MailMessage;
+};
+
+export type Microsoft365MailReplyDraftBody = {
+  /**
+   * Reply text to save in a draft for user review; this does not send mail.
+   */
+  comment: string;
+};
+
+export type Microsoft365MailMessageResponse = {
+  ok: true;
+  message: Microsoft365MailMessage;
+};
+
+export type Microsoft365MailMessageUpdateBody = {
+  isRead?: boolean;
+  /**
+   * Replace the message's categories with this list; an empty list clears them.
+   */
+  categories?: Array<string>;
+};
+
+export type Microsoft365MailMessageMoveBody = {
+  /**
+   * Named folder in the caller's mailbox. deleteditems moves to trash, never permanently deletes.
+   */
+  destination: "archive" | "deleteditems" | "inbox";
+  /**
+   * Required when destination is deleteditems. Set true only when the user explicitly requested moving this message to trash.
+   */
+  confirmTrash?: true;
+};
+
+export type Microsoft365CalendarEvent = {
+  id: string;
+  subject: string;
+  preview: string;
+  start: string;
+  startTimeZone: string;
+  end: string;
+  endTimeZone: string;
+  isAllDay: boolean;
+  location: string;
+  organizer: Microsoft365EmailAddress | null;
+  attendees: Array<Microsoft365EmailAddress>;
+  webLink: string;
+  onlineMeetingUrl: string | null;
+};
+
+export type Microsoft365CalendarEventResponse = {
+  ok: true;
+  event: Microsoft365CalendarEvent;
+};
+
+export type Microsoft365CalendarEventUpdateBody = {
+  /**
+   * The user explicitly authorized this update and potential attendee email notifications from Microsoft Graph.
+   */
+  confirmNotifications: true;
+  subject?: string;
+  body?: string;
+  /**
+   * New UTC start, with Z suffix. Rescheduling requires both start and end.
+   */
+  start?: string;
+  /**
+   * New UTC end, with Z suffix.
+   */
+  end?: string;
+  location?: string;
+};
+
+export type Microsoft365CalendarCancelResponse = {
+  ok: true;
+  eventId: string;
+  status: "accepted";
+};
+
+export type Microsoft365CalendarCancelBody = {
+  /**
+   * The user explicitly requested cancellation, including attendee notifications.
+   */
+  confirmCancel: true;
+  comment?: string;
+};
+
+export type Microsoft365CalendarDeleteResponse = {
+  ok: true;
+  eventId: string;
+  status: "deleted";
+};
+
+export type Microsoft365CalendarDeleteBody = {
+  /**
+   * The user explicitly requested deleting this event; organizer deletion can notify attendees.
+   */
+  confirmDelete: true;
+};
+
+export type Microsoft365DriveItem = {
+  id: string;
+  name: string;
+  size: number | null;
+  modifiedTime: string;
+  webUrl: string;
+  mimeType: string;
+  kind: "file" | "folder" | "unknown";
+};
+
+export type Microsoft365DriveFileWriteResponse = {
+  ok: true;
+  file: Microsoft365DriveItem;
+};
+
+export type Microsoft365DriveItemUpdateBody = {
+  name?: string;
+  /**
+   * Destination folder id within the calling member's same OneDrive; cross-drive moves are not supported.
+   */
+  parentId?: string;
+};
+
+export type Microsoft365DriveFolderBody = {
+  /**
+   * Existing parent folder id in the calling member's OneDrive.
+   */
+  parentId: string;
+  name: string;
 };
 
 export type Microsoft365MailMessageSummary = {
@@ -1617,66 +1788,9 @@ export type Microsoft365MailMessagesResponse = {
   messages: Array<Microsoft365MailMessageSummary>;
 };
 
-export type Microsoft365NeedsConnectionError = {
-  error: "needs_connection";
-  message: string;
-};
-
-export type Microsoft365GraphError = {
-  error: "microsoft_graph_error";
-  message: string;
-};
-
-export type Microsoft365MailMessage = {
-  id: string;
-  conversationId: string;
-  subject: string;
-  receivedDateTime: string;
-  preview: string;
-  from: Microsoft365EmailAddress | null;
-  to: Array<Microsoft365EmailAddress>;
-  webLink: string;
-  hasAttachments: boolean;
-  cc: Array<Microsoft365EmailAddress>;
-  body: string;
-  bodyContentType: string;
-  bodyTruncated: boolean;
-};
-
-export type Microsoft365MailMessageResponse = {
-  ok: true;
-  message: Microsoft365MailMessage;
-};
-
-export type Microsoft365CalendarEvent = {
-  id: string;
-  subject: string;
-  preview: string;
-  start: string;
-  startTimeZone: string;
-  end: string;
-  endTimeZone: string;
-  isAllDay: boolean;
-  location: string;
-  organizer: Microsoft365EmailAddress | null;
-  attendees: Array<Microsoft365EmailAddress>;
-  webLink: string;
-  onlineMeetingUrl: string | null;
-};
-
 export type Microsoft365CalendarEventsResponse = {
   ok: true;
   events: Array<Microsoft365CalendarEvent>;
-};
-
-export type Microsoft365DriveItem = {
-  id: string;
-  name: string;
-  size: number | null;
-  modifiedTime: string;
-  webUrl: string;
-  mimeType: string;
-  kind: "file" | "folder" | "unknown";
 };
 
 export type Microsoft365DriveFilesResponse = {
@@ -1706,22 +1820,12 @@ export type Microsoft365DriveFileResponse = {
   };
 };
 
-export type Microsoft365MailDraftResponse = {
-  ok: true;
-  draft: Microsoft365MailMessage;
-};
-
 export type Microsoft365MailDraftBody = {
   to: Array<string>;
   cc?: Array<string>;
   bcc?: Array<string>;
   subject: string;
   body: string;
-};
-
-export type Microsoft365CalendarEventResponse = {
-  ok: true;
-  event: Microsoft365CalendarEvent;
 };
 
 export type Microsoft365CalendarEventBody = {
@@ -1732,11 +1836,6 @@ export type Microsoft365CalendarEventBody = {
   timeZone?: string;
   location?: string;
   attendees?: Array<string>;
-};
-
-export type Microsoft365DriveFileWriteResponse = {
-  ok: true;
-  file: Microsoft365DriveItem;
 };
 
 export type Microsoft365DriveFileWriteBody = {
@@ -1883,6 +1982,7 @@ export type ExternalMcpPresetResponse = {
   description: string;
   url: string;
   authType: "oauth" | "apikey" | "none";
+  supportedAuthTypes?: Array<"oauth" | "apikey" | "none">;
   requiresOAuthClient?: boolean;
   authorizationServerIssuer?: string;
   defaultOAuthScopes?: Array<string>;
@@ -2356,6 +2456,7 @@ export type ExternalMcpConnectStartFailedError = {
   error: "oauth_handshake_failed";
   message: string;
   diagnostic: ExternalMcpDiagnostic;
+  callbackUrl?: string;
 };
 
 export type PluginArchGithubInstallStartResponse = {
@@ -2580,37 +2681,7 @@ export type OpenWorkExtensionManifest = {
   lifecycle?: {
     [key: string]: unknown;
   };
-  [key: string]:
-    | unknown
-    | 1
-    | string
-    | string
-    | {
-        format:
-          | "agent-plugin"
-          | "openwork-builtin"
-          | "openwork-extension-manifest"
-          | "claude-plugin"
-          | "opencode-plugin"
-          | "mcp-directory"
-          | "manual";
-        trusted: boolean;
-        origin?: "builtin" | "den" | "workspace" | "local";
-        reference?: string;
-      }
-    | Array<{
-        [key: string]: unknown;
-      }>
-    | Array<{
-        [key: string]: unknown;
-      }>
-    | {
-        [key: string]: unknown;
-      }
-    | {
-        [key: string]: unknown;
-      }
-    | undefined;
+  [key: string]: unknown;
 };
 
 export type PluginArchExtensionProjection = {
@@ -3666,13 +3737,7 @@ export type PluginArchConnectorSyncSummary = {
   failures?: Array<{
     [key: string]: unknown;
   }>;
-  [key: string]:
-    | unknown
-    | number
-    | Array<{
-        [key: string]: unknown;
-      }>
-    | undefined;
+  [key: string]: unknown;
 };
 
 export type PluginArchConnectorSyncEvent = {
@@ -3779,6 +3844,7 @@ export type TeamResponse = {
     updatedAt: string;
     memberIds: Array<string>;
     managedByScim: boolean;
+    grantsOrganizationAdmin: boolean;
   };
 };
 
@@ -4047,7 +4113,7 @@ export type OpenApiDocument = {
   info: {
     title: string;
     version: string;
-    [key: string]: unknown | string;
+    [key: string]: unknown;
   };
   paths: {
     [key: string]: unknown;
@@ -4055,21 +4121,7 @@ export type OpenApiDocument = {
   components?: {
     [key: string]: unknown;
   };
-  [key: string]:
-    | unknown
-    | string
-    | {
-        title: string;
-        version: string;
-        [key: string]: unknown | string;
-      }
-    | {
-        [key: string]: unknown;
-      }
-    | {
-        [key: string]: unknown;
-      }
-    | undefined;
+  [key: string]: unknown;
 };
 
 export type GetHealthData = {
@@ -4222,6 +4274,74 @@ export type PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses = {
    */
   200: unknown;
 };
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaData = {
+  body: {
+    dpaSigned: boolean;
+    reason: string;
+  };
+  path: {
+    organizationId: string;
+  };
+  query?: never;
+  url: "/v1/admin/organizations/{organizationId}/dpa";
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaErrors = {
+  /**
+   * Invalid DPA decision or organization identifier.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: "invalid_request";
+        message: string;
+      };
+  /**
+   * Authentication is required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Platform administrator access is required.
+   */
+  403: ForbiddenError;
+  /**
+   * Organization not found.
+   */
+  404: {
+    error: "not_found";
+    message: string;
+  };
+  /**
+   * Organization metadata could not be read.
+   */
+  503: {
+    error: "managed_models_policy_unavailable";
+    message: string;
+  };
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaError =
+  PatchV1AdminOrganizationsByOrganizationIdDpaErrors[keyof PatchV1AdminOrganizationsByOrganizationIdDpaErrors];
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaResponses = {
+  /**
+   * DPA decision recorded.
+   */
+  200: {
+    ok: true;
+    organization: {
+      /**
+       * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      dpaSigned: boolean;
+    };
+  };
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdDpaResponse =
+  PatchV1AdminOrganizationsByOrganizationIdDpaResponses[keyof PatchV1AdminOrganizationsByOrganizationIdDpaResponses];
 
 export type PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessData = {
   body?: never;
@@ -10454,9 +10574,21 @@ export type PatchV1InferenceErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can update inference settings.
+   * Inference settings access is denied.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "managed_models_disabled_for_dpa" | "managed_models_policy_unavailable";
+        message: string;
+      };
+  /**
+   * Managed Models policy is unavailable.
+   */
+  503: {
+    error: "managed_models_disabled_for_dpa" | "managed_models_policy_unavailable";
+    message: string;
+  };
 };
 
 export type PatchV1InferenceError = PatchV1InferenceErrors[keyof PatchV1InferenceErrors];
@@ -12932,6 +13064,1716 @@ export type PostV1OauthProvidersByProviderIdDisconnectResponses = {
   200: unknown;
 };
 
+export type SendGmailDraftData = {
+  body: {
+    /**
+     * True only when the user explicitly requested this action on this resource. Discovering or selecting a capability is not authorization.
+     */
+    confirm: true;
+  };
+  path: {
+    /**
+     * Existing Gmail draft ID, not its message ID.
+     */
+    draftId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/google-workspace/gmail-draft/{draftId}/send";
+};
+
+export type SendGmailDraftErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Missing permission or protected system label.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Request exceeds 6 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google rejected or did not confirm the operation.
+   */
+  502: {
+    error: string;
+    message: string;
+  };
+};
+
+export type SendGmailDraftError = SendGmailDraftErrors[keyof SendGmailDraftErrors];
+
+export type SendGmailDraftResponses = {
+  /**
+   * Google's validated response.
+   */
+  200: {
+    id: string;
+    threadId: string;
+    [key: string]: unknown;
+  };
+};
+
+export type SendGmailDraftResponse = SendGmailDraftResponses[keyof SendGmailDraftResponses];
+
+export type ListGmailDraftsData = {
+  body?: never;
+  path?: never;
+  query?: {
+    q?: string;
+    maxResults?: number;
+    pageToken?: string;
+    includeSpamTrash?: "true" | "false";
+  };
+  url: "/v1/capabilities/google-workspace/gmail-drafts";
+};
+
+export type ListGmailDraftsErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Missing permission or protected system label.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Request exceeds 6 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google rejected or did not confirm the operation.
+   */
+  502: {
+    error: string;
+    message: string;
+  };
+};
+
+export type ListGmailDraftsError = ListGmailDraftsErrors[keyof ListGmailDraftsErrors];
+
+export type ListGmailDraftsResponses = {
+  /**
+   * Google's validated response.
+   */
+  200: {
+    drafts?: Array<{
+      id: string;
+      message: {
+        id: string;
+        threadId: string;
+        [key: string]: unknown;
+      };
+      [key: string]: unknown;
+    }>;
+    nextPageToken?: string;
+    resultSizeEstimate?: number;
+    [key: string]: unknown;
+  };
+};
+
+export type ListGmailDraftsResponse = ListGmailDraftsResponses[keyof ListGmailDraftsResponses];
+
+export type PostV1CapabilitiesGoogleWorkspaceGmailDraftsData = {
+  body: {
+    /**
+     * Recipient email address.
+     */
+    to: string;
+    /**
+     * Optional comma-separated Cc email addresses.
+     */
+    cc?: string;
+    /**
+     * Optional comma-separated Bcc email addresses.
+     */
+    bcc?: string;
+    /**
+     * Draft subject line. For replies or forwards, include threadId; subjects starting with Re: or Fwd: are rejected without threadId so the draft stays on the existing conversation.
+     */
+    subject: string;
+    /**
+     * Plain-text draft body. Write plain prose with no markdown syntax, separate paragraphs with blank lines, and do not hard-wrap prose. For threaded drafts, the server appends the quoted conversation automatically; do not include quoted history.
+     */
+    body: string;
+    /**
+     * Gmail thread id to reply on. Required for replies and forwards; get it from the gmail-messages capability. When set, the draft is attached to that thread as a reply — keep the thread's subject (e.g. 'Re: …').
+     */
+    threadId?: string;
+    /**
+     * Optional workspace file paths, 1 to 10 files totaling at most 4 MiB. File bytes stay outside model context. Requires a direct execute_capability call from a supporting OpenWork host; Code Mode and other MCP hosts are unsupported and create no draft. Do not retry without attachments.
+     */
+    attachments?: Array<string>;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/capabilities/google-workspace/gmail-drafts";
+};
+
+export type PostV1CapabilitiesGoogleWorkspaceGmailDraftsErrors = {
+  /**
+   * The draft request was invalid.
+   */
+  400: InvalidRequestError | GoogleWorkspaceMissingThreadIdError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The calling member has not connected their Google account or is missing permission.
+   */
+  409: GoogleWorkspaceNeedsConnectionError;
+  /**
+   * Workspace attachments require a supporting OpenWork host; no draft was created.
+   */
+  422: {
+    ok: false;
+    error: "file_input_requires_host";
+    created: false;
+    message: "Workspace attachments require a supporting OpenWork host. No draft was created. Do not retry without attachments.";
+  };
+  /**
+   * Google rejected the request.
+   */
+  502: GoogleWorkspaceUpstreamError;
+};
+
+export type PostV1CapabilitiesGoogleWorkspaceGmailDraftsError =
+  PostV1CapabilitiesGoogleWorkspaceGmailDraftsErrors[keyof PostV1CapabilitiesGoogleWorkspaceGmailDraftsErrors];
+
+export type PostV1CapabilitiesGoogleWorkspaceGmailDraftsResponses = {
+  /**
+   * Draft created.
+   */
+  200: GoogleWorkspaceDraftResponse;
+};
+
+export type PostV1CapabilitiesGoogleWorkspaceGmailDraftsResponse =
+  PostV1CapabilitiesGoogleWorkspaceGmailDraftsResponses[keyof PostV1CapabilitiesGoogleWorkspaceGmailDraftsResponses];
+
+export type DeleteGmailDraftData = {
+  body: {
+    /**
+     * True only when the user explicitly requested this action on this resource. Discovering or selecting a capability is not authorization.
+     */
+    confirm: true;
+  };
+  path: {
+    /**
+     * Existing Gmail draft ID, not its message ID.
+     */
+    draftId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/google-workspace/gmail-draft/{draftId}";
+};
+
+export type DeleteGmailDraftErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Missing permission or protected system label.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Request exceeds 6 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google rejected or did not confirm the operation.
+   */
+  502: {
+    error: string;
+    message: string;
+  };
+};
+
+export type DeleteGmailDraftError = DeleteGmailDraftErrors[keyof DeleteGmailDraftErrors];
+
+export type DeleteGmailDraftResponses = {
+  /**
+   * Google's validated response.
+   */
+  200: {
+    ok: true;
+  };
+};
+
+export type DeleteGmailDraftResponse = DeleteGmailDraftResponses[keyof DeleteGmailDraftResponses];
+
+export type GetGmailDraftData = {
+  body?: never;
+  path: {
+    /**
+     * Existing Gmail draft ID, not its message ID.
+     */
+    draftId: string;
+  };
+  query?: {
+    format?: "minimal" | "full" | "raw" | "metadata";
+  };
+  url: "/v1/capabilities/google-workspace/gmail-draft/{draftId}";
+};
+
+export type GetGmailDraftErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Missing permission or protected system label.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Request exceeds 6 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google rejected or did not confirm the operation.
+   */
+  502: {
+    error: string;
+    message: string;
+  };
+};
+
+export type GetGmailDraftError = GetGmailDraftErrors[keyof GetGmailDraftErrors];
+
+export type GetGmailDraftResponses = {
+  /**
+   * Google's validated response.
+   */
+  200: {
+    id: string;
+    message: {
+      id: string;
+      threadId?: string;
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+};
+
+export type GetGmailDraftResponse = GetGmailDraftResponses[keyof GetGmailDraftResponses];
+
+export type UpdateGmailDraftData = {
+  body: {
+    /**
+     * True only when the user explicitly requested this action on this resource. Discovering or selecting a capability is not authorization.
+     */
+    confirm: true;
+    message: {
+      /**
+       * Complete base64url RFC 2822 MIME message, not just body text.
+       */
+      raw: string;
+      /**
+       * Preserve the existing conversation's threadId for a reply, with matching subject and References/In-Reply-To headers in raw.
+       */
+      threadId?: string;
+    };
+  };
+  path: {
+    /**
+     * Existing Gmail draft ID, not its message ID.
+     */
+    draftId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/google-workspace/gmail-draft/{draftId}";
+};
+
+export type UpdateGmailDraftErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Missing permission or protected system label.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Request exceeds 6 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google rejected or did not confirm the operation.
+   */
+  502: {
+    error: string;
+    message: string;
+  };
+};
+
+export type UpdateGmailDraftError = UpdateGmailDraftErrors[keyof UpdateGmailDraftErrors];
+
+export type UpdateGmailDraftResponses = {
+  /**
+   * Google's validated response.
+   */
+  200: {
+    id: string;
+    message: {
+      id: string;
+      threadId: string;
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+};
+
+export type UpdateGmailDraftResponse = UpdateGmailDraftResponses[keyof UpdateGmailDraftResponses];
+
+export type UpdateGmailMessageLabelsData = {
+  body: {
+    /**
+     * Add INBOX to unarchive, UNREAD to mark unread, STARRED to star, or user label IDs. Use the dedicated trash action for TRASH.
+     */
+    addLabelIds?: Array<string>;
+    /**
+     * Remove INBOX to archive, UNREAD to mark read, STARRED to unstar, or user label IDs. Use the dedicated untrash action for TRASH.
+     */
+    removeLabelIds?: Array<string>;
+  };
+  path: {
+    messageId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/google-workspace/gmail-message/{messageId}/modify";
+};
+
+export type UpdateGmailMessageLabelsErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Missing permission or protected system label.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Request exceeds 6 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google rejected or did not confirm the operation.
+   */
+  502: {
+    error: string;
+    message: string;
+  };
+};
+
+export type UpdateGmailMessageLabelsError = UpdateGmailMessageLabelsErrors[keyof UpdateGmailMessageLabelsErrors];
+
+export type UpdateGmailMessageLabelsResponses = {
+  /**
+   * Google's validated response.
+   */
+  200: {
+    id: string;
+    threadId: string;
+    [key: string]: unknown;
+  };
+};
+
+export type UpdateGmailMessageLabelsResponse =
+  UpdateGmailMessageLabelsResponses[keyof UpdateGmailMessageLabelsResponses];
+
+export type TrashGmailMessageData = {
+  body: {
+    /**
+     * True only when the user explicitly requested this action on this resource. Discovering or selecting a capability is not authorization.
+     */
+    confirm: true;
+  };
+  path: {
+    messageId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/google-workspace/gmail-message/{messageId}/trash";
+};
+
+export type TrashGmailMessageErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Missing permission or protected system label.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Request exceeds 6 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google rejected or did not confirm the operation.
+   */
+  502: {
+    error: string;
+    message: string;
+  };
+};
+
+export type TrashGmailMessageError = TrashGmailMessageErrors[keyof TrashGmailMessageErrors];
+
+export type TrashGmailMessageResponses = {
+  /**
+   * Google's validated response.
+   */
+  200: {
+    id: string;
+    threadId: string;
+    [key: string]: unknown;
+  };
+};
+
+export type TrashGmailMessageResponse = TrashGmailMessageResponses[keyof TrashGmailMessageResponses];
+
+export type UntrashGmailMessageData = {
+  body?: never;
+  path: {
+    messageId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/google-workspace/gmail-message/{messageId}/untrash";
+};
+
+export type UntrashGmailMessageErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Missing permission or protected system label.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Request exceeds 6 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google rejected or did not confirm the operation.
+   */
+  502: {
+    error: string;
+    message: string;
+  };
+};
+
+export type UntrashGmailMessageError = UntrashGmailMessageErrors[keyof UntrashGmailMessageErrors];
+
+export type UntrashGmailMessageResponses = {
+  /**
+   * Google's validated response.
+   */
+  200: {
+    id: string;
+    threadId: string;
+    [key: string]: unknown;
+  };
+};
+
+export type UntrashGmailMessageResponse = UntrashGmailMessageResponses[keyof UntrashGmailMessageResponses];
+
+export type ListGmailLabelsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/capabilities/google-workspace/gmail-labels";
+};
+
+export type ListGmailLabelsErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Missing permission or protected system label.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Request exceeds 6 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google rejected or did not confirm the operation.
+   */
+  502: {
+    error: string;
+    message: string;
+  };
+};
+
+export type ListGmailLabelsError = ListGmailLabelsErrors[keyof ListGmailLabelsErrors];
+
+export type ListGmailLabelsResponses = {
+  /**
+   * Google's validated response.
+   */
+  200: {
+    labels?: Array<{
+      id: string;
+      name: string;
+      type: "user" | "system";
+      [key: string]: unknown;
+    }>;
+    [key: string]: unknown;
+  };
+};
+
+export type ListGmailLabelsResponse = ListGmailLabelsResponses[keyof ListGmailLabelsResponses];
+
+export type CreateGmailLabelData = {
+  body: {
+    /**
+     * User label name.
+     */
+    name: string;
+    messageListVisibility?: "show" | "hide";
+    labelListVisibility?: "labelShow" | "labelShowIfUnread" | "labelHide";
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/capabilities/google-workspace/gmail-labels";
+};
+
+export type CreateGmailLabelErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Missing permission or protected system label.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Request exceeds 6 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google rejected or did not confirm the operation.
+   */
+  502: {
+    error: string;
+    message: string;
+  };
+};
+
+export type CreateGmailLabelError = CreateGmailLabelErrors[keyof CreateGmailLabelErrors];
+
+export type CreateGmailLabelResponses = {
+  /**
+   * Google's validated response.
+   */
+  200: {
+    id: string;
+    name: string;
+    type: "user" | "system";
+    [key: string]: unknown;
+  };
+};
+
+export type CreateGmailLabelResponse = CreateGmailLabelResponses[keyof CreateGmailLabelResponses];
+
+export type DeleteGmailLabelData = {
+  body: {
+    /**
+     * True only when the user explicitly requested this action on this resource. Discovering or selecting a capability is not authorization.
+     */
+    confirm: true;
+  };
+  path: {
+    labelId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/google-workspace/gmail-label/{labelId}";
+};
+
+export type DeleteGmailLabelErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Missing permission or protected system label.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Request exceeds 6 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google rejected or did not confirm the operation.
+   */
+  502: {
+    error: string;
+    message: string;
+  };
+};
+
+export type DeleteGmailLabelError = DeleteGmailLabelErrors[keyof DeleteGmailLabelErrors];
+
+export type DeleteGmailLabelResponses = {
+  /**
+   * Google's validated response.
+   */
+  200: {
+    ok: true;
+  };
+};
+
+export type DeleteGmailLabelResponse = DeleteGmailLabelResponses[keyof DeleteGmailLabelResponses];
+
+export type UpdateGmailLabelData = {
+  body: {
+    /**
+     * User label name.
+     */
+    name?: string;
+    messageListVisibility?: "show" | "hide";
+    labelListVisibility?: "labelShow" | "labelShowIfUnread" | "labelHide";
+  };
+  path: {
+    labelId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/google-workspace/gmail-label/{labelId}";
+};
+
+export type UpdateGmailLabelErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Missing permission or protected system label.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Request exceeds 6 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google rejected or did not confirm the operation.
+   */
+  502: {
+    error: string;
+    message: string;
+  };
+};
+
+export type UpdateGmailLabelError = UpdateGmailLabelErrors[keyof UpdateGmailLabelErrors];
+
+export type UpdateGmailLabelResponses = {
+  /**
+   * Google's validated response.
+   */
+  200: {
+    id: string;
+    name: string;
+    type: "user" | "system";
+    [key: string]: unknown;
+  };
+};
+
+export type UpdateGmailLabelResponse = UpdateGmailLabelResponses[keyof UpdateGmailLabelResponses];
+
+export type DeleteGoogleCalendarEventData = {
+  body?: never;
+  path: {
+    eventId: string;
+  };
+  query: {
+    calendarId?: string;
+    /**
+     * Notification policy. all/externalOnly requires confirmNotifications=true after explicit user approval. Google may still send some service emails with none.
+     */
+    sendUpdates?: "none" | "all" | "externalOnly";
+    /**
+     * Required explicit user confirmation to delete/cancel this event. A recurring master ID cancels the whole series; use an instance ID for one occurrence.
+     */
+    confirmCancellation: "true";
+    confirmNotifications?: "true" | "false";
+  };
+  url: "/v1/capabilities/google-workspace/calendar-events/{eventId}";
+};
+
+export type DeleteGoogleCalendarEventErrors = {
+  /**
+   * Invalid bounded request or missing confirmation.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in first.
+   */
+  401: UnauthorizedError;
+  /**
+   * Connect with the required provider permission.
+   */
+  409: {
+    error: "needs_connection";
+    message: string;
+  };
+  /**
+   * Request exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google did not confirm the operation; do not blindly retry mutations.
+   */
+  502: {
+    error: "google_api_error";
+    message: string;
+  };
+};
+
+export type DeleteGoogleCalendarEventError = DeleteGoogleCalendarEventErrors[keyof DeleteGoogleCalendarEventErrors];
+
+export type DeleteGoogleCalendarEventResponses = {
+  /**
+   * Google-confirmed result.
+   */
+  200: {
+    ok: true;
+    calendarId: string;
+    eventId: string;
+    cancelled: true;
+    /**
+     * Notification policy. all/externalOnly requires confirmNotifications=true after explicit user approval. Google may still send some service emails with none.
+     */
+    sendUpdates?: "none" | "all" | "externalOnly";
+  };
+};
+
+export type DeleteGoogleCalendarEventResponse =
+  DeleteGoogleCalendarEventResponses[keyof DeleteGoogleCalendarEventResponses];
+
+export type GetGoogleCalendarEventData = {
+  body?: never;
+  path: {
+    eventId: string;
+  };
+  query?: {
+    calendarId?: string;
+  };
+  url: "/v1/capabilities/google-workspace/calendar-events/{eventId}";
+};
+
+export type GetGoogleCalendarEventErrors = {
+  /**
+   * Invalid bounded request or missing confirmation.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in first.
+   */
+  401: UnauthorizedError;
+  /**
+   * Connect with the required provider permission.
+   */
+  409: {
+    error: "needs_connection";
+    message: string;
+  };
+  /**
+   * Request exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google did not confirm the operation; do not blindly retry mutations.
+   */
+  502: {
+    error: "google_api_error";
+    message: string;
+  };
+};
+
+export type GetGoogleCalendarEventError = GetGoogleCalendarEventErrors[keyof GetGoogleCalendarEventErrors];
+
+export type GetGoogleCalendarEventResponses = {
+  /**
+   * Google-confirmed result.
+   */
+  200: {
+    ok: true;
+    calendarId: string;
+    event: {
+      id: string;
+      status: "confirmed" | "tentative" | "cancelled";
+      summary?: string;
+      description?: string;
+      location?: string;
+      start?:
+        | {
+            dateTime: string;
+            timeZone?: string;
+          }
+        | {
+            date: string;
+            timeZone?: string;
+          };
+      end?:
+        | {
+            dateTime: string;
+            timeZone?: string;
+          }
+        | {
+            date: string;
+            timeZone?: string;
+          };
+      htmlLink?: string;
+      etag?: string;
+      recurringEventId?: string;
+      attendeesOmitted?: boolean;
+      attendees?: Array<{
+        email?: string;
+        displayName?: string;
+        responseStatus?: string;
+        optional?: boolean;
+      }>;
+    };
+    /**
+     * Notification policy. all/externalOnly requires confirmNotifications=true after explicit user approval. Google may still send some service emails with none.
+     */
+    sendUpdates?: "none" | "all" | "externalOnly";
+  };
+};
+
+export type GetGoogleCalendarEventResponse = GetGoogleCalendarEventResponses[keyof GetGoogleCalendarEventResponses];
+
+export type UpdateGoogleCalendarEventData = {
+  body: {
+    summary?: string;
+    description?: string;
+    location?: string;
+    /**
+     * Rescheduling requires both start and end, of the same type. All-day end dates are exclusive.
+     */
+    start?:
+      | {
+          dateTime: string;
+          timeZone?: string;
+        }
+      | {
+          date: string;
+        };
+    end?:
+      | {
+          dateTime: string;
+          timeZone?: string;
+        }
+      | {
+          date: string;
+        };
+    /**
+     * Replaces the entire attendee list; [] removes all attendees. Read the event first to preserve existing guests.
+     */
+    attendees?: Array<{
+      email: string;
+      optional?: boolean;
+    }>;
+    /**
+     * Notification policy. all/externalOnly requires confirmNotifications=true after explicit user approval. Google may still send some service emails with none.
+     */
+    sendUpdates?: "none" | "all" | "externalOnly";
+    confirmNotifications?: boolean;
+  };
+  path: {
+    eventId: string;
+  };
+  query?: {
+    calendarId?: string;
+  };
+  url: "/v1/capabilities/google-workspace/calendar-events/{eventId}";
+};
+
+export type UpdateGoogleCalendarEventErrors = {
+  /**
+   * Invalid bounded request or missing confirmation.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in first.
+   */
+  401: UnauthorizedError;
+  /**
+   * Connect with the required provider permission.
+   */
+  409: {
+    error: "needs_connection";
+    message: string;
+  };
+  /**
+   * Request exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google did not confirm the operation; do not blindly retry mutations.
+   */
+  502: {
+    error: "google_api_error";
+    message: string;
+  };
+};
+
+export type UpdateGoogleCalendarEventError = UpdateGoogleCalendarEventErrors[keyof UpdateGoogleCalendarEventErrors];
+
+export type UpdateGoogleCalendarEventResponses = {
+  /**
+   * Google-confirmed result.
+   */
+  200: {
+    ok: true;
+    calendarId: string;
+    event: {
+      id: string;
+      status: "confirmed" | "tentative" | "cancelled";
+      summary?: string;
+      description?: string;
+      location?: string;
+      start?:
+        | {
+            dateTime: string;
+            timeZone?: string;
+          }
+        | {
+            date: string;
+            timeZone?: string;
+          };
+      end?:
+        | {
+            dateTime: string;
+            timeZone?: string;
+          }
+        | {
+            date: string;
+            timeZone?: string;
+          };
+      htmlLink?: string;
+      etag?: string;
+      recurringEventId?: string;
+      attendeesOmitted?: boolean;
+      attendees?: Array<{
+        email?: string;
+        displayName?: string;
+        responseStatus?: string;
+        optional?: boolean;
+      }>;
+    };
+    /**
+     * Notification policy. all/externalOnly requires confirmNotifications=true after explicit user approval. Google may still send some service emails with none.
+     */
+    sendUpdates?: "none" | "all" | "externalOnly";
+  };
+};
+
+export type UpdateGoogleCalendarEventResponse =
+  UpdateGoogleCalendarEventResponses[keyof UpdateGoogleCalendarEventResponses];
+
+export type GetGoogleSpreadsheetData = {
+  body?: never;
+  path: {
+    spreadsheetId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/google-workspace/spreadsheets/{spreadsheetId}";
+};
+
+export type GetGoogleSpreadsheetErrors = {
+  /**
+   * Invalid bounded request or missing confirmation.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in first.
+   */
+  401: UnauthorizedError;
+  /**
+   * Connect with the required provider permission.
+   */
+  409: {
+    error: "needs_connection";
+    message: string;
+  };
+  /**
+   * Request exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google did not confirm the operation; do not blindly retry mutations.
+   */
+  502: {
+    error: "google_api_error";
+    message: string;
+  };
+};
+
+export type GetGoogleSpreadsheetError = GetGoogleSpreadsheetErrors[keyof GetGoogleSpreadsheetErrors];
+
+export type GetGoogleSpreadsheetResponses = {
+  /**
+   * Google-confirmed result.
+   */
+  200: {
+    ok: true;
+    spreadsheet: {
+      spreadsheetId: string;
+      spreadsheetUrl: string;
+      properties: {
+        title: string;
+        locale?: string;
+        timeZone?: string;
+      };
+      sheets: Array<{
+        properties: {
+          sheetId: number;
+          title: string;
+          index?: number;
+          gridProperties?: {
+            rowCount?: number;
+            columnCount?: number;
+          };
+        };
+      }>;
+    };
+  };
+};
+
+export type GetGoogleSpreadsheetResponse = GetGoogleSpreadsheetResponses[keyof GetGoogleSpreadsheetResponses];
+
+export type CreateGoogleSpreadsheetData = {
+  body: {
+    title: string;
+    sheetTitle?: string;
+    rowCount?: number;
+    columnCount?: number;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/capabilities/google-workspace/spreadsheets";
+};
+
+export type CreateGoogleSpreadsheetErrors = {
+  /**
+   * Invalid bounded request or missing confirmation.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in first.
+   */
+  401: UnauthorizedError;
+  /**
+   * Connect with the required provider permission.
+   */
+  409: {
+    error: "needs_connection";
+    message: string;
+  };
+  /**
+   * Request exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google did not confirm the operation; do not blindly retry mutations.
+   */
+  502: {
+    error: "google_api_error";
+    message: string;
+  };
+};
+
+export type CreateGoogleSpreadsheetError = CreateGoogleSpreadsheetErrors[keyof CreateGoogleSpreadsheetErrors];
+
+export type CreateGoogleSpreadsheetResponses = {
+  /**
+   * Google-confirmed result.
+   */
+  200: {
+    ok: true;
+    spreadsheet: {
+      spreadsheetId: string;
+      spreadsheetUrl: string;
+      properties: {
+        title: string;
+        locale?: string;
+        timeZone?: string;
+      };
+      sheets: Array<{
+        properties: {
+          sheetId: number;
+          title: string;
+          index?: number;
+          gridProperties?: {
+            rowCount?: number;
+            columnCount?: number;
+          };
+        };
+      }>;
+    };
+  };
+};
+
+export type CreateGoogleSpreadsheetResponse = CreateGoogleSpreadsheetResponses[keyof CreateGoogleSpreadsheetResponses];
+
+export type GetGoogleSheetsValuesData = {
+  body?: never;
+  path: {
+    spreadsheetId: string;
+  };
+  query: {
+    range: string;
+    valueRenderOption?: "FORMATTED_VALUE" | "UNFORMATTED_VALUE" | "FORMULA";
+  };
+  url: "/v1/capabilities/google-workspace/spreadsheets/{spreadsheetId}/values";
+};
+
+export type GetGoogleSheetsValuesErrors = {
+  /**
+   * Invalid bounded request or missing confirmation.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in first.
+   */
+  401: UnauthorizedError;
+  /**
+   * Connect with the required provider permission.
+   */
+  409: {
+    error: "needs_connection";
+    message: string;
+  };
+  /**
+   * Request exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google did not confirm the operation; do not blindly retry mutations.
+   */
+  502: {
+    error: "google_api_error";
+    message: string;
+  };
+};
+
+export type GetGoogleSheetsValuesError = GetGoogleSheetsValuesErrors[keyof GetGoogleSheetsValuesErrors];
+
+export type GetGoogleSheetsValuesResponses = {
+  /**
+   * Google-confirmed result.
+   */
+  200: {
+    ok: true;
+    spreadsheetId: string;
+    range: string;
+    majorDimension: "ROWS";
+    values: Array<Array<string | number | boolean>>;
+    valueRenderOption?: "FORMATTED_VALUE" | "UNFORMATTED_VALUE" | "FORMULA";
+  };
+};
+
+export type GetGoogleSheetsValuesResponse = GetGoogleSheetsValuesResponses[keyof GetGoogleSheetsValuesResponses];
+
+export type UpdateGoogleSheetsValuesData = {
+  body: {
+    range: string;
+    /**
+     * Rows of literal strings, numbers, and booleans. Empty strings clear cells; missing trailing cells stay unchanged.
+     */
+    values: Array<Array<string | number | boolean>>;
+    /**
+     * RAW stores strings literally, including =formulas. USER_ENTERED parses formulas/dates and can execute formulas or fetch external data; requires explicit approval via confirmUserEntered.
+     */
+    valueInputOption?: "RAW" | "USER_ENTERED";
+    confirmUserEntered?: boolean;
+  };
+  path: {
+    spreadsheetId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/google-workspace/spreadsheets/{spreadsheetId}/values";
+};
+
+export type UpdateGoogleSheetsValuesErrors = {
+  /**
+   * Invalid bounded request or missing confirmation.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in first.
+   */
+  401: UnauthorizedError;
+  /**
+   * Connect with the required provider permission.
+   */
+  409: {
+    error: "needs_connection";
+    message: string;
+  };
+  /**
+   * Request exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google did not confirm the operation; do not blindly retry mutations.
+   */
+  502: {
+    error: "google_api_error";
+    message: string;
+  };
+};
+
+export type UpdateGoogleSheetsValuesError = UpdateGoogleSheetsValuesErrors[keyof UpdateGoogleSheetsValuesErrors];
+
+export type UpdateGoogleSheetsValuesResponses = {
+  /**
+   * Google-confirmed result.
+   */
+  200: {
+    ok: true;
+    spreadsheetId: string;
+    updatedRange: string;
+    updatedRows: number;
+    updatedColumns: number;
+    updatedCells: number;
+    /**
+     * RAW stores strings literally, including =formulas. USER_ENTERED parses formulas/dates and can execute formulas or fetch external data; requires explicit approval via confirmUserEntered.
+     */
+    valueInputOption?: "RAW" | "USER_ENTERED";
+  };
+};
+
+export type UpdateGoogleSheetsValuesResponse =
+  UpdateGoogleSheetsValuesResponses[keyof UpdateGoogleSheetsValuesResponses];
+
+export type AppendGoogleSheetsValuesData = {
+  body: {
+    range: string;
+    /**
+     * Rows of literal strings, numbers, and booleans. Empty strings clear cells; missing trailing cells stay unchanged.
+     */
+    values: Array<Array<string | number | boolean>>;
+    /**
+     * RAW stores strings literally, including =formulas. USER_ENTERED parses formulas/dates and can execute formulas or fetch external data; requires explicit approval via confirmUserEntered.
+     */
+    valueInputOption?: "RAW" | "USER_ENTERED";
+    confirmUserEntered?: boolean;
+  };
+  path: {
+    spreadsheetId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/google-workspace/spreadsheets/{spreadsheetId}/values/append";
+};
+
+export type AppendGoogleSheetsValuesErrors = {
+  /**
+   * Invalid bounded request or missing confirmation.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in first.
+   */
+  401: UnauthorizedError;
+  /**
+   * Connect with the required provider permission.
+   */
+  409: {
+    error: "needs_connection";
+    message: string;
+  };
+  /**
+   * Request exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google did not confirm the operation; do not blindly retry mutations.
+   */
+  502: {
+    error: "google_api_error";
+    message: string;
+  };
+};
+
+export type AppendGoogleSheetsValuesError = AppendGoogleSheetsValuesErrors[keyof AppendGoogleSheetsValuesErrors];
+
+export type AppendGoogleSheetsValuesResponses = {
+  /**
+   * Google-confirmed result.
+   */
+  200: {
+    ok: true;
+    spreadsheetId: string;
+    updatedRange: string;
+    updatedRows: number;
+    updatedColumns: number;
+    updatedCells: number;
+    /**
+     * RAW stores strings literally, including =formulas. USER_ENTERED parses formulas/dates and can execute formulas or fetch external data; requires explicit approval via confirmUserEntered.
+     */
+    valueInputOption?: "RAW" | "USER_ENTERED";
+    tableRange: string;
+  };
+};
+
+export type AppendGoogleSheetsValuesResponse =
+  AppendGoogleSheetsValuesResponses[keyof AppendGoogleSheetsValuesResponses];
+
+export type CreateGoogleDriveFolderData = {
+  body: {
+    name: string;
+    parentId?: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/capabilities/google-workspace/drive-folders";
+};
+
+export type CreateGoogleDriveFolderErrors = {
+  /**
+   * Invalid bounded request or missing confirmation.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in first.
+   */
+  401: UnauthorizedError;
+  /**
+   * Connect with the required provider permission.
+   */
+  409: {
+    error: "needs_connection";
+    message: string;
+  };
+  /**
+   * Request exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google did not confirm the operation; do not blindly retry mutations.
+   */
+  502: {
+    error: "google_api_error";
+    message: string;
+  };
+};
+
+export type CreateGoogleDriveFolderError = CreateGoogleDriveFolderErrors[keyof CreateGoogleDriveFolderErrors];
+
+export type CreateGoogleDriveFolderResponses = {
+  /**
+   * Google-confirmed result.
+   */
+  200: {
+    ok: true;
+    file: {
+      id: string;
+      name: string;
+      mimeType: string;
+      trashed: boolean;
+      parents?: Array<string>;
+      webViewLink?: string;
+    };
+  };
+};
+
+export type CreateGoogleDriveFolderResponse = CreateGoogleDriveFolderResponses[keyof CreateGoogleDriveFolderResponses];
+
+export type GetGoogleDriveFileMetadataData = {
+  body?: never;
+  path: {
+    fileId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/google-workspace/drive-files/{fileId}";
+};
+
+export type GetGoogleDriveFileMetadataErrors = {
+  /**
+   * Invalid bounded request or missing confirmation.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in first.
+   */
+  401: UnauthorizedError;
+  /**
+   * Connect with the required provider permission.
+   */
+  409: {
+    error: "needs_connection";
+    message: string;
+  };
+  /**
+   * Request exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google did not confirm the operation; do not blindly retry mutations.
+   */
+  502: {
+    error: "google_api_error";
+    message: string;
+  };
+};
+
+export type GetGoogleDriveFileMetadataError = GetGoogleDriveFileMetadataErrors[keyof GetGoogleDriveFileMetadataErrors];
+
+export type GetGoogleDriveFileMetadataResponses = {
+  /**
+   * Google-confirmed result.
+   */
+  200: {
+    ok: true;
+    file: {
+      id: string;
+      name: string;
+      mimeType: string;
+      trashed: boolean;
+      parents?: Array<string>;
+      webViewLink?: string;
+    };
+  };
+};
+
+export type GetGoogleDriveFileMetadataResponse =
+  GetGoogleDriveFileMetadataResponses[keyof GetGoogleDriveFileMetadataResponses];
+
+export type UpdateGoogleDriveFileMetadataData = {
+  body: {
+    name?: string;
+    /**
+     * Move destination folder ID. Also supply removeParentId from current file metadata; folder changes use Google addParents/removeParents query parameters.
+     */
+    addParentId?: string;
+    removeParentId?: string;
+    /**
+     * true moves to trash; false restores. Never permanently deletes.
+     */
+    trashed?: boolean;
+    /**
+     * Required explicit user approval when trashed=true; trashing a folder affects its children.
+     */
+    confirmTrash?: boolean;
+  };
+  path: {
+    fileId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/google-workspace/drive-files/{fileId}";
+};
+
+export type UpdateGoogleDriveFileMetadataErrors = {
+  /**
+   * Invalid bounded request or missing confirmation.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in first.
+   */
+  401: UnauthorizedError;
+  /**
+   * Connect with the required provider permission.
+   */
+  409: {
+    error: "needs_connection";
+    message: string;
+  };
+  /**
+   * Request exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Google did not confirm the operation; do not blindly retry mutations.
+   */
+  502: {
+    error: "google_api_error";
+    message: string;
+  };
+};
+
+export type UpdateGoogleDriveFileMetadataError =
+  UpdateGoogleDriveFileMetadataErrors[keyof UpdateGoogleDriveFileMetadataErrors];
+
+export type UpdateGoogleDriveFileMetadataResponses = {
+  /**
+   * Google-confirmed result.
+   */
+  200: {
+    ok: true;
+    file: {
+      id: string;
+      name: string;
+      mimeType: string;
+      trashed: boolean;
+      parents?: Array<string>;
+      webViewLink?: string;
+    };
+  };
+};
+
+export type UpdateGoogleDriveFileMetadataResponse =
+  UpdateGoogleDriveFileMetadataResponses[keyof UpdateGoogleDriveFileMetadataResponses];
+
 export type PostV1DirectUploadsGoogleWorkspaceDriveFilesData = {
   body?: never;
   path?: never;
@@ -13022,6 +14864,10 @@ export type GetV1CapabilitiesGoogleWorkspaceGmailMessagesData = {
      * Maximum messages to return, capped at 25.
      */
     maxResults?: number;
+    /**
+     * nextPageToken from a previous page of the same Gmail search.
+     */
+    pageToken?: string;
   };
   url: "/v1/capabilities/google-workspace/gmail-messages";
 };
@@ -13264,15 +15110,24 @@ export type PatchV1CapabilitiesGoogleWorkspaceCalendarEventByEventIdResponse =
 export type GetV1CapabilitiesGoogleWorkspaceDriveFilesData = {
   body?: never;
   path?: never;
-  query: {
+  query?: {
     /**
-     * Text to search in Drive file names and full text.
+     * Optional text to search in Drive file names and full text. Omit to list files.
      */
-    query: string;
+    query?: string;
     /**
      * Maximum files to return, capped at 25.
      */
     maxResults?: number;
+    pageToken?: string;
+    /**
+     * Only files modified after this RFC3339 timestamp; follow nextPageToken to enumerate all matching files.
+     */
+    modifiedAfter?: string;
+    /**
+     * Limit to direct children of this folder.
+     */
+    folderId?: string;
   };
   url: "/v1/capabilities/google-workspace/drive-files";
 };
@@ -13393,69 +15248,493 @@ export type PostV1CapabilitiesGoogleWorkspaceDriveFileShareByFileIdResponses = {
 export type PostV1CapabilitiesGoogleWorkspaceDriveFileShareByFileIdResponse =
   PostV1CapabilitiesGoogleWorkspaceDriveFileShareByFileIdResponses[keyof PostV1CapabilitiesGoogleWorkspaceDriveFileShareByFileIdResponses];
 
-export type PostV1CapabilitiesGoogleWorkspaceGmailDraftsData = {
-  body: {
+export type SendMicrosoft365MailDraftData = {
+  body: Microsoft365MailSendBody;
+  path: {
     /**
-     * Recipient email address.
+     * Microsoft Graph message id.
      */
-    to: string;
-    /**
-     * Optional comma-separated Cc email addresses.
-     */
-    cc?: string;
-    /**
-     * Optional comma-separated Bcc email addresses.
-     */
-    bcc?: string;
-    /**
-     * Draft subject line. For replies or forwards, include threadId; subjects starting with Re: or Fwd: are rejected without threadId so the draft stays on the existing conversation.
-     */
-    subject: string;
-    /**
-     * Plain-text draft body. Write plain prose with no markdown syntax, separate paragraphs with blank lines, and do not hard-wrap prose. For threaded drafts, the server appends the quoted conversation automatically; do not include quoted history.
-     */
-    body: string;
-    /**
-     * Gmail thread id to reply on. Required for replies and forwards; get it from the gmail-messages capability. When set, the draft is attached to that thread as a reply — keep the thread's subject (e.g. 'Re: …').
-     */
-    threadId?: string;
+    messageId: string;
   };
-  path?: never;
   query?: never;
-  url: "/v1/capabilities/google-workspace/gmail-drafts";
+  url: "/v1/capabilities/microsoft-365/mail-drafts/{messageId}/send";
 };
 
-export type PostV1CapabilitiesGoogleWorkspaceGmailDraftsErrors = {
-  /**
-   * The draft request was invalid.
-   */
-  400: InvalidRequestError | GoogleWorkspaceMissingThreadIdError;
+export type SendMicrosoft365MailDraftErrors = {
   /**
    * The caller must be signed in.
    */
   401: UnauthorizedError;
   /**
-   * The calling member has not connected their Google account or is missing permission.
+   * The selected feature or delegated permission is missing.
    */
-  409: GoogleWorkspaceNeedsConnectionError;
+  409: Microsoft365NeedsConnectionError;
   /**
-   * Google rejected the request.
+   * Request body exceeds 1 MiB.
    */
-  502: GoogleWorkspaceUpstreamError;
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Microsoft Graph rejected the request or the outcome is unknown.
+   */
+  502: Microsoft365GraphError;
 };
 
-export type PostV1CapabilitiesGoogleWorkspaceGmailDraftsError =
-  PostV1CapabilitiesGoogleWorkspaceGmailDraftsErrors[keyof PostV1CapabilitiesGoogleWorkspaceGmailDraftsErrors];
+export type SendMicrosoft365MailDraftError = SendMicrosoft365MailDraftErrors[keyof SendMicrosoft365MailDraftErrors];
 
-export type PostV1CapabilitiesGoogleWorkspaceGmailDraftsResponses = {
+export type SendMicrosoft365MailDraftResponses = {
   /**
-   * Draft created.
+   * Microsoft Graph mutation receipt returned.
    */
-  200: GoogleWorkspaceDraftResponse;
+  200: Microsoft365MailSendResponse;
 };
 
-export type PostV1CapabilitiesGoogleWorkspaceGmailDraftsResponse =
-  PostV1CapabilitiesGoogleWorkspaceGmailDraftsResponses[keyof PostV1CapabilitiesGoogleWorkspaceGmailDraftsResponses];
+export type SendMicrosoft365MailDraftResponse =
+  SendMicrosoft365MailDraftResponses[keyof SendMicrosoft365MailDraftResponses];
+
+export type CreateMicrosoft365ReplyDraftData = {
+  body: Microsoft365MailReplyDraftBody;
+  path: {
+    /**
+     * Microsoft Graph message id.
+     */
+    messageId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/microsoft-365/mail-message/{messageId}/reply-draft";
+};
+
+export type CreateMicrosoft365ReplyDraftErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The selected feature or delegated permission is missing.
+   */
+  409: Microsoft365NeedsConnectionError;
+  /**
+   * Request body exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Microsoft Graph rejected the request or the outcome is unknown.
+   */
+  502: Microsoft365GraphError;
+};
+
+export type CreateMicrosoft365ReplyDraftError =
+  CreateMicrosoft365ReplyDraftErrors[keyof CreateMicrosoft365ReplyDraftErrors];
+
+export type CreateMicrosoft365ReplyDraftResponses = {
+  /**
+   * Microsoft Graph mutation receipt returned.
+   */
+  200: Microsoft365MailDraftResponse;
+};
+
+export type CreateMicrosoft365ReplyDraftResponse =
+  CreateMicrosoft365ReplyDraftResponses[keyof CreateMicrosoft365ReplyDraftResponses];
+
+export type GetV1CapabilitiesMicrosoft365MailMessageByMessageIdData = {
+  body?: never;
+  path: {
+    /**
+     * Microsoft Graph message id.
+     */
+    messageId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/microsoft-365/mail-message/{messageId}";
+};
+
+export type GetV1CapabilitiesMicrosoft365MailMessageByMessageIdErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The calling member has not connected their Microsoft account or is missing permission.
+   */
+  409: Microsoft365NeedsConnectionError;
+  /**
+   * Microsoft Graph rejected the request.
+   */
+  502: Microsoft365GraphError;
+};
+
+export type GetV1CapabilitiesMicrosoft365MailMessageByMessageIdError =
+  GetV1CapabilitiesMicrosoft365MailMessageByMessageIdErrors[keyof GetV1CapabilitiesMicrosoft365MailMessageByMessageIdErrors];
+
+export type GetV1CapabilitiesMicrosoft365MailMessageByMessageIdResponses = {
+  /**
+   * Outlook message returned.
+   */
+  200: Microsoft365MailMessageResponse;
+};
+
+export type GetV1CapabilitiesMicrosoft365MailMessageByMessageIdResponse =
+  GetV1CapabilitiesMicrosoft365MailMessageByMessageIdResponses[keyof GetV1CapabilitiesMicrosoft365MailMessageByMessageIdResponses];
+
+export type UpdateMicrosoft365MailMessageData = {
+  body: Microsoft365MailMessageUpdateBody;
+  path: {
+    /**
+     * Microsoft Graph message id.
+     */
+    messageId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/microsoft-365/mail-message/{messageId}";
+};
+
+export type UpdateMicrosoft365MailMessageErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The selected feature or delegated permission is missing.
+   */
+  409: Microsoft365NeedsConnectionError;
+  /**
+   * Request body exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Microsoft Graph rejected the request or the outcome is unknown.
+   */
+  502: Microsoft365GraphError;
+};
+
+export type UpdateMicrosoft365MailMessageError =
+  UpdateMicrosoft365MailMessageErrors[keyof UpdateMicrosoft365MailMessageErrors];
+
+export type UpdateMicrosoft365MailMessageResponses = {
+  /**
+   * Microsoft Graph mutation receipt returned.
+   */
+  200: Microsoft365MailMessageResponse;
+};
+
+export type UpdateMicrosoft365MailMessageResponse =
+  UpdateMicrosoft365MailMessageResponses[keyof UpdateMicrosoft365MailMessageResponses];
+
+export type MoveMicrosoft365MailMessageData = {
+  body: Microsoft365MailMessageMoveBody;
+  path: {
+    /**
+     * Microsoft Graph message id.
+     */
+    messageId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/microsoft-365/mail-message/{messageId}/move";
+};
+
+export type MoveMicrosoft365MailMessageErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The selected feature or delegated permission is missing.
+   */
+  409: Microsoft365NeedsConnectionError;
+  /**
+   * Request body exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Microsoft Graph rejected the request or the outcome is unknown.
+   */
+  502: Microsoft365GraphError;
+};
+
+export type MoveMicrosoft365MailMessageError =
+  MoveMicrosoft365MailMessageErrors[keyof MoveMicrosoft365MailMessageErrors];
+
+export type MoveMicrosoft365MailMessageResponses = {
+  /**
+   * Microsoft Graph mutation receipt returned.
+   */
+  200: Microsoft365MailMessageResponse;
+};
+
+export type MoveMicrosoft365MailMessageResponse =
+  MoveMicrosoft365MailMessageResponses[keyof MoveMicrosoft365MailMessageResponses];
+
+export type DeleteMicrosoft365CalendarEventData = {
+  body: Microsoft365CalendarDeleteBody;
+  path: {
+    eventId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/microsoft-365/calendar-events/{eventId}";
+};
+
+export type DeleteMicrosoft365CalendarEventErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The selected feature or delegated permission is missing.
+   */
+  409: Microsoft365NeedsConnectionError;
+  /**
+   * Request body exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Microsoft Graph rejected the request or the outcome is unknown.
+   */
+  502: Microsoft365GraphError;
+};
+
+export type DeleteMicrosoft365CalendarEventError =
+  DeleteMicrosoft365CalendarEventErrors[keyof DeleteMicrosoft365CalendarEventErrors];
+
+export type DeleteMicrosoft365CalendarEventResponses = {
+  /**
+   * Microsoft Graph mutation receipt returned.
+   */
+  200: Microsoft365CalendarDeleteResponse;
+};
+
+export type DeleteMicrosoft365CalendarEventResponse =
+  DeleteMicrosoft365CalendarEventResponses[keyof DeleteMicrosoft365CalendarEventResponses];
+
+export type UpdateMicrosoft365CalendarEventData = {
+  body: Microsoft365CalendarEventUpdateBody;
+  path: {
+    eventId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/microsoft-365/calendar-events/{eventId}";
+};
+
+export type UpdateMicrosoft365CalendarEventErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The selected feature or delegated permission is missing.
+   */
+  409: Microsoft365NeedsConnectionError;
+  /**
+   * Request body exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Microsoft Graph rejected the request or the outcome is unknown.
+   */
+  502: Microsoft365GraphError;
+};
+
+export type UpdateMicrosoft365CalendarEventError =
+  UpdateMicrosoft365CalendarEventErrors[keyof UpdateMicrosoft365CalendarEventErrors];
+
+export type UpdateMicrosoft365CalendarEventResponses = {
+  /**
+   * Microsoft Graph mutation receipt returned.
+   */
+  200: Microsoft365CalendarEventResponse;
+};
+
+export type UpdateMicrosoft365CalendarEventResponse =
+  UpdateMicrosoft365CalendarEventResponses[keyof UpdateMicrosoft365CalendarEventResponses];
+
+export type CancelMicrosoft365CalendarEventData = {
+  body: Microsoft365CalendarCancelBody;
+  path: {
+    eventId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/microsoft-365/calendar-events/{eventId}/cancel";
+};
+
+export type CancelMicrosoft365CalendarEventErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The selected feature or delegated permission is missing.
+   */
+  409: Microsoft365NeedsConnectionError;
+  /**
+   * Request body exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Microsoft Graph rejected the request or the outcome is unknown.
+   */
+  502: Microsoft365GraphError;
+};
+
+export type CancelMicrosoft365CalendarEventError =
+  CancelMicrosoft365CalendarEventErrors[keyof CancelMicrosoft365CalendarEventErrors];
+
+export type CancelMicrosoft365CalendarEventResponses = {
+  /**
+   * Microsoft Graph mutation receipt returned.
+   */
+  200: Microsoft365CalendarCancelResponse;
+};
+
+export type CancelMicrosoft365CalendarEventResponse =
+  CancelMicrosoft365CalendarEventResponses[keyof CancelMicrosoft365CalendarEventResponses];
+
+export type GetV1CapabilitiesMicrosoft365DriveFileByItemIdData = {
+  body?: never;
+  path: {
+    /**
+     * Microsoft Graph drive item id.
+     */
+    itemId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/microsoft-365/drive-file/{itemId}";
+};
+
+export type GetV1CapabilitiesMicrosoft365DriveFileByItemIdErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The calling member has not connected their Microsoft account or is missing permission.
+   */
+  409: Microsoft365NeedsConnectionError;
+  /**
+   * Microsoft Graph rejected the request.
+   */
+  502: Microsoft365GraphError;
+};
+
+export type GetV1CapabilitiesMicrosoft365DriveFileByItemIdError =
+  GetV1CapabilitiesMicrosoft365DriveFileByItemIdErrors[keyof GetV1CapabilitiesMicrosoft365DriveFileByItemIdErrors];
+
+export type GetV1CapabilitiesMicrosoft365DriveFileByItemIdResponses = {
+  /**
+   * OneDrive file returned.
+   */
+  200: Microsoft365DriveFileResponse;
+};
+
+export type GetV1CapabilitiesMicrosoft365DriveFileByItemIdResponse =
+  GetV1CapabilitiesMicrosoft365DriveFileByItemIdResponses[keyof GetV1CapabilitiesMicrosoft365DriveFileByItemIdResponses];
+
+export type UpdateMicrosoft365DriveItemData = {
+  body: Microsoft365DriveItemUpdateBody;
+  path: {
+    /**
+     * Microsoft Graph drive item id.
+     */
+    itemId: string;
+  };
+  query?: never;
+  url: "/v1/capabilities/microsoft-365/drive-file/{itemId}";
+};
+
+export type UpdateMicrosoft365DriveItemErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The selected feature or delegated permission is missing.
+   */
+  409: Microsoft365NeedsConnectionError;
+  /**
+   * Request body exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Microsoft Graph rejected the request or the outcome is unknown.
+   */
+  502: Microsoft365GraphError;
+};
+
+export type UpdateMicrosoft365DriveItemError =
+  UpdateMicrosoft365DriveItemErrors[keyof UpdateMicrosoft365DriveItemErrors];
+
+export type UpdateMicrosoft365DriveItemResponses = {
+  /**
+   * Microsoft Graph mutation receipt returned.
+   */
+  200: Microsoft365DriveFileWriteResponse;
+};
+
+export type UpdateMicrosoft365DriveItemResponse =
+  UpdateMicrosoft365DriveItemResponses[keyof UpdateMicrosoft365DriveItemResponses];
+
+export type CreateMicrosoft365DriveFolderData = {
+  body: Microsoft365DriveFolderBody;
+  path?: never;
+  query?: never;
+  url: "/v1/capabilities/microsoft-365/drive-folders";
+};
+
+export type CreateMicrosoft365DriveFolderErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The selected feature or delegated permission is missing.
+   */
+  409: Microsoft365NeedsConnectionError;
+  /**
+   * Request body exceeds 1 MiB.
+   */
+  413: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * Microsoft Graph rejected the request or the outcome is unknown.
+   */
+  502: Microsoft365GraphError;
+};
+
+export type CreateMicrosoft365DriveFolderError =
+  CreateMicrosoft365DriveFolderErrors[keyof CreateMicrosoft365DriveFolderErrors];
+
+export type CreateMicrosoft365DriveFolderResponses = {
+  /**
+   * Microsoft Graph mutation receipt returned.
+   */
+  200: Microsoft365DriveFileWriteResponse;
+};
+
+export type CreateMicrosoft365DriveFolderResponse =
+  CreateMicrosoft365DriveFolderResponses[keyof CreateMicrosoft365DriveFolderResponses];
 
 export type GetV1CapabilitiesMicrosoft365MailMessagesData = {
   body?: never;
@@ -13500,46 +15779,6 @@ export type GetV1CapabilitiesMicrosoft365MailMessagesResponses = {
 
 export type GetV1CapabilitiesMicrosoft365MailMessagesResponse =
   GetV1CapabilitiesMicrosoft365MailMessagesResponses[keyof GetV1CapabilitiesMicrosoft365MailMessagesResponses];
-
-export type GetV1CapabilitiesMicrosoft365MailMessageByMessageIdData = {
-  body?: never;
-  path: {
-    /**
-     * Microsoft Graph message id.
-     */
-    messageId: string;
-  };
-  query?: never;
-  url: "/v1/capabilities/microsoft-365/mail-message/{messageId}";
-};
-
-export type GetV1CapabilitiesMicrosoft365MailMessageByMessageIdErrors = {
-  /**
-   * The caller must be signed in.
-   */
-  401: UnauthorizedError;
-  /**
-   * The calling member has not connected their Microsoft account or is missing permission.
-   */
-  409: Microsoft365NeedsConnectionError;
-  /**
-   * Microsoft Graph rejected the request.
-   */
-  502: Microsoft365GraphError;
-};
-
-export type GetV1CapabilitiesMicrosoft365MailMessageByMessageIdError =
-  GetV1CapabilitiesMicrosoft365MailMessageByMessageIdErrors[keyof GetV1CapabilitiesMicrosoft365MailMessageByMessageIdErrors];
-
-export type GetV1CapabilitiesMicrosoft365MailMessageByMessageIdResponses = {
-  /**
-   * Outlook message returned.
-   */
-  200: Microsoft365MailMessageResponse;
-};
-
-export type GetV1CapabilitiesMicrosoft365MailMessageByMessageIdResponse =
-  GetV1CapabilitiesMicrosoft365MailMessageByMessageIdResponses[keyof GetV1CapabilitiesMicrosoft365MailMessageByMessageIdResponses];
 
 export type GetV1CapabilitiesMicrosoft365CalendarEventsData = {
   body?: never;
@@ -13702,46 +15941,6 @@ export type PutV1CapabilitiesMicrosoft365DriveFilesResponses = {
 
 export type PutV1CapabilitiesMicrosoft365DriveFilesResponse =
   PutV1CapabilitiesMicrosoft365DriveFilesResponses[keyof PutV1CapabilitiesMicrosoft365DriveFilesResponses];
-
-export type GetV1CapabilitiesMicrosoft365DriveFileByItemIdData = {
-  body?: never;
-  path: {
-    /**
-     * Microsoft Graph drive item id.
-     */
-    itemId: string;
-  };
-  query?: never;
-  url: "/v1/capabilities/microsoft-365/drive-file/{itemId}";
-};
-
-export type GetV1CapabilitiesMicrosoft365DriveFileByItemIdErrors = {
-  /**
-   * The caller must be signed in.
-   */
-  401: UnauthorizedError;
-  /**
-   * The calling member has not connected their Microsoft account or is missing permission.
-   */
-  409: Microsoft365NeedsConnectionError;
-  /**
-   * Microsoft Graph rejected the request.
-   */
-  502: Microsoft365GraphError;
-};
-
-export type GetV1CapabilitiesMicrosoft365DriveFileByItemIdError =
-  GetV1CapabilitiesMicrosoft365DriveFileByItemIdErrors[keyof GetV1CapabilitiesMicrosoft365DriveFileByItemIdErrors];
-
-export type GetV1CapabilitiesMicrosoft365DriveFileByItemIdResponses = {
-  /**
-   * OneDrive file returned.
-   */
-  200: Microsoft365DriveFileResponse;
-};
-
-export type GetV1CapabilitiesMicrosoft365DriveFileByItemIdResponse =
-  GetV1CapabilitiesMicrosoft365DriveFileByItemIdResponses[keyof GetV1CapabilitiesMicrosoft365DriveFileByItemIdResponses];
 
 export type PostV1CapabilitiesMicrosoft365MailDraftsData = {
   body: Microsoft365MailDraftBody;
@@ -14763,9 +16962,9 @@ export type GetV1McpConnectionsByConnectionIdConnectStartErrors = {
    */
   409: ExternalMcpConnectStartConflictError;
   /**
-   * OAuth handshake failed.
+   * OAuth handshake failed with the provider; the body carries the diagnostic.
    */
-  502: ExternalMcpConnectStartFailedError;
+  424: ExternalMcpConnectStartFailedError;
 };
 
 export type GetV1McpConnectionsByConnectionIdConnectStartError =
@@ -19206,6 +21405,7 @@ export type PutV1TeamsByKeyByExternalKeyData = {
   body: {
     name: string;
     memberIds?: Array<string>;
+    grantsOrganizationAdmin?: boolean;
   };
   path: {
     externalKey: string;
@@ -19333,6 +21533,7 @@ export type PatchV1TeamsByTeamIdData = {
   body: {
     name?: string;
     memberIds?: Array<string>;
+    grantsOrganizationAdmin?: boolean;
   };
   path: {
     /**
@@ -19378,6 +21579,7 @@ export type PostV1TeamsData = {
   body: {
     name: string;
     memberIds?: Array<string>;
+    grantsOrganizationAdmin?: boolean;
   };
   path?: never;
   query?: never;

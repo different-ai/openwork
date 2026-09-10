@@ -272,11 +272,13 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       requestedReleaseChannel,
     ).catch((error: unknown) => {
       if (isCurrentReleaseChannel()) {
+        const message = describeError(error);
         setUpdateStatus({
           state: "error",
-          message: describeError(error),
+          message,
           failedAction: "download",
         });
+        setError(message);
       }
       return null;
     });
@@ -317,11 +319,13 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       const result = await bridge.download();
       if (!isCurrentReleaseChannel()) return;
       if (!result?.ok) {
+        const message = result?.reason ?? "Update download failed.";
         setUpdateStatus({
           state: "error",
-          message: result?.reason ?? "Update download failed.",
+          message,
           failedAction: "download",
         });
+        setError(message);
         return;
       }
       if (
@@ -343,11 +347,13 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       }));
     } catch (error) {
       if (!isCurrentReleaseChannel()) return;
+      const message = describeError(error);
       setUpdateStatus({
         state: "error",
-        message: describeError(error),
+        message,
         failedAction: "download",
       });
+      setError(message);
     } finally {
       unsubProgress?.();
     }
@@ -596,6 +602,8 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       const result = await bridge.installAndRestart();
       if (!isCurrentReleaseChannel()) return;
       if (!result?.ok) {
+        const message = result?.reason ?? "Update install failed.";
+        setError(message);
         if (result?.reason === "update-not-downloaded") {
           // The main-side staged download was invalidated; re-check so the UI
           // returns to a working stable-targeted download/install flow.
@@ -606,17 +614,19 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         }
         setUpdateStatus({
           state: "error",
-          message: result?.reason ?? "Update install failed.",
+          message,
           failedAction: "install",
         });
       }
     } catch (error) {
       if (!isCurrentReleaseChannel()) return;
+      const message = describeError(error);
       setUpdateStatus({
         state: "error",
-        message: describeError(error),
+        message,
         failedAction: "install",
       });
+      setError(message);
     }
   }, [onReleaseChannelChange, resolvePolicyReleaseChannel, runCheckForUpdates, setError]);
 

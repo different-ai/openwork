@@ -14,6 +14,7 @@ declare global {
     };
     __reauthOriginalOpen?: typeof window.open;
     __OPENWORK_ELECTRON__: {
+      shell: { relaunch(): Promise<void> };
       browserLogins: {
         testWitnessUrl(): Promise<string>;
         writeTestStore(request: { path: string; cookies: unknown[] }): Promise<unknown>;
@@ -23,8 +24,10 @@ declare global {
       };
       invokeDesktop<C extends DesktopCommandName>(command: C, ...args: DesktopCommandArgs<C>): Promise<DesktopCommandResult<C>>;
       browser: {
-        openUrl(url: string, options?: { sessionId?: string | null }): Promise<{ tabId: string; [key: string]: unknown }>;
-        getState(): Promise<unknown>;
+        openUrl(url: string, provider?: string, options?: { sessionId?: string | null }): Promise<{ tab_id: string; target_id: string; [key: string]: unknown }>;
+        createTab(url?: string, sessionId?: string | null): Promise<{ tabId: string }>;
+        getState(): Promise<{ activeTabId: string | null; tabs: Array<{ id: string; url: string; ownerSessionId: string | null }>; [key: string]: unknown }>;
+        setControlEnabled(enabled: boolean): Promise<boolean>;
         [key: string]: unknown;
       };
       updater: {
@@ -33,6 +36,23 @@ declare global {
       };
     };
     __openwork: {
+      events(limit?: number): { at: number; name: string; data: unknown }[];
+      slice(name: "composer"): {
+        snapshotQuery: {
+          status: "pending" | "error" | "success";
+          fetchStatus: "fetching" | "paused" | "idle";
+          isPaused: boolean;
+          failureCount: number;
+          errorName: string | null;
+          errorMessage: string | null;
+          dataSessionId: string | null;
+          dataMessageCount: number | null;
+          currentSnapshotId: string | null;
+          intendedSessionId: string;
+          opencodeBaseUrl: { origin: string | null; pathname: string | null };
+          tokenPresent: boolean;
+        };
+      };
       slice(name: "route"): {
         selectedWorkspaceId: string | null;
         workspaces: { id: string; name?: string; displayName?: string; displayNameResolved?: string; loading?: boolean; error?: string | null }[];

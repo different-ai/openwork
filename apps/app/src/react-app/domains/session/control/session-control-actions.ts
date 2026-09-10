@@ -4,7 +4,6 @@ import { useCallback, useMemo } from "react";
 import type { createClient } from "../../../../app/lib/opencode";
 import type { OpenworkServerClient, OpenworkWorkspaceInfo } from "../../../../app/lib/openwork-server";
 import { deleteRouteSession } from "../../../shell/route-workspaces";
-import { setSessionArchived } from "../../../../app/lib/opencode-session";
 import type { ResolvedWorkspaceEndpoint } from "../../../../app/lib/workspace-endpoint";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
@@ -40,6 +39,7 @@ type UseSessionControlActionsInput = {
   createTaskInWorkspace: (workspaceId: string) => Promise<string | null> | string | null;
   openModelPicker: () => void;
   refreshRouteState: () => Promise<unknown> | unknown;
+  archiveSession: (sessionId: string, archived: boolean) => Promise<boolean>;
 };
 
 function workspaceLabel(workspace: SessionControlWorkspace) {
@@ -86,6 +86,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     selectedWorkspaceRoot,
     sessionsByWorkspaceId,
     workspaces,
+    archiveSession,
   } = input;
   const pinnedIds = useSessionManagementStore((s) => s.pinnedIds);
 
@@ -283,7 +284,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const archiveControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.archive",
     label: "Archive or unarchive a session",
-    description: archiveDisabledReason ?? "Archive a session (non-destructive, preserves context). Archived sessions move to the Archived section. Pass archived=false to unarchive.",
+    description: archiveDisabledReason ?? "Archive a session, preserving context. Working sessions require the user to confirm Stop and archive in the app. Pass archived=false to restore without restarting work.",
     sideEffect: "mutation",
     requiresArgs: true,
     args: [
@@ -296,13 +297,12 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       const archived = booleanArg(args, "archived");
       if (archiveDisabledReason) return { ok: false, error: archiveDisabledReason };
       if (!sessionId) return { ok: false, error: "sessionId is required" };
-      if (!opencodeClient) return { ok: false, error: "OpenCode client is not connected" };
-      const targetWorkspace = findSessionWorkspace(workspaces, sessionsByWorkspaceId, sessionId);
-      await setSessionArchived(opencodeClient, sessionId, archived, targetWorkspace?.path || selectedWorkspaceRoot || undefined);
-      await refreshRouteState();
-      return { ok: true, sessionId, archived };
+      const ok = await archiveSession(sessionId, archived);
+      return ok
+        ? { ok: true, sessionId, archived }
+        : { ok: false, sessionId, error: "Session archive was cancelled or could not be confirmed" };
     },
-  }), [archiveDisabledReason, opencodeClient, refreshRouteState, selectedWorkspaceRoot, sessionsByWorkspaceId, workspaces]);
+  }), [archiveDisabledReason, archiveSession, opencodeClient]);
   useControlAction(archiveControlAction);
 
   const groupCreateControlAction = useMemo<OpenworkControlAction>(() => ({

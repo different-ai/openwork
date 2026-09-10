@@ -2,11 +2,11 @@ import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { onboardingWorld } from "./world.ts";
 import { onboarding } from "./workflow.ts";
-import { downloadScreenshot } from "./screenshots.ts";
+import { completionScreenshot } from "./screenshots.ts";
 
 const test = spec.world(onboardingWorld, { timeout: 600_000 });
 
-test("signup, invite two teammates, add tools, and download the desktop app", async (ctx) => {
+test("signup, invite two teammates, add tools, and complete setup without a download", async (ctx) => {
   const result = await onboarding(ctx);
   const { recordAssertionEvidence: record } = ctx.evidence;
 
@@ -60,29 +60,19 @@ test("signup, invite two teammates, add tools, and download the desktop app", as
     true,
   );
 
-  const begun = result.downloads.find(
-    (event) => event.event === "Browser.downloadWillBegin",
-  );
-  expect(begun?.suggestedFilename).toMatch(
-    /^openwork-linux-x86_64-.*\.AppImage$/,
-  );
-  expect(result.completed?.guid).toBe(begun?.guid);
-  expect(result.completed?.receivedBytes).toBeGreaterThan(1_000_000);
-  expect(result.completed?.receivedBytes).toBe(result.completed?.totalBytes);
-  expect(result.downloads.some((event) => event.state === "canceled")).toBe(
-    false,
-  );
+  expect(result.downloads).toEqual([]);
+  expect(result.completedPath).toBe("/dashboard");
   record(
-    "Desktop installer downloaded completely",
-    JSON.stringify(result.completed),
+    "Setup opens the dashboard without downloading or requiring models",
+    JSON.stringify({ path: result.completedPath, downloads: result.downloads }),
     true,
   );
 
   await ctx.world.film?.stop();
-  const screenshot = await downloadScreenshot(ctx.world);
+  const screenshot = await completionScreenshot(ctx.world);
   expect(screenshot.bytes).toBeGreaterThan(1_000);
   record(
-    "DocShot captures the settled download page",
+    "DocShot captures the completed setup dashboard",
     JSON.stringify(screenshot),
     true,
   );

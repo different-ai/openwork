@@ -493,7 +493,8 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     const managed = await createManagedOpencodeV2Server({
       bin: resolved.bin,
       rootDir,
-      env: { OPENCODE_MODELS_URL: opencodeModelsUrl, OPENWORK_SERVER_URL: `http://127.0.0.1:${config.port}`, OPENWORK_POLICY_TOKEN: managedDesktopPolicy(config).evaluationToken },
+      env: { OPENCODE_MODELS_URL: opencodeModelsUrl },
+      checkPolicy: (action, input) => managedDesktopPolicy(config).assert(action, input),
       permissions: async () => executionRules((await readGlobalRuntimeOpencodeConfig(config)).managedPolicy?.execution),
     });
     sidecar = managed;

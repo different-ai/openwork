@@ -1,7 +1,7 @@
 import { expect } from "vitest";
 import { selectModel } from "@openwork/behaviors";
-import { spec } from "@openwork/testkit";
-import { defaultPolicyEditorAndMemberDesktop, readDefaultDesktopPolicy, teamAccess } from "../worlds/desktop-policies.ts";
+import { spec, type Agent, type User } from "@openwork/testkit";
+import { defaultPolicyEditorAndMemberDesktop, managedPolicyRecovery, readDefaultDesktopPolicy, teamAccess } from "../worlds/desktop-policies.ts";
 
 // An organization that wants a vanilla OpenWork picks one decision, Restricted,
 // in the Den policy editor. This spec drives the real editor as the admin and a
@@ -10,16 +10,20 @@ import { defaultPolicyEditorAndMemberDesktop, readDefaultDesktopPolicy, teamAcce
 // collapse to what the policy leaves reachable.
 const defaultJourney = "an admin restricts the default policy and the member desktop enforces it";
 const teamJourney = "team access overrides overlapping grants and restores only selected desktop capabilities";
+const recoveryJourney = "managed policy evaluation bounds transient Den retries and never reuses stale access";
 // Register one fixture extension: Vitest 3 accumulates fixtures when the same
 // base is extended twice. Choose the setup at the test boundary, keeping the
 // worlds framework-free and each sequential journey isolated.
 const test = spec.world(async (seed) => {
   const name = expect.getState().currentTestName;
   if (name?.endsWith(defaultJourney)) {
-    return { defaultPolicy: await defaultPolicyEditorAndMemberDesktop(seed), team: null };
+    return { defaultPolicy: await defaultPolicyEditorAndMemberDesktop(seed), team: null, recovery: null };
   }
   if (name?.endsWith(teamJourney)) {
-    return { defaultPolicy: null, team: await teamAccess(seed) };
+    return { defaultPolicy: null, team: await teamAccess(seed), recovery: null };
+  }
+  if (name?.endsWith(recoveryJourney)) {
+    return { defaultPolicy: null, team: null, recovery: await managedPolicyRecovery(seed) };
   }
   throw new Error(`No desktop policy world selected for ${name}`);
 }, { timeout: 900_000 });
@@ -90,15 +94,12 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
     await member.user.see({ text: "Library" }, { timeoutMs: 90_000 });
     await member.user.notSee(manageExtensionsNotice);
     await member.user.click({ role: "button", label: /^MCPs$/ });
-    await member.user.click({ role: "button", label: /^Add$/ });
-    await member.user.see({ text: "Workspace MCP" });
-    await member.user.click({ text: "Workspace MCP" });
-    await member.user.click({ role: "button", label: "Continue" });
+    await member.user.click({ role: "button", label: "Add workspace MCP" });
     await member.user.see({ text: "Add workspace MCP" });
     await member.user.see({ role: "textbox", label: "App name" });
     const localMcpFormText = await member.probe.text();
     await member.user.press("Escape");
-    await member.user.notSee({ text: "Add workspace MCP" });
+    await member.user.notSee({ role: "textbox", label: "App name" });
     await member.user.click({ role: "button", label: /^All$/ });
     return { libraryHashBefore: await member.probe.hash(), localMcpFormText };
   });
@@ -292,24 +293,21 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
       label: "built-in extensions notice",
       until: (shown) => shown,
     });
+    await member.user.click({ role: "button", label: /^MCPs$/ });
+    await member.user.notSee({ role: "button", label: "Add workspace MCP" });
+    const mcpFilterText = await member.probe.text();
+    expect(mcpFilterText).not.toContain("Add workspace MCP");
     await member.user.click({ role: "button", label: /^All$/ });
     await member.user.click({ role: "button", label: /^Add$/ });
     await member.user.see({ testId: "library-add-choices" });
-    await member.user.see({ text: "Organization MCP" });
-    await member.user.notSee({ text: "Workspace MCP" });
+    await member.user.see({ text: "Connection" });
+    await member.user.notSee({ text: "Local MCP" });
     const choicesText = await member.probe.text();
-    expect(choicesText).not.toContain("Workspace MCP");
-    await member.user.click({ text: "Organization MCP" });
-    await member.user.click({ role: "button", label: "Continue" });
-    await member.user.see({ text: "Add an MCP server" });
-    await member.user.see({ text: "Saved to your organization Library as a remote MCP connection." });
-    await member.user.notSee({ text: "Add workspace MCP" });
-    const restrictedMcpText = `${choicesText}\n${await member.probe.text()}`;
-    expect(restrictedMcpText).not.toContain("Workspace MCP");
+    expect(choicesText).not.toContain("Local MCP");
+    const restrictedMcpText = `${mcpFilterText}\n${choicesText}`;
     expect(restrictedMcpText).not.toContain("Add workspace MCP");
     await member.user.press("Escape");
-    await member.user.notSee({ text: "Add an MCP server" });
-    await member.user.click({ role: "button", label: /^All$/ });
+    await member.user.notSee({ testId: "library-add-choices" });
     return { libraryHashAfter: await member.probe.hash(), builtInNoticeShown, restrictedMcpText };
   });
   expect(libraryHashAfter).toContain("/extensions");
@@ -319,11 +317,283 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
     "A notice says built-in OpenWork extensions are disabled by your organization",
   ]);
   evidence.recordAssertionEvidence(
-    "The Library removes the local workspace MCP add path while the organization MCP add form remains reachable",
-    `hash=${libraryHashAfter}; manage-extensions notice visible; builtInNotice=${builtInNoticeShown}; add choices and organization form=${restrictedMcpText}`,
-    libraryHashAfter.includes("/extensions") && builtInNoticeShown && restrictedMcpText.includes("Saved to your organization Library as a remote MCP connection.") && !restrictedMcpText.includes("Workspace MCP") && !restrictedMcpText.includes("Add workspace MCP"),
+    "The Library removes local MCP creation while retaining Connection as a separate picker choice",
+    `hash=${libraryHashAfter}; manage-extensions notice visible; builtInNotice=${builtInNoticeShown}; MCP filter and All picker=${restrictedMcpText}`,
+    libraryHashAfter.includes("/extensions") && builtInNoticeShown && restrictedMcpText.includes("Connection") && !restrictedMcpText.includes("Local MCP") && !restrictedMcpText.includes("Add workspace MCP"),
   );
 
+});
+
+test(recoveryJourney, { timeout: 300_000 }, async ({ world: selectedWorld, step, evidence }) => {
+  const world = selectedWorld.recovery;
+  if (!world) throw new Error("Expected the managed-policy recovery world");
+  const policyPath = "/v1/me/desktop-config";
+  const catalogPath = "/v1/llm-providers";
+  const builtInModel = { action: "model", input: { providerID: "opencode", id: "policy-retry-proof" } };
+  const assignedModel = { action: "model", input: { providerID: world.providerId, id: world.modelId } };
+  const code = (body: unknown) => isRecord(body) && typeof body.code === "string" ? body.code : null;
+  const runtimeProvider = (body: unknown) => {
+    const providers = isRecord(body) && isRecord(body.provider) ? body.provider : null;
+    const provider = providers?.[world.providerId];
+    return isRecord(provider) ? provider : null;
+  };
+  const statusProvider = (body: unknown) => isRecord(body) && Array.isArray(body.providers)
+    ? body.providers.filter(isRecord).find((provider) => provider.cloudProviderId === world.providerId) ?? null
+    : null;
+  const waitForRequests = async (start: number, path: string, expected: number) => {
+    const deadline = Date.now() + 5_000;
+    while (true) {
+      const requests = (await world.proxy.requestLog()).slice(start).filter((request) => request.path === path);
+      if (requests.length >= expected || Date.now() >= deadline) return requests;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
+  const faultedEvaluation = async (
+    path: string,
+    evaluation: Record<string, unknown>,
+    statusCode: number,
+    times: number,
+    body?: unknown,
+  ) => {
+    await world.proxy.faults.clear();
+    const start = (await world.proxy.requestLog()).length;
+    await world.proxy.faults.status(path, statusCode, { times, body });
+    const startedAt = performance.now();
+    const result = await world.evaluate(evaluation);
+    const elapsedMs = performance.now() - startedAt;
+    const requests = await waitForRequests(start, path, statusCode === 503 ? 2 : 1);
+    return { result, requests, elapsedMs };
+  };
+  const latencyEvaluation = async (path: string, evaluation: Record<string, unknown>, times: number) => {
+    await world.proxy.faults.clear();
+    const start = (await world.proxy.requestLog()).length;
+    await world.proxy.faults.latency(path, 5_000, { times });
+    const startedAt = performance.now();
+    let evaluationComplete = false;
+    const evaluationPromise = world.evaluate(evaluation).finally(() => { evaluationComplete = true; });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const requestsBeforeCompletion = (await world.proxy.requestLog()).slice(start).filter((request) => request.path === path);
+    const completedBeforeRequestProbe = evaluationComplete;
+    const result = await evaluationPromise;
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    const logAfterEvaluation = await world.proxy.requestLog();
+    const afterEvaluation = logAfterEvaluation.length;
+    const requests = logAfterEvaluation.slice(start, afterEvaluation).filter((request) => request.path === path);
+    const freshBeforeCompletion = requestsBeforeCompletion.filter((request) => request.faulted === false).length;
+    const freshWithinEvaluation = requests.filter((request) => request.faulted === false).length;
+    // Aborted requests are not completed-response log entries. Give every
+    // five-second latency handler a bounded drain window, then prove that a
+    // fault-free evaluation is healthy before starting the next case.
+    await new Promise((resolve) => setTimeout(resolve, 5_250));
+    await world.proxy.faults.clear();
+    const healthy = await world.evaluate(evaluation);
+    return { result, healthy, elapsedMs, start, afterEvaluation, requests, completedBeforeRequestProbe, freshBeforeCompletion, freshWithinEvaluation };
+  };
+
+  await step("the assigned model is materialized and allowed while custom providers are disabled", async () => {
+    const synced = await world.syncProviders();
+    const provider = runtimeProvider(synced.runtime.body);
+    const models = provider && isRecord(provider.models) ? provider.models : null;
+    const status = statusProvider(synced.status.body);
+    const statusModels = status && Array.isArray(status.modelIds) ? status.modelIds : [];
+    const catalog = await world.memberCatalog();
+    const catalogIds = catalog.providers.flatMap((item) => typeof item.id === "string" ? [item.id] : []);
+    const allowed = await world.evaluate(assignedModel);
+    expect(world.providerId).toMatch(/^lpr_/);
+    expect(synced.run.status).toBe(200);
+    expect(synced.runtime.status).toBe(200);
+    expect(synced.status.status).toBe(200);
+    expect(models).not.toBeNull();
+    expect(models && Object.hasOwn(models, world.modelId)).toBe(true);
+    expect(statusModels).toContain(world.modelId);
+    expect(catalog.status).toBe(200);
+    expect(catalogIds).toContain(world.providerId);
+    expect(allowed.status).toBe(200);
+    evidence.recordAssertionEvidence(
+      "A directly assigned lpr_ model is materialized and passes live catalog authorization when custom providers are disabled",
+      JSON.stringify({ providerId: world.providerId, modelId: world.modelId, syncHttp: synced.run.status, runtimeHttp: synced.runtime.status, syncStatusHttp: synced.status.status, statusModels, catalogIds, evaluation: allowed }),
+      /^lpr_/.test(world.providerId) && Boolean(models && Object.hasOwn(models, world.modelId))
+        && statusModels.includes(world.modelId) && catalogIds.includes(world.providerId) && allowed.status === 200,
+    );
+  });
+
+  await step("one transient policy response backs off before retrying once and applies the live allow", async () => {
+    const recovered = await faultedEvaluation(policyPath, builtInModel, 503, 1);
+    expect(recovered.result.status).toBe(200);
+    expect(recovered.requests).toMatchObject([
+      { status: 503, faulted: true },
+      { status: 200, faulted: false },
+    ]);
+    expect(recovered.requests).toHaveLength(2);
+    expect(recovered.elapsedMs).toBeGreaterThanOrEqual(190);
+    evidence.recordAssertionEvidence(
+      "A transient Den policy failure backs off before retrying exactly once and the real OpenWork server applies the live allow",
+      JSON.stringify(recovered),
+      recovered.result.status === 200 && recovered.requests.length === 2 && recovered.elapsedMs >= 190
+        && recovered.requests[0]?.status === 503 && recovered.requests[1]?.status === 200,
+    );
+  });
+
+  await step("persistent and non-retryable policy verification failures stay closed", async () => {
+    const outage = await faultedEvaluation(policyPath, builtInModel, 503, 2);
+    expect(outage.result.status).toBe(403);
+    expect(code(outage.result.body)).toBe("policy_unavailable");
+    expect(outage.requests).toHaveLength(2);
+    expect(outage.requests.map((request) => request.status)).toEqual([503, 503]);
+
+    const nonRetryable = [];
+    for (const fault of [
+      { name: "unauthenticated", status: 401 },
+      { name: "forbidden", status: 403 },
+      { name: "rate limited", status: 429 },
+      { name: "invalid schema", status: 200, body: { allowZenModel: "invalid" } },
+    ]) {
+      const observed = await faultedEvaluation(policyPath, builtInModel, fault.status, 2, fault.body);
+      expect(observed.result.status, fault.name).toBe(403);
+      expect(code(observed.result.body), fault.name).toBe("policy_unavailable");
+      expect(observed.requests, fault.name).toHaveLength(1);
+      nonRetryable.push({ fault: fault.name, ...observed });
+    }
+    evidence.recordAssertionEvidence(
+      "Persistent outage, authentication, authorization, rate limit, and invalid policy responses fail closed without stale access",
+      JSON.stringify({ outage, nonRetryable }),
+      outage.result.status === 403 && code(outage.result.body) === "policy_unavailable" && outage.requests.length === 2
+        && nonRetryable.every((item) => item.result.status === 403 && code(item.result.body) === "policy_unavailable" && item.requests.length === 1),
+    );
+  });
+
+  await step("assigned-model catalog verification has the same bounded retry and fail-closed behavior", async () => {
+    const recovered = await faultedEvaluation(catalogPath, assignedModel, 503, 1);
+    expect(recovered.result.status).toBe(200);
+    expect(recovered.requests).toMatchObject([
+      { status: 503, faulted: true },
+      { status: 200, faulted: false },
+    ]);
+    expect(recovered.requests).toHaveLength(2);
+
+    const outage = await faultedEvaluation(catalogPath, assignedModel, 503, 2);
+    expect(outage.result.status).toBe(403);
+    expect(code(outage.result.body)).toBe("policy_unavailable");
+    expect(outage.requests).toHaveLength(2);
+    expect(outage.requests.map((request) => request.status)).toEqual([503, 503]);
+
+    const nonRetryable = [];
+    for (const fault of [
+      { name: "unauthenticated", status: 401 },
+      { name: "forbidden", status: 403 },
+      { name: "rate limited", status: 429 },
+      { name: "invalid schema", status: 200, body: { llmProviders: "invalid" } },
+    ]) {
+      const observed = await faultedEvaluation(catalogPath, assignedModel, fault.status, 2, fault.body);
+      expect(observed.result.status, fault.name).toBe(403);
+      expect(code(observed.result.body), fault.name).toBe("policy_unavailable");
+      expect(observed.requests, fault.name).toHaveLength(1);
+      nonRetryable.push({ fault: fault.name, ...observed });
+    }
+    evidence.recordAssertionEvidence(
+      "Assigned-model catalog verification recovers from one 503, then fails closed after exactly two persistent attempts or one non-retryable response",
+      JSON.stringify({ recovered, outage, nonRetryable }),
+      recovered.result.status === 200 && recovered.requests.map((request) => request.status).join(",") === "503,200"
+        && outage.result.status === 403 && code(outage.result.body) === "policy_unavailable" && outage.requests.length === 2
+        && nonRetryable.every((item) => item.result.status === 403 && code(item.result.body) === "policy_unavailable" && item.requests.length === 1),
+    );
+  });
+
+  await step("single policy and assigned-model catalog timeouts recover while repeated timeouts exhaust within the shared deadline", async () => {
+    const policyRecovered = await latencyEvaluation(policyPath, builtInModel, 1);
+    const policyExhausted = await latencyEvaluation(policyPath, builtInModel, 2);
+    const catalogRecovered = await latencyEvaluation(catalogPath, assignedModel, 1);
+    const catalogExhausted = await latencyEvaluation(catalogPath, assignedModel, 2);
+    for (const { name, observed } of [
+      { name: "policy recovery", observed: policyRecovered },
+      { name: "catalog recovery", observed: catalogRecovered },
+    ]) {
+      expect(observed.result.status, name).toBe(200);
+      expect(observed.healthy.status, `${name} healthy follow-up`).toBe(200);
+      expect(observed.elapsedMs, name).toBeGreaterThan(3_000);
+      expect(observed.elapsedMs, name).toBeLessThan(8_000);
+      expect(observed.completedBeforeRequestProbe, name).toBe(false);
+      expect(observed.freshBeforeCompletion, name).toBe(0);
+      expect(observed.freshWithinEvaluation, name).toBe(1);
+      expect(observed.requests.filter((request) => request.faulted === false), name).toMatchObject([{ faulted: false, status: 200 }]);
+    }
+    for (const { name, observed } of [
+      { name: "policy exhaustion", observed: policyExhausted },
+      { name: "catalog exhaustion", observed: catalogExhausted },
+    ]) {
+      expect(observed.result.status, name).toBe(403);
+      expect(code(observed.result.body), name).toBe("policy_unavailable");
+      expect(observed.healthy.status, `${name} healthy follow-up`).toBe(200);
+      expect(observed.elapsedMs, name).toBeGreaterThan(5_500);
+      expect(observed.elapsedMs, name).toBeLessThan(8_000);
+      expect(observed.completedBeforeRequestProbe, name).toBe(false);
+      expect(observed.freshBeforeCompletion, name).toBe(0);
+      expect(observed.freshWithinEvaluation, name).toBe(0);
+    }
+    evidence.recordAssertionEvidence(
+      "One policy or assigned-model catalog transport timeout recovers after three seconds, repeated timeouts fail closed after five and a half seconds, and every response arrives before eight seconds with a healthy fault-free follow-up",
+      JSON.stringify({ policyRecovered, policyExhausted, catalogRecovered, catalogExhausted }),
+      policyRecovered.result.status === 200 && catalogRecovered.result.status === 200
+        && code(policyExhausted.result.body) === "policy_unavailable" && code(catalogExhausted.result.body) === "policy_unavailable"
+        && policyRecovered.elapsedMs > 3_000 && catalogRecovered.elapsedMs > 3_000
+        && policyExhausted.elapsedMs > 5_500 && catalogExhausted.elapsedMs > 5_500
+        && [policyRecovered, catalogRecovered].every((item) => !item.completedBeforeRequestProbe && item.freshBeforeCompletion === 0 && item.freshWithinEvaluation === 1)
+        && [policyExhausted, catalogExhausted].every((item) => !item.completedBeforeRequestProbe && item.freshBeforeCompletion === 0 && item.freshWithinEvaluation === 0)
+        && [policyRecovered, policyExhausted, catalogRecovered, catalogExhausted]
+          .every((item) => item.elapsedMs < 8_000 && item.healthy.status === 200),
+    );
+  });
+
+  await step("revoked catalog access overrides a stale materialized model until the next sync removes it", async () => {
+    await world.proxy.faults.clear();
+    expect(await world.revokeProviderAccess()).toBe(204);
+    const catalog = await world.memberCatalog();
+    const catalogIds = catalog.providers.flatMap((item) => typeof item.id === "string" ? [item.id] : []);
+    expect(catalog.status).toBe(200);
+    expect(catalogIds).not.toContain(world.providerId);
+
+    const stale = await world.readProviderState();
+    const staleProvider = runtimeProvider(stale.runtime.body);
+    const staleModels = staleProvider && isRecord(staleProvider.models) ? staleProvider.models : null;
+    expect(staleModels && Object.hasOwn(staleModels, world.modelId)).toBe(true);
+    expect(statusProvider(stale.status.body)).not.toBeNull();
+
+    const denied = await faultedEvaluation(catalogPath, assignedModel, 503, 1);
+    expect(denied.result.status).toBe(403);
+    expect(code(denied.result.body)).toBe("organization_model_denied");
+    expect(code(denied.result.body)).not.toBe("organization_policy_denied");
+    expect(denied.requests).toHaveLength(2);
+    expect(denied.requests.map((request) => request.status)).toEqual([503, 200]);
+
+    await world.proxy.faults.clear();
+    const synced = await world.syncProviders();
+    expect(synced.run.status).toBe(200);
+    expect(runtimeProvider(synced.runtime.body)).toBeNull();
+    expect(statusProvider(synced.status.body)).toBeNull();
+    evidence.recordAssertionEvidence(
+      "A revoked direct assignment is denied as organization_model_denied even while runtime config is stale, then a fresh sync removes it",
+      JSON.stringify({ providerId: world.providerId, modelId: world.modelId, memberCatalogIds: catalogIds, staleRuntimeModel: Boolean(staleModels && Object.hasOwn(staleModels, world.modelId)), denial: denied, removedFromRuntime: runtimeProvider(synced.runtime.body) === null, removedFromSyncStatus: statusProvider(synced.status.body) === null }),
+      !catalogIds.includes(world.providerId) && Boolean(staleModels && Object.hasOwn(staleModels, world.modelId))
+        && denied.result.status === 403 && code(denied.result.body) === "organization_model_denied"
+        && denied.requests.length === 2 && runtimeProvider(synced.runtime.body) === null && statusProvider(synced.status.body) === null,
+    );
+  });
+
+  await step("a retry reads and applies a fresh denial instead of the prior allow", async () => {
+    const updated = await world.updateBuiltInModel(false);
+    expect(updated.response.ok).toBe(true);
+    const denied = await faultedEvaluation(policyPath, builtInModel, 503, 1);
+    expect(denied.result.status).toBe(403);
+    expect(code(denied.result.body)).toBe("organization_policy_denied");
+    expect(denied.requests).toHaveLength(2);
+    expect(denied.requests.map((request) => request.status)).toEqual([503, 200]);
+    evidence.recordAssertionEvidence(
+      "After an earlier allow, the retry uses the fresh Den denial rather than stale policy",
+      JSON.stringify(denied),
+      denied.result.status === 403 && code(denied.result.body) === "organization_policy_denied"
+        && denied.requests.length === 2 && denied.requests[0]?.status === 503 && denied.requests[1]?.status === 200,
+    );
+  });
 });
 
 test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user, agent, probe, step, evidence, seed }) => {
@@ -331,6 +601,12 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
   if (!world) throw new Error("Expected the Team Access world");
   const member = { user: user.on(world.member), agent: agent.on(world.member), probe: probe.on(world.member) };
   const admin = { user: user.on(world.admin), probe: probe.on(world.admin) };
+  const openOwnedPolicyTab = async (tabAgent: Agent, tabUser: User, title: string, url: string) => {
+    const sessionId = await tabAgent.createSession(title);
+    const opening = tabAgent.run("browser.open_url", { url, provider: "builtin" });
+    await tabUser.click({ role: "button", label: "Allow origin in this tab" });
+    expect(await opening).toMatchObject({ owner_session_id: sessionId });
+  };
   const effective = async (identity: typeof world.den.admin) => {
     const result = await probe.api(identity, "/v1/me/desktop-config");
     expect(result.response.ok).toBe(true);
@@ -546,25 +822,22 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     await member.user.click("Library");
     await member.user.see(manageExtensionsNotice, { timeoutMs: 90_000 });
     await member.user.see({ text: /Need an MCP server or skill/ });
+    await member.user.click({ role: "button", label: /^MCPs$/ });
+    await member.user.notSee({ role: "button", label: "Add workspace MCP" });
+    const mcpFilterText = await member.probe.text();
+    expect(mcpFilterText).not.toContain("Add workspace MCP");
     await member.user.click({ role: "button", label: /^All$/ });
     await member.user.click({ role: "button", label: /^Add$/ });
     await member.user.see({ testId: "library-add-choices" });
-    await member.user.see({ text: "Organization MCP" });
-    await member.user.notSee({ text: "Workspace MCP" });
+    await member.user.see({ text: "Connection" });
+    await member.user.notSee({ text: "Local MCP" });
     const choicesText = await member.probe.text();
-    expect(choicesText).not.toContain("Workspace MCP");
-    await member.user.click({ text: "Organization MCP" });
-    await member.user.click({ role: "button", label: "Continue" });
-    await member.user.see({ text: "Add an MCP server" });
-    await member.user.see({ text: "Saved to your organization Library as a remote MCP connection." });
-    await member.user.notSee({ text: "Add workspace MCP" });
-    const mcpText = `${choicesText}\n${await member.probe.text()}`;
-    expect(mcpText).not.toContain("Workspace MCP");
+    expect(choicesText).not.toContain("Local MCP");
+    const mcpText = `${mcpFilterText}\n${choicesText}`;
     expect(mcpText).not.toContain("Add workspace MCP");
     await member.user.press("Escape");
-    await member.user.notSee({ text: "Add an MCP server" });
-    evidence.recordAssertionEvidence("Blocked local tool management removes the workspace MCP add path while the organization MCP add form remains reachable", mcpText, mcpText.includes("Saved to your organization Library as a remote MCP connection.") && !mcpText.includes("Workspace MCP") && !mcpText.includes("Add workspace MCP"));
-    await member.user.click({ role: "button", label: /^All$/ });
+    await member.user.notSee({ testId: "library-add-choices" });
+    evidence.recordAssertionEvidence("Blocked local tool management removes local MCP creation while retaining Connection as a separate picker choice", mcpText, mcpText.includes("Connection") && !mcpText.includes("Local MCP") && !mcpText.includes("Add workspace MCP"));
     const libraryText = await member.probe.text();
     evidence.recordAssertionEvidence("The locked desktop hides Settings, redirects forbidden routes, and explains how to get an MCP server", JSON.stringify({ redirected, forbiddenRoute, permissionsText, menuText, libraryText }), redirected.includes("/settings/cloud-account") && forbiddenRoute.includes("/settings/cloud-account") && count(permissionsText, "Blocked") === lockedKeys.length && libraryText.includes("Need an MCP server or skill"));
     await member.user.looks(["The Library shows organization restrictions and guidance for requesting an MCP server or skill"]);
@@ -634,31 +907,28 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     expect(count(permissionsText, "Allowed")).toBe(lockedKeys.length - 1);
     evidence.recordAssertionEvidence("The Custom account permissions tab shows Settings Allowed and tools Blocked", permissionsText, count(permissionsText, "Blocked") === 1 && count(permissionsText, "Allowed") === lockedKeys.length - 1);
     await member.user.looks(["The dedicated App permissions tab shows Change app settings Allowed and Add tools, skills & MCP servers Blocked, without a policy banner"]);
-    // Wait for the Library data, then open Add from the current view. Changing
-    // its inventory filter navigates again and is unrelated to this assertion.
+    // Wait for the Library data before checking its filtered and All add controls.
     await member.user.click({ role: "button", label: "Back to app" });
     await member.user.click("Library");
     await member.user.see(manageExtensionsNotice, { timeoutMs: 90_000 });
     await member.user.see({ text: world.pluginName }, { timeoutMs: 90_000 });
     await member.user.see({ text: "No MCP servers configured yet." }, { timeoutMs: 90_000 });
+    await member.user.click({ role: "button", label: /^MCPs$/ });
+    await member.user.notSee({ role: "button", label: "Add workspace MCP" });
+    const mcpFilterText = await member.probe.text();
+    expect(mcpFilterText).not.toContain("Add workspace MCP");
+    await member.user.click({ role: "button", label: /^All$/ });
     await member.user.click({ role: "button", label: /^Add$/ });
     await member.user.see({ testId: "library-add-choices" });
-    await member.user.see({ text: "Organization MCP" });
-    await member.user.notSee({ text: "Workspace MCP" });
+    await member.user.see({ text: "Connection" });
+    await member.user.notSee({ text: "Local MCP" });
     const choicesText = await member.probe.text();
-    expect(choicesText).not.toContain("Workspace MCP");
-    await member.user.click({ text: "Organization MCP" });
-    await member.user.click({ role: "button", label: "Continue" });
-    await member.user.see({ text: "Add an MCP server" });
-    await member.user.see({ text: "Saved to your organization Library as a remote MCP connection." });
-    await member.user.notSee({ text: "Add workspace MCP" });
-    const mcpText = `${choicesText}\n${await member.probe.text()}`;
-    expect(mcpText).not.toContain("Workspace MCP");
+    expect(choicesText).not.toContain("Local MCP");
+    const mcpText = `${mcpFilterText}\n${choicesText}`;
     expect(mcpText).not.toContain("Add workspace MCP");
     await member.user.press("Escape");
-    await member.user.notSee({ text: "Add an MCP server" });
-    evidence.recordAssertionEvidence("Blocked local tool management removes the workspace MCP add path while the organization MCP add form remains reachable", mcpText, mcpText.includes("Saved to your organization Library as a remote MCP connection.") && !mcpText.includes("Workspace MCP") && !mcpText.includes("Add workspace MCP"));
-    await member.user.click({ role: "button", label: /^All$/ });
+    await member.user.notSee({ testId: "library-add-choices" });
+    evidence.recordAssertionEvidence("Blocked local tool management removes local MCP creation while retaining Connection as a separate picker choice", mcpText, mcpText.includes("Connection") && !mcpText.includes("Local MCP") && !mcpText.includes("Add workspace MCP"));
     await admin.user.looks(["Tools and connections is Admin managed while AI setup and Settings, workspaces and updates are Allowed"]);
   });
 
@@ -832,6 +1102,8 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     expect(deniedExtension.status).toBe(403);
     expect(permittedExtension.status).toBe(200);
     evidence.recordAssertionEvidence("Direct config and extension requests cannot bypass the restricted member's UI", JSON.stringify({ forbiddenConfig, deniedExtension, permittedExtension }), forbiddenConfig.status === 403 && deniedExtension.status === 403 && permittedExtension.status === 200);
+    await openOwnedPolicyTab(member.agent, member.user, "Restricted browsing policy proof", world.den.mocks.witness.url);
+    await openOwnedPolicyTab(other.agent, other.user, "Control browsing policy proof", world.den.mocks.witness.url);
     const allowedBrowser = await member.agent.browserRequest({ url: `${world.den.mocks.witness.url}/health` });
     expect(allowedBrowser.reached).toBe(true);
     const outside = new URL("/health", world.den.ref.apiUrl).toString();
@@ -887,6 +1159,8 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     const origin = new URL(world.den.mocks.witness.url).origin;
     const url = `${origin}/health`;
     const other = agent.on(world.control);
+    await openOwnedPolicyTab(member.agent, member.user, "Restricted empty-site policy proof", origin);
+    await openOwnedPolicyTab(other, user.on(world.control), "Control empty-site policy proof", origin);
     const controlBefore = await effective(world.den.members.casey);
     const before = await member.agent.browserRequest({ url });
     expect(before.reached).toBe(true);
@@ -903,15 +1177,22 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     const denied = await member.agent.desktopApi("/managed-policy/evaluate", { method: "POST", body: { action: "browser", input: { url, method: "GET" } } });
     expect(denied.status).toBe(403);
     expect(isRecord(denied.body) && denied.body.code).toBe("organization_policy_denied");
-    const blocked = await member.agent.browserRequest({ url });
+    const policyMessage = "Error invoking remote method 'openwork:browser:openUrl': Error: Your organization does not allow this website.";
+    const blocked = await member.agent.browserRequest({ url }).then(
+      () => { throw new Error("Expected the browser request to reject under the empty website allowlist"); },
+      (error: unknown) => {
+        if (!(error instanceof Error)) throw error;
+        expect(error.message).toContain(policyMessage);
+        return error.message;
+      },
+    );
     const unaffected = await other.browserRequest({ url });
-    expect(blocked.reached).toBe(false);
     expect(unaffected.reached).toBe(true);
     expect(await effective(world.den.members.casey)).toEqual(controlBefore);
     await admin.user.reload();
     await admin.user.see({ role: "combobox", label: "Website access" }, { value: "blocked", timeoutMs: 60_000 });
     await admin.user.notSee({ role: "button", label: `Remove ${origin}` });
-    evidence.recordAssertionEvidence("Saving an empty approved-site list persists browsing Blocked and stops real requests to the formerly approved site only for the assigned team", JSON.stringify({ saved, denied, before, unsaved, blocked, unaffected, controlBefore }), denied.status === 403 && before.reached && unsaved.reached && !blocked.reached && unaffected.reached);
+    evidence.recordAssertionEvidence("Saving an empty approved-site list persists browsing Blocked and rejects real requests to the formerly approved site only for the assigned team", JSON.stringify({ saved, denied, before, unsaved, blocked, unaffected, controlBefore }), denied.status === 403 && before.reached && unsaved.reached && blocked.includes(policyMessage) && unaffected.reached);
     await admin.user.looks(["Team Access shows Website access Blocked and says no websites are approved"]);
   });
 

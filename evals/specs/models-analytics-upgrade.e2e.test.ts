@@ -293,6 +293,53 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   expect(afterOptOut.some((request) => request.method === "POST" && request.path.endsWith("/inference/analytics/events"))).toBe(false);
   await user.on(app).see({ text: "Keep working after turning off task analytics." });
   evidence.recordAssertionEvidence("Turning analytics off leaves the existing desktop conversation and selected model usable", "A new assistant reply arrived from the same selected model after disable; the independent HTTP witness observed no task-event uploads across opt-out, re-enable and 40 seconds of background reporting, the disabled-period task was absent, and the earlier conversation was still visible", true);
+  await world.seedPagination();
+  await webUser.reload();
+  await webUser.see({ text: "pagination-model-200" }, { timeoutMs: 60_000 });
+  {
+  const firstPage = record((await probe.api(world.den.admin, "/v1/inference/analytics/activity?days=30")).body);
+  expect(list(firstPage.events).at(-1)).toMatchObject({ id: "pagination-200" });
+  const oldCursor = record(firstPage.next).beforeId;
+  if (typeof oldCursor !== "string") throw new Error("Expected the first activity cursor");
+  await using latePage = await world.holdActivityPage(oldCursor);
+  await webUser.click({ role: "button", label: "Load more activity" });
+  expect(await probe.eventually(() => latePage.read(), {
+    within: 10_000, label: "the old activity page body is held", until: (state) => state.held,
+  })).toMatchObject({ cursors: [oldCursor], status: 200, delivered: false, expired: false });
+
+  await world.seedPagination(true);
+  // Refresh while Load more is still pending, not after its old page has rendered.
+  await webUser.see({ text: "pagination-model-newest" }, { timeoutMs: 45_000 });
+  const refreshed = record((await probe.api(world.den.admin, "/v1/inference/analytics/activity?days=30")).body);
+  expect(list(refreshed.events).at(-1)).toMatchObject({ id: "pagination-199" });
+  const freshCursor = record(refreshed.next).beforeId;
+  expect(freshCursor).not.toBe(oldCursor);
+  expect(await latePage.read()).toMatchObject({ held: true, delivered: false, expired: false });
+  await latePage.release();
+  // The enabled refresh button witnesses more() finishing and React committing its result.
+  await probe.eventually(() => probe.on(world.web).dom('[data-testid="models-task-analytics"] button:not(:disabled)'), {
+    within: 10_000, label: "the late page finishes in the refreshed view",
+    until: (snapshot) => snapshot.elements.some((element) => element.text === "Refresh analytics"),
+  });
+  expect(await latePage.read()).toMatchObject({ delivered: true, expired: false });
+  await webUser.see({ text: "pagination-model-newest" });
+  await webUser.see({ text: "pagination-model-199" });
+  await webUser.notSee({ text: "pagination-model-200" });
+  await webUser.notSee({ text: "pagination-model-400" });
+  expect((await probe.on(world.web).text()).match(/\bpagination-model-(?:\d+|newest)\b/g)).toHaveLength(200);
+  await webUser.click({ role: "button", label: "Load more activity" });
+  await webUser.see({ text: "pagination-model-200" });
+  await webUser.see({ text: "pagination-model-399" });
+  await webUser.notSee({ text: "pagination-model-400" });
+  expect((await latePage.read()).cursors).toEqual([oldCursor, freshCursor]);
+  await webUser.click({ role: "button", label: "Load more activity" });
+  await webUser.see({ text: "pagination-model-400" });
+  await webUser.notSee({ role: "button", label: "Load more activity" });
+  const seenModels = (await probe.on(world.web).text()).match(/\bpagination-model-(?:\d+|newest)\b/g);
+  expect(seenModels).toHaveLength(401);
+  expect(new Set(seenModels).size).toBe(401);
+  evidence.recordAssertionEvidence("Refreshing model activity rejects a late old page and preserves a complete traversal", "The real page after task 200 was held while a newer event triggered automatic refresh. After releasing the old body and observing completion, only the refreshed 200 rows remained, with no stale tasks 200 or 400. The next UI request used the refreshed cursor, recovered task 200 through 399, and the final page reached 400. All 401 fixture tasks appeared exactly once, with no further page available.", true);
+  }
   expect((await api("/v1/org", { method: "DELETE" })).response.status).toBe(200);
   await world.verifyErasure();
   evidence.recordAssertionEvidence("Deleting a workspace erases its task analytics and stored export credentials", "Workspace deletion returned 200; an independent data-store witness found no retained history or analytics configuration", true);

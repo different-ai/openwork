@@ -35,11 +35,106 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
       - name: Analyze
         id: analyze
         uses: getsentry/warden@8759014a14130cd2b82e59d3fb450a7385721221 # v0
         with:
           mode: analyze
+
+      # Never execute the pull request's copy of this helper: the job has
+      # write-capable permissions and the analyzer needs the model secret.
+      - name: Fetch trusted review helper
+        id: trusted-helper
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+          WARDEN_MODEL: ""
+          WARDEN_OPENAI_API_KEY: ""
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Pull request base SHA is invalid"
+            exit 1
+          fi
+
+          endpoint="repos/$GITHUB_REPOSITORY/contents/.github/scripts/warden-review.mjs?ref=$BASE_SHA"
+          headers="$RUNNER_TEMP/warden-review-base.headers"
+          metadata="$RUNNER_TEMP/warden-review-base.json"
+          partial="$RUNNER_TEMP/warden-review-base.mjs.partial"
+          helper="$RUNNER_TEMP/warden-review-base.mjs"
+
+          set +e
+          gh api --include --silent "$endpoint" > "$headers"
+          api_exit=$?
+          set -e
+          http_status="$(awk 'NR == 1 { print $2 }' "$headers")"
+          if [ "$http_status" = "404" ]; then
+            echo "::warning::The immutable PR base does not contain the review helper. Native Warden reporting will continue, but this bootstrap run cannot emit a clearance receipt and requires independent review."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$api_exit" -ne 0 ] || [ "$http_status" != "200" ]; then
+            echo "::error::Could not verify the trusted review helper (HTTP ${http_status:-unknown}, gh exit $api_exit)"
+            exit 1
+          fi
+
+          gh api "$endpoint" > "$metadata"
+          if ! jq -e --arg path ".github/scripts/warden-review.mjs" \
+            '.type == "file" and .path == $path and (.sha | strings | test("^[0-9a-f]{40}$"))' \
+            "$metadata" > /dev/null; then
+            echo "::error::Trusted review helper metadata is invalid"
+            exit 1
+          fi
+          expected_blob="$(jq -r '.sha' "$metadata")"
+          gh api -H "Accept: application/vnd.github.raw+json" "$endpoint" > "$partial"
+          if [ ! -s "$partial" ] || [ -L "$partial" ]; then
+            echo "::error::Trusted review helper download is not a regular non-empty file"
+            exit 1
+          fi
+          actual_blob="$(git hash-object --no-filters "$partial")"
+          if [ "$actual_blob" != "$expected_blob" ]; then
+            echo "::error::Trusted review helper failed blob integrity verification"
+            exit 1
+          fi
+          mv "$partial" "$helper"
+          chmod 0444 "$helper"
+          echo "path=$helper" >> "$GITHUB_OUTPUT"
+          echo "available=true" >> "$GITHUB_OUTPUT"
+
+      # Report mode overwrites the analyzer output and omits partial-analysis
+      # metadata, so prepare the fail-closed, redacted receipt first.
+      - name: Prepare review receipt
+        id: prepare
+        if: steps.trusted-helper.outputs.available == 'true'
+        env:
+          FINDINGS_FILE: ${{ steps.analyze.outputs.findings-file }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          TRUSTED_HELPER: ${{ steps.trusted-helper.outputs.path }}
+          WARDEN_OPENAI_API_KEY: ""
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt="$GITHUB_WORKSPACE/warden-summary.json"
+          rm -f "$receipt"
+          node "$TRUSTED_HELPER" prepare \
+            --findings "$FINDINGS_FILE" \
+            --repository "$GITHUB_REPOSITORY" \
+            --pr "$PR_NUMBER" \
+            --head "$HEAD_SHA" \
+            --base "$BASE_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
+            --output "$receipt"
+          if [ ! -s "$receipt" ] || [ -L "$receipt" ]; then
+            echo "::error::Trusted review helper did not create a regular non-empty receipt"
+            exit 1
+          fi
+          echo "completed=true" >> "$GITHUB_OUTPUT"
 
       - name: Report
         uses: getsentry/warden@8759014a14130cd2b82e59d3fb450a7385721221 # v0
@@ -47,60 +142,10 @@ jobs:
           mode: report
           findings-file: ${{ steps.analyze.outputs.findings-file }}
 
-      # Consumed by warden-clearance.yml (workflow_run). security_count also
-      # includes confidentiality-review findings (all blocking). blocking_count excludes
-      # advisory desktop↔den sync findings so they notify without withholding
-      # clearance. The clearance workflow refuses to act on PRs that touch review
-      # machinery, so this artifact cannot be forged without tripping that guard.
-      - name: Write clearance summary
-        env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          FINDINGS_COUNT: ${{ steps.analyze.outputs.findings-count }}
-          HIGH_COUNT: ${{ steps.analyze.outputs.high-count }}
-          FINDINGS_FILE: ${{ steps.analyze.outputs.findings-file }}
-        run: |
-          set -euo pipefail
-
-          if [ -n "$FINDINGS_FILE" ] && [ -f "$FINDINGS_FILE" ] && counts="$(jq -ce '
-            {
-              security_count: ([.skills[] | select(.name == "diff-security-review" or .name == "confidentiality-review") | .findings | length] | add // 0),
-              sync_blocking_count: ([.skills[] | select(.name == "desktop-den-sync-review") | .findings[] | select(.severity != "medium" and .severity != "low")] | length),
-              sync_advisory_count: ([.skills[] | select(.name == "desktop-den-sync-review") | .findings[] | select(.severity == "medium" or .severity == "low")] | length)
-            }
-          ' "$FINDINGS_FILE" 2>/dev/null)"; then
-            security_count="$(jq -r '.security_count' <<< "$counts")"
-            sync_blocking_count="$(jq -r '.sync_blocking_count' <<< "$counts")"
-            sync_advisory_count="$(jq -r '.sync_advisory_count' <<< "$counts")"
-            blocking_count="$((security_count + sync_blocking_count))"
-          else
-            security_count="$FINDINGS_COUNT"
-            sync_blocking_count=0
-            sync_advisory_count=0
-            blocking_count="$FINDINGS_COUNT"
-          fi
-
-          jq -n \
-            --arg sha "$HEAD_SHA" \
-            --arg count "$FINDINGS_COUNT" \
-            --arg high "$HIGH_COUNT" \
-            --arg blocking "$blocking_count" \
-            --arg security "$security_count" \
-            --arg sync_blocking "$sync_blocking_count" \
-            --arg sync_advisory "$sync_advisory_count" \
-            '{
-              head_sha: $sha,
-              findings_count: ($count | tonumber),
-              high_count: ($high | tonumber),
-              blocking_count: ($blocking | tonumber),
-              security_count: ($security | tonumber),
-              sync_blocking_count: ($sync_blocking | tonumber),
-              sync_advisory_count: ($sync_advisory | tonumber)
-            }' \
-            > warden-summary.json
-          cat warden-summary.json
-
-      - name: Upload clearance summary
+      - name: Upload sanitized review receipt
+        if: steps.prepare.outputs.completed == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: warden-summary
           path: warden-summary.json
+          retention-days: 90

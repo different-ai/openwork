@@ -669,10 +669,6 @@ export function AgentContextDiagnosticsReportView(props: {
               value={t(BRANCH_LABEL_KEYS[props.report.connect.expectedBranch])}
             />
             <Fact label={t("connect.diagnostics_connect_policy")} value={connectStateSummary.statusLabel} />
-            <Fact
-              label={t("connect.diagnostics_legacy_google_workspace")}
-              value={booleanLabel(props.report.connect.legacyGoogleWorkspaceConfigured)}
-            />
             <Fact label={t("connect.diagnostics_global_cloud_mcp")} value={booleanLabel(props.report.connect.globalCloudMcpPresent)} />
             <Fact label={t("connect.diagnostics_workspace_cloud_mcp")} value={booleanLabel(props.report.connect.selectedWorkspaceCloudMcpPresent)} />
             <Fact label={t("connect.diagnostics_cross_workspace_drift")} value={booleanLabel(props.report.connect.crossWorkspaceSteeringDrift)} />

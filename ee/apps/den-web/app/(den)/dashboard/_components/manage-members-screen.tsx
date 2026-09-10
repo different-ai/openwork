@@ -1,4 +1,5 @@
 "use client";
+import { TeamAdminCheckbox } from "./team-admin-checkbox";
 
 import Link from "next/link";
 import { type ElementType, useEffect, useMemo, useState } from "react";
@@ -855,13 +856,14 @@ export function ManageMembersScreen() {
               const isInvited = !member.joinedAt;
               const inviteId = member.inviteId;
               const inviteToken = inviteId ? invitationsById.get(inviteId)?.inviteToken : null;
-              const memberAccess = getOrgAccessFlags(member.role, member.isOwner, orgContext.roles);
-              const canResendInvitation = isInvited && canRefreshInvitationRole(member.role, access);
+              const memberAccess = getOrgAccessFlags(member.effectiveRole, member.isOwner, orgContext.roles);
+              const canManageMemberGrants = access.canManageRoles || member.adminTeams.length === 0;
+              const canResendInvitation = isInvited && canManageMemberGrants && canRefreshInvitationRole(member.role, access);
               const canTransferOwnershipToMember = access.canTransferOwnership && !isInvited && memberAccess.isSuperAdmin;
               const canOpenActions = member.isOwner
                 ? false
                 : isInvited
-                  ? canResendInvitation || access.canCancelInvitations
+                  ? canResendInvitation || (access.canCancelInvitations && canManageMemberGrants)
                   : access.canManageRoles || access.canManageTeams || access.canRemoveMembers || canTransferOwnershipToMember;
 
               return (
@@ -872,6 +874,9 @@ export function ManageMembersScreen() {
                   <OrgMemberIdentity member={member} />
                   <span className="text-[13px] text-gray-500">
                     {splitRoleString(member.role).map(formatRoleLabel).join(", ")}
+                    {member.adminTeams.length > 0 ? (
+                      <span className="mt-1 block text-[12px] text-cyan-700">Admin via {member.adminTeams.map((team) => team.name).join(", ")}</span>
+                    ) : null}
                   </span>
                   <span className="text-[13px] text-gray-400">
                     {member.joinedAt
@@ -929,7 +934,7 @@ export function ManageMembersScreen() {
                                 Resend invite
                               </button>
                             ) : null}
-                            {isInvited && access.canCancelInvitations && inviteId ? (
+                            {isInvited && access.canCancelInvitations && canManageMemberGrants && inviteId ? (
                               <button
                                 type="button"
                                 onClick={async () => {
@@ -993,7 +998,7 @@ export function ManageMembersScreen() {
                                 Manage teams
                               </button>
                             ) : null}
-                            {!isInvited && access.canRemoveMembers ? (
+                            {!isInvited && access.canRemoveMembers && canManageMemberGrants ? (
                               <button
                                 type="button"
                                 onClick={async () => {
@@ -1037,6 +1042,7 @@ export function ManageMembersScreen() {
                               <button
                                 key={team.id}
                                 type="button"
+                                disabled={team.managedByScim || (team.grantsOrganizationAdmin && !access.canManageRoles)}
                                 onClick={() => {
                                   setMemberTeamsDraft((current) => {
                                     const next = new Set(current);
@@ -1154,12 +1160,13 @@ export function ManageMembersScreen() {
                         ? ` +${(teamMemberNames.get(team.id)?.length ?? 0) - 3}`
                         : ""}
                     </p>
+                    <TeamAdminCheckbox team={team} />
                   </div>
                   <span className="text-[13px] text-gray-400">{`${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}`}</span>
                   <div className="flex items-center justify-end gap-3">
                     {team.managedByScim ? (
                       <span className="text-[12px] font-medium text-cyan-700">Managed by identity provider</span>
-                    ) : access.canManageTeams ? (
+                    ) : access.canManageTeams && (!team.grantsOrganizationAdmin || access.canManageRoles) ? (
                       <>
                         <ActionButton
                           icon={Pencil}
