@@ -385,6 +385,7 @@ test("connected service actions reach only the selected account and enforce writ
   const policyMatches = new Map<string, Record<string, unknown>>();
   const folderBody = { name: "Policy recovery", parentId: "parent-2" };
   const folderReceipt = { ok: true, file: { name: folderBody.name } };
+  const policyDenial = { error: "policy_blocked", message: "Connect is disabled for this organization. Ask your administrator to have it re-enabled." };
   for (const { connection, providerKey } of policyConnections) {
     const [match] = await discover(connection, providerKey, "drive-folders", ["POST"]);
     expect(match).toBeDefined();
@@ -441,7 +442,10 @@ test("connected service actions reach only the selected account and enforce writ
           expect(observed).toEqual([expect.objectContaining({ method: "POST", path: providerPath, email: selected, tokenId: selectedTokens.get(connection.id) })]);
         } else {
           expect(executed.result.isError).toBe(true);
-          expect(executed.payload).toMatchObject({ error: executor === "execute_capability" ? "unknown_capability" : "script_failed" });
+          expect(executed.payload).toMatchObject(executor === "execute_capability" ? policyDenial : { error: "script_failed" });
+          expect(executed.payload.connectionStatus).toBeUndefined();
+          expect(executed.payload.connectionAction).toBeUndefined();
+          expect(JSON.stringify(executed.payload)).not.toMatch(/needs_connection|reauth_required|reconnect|connect your account/i);
           expect(await snapshot(selected)).toEqual(before);
         }
       }
@@ -462,12 +466,20 @@ test("connected service actions reach only the selected account and enforce writ
       const executed = await denFetch(writer, `/v1/capabilities/${providerKey}/drive-folders`, {
         method: "POST", headers: { authorization: `Bearer ${writer.token}` }, body: JSON.stringify(folderBody),
       });
-      expect(executed.response.status, executed.text).toBe(enabled ? 200 : 409);
-      expect(executed.body).toMatchObject(enabled ? folderReceipt : { error: "needs_connection" });
+      expect(executed.response.status, executed.text).toBe(enabled ? 200 : 403);
+      expect(executed.body).toMatchObject(enabled ? folderReceipt : policyDenial);
       if (enabled) {
         const observed = rows((await snapshot(selected)).requests).slice(rows(before.requests).length);
         expect(observed).toEqual([expect.objectContaining({ method: "POST", path: providerPath, email: selected, tokenId: selectedTokens.get(connection.id) })]);
-      } else expect(await snapshot(selected)).toEqual(before);
+      } else {
+        expect(executed.text).not.toMatch(/needs_connection|reauth_required|reconnect|connect your account/i);
+        const read = await denFetch(writer, `/v1/capabilities/${providerKey}/${providerKey === "google-workspace" ? "gmail-messages" : "mail-messages"}`, {
+          headers: { authorization: `Bearer ${writer.token}` },
+        });
+        expect(read.response.status, read.text).toBe(403);
+        expect(read.body).toMatchObject(policyDenial);
+        expect(await snapshot(selected)).toEqual(before);
+      }
     }
     for (const { email, initial } of [{ email: primary, initial: untouched }, { email: readonly, initial: readerBefore }]) {
       const account = await snapshot(email);
@@ -487,9 +499,18 @@ test("connected service actions reach only the selected account and enforce writ
       : "Organization disable stops selected and legacy native execution while preserving admin management",
     enabled
       ? "The retained generic and Code Mode capabilities and default REST routes each made exactly one request with their original selected credential. Only the selected account gained ten folders; other accounts stayed unchanged."
-      : "The actual admin capability switch hid native search and usable connections. Generic, Code Mode, and legacy default REST writes were denied with zero provider calls or account changes; admins could still list and save the existing client configuration.", true);
+      : "The actual admin capability switch hid native search and usable connections. Generic execution and legacy REST reads/writes returned policy_blocked with administrator guidance, not reconnect instructions. Code Mode stayed blocked. No provider call or account change occurred; admins could still list and save client configuration.", true);
   }
   const final = await snapshot(selected);
+  for (const { providerKey } of legacyConnections) {
+    const disconnected = await denFetch(den.admin, `/v1/capabilities/${providerKey}/drive-folders`, {
+      method: "POST", headers: { authorization: `Bearer ${den.admin.token}` }, body: JSON.stringify(folderBody),
+    });
+    expect(disconnected.response.status, disconnected.text).toBe(409);
+    expect(disconnected.body).toMatchObject({ error: "needs_connection" });
+    expect(await snapshot(selected)).toEqual(final);
+  }
+  evidence.recordAssertionEvidence("Organization policy does not replace genuine native sign-in requirements", "With Connect enabled, the unconnected admin still receives needs_connection and HTTP 409 for both native providers, without reaching either provider.", true);
   for (const [connection, features, action] of [
     [google, ["gmailRead", "calendarRead", "sheetsRead"], cases[0]],
     [microsoft, ["mailRead"], cases[googleCases.length]],
