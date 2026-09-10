@@ -19,6 +19,7 @@ import {
 import { fixtureCatalog, fixtureProvider } from "./provider-catalog.fixture.ts";
 import { connectedModelCatalog, type EngineModelOption } from "./threads.ts";
 import { chooseIndexedModel, MODEL_INTELLIGENCE_INDEX, modelSelectionDefaults, normalizeModelSelectionPreferences } from "./model-intelligence.ts";
+import { describeTurnFailure } from "./turn-failure.ts";
 
 test("the model mode a stored record means: explicit wins, otherwise one model every time (Automatic is chosen in the picker)", () => {
   assert.equal(modelModeOf({ modelMode: "auto", model: "openai/gpt-5" }), "auto");
@@ -274,6 +275,13 @@ test("fixed discussion models ignore automatic preferences and never replace an 
       const choice = resolveDiscussionModel(models, { model, modelMode, modelVariant: "high" }, "hello");
       assert.equal(choice.model, null);
       assert.equal(choice.variant, "");
+      if (modelMode === "fixed" && model === "gone/model") {
+        assert.ok(choice.reason.includes(model));
+        const failure = describeTurnFailure(choice.reason, "Editor");
+        assert.equal(failure.headline, "Editor's AI model is not available.");
+        assert.equal(failure.modelRelated, true);
+        assert.equal(failure.transient, false);
+      }
     }
   }
 });

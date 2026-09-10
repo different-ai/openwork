@@ -1005,7 +1005,7 @@ const groupDocuments = createGroupDocumentService({
   resolveContext: (slug, context, expected) => collaboration.context(slug, context, expected, assertGroupDocumentToolContext),
 });
 
-async function collaborationClient(slug, { kind = "reply", requestText, model, signal } = {}) {
+async function collaborationClient(slug, { kind = "reply", requestText, model, observationOnly = false, signal } = {}) {
   maintenanceAdmission.assertOpen();
   const coworker = slug === ".coordinator" ? await ensureCoordinatorWorkspace() : await getCoworker(coworkersDir, slug);
   const handle = await ensurePlatformServer();
@@ -1016,7 +1016,9 @@ async function collaborationClient(slug, { kind = "reply", requestText, model, s
     if (!toolsRegistered.has(slug)) await registerCoworkerTools(coworker);
   }
   signal?.throwIfAborted();
-  const resolvedModel = model ?? await localRunModel(coworker, kind, requestText);
+  // Legacy admissions have no model pin. Observe their native work without
+  // consulting today's catalog or turning a missing selection into a failure.
+  const resolvedModel = model ?? (observationOnly ? undefined : await localRunModel(coworker, kind, requestText));
   const client = createHeadlessThreadClient({ baseUrl: handle.url, workspaceId: coworker.workspaceId, token: ownerToken, defaultModel: resolvedModel });
   client.resolvedModel = resolvedModel;
   const interactions = createCoworkerThreads({ serverUrl: handle.url, workspaceId: coworker.workspaceId, token: ownerToken });

@@ -1057,16 +1057,34 @@ test("a dependency-free tool-free retry retains its message ID", async () => {
   });
 });
 
-test("a recovered group question observes the same admission; cancel and expired waits reject late answers", async () => {
+test("legacy group recovery observes completed work and questions without model selection; cancel and expired waits reject late answers", async () => {
   await withHome(async (home) => {
     const fixture = nativeFixture();
     const owner = { slug: "scout", threadId: "ses_question", conversationId: "grp_question", groupId: "grp_question", kind: "group" };
     let clock = Date.now();
-    const options = { directory: home, clientFor: fixture.clientFor, pollMs: 5, now: () => clock, personTimeoutMs: 1000 };
+    let catalogAvailable = true;
+    const options = { directory: home, clientFor: async (slug, { observationOnly } = {}) => {
+      if (!observationOnly && !catalogAvailable) throw new Error("The current model catalog could not be read.");
+      return fixture.clientFor(slug);
+    }, pollMs: 5, now: () => clock, personTimeoutMs: 1000 };
     let service = createCollaboration(options);
     try {
       const root = await service.submit({ owner, messageId: "msg_question", prompt: "Question already admitted" });
       await eventually(async () => (await service.read((state) => state.executions[root.id])).state === "succeeded");
+      await service.stop();
+      catalogAvailable = false;
+      service = createCollaboration(options);
+      await service.change((state) => {
+        assert.ok(state.executions[root.id].sentAt);
+        assert.equal(state.executions[root.id].model, null);
+        state.executions[root.id].state = state.tasks[root.taskId].state = "running";
+      });
+      await service.start();
+      await eventually(async () => (await service.read((state) => state.executions[root.id])).state === "succeeded");
+      assert.equal((await service.read((state) => state.executions[root.id])).model, null, "recovery does not invent a model pin");
+      const fresh = await service.submit({ owner, messageId: "msg_no_catalog", prompt: "New work still needs a model" });
+      await eventually(async () => (await service.read((state) => state.executions[fresh.id])).state === "failed");
+      assert.equal(fixture.requests.length, 1, "completed recovery never resends, and new admission still fails closed");
       await service.stop();
       const reply = fixture.histories.get(owner.threadId).at(-1);
       const question = { id: "question_a", sessionID: owner.threadId, questions: [{ header: "Choose", question: "Which?", options: [{ label: "A", description: "One" }], custom: false, multiple: false }], tool: { messageID: reply.id, callID: reply.parts[0].callId } };
@@ -1085,6 +1103,7 @@ test("a recovered group question observes the same admission; cancel and expired
       await eventually(async () => (await service.read((state) => state.executions[root.id])).state === "succeeded");
       assert.equal(fixture.requests.length, 1);
       assert.deepEqual(fixture.decisions[0].answers, [["A"]]);
+      catalogAvailable = true;
       for (const mode of ["cancel", "expire"]) {
         const client = await fixture.clientFor(owner.slug);
         const entry = await service.submit({ owner, messageId: `msg_${mode}`, prompt: mode });
