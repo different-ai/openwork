@@ -10,6 +10,8 @@ const definitions = {
   'packaged-first-launch.e2e.test.ts': { name: 'Open a fresh cloud or enterprise install', placement: 'local' },
   // Boots the packaged enterprise artifact twice (fresh and pre-activated); only packaged-smoke provides that binary.
   'packaged-preactivation-updater.e2e.test.ts': { name: 'Keep an unactivated enterprise install from updating itself', placement: 'local' },
+  // Boots the packaged enterprise artifact twice (fresh and pre-activated) behind a refusing proxy; only packaged-smoke provides that binary.
+  'packaged-preactivation-egress.e2e.test.ts': { name: 'Keep an unactivated enterprise install off the network', placement: 'local' },
   'packaged-activated-launch.e2e.test.ts': { name: 'Open an already-activated enterprise install', placement: 'local' },
   // Boots the packaged enterprise artifact and asks it to quit (SIGTERM and Browser.close); only packaged-smoke provides that binary.
   'desktop-quit-path.e2e.test.ts': { name: 'Quit an enterprise install cleanly', placement: 'local' },
@@ -28,6 +30,9 @@ const definitions = {
   },
   'live-tool-visible-after-session-switch.e2e.test.ts': {
     cases: [{ id: 'SWITCH-10', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--daytona', engine: 'v1' } }],
+  },
+  'unfinished-tool-lifecycle.e2e.test.ts': {
+    cases: [{ id: 'STOP-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
   },
 };
 

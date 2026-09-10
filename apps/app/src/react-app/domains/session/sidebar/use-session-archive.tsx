@@ -25,7 +25,7 @@ import { dispatchQueuedDrain, getQueuedDrainState, hasPendingQueuedAdmission } f
 import { clearQueuedSendContext } from "../sync/queued-send-context";
 import { applySessionArchived } from "../sync/session-sync";
 
-type ArchiveTarget = { workspace: RouteWorkspace; endpoint: ResolvedWorkspaceEndpoint; sessionId: string; draftScope: string | null };
+type ArchiveTarget = { workspace: RouteWorkspace; endpoint: ResolvedWorkspaceEndpoint; sessionId: string; title: string; draftScope: string | null };
 
 export function useSessionArchive(input: {
   workspaces: RouteWorkspace[];
@@ -99,7 +99,8 @@ export function useSessionArchive(input: {
   }
 
   function showUndo(target: ArchiveTarget, archived: boolean, undo?: typeof undoNavigation.current) {
-    toast.undo(archived ? t("session_management.session_archived") : t("session_management.session_unarchived"), {
+    const message = archived ? t("session_management.session_archived", { title: target.title }) : t("session_management.session_unarchived");
+    toast.undo(<span title={message}>{message}</span>, {
       id: `session-archive:${target.sessionId}`,
       icon: archived ? Archive : ArchiveRestore,
       undo: { label: t("common.undo"), onClick: () => {
@@ -271,7 +272,8 @@ export function useSessionArchive(input: {
       toast.error(endpoint && isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl) ? V2_SESSION_ARCHIVE_UNAVAILABLE : "The session's workspace is not connected.");
       return false;
     }
-    const target = { workspace, endpoint, sessionId, draftScope: input.draftScope };
+    const title = input.sessionsByWorkspaceId[workspace.id]?.find(session => session.id === sessionId)?.title?.trim() || t("session.default_title");
+    const target = { workspace, endpoint, sessionId, title, draftScope: input.draftScope };
     if (!archived) return restore(target, true);
     return new Promise<boolean>(resolve => {
       pending.current = resolve;

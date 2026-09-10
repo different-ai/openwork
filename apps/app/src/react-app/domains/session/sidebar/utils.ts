@@ -53,6 +53,12 @@ const normalizeSessionParentID = (session: SessionListItem) => {
 export const getRootSessions = (sessions: WorkspaceSessionGroup["sessions"]) =>
   sessions.filter((session) => !normalizeSessionParentID(session));
 
+/** Ownership inventory, not the preview: pins and side chats still belong here. */
+export const workspaceConversationCount = (group: WorkspaceSessionGroup): number | undefined =>
+  group.sessionsLoaded && group.status === "ready" && !group.error
+    ? getRootSessions(group.sessions).filter((session) => !isSessionArchived(session)).length
+    : undefined;
+
 /**
  * Return every descendant of a session in stable session-list order. The
  * visited set keeps malformed cyclic parent data from looping forever.
