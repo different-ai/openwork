@@ -16,6 +16,11 @@ const test = spec.world(packagedActivatedLaunchWorld, { timeout: 180_000 });
  * and the routes behind it must mount. The seeded Den is a closed local port,
  * so this holds with no network at all; the sign-in surface it lands on reads
  * its heading from the bootstrap, not from Den.
+ *
+ * This is the activated half of a pair: packaged-first-launch boots the same
+ * enterprise artifact with no bootstrap and requires the activation gate
+ * heading, so a gate that always stepped aside would fail there. packaged-smoke
+ * runs both against one binary.
  */
 const ACTIVATION_GATE_HEADING = "Link this app to your organization";
 const SIGN_IN_HEADING = "Welcome to OpenWork";
