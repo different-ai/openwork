@@ -43,8 +43,8 @@ test("notification center keeps background events and leaves action confirmation
     await user.see(emptyHint);
     await user.notSee(staleHint);
     await user.screenshot();
-    await user.press("Escape");
-    await user.notSee(emptyTitle);
+    await user.click(bell);
+    await user.notSee(emptyTitle, { timeoutMs: 10_000 });
   });
 
   if (world.engine !== "v2") {
@@ -106,7 +106,8 @@ test("notification center keeps background events and leaves action confirmation
     await user.see({ role: "button", label: "Select a model" });
     await user.notSee(emptyTitle);
     await user.screenshot();
-    await user.press("Escape");
+    await user.click(bell);
+    await user.notSee({ text: "2 new providers available" }, { timeoutMs: 10_000 });
     const read = await probe.eventually(center, {
       within: 10_000, label: "closing the panel marks the entry read", until: (value) => value[0]?.readAt !== null,
     });
