@@ -15,6 +15,22 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 declare global {
   interface Window {
     __openworkSubmissionFault?: { attempts: number; release: () => void };
+    __openworkStoppingFault?: {
+      state: {
+        attempts: number;
+        held: number;
+        nativeStatus: number | null;
+        nativeFailed: boolean;
+        released: boolean;
+        failed: boolean;
+        clickCaptured: boolean;
+        trusted: boolean;
+        elapsedMs: number | null;
+        expired: boolean;
+      };
+      fail: () => void;
+      dispose: () => void;
+    };
   }
 }
 
@@ -1715,12 +1731,219 @@ export async function taskActivity(seed: Seed) {
   return { app, workspace, session };
 }
 
+async function stoppingFeedbackFault(
+  seed: Seed,
+  app: Awaited<ReturnType<Seed["desktop"]>>,
+  workspaceId: string,
+  sessionId: string,
+) {
+  await seed.evalIn(app, browserScript((workspaceId, sessionId) => {
+    if (window.__openworkStoppingFault) throw new Error("A Stop feedback fault is already active");
+    const port = localStorage.getItem("openwork.server.port");
+    if (!port) throw new Error("Stop feedback fault requires the local server port");
+    const serverOrigin = `http://127.0.0.1:${port}`;
+    const encodedWorkspaceId = encodeURIComponent(workspaceId);
+    const encodedSessionId = encodeURIComponent(sessionId);
+    const paths = new Set(["workspace", "w"].flatMap((mount) => [
+      `/${mount}/${encodedWorkspaceId}/opencode/session/${encodedSessionId}/abort`,
+      `/${mount}/${encodedWorkspaceId}/opencode2/api/session/${encodedSessionId}/interrupt`,
+    ]));
+    const originalFetch = window.fetch;
+    let releaseHold = () => {};
+    const hold = new Promise<void>((resolve) => { releaseHold = resolve; });
+    const state = {
+      attempts: 0,
+      held: 0,
+      nativeStatus: null as number | null,
+      nativeFailed: false,
+      released: false,
+      failed: false,
+      clickCaptured: false,
+      trusted: false,
+      elapsedMs: null as number | null,
+      expired: false,
+    };
+    let clickedAt = 0;
+    let frame = 0;
+    let expiry: ReturnType<typeof setTimeout> | null = null;
+    const sessionRoot = () => [...document.querySelectorAll<HTMLElement>("[data-session-surface-id]")]
+      .find((candidate) => candidate.dataset.sessionSurfaceId === sessionId) ?? null;
+    const visible = (element: HTMLElement | null) => {
+      if (!element) return false;
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return element.getClientRects().length > 0 && rect.width > 0 && rect.height > 0
+        && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) > 0;
+    };
+    const sample = () => {
+      if (!state.clickCaptured || state.elapsedMs !== null) return;
+      const button = sessionRoot()?.querySelector<HTMLButtonElement>('button[aria-label="Stopping…"][aria-busy="true"]') ?? null;
+      if (button?.disabled && visible(button)) state.elapsedMs = performance.now() - clickedAt;
+    };
+    const paint = () => { sample(); frame = requestAnimationFrame(paint); };
+    const capture = (event: MouseEvent) => {
+      if (state.clickCaptured || !event.isTrusted || !(event.target instanceof Element)) return;
+      const button = event.target.closest<HTMLButtonElement>('button[aria-label="Stop"]');
+      const root = sessionRoot();
+      if (!button || !root?.contains(button)) return;
+      state.clickCaptured = true;
+      state.trusted = true;
+      clickedAt = performance.now();
+      expiry = setTimeout(() => { state.expired = true; }, 2_000);
+      queueMicrotask(sample);
+    };
+    window.addEventListener("click", capture, true);
+    const observer = new MutationObserver(sample);
+    observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true });
+    frame = requestAnimationFrame(paint);
+
+    const wrappedFetch: typeof window.fetch = async (...args) => {
+      const input = args[0];
+      const init = args[1];
+      const requestUrl = new URL(input instanceof Request ? input.url : String(input), location.href);
+      const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+      if (state.released || method !== "POST" || requestUrl.origin !== serverOrigin || !paths.has(requestUrl.pathname)) {
+        return originalFetch(...args);
+      }
+      state.attempts += 1;
+      state.held += 1;
+      try {
+        await hold;
+        if (state.failed) {
+          state.nativeStatus = 503;
+          return new Response(JSON.stringify({ message: "Stop unavailable" }), {
+            status: 503,
+            statusText: "Service Unavailable",
+            headers: { "content-type": "application/json" },
+          });
+        }
+        try {
+          const response = await originalFetch(...args);
+          state.nativeStatus = response.status;
+          return response;
+        } catch (error) {
+          state.nativeFailed = true;
+          throw error;
+        }
+      } finally {
+        state.held -= 1;
+      }
+    };
+    window.fetch = wrappedFetch;
+    const release = (failed: boolean) => {
+      if (state.released) return;
+      state.failed = failed;
+      state.released = true;
+      releaseHold();
+    };
+    const dispose = () => {
+      release(true);
+      if (window.fetch === wrappedFetch) window.fetch = originalFetch;
+      if (expiry) clearTimeout(expiry);
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+      window.removeEventListener("click", capture, true);
+    };
+    window.__openworkStoppingFault = { state, fail: () => release(true), dispose };
+  }, [workspaceId, sessionId]));
+
+  let disposed = false;
+  return {
+    async read() {
+      return seed.evalIn(app, browserScript((sessionId) => {
+        const fault = window.__openworkStoppingFault;
+        if (!fault) throw new Error("Stop feedback fault lost its document");
+        const root = [...document.querySelectorAll<HTMLElement>("[data-session-surface-id]")]
+          .find((candidate) => candidate.dataset.sessionSurfaceId === sessionId) ?? null;
+        const stopping = root?.querySelector<HTMLButtonElement>('button[aria-label="Stopping…"]') ?? null;
+        const retry = root?.querySelector<HTMLButtonElement>('button[aria-label="Stop"]') ?? null;
+        const run = root?.querySelector<HTMLButtonElement>('button[aria-label="Run task"]') ?? null;
+        const error = root?.querySelector<HTMLElement>('[data-testid="session-error-card"]') ?? null;
+        const aggregate = root?.querySelector<HTMLElement>("[data-tool-aggregate]") ?? null;
+        const composer: unknown = window.__openwork?.slice("composer");
+        const snapshotQuery = composer && typeof composer === "object" && "snapshotQuery" in composer
+          ? composer.snapshotQuery
+          : null;
+        const visible = (element: HTMLElement | null) => {
+          if (!element) return false;
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return element.getClientRects().length > 0 && rect.width > 0 && rect.height > 0
+            && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) > 0;
+        };
+        return {
+          ...fault.state,
+          stoppingVisible: visible(stopping),
+          stoppingDisabled: stopping?.disabled ?? false,
+          ariaBusy: stopping?.getAttribute("aria-busy") ?? null,
+          spinnerVisible: visible(stopping?.querySelector<HTMLElement>("svg.lucide-loader-circle.animate-spin") ?? null),
+          retryEnabled: Boolean(retry && visible(retry) && !retry.disabled),
+          runVisible: visible(run),
+          errorText: error?.innerText.replace(/\s+/g, " ").trim() ?? "",
+          aggregateText: aggregate?.innerText.replace(/\s+/g, " ").trim() ?? "",
+          snapshotMessageCount: snapshotQuery && typeof snapshotQuery === "object" && "dataMessageCount" in snapshotQuery
+            && typeof snapshotQuery.dataMessageCount === "number" ? snapshotQuery.dataMessageCount : 0,
+          surfaceError: composer && typeof composer === "object" && "error" in composer ? composer.error : null,
+        };
+      }, [sessionId]));
+    },
+    async fail() {
+      await seed.evalIn(app, () => {
+        const fault = window.__openworkStoppingFault;
+        if (!fault || fault.state.held < 1) throw new Error("No native Stop response is held");
+        fault.fail();
+      });
+    },
+    async [Symbol.asyncDispose]() {
+      if (disposed) return;
+      disposed = true;
+      await seed.evalIn(app, () => {
+        window.__openworkStoppingFault?.dispose();
+        delete window.__openworkStoppingFault;
+      });
+    },
+  };
+}
+
 export async function unfinishedTools(seed: Seed) {
-  const app = await seed.desktop({ name: "unfinished-tool-lifecycle" });
-  const workspace = await seed.workspace(app, seed.tmpPath("unfinished-tool-lifecycle"));
-  const session = await seedSessionRetry(seed, app);
-  await arrangeControl(seed, app, "eval.session_lifecycle.seed_unfinished_tools", { lifecycle: "active" });
-  return { app, workspace, session };
+  const prompt = "Hold the native tool open for Stop feedback proof.";
+  const warmup = { prompt: "Create the Stop feedback fixture.", reply: "Stop feedback fixture ready." };
+  const base = await splitPaneQuestions(seed, "unfinished-tool-lifecycle", [
+    { promptMarker: warmup.prompt, latestUserTurn: true, finalReply: warmup.reply, steps: [] },
+    {
+      promptMarker: prompt,
+      latestUserTurn: true,
+      finalReply: "The held tool finished without Stop.",
+      steps: [{ tool: "bash", arguments: {
+        command: "sleep 120",
+        description: "Hold the native tool for Stop feedback",
+        timeout: 180_000,
+      } }],
+    },
+  ], { permission: { bash: "allow" } });
+  const session = await seedSessionRetry(seed, base.app);
+  return {
+    ...base,
+    session,
+    prompt,
+    warmup,
+    engine: resolveEvalEngine(),
+    startStopFault: () => stoppingFeedbackFault(seed, base.app, base.workspace.workspaceId, session.sessionId),
+    nativeStatus: () => seed.evalIn(base.app, browserScript(async (workspaceId, sessionId) => {
+      const port = localStorage.getItem("openwork.server.port");
+      const token = localStorage.getItem("openwork.server.token");
+      const response = await fetch(`http://127.0.0.1:${port}/workspace/${encodeURIComponent(workspaceId)}/opencode/session/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return `http-${response.status}`;
+      const statuses: unknown = await response.json();
+      if (!statuses || typeof statuses !== "object") return "missing";
+      const status: unknown = Object.entries(statuses).find(([id]) => id === sessionId)?.[1];
+      return status && typeof status === "object" && "type" in status && typeof status.type === "string"
+        ? status.type
+        : "invalid";
+    }, [base.workspace.workspaceId, session.sessionId]), { awaitPromise: true }),
+  };
 }
 
 /** Signed-in chat with a deterministic model and a scheduled desktop task. */
