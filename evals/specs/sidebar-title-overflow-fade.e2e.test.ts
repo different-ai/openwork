@@ -244,7 +244,10 @@ const expansionModes: ("workspace" | "group" | "ungrouped")[] = ["workspace", "g
 for (const mode of expansionModes) {
   describe(mode, () => {
   beforeEach(() => { selectedMode = mode; });
-  test(`${mode} Show more keeps old rows anchored through every frame and still permits reordering`, async ({ world, user, probe, step }) => {
+  // Session rows are also native HTML drag sources (dropping into a group), and a native drag cancels
+  // the pointer gesture Motion's Reorder needs, so only groups reorder by dragging.
+  const dragClaim = mode === "group" ? "still permits reordering" : "still starts the native session drag";
+  test(`${mode} Show more keeps old rows anchored through every frame and ${dragClaim}`, async ({ world, user, probe, step }) => {
     if (world.mode === "overflow") throw new Error("Unexpected sidebar fixture");
     const first = world.sessions[0];
     if (!first) throw new Error("Missing expansion anchor session");
@@ -311,7 +314,7 @@ for (const mode of expansionModes) {
     expect(scrolledExpansions, "exercise expansion in an already-scrolled sidebar").toBeGreaterThan(0);
     await user.notSee({ text: /^Show \d+ more$/ }, { timeoutMs: 500 });
 
-    await step("drag still reorders after expansion without selecting another conversation", async () => {
+    await step(`${dragClaim} after expansion without selecting another conversation`, async () => {
       const last = world.sessions.at(-1)!;
       const preceding = world.sessions.at(-2)!;
       let sourceId = `session:${last.sessionId}`;
@@ -329,47 +332,54 @@ for (const mode of expansionModes) {
       // the row a fraction of a pixel past the list's fractional edge: same 1px tolerance as every
       // other geometry comparison here.
       const before = await probe.eventually(() => world.observation.read(), {
-        within: 10_000, label: "reorder targets visible and settled",
+        within: 10_000, label: "drag targets visible and settled",
         until: value => (mode !== "group" || value.current.rows.every(row => !row.id.startsWith("session:")))
           && [sourceId, targetId].every(id => value.current.rows.some(row => row.id === id
             && row.top >= value.current.viewport.top - 1 && row.bottom <= value.current.viewport.bottom + 1 && Math.abs(row.projectionY) < 1)),
       });
+      expect(before.drags).toEqual([]);
       const from = before.current.rows.find(row => row.id === sourceId)!;
       const to = before.current.rows.find(row => row.id === targetId)!;
       await dragPointer(world.app, from, { x: from.x, y: to.y - 4 });
-      const reordered = await probe.eventually(() => world.observation.read(), {
-        within: 10_000, label: "trusted drag changes row order and settles",
-        until: value => {
-          const ids = value.current.rows.map(row => row.id);
-          return ids.indexOf(sourceId) < ids.indexOf(targetId)
-            && value.current.rows.every(row => Math.abs(row.projectionY) < 1);
-        },
-      });
       const idsBefore = before.current.rows.map(row => row.id);
-      const expected = [...idsBefore];
-      expected.splice(expected.indexOf(sourceId), 1);
-      expected.splice(expected.indexOf(targetId), 0, sourceId);
-      expect(reordered.current.rows.map(row => row.id)).toEqual(expected);
-      expect(reordered.current.hash).toBe(initial.current.hash);
+      const sessionOrder = [...world.sessions.map(session => session.sessionId), world.neighbor.sessionId];
       if (mode === "group") {
+        const reordered = await probe.eventually(() => world.observation.read(), {
+          within: 10_000, label: "trusted drag changes row order and settles",
+          until: value => {
+            const ids = value.current.rows.map(row => row.id);
+            return ids.indexOf(sourceId) < ids.indexOf(targetId)
+              && value.current.rows.every(row => Math.abs(row.projectionY) < 1);
+          },
+        });
+        const expected = [...idsBefore];
+        expected.splice(expected.indexOf(sourceId), 1);
+        expected.splice(expected.indexOf(targetId), 0, sourceId);
+        // Releasing the drag on the group header must not toggle it open.
+        expect(reordered.current.rows.map(row => row.id)).toEqual(expected);
+        expect(reordered.current.hash).toBe(initial.current.hash);
+        expect(reordered.drags).toEqual([]);
         // Collapsed panels unmount their session rows; restore the selection witness.
         await user.click({ text: "Expansion group" });
         await probe.eventually(() => world.observation.read(), {
           within: 10_000, label: "selected conversation remains selected after group reorder",
           until: value => value.current.selected.includes(first.sessionId),
         });
+      } else {
+        const dragged = await probe.eventually(() => world.observation.read(), {
+          within: 10_000, label: "trusted drag starts the native session drag",
+          until: value => value.drags.length > 0,
+        });
+        expect(dragged.drags).toEqual([{ sessionId: last.sessionId, types: ["application/x-openwork-session-id"] }]);
+        expect(dragged.current.rows.map(row => row.id)).toEqual(idsBefore);
+        expect(dragged.current.hash).toBe(initial.current.hash);
       }
       expect((await world.observation.read()).current.selected).toEqual(initial.current.selected);
       const management = await probe.storage("openwork.react.sessionManagement");
       if (mode === "group") expect(management).toMatchObject({ state: { groupsByWorkspace: {
         [world.workspace.workspaceId]: { groups: [{ id: "grp_neighbor" }, { id: "grp_expansion" }] },
       } } });
-      else {
-        const sessionOrder = [...world.sessions.map(session => session.sessionId), world.neighbor.sessionId];
-        sessionOrder.splice(sessionOrder.indexOf(last.sessionId), 1);
-        sessionOrder.splice(sessionOrder.indexOf(preceding.sessionId), 0, last.sessionId);
-        expect(management).toMatchObject({ state: { orderByWorkspace: { [world.workspace.workspaceId]: sessionOrder } } });
-      }
+      else expect(management).toMatchObject({ state: { orderByWorkspace: { [world.workspace.workspaceId]: sessionOrder } } });
     });
   });
   });

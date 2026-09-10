@@ -45,12 +45,19 @@ interface ExpansionFrames {
   complete: boolean;
 }
 
+/** A native HTML drag that started on a session row, with the payload types it carries. */
+interface SessionDragStart {
+  sessionId: string;
+  types: string[];
+}
+
 declare global {
   interface Window {
     [key: `sidebar-observation-${string}`]: {
       snapshot(): SidebarGeometry;
       expansion: ExpansionFrames | null;
       clicks: number;
+      drags: SessionDragStart[];
       stop(): void;
     } | undefined;
   }
@@ -96,8 +103,19 @@ export async function observeSidebarExpansion(surface: Surface) {
     let frame = 0;
     let timer: ReturnType<typeof setTimeout>;
     const observer: NonNullable<Window[typeof key]> = {
-      snapshot, expansion: null, clicks: 0,
-      stop() { cancelAnimationFrame(frame); clearTimeout(timer); document.removeEventListener("click", onClick, true); },
+      snapshot, expansion: null, clicks: 0, drags: [],
+      stop() {
+        cancelAnimationFrame(frame);
+        clearTimeout(timer);
+        document.removeEventListener("click", onClick, true);
+        document.removeEventListener("dragstart", onDragStart, true);
+      },
+    };
+    const onDragStart = (event: DragEvent) => {
+      if (!event.isTrusted || !(event.target instanceof Element)) return;
+      const row = event.target.closest<HTMLElement>("[data-sidebar-session-id]");
+      if (!row) return;
+      observer.drags.push({ sessionId: row.dataset.sidebarSessionId ?? "", types: [...(event.dataTransfer?.types ?? [])] });
     };
     const onClick = (event: MouseEvent) => {
       if (!event.isTrusted || !(event.target instanceof Element)) return;
@@ -120,6 +138,7 @@ export async function observeSidebarExpansion(surface: Surface) {
       timer = setTimeout(() => cancelAnimationFrame(frame), 5_000);
     };
     document.addEventListener("click", onClick, true);
+    document.addEventListener("dragstart", onDragStart, true);
     window[key] = observer;
   }, [key]);
   return {
@@ -127,7 +146,7 @@ export async function observeSidebarExpansion(surface: Surface) {
       return callFunctionOnSurface(surface, (key: `sidebar-observation-${string}`) => {
         const observer = window[key];
         if (!observer) throw new Error("Sidebar frame observation was lost");
-        return { current: observer.snapshot(), expansion: observer.expansion, clicks: observer.clicks };
+        return { current: observer.snapshot(), expansion: observer.expansion, clicks: observer.clicks, drags: observer.drags };
       }, [key]);
     },
     async [Symbol.asyncDispose]() {
