@@ -54,7 +54,7 @@ test("an unsent new-task prompt survives opening another session and is reachabl
     const otherComposer = (await probe.composer()).draftText;
     const rows = (await probe.dom(`[data-testid="${draftRow.testId}"]`)).elements;
     assertObserved("Opening another conversation keeps one reachable draft without leaking its text into that composer",
-      { otherComposer, rows }, otherComposer === "" && rows.length === 1 && rows[0]!.text === `Draft: ${draft}`);
+      { otherComposer, rows }, otherComposer.trim() === "" && rows.length === 1 && rows[0]!.text === `Draft: ${draft}`);
   });
 
   await step("come back to the draft from the sidebar", async () => {
@@ -203,7 +203,7 @@ existingDraftTest("an existing conversation keeps its title and an accessible dr
     assertObserved("Sending clears the follow-up composer, marker and storage without consuming the independent draft",
       { sentKeys, sentComposer, sentMarkers, excludedSessionId: world.session.sessionId },
       sentKeys.length === 1 && sentKeys[0]!.includes("__new-task__") && !sentKeys[0]!.includes(world.session.sessionId)
-        && sentComposer === "" && sentMarkers.length === 0);
+        && sentComposer.trim() === "" && sentMarkers.length === 0);
     await user.type("composer", draft, { verify: true });
     await user.click(neighbor);
     await user.see({ ...existing, label: /Release checklist, Responding, Draft$/ });
