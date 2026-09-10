@@ -27,9 +27,10 @@ describe("App conversation ownership", () => {
     const setTimer = window.setTimeout.bind(window);
     const timerSpy = spyOn(window, "setTimeout").mockImplementation((callback, delay, ...args) => {
       if (typeof callback === "function" && (delay === 1_000 || delay === 3_000)) {
-        retryCallbacks.push(() => callback(...args));
+        const timer = setTimer(() => {}, 60_000);
+        retryCallbacks.push(() => { window.clearTimeout(timer); callback(...args); });
         delays.push(delay);
-        return setTimer(() => {}, 60_000);
+        return timer;
       }
       return setTimer(callback, delay, ...args);
     });
