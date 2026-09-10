@@ -164,6 +164,45 @@ function configuredItem(): OpenworkMcpItem {
 describe("cloud MCP maintenance user-state gate", () => {
   beforeEach(() => installStorageStub());
 
+  test("background maintenance provisions private authorization even when ordinary Cloud is healthy", async () => {
+    let mintCount = 0;
+    let reconcileCount = 0;
+    const result = await syncCloudControlMcpInBackground({
+      client: {
+        baseUrl: scope.serverBaseUrl,
+        listMcp: async () => ({ items: [configuredItem()] }),
+        getOpenworkCloudMcpHealth: async () => ({ ...health({ usable: true }), appHostAuthorizationReady: false }),
+        reconcileOpenworkCloudMcp: async (workspaceId, payload) => {
+          reconcileCount += 1;
+          expect(workspaceId).toBe(scope.workspaceId);
+          expect(payload.appHostAuthorization).toBe(`Bearer ${token.appHostToken}`);
+          return { ...health({ usable: true }), appHostAuthorizationReady: true };
+        },
+      },
+      workspaceId: scope.workspaceId,
+      settings,
+      now: NOW,
+      mintToken: async () => { mintCount += 1; return token; },
+    });
+    expect(result).toMatchObject({ outcome: "ready", status: "synced", health: { appHostAuthorizationReady: true } });
+    expect(mintCount).toBe(1);
+    expect(reconcileCount).toBe(1);
+  });
+
+  test("an App-only failure does not block ordinary Connect or claim a successful sync", async () => {
+    const result = await syncCloudControlMcpInBackground({
+      client: {
+        baseUrl: scope.serverBaseUrl,
+        listMcp: async () => ({ items: [configuredItem()] }),
+        getOpenworkCloudMcpHealth: async () => ({ ...health({ usable: true }), appHostAuthorizationReady: false }),
+        reconcileOpenworkCloudMcp: async () => { throw new Error("Must not reconcile after mint failure"); },
+      },
+      workspaceId: scope.workspaceId, settings, now: NOW,
+      mintToken: async () => { throw new Error("Synthetic mint unavailable"); },
+    });
+    expect(result).toMatchObject({ outcome: "ready", status: "unchanged", health: { usable: true, appHostAuthorizationReady: false } });
+  });
+
   test("field repro: legacy 'removed' intent must not block token maintenance of an existing enabled entry", async () => {
     // The affected machine had the legacy raw-string value from an old manual
     // toggle. Its 7-day token expired with maintenance permanently skipped.

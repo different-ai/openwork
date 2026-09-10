@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +12,7 @@ import {
   connectDirectMcpRuntimeName,
   connectMcpAppHostName,
   type OpenWorkConnectMcpServerIndex,
+  readOpenWorkConnectMcpAppHostAuthorizationReady,
   readOpenWorkConnectMcpAppHostCatalog,
   readOpenWorkConnectMcpServerIndex,
   readOpenWorkConnectMcpServerIndexWithDiagnostics,
@@ -18,22 +21,28 @@ import {
   writeOpenWorkConnectMcpAppHostAuthorization,
   writeOpenWorkConnectMcpAppHostCatalog,
 } from "./connect-mcp-server-catalog.js";
+import { runtimeDbPath } from "./runtime-db.js";
 import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
+import { createWorkspaceKvStore } from "./workspace-kv-store.js";
 
 const roots: string[] = [];
 const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
+const previousBootstrapPath = process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH;
 
 afterEach(async () => {
   while (roots.length) await rm(roots.pop() ?? "", { recursive: true, force: true });
   if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
   else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
+  if (previousBootstrapPath === undefined) delete process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH;
+  else process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH = previousBootstrapPath;
 });
 
 async function fixtureConfig(): Promise<ServerConfig> {
   const root = await mkdtemp(join(tmpdir(), "openwork-connect-mcp-servers-"));
   roots.push(root);
   process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
+  process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH = join(root, "desktop-bootstrap.json");
   return {
     host: "127.0.0.1",
     port: 0,
@@ -87,6 +96,66 @@ function indexFetcher(
 }
 
 describe("OpenWork Connect MCP server catalog", () => {
+  test("reports workspace- and origin-bound private authorization readiness without initializing storage", async () => {
+    const config = await fixtureConfig();
+    config.workspaces.push({ ...config.workspaces[0]!, id: "ws_2", name: "Two" });
+    const readOnlyConfig = { ...config, readOnly: true };
+    const dbPath = runtimeDbPath(config);
+    const cloudMcp = {
+      type: "remote", enabled: true, url: "https://api.openworklabs.com/mcp/agent",
+      headers: { Authorization: "Bearer member-token" },
+    };
+    expect(await readOpenWorkConnectMcpAppHostAuthorizationReady(readOnlyConfig, "ws_1", cloudMcp)).toBe(false);
+    expect(existsSync(dbPath)).toBe(false);
+    await writeRuntimeOpencodeConfig(config, "ws_1", () => ({ mcp: { "openwork-cloud": cloudMcp } }));
+    const sqlite = new Database(dbPath, { readonly: true, create: false });
+    try {
+      const schema = sqlite.query("SELECT type, name, sql FROM sqlite_master ORDER BY name").all();
+      expect(sqlite.query("SELECT name FROM sqlite_master WHERE name = ?").get("connect_mcp_app_host_authorizations")).toBeNull();
+      expect(await readOpenWorkConnectMcpAppHostAuthorizationReady(readOnlyConfig, "ws_1", cloudMcp)).toBe(false);
+      expect(sqlite.query("SELECT type, name, sql FROM sqlite_master ORDER BY name").all()).toEqual(schema);
+    } finally {
+      sqlite.close();
+    }
+    await writeOpenWorkConnectMcpAppHostAuthorization(config, "ws_1", "Bearer private-app-host-token", cloudMcp.url);
+    expect(await readOpenWorkConnectMcpAppHostAuthorizationReady(readOnlyConfig, "ws_1", cloudMcp)).toBe(true);
+    expect(await readOpenWorkConnectMcpAppHostAuthorizationReady(readOnlyConfig, "ws_2", cloudMcp)).toBe(false);
+    expect(await readOpenWorkConnectMcpAppHostAuthorizationReady(readOnlyConfig, "ws_1", {
+      ...cloudMcp, url: "https://api.openwork.software/mcp/agent",
+    })).toBe(false);
+    expect(await readOpenWorkConnectMcpAppHostAuthorizationReady(readOnlyConfig, "ws_1", cloudMcp)).toBe(true);
+  });
+
+  test("reports malformed stored private authorization as not provisioned", async () => {
+    const config = await fixtureConfig();
+    const cloudMcp = { type: "remote", enabled: true, url: "https://api.openworklabs.com/mcp/agent" };
+    const authorizations = createWorkspaceKvStore<string>({
+      tableName: "connect_mcp_app_host_authorizations", valueColumn: "authorization_json",
+      parse: (json) => json, serialize: (json) => json,
+    });
+    for (const value of [
+      "not-json",
+      JSON.stringify({ authorization: 123, origin: "https://api.openworklabs.com" }),
+      JSON.stringify({ authorization: "Bearer token with spaces", origin: "https://api.openworklabs.com" }),
+      JSON.stringify({ authorization: "Bearer private-app-host-token", origin: "not-an-origin" }),
+    ]) {
+      await authorizations.set(config, "ws_1", value);
+      expect(await readOpenWorkConnectMcpAppHostAuthorizationReady(config, "ws_1", cloudMcp)).toBe(false);
+    }
+  });
+
+  test("leaves private authorization readiness unknown for ineligible endpoints", async () => {
+    const config = await fixtureConfig();
+    const cloudMcp = { type: "remote", enabled: true, url: "https://api.openworklabs.com/mcp/agent" };
+    await writeOpenWorkConnectMcpAppHostAuthorization(config, "ws_1", "Bearer private-app-host-token", cloudMcp.url);
+    for (const endpoint of [null, { ...cloudMcp, enabled: false }, { ...cloudMcp, type: "local" }, { ...cloudMcp, url: "not-a-url" }]) {
+      expect(await readOpenWorkConnectMcpAppHostAuthorizationReady(config, "ws_1", endpoint)).toBeNull();
+    }
+    const untrusted = { ...cloudMcp, url: "https://untrusted.invalid/mcp/agent" };
+    await writeOpenWorkConnectMcpAppHostAuthorization(config, "ws_1", "Bearer private-app-host-token", untrusted.url);
+    expect(await readOpenWorkConnectMcpAppHostAuthorizationReady(config, "ws_1", untrusted)).toBeNull();
+  });
+
   test("reads the member catalog through an authenticated MCP resource", async () => {
     const requests: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = [];
     const index = await readOpenWorkConnectMcpServerIndex({

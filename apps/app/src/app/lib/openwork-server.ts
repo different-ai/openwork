@@ -736,6 +736,8 @@ export type OpenworkCloudMcpHealth = {
   usable: boolean;
   usableByCurrentModel: boolean | null;
   connectCatalogEnabled: boolean;
+  /** Local private credential readiness, not provider health. Older servers omit it. */
+  appHostAuthorizationReady?: boolean | null;
   workspace: {
     id: string;
     type: string;

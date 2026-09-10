@@ -528,6 +528,15 @@ select:disabled {
   }
 }
 
+/* Let running task titles inherit the same hover color as completed ones. */
+@media (hover: hover) {
+  [data-subagent-run] > .group:hover .ow-text-shimmer {
+    background-image: none;
+    color: inherit;
+    animation: none;
+  }
+}
+
 /* Quiet, small dot ticker (`:: :: ::`). Each dot pulses briefly in sequence,
    illuminating left-to-right like a subtle running light. Used for boot,
    "awaiting first token", and any idle-but-alive hint. */
