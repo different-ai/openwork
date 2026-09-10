@@ -210,6 +210,9 @@ let sessionStatusFetcher = defaultSessionStatusFetcher;
 const defaultSessionPermissionFetcher = async (baseUrl: string, token: string, sessionID: string, signal: AbortSignal) =>
   unwrap(await createSyncClient(baseUrl, token).v2.session.permission.list({ sessionID }, { signal })).data;
 let sessionPermissionFetcher = defaultSessionPermissionFetcher;
+const defaultSessionQuestionFetcher = async (baseUrl: string, token: string, signal: AbortSignal) =>
+  unwrap(await createSyncClient(baseUrl, token).question.list(undefined, { signal }));
+let sessionQuestionFetcher = defaultSessionQuestionFetcher;
 
 const defaultDeltaFlushScheduler: DeltaFlushScheduler = (lane, run) => {
   if (
@@ -903,7 +906,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     } else if (event.type === "session.execution.failed") {
       entry.nativeTerminalSessions.add(sessionId);
       applyEvent(entry, workspaceId, { type: "session.error", properties: event.properties });
-      void reconcileSessionPermissions(entry, sessionId);
+      void reconcileSessionInteractions(entry, sessionId);
     } else if (event.type === "session.execution.succeeded") {
       entry.nativeTerminalSessions.add(sessionId);
       applySessionRunStatus(entry, workspaceId, sessionId, idleStatus, { completed: true, terminalEvent: true });
@@ -919,7 +922,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
         clearSessionRetry(entry, workspaceId, sessionId);
         entry.liveSessionIds.add(sessionId);
         scheduleActiveSessionStatusReconciliation(entry);
-        void reconcileSessionPermissions(entry, sessionId);
+        void reconcileSessionInteractions(entry, sessionId);
       }
     }
     return;
@@ -1495,7 +1498,7 @@ function applySessionRunStatus(
     }
     const shouldRecordTerminal = wasLive || runStartedAt !== null;
     const shouldConvergeTerminal = shouldRecordTerminal || options.terminalEvent === true;
-    if (shouldConvergeTerminal) void reconcileSessionPermissions(entry, sessionId);
+    if (shouldConvergeTerminal) void reconcileSessionInteractions(entry, sessionId);
     if (tracked && shouldConvergeTerminal) {
       flushSessionDeltas(entry, workspaceId, sessionId);
       void getReactQueryClient().invalidateQueries({
@@ -1532,23 +1535,37 @@ function clearSessionRetry(entry: SyncEntry, workspaceId: string, sessionId: str
   if (status?.type === "retry") applySessionRunStatus(entry, workspaceId, sessionId, { type: "busy" });
 }
 
-async function reconcileSessionPermissions(entry: SyncEntry, sessionId: string) {
-  if (!isOpencodeV2BaseUrl(entry.input.baseUrl)) return;
+// An interrupted request leaves the engine's pending list through its finalizer
+// without a replied/rejected event (Stop on a delegated child asking a
+// question, for example), so a terminal edge re-reads what is still pending.
+async function reconcileSessionInteractions(entry: SyncEntry, sessionId: string) {
   entry.permissionReconciles.get(sessionId)?.abort();
   const controller = new AbortController();
   entry.permissionReconciles.set(sessionId, controller);
+  const { baseUrl, workspaceId } = entry.input;
+  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
   const snapshotStartedAt = Date.now();
-  const snapshotRevision = getReactQueryClient().getQueryState(permissionKey(entry.input.workspaceId, sessionId))?.dataUpdateCount ?? 0;
-  try {
-    const permissions = await sessionPermissionFetcher(entry.input.baseUrl, entry.openworkToken, sessionId,
-      AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]));
-    if (controller.signal.aborted || syncs.get(syncKey(entry.input)) !== entry) return;
-    seedPermissionState(entry.input.workspaceId, sessionId, permissions, { snapshotStartedAt, snapshotRevision });
-  } catch {
-    // Failed reads are not permission settlements. Reconnect will retry.
-  } finally {
-    if (entry.permissionReconciles.get(sessionId) === controller) entry.permissionReconciles.delete(sessionId);
-  }
+  const snapshotRevision = getReactQueryClient().getQueryState(permissionKey(workspaceId, sessionId))?.dataUpdateCount ?? 0;
+  const current = () => !controller.signal.aborted && syncs.get(syncKey(entry.input)) === entry;
+  // Failed reads are not settlements. Reconnect will retry.
+  await Promise.allSettled([
+    // V1 has no per-session permission read; its list endpoint sweeps every root.
+    isOpencodeV2BaseUrl(baseUrl)
+      ? sessionPermissionFetcher(baseUrl, entry.openworkToken, sessionId, signal).then((permissions) => {
+          if (current()) seedPermissionState(workspaceId, sessionId, permissions, { snapshotStartedAt, snapshotRevision });
+        })
+      : Promise.resolve(),
+    sessionQuestionFetcher(baseUrl, entry.openworkToken, signal).then((questions) => {
+      // The question list spans every session; only touch this session's
+      // cache when it has (or had) something pending.
+      if (!current()) return;
+      const cached = getReactQueryClient().getQueryData<PendingQuestion[]>(questionKey(workspaceId, sessionId));
+      if (cached?.length || questions.some((question) => question.sessionID === sessionId)) {
+        seedQuestionState(workspaceId, sessionId, questions, { snapshotStartedAt });
+      }
+    }),
+  ]);
+  if (entry.permissionReconciles.get(sessionId) === controller) entry.permissionReconciles.delete(sessionId);
 }
 
 // Snapshot-only busy observations need the same validation as stream edges.
@@ -1576,7 +1593,7 @@ async function reconcileSessionRunStatuses(
   if (source === "connect-reconcile") {
     const records = useSessionActivityStore.getState().recordsByWorkspaceId[input.workspaceId] ?? {};
     for (const sessionId of new Set([...Object.keys(records), ...entry.trackedSessionRefs.keys()])) {
-      void reconcileSessionPermissions(entry, sessionId);
+      void reconcileSessionInteractions(entry, sessionId);
     }
   }
   let statuses: Record<string, SessionStatus>;
@@ -2102,4 +2119,8 @@ export function __setWorkspaceSessionSyncStatusFetcherForTest(fetcher: SessionSt
 
 export function __setWorkspaceSessionSyncPermissionFetcherForTest(fetcher: typeof defaultSessionPermissionFetcher | null) {
   sessionPermissionFetcher = fetcher ?? defaultSessionPermissionFetcher;
+}
+
+export function __setWorkspaceSessionSyncQuestionFetcherForTest(fetcher: typeof defaultSessionQuestionFetcher | null) {
+  sessionQuestionFetcher = fetcher ?? defaultSessionQuestionFetcher;
 }
