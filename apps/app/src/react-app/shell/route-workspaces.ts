@@ -83,18 +83,14 @@ export async function deleteRouteSession(endpoint: ResolvedWorkspaceEndpoint, se
 
 export async function listRouteSessions(
   endpoint: ResolvedWorkspaceEndpoint,
-  transport?: RouteSessionListTransport,
+  transport: RouteSessionListTransport = nativeRouteSessionList,
 ): Promise<RouteSession[]> {
-  // Resolve before reading: the renderer's routing state is not ready on cold boot.
-  const load = transport ?? (isOpencodeV2BaseUrl((await routeSessionEndpoint(endpoint)).opencodeBaseUrl)
-    ? v2RouteSessionList
-    : nativeRouteSessionList);
   let limit = 200;
   let cursor: string | undefined;
   const cursors = new Set<string>();
   const sessions = new Map<string, RouteSession>();
   for (;;) {
-    const result = await load({ endpoint, limit, ...(cursor === undefined ? {} : { cursor }) });
+    const result = await transport({ endpoint, limit, ...(cursor === undefined ? {} : { cursor }) });
     let items: RouteSession[];
     try {
       items = unwrap(result);

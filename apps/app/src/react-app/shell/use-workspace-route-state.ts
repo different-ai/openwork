@@ -66,6 +66,7 @@ import {
   stabilizeRouteWorkspaceOrder,
   type RouteSession,
   type RouteWorkspace,
+  v2RouteSessionList,
 } from "./route-workspaces";
 import {
   readActiveWorkspaceId,
@@ -187,6 +188,8 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const [token, setToken] = useState("");
   const [engineV2ChatRouting, setEngineV2ChatRouting] = useState(false);
   const [engineRoutingReady, setEngineRoutingReady] = useState(false);
+  const engineV2ChatRoutingRef = useRef(engineV2ChatRouting);
+  engineV2ChatRoutingRef.current = engineV2ChatRouting;
   const previousEngineV2ChatRoutingRef = useRef<boolean | null>(null);
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
   const [workspaceOrderIds, setWorkspaceOrderIds] = useState<string[]>(() => readWorkspaceOrderIds());
@@ -349,7 +352,10 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           }));
         }
         try {
-          const fetchedItems = await listRouteSessions(endpoint);
+          // The sidebar lists from whichever engine chat is routed to.
+          const fetchedItems = workspace.workspaceType !== "remote" && engineV2ChatRoutingRef.current
+            ? await listRouteSessions(endpoint, v2RouteSessionList)
+            : await listRouteSessions(endpoint);
           const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
           const items = workspaceRoot && !isRemoteOpenworkWorkspace
             ? fetchedItems.filter((session) =>

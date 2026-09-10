@@ -117,6 +117,7 @@ existingDraftTest("an existing conversation keeps its title and an accessible dr
 
   await step("new-task drafts remain independent and both are discoverable after reloading elsewhere", async () => {
     await user.click(newSession);
+    await user.see("composer", { editable: true, text: "" });
     await user.type("composer", newDraft, { verify: true });
     await user.see(draftRow, { text: `Draft: ${newDraft}` });
     await user.click(neighbor);
