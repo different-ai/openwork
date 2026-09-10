@@ -5,6 +5,9 @@ import { act, useCallback, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { SESSION_SCROLL_NAVIGATION_EVENT, useSessionScrollController } from "../src/react-app/domains/session/surface/scroll-controller";
 import { flushSessionScrollState, getSessionScrollState, readPersistedSessionScrollState, sessionScrollKey, useSessionScrollStore } from "../src/react-app/domains/session/surface/scroll-store";
+import { SessionScrollOverlay } from "../src/react-app/domains/session/surface/scroll-overlay";
+import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
+import { WorkspaceProvider } from "../src/react-app/shell/workspace-provider";
 
 const ownedDom = typeof window === "undefined";
 if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
@@ -33,6 +36,7 @@ beforeEach(() => {
     disconnect() {}
   });
   useSessionScrollStore.setState({ sessions: {} });
+  useSessionActivityStore.setState({ recordsByWorkspaceId: {}, statusesByWorkspaceId: {} });
   flushSessionScrollState();
   localStorage.clear();
 });
@@ -62,6 +66,108 @@ function runFrames() {
   frames.clear();
   for (const callback of pending) callback(now);
 }
+
+describe("new output while reading", () => {
+  test("uses the secondary surface workspace despite a primary ancestor and resets unseen output on owner changes", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    cleanups.push(async () => { await act(async () => root.unmount()); host.remove(); });
+    const latest = mock(() => {});
+    const start = mock(() => {});
+    const render = async (owner = "secondary-owner") => {
+      await act(async () => root.render(
+        <WorkspaceProvider workspaceId="primary" client={null} selectedWorkspaceRoot="/primary">
+          <SessionScrollOverlay workspaceId="secondary" sessionId="shared-session" owner={owner} isStreaming onJumpToLatest={latest} onJumpToStartOfMessage={start} />
+        </WorkspaceProvider>,
+      ));
+    };
+    const progress = async (workspaceId: string, text: string) => {
+      now += 10;
+      await act(async () => useSessionActivityStore.getState().observeTranscript(workspaceId, "shared-session", [
+        { id: "answer", role: "assistant", parts: [{ type: "text", text, state: "streaming" }] },
+      ]));
+    };
+    for (const owner of ["secondary-owner", "replacement-owner"]) {
+      useSessionScrollStore.getState().setManualScroll(sessionScrollKey("shared-session", owner), 325, "reading");
+    }
+    await progress("secondary", "Initial secondary output");
+    await render();
+    const positions = useSessionScrollStore.getState().sessions;
+    expect(host.textContent).toContain("Jump to latest");
+    expect(host.textContent).not.toContain("New output");
+    await progress("primary", "Primary output with the same session ID");
+    expect(host.textContent).not.toContain("New output");
+    await progress("secondary", "Secondary output continues");
+    expect(host.querySelector('[role="status"]')?.textContent).toBe("New output");
+    await render("replacement-owner");
+    expect(host.textContent).not.toContain("New output");
+    await progress("primary", "More primary output");
+    expect(host.textContent).not.toContain("New output");
+    await progress("secondary", "More secondary output");
+    expect(host.querySelector('[role="status"]')?.textContent).toBe("New output");
+    expect(useSessionScrollStore.getState().sessions).toBe(positions);
+    expect(latest).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  test.each([false, true])("badges real progress without scrolling; explicit navigation respects reduced motion (%s)", async (reducedMotion) => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    cleanups.push(async () => { await act(async () => root.unmount()); host.remove(); });
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    spyOn(window, "matchMedia").mockImplementation(() => ({ ...media, matches: reducedMotion }));
+    const latest = mock((_behavior?: ScrollBehavior) => {});
+    const start = mock((_behavior?: ScrollBehavior) => {});
+    const key = sessionScrollKey("a", "owner-a");
+    const render = async (streaming = true, owner = "owner-a", workspaceId = "ws") => {
+      await act(async () => root.render(
+        <WorkspaceProvider workspaceId={workspaceId} client={null} selectedWorkspaceRoot="/fixture">
+          <SessionScrollOverlay workspaceId={workspaceId} sessionId="a" owner={owner} isStreaming={streaming} onJumpToLatest={latest} onJumpToStartOfMessage={start} />
+        </WorkspaceProvider>,
+      ));
+    };
+    const progress = (text: string, workspace = "ws") => {
+      now += 10;
+      useSessionActivityStore.getState().observeTranscript(workspace, "a", [
+        { id: "answer", role: "assistant", parts: [{ type: "text", text, state: "streaming" }] },
+      ]);
+    };
+    progress("Initial output");
+    await render();
+    expect(host.textContent).not.toContain("New output");
+    await act(async () => useSessionScrollStore.getState().setManualScroll(key, 325, "reading", { messageId: "reading", offset: 25 }));
+    const position = state("a", "owner-a");
+    expect(host.textContent).toContain("Jump to latest");
+    expect(host.textContent).not.toContain("New output");
+    await act(async () => progress("Foreign output", "other-workspace"));
+    expect(host.textContent).not.toContain("New output");
+    await act(async () => progress("Initial output continues"));
+    expect(host.querySelector('[role="status"]')?.textContent).toBe("New output");
+    expect(latest).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+    expect(state("a", "owner-a")).toBe(position);
+    await render(false);
+    expect(host.textContent).toContain("New output");
+    const buttons = [...host.querySelectorAll("button")];
+    const latestButton = buttons.find((button) => button.textContent?.startsWith("Jump to latest"));
+    const startButton = buttons.find((button) => button.textContent === "Jump to start");
+    if (!latestButton || !startButton) throw new Error("Missing explicit scroll controls");
+    await act(async () => { latestButton.click(); startButton.click(); });
+    expect(latest).toHaveBeenCalledWith(reducedMotion ? "instant" : "smooth");
+    expect(start).toHaveBeenCalledWith(reducedMotion ? "instant" : "smooth");
+    await act(async () => useSessionScrollStore.getState().setStickyBottom(key, null));
+    await act(async () => useSessionScrollStore.getState().setManualScroll(key, 325, "reading"));
+    expect(host.textContent).not.toContain("New output");
+    await render(true);
+    await act(async () => progress("Another output"));
+    expect(host.textContent).toContain("New output");
+    await render(true, "owner-b", "other-workspace");
+    expect(host.textContent).not.toContain("New output");
+    expect(latest).toHaveBeenCalledTimes(1);
+  });
+});
 
 function observeStorageWrites() {
   const storage = window.localStorage;

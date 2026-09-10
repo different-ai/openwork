@@ -21,6 +21,7 @@ import {
 import {
   DynamicToolUIPart,
   isFileUIPart,
+  isToolUIPart,
   ToolUIPart,
   type FileUIPart,
   type UIMessage,
@@ -124,8 +125,8 @@ import { faviconUrlForHref } from "@/lib/favicon"
 import { useOpenArtifactPath } from "@/lib/artifacts"
 import { cn } from "@/lib/utils"
 import { DevProfiler } from "@/react-app/shell/dev-profiler"
-import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, formatMessageTimestamp, splitTurnAtAnswer, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, getSafeFileRevealPath } from "./utils"
-import type { AnyToolPart } from "@/lib/tool-aggregate"
+import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, formatMessageTimestamp, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, getSafeFileRevealPath } from "./utils"
+import { isAggregatableToolPart, type AnyToolPart } from "@/lib/tool-aggregate"
 import { resolveConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
@@ -1146,33 +1147,42 @@ function getRenderableMessage(message: UIMessage) {
   return parts.length > 0 ? { ...message, parts } : null;
 }
 
-/**
- * A finished turn's steps collapse to a single "Worked for 1m 19s" line
- * that expands back into the full run. Only live turns show their steps
- * unprompted; once the answer is in, the reasoning is available but out
- * of the way.
- */
-function CompletedStepRun({ label, children }: { label: string; children: React.ReactNode }) {
-  const [open, setOpen] = React.useState(false)
+/** Completion changes the summary, never the identity or the reader's choice. */
+function CompletedStepRun({ label, live, rowCount, mustShow, children }: {
+  label: string
+  live: boolean
+  rowCount: number
+  mustShow: boolean
+  children: React.ReactNode
+}) {
+  const { highlightQuery } = useMessageList()
+  const [open, setOpen] = React.useState(() => live || mustShow || rowCount <= COLLAPSED_STEP_RUN_MIN_ROWS)
+  // Reveal requests/errors without reparenting them, and do not fold them again
+  // when they settle: the reader may have started inspecting the revealed detail.
+  if (mustShow && !open) setOpen(true)
+  const searching = Boolean(highlightQuery?.trim())
+  const expanded = open || mustShow || searching
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="flex w-full flex-col gap-2">
+    <Collapsible data-step-run="" open={expanded} onOpenChange={setOpen} className="flex w-full flex-col gap-2">
       <div className="mx-auto flex w-full max-w-3xl px-2 md:px-10">
         <CollapsibleTrigger
-          className="group flex cursor-pointer items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-          aria-label={open ? `${label}. Hide steps` : `${label}. Show steps`}
+          disabled={mustShow || searching}
+          title={mustShow ? "Active steps, errors, and interactive tools stay visible" : searching ? "Steps are visible while searching" : undefined}
+          className="group flex min-h-6 cursor-pointer items-center gap-1 text-sm text-muted-foreground hover:text-foreground aria-disabled:cursor-default"
+          aria-label={expanded ? `${label}. Hide steps` : `${label}. Show steps`}
         >
           <span>{label}</span>
           <ChevronRight
             aria-hidden="true"
             className={cn(
-              "size-3.5 text-muted-foreground/70 transition-transform duration-150",
-              open && "rotate-90"
+              "size-3.5 text-muted-foreground/70",
+              expanded && "rotate-90"
             )}
           />
         </CollapsibleTrigger>
       </div>
-      <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+      <CollapsibleContent hiddenUntilFound className="[&[hidden]:not([hidden='until-found'])]:hidden">
         {children}
       </CollapsibleContent>
     </Collapsible>
@@ -1214,6 +1224,7 @@ function MessageGroup({
   // silently corrupt fork/revert boundaries.
   const lastRealItem = items.findLast((item) => !isSessionErrorMessage(item.message))
   const isLiveGroup = isStreaming && isLastGroup
+  const { syncDegraded } = useMessageList()
 
   if (!lastItem || isMessageEmptyGroup(items)) {
     return null;
@@ -1232,15 +1243,16 @@ function MessageGroup({
   }
   let stepItems = items.slice(0, stepCount)
   let proseItems = items.slice(stepCount)
-  // OpenCode delivers a whole turn as one assistant message with steps and
-  // the answer interleaved in its parts. Split the first prose message so
-  // its leading steps fold with the rest instead of pinning the run open.
+  // Split at the FIRST prose boundary, not the changing last answer. Later
+  // narration/tools stay in place instead of moving under the fold on every
+  // new text part. A moving live tail would reset those stateful tool bodies.
   const firstProse = proseItems[0]
   if (firstProse && firstProse.message.role === "assistant" && !isSessionErrorMessage(firstProse.message)) {
-    const split = splitTurnAtAnswer(firstProse.message)
-    if (split) {
-      stepItems = [...stepItems, { index: firstProse.index, message: split.steps }]
-      proseItems = [{ index: firstProse.index, message: split.answer }, ...proseItems.slice(1)]
+    const parts = firstProse.message.parts
+    const boundary = parts.findIndex((part) => part.type === "text" || part.type === "file")
+    if (boundary > 0 && parts.slice(0, boundary).some((part) => isToolUIPart(part) || part.type === "reasoning")) {
+      stepItems = [...stepItems, { ...firstProse, message: { ...firstProse.message, id: `${firstProse.message.id}:steps`, parts: parts.slice(0, boundary) } }]
+      proseItems = [{ ...firstProse, message: { ...firstProse.message, parts: parts.slice(boundary) } }, ...proseItems.slice(1)]
     }
   }
   // How long the turn spent working, from the first step to when the answer
@@ -1249,17 +1261,6 @@ function MessageGroup({
   const stepsStartedAt = stepItems.length > 0 ? getMessageCreated(stepItems[0].message) : null
   const stepsEndedAt = getMessageCompleted(lastItem.message) ?? getMessageCreated(lastItem.message)
 
-  // The answer message's own thinking belongs to the work, not the answer, so
-  // a collapsed run shows it and the message below renders text only.
-  const proseReasoning = proseItems.flatMap((item) =>
-    item.message.role === "assistant" && !isSessionErrorMessage(item.message)
-      ? getAssistantRenderGroups(item.message.parts, showThinking).flatMap((group, groupIndex) =>
-        group.kind === "reasoning"
-          ? [{ key: JSON.stringify(["reasoning", item.message.id, groupIndex]), text: group.text, isStreaming: group.isStreaming }]
-          : []
-      )
-      : []
-  )
   // An aggregate line counts each call it absorbed: it reads as one row but
   // stands for that much work, and folding should key off the work done.
   const stepRowCount =
@@ -1273,32 +1274,29 @@ function MessageGroup({
           )
           : 1),
       0
-    ) + proseReasoning.length
+    )
   const stepRunLabel =
-    stepsStartedAt !== null && stepsEndedAt !== null && stepsEndedAt > stepsStartedAt
+    isLiveGroup
+      ? `${syncDegraded ? "Status unknown" : "Live activity"} · ${stepRowCount} ${stepRowCount === 1 ? "step" : "steps"}`
+      : stepRowCount > COLLAPSED_STEP_RUN_MIN_ROWS && stepsStartedAt !== null && stepsEndedAt !== null && stepsEndedAt > stepsStartedAt
       ? `Worked for ${formatToolCallDuration(stepsEndedAt - stepsStartedAt)}`
       : stepRowCount === 1
         ? "1 step"
         : `${stepRowCount} steps`
-  // A short finished run reads fine as a list, so only long ones fold away.
-  const collapseSteps =
-    !isLiveGroup && stepItems.length > 0 && stepRowCount > COLLAPSED_STEP_RUN_MIN_ROWS
-  const foldedReasoning = collapseSteps
-    ? proseReasoning.map((reasoning) => (
-      <Message
-        key={`folded-reasoning-${reasoning.key}`}
-        className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10"
-      >
-        <ReasoningBlock disclosureKey={reasoning.key} text={reasoning.text} isStreaming={reasoning.isStreaming} />
-      </Message>
-    ))
-    : []
+  // Only known, successful passive steps may be hidden. Unknown tools can own
+  // approvals or interactive frames even after returning a result.
+  const mustShowSteps = stepItems.some(({ message }) => isSessionErrorMessage(message)
+    || message.parts.some((part) => isToolUIPart(part)
+      && (part.state !== "output-available" || !isAggregatableToolPart(part))))
 
   const renderItem = (item: UIMessageWithIndex, groupIndex: number, hideReasoning?: boolean) => {
     const isLastMessage = isLastGroup && item.index === lastItem.index
+    // The synthetic DOM id remains useful to scroll/Find; it must not change
+    // the React identity when a tool-only message gains its first prose part.
+    const key = item.message.id.endsWith(":steps") ? item.message.id.slice(0, -6) : item.message.id
 
     return (
-      <div key={item.message.id}>
+      <div key={key}>
         <MessageComponent
           message={item.message}
           isLastMessage={isLastMessage}
@@ -1333,7 +1331,7 @@ function MessageGroup({
           ? getAggregateOnlyParts(item.message, showThinking)
           : null
       if (aggregateParts) {
-        if (!run) run = { parts: [], key: item.message.id }
+        if (!run) run = { parts: [], key: aggregateParts[0].toolCallId }
         run.parts.push(...aggregateParts)
         return
       }
@@ -1351,18 +1349,11 @@ function MessageGroup({
           message use, so a step row is spaced identically whether or not a
           message boundary happens to fall between it and the previous row. */}
       {stepItems.length > 0 ? (
-        collapseSteps ? (
-          <CompletedStepRun label={stepRunLabel}>
-            <div className="flex flex-col gap-2">
-              {renderItems(stepItems, 0)}
-              {foldedReasoning}
-            </div>
-          </CompletedStepRun>
-        ) : (
-          <div data-live-steps="" className="flex flex-col gap-2">
+        <CompletedStepRun label={stepRunLabel} live={isLiveGroup} rowCount={stepRowCount} mustShow={mustShowSteps}>
+          <div className="flex flex-col gap-2">
             {renderItems(stepItems, 0)}
           </div>
-        )
+        </CompletedStepRun>
       ) : null}
       {mcpAppParts.map((part) => (
         <Message
@@ -1372,7 +1363,7 @@ function MessageGroup({
           <McpAppFrame part={part} />
         </Message>
       ))}
-      {renderItems(proseItems, stepItems.length, collapseSteps)}
+      {renderItems(proseItems, stepItems.length)}
       {lastTextMessage && !isStreaming && (
         <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 opacity-0 transition-opacity duration-150 group-hover/message-group:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100 md:px-8">
           <MessageActions className="flex gap-0">
