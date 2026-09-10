@@ -1,11 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 import {
   buildSentryEnvelope,
   buildWebErrorEvent,
   parseSentryDsn,
+  reportCaughtWebError,
   sanitizePageUrl,
   shouldMonitorWebErrors,
+  startWebErrorMonitoring,
 } from "../src/app/lib/error-monitoring";
 
 const DSN = "https://publickey123@o123456.ingest.us.sentry.io/4500000000000000";
@@ -124,5 +127,48 @@ describe("buildSentryEnvelope", () => {
     expect(JSON.parse(lines[0]).event_id).toBe(event.event_id);
     expect(JSON.parse(lines[1])).toEqual({ type: "event" });
     expect(JSON.parse(lines[2]).exception.values[0].value).toBe("boom");
+  });
+});
+
+describe("reportCaughtWebError", () => {
+  // Bun aliases import.meta.env to process.env, so the build-time gate can be
+  // driven at runtime. Module state only opens once, so desktop runs first.
+  test("a boundary-caught error produces exactly one envelope on web and none on desktop", async () => {
+    GlobalRegistrator.register({ url: "https://app.openworklabs.com/signin?grant=secret-grant" });
+    const bodies: string[] = [];
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+      bodies.push(String(init?.body));
+      return Promise.resolve(new Response());
+    });
+    const previous = {
+      deployment: process.env.VITE_OPENWORK_DEPLOYMENT,
+      dsn: process.env.VITE_OPENWORK_SENTRY_DSN,
+    };
+    try {
+      process.env.VITE_OPENWORK_DEPLOYMENT = "desktop";
+      process.env.VITE_OPENWORK_SENTRY_DSN = DSN;
+      startWebErrorMonitoring();
+      reportCaughtWebError(new Error("render exploded"));
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(window.__openworkWebErrorMonitorActive).toBeUndefined();
+
+      process.env.VITE_OPENWORK_DEPLOYMENT = "web";
+      startWebErrorMonitoring();
+      reportCaughtWebError(new Error("render exploded"));
+      reportCaughtWebError(new Error("render exploded"));
+      expect(bodies).toHaveLength(1);
+      const event = JSON.parse(bodies[0].split("\n")[2]);
+      expect(event.exception.values).toEqual([{ type: "Error", value: "render exploded" }]);
+      expect(event.tags).toEqual({ boot_phase: "runtime" });
+      expect(event.request).toEqual({ url: "https://app.openworklabs.com/signin" });
+      expect(JSON.stringify(event)).not.toContain("secret-grant");
+    } finally {
+      fetchSpy.mockRestore();
+      if (previous.deployment === undefined) delete process.env.VITE_OPENWORK_DEPLOYMENT;
+      else process.env.VITE_OPENWORK_DEPLOYMENT = previous.deployment;
+      if (previous.dsn === undefined) delete process.env.VITE_OPENWORK_SENTRY_DSN;
+      else process.env.VITE_OPENWORK_SENTRY_DSN = previous.dsn;
+      await GlobalRegistrator.unregister();
+    }
   });
 });

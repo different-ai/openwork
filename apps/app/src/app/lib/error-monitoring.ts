@@ -118,7 +118,8 @@ export function buildSentryEnvelope(event: WebErrorEvent): string {
   return `${header}\n${itemHeader}\n${JSON.stringify(event)}`;
 }
 
-let started = false;
+/** Set once the gate opens; null keeps every reporting path inert (desktop). */
+let monitor: { target: SentryDsnTarget; release: string } | null = null;
 let sentCount = 0;
 const seenErrors = new Set<string>();
 
@@ -154,7 +155,7 @@ function resourceUrl(target: EventTarget | null): string | null {
  * load failures are reported for web deployments.
  */
 export function startWebErrorMonitoring() {
-  if (started || typeof window === "undefined") return;
+  if (monitor || typeof window === "undefined") return;
   const dsn = String(import.meta.env.VITE_OPENWORK_SENTRY_DSN ?? "").trim();
   const gate: WebErrorMonitoringGate = {
     dsn,
@@ -165,11 +166,11 @@ export function startWebErrorMonitoring() {
   const target = parseSentryDsn(dsn);
   if (!target) return;
 
-  started = true;
   // Hand off from the pre-boot beacon in index.html.
   window.__openworkWebErrorMonitorActive = true;
   const release = String(import.meta.env.VITE_OPENWORK_BUILD_SHA ?? "").trim()
     || String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").trim();
+  monitor = { target, release };
 
   window.addEventListener(
     "error",
@@ -208,5 +209,23 @@ export function startWebErrorMonitoring() {
       release,
       phase: "runtime",
     });
+  });
+}
+
+/**
+ * Report an error a React error boundary caught. React swallows render throws
+ * before they reach the window "error" listener above, so the boundary hands
+ * them over explicitly. Same gate, dedupe and cap as every other event; a no-op
+ * until startWebErrorMonitoring() has opened the gate.
+ */
+export function reportCaughtWebError(error: Error) {
+  if (!monitor) return;
+  deliver(monitor.target, {
+    type: error.name,
+    message: error.message,
+    stack: error.stack,
+    url: sanitizePageUrl(window.location.href),
+    release: monitor.release,
+    phase: "runtime",
   });
 }
