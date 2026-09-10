@@ -20,8 +20,10 @@
  *                                      must retry explicitly
  * - `rejected`                       — the send was cancelled (context
  *                                      changed / unmounted); item re-queued
- * - `admission_unknown`              — POST may have been accepted; only exact
- *                                      message observation releases the hold
+ * - `admission_unknown`              — POST may have been accepted; released
+ *                                      only by observing the exact message, or
+ *                                      by native listing the idle conversation
+ *                                      without it (a halt, never a resend)
  * - `terminal_failure`               — definite failure; explicit retry required
  *
  * A missing busy event is never the only signal that allows progress: an
@@ -71,6 +73,7 @@ export type QueuedDrainEvent =
   | { type: "send_error"; itemId: string }
   | { type: "send_unknown"; itemId: string; messageID: string; at: number; deferred?: boolean }
   | { type: "admission_observed"; itemId: string; messageID: string; at: number }
+  | { type: "admission_rejected"; itemId: string; messageID: string }
   | { type: "busy_observed" }
   /** An authoritative status level read (SSE-followed idle after a busy
    * observation, or an explicit snapshot/status probe). `observedAt` is when
@@ -167,6 +170,12 @@ export function reduceQueuedDrain(state: QueuedDrainState, event: QueuedDrainEve
       // This proves admission, not completion. Require a subsequent run/status
       // observation; a busy/idle from the previously running parent is not proof.
       return resolved(state, { kind: "awaiting_observation", itemId: event.itemId, admittedAt: event.at, ...(phase.deferred ? { messageID: phase.messageID } : {}) }, event.itemId, "admitted_awaiting_observation");
+    }
+    case "admission_rejected": {
+      if (phase.kind !== "admission_unknown" || phase.itemId !== event.itemId || phase.messageID !== event.messageID) return state;
+      // Native listed the conversation without the message, so the settled POST
+      // did not admit it. Halt like any definite failure: the person retries.
+      return resolved(state, { kind: "halted", itemId: event.itemId, reason: "terminal_failure" }, event.itemId, "terminal_failure");
     }
     case "busy_observed": {
       if (phase.kind === "sending") {
