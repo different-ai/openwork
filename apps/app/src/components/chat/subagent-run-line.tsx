@@ -33,10 +33,11 @@ export function subagentRunActivity(input: {
   resultPending?: boolean
   childFailed?: boolean
   noNewActivity?: boolean
+  timingUnknown?: boolean
   syncDegraded?: boolean
   inFlight: boolean
   failed: boolean
-}): "waiting-permission" | "waiting-question" | "waiting-result" | "retrying" | "no-new-activity" | "reconnecting" | "shimmer" | "failed" | "completed" {
+}): "waiting-permission" | "waiting-question" | "waiting-result" | "waiting-start" | "retrying" | "no-new-activity" | "reconnecting" | "shimmer" | "failed" | "completed" {
   // A pending ask is the actionable state and does not depend on the stream
   // ticking; a lost connection only downgrades the live "Working" treatment.
   if (input.permissionPending) return "waiting-permission"
@@ -45,6 +46,7 @@ export function subagentRunActivity(input: {
   if (input.inFlight && input.syncDegraded) return "reconnecting"
   if (input.failed || input.childFailed) return "failed"
   if (input.inFlight && input.resultPending) return "waiting-result"
+  if (input.inFlight && input.timingUnknown) return "waiting-start"
   if (input.inFlight && input.noNewActivity) return "no-new-activity"
   if (input.inFlight) return "shimmer"
   return "completed"
@@ -84,14 +86,15 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
   const isFailed = part.state === "output-error"
   const duration = trackToolCallDuration(part)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
-  // First-seen-in-flight time lives in a module map, so remounting (like
-  // switching sessions and back) resumes the counter instead of restarting.
+  // Native start time survives reload; optimistic timing survives remounts.
   const startedAt = getToolCallStartedAt(part)
+  const lastProgressAt = child?.lastProgressAt || startedAt || 0
   const noNewActivity = hasNoNewActivity({
-    active: inFlight, lastProgressAt: Math.max(child?.runStartedAt || startedAt || 0, child?.lastProgressAt ?? 0), now: Date.now(),
+    active: inFlight, lastProgressAt, now: Date.now(),
   })
   const activity = subagentRunActivity({
     permissionPending, questionPending, retrying: childStatus?.type === "retry" || child?.retrying, noNewActivity,
+    timingUnknown: startedAt === null,
     syncDegraded, inFlight, failed: isFailed,
     childFailed: inFlight && child?.errorActive,
     resultPending: Boolean(child && !child.runActive && child.runStatusAt > 0) || (!parentActive && !child?.runActive),
@@ -115,7 +118,8 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
     : activity === "retrying" ? "Retrying"
     : activity === "failed" ? "Task reported an error"
     : activity === "waiting-result" ? "Waiting for task result"
-    : activity === "no-new-activity" ? "No new activity"
+    : activity === "waiting-start" ? "Waiting for task update"
+    : activity === "no-new-activity" ? "Still working — waiting for updates"
     : inFlight
     ? syncDegraded
       ? "Connection lost — reconnecting…"
