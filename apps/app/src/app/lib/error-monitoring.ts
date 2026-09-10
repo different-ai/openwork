@@ -215,10 +215,10 @@ export function startWebErrorMonitoring() {
 /**
  * Report an error a React error boundary caught. React swallows render throws
  * before they reach the window "error" listener above, so the boundary hands
- * them over explicitly. Same gate, dedupe and cap as every other event; a no-op
- * until startWebErrorMonitoring() has opened the gate.
+ * them over explicitly, already redacted. Same gate, dedupe and cap as every
+ * other event; a no-op until startWebErrorMonitoring() has opened the gate.
  */
-export function reportCaughtWebError(error: Error) {
+export function reportCaughtWebError(error: Pick<Error, "name" | "message" | "stack">) {
   if (!monitor) return;
   deliver(monitor.target, {
     type: error.name,

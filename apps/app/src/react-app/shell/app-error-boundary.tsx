@@ -196,8 +196,9 @@ export class AppErrorBoundary extends React.Component<
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error("[app] render failed", error, info.componentStack);
     // A caught render throw never reaches the window "error" listener, so the
-    // web deployment's monitor is told directly. Inert on desktop.
-    reportCaughtWebError(error);
+    // web deployment's monitor is told directly, with the same redacted text
+    // the screen shows. Inert on desktop.
+    reportCaughtWebError({ name: error.name, ...describeCrash(error) });
   }
 
   render() {

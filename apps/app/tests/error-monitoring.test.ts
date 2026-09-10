@@ -5,11 +5,11 @@ import {
   buildSentryEnvelope,
   buildWebErrorEvent,
   parseSentryDsn,
-  reportCaughtWebError,
   sanitizePageUrl,
   shouldMonitorWebErrors,
   startWebErrorMonitoring,
 } from "../src/app/lib/error-monitoring";
+import { AppErrorBoundary } from "../src/react-app/shell/app-error-boundary";
 
 const DSN = "https://publickey123@o123456.ingest.us.sentry.io/4500000000000000";
 
@@ -133,6 +133,8 @@ describe("buildSentryEnvelope", () => {
 describe("reportCaughtWebError", () => {
   // Bun aliases import.meta.env to process.env, so the build-time gate can be
   // driven at runtime. Module state only opens once, so desktop runs first.
+  // The boundary's componentDidCatch is the real caller, so the hand-off and
+  // its redaction are exercised through it.
   test("a boundary-caught error produces exactly one envelope on web and none on desktop", async () => {
     GlobalRegistrator.register({ url: "https://app.openworklabs.com/signin?grant=secret-grant" });
     const bodies: string[] = [];
@@ -140,30 +142,38 @@ describe("reportCaughtWebError", () => {
       bodies.push(String(init?.body));
       return Promise.resolve(new Response());
     });
+    const logError = spyOn(console, "error").mockImplementation(() => {});
     const previous = {
       deployment: process.env.VITE_OPENWORK_DEPLOYMENT,
       dsn: process.env.VITE_OPENWORK_SENTRY_DSN,
     };
+    const boundary = new AppErrorBoundary({ children: null });
+    const info = { componentStack: "\n    at AppRoot" };
+    const thrown = new Error("Deep link rejected: openwork://open?token=eval-secret-token");
     try {
       process.env.VITE_OPENWORK_DEPLOYMENT = "desktop";
       process.env.VITE_OPENWORK_SENTRY_DSN = DSN;
       startWebErrorMonitoring();
-      reportCaughtWebError(new Error("render exploded"));
+      boundary.componentDidCatch(thrown, info);
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(window.__openworkWebErrorMonitorActive).toBeUndefined();
 
       process.env.VITE_OPENWORK_DEPLOYMENT = "web";
       startWebErrorMonitoring();
-      reportCaughtWebError(new Error("render exploded"));
-      reportCaughtWebError(new Error("render exploded"));
+      boundary.componentDidCatch(thrown, info);
+      boundary.componentDidCatch(thrown, info);
       expect(bodies).toHaveLength(1);
       const event = JSON.parse(bodies[0].split("\n")[2]);
-      expect(event.exception.values).toEqual([{ type: "Error", value: "render exploded" }]);
+      expect(event.exception.values).toEqual([{ type: "Error", value: "Deep link rejected: openwork://open" }]);
       expect(event.tags).toEqual({ boot_phase: "runtime" });
       expect(event.request).toEqual({ url: "https://app.openworklabs.com/signin" });
-      expect(JSON.stringify(event)).not.toContain("secret-grant");
+      expect(event.extra.stack).toContain("Deep link rejected: openwork://open");
+      // Neither the page URL's grant nor the thrown URL's token leaves the page.
+      expect(bodies[0]).not.toContain("secret-grant");
+      expect(bodies[0]).not.toContain("eval-secret-token");
     } finally {
       fetchSpy.mockRestore();
+      logError.mockRestore();
       if (previous.deployment === undefined) delete process.env.VITE_OPENWORK_DEPLOYMENT;
       else process.env.VITE_OPENWORK_DEPLOYMENT = previous.deployment;
       if (previous.dsn === undefined) delete process.env.VITE_OPENWORK_SENTRY_DSN;
