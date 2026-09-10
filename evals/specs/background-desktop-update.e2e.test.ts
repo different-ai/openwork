@@ -101,7 +101,10 @@ test("updates download outside Settings and offer a persistent, optional restart
   await user.see({ text: "Restart OpenWork?" });
   await user.see({ text: /Eligible running tasks resume gradually after restart/ });
   await user.click("Keep working");
-  await user.notSee({ text: "Restart OpenWork?" });
+  await probe.eventually(async () => {
+    await user.notSee({ text: "Restart OpenWork?" }, { timeoutMs: 100 });
+    return true;
+  }, { within: 5_000, label: "Keep working dismisses the restart dialog", until: Boolean });
   expect(await world.snapshot()).toMatchObject({ installs: 0, installAttempts: 0 });
 
   await world.setCustomBranding();
@@ -121,7 +124,10 @@ test("updates download outside Settings and offer a persistent, optional restart
     await user.click({ role: "button", label: /^Notifications/ });
     await user.see({ text: message });
     await user.press("Escape");
-    await user.notSee({ text: "Restart Studio?" });
+    await probe.eventually(async () => {
+      await user.notSee({ text: "Restart Studio?" }, { timeoutMs: 100 });
+      return true;
+    }, { within: 5_000, label: "the failed restart dismisses its dialog", until: Boolean });
     await user.notSee({ text: "Restart to update" });
     expect(await world.snapshot()).toMatchObject({ installAttempts: index + 1, installs: 0 });
     await world.openSettings();
