@@ -310,7 +310,7 @@ export async function syncCloudControlMcpInBackground(input: {
   if (result.health?.usable) {
     return {
       outcome: "ready",
-      status: result.status === "unchanged" || result.status === "ready" ? "unchanged" : "synced",
+      status: result.status === "repaired" ? "synced" : "unchanged",
       health: result.health,
     };
   }

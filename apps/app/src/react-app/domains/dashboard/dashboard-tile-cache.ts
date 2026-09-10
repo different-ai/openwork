@@ -128,7 +128,8 @@ export function writeDashboardTileCache(
     const raw = window.localStorage.getItem(scopeKey);
     const parsed: unknown = raw === null ? {} : JSON.parse(raw);
     const next: Record<string, unknown> = isRecord(parsed) ? { ...parsed } : {};
-    next[entryId] = cache;
+    // A live host lease must not survive in persisted HTML/result caches.
+    next[entryId] = { ...cache, app: parseApp(cache.app) };
 
     const entries = Object.entries(next).sort((left, right) => {
       const leftAt = isRecord(left[1]) && typeof left[1].cachedAt === "number" ? left[1].cachedAt : 0;

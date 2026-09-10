@@ -61,6 +61,58 @@ Desktop Automation and remote-command requests opt out with
 Runtime journey verification for actual Electron restarts on both engines remains
 separate from the focused coordinator and mocked-proxy tests.
 
+## MCP App launch ownership
+
+An interactive host sends `context: { sessionId, readOnly, engine? }` with
+`POST /workspace/:id/mcp-apps/resolve`. `sessionId` is the originating conversation
+or `null` for a dashboard; `engine` is `v1` (default) or `v2`, never a provider URL.
+An actionable response includes an opaque `app.launchId`. The host keeps the
+server endpoint and workspace that resolved it, rather than the currently
+selected workspace. No credential, configuration, or fingerprint is returned.
+
+`POST /workspace/:id/mcp-apps/call` requires that `launchId`, the same `sessionId`
+and `engine`, and the existing `serverName`, `resourceUri`, `name`, `arguments`,
+and optional `approved` fields. The server binds the lease to its own instance,
+workspace path, conversation, original native launch tool, resource URI, and
+private configuration fingerprint. It rechecks the original tool's App visibility,
+resource binding and availability, original and requested tool policy, current
+session ownership/archive state, and configuration before dispatch. Existing
+helper audience and approval rules are unchanged.
+
+Leases are process-local, expire after 30 minutes, and are capped at 256 per
+server (oldest first eviction). `POST /workspace/:id/mcp-apps/release` with
+`{ launchId }` closes one workspace-owned lease. Closing/replacing a conversation
+view releases it; the renderer also invalidates its bridge synchronously and
+checks liveness before and after approval. A release failure is bounded by lease
+expiry. Already-dispatched provider operations cannot be recalled.
+
+The private fingerprint includes effective configuration (including headers),
+workspace/global runtime generations of the relevant MCP entry, private Connect authorization
+generation, and local managed gateway connection/credential/registration
+revisions. Named-entry generations are process-local, like the leases, and track
+host runtime writes including removal/restoration. Unrelated provider, plugin,
+and other MCP edits do not invalidate a lease. Private Connect hosts track the
+`openwork-cloud` runtime entry as well as their private authorization generation.
+File-backed configuration is compared by its
+observed values; edits restored between observations are not observable history.
+Provider-side account changes that leave all host-visible credentials and
+configuration unchanged are not detectable by this contract.
+
+Compatibility is intentionally fail-closed: older clients may still resolve HTML,
+but calls without a lease return `missing_launch_context`; stale leases return
+`stale_launch_context` with reopening guidance. New clients on old servers do not
+dispatch unbound calls. Generated read-only previews and archived result views
+still render and support local interactions without acquiring a lease. Dashboard
+HTML/result caches never persist a launch ID and remain read-only until refreshed.
+
+The renderer contract is `McpAppOrigin` and `createMcpAppActions` in
+`apps/app/src/components/chat/mcp-app-origin.ts`; `MessageListProvider` receives
+it from the owning `SessionSurface`. `McpAppLaunchContext`, resolution, validation,
+and release are owned by `src/mcp-app-host.ts`, with HTTP/session checks in
+`src/server.ts`.
+Internal callers of `callMcpAppTool` must supply `assertSessionActive` for a
+conversation lease; omitting the guard fails closed.
+
 ## Config file
 
 Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CONFIG` or `--config`).

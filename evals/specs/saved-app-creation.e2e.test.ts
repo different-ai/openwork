@@ -35,6 +35,31 @@ isolationTest("APP-ISOLATION embedded MCP Apps isolate siblings while SDK initia
   evidence.recordAssertionEvidence("Opaque Apps retain the standard SDK round trip", "Both real SDK Apps initialized through the shared renderer, received their distinct launch input and result, and completed exactly one legitimate helper call on their own provider.", true);
 });
 
+// The v2 engine does not expose a native archive mutation yet.
+isolationTest.skipIf(process.env.OPENWORK_EVAL_ENGINE === "v2")("APP-ARCHIVE archived conversations render Apps without actions (needs v1 archive API)", async ({ world, agent, user, probe, evidence }) => {
+  const sinceIso = new Date().toISOString();
+  await agent.send(isolationPrompt);
+  await user.see({ text: isolationReply }, { timeoutMs: 120_000 });
+  await probe.eventually(() => world.reports(), {
+    within: 30_000, label: "active Apps complete their initial helper requests",
+    until: values => values.length === 2 && values.every(value => value.complete === true && value.helper !== null),
+  });
+  await agent.run("session.archive", { sessionId: world.session.sessionId, archived: true });
+  await agent.run("session.open", { sessionId: world.session.sessionId });
+  const archived = await probe.eventually(() => world.reports(), {
+    within: 30_000, label: "archived Apps render results but reject helper actions",
+    until: values => values.length === 2 && values.every(value => value.complete === true && typeof value.helperError === "string"),
+  });
+  for (const label of ["A", "B"]) {
+    expect(archived.find(value => value.label === label)).toMatchObject({
+      input: { marker: `input-${label}` }, result: [{ type: "text", text: `initial-${label}` }], helper: null,
+    });
+  }
+  expect((await world.first.toolCalls({ name: "read_detail", sinceIso, atLeast: 1 })).map(call => call.args)).toEqual([{ marker: "legitimate-A" }]);
+  expect((await world.second.toolCalls({ name: "read_detail", sinceIso, atLeast: 1 })).map(call => call.args)).toEqual([{ marker: "legitimate-B" }]);
+  evidence.recordAssertionEvidence("Archived conversations cannot dispatch App helper calls", "Reopened archived Apps received their original inputs and results, rejected helper requests, and neither provider recorded an additional call.", true);
+});
+
 test("create, preview, save and reopen an app without changing already-open results", async ({ world, user, probe, seed, step, evidence }) => {
   await step("advertise direct artifact creation guidance and prerequisites", async () => {
     const { tools } = await world.listTools();
