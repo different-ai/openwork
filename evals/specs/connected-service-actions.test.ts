@@ -442,7 +442,15 @@ test("connected service actions reach only the selected account and enforce writ
           expect(observed).toEqual([expect.objectContaining({ method: "POST", path: providerPath, email: selected, tokenId: selectedTokens.get(connection.id) })]);
         } else {
           expect(executed.result.isError).toBe(true);
-          expect(executed.payload).toMatchObject(executor === "execute_capability" ? policyDenial : { error: "script_failed" });
+          if (executor === "execute_capability") expect(executed.payload).toMatchObject(policyDenial);
+          else {
+            // Disabled native leaves are omitted before the script runs, not invoked and rejected by the provider.
+            expect(executed.payload).toMatchObject({
+              error: "script_failed", kind: "UnknownTool",
+              message: `Unknown tool '${text(match.scriptPath).replace(/^tools\./, "")}'.`,
+            });
+            expect(executed.payload.toolCalls).toEqual([]);
+          }
           expect(executed.payload.connectionStatus).toBeUndefined();
           expect(executed.payload.connectionAction).toBeUndefined();
           expect(JSON.stringify(executed.payload)).not.toMatch(/needs_connection|reauth_required|reconnect|connect your account/i);
@@ -499,7 +507,7 @@ test("connected service actions reach only the selected account and enforce writ
       : "Organization disable stops selected and legacy native execution while preserving admin management",
     enabled
       ? "The retained generic and Code Mode capabilities and default REST routes each made exactly one request with their original selected credential. Only the selected account gained ten folders; other accounts stayed unchanged."
-      : "The actual admin capability switch hid native search and usable connections. Generic execution and legacy REST reads/writes returned policy_blocked with administrator guidance, not reconnect instructions. Code Mode stayed blocked. No provider call or account change occurred; admins could still list and save client configuration.", true);
+      : "The actual admin capability switch hid native search and usable connections. Generic execution and legacy REST reads/writes returned policy_blocked with administrator guidance, not reconnect instructions. Code Mode omitted the native leaves and returned UnknownTool for each exact retained path with no tool calls. No provider call or account change occurred; admins could still list and save client configuration.", true);
   }
   const final = await snapshot(selected);
   for (const { providerKey } of legacyConnections) {
