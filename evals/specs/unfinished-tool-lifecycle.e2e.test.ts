@@ -68,11 +68,6 @@ test("STOP-01 unfinished current-turn tools expose Stop feedback and active, wai
     );
   });
 
-  await arrangeControl(seed, world.app, "eval.session_lifecycle.seed_unfinished_tools", { lifecycle: "active" });
-  await step("active unfinished tools remain visibly in progress", async () => {
-    await user.see("Running command, reading 1 file");
-  });
-
   await step("a failed Stop shows an error and restores retry without claiming completion", async () => {
     await stopFault.fail();
     const failed = await probe.eventually(() => stopFault.read(), {
@@ -93,9 +88,11 @@ test("STOP-01 unfinished current-turn tools expose Stop feedback and active, wai
     });
     await user.see({ text: /Stop unavailable/ });
     expect(failed.aggregateText).not.toMatch(/\b(?:Ran command|Read brief\.md)\b/);
+    const nativeStatus = await world.nativeStatus();
+    expect(["busy", "retry"]).toContain(nativeStatus);
     evidence.recordAssertionEvidence(
       "A failed Stop remains explicitly retryable and never presents the run as completed",
-      JSON.stringify(failed),
+      JSON.stringify({ ...failed, nativeRunStatus: nativeStatus }),
       true,
     );
   });
@@ -116,6 +113,12 @@ test("STOP-01 unfinished current-turn tools expose Stop feedback and active, wai
       JSON.stringify(settled),
       true,
     );
+  });
+
+  // Synthetic lifecycle coverage starts only after native failure recovery is proven.
+  await arrangeControl(seed, world.app, "eval.session_lifecycle.seed_unfinished_tools", { lifecycle: "active" });
+  await step("active unfinished tools remain visibly in progress", async () => {
+    await user.see("Running command, reading 1 file");
   });
 
   await arrangeControl(seed, world.app, "eval.session_lifecycle.seed_unfinished_tools", { lifecycle: "waiting" });
