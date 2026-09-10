@@ -1738,6 +1738,35 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
     commandSetup,
     paletteShortcut,
     facts,
+    archiveAccessibleDescription: async () => {
+      const tree = await app.client.send("Accessibility.getFullAXTree");
+      if (!isRecord(tree) || !Array.isArray(tree.nodes)) throw new Error("Archive accessibility tree is unavailable");
+      const dialog = tree.nodes.find(node => isRecord(node) && isRecord(node.role) && node.role.value === "alertdialog" && node.ignored !== true);
+      if (!isRecord(dialog) || !isRecord(dialog.description) || typeof dialog.description.value !== "string") {
+        throw new Error("Archive dialog has no computed accessible description");
+      }
+      return dialog.description.value;
+    },
+    archiveConfirmation: () => seed.evalIn(app, () => {
+      const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
+      const title = dialog?.querySelector<HTMLElement>('[data-slot="alert-dialog-title"]');
+      const bounds = dialog?.getBoundingClientRect();
+      return {
+        title: title?.textContent,
+        text: dialog?.innerText,
+        metadata: [...(dialog?.querySelectorAll("dl > div") ?? [])].map(row => ({
+          label: row.querySelector("dt")?.textContent,
+          value: row.querySelector("dd")?.textContent,
+          selectable: getComputedStyle(row.querySelector("dd") ?? row).userSelect === "text",
+        })),
+        titleUnclipped: Boolean(title && title.scrollWidth <= title.clientWidth && title.scrollHeight <= title.clientHeight
+          && getComputedStyle(title).textOverflow !== "ellipsis" && getComputedStyle(title).webkitLineClamp === "none"),
+        fitsViewport: Boolean(bounds && bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight),
+        noHorizontalOverflow: Boolean(dialog && dialog.scrollWidth <= dialog.clientWidth),
+        contentReachable: Boolean(dialog && (dialog.scrollHeight <= dialog.clientHeight || getComputedStyle(dialog).overflowY === "auto")),
+      };
+    }),
+    resize: (width: number, height: number) => app.client.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false }),
     networkFault,
     faultObservation: () => seed.evalIn(app, browserScript(async (workspaceIds) => {
       const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
