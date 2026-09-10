@@ -178,24 +178,22 @@ export function coalescePendingDeltas(items: PendingDelta[]) {
 
 export function selectDeltaFlushLane(
   items: PendingDelta[],
-  visibleSessionId?: string | null,
+  visibleSessionIds: ReadonlyMap<string, number>,
 ): DeltaFlushLane {
-  const visible = visibleSessionId?.trim();
-  return visible && items.some((item) => item.sessionId === visible)
+  return items.some((item) => visibleSessionIds.has(item.sessionId))
     ? "foreground"
     : "background";
 }
 
 export function partitionPendingDeltasByLane(
   items: PendingDelta[],
-  visibleSessionId: string | null | undefined,
+  visibleSessionIds: ReadonlyMap<string, number>,
   lane: DeltaFlushLane,
 ) {
-  const visible = visibleSessionId?.trim();
   const flushing: PendingDelta[] = [];
   const deferred: PendingDelta[] = [];
   for (const item of items) {
-    const itemLane = visible === item.sessionId ? "foreground" : "background";
+    const itemLane = visibleSessionIds.has(item.sessionId) ? "foreground" : "background";
     if (itemLane === lane) flushing.push(item);
     else deferred.push(item);
   }

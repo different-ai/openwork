@@ -83,6 +83,8 @@ type SyncEntry = {
   // parked in auth backoff restarts immediately with the new credential.
   notifyStreamGenerationChanged: (() => void) | null;
   refs: number;
+  // Visibility belongs to attachments, not focus or background retention.
+  visibleSessionRefs: Map<string, number>;
   dispose: () => void;
   disposeTimer: ReturnType<typeof setTimeout> | null;
   trackedSessionRefs: Map<string, number>;
@@ -1307,8 +1309,8 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
 function scheduleDeltaFlush(entry: SyncEntry, workspaceId: string) {
   if (entry.deltaFlushBuffer.length === 0) return;
-  const lane = selectDeltaFlushLane(entry.deltaFlushBuffer, entry.input.visibleSessionId);
-  if (entry.deltaFlushLane === lane || entry.deltaFlushLane === "foreground") return;
+  const lane = selectDeltaFlushLane(entry.deltaFlushBuffer, entry.visibleSessionRefs);
+  if (entry.deltaFlushLane === lane) return;
 
   entry.cancelDeltaFlush?.();
   entry.deltaFlushLane = lane;
@@ -1325,7 +1327,7 @@ function flushDeltas(entry: SyncEntry, workspaceId: string, lane: DeltaFlushLane
   const pending = coalescePendingDeltas(entry.deltaFlushBuffer);
   const { flushing, deferred } = partitionPendingDeltasByLane(
     pending,
-    entry.input.visibleSessionId,
+    entry.visibleSessionRefs,
     lane,
   );
   entry.deltaFlushBuffer = deferred;
@@ -1705,6 +1707,7 @@ export function __resetWorkspaceSyncReconcileHealthForTest() {
 }
 
 export function ensureWorkspaceSessionSync(input: SyncOptions) {
+  input = { ...input, visibleSessionId: input.visibleSessionId?.trim() || undefined };
   const key = syncKey(input);
   const existing = syncs.get(key);
   if (existing) {
@@ -1725,8 +1728,9 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     retainListener(existing.sessionDeletedListeners, input.onSessionDeleted);
     retainListener(existing.sessionStatusListeners, input.onSessionStatus);
     existing.refs += 1;
+    retainListener(existing.visibleSessionRefs, input.visibleSessionId ?? undefined);
     scheduleDeltaFlush(existing, input.workspaceId);
-    return () => releaseWorkspaceSessionSync(input);
+    return workspaceSyncRelease(input, existing);
   }
 
   const created: SyncEntry = {
@@ -1734,6 +1738,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     openworkToken: input.openworkToken,
     notifyStreamGenerationChanged: null,
     refs: 1,
+    visibleSessionRefs: createListenerRegistry(input.visibleSessionId ?? undefined),
     dispose: () => {},
     disposeTimer: null,
     trackedSessionRefs: new Map(),
@@ -1797,17 +1802,28 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
   syncs.set(key, created);
   created.dispose = startSync(input, created);
 
-  return () => releaseWorkspaceSessionSync(input);
+  return workspaceSyncRelease(input, created);
 }
 
-function releaseWorkspaceSessionSync(input: SyncOptions) {
+function workspaceSyncRelease(input: SyncOptions, owner: SyncEntry) {
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    releaseWorkspaceSessionSync(input, owner);
+  };
+}
+
+function releaseWorkspaceSessionSync(input: SyncOptions, owner: SyncEntry) {
   const key = syncKey(input);
   const existing = syncs.get(key);
-  if (!existing) return;
+  if (!existing || existing !== owner) return;
   releaseListener(existing.sessionCreatedListeners, input.onSessionCreated);
   releaseListener(existing.sessionUpdatedListeners, input.onSessionUpdated);
   releaseListener(existing.sessionDeletedListeners, input.onSessionDeleted);
   releaseListener(existing.sessionStatusListeners, input.onSessionStatus);
+  releaseListener(existing.visibleSessionRefs, input.visibleSessionId ?? undefined);
+  scheduleDeltaFlush(existing, input.workspaceId);
   existing.refs = Math.max(0, existing.refs - 1);
   if (existing.refs > 0) return;
   // A status fetch can discover work that no transcript owner ever mounted.
@@ -2035,6 +2051,7 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
     openworkToken: input.openworkToken,
     notifyStreamGenerationChanged: null,
     refs: 1,
+    visibleSessionRefs: createListenerRegistry(input.visibleSessionId?.trim() || undefined),
     dispose: () => {},
     disposeTimer: null,
     trackedSessionRefs: new Map(),

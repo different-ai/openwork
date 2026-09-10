@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import * as React from "react";
+import { useSessionPrefetchIntent } from "../surface/session-history";
 import {
   AlertCircle,
   AlertTriangle,
@@ -9,6 +10,7 @@ import {
   ArrowRight,
   Blocks,
   Clock3,
+  Check,
   ChevronRight,
   Columns2,
   FolderPlus,
@@ -137,6 +139,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
 import { SessionDotMatrixLoader } from "./session-dot-matrix-loader";
+import { sidebarPreviewCount, useSidebarPreviewCounts, useSidebarPreviewStore } from "./sidebar-preview-store";
 import {
   SIDEBAR_ROW_LANE,
   SIDEBAR_SECTION_LABEL,
@@ -242,18 +245,18 @@ function SessionStatusIndicator({ status, isActiveWork, isUnread }: SessionStatu
   );
 }
 
-/** Orange = needs you, green = unread result, none = read/idle. */
+/** Shape and color distinguish pending input from an unread result. */
 function SessionOutcomeIndicator({ status, isUnread }: { status?: string; isUnread: boolean }) {
+  if (status === "error") return <AlertTriangle className="size-3 text-destructive" aria-label={getSessionActivityStatusLabel("error")} />;
   if (isNeedsAttentionSessionStatus(status)) {
     const title = isSessionActivityStatus(status)
       ? getSessionActivityStatusLabel(status)
       : t("workspace_list.session_needs_attention");
     return (
-      <span
+      <AlertCircle
         data-session-attention-indicator
-        className="size-2 shrink-0 rounded-full"
-        style={{ backgroundColor: OUTCOME_DOT_NEEDS_ACTION }}
-        title={title}
+        className="size-3 shrink-0"
+        style={{ color: OUTCOME_DOT_NEEDS_ACTION }}
         aria-label={title}
       />
     );
@@ -262,11 +265,10 @@ function SessionOutcomeIndicator({ status, isUnread }: { status?: string; isUnre
   if (!isUnread) return null;
 
   return (
-    <span
+    <Check
       data-session-attention-indicator
-      className="size-2 shrink-0 rounded-full"
-      style={{ backgroundColor: OUTCOME_DOT_UNREAD }}
-      title={t("workspace_list.session_unread")}
+      className="size-3 shrink-0"
+      style={{ color: OUTCOME_DOT_UNREAD }}
       aria-label={t("workspace_list.session_unread")}
     />
   );
@@ -702,7 +704,7 @@ function SessionSideChatControl({ workspaceId, sessionId, title }: {
   const unreadIds = useUnreadSessionIds();
   const selected = isSameWorkbenchSession(primary, { workspaceId, sessionId });
   const status = sideChat ? ctx.sessionStatusById?.[sideChat.sessionId] : undefined;
-  const isUnread = Boolean(sideChat && unreadIds.has(sideChat.sessionId) && !selected);
+  const isUnread = Boolean(sideChat && unreadIds.has(sideChat.sessionId));
   const isActiveWork = isActiveWorkSessionStatus(status);
 
   React.useEffect(() => {
@@ -750,6 +752,8 @@ export type AppSidebarProps = {
   selectedWorkspaceId: string;
   developerMode: boolean;
   selectedSessionId: string | null;
+  /** Supplied by the pane renderer; a retained split reference is not visibility. */
+  visibleSecondarySessionId?: string | null;
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
   connectingWorkspaceId: string | null;
@@ -759,7 +763,7 @@ export type AppSidebarProps = {
   newTaskDraftScope?: string | null;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
-  onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
+  onPrefetchSession?: (workspaceId: string, sessionId: string) => void | (() => void);
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
   onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
   onOpenRenameSession?: (sessionId: string) => void;
@@ -812,8 +816,9 @@ export function AppSidebar(props: AppSidebarProps) {
     () => new Set(expandedWorkspaceIdList),
     [expandedWorkspaceIdList],
   );
-  const [previewCountByWorkspaceId, setPreviewCountByWorkspaceId] = React.useState<Record<string, number>>({});
-  const previousSessionStatusRef = React.useRef<Record<string, string>>({});
+  const previewScope = props.newTaskDraftScope ?? null;
+  const previewCounts = useSidebarPreviewCounts(previewScope);
+  const previousSessionStatusRef = React.useRef<{ scope: string | null; statuses: Record<string, string> }>({ scope: previewScope, statuses: {} });
   const sessionNumberShortcutByTarget = React.useMemo(
     () => new Map(props.sessionNumberShortcuts.targets.map((target) => [
       sessionNumberShortcutTargetKey(target.workspaceId, target.sessionId),
@@ -822,15 +827,15 @@ export function AppSidebar(props: AppSidebarProps) {
     [props.sessionNumberShortcuts.targets],
   );
 
-  // Green unread dots: agent finished while the user was on another session.
+  // Unread results are for conversations outside either visible pane.
   React.useEffect(() => {
     const statuses = props.sessionStatusById ?? {};
-    const previous = previousSessionStatusRef.current;
+    const previous = previousSessionStatusRef.current.scope === previewScope ? previousSessionStatusRef.current.statuses : {};
     const selectedId = props.selectedSessionId;
     const store = useSessionManagementStore.getState();
 
     for (const [sessionId, status] of Object.entries(statuses)) {
-      if (sessionId === selectedId) {
+      if (sessionId === selectedId || sessionId === props.visibleSecondarySessionId) {
         store.clearUnread(sessionId);
         continue;
       }
@@ -841,8 +846,9 @@ export function AppSidebar(props: AppSidebarProps) {
     }
 
     if (selectedId) store.clearUnread(selectedId);
-    previousSessionStatusRef.current = statuses;
-  }, [props.selectedSessionId, props.sessionStatusById]);
+    if (props.visibleSecondarySessionId) store.clearUnread(props.visibleSecondarySessionId);
+    previousSessionStatusRef.current = { scope: previewScope, statuses };
+  }, [props.selectedSessionId, props.sessionStatusById, props.visibleSecondarySessionId, previewScope]);
 
   React.useEffect(() => {
     const id = props.selectedWorkspaceId.trim();
@@ -851,43 +857,12 @@ export function AppSidebar(props: AppSidebarProps) {
   }, [props.selectedWorkspaceId, expandWorkspace]);
 
   const previewCount = (workspaceId: string) =>
-    previewCountByWorkspaceId[workspaceId] ?? MAX_SESSIONS_PREVIEW;
+    sidebarPreviewCount(previewCounts, workspaceId);
 
   const showMoreSessions = (workspaceId: string, totalRoots: number) => {
     expandWorkspace(workspaceId);
-    setPreviewCountByWorkspaceId((current) => ({
-      ...current,
-      [workspaceId]: Math.min((current[workspaceId] ?? MAX_SESSIONS_PREVIEW) + MAX_SESSIONS_PREVIEW, totalRoots),
-    }));
+    useSidebarPreviewStore.getState().showMore(previewScope, workspaceId, totalRoots);
   };
-
-  React.useEffect(() => {
-    const workspaceId = props.selectedWorkspaceId.trim();
-    if (!workspaceId) return;
-
-    const group = props.workspaceSessionGroups.find(
-      (entry) => entry.workspace.id === workspaceId,
-    );
-    if (!group?.sessions.length) return;
-
-    const selectedId = props.selectedSessionId?.trim() ?? "";
-    const selectedIndex = selectedId
-      ? group.sessions.findIndex((session) => session.id === selectedId)
-      : -1;
-    const start = selectedIndex >= 0 ? Math.max(0, selectedIndex - 2) : 0;
-    const end = selectedIndex >= 0
-      ? Math.min(group.sessions.length, selectedIndex + 3)
-      : Math.min(group.sessions.length, 4);
-
-    group.sessions.slice(start, end).forEach((session) => {
-      props.onPrefetchSession?.(workspaceId, session.id);
-    });
-  }, [
-    props.onPrefetchSession,
-    props.selectedSessionId,
-    props.selectedWorkspaceId,
-    props.workspaceSessionGroups,
-  ]);
 
   const contextValue: SidebarContextValue = {
     selectedWorkspaceId: props.selectedWorkspaceId,
@@ -1081,6 +1056,7 @@ export function AppSidebar(props: AppSidebarProps) {
             {pinnedSessions.length > 0 ? (
               <GlobalPinnedSessions entries={pinnedSessions} />
             ) : null}
+            <CurrentConversationOrientation groups={props.workspaceSessionGroups} />
             <div className={cn("group/workspaces-header flex h-6 items-center mt-4", SIDEBAR_SECTION_LANE)}>
               <span className={SIDEBAR_SECTION_LABEL}>
                 {t("workspace_list.title")}
@@ -1602,6 +1578,44 @@ const SESSION_DRAG_TYPE = "application/x-openwork-session-id";
 const EMPTY_PINNED_IDS = new Set<string>();
 const UNGROUPED_GROUP_ID = "__openwork_ungrouped";
 
+/** A location cue, not another slice or a reorder of the person's session list. */
+function CurrentConversationOrientation({ groups }: { groups: WorkspaceSessionGroup[] }) {
+  const ctx = useSidebarContext();
+  const counts = useSidebarPreviewCounts(ctx.newTaskDraftScope);
+  const pinnedIds = usePinnedSessionIds();
+  const order = useSessionOrder(ctx.selectedWorkspaceId);
+  const management = useWorkspaceGroups(ctx.selectedWorkspaceId);
+  const workspace = groups.find((entry) => entry.workspace.id === ctx.selectedWorkspaceId);
+  const session = workspace?.sessions.find((entry) => entry.id === ctx.selectedSessionId);
+  if (!workspace || !session || session.parentID || isSessionArchived(session)) return null;
+  if (pinnedIds.has(session.id)) return null;
+
+  const assignedGroup = management.groups.find((group) => group.id === management.assignments[session.id]);
+  const groupId = management.groups.length ? assignedGroup?.id ?? UNGROUPED_GROUP_ID : undefined;
+  const rows = flattenSessionRows(workspace.sessions, Number.MAX_SAFE_INTEGER, EMPTY_PINNED_IDS, order, { exclude: pinnedIds })
+    .filter((row) => !groupId || (assignedGroup
+      ? management.assignments[row.session.id] === assignedGroup.id
+      : !management.groups.some((group) => group.id === management.assignments[row.session.id])));
+  const index = rows.findIndex((row) => row.session.id === session.id);
+  const groupExpanded = !groupId || !management.collapsedGroupIds?.includes(groupId);
+  if (ctx.expandedWorkspaceIds.has(workspace.workspace.id) && groupExpanded
+    && index >= 0 && index < sidebarPreviewCount(counts, workspace.workspace.id, groupId)) return null;
+
+  const location = [workspaceLabel(workspace.workspace), assignedGroup?.label
+    ?? (groupId ? t("session_management.ungrouped") : null)].filter(Boolean).join(" / ");
+  return (
+    <SidebarGroup data-sidebar-current-conversation>
+      <div className={cn("flex flex-col gap-1 py-1", SIDEBAR_SECTION_LANE)}>
+        <span className={SIDEBAR_SECTION_LABEL}>{t("workspace_list.current_conversation")}</span>
+        <span className="truncate text-xs text-muted-foreground" title={location}>{location}</span>
+      </div>
+      <SidebarMenu>
+        <SessionMenuItem session={session} workspaceId={workspace.workspace.id} workspaceName={location} />
+      </SidebarMenu>
+    </SidebarGroup>
+  );
+}
+
 /**
  * The prompt typed in this workspace's new-task composer before its session
  * exists. Opening another conversation unmounts that composer, so this row is
@@ -1900,20 +1914,15 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, works
   workspaceId: string;
   store: typeof useSessionManagementStore;
 }) {
-  const [previewCountByGroup, setPreviewCountByGroup] = React.useState<Record<string, number>>({});
+  const ctx = useSidebarContext();
+  const previewCounts = useSidebarPreviewCounts(ctx.newTaskDraftScope);
 
   const groupPreviewCount = (groupId: string) =>
-    previewCountByGroup[groupId] ?? MAX_SESSIONS_PREVIEW;
+    sidebarPreviewCount(previewCounts, workspaceId, groupId);
 
-  const showMoreInGroup = React.useCallback((groupId: string, totalCount: number) => {
-    setPreviewCountByGroup((current) => ({
-      ...current,
-      [groupId]: Math.min(
-        (current[groupId] ?? MAX_SESSIONS_PREVIEW) + MAX_SESSIONS_PREVIEW,
-        totalCount,
-      ),
-    }));
-  }, []);
+  const showMoreInGroup = (groupId: string, totalCount: number) => {
+    useSidebarPreviewStore.getState().showMore(ctx.newTaskDraftScope, workspaceId, totalCount, groupId);
+  };
 
   // Partition root rows into per-group buckets + ungrouped.
   const rootRowsByGroup = new Map<string, FlattenedSessionRow[]>();
@@ -2142,12 +2151,19 @@ function SessionMenuItem({
   const [isTitleHovered, setIsTitleHovered] = React.useState(false);
   const [isTitleFocused, setIsTitleFocused] = React.useState(false);
   const unreadIds = useUnreadSessionIds();
-  const isSelected = ctx.selectedSessionId === session.id;
+  const isSelected = ctx.selectedWorkspaceId === workspaceId && ctx.selectedSessionId === session.id;
   const displayTitle = getDisplaySessionTitle(session.title);
   const itemTitle = workspaceName ? `${displayTitle} — ${workspaceName}` : displayTitle;
   const sessionActivityStatus = ctx.sessionStatusById?.[session.id];
   const resolvedActiveWork = isActiveWorkSessionStatus(sessionActivityStatus);
   const isUnread = unreadIds.has(session.id) && !isSelected;
+  const attentionLabel = resolvedActiveWork
+    ? t("workspace_list.session_streaming")
+    : isNeedsAttentionSessionStatus(sessionActivityStatus)
+      ? t("workspace_list.session_needs_attention")
+      : sessionActivityStatus === "error"
+        ? getSessionActivityStatusLabel("error")
+        : isUnread ? t("workspace_list.session_unread") : null;
   const isArchived = isSessionArchived(session);
   const relativeTime = formatSessionRelativeTime(session.time?.updated ?? session.time?.created);
   const shortcutDigit = ctx.sessionNumberShortcutByTarget.get(
@@ -2158,20 +2174,21 @@ function SessionMenuItem({
     : sessionNumberAriaKeyShortcut(ctx.sessionNumberShortcutOs, shortcutDigit);
 
   const openSession = () => {
+    commitPrefetch();
     useSessionManagementStore.getState().clearUnread(session.id);
     ctx.onOpenSession(workspaceId, session.id);
   };
 
-  const prefetchSession = () => {
+  const prefetchSession = React.useCallback(() => {
     if (workspaceId !== ctx.selectedWorkspaceId) {
       return;
     }
 
-    ctx.onPrefetchSession?.(workspaceId, session.id);
-  };
+    return ctx.onPrefetchSession?.(workspaceId, session.id);
+  }, [ctx.onPrefetchSession, ctx.selectedWorkspaceId, workspaceId, session.id]);
+  const commitPrefetch = useSessionPrefetchIntent(!isSelected && (isTitleHovered || isTitleFocused), prefetchSession);
 
   const handlePointerEnter = (event: React.PointerEvent) => {
-    prefetchSession();
     if (event.pointerType === "mouse") setIsTitleHovered(true);
   };
 
@@ -2185,13 +2202,7 @@ function SessionMenuItem({
     },
   };
 
-  const accessibleState = resolvedActiveWork && isSessionActivityStatus(sessionActivityStatus)
-    ? `${displayTitle}, ${getSessionActivityStatusLabel(sessionActivityStatus)}`
-    : isNeedsAttentionSessionStatus(sessionActivityStatus)
-      ? `${displayTitle}, ${t("workspace_list.session_needs_attention")}`
-      : isUnread
-        ? `${displayTitle}, ${t("workspace_list.session_unread")}`
-        : itemTitle;
+  const accessibleState = attentionLabel ? `${itemTitle}, ${attentionLabel}` : itemTitle;
 
   const rowButtonClass = cn(
     // Soft pill @ 11px radius from Paper; overlay tint adapts to theme
@@ -2247,7 +2258,6 @@ function SessionMenuItem({
             onPointerEnter={handlePointerEnter}
             onPointerLeave={() => setIsTitleHovered(false)}
             onFocus={() => {
-              prefetchSession();
               setIsTitleFocused(true);
             }}
             onBlur={() => setIsTitleFocused(false)}
@@ -2259,6 +2269,11 @@ function SessionMenuItem({
           >
             {leading}
             <SessionTitle intent={titleIntent} title={displayTitle} tooltip={itemTitle} />
+            {attentionLabel ? (
+              <span data-session-attention-label className="shrink-0 text-[10px] text-muted-foreground">
+                {attentionLabel}
+              </span>
+            ) : null}
             {hasDraft ? (
               <span data-testid={`sidebar-session-draft-${session.id}`} className="shrink-0 text-xs text-muted-foreground">
                 {draftLabel}
