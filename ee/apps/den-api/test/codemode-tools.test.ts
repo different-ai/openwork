@@ -7,6 +7,23 @@ import { Effect } from "effect"
 import { Hono } from "hono"
 import { buildMcpCatalog } from "../src/mcp/catalog.js"
 
+// These catalog tests supply principals directly; authentication must not seed a database at import time.
+mock.module("../src/auth.js", () => ({
+  auth: { handler: () => Promise.resolve(Response.json({ keys: [] })) },
+  DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX: "ow_mcp_at_",
+  DEN_MCP_FIRST_PARTY_CLIENT_ID: "openwork-desktop",
+  DEN_MCP_FIRST_PARTY_RESOURCES: [
+    "http://127.0.0.1:8790/mcp", "http://127.0.0.1:8790/mcp/agent", "http://127.0.0.1:8790/mcp/admin",
+  ],
+  DEN_MCP_GRANT_ID_CLAIM: "https://openworklabs.com/grant_id",
+  DEN_MCP_ORG_ID_CLAIM: "https://openworklabs.com/org_id",
+  DEN_MCP_OAUTH_RESOURCE: "http://127.0.0.1:8790/mcp/agent",
+  DEN_MCP_RESOURCE: "http://127.0.0.1:8790/mcp",
+  DEN_MCP_RESOURCE_CLAIM: "https://openworklabs.com/resource",
+  DEN_MCP_RESOURCES: ["http://127.0.0.1:8790/mcp"],
+  DEN_MCP_TOKEN_USE_CLAIM: "https://openworklabs.com/token_use",
+}))
+
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)

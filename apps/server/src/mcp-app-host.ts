@@ -190,9 +190,15 @@ export function projectedMcpToolName(serverName: string, toolName: string): stri
 async function appToolPolicy(input: { serverConfig: ServerConfig; workspaceRoot: string }) {
   const rules = await readMcpToolPolicy(input.serverConfig, input.workspaceRoot);
   if (!rules) throw new McpAppHostError("tool_policy_unavailable", "The workspace tool policy could not be read safely.");
-  // With no configured rule the App host retains its annotation approval gate.
-  return (serverName: string, toolName: string) =>
-    winningRule(rules, projectedMcpToolName(serverName, toolName), "*")?.action ?? "allow";
+  return (policyServerNames: readonly string[], toolName: string) => {
+    // Rule order decides within each identity; one identity cannot relax another.
+    const actions = policyServerNames.map(serverName =>
+      winningRule(rules, projectedMcpToolName(serverName, toolName), "*")?.action);
+    if (actions.includes("deny")) return "deny";
+    if (actions.includes("ask")) return "ask";
+    // With no configured rule the App host retains its annotation approval gate.
+    return "allow";
+  };
 }
 
 export function toolUiResourceUri(tool: Partial<Tool>): string | null {
@@ -548,7 +554,7 @@ async function catalogAppsFromClient(client: Client, options: {
     }
     if (!resourceUri) continue;
     const projectedToolName = projectedMcpToolName(options.serverName, tool.name);
-    if (permission(options.serverName, tool.name) === "deny") continue;
+    if (permission([options.serverName], tool.name) === "deny") continue;
     catalog.push({
       serverName: options.serverName,
       ...(options.connectionId ? { connectionId: options.connectionId } : {}),
@@ -558,7 +564,7 @@ async function catalogAppsFromClient(client: Client, options: {
       title: toolDisplayTitle(tool),
       description: typeof tool.description === "string" ? tool.description : null,
       requiresInput: toolRequiresInput(tool),
-      requiresApproval: toolRequiresApproval(tool) || permission(options.serverName, tool.name) === "ask",
+      requiresApproval: toolRequiresApproval(tool) || permission([options.serverName], tool.name) === "ask",
     });
   }
   return catalog;
@@ -726,7 +732,7 @@ export async function resolveMcpAppResource(input: {
       if (!mcpToolVisibleTo(tool, "model")) return null;
       const resourceUri = toolUiResourceUri(tool);
       if (!resourceUri) return null;
-      if (permission(item.name, tool.name) === "deny") {
+      if (permission([item.name], tool.name) === "deny") {
         throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
       }
       if (directConnectionId) {
@@ -834,7 +840,7 @@ async function resolvePrivateConnectMcpAppResource(
     if (resourceUri !== input.launch.resourceUri) {
       throw new McpAppHostError("tool_resource_mismatch", "The originating MCP App tool now advertises a different resource.");
     }
-    if (policyServerNames.some(name => permission(name, tool.name) === "deny")) {
+    if (permission(policyServerNames, tool.name) === "deny") {
       throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
     }
     const read = await client.readResource({ uri: resourceUri }).catch(() => {
@@ -901,7 +907,7 @@ export async function resolveSameServerMcpAppResource(input: {
       if (resourceUri !== input.launch.resourceUri) {
         throw new McpAppHostError("tool_resource_mismatch", "The same-server MCP App tool now advertises a different resource.");
       }
-      if (permission(item.name, launchTool.name) === "deny") {
+      if (permission([item.name], launchTool.name) === "deny") {
         throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
       }
       const read = await client.readResource({ uri: resourceUri }).catch(() => {
@@ -1010,7 +1016,7 @@ export async function callMcpAppTool(input: {
     await input.assertSessionActive?.();
     await currentConfig();
     const permission = await appToolPolicy(input);
-    const decisions = [original, ...targets].flatMap(target => launch.policyServerNames.map(name => permission(name, target.name)));
+    const decisions = [original, ...targets].map(target => permission(launch.policyServerNames, target.name));
     if (decisions.includes("deny")) {
       throw new McpAppHostError("tool_denied", "This App tool is denied by the workspace tool policy.");
     }

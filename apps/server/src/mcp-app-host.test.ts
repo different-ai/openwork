@@ -654,6 +654,91 @@ describe("MCP Apps host transport", () => {
     expect(fixture.requests.filter((request) => request.method === "tools/call")).toEqual([]);
   });
 
+  test.each(["direct", "private"])("direct App actions retain %s asks while honoring later same-namespace allows", async (identity) => {
+    const fixture = await directConnectFixture();
+    const app = await fixture.resolve();
+    if (!app?.launchId) throw new Error("Missing App lease");
+    const privateName = connectMcpAppHostName(fixture.descriptor.connectionId);
+    const restrictedName = identity === "direct" ? fixture.directName : privateName;
+    const otherName = identity === "direct" ? privateName : fixture.directName;
+    const request = {
+      serverConfig: fixture.config, workspaceId: WORKSPACE_ID, workspaceRoot: fixture.root,
+      serverName: app.serverName, resourceUri: app.resourceUri, launchId: app.launchId,
+      sessionId: "session-direct", engine: "v2" as const, name: "read_detail", assertSessionActive: async () => {},
+    };
+    for (const toolName of ["render.fixture", "read_detail"]) {
+      const restrictedTool = projectedMcpToolName(restrictedName, toolName);
+      const otherTool = projectedMcpToolName(otherName, toolName);
+      await writeJsoncFile(opencodeConfigPath(fixture.root), { permission: {
+        "*": "allow", [restrictedTool]: "ask", [otherTool]: "allow",
+      } });
+      fixture.requests.length = 0;
+      await expect(callMcpAppTool(request)).rejects.toMatchObject({ code: "tool_requires_approval" });
+      expect(fixture.requests.filter(request => request.method === "tools/call")).toEqual([]);
+      await callMcpAppTool({ ...request, approved: true });
+      expect(fixture.requests.filter(request => request.method === "tools/call")).toHaveLength(1);
+    }
+    await writeJsoncFile(opencodeConfigPath(fixture.root), { permission: {
+      "*": "ask",
+      ...Object.fromEntries([privateName, fixture.directName].flatMap(serverName =>
+        ["render.fixture", "read_detail"].map(toolName => [projectedMcpToolName(serverName, toolName), "allow"]))),
+    } });
+    fixture.requests.length = 0;
+    await callMcpAppTool(request);
+    expect(fixture.requests.filter(request => request.method === "tools/call")).toEqual([{
+      path: new URL(fixture.descriptor.url).pathname, method: "tools/call", privateAuth: true,
+      appHostCapability: true, params: { name: "read_detail", arguments: {} },
+    }]);
+  });
+
+  test.each(["direct", "private"])("wrapped helpers enforce every %s target policy without rebinding the private lease", async (identity) => {
+    const fixture = await directConnectFixture();
+    fixture.tools.private.push({
+      name: "execute_capability", inputSchema: { type: "object" }, annotations: { readOnlyHint: false },
+      _meta: { ui: { visibility: ["app"] } },
+    });
+    const privateName = connectMcpAppHostName(fixture.descriptor.connectionId);
+    const serverNames = [privateName, fixture.directName];
+    const toolNames = ["render.fixture", "execute_capability", "read_detail"];
+    const permission = {
+      "*": "deny",
+      ...Object.fromEntries(serverNames.flatMap(serverName =>
+        toolNames.map(toolName => [projectedMcpToolName(serverName, toolName), "allow"]))),
+    };
+    await writeJsoncFile(opencodeConfigPath(fixture.root), { permission });
+    const app = await fixture.resolve();
+    if (!app?.launchId) throw new Error("Missing App lease");
+    expect(app.serverName).toBe(privateName);
+    const request = {
+      serverConfig: fixture.config, workspaceId: WORKSPACE_ID, workspaceRoot: fixture.root,
+      serverName: app.serverName, resourceUri: app.resourceUri, launchId: app.launchId,
+      sessionId: "session-direct", engine: "v2" as const, name: "execute_capability", assertSessionActive: async () => {},
+      arguments: { name: "read_detail", body: { id: "wrapped" } },
+    };
+    fixture.requests.length = 0;
+    await expect(callMcpAppTool(request)).rejects.toMatchObject({ code: "tool_requires_approval" });
+    expect(fixture.requests.filter(request => request.method === "tools/call")).toEqual([]);
+    await callMcpAppTool({ ...request, approved: true });
+    expect(fixture.requests.filter(request => request.method === "tools/call")).toEqual([{
+      path: new URL(fixture.descriptor.url).pathname, method: "tools/call", privateAuth: true,
+      appHostCapability: true, params: { name: "execute_capability", arguments: request.arguments },
+    }]);
+    for (const toolName of toolNames) {
+      const serverName = identity === "direct" ? fixture.directName : privateName;
+      await writeJsoncFile(opencodeConfigPath(fixture.root), { permission: {
+        ...permission, [`${projectedMcpToolName(serverName, toolName)}*`]: "deny",
+      } });
+      fixture.requests.length = 0;
+      await expect(callMcpAppTool({ ...request, approved: true })).rejects.toMatchObject({ code: "tool_denied" });
+      expect(fixture.requests.filter(request => request.method === "tools/call")).toEqual([]);
+    }
+    await writeJsoncFile(opencodeConfigPath(fixture.root), { permission });
+    await writeOpenWorkConnectMcpAppHostAuthorization(fixture.config, WORKSPACE_ID, "Bearer rotated-fixture", fixture.descriptor.url);
+    fixture.requests.length = 0;
+    await expect(callMcpAppTool({ ...request, approved: true })).rejects.toMatchObject({ code: "stale_launch_context" });
+    expect(fixture.requests).toEqual([]);
+  });
+
   test("a read-only direct resolution forwards context without issuing an actionable lease", async () => {
     const fixture = await directConnectFixture();
     const app = await fixture.resolve({ sessionId: "session-direct", readOnly: true, engine: "v2" });
