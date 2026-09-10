@@ -90,6 +90,15 @@ test("redaction drops query strings and fragments from URLs in the message and s
   expect(report).toContain("https://app.openworklabs.com/signin");
 });
 
+test("redaction drops credentials embedded in a URL authority", () => {
+  expect(redactCrashText("fetch failed for https://svc:eval-secret-pass@example.test/path")).toBe(
+    "fetch failed for https://example.test/path",
+  );
+  expect(redactCrashText("fetch failed for https://svc:eval-secret-pass@example.test/path?code=c#f")).toBe(
+    "fetch failed for https://example.test/path",
+  );
+});
+
 test("redaction masks bare token-like pairs outside URLs", () => {
   expect(redactCrashText("Handoff rejected: token=eyJhbGci.payload grant=g-123 state=ok")).toBe(
     "Handoff rejected: token=[redacted] grant=[redacted] state=ok",

@@ -27,18 +27,21 @@ const SECRET_PAIR_PATTERN = /(token|grant|code|secret|key)=[^&\s]+/gi;
 
 /**
  * Messages and stacks can quote URLs whose query strings carry sign-in grants
- * or deep-link tokens. Same rule as the web error beacon (origin + path only),
- * plus a mask for bare `token=…` pairs. file:// asset paths stay intact.
+ * or deep-link tokens. Same rule as the web error beacon (origin + path only:
+ * no userinfo, query or fragment), plus a mask for bare `token=…` pairs.
+ * file:// asset paths stay intact.
  */
 export function redactCrashText(text: string): string {
   return text
     .replace(SECRET_PAIR_PATTERN, "$1=[redacted]")
     .replace(URL_PATTERN, (url) => {
-      const cut = url.search(/[?#]/);
-      if (cut === -1 || /^file:/i.test(url)) return url;
+      if (/^file:/i.test(url)) return url;
+      const withoutUserinfo = url.replace(/^([^/]*\/\/)[^/@]*@/, "$1");
+      const cut = withoutUserinfo.search(/[?#]/);
+      if (cut === -1) return withoutUserinfo;
       // Keep the `:line:col` a stack frame appends after a dev-server URL.
-      const position = /(:\d+){1,2}$/.exec(url)?.[0] ?? "";
-      return url.slice(0, cut) + position;
+      const position = /(:\d+){1,2}$/.exec(withoutUserinfo)?.[0] ?? "";
+      return withoutUserinfo.slice(0, cut) + position;
     });
 }
 
