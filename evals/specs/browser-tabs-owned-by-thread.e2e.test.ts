@@ -461,37 +461,48 @@ linkTest("a transcript link's menu copies its exact address and opens only its o
     await user.see(link);
   };
 
-  await user.rightClick(link);
-  const attached = await eventually(() => world.menuOverlay(), {
-    within: 15_000, until: value => value !== null, label: "the native overlay.html menu target appears",
+  // The link menu is a native OS popup: it has no DOM and no CDP target, so the
+  // development seam is the only way to read its entries or deliver a choice.
+  const menuOpen = (open: boolean) => eventually(() => world.nativeMenu(), {
+    within: 15_000, until: value => value.open === open,
+    label: open ? "the native menu is on screen" : "the native menu has closed",
   });
-  if (!attached) throw new Error("The link context menu has no native overlay surface.");
-  await using overlay = attached;
-  const menu = user.on(overlay);
-  const menuShown = (shown: boolean) => eventually(() => world.menuShown(overlay), {
-    within: 10_000, until: value => value === shown,
-    label: shown ? "the native link menu is rendered" : "the dismissed link menu is cleared",
-  });
+  const openMenu = async (target: Target) => {
+    await user.rightClick(target);
+    const shown = await menuOpen(true);
+    if (!shown.current) throw new Error("The native menu is open without a template.");
+    return shown.current;
+  };
+  const labels = (popup: { items: Array<{ type: string; label: string | null }> }) =>
+    popup.items.filter(item => item.type === "item").map(item => item.label);
+  const choose = async (popup: { items: Array<{ id: string | null; label: string | null }> }, label: string) => {
+    const id = popup.items.find(item => item.label === label)?.id;
+    if (!id) throw new Error(`The native menu offers no "${label}" entry.`);
+    expect(await world.chooseMenuItem(id)).toBe(true);
+    const closed = await menuOpen(false);
+    expect(closed.last).toMatchObject({ selectedId: id });
+  };
 
   await step("Right-click and Escape leave the transcript and every browser page unchanged", async () => {
-    await menuShown(true);
-    for (const label of ["Open in OpenWork", "Open in Default Browser", "Copy Link Address"]) {
-      await menu.see(menuItem(label));
-    }
-    // TargetRole excludes menu; keep its container semantics as a DOM observation.
-    expect(await world.menuLabels(overlay)).toEqual(["link context menu"]);
+    const popup = await openMenu(link);
+    const entries = labels(popup);
+    expect(entries.slice(0, 2)).toEqual(["Open in OpenWork", "Open in Default Browser"]);
+    expect(entries.at(-1)).toBe("Copy Link Address");
+    for (const installed of entries.slice(2, -1)) expect(installed).toMatch(/^Open in .+/);
+    expect(entries).not.toContain("Edit message");
+    expect(popup.items.filter(item => item.type === "item").every(item => item.enabled)).toBe(true);
+    // A native popup renders no HTML menu in the app document.
+    await user.notSee(menuItem("Open in OpenWork"));
     await user.notSee(menuItem("Edit message"));
     await unchanged();
-    await menu.press("Escape");
-    await menuShown(false);
+    await user.press("Escape");
+    const dismissed = await menuOpen(false);
+    expect(dismissed.last).toMatchObject({ selectedId: null });
     await unchanged();
   });
 
   await step("Copy Link Address copies the exact URL, not the whole message, without opening a page", async () => {
-    await user.rightClick(link);
-    await menuShown(true);
-    await menu.click(menuItem("Copy Link Address"));
-    await menuShown(false);
+    await choose(await openMenu(link), "Copy Link Address");
     // Clipboard reads require the app document to be focused.
     await user.click("composer");
     expect(await world.readClipboard()).toBe(world.linkUrl);
@@ -499,21 +510,18 @@ linkTest("a transcript link's menu copies its exact address and opens only its o
   });
 
   await step("Right-clicking nonlink message text still offers the message menu", async () => {
-    await user.rightClick({ text: world.note });
-    await user.see(menuItem("Edit message"));
-    await user.see(menuItem("Copy"));
-    await user.notSee(menuItem("Open in OpenWork"));
-    expect(await world.menuShown(overlay)).toBe(false);
-    await user.press("Escape");
+    const popup = await openMenu({ text: world.note });
+    const entries = labels(popup);
+    expect(entries).toEqual(expect.arrayContaining(["Edit message", "Copy"]));
+    expect(entries).not.toContain("Open in OpenWork");
     await user.notSee(menuItem("Edit message"));
+    expect(await world.dismissMenu()).toBe(true);
+    expect((await menuOpen(false)).last).toMatchObject({ selectedId: null });
     await unchanged();
   });
 
   const opened = await step("Open in OpenWork creates exactly one tab owned by the link's conversation", async () => {
-    await user.rightClick(link);
-    await menuShown(true);
-    await menu.click(menuItem("Open in OpenWork"));
-    await menuShown(false);
+    await choose(await openMenu(link), "Open in OpenWork");
     const state = await eventually(() => world.readBrowserState(), {
       within: 30_000,
       until: value => value.tabs.some(tab => tab.url === world.linkUrl && tab.id === value.activeTabId),
@@ -578,7 +586,7 @@ linkTest("a transcript link's menu copies its exact address and opens only its o
     expect(newPages).toHaveLength(1);
     expect(newPages[0].url).toBe(world.linkUrl);
     expect(await world.readMainUrl()).toBe(mainUrl);
-    expect(await world.menuShown(overlay)).toBe(false);
+    expect((await world.nativeMenu()).open).toBe(false);
   });
 });
 
