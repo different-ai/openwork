@@ -23,6 +23,7 @@ import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./me
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
+import { readRequiredUpdaterPolicy } from "./updater-policy.mjs";
 import {
   checkComputerUsePermissions,
   getComputerUseMcpCommand,
@@ -2850,6 +2851,14 @@ const { ensureAutoUpdater } = registerUpdaterIpc({
   platform: process.platform,
   arch: process.arch,
   assertActivation: assertDesktopActivation,
+  readUpdatePolicy: () => readRequiredUpdaterPolicy({
+    requiresPolicy: () => {
+      const bootstrap = workspaceStore.readDesktopBootstrapConfigSync();
+      return DESKTOP_DISTRIBUTION.flavor !== "public" || bootstrap.requireSignin === true
+        || Boolean(bootstrap.enterpriseActivation?.activatedAt);
+    },
+    getServerInfo: () => runtimeManager.openworkServerInfo(),
+  }),
 });
 
 if (!app.requestSingleInstanceLock()) {
