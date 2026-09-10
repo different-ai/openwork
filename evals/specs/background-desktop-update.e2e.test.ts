@@ -107,12 +107,12 @@ test("updates download outside Settings and offer a persistent, optional restart
   }, { within: 5_000, label: "Keep working dismisses the restart dialog", until: Boolean });
   expect(await world.snapshot()).toMatchObject({ installs: 0, installAttempts: 0 });
 
-  // The background behavior above is proven. Isolate the manual install-error
-  // retries below from another background check after a fresh policy arrives.
-  await world.openSettings();
-  await user.click({ role: "switch", label: "Check automatically" });
-  expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: false });
-  await world.openWorkspace();
+  // The background behavior above is proven. The first failed install below
+  // keeps "Check automatically" on: returning after the check interval is the
+  // trigger that used to restart the download loop, and only the updater's
+  // error/install guard keeps the counters still. The switch is then turned
+  // off so the second retry and the final install stay isolated from another
+  // background check after a fresh policy arrives.
   await world.setCustomBranding();
   await probe.eventually(world.snapshot, {
     within: 5_000, label: "custom logo is preserved instead of the default wordmark",
@@ -135,13 +135,18 @@ test("updates download outside Settings and offer a persistent, optional restart
       return true;
     }, { within: 5_000, label: "the failed restart dismisses its dialog", until: Boolean });
     await user.notSee({ text: "Restart to update" });
-    expect(await world.snapshot()).toMatchObject({ installAttempts: index + 1, installs: 0 });
+    // Automatic checks are still armed on the first failure and off on the second.
+    expect(await world.snapshot()).toMatchObject({ installAttempts: index + 1, installs: 0, automaticChecksEnabled: index === 0 });
     // Coming back after the check interval must not restart the download loop
     // on its own: the failure stays put until the person retries from Settings.
     await world.returnToApp();
     await world.openSettings();
     await user.see({ text: "Couldn't install the update" });
     expect(await world.snapshot()).toMatchObject({ checks: index + 6, downloads: index + 3, installAttempts: index + 1, installs: 0 });
+    if (index === 0) {
+      await user.click({ role: "switch", label: "Check automatically" });
+      expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: false, checks: 6, downloads: 3 });
+    }
     await user.click({ role: "button", text: "Check now" });
     await probe.eventually(world.snapshot, {
       within: 5_000, label: "the user re-downloads after the failed install through Settings",
