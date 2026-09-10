@@ -42,12 +42,22 @@ const effortTest = spec.world(modelPickerEffortWeb, {
 
 effortTest("MODEL-01 selected reasoning effort survives reload and reaches the native provider", async ({ world, user, probe, step, evidence }) => {
   expect(world.engine).toBe("v2");
+  const runtime = await world.runtimeFacts();
+  expect(runtime.browser).toContain("HeadlessChrome");
+  expect(runtime.electronBridge).toBe(false);
+  evidence.recordJsonArtifact("MODEL-01 headless runtime", runtime);
   const prefix = `/workspace/${world.workspace.workspaceId}/opencode2/api`;
-  const status = await probe.desktopApi("/experimental/engine-v2-preview/status");
+  const status = await world.readNative("/experimental/engine-v2-preview/status");
+  expect(status.status).toBe(200);
   expect(status.body).toMatchObject({ running: true, chatRouting: true });
-  const catalog = await probe.desktopApi(`${prefix}/model`);
+  const catalog = await world.readNative(`${prefix}/model`);
+  expect(catalog.status).toBe(200);
+  expect(catalog.body).toMatchObject({ data: expect.arrayContaining([
+    expect.objectContaining({ id: world.modelId, providerID: world.providerId, variants: [{ id: "low" }, { id: "high" }, { id: "CustomExact" }] }),
+    expect.objectContaining({ id: "standard", providerID: world.providerId, variants: [] }),
+  ]) });
+  expect(JSON.stringify(catalog.body)).not.toMatch(/synthetic-effort-key|"settings":|"providerOptions":|"headers":/);
   evidence.recordJsonArtifact("MODEL-01 native catalog", catalog);
-  expect(JSON.stringify(catalog.body)).toContain('"id":"high"');
   await user.click({ role: "button", label: "Change model" });
   await step("only advertised effort choices are selectable", async () => {
     await user.click({ role: "button", label: /^Effort/ });
@@ -64,7 +74,7 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     const requests = await world.requests();
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({ model: world.modelId, reasoningEffort: "high" });
-    const native = await probe.desktopApi(`${prefix}/session/${world.session.sessionId}`);
+    const native = await world.readNative(`${prefix}/session/${world.session.sessionId}`);
     expect(native.body).toMatchObject({ data: { model: { id: world.modelId, providerID: world.providerId, variant: "high" } } });
     evidence.recordJsonArtifact("MODEL-01 first request and native session", { requests, native });
     await user.reload();
@@ -88,7 +98,7 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     await user.click("Run task");
     await probe.eventually(() => world.requests(), { within: 90_000, label: "custom effort reaches provider", until: (requests) => requests.length === 3 });
     expect((await world.requests()).map((request) => request.reasoningEffort)).toEqual(["high", "high", "low"]);
-    const native = await probe.desktopApi(`${prefix}/session/${world.session.sessionId}`);
+    const native = await world.readNative(`${prefix}/session/${world.session.sessionId}`);
     expect(native.body).toMatchObject({ data: { model: { id: world.modelId, providerID: world.providerId, variant: "CustomExact" } } });
     evidence.recordJsonArtifact("MODEL-01 custom effort request and native session", { requests: await world.requests(), native });
   });
@@ -97,10 +107,26 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     await user.click({ role: "button", label: "Change model" });
     await user.click({ role: "button", label: /^Model\s+Reasoning witness/ });
     await user.type({ placeholder: "Search models..." }, "Standard witness");
-    await user.click({ role: "button", label: /Standard witness/ });
+    await user.click({ role: "option", label: /^Standard witness/ });
+    await user.notSee({ placeholder: "Search models..." });
     await user.click({ role: "button", label: "Change model" });
     await user.see({ role: "button", label: /^Effort\s+Unavailable/ });
-    expect(await probe.eval(() => [...document.querySelectorAll("button")].some((button) =>
-      button.textContent?.includes("Effort") && button.textContent.includes("Unavailable") && button.disabled))).toBe(true);
+    const disabled = await probe.dom('[data-slot="model-select-root"] button:disabled');
+    expect(disabled.elements.some((button) => button.text.includes("Effort") && button.text.includes("Unavailable"))).toBe(true);
+    await user.press("Escape");
+    await probe.eventually(() => probe.dom('[data-slot="model-select-root"]'), {
+      within: 5_000, label: "effort picker finishes closing", until: (snapshot) => snapshot.elements.length === 0,
+    });
+    await user.notSee({ role: "button", label: /^Effort\s+Unavailable/ });
+    await user.type("composer", world.prompt);
+    await user.click("Run task");
+    await probe.eventually(() => world.requests(), { within: 90_000, label: "unsupported model omits effort", until: (requests) => requests.length === 4 });
+    const requests = await world.requests();
+    expect(requests[3]).toMatchObject({ model: "standard", reasoningEffort: null });
+    const native = await world.readNative(`${prefix}/session/${world.session.sessionId}`);
+    expect(native.body).toMatchObject({ data: { model: { id: "standard", providerID: world.providerId } } });
+    expect(JSON.stringify(native.body)).not.toContain('"variant":');
+    evidence.recordJsonArtifact("MODEL-01 unsupported model request and native session", { requests, native });
+    await user.see("Run task", { timeoutMs: 30_000 });
   });
 });

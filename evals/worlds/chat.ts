@@ -557,6 +557,19 @@ export async function modelPickerEffortWeb(seed: Seed) {
   } }, engine);
   const session = await seedSessionRetry(seed, app, { title: "Model effort contract" });
   return { app, engine, workspace, session, prompt, providerId, modelId,
+    runtimeFacts: async () => ({
+      ...await seed.evalIn(app, () => ({ browser: navigator.userAgent, electronBridge: Boolean(window.__OPENWORK_ELECTRON__) })),
+      sourceSha: app.actualSourceSha,
+    }),
+    readNative: (path: string) => seed.evalIn(app, browserScript(async (path) => {
+      const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+      const response = await fetch(base + path, {
+        headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") },
+        signal: AbortSignal.timeout(15_000),
+      });
+      const body: unknown = await response.json();
+      return { status: response.status, body };
+    }, [path]), { awaitPromise: true, timeoutMs: 20_000 }),
     requests: async () => (await witness.agentRequests({ promptMarker: prompt })).filter((request) => request.kind === "final"),
   };
 }
