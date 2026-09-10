@@ -1,20 +1,40 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NextRequest } from "next/server";
 
 const previousDenBaseUrl = process.env.DEN_BASE_URL;
 const previousDenApiBase = process.env.DEN_API_BASE;
+const previousDenApiPublicUrl = process.env.DEN_API_PUBLIC_URL;
 const previousPublicOrigin = process.env.DEN_WEB_PUBLIC_ORIGIN;
+
+beforeEach(() => {
+  delete process.env.DEN_API_PUBLIC_URL;
+});
 
 afterEach(() => {
   if (previousDenBaseUrl === undefined) delete process.env.DEN_BASE_URL;
   else process.env.DEN_BASE_URL = previousDenBaseUrl;
   if (previousDenApiBase === undefined) delete process.env.DEN_API_BASE;
   else process.env.DEN_API_BASE = previousDenApiBase;
+  if (previousDenApiPublicUrl === undefined) delete process.env.DEN_API_PUBLIC_URL;
+  else process.env.DEN_API_PUBLIC_URL = previousDenApiPublicUrl;
   if (previousPublicOrigin === undefined) delete process.env.DEN_WEB_PUBLIC_ORIGIN;
   else process.env.DEN_WEB_PUBLIC_ORIGIN = previousPublicOrigin;
 });
 
 describe("Den API redirect compatibility route", () => {
+  test("sends browsers to DEN_API_PUBLIC_URL when DEN_API_BASE is an in-network upstream", async () => {
+    process.env.DEN_BASE_URL = "http://localhost:13005";
+    process.env.DEN_API_BASE = "http://den:8788";
+    process.env.DEN_API_PUBLIC_URL = "http://localhost:18788";
+    delete process.env.DEN_WEB_PUBLIC_ORIGIN;
+
+    const { GET } = await import("../den/[...path]/route.ts");
+    const response = await GET(new NextRequest("http://localhost:13005/api/den/health"));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost:18788/health");
+  });
+
   test("redirects legacy /api/den callers to the api-prefixed host", async () => {
     delete process.env.DEN_BASE_URL;
     delete process.env.DEN_API_BASE;
