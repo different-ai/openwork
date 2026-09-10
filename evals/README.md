@@ -64,6 +64,14 @@ pnpm evals:pr
 pnpm evals:e2e app-smoke
 ```
 
+`pnpm --dir evals typecheck` (also `pnpm evals:typecheck`) type-checks every
+spec, world, driver, script, and package under `evals/` and must exit 0; CI runs
+it in the test-framework job. It compiles with the bundler resolution Vitest
+uses and reports only diagnostics that belong to `evals/` (or to files the
+config includes explicitly), because the `apps/` and `ee/` sources a spec pulls
+in are compiled by their own projects with their own flags. Nothing inside
+`evals/` is filtered: a spec that no longer matches the testkit API is red here.
+
 ### E2E CLI
 
 Run the E2E lane with `pnpm evals:e2e [test-names...]`. Naming a test
@@ -636,6 +644,7 @@ already running in the current page still needs its own cleanup.
 `pnpm evals:check-browser` checks browser callback bodies, argument/result types,
 closure captures (including imported aliases), and raw CDP execution bypasses.
 It runs in the test-framework CI command. Unlike running a TypeScript test,
-this invokes the TypeScript checker. The full `evals:typecheck` also includes
-legacy server imports; the browser check does not suppress their diagnostics or
-claim that those unrelated projects compile.
+this invokes the TypeScript checker, scoped to browser callback bodies and the
+CDP browser-script modules. `pnpm --dir evals typecheck` (see Install and run)
+checks everything else under `evals/`; neither claims that the unrelated `apps/`
+or `ee/` projects a spec imports compile under evals flags.
