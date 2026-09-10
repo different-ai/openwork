@@ -27,10 +27,11 @@ For Kubernetes installs, use the published Helm chart:
 ```bash
 helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
   --version <chart-version> \
+  --set image.tag=<chart-version> \
   -f values.prod.yaml
 ```
 
-The chart pulls the matching GHCR images for `openwork-den-api`, `openwork-den-web`, and optional `openwork-inference` unless you mirror them into an internal registry.
+`--version` pins the chart only. The published chart defaults `image.tag` to `latest`, which floats to the newest release on every pull, so set `image.tag` (on the command line or in `values.prod.yaml`) to the same version as the chart. The images are `openwork-den-api`, `openwork-den-web`, and optional `openwork-inference` on GHCR unless you mirror them into an internal registry.
 
 Choose a tested provider path in [Deploy to your cloud](/self-host/deploy-to-your-cloud/overview). The public guides cover AWS, Azure, and Google Cloud, including managed MySQL, ingress, DNS, TLS, migrations, and secure creation of the first administrator.
 
@@ -76,7 +77,7 @@ For containerized services, start from the [Docker packaging](https://github.com
 For production, configure encryption explicitly:
 
 - Enable encryption at rest for the MySQL-compatible database, database backups, object storage, worker volumes, and logs that may contain operational metadata.
-- Require TLS for application-to-database traffic. `sslmode=require` encrypts the connection but is not certificate identity verification. For standard MySQL with certificate verification, use `sslmode=verify-ca`, `sslmode=verify-full`, or a strict equivalent such as `sslaccept=strict`, and provide the CA bundle through the database platform or Helm `customCa`.
+- Require TLS for application-to-database traffic. In OpenWork, `sslmode=require`, `sslmode=verify-ca`, `sslmode=verify-full`, and `sslaccept=strict` all verify the server certificate chain and hostname (Den's MySQL client treats `verify-ca` the same as `verify-full`), so the server certificate must chain to a trusted CA and carry the database hostname in its SAN. Use `sslmode=verify-full` and provide a private CA bundle through the database platform or Helm `customCa`. Only `sslaccept=accept` encrypts without certificate verification; keep it for smoke tests.
 - Keep the local Docker MySQL URL (`mysql://root:password@127.0.0.1:3306/openwork_den`) for development only; it is not a production security posture.
 - Set a unique `DEN_DB_ENCRYPTION_KEY` of at least 32 characters. OpenWork uses it to encrypt selected sensitive database columns, but it does not replace infrastructure-level encryption at rest.
 

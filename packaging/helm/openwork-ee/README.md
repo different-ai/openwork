@@ -16,10 +16,14 @@ Published releases are available as an OCI Helm chart:
 ```bash
 helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
   --version REPLACE_OPENWORK_VERSION \
+  --set image.tag=REPLACE_OPENWORK_VERSION \
   -f values.prod.yaml
 ```
 
-Use the matching image tag in `values.prod.yaml`:
+`--version` pins the chart only. The chart defaults `image.tag` to `latest`,
+which floats to the newest published release on every pull, so always set
+`image.tag` to the same version as `--version`, either with `--set` as above or
+in `values.prod.yaml`.
 
 Create a values file for the target environment:
 
@@ -357,10 +361,13 @@ secret:
     databaseUrl: "mysql://openwork:REPLACE_DB_PASSWORD@mysql.example.internal:3306/openwork_den?sslmode=verify-full"
 ```
 
-`sslmode=verify-ca`, `sslmode=verify-full`, and `sslaccept=strict` enable strict
-certificate verification. `sslaccept=accept` keeps TLS enabled but does not
-verify the certificate chain, so use it only for smoke tests or while preparing
-the CA bundle.
+`sslmode=require`, `sslmode=verify-ca`, `sslmode=verify-full`, and
+`sslaccept=strict` all enable strict certificate verification in Den's MySQL
+client: the chain must be trusted and the certificate must carry the database
+hostname in its SAN (`verify-ca` behaves like `verify-full`). A private-CA
+database therefore needs `customCa` with every one of these modes. Only
+`sslaccept=accept` keeps TLS enabled without verifying the certificate chain, so
+use it only for smoke tests or while preparing the CA bundle.
 
 The custom CA is release-wide for Node.js processes in this chart. Treat it as a
 global trust decision for outbound TLS from those workloads, and include only CA
@@ -528,13 +535,20 @@ In another terminal:
 
 ```bash
 curl --fail --silent --show-error \
-  http://127.0.0.1:3005/api/den/openapi.json >/dev/null
+  http://127.0.0.1:3005/api/auth/get-session >/dev/null
 ```
 
-Your observability backend should show `openwork-den-web` and
-`openwork-den-api`, with one connected trace for the request. Logs from both
+Den Web proxies `/api/auth/*` server-side to Den API, so this single request
+produces a span in `openwork-den-web` and a span in `openwork-den-api`; an
+anonymous session lookup returns `200` with a `null` body. Logs from both
 services carry trace and span IDs. Den API also exports Hono request-duration
 and active-request metrics.
+
+Do not use `/api/den/...` for this check: Den Web answers those paths with a
+`307` redirect to the public API origin instead of proxying them, `curl --fail`
+treats the redirect as success, and Den API never receives the request. Health
+paths (`/api/health`, `/api/ready`, and Den API `/health` and `/ready`) are
+excluded from tracing on purpose.
 
 ### Endpoint and troubleshooting notes
 
