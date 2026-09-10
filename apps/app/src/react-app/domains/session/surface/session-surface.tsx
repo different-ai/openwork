@@ -77,6 +77,7 @@ import { useShellConfig } from "@/react-app/shell/shell-config";
 import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog";
 import { SessionDebugPanel } from "./debug-panel";
 import { deriveComposerHistory, deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
+import { pendingMessageParts, useDisplayedMessages } from "./use-displayed-messages";
 import {
   ADMISSION_OUTCOME_GRACE_MS,
   createSingleFlight,
@@ -972,33 +973,6 @@ function revokeUnownedAttachmentPreviews(attachments: ComposerAttachment[]) {
   }
 }
 
-function pendingMessageParts(text: string, attachments: ComposerAttachment[], serverParts: UIMessage["parts"] = []) {
-  const parts = [...serverParts];
-  if (text && !parts.some((part) => part.type === "text" && part.text)) parts.unshift({ type: "text", text });
-  const matched = new Set<number>();
-  let attachmentsReady = true;
-  for (const attachment of attachments) {
-    const filename = resolveAttachmentFileMetadata(attachment.file).filename;
-    // Compression can change an image's extension, but never its submitted bytes here.
-    const compressedFilename = attachment.kind === "image"
-      ? resolveAttachmentFileMetadata({ name: `${attachment.file.name.replace(/\.[^.]+$/, "") || "image"}.jpg`, type: "image/jpeg" }).filename
-      : filename;
-    const index = serverParts.findIndex((part, index) => !matched.has(index) && part.type === "file"
-      && (part.filename === filename || part.filename === compressedFilename));
-    if (index >= 0) matched.add(index);
-    const part = serverParts[index];
-    const usable = part?.type === "file" && (attachment.kind === "image"
-      ? part.mediaType.startsWith("image/") && /^(data:image\/|https?:\/\/)/.test(part.url)
-      : /^(data:|file:\/\/|https?:\/\/)/.test(part.url));
-    if (usable) continue;
-    attachmentsReady = false;
-    const preview = { type: "file", filename: attachment.name, mediaType: attachment.mimeType, url: attachment.previewUrl ?? "" } satisfies UIMessage["parts"][number];
-    if (part) parts[parts.indexOf(part)] = preview;
-    else parts.push(preview);
-  }
-  return { parts, attachmentsReady };
-}
-
 function draftWithEditedText(draft: ComposerDraft, text: string): ComposerDraft {
   return {
     ...draft,
@@ -1547,20 +1521,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
       .filter((item) => !remainingPendingMessages.some((remaining) => remaining.draft === item.draft))
       .flatMap((item) => item.draft.attachments));
   }, [pendingMessages, sessionOwner, remainingPendingMessages]);
-  const renderedMessages = useMemo(() => {
-    const pending: UIMessage[] = [];
-    if (autoSending) {
-      const pendingComposer = autoSendPayload?.composer;
-      const pendingText = pendingComposer?.draft ?? draft;
-      const pendingPasteParts = pendingComposer?.pasteParts ?? pasteParts;
-      if (pendingText.trim() || (pendingComposer?.attachments.length ?? attachments.length)) pending.push({
-        id: `${props.sessionId}:first-send`,
-        role: "user",
-        parts: pendingMessageParts(resolvePastedTextPlaceholders(pendingText, pendingPasteParts).replace(/\[attachment [^\]]+\]/g, ""), pendingComposer?.attachments ?? attachments).parts,
-      });
-    }
-    return [...pendingReconciliation.messages, ...pending, ...evalMarkdownMessages];
-  }, [attachments, autoSendPayload, autoSending, draft, evalMarkdownMessages, pasteParts, pendingReconciliation.messages, props.sessionId]);
+  const renderedMessages = useDisplayedMessages({
+    messages: pendingReconciliation.messages,
+    extraMessages: evalMarkdownMessages,
+    sessionId: props.sessionId,
+    autoSending,
+    autoSendComposer: autoSendPayload?.composer,
+    composer: { draft, attachments, pasteParts },
+  });
   const renderedMessagesRef = useRef(renderedMessages);
   useEffect(() => {
     renderedMessagesRef.current = renderedMessages;

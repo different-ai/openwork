@@ -78,12 +78,32 @@ function sameStructure(a: Plan, b: Plan) {
 
 /** Whole groups mount once, then stay mounted. The key cancels work on a session switch. */
 export function ProgressiveMessageList<T>(props: ProgressiveMessageListProps<T>) {
-  return <ProgressiveGroups key={props.viewport?.sessionKey ?? "eager"} {...props} />
+  const { groups, getGroupKey, getMessageIds } = props
+  const keys = React.useMemo(() => groups.map(getGroupKey), [groups, getGroupKey])
+  const anchorMessageId = props.viewport?.anchorMessageId
+  const anchorIndex = React.useMemo(() => anchorMessageId
+    ? groups.findIndex((group) => getMessageIds(group).includes(anchorMessageId))
+    : -1, [groups, getMessageIds, anchorMessageId])
+  return <ProgressiveGroups key={props.viewport?.sessionKey ?? "eager"} {...props} keys={keys} anchorIndex={anchorIndex} />
+}
+
+type PreparedGroupsProps<T> = ProgressiveMessageListProps<T> & { keys: string[]; anchorIndex: number }
+
+// Internal mount batches reuse settled output. Parent callback changes must
+// invalidate it too: the callback captures streaming, last-step and other props.
+class RenderedGroup<T> extends React.PureComponent<{
+  group: T
+  index: number
+  renderGroup: ProgressiveMessageListProps<T>["renderGroup"]
+}> {
+  render() {
+    return this.props.renderGroup(this.props.group, this.props.index)
+  }
 }
 
 // getSnapshotBeforeUpdate reads the actual pre-mutation DOM, including any scroll
 // since a batch was queued. An effect's previous-commit anchor would snap readers back.
-class ProgressiveGroups<T> extends React.Component<ProgressiveMessageListProps<T>, MountState> {
+class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, MountState> {
   state: MountState = {
     mounted: new Set(),
     initialized: false,
@@ -91,13 +111,9 @@ class ProgressiveGroups<T> extends React.Component<ProgressiveMessageListProps<T
     width: this.props.viewport?.viewportWidth ?? 0,
   }
 
-  static getDerivedStateFromProps<T>(props: ProgressiveMessageListProps<T>, state: MountState): MountState | null {
-    const keys = props.groups.map(props.getGroupKey)
+  static getDerivedStateFromProps<T>(props: PreparedGroupsProps<T>, state: MountState): MountState | null {
+    const { keys, anchorIndex } = props
     if (!keys.length) return null
-    const anchorMessageId = props.viewport?.anchorMessageId
-    const anchorIndex = anchorMessageId
-      ? props.groups.findIndex((group) => props.getMessageIds(group).includes(anchorMessageId))
-      : -1
     let mounted = state.mounted
     const last = keys[keys.length - 1]
     if (!props.viewport || props.viewport.revealAll) {
@@ -327,8 +343,7 @@ class ProgressiveGroups<T> extends React.Component<ProgressiveMessageListProps<T
   }
 
   render() {
-    const { groups, getGroupKey, renderGroup, viewport, header, children, className } = this.props
-    const keys = groups.map(getGroupKey)
+    const { groups, keys, renderGroup, viewport, header, children, className } = this.props
     const cache = heightCache.get(this.cacheKey())
     const estimateScope = JSON.stringify([this.state.width, viewport?.historyComplete])
     if (estimateScope !== this.estimateScope) {
@@ -373,7 +388,7 @@ class ProgressiveGroups<T> extends React.Component<ProgressiveMessageListProps<T
         ? <div key={segment.key} ref={this.trackNode} data-thread-placeholder={segment.key} aria-hidden="true"
             style={{ height: segment.height, flexShrink: 0, overflowAnchor: "none" }} />
         : <div key={segment.key} ref={this.trackNode} data-thread-group={keys[segment.start]} className="min-w-0 shrink-0 empty:hidden">
-            {renderGroup(groups[segment.start], segment.start)}
+            <RenderedGroup group={groups[segment.start]} index={segment.start} renderGroup={renderGroup} />
           </div>)}
       {children}
     </div>

@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
-import { act, StrictMode } from "react"
+import { act, createContext, StrictMode, useContext, useEffect, useState, type ReactNode } from "react"
 import { createRoot } from "react-dom/client"
 import { ProgressiveMessageList, type MessageListViewport } from "../src/components/chat/progressive-message-list"
 
@@ -66,7 +66,7 @@ function groups(count = 80): Group[] {
   return Array.from({ length: count }, (_, index) => ({ id: `g${index}`, messages: [{ id: `m${index}`, height: 240 }] }))
 }
 
-function fixture(initial = groups(), options: Partial<MessageListViewport> = {}, strict = false) {
+function fixture(initial = groups(), options: Partial<MessageListViewport> = {}, strict = false, fixedGeometry = false) {
   const container = document.createElement("div")
   document.body.append(container)
   const root = createRoot(container)
@@ -78,6 +78,8 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
   const writes: number[] = []
   const ready = mock(() => {})
   const rendered: number[] = []
+  const key = mock((group: Group) => group.id)
+  const ids = mock((group: Group) => group.messages.map((message) => message.id))
   let viewport: MessageListViewport = {
     sessionKey: `progressive-${++sessionId}`, scrollRef: { current: container }, viewportWidth: width,
     historyComplete: true, stickyBottom: () => sticky, onReady: ready, ...options,
@@ -87,6 +89,7 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
     return data.flatMap((group) => group.messages).find((message) => message.id === id)?.height ?? 0
   }
   const height = (node: Element): number => {
+    if (fixedGeometry) return node === container ? data.length * 248 : 240
     if (node instanceof HTMLElement && node.hasAttribute("data-thread-placeholder")) return Number.parseFloat(node.style.height) || 0
     if (node.hasAttribute("data-message-id")) return messageHeight(node)
     if (node.hasAttribute("data-thread-group")) return [...node.children].reduce((sum, child) => sum + height(child), 0)
@@ -106,6 +109,7 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
   const originalRect = HTMLElement.prototype.getBoundingClientRect
   spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
     if (this === container) return new DOMRect(0, 40, width, 200)
+    if (fixedGeometry && container.contains(this)) return new DOMRect(0, 40, width, 240)
     if (container.contains(this)) return new DOMRect(0, 40 + contentTop(this) - container.scrollTop, width, height(this))
     return originalRect.call(this)
   })
@@ -126,14 +130,15 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
   }
   cleanups.push(unmount)
   return {
-    container, ready, writes, rendered, unmount,
-    async render(next = data, update: Partial<MessageListViewport> = {}) {
+    container, ready, writes, rendered, key, ids, unmount,
+    async render(next = data, update: Partial<MessageListViewport> = {}, renderer?: (group: Group, index: number) => ReactNode) {
       data = next
       viewport = { ...viewport, ...update }
       const list = <ProgressiveMessageList
-        groups={data} viewport={viewport} getGroupKey={(group) => group.id} getMessageIds={(group) => group.messages.map((message) => message.id)}
+        groups={data} viewport={viewport} getGroupKey={key} getMessageIds={ids}
         renderGroup={(group, index) => {
           rendered.push(index)
+          if (renderer) return renderer(group, index)
           return group.messages.map((message) => <div key={message.id} data-message-id={message.id}>{message.id}</div>)
         }}
       />
@@ -158,6 +163,95 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
 }
 
 describe("progressive whole-group rendering", () => {
+  for (const count of [80, 800, 1600]) {
+    test(`invokes renderGroup only ${count} times while backfilling ${count} groups`, async () => {
+      const data = groups(count)
+      const view = fixture(data, { anchorMessageId: `m${count - 1}` }, false, true)
+      await view.render()
+      expect(view.rendered).toHaveLength(8)
+      for (let index = 8; index < count; index += 8) await batch()
+      expect(view.mounted).toHaveLength(count)
+      expect(view.rendered).toHaveLength(count)
+      expect(view.key).toHaveBeenCalledTimes(count)
+      expect(view.ids).toHaveBeenCalledTimes(count)
+      expect(frames.size).toBe(0)
+    })
+  }
+
+  test("invalidates parent render captures and preserves state across batches, live updates, index shifts and Find", async () => {
+    let mounts = 0
+    let unmounts = 0
+    function StatefulTool({ group, index, phase, last }: { group: Group; index: number; phase: string; last: boolean }) {
+      const [expanded, setExpanded] = useState(false)
+      useEffect(() => { mounts++; return () => { unmounts++ } }, [])
+      return <button data-message-id={group.messages[0].id} onClick={() => setExpanded(!expanded)}>
+        {`${group.messages.length}:${index}:${phase}:${last}:${expanded}`}
+      </button>
+    }
+    let data = groups()
+    const view = fixture(data)
+    const render = (phase: string) => view.render(data, {}, (group, index) =>
+      <StatefulTool group={group} index={index} phase={phase} last={index === data.length - 1} />)
+    await render("streaming")
+    const tail = view.message("m79")
+    await act(async () => tail.click())
+    await batch()
+    expect(view.rendered).toHaveLength(16)
+    expect(tail.textContent).toBe("1:79:streaming:true:true")
+    view.rendered.length = 0
+    await render("settled")
+    expect(view.rendered).toHaveLength(16)
+    expect(tail.textContent).toBe("1:79:settled:true:true")
+    data = data.map((group) => group.id === "g79" ? { ...group, messages: [...group.messages, { id: "delta", height: 40 }] } : group)
+    await render("streaming")
+    expect(tail.textContent).toBe("2:79:streaming:true:true")
+    data = [{ id: "prefix", messages: [{ id: "prefix", height: 40 }] }, ...data,
+      { id: "suffix", messages: [{ id: "suffix", height: 40 }] }]
+    await render("streaming")
+    expect(tail.textContent).toBe("2:80:streaming:false:true")
+    const renderer = (group: Group, index: number) => <StatefulTool group={group} index={index} phase="settled" last={index === data.length - 1} />
+    await view.render(data, { revealAll: true }, renderer)
+    expect(view.mounted).toHaveLength(82)
+    await view.render(data, { revealAll: false }, renderer)
+    expect(view.message("m79")).toBe(tail)
+    expect(tail.textContent).toBe("2:80:settled:false:true")
+    expect(mounts).toBe(82)
+    expect(unmounts).toBe(0)
+  })
+
+  test("stable callbacks still update changed groups and indexes, and descendants receive context without remounting", async () => {
+    const context = createContext("initial")
+    function Content({ group, index }: { group: Group; index: number }) {
+      const value = useContext(context)
+      return <div data-message-id={group.id}>{`${group.messages.length}:${index}:${value}`}</div>
+    }
+    const container = document.createElement("div")
+    document.body.append(container)
+    const root = createRoot(container)
+    cleanups.push(async () => { await act(async () => root.unmount()); container.remove() })
+    const renderGroup = mock((group: Group, index: number) => <Content group={group} index={index} />)
+    const getGroupKey = (group: Group) => group.id
+    const getMessageIds = (group: Group) => group.messages.map((message) => message.id)
+    let data = groups(2)
+    const render = async (value: string) => { await act(async () => root.render(<context.Provider value={value}>
+      <ProgressiveMessageList groups={data} getGroupKey={getGroupKey} getMessageIds={getMessageIds} renderGroup={renderGroup} />
+    </context.Provider>)) }
+    await render("initial")
+    const first = container.querySelector('[data-message-id="g0"]')
+    await render("updated")
+    expect(renderGroup).toHaveBeenCalledTimes(2)
+    expect(first?.textContent).toBe("1:0:updated")
+    data = [{ ...data[0], messages: [...data[0].messages, { id: "new", height: 40 }] }, data[1]]
+    await render("updated")
+    expect(renderGroup).toHaveBeenCalledTimes(3)
+    expect(first?.textContent).toBe("2:0:updated")
+    data = [data[1], data[0]]
+    await render("updated")
+    expect(renderGroup).toHaveBeenCalledTimes(5)
+    expect(first?.textContent).toBe("2:1:updated")
+    expect(container.querySelector('[data-message-id="g0"]')).toBe(first)
+  })
+
   test("reserves both sides of a saved middle preview and keeps its anchor mounted when the full assistant group arrives", async () => {
     const full = groups(80);
     const reading = full[40];
@@ -194,6 +288,7 @@ describe("progressive whole-group rendering", () => {
     expect(view.complete).toBe("true")
     expect(view.placeholders.length).toBe(0)
     expect(view.message("m79")).toBe(tail)
+    expect(view.rendered).toHaveLength(80)
     expect(frames.size).toBe(0)
   })
 
