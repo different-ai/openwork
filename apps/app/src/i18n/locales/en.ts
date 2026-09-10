@@ -1075,7 +1075,7 @@ export default {
   "model_picker.recommended": "Recent",
   "notifications.clear_all": "Clear all",
   "notifications.empty": "No notifications yet",
-  "notifications.empty_hint": "Updates from OpenWork Cloud and your workspaces will show up here.",
+  "notifications.empty_hint": "Background updates show up here: new models, extension changes, applied reloads, and errors that need your attention. Confirmations of your own actions, like archiving a session, appear briefly instead.",
   "notifications.engine_reloaded": "Updates applied",
   "notifications.just_now": "Just now",
   "notifications.reconnect_failed": "Couldn't reconnect to the OpenWork server",
