@@ -1003,10 +1003,13 @@ export function SessionRoute() {
     return () => window.removeEventListener(openModelPickerEvent, handler);
   }, []);
   const entitledOrgDefaultModel = useMemo(() => {
+    const runtimeProviderList = cloudProviderList ?? providerListQuery.data;
     return resolveOrgDefaultModelReplacement({
-      runtimeOptions: providerListModelEntitlementOptions(
-        cloudProviderList ?? providerListQuery.data,
-      ),
+      runtimeOptions: providerListModelEntitlementOptions(runtimeProviderList),
+      // Same pending rule as computeModelAvailability: a connected workspace
+      // engine whose catalog has not answered (e.g. still reloading after a
+      // provider was configured) must not be read as "provider missing".
+      runtimeCatalogPending: Boolean(selectedWorkspaceId && opencodeClient) && !runtimeProviderList,
       assignedOptions: organizationAssignedModelOptions,
       currentDefault: local.prefs.defaultModel,
       restrictToCloud: restrictToCloudProviders,
@@ -1016,9 +1019,11 @@ export function SessionRoute() {
     checkDesktopRestriction,
     cloudProviderList,
     local.prefs.defaultModel,
+    opencodeClient,
     organizationAssignedModelOptions,
     providerListQuery.data,
     restrictToCloudProviders,
+    selectedWorkspaceId,
   ]);
   useEffect(() => {
     if (entitledOrgDefaultModel) writeStoredDefaultModel(entitledOrgDefaultModel);
