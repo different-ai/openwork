@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, jest, setSystemTime, spyOn, test } from "bun:test";
-import type { PermissionV2Request, QuestionRequest, SessionStatus } from "@opencode-ai/sdk/v2/client";
+import { afterEach, describe, expect, jest, setSystemTime, spyOn, test } from "bun:test";
+import type { PermissionV2Request, SessionStatus } from "@opencode-ai/sdk/v2/client";
 
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { markTaskRunStart, takeTaskRunStart } from "../src/app/lib/analytics";
@@ -14,7 +14,6 @@ import {
   __resetWorkspaceSyncReconcileHealthForTest,
   __revalidateWorkspaceSyncsForTest,
   __setWorkspaceSessionSyncPermissionFetcherForTest,
-  __setWorkspaceSessionSyncQuestionFetcherForTest,
   __setWorkspaceSessionSyncStatusFetcherForTest,
   __setWorkspaceSessionSyncSubscriptionFactoryForTest,
   ensureWorkspaceSessionSync,
@@ -177,11 +176,6 @@ function applyCompletedToolAndFinalAnswer(input: SyncInput) {
   } as any);
 }
 
-beforeEach(() => {
-  // Terminal edges re-read pending questions; keep that read off the network.
-  __setWorkspaceSessionSyncQuestionFetcherForTest(async () => []);
-});
-
 afterEach(() => {
   jest.restoreAllMocks();
   takeTaskRunStart(sessionId);
@@ -192,7 +186,6 @@ afterEach(() => {
   __setWorkspaceSessionSyncSubscriptionFactoryForTest(null);
   __setWorkspaceSessionSyncStatusFetcherForTest(null);
   __setWorkspaceSessionSyncPermissionFetcherForTest(null);
-  __setWorkspaceSessionSyncQuestionFetcherForTest(null);
   useSessionActivityStore.setState({ recordsByWorkspaceId: {}, statusesByWorkspaceId: {} });
   useWorkspaceSyncStreamStore.setState({ phasesByKey: {} });
   __resetWorkspaceSyncReconcileHealthForTest();
@@ -783,28 +776,6 @@ describe("active session status reconciliation", () => {
     expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("waiting");
   });
 
-  test("a terminal edge clears a question the engine dropped without a rejected event", async () => {
-    const { input } = createTestSync();
-    const childSessionId = "delegated-child";
-    const question = (id: string): QuestionRequest => ({
-      id: `question-${id}`, sessionID: id,
-      questions: [{ header: "Format", question: "Which format?", options: [{ label: "Checklist", description: "Use it" }] }],
-    });
-    for (const id of [childSessionId, "unrelated-root"]) {
-      __applySessionSyncEventForTest(input, { type: "question.asked", properties: question(id) });
-    }
-    // Stop interrupts the child's question tool: the engine forgets the request
-    // silently, so only a fresh list read shows it is gone.
-    __setWorkspaceSessionSyncQuestionFetcherForTest(async () => [question("unrelated-root")]);
-    __applySessionSyncEventForTest(input, { type: "session.idle", properties: { sessionID: childSessionId } });
-    await flushMicrotasks();
-
-    const queryClient = getReactQueryClient();
-    expect(queryClient.getQueryData(questionKey(workspaceId, childSessionId))).toEqual([]);
-    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[childSessionId]?.waitingQuestionIds).toEqual([]);
-    expect(queryClient.getQueryData(questionKey(workspaceId, "unrelated-root"))).toMatchObject([{ id: "question-unrelated-root" }]);
-  });
-
   test("deletion releases a waiting session and rejects its late permission read without clearing another session", async () => {
     jest.useFakeTimers();
     __setWorkspaceSessionSyncSubscriptionFactoryForTest(createSubscription);
@@ -836,8 +807,6 @@ describe("active session status reconciliation", () => {
       permissionSignal = signal;
       return pending.promise;
     });
-    __setWorkspaceSessionSyncQuestionFetcherForTest(async () =>
-      [sessionId, otherSessionId].flatMap((id) => queryClient.getQueryData<QuestionRequest[]>(questionKey(workspaceId, id)) ?? []));
     __applySessionSyncEventForTest(input, {
       type: "session.execution.started", properties: { sessionID: sessionId, sequence: 1 },
     });
