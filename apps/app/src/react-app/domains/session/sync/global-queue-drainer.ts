@@ -1,7 +1,7 @@
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 
 import { markTaskRunStart } from "@/app/lib/analytics";
-import { createClient, createPromptMessageID, hasAcceptedPromptMessage, isPromptAdmissionUnknown } from "@/app/lib/opencode";
+import { createClient, createPromptMessageID, isPromptAdmissionUnknown, readPromptAdmission } from "@/app/lib/opencode";
 import { shellInSession } from "@/app/lib/opencode-session";
 import { composeNativeSessionSnapshot, getNativeSession } from "@/app/lib/opencode-session-native";
 import { hasTerminalSessionReply, sendSessionCommand, sessionHasPendingSubmission, sessionWorkHeld, submitAfterInterruption } from "@/app/lib/opencode-interruption";
@@ -203,11 +203,14 @@ function armObservationProbe(watched: WatchedSession) {
         const client = createClient(watched.context.opencodeBaseUrl, watched.context.workspaceRoot || undefined, {
           token: watched.context.openworkToken, mode: "openwork",
         });
-        if (await hasAcceptedPromptMessage(client, watched.sessionId, phase.messageID)) {
-          if (watchedSessions.get(watched.sessionId) !== watched) return;
+        const admission = await readPromptAdmission(client, watched.sessionId, phase.messageID);
+        if (watchedSessions.get(watched.sessionId) !== watched) return;
+        if (admission === "accepted") {
           dispatchQueuedDrain(watched.sessionId, {
             type: "admission_observed", itemId: phase.itemId, messageID: phase.messageID, at: Date.now(),
           });
+        } else if (admission === "absent") {
+          dispatchQueuedDrain(watched.sessionId, { type: "admission_rejected", itemId: phase.itemId, messageID: phase.messageID });
         }
         return;
       }
