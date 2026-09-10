@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { createHash, randomUUID } from "node:crypto";
 import { SSEClientTransport, SseError } from "@modelcontextprotocol/sdk/client/sse.js";
@@ -6,10 +7,13 @@ import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
+  CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX,
   CONNECT_MCP_APP_HOST_CAPABILITY,
   CONNECT_MCP_APP_HOST_CAPABILITY_HEADER,
   CONNECT_MCP_APP_HOST_NAME_PREFIX,
+  connectDirectMcpRuntimeName,
   connectMcpAppHostName,
+  directConnectMcpRuntimeEntries,
   findOpenWorkConnectMcpAppHostServer,
   readOpenWorkConnectMcpAppHostAuthorization,
   readOpenWorkConnectMcpAppHostAuthorizationRevision,
@@ -678,7 +682,8 @@ export async function resolveMcpAppResource(input: {
   if (!/^[a-zA-Z0-9_-]{1,256}$/.test(input.projectedToolName)) {
     throw new McpAppHostError("invalid_tool_name", "Projected MCP tool name is invalid.");
   }
-  const configured = await listMcp(input.serverConfig, input.workspaceId, input.workspaceRoot);
+  const runtime = await readEffectiveRuntimeOpencodeConfig(input.serverConfig, input.workspaceId);
+  const configured = await listMcpFromRuntimeSnapshot(input.workspaceRoot, runtime);
   const candidates = configured.filter((item) => (
     item.config.enabled !== false
     && input.projectedToolName.startsWith(`${item.name.replace(/[^a-zA-Z0-9_-]/g, "_")}_`)
@@ -688,16 +693,42 @@ export async function resolveMcpAppResource(input: {
   for (const item of candidates) {
     if (!remoteUrl(item.config)) continue;
     const fingerprint = await launchFingerprint(input, item.name, item.config);
+    let directConnectionId: string | undefined;
+    if (item.source === "config.remote" && item.name.startsWith(CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX)) {
+      // A projected name is not authority. Require the private catalog's unique
+      // direct descriptor and the complete runtime entry it would project.
+      const catalog = await readOpenWorkConnectMcpAppHostCatalog(input.serverConfig, input.workspaceId);
+      const descriptors = catalog.servers.filter((server) => server.exposeDirectly && connectDirectMcpRuntimeName(server) === item.name);
+      const expected = directConnectMcpRuntimeEntries(runtime.mcp?.["openwork-cloud"] ?? {}, catalog)[item.name];
+      if (descriptors.length !== 1 || !isDeepStrictEqual(item.config, expected)) {
+        throw new McpAppHostError("server_unavailable", "The originating direct Connect MCP server is not available to this workspace.");
+      }
+      directConnectionId = descriptors[0]!.connectionId;
+    }
     const match = await withRemoteClient(item.config, async (client) => {
-      const tool = (await listTools(client)).find((candidate) => (
+      const tools = (await listTools(client)).filter((candidate) => (
         projectedMcpToolName(item.name, candidate.name) === input.projectedToolName
       ));
+      if (directConnectionId && tools.length > 1) {
+        throw new McpAppHostError("ambiguous_tool", "More than one Connect MCP tool matches this projected tool name.");
+      }
+      const tool = tools[0];
       if (!tool) return null;
       if (!toolVisibility(tool, "model")) return null;
       const resourceUri = toolUiResourceUri(tool);
       if (!resourceUri) return null;
       if ((await diagnoseMcpToolDenies(input.workspaceRoot, item.name, [input.projectedToolName])).length > 0) {
         throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
+      }
+      if (directConnectionId) {
+        // Revalidate the original tool and UI binding on the private connection;
+        // never send its credential to the configured or result-provided URL.
+        return await resolveConnectMcpAppResource({
+          serverConfig: input.serverConfig,
+          workspaceId: input.workspaceId,
+          workspaceRoot: input.workspaceRoot,
+          launch: { connectionId: directConnectionId, toolName: tool.name, resourceUri },
+        });
       }
       const read = await client.readResource({ uri: resourceUri }).catch(() => {
         throw new McpAppHostError(

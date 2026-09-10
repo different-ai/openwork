@@ -11,15 +11,22 @@ import {
   ListToolsRequestSchema,
   McpError,
   ReadResourceRequestSchema,
+  type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { addMcp, listMcp } from "./mcp.js";
 import {
+  CONNECT_MCP_APP_HOST_CAPABILITY,
+  CONNECT_MCP_APP_HOST_CAPABILITY_HEADER,
   CONNECT_MCP_SERVER_INDEX_URI,
+  connectDirectMcpRuntimeName,
   connectMcpAppHostName,
   readOpenWorkConnectMcpAppHostCatalog,
+  reconcileOpenWorkConnectMcpServers,
   writeOpenWorkConnectMcpAppHostAuthorization,
   writeOpenWorkConnectMcpAppHostCatalog,
 } from "./connect-mcp-server-catalog.js";
+import { isRecord, mcpPost } from "./connect-mcp-transport.js";
+import { writeJsoncFile } from "./jsonc.js";
 import { ENGINE_GLOBAL_RUNTIME_CONFIG_ID, readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig, writeGlobalRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import {
   callMcpAppTool,
@@ -34,6 +41,7 @@ import {
 } from "./mcp-app-host.js";
 import type { ServerConfig } from "./types.js";
 import { localManagedMcpAppIdentity } from "./local-managed-mcp.js";
+import { opencodeConfigPath } from "./workspace-files.js";
 
 const WORKSPACE_ID = "ws_mcp_apps_host";
 const RESOURCE_URI = "ui://fixture/v1/view.html";
@@ -282,24 +290,7 @@ async function configuredFixture(
   hideLaunch: () => void;
   removeLaunch: () => void;
 }> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
-  const previousDevMode = process.env.OPENWORK_DEV_MODE;
-  const previousConfigDir = process.env.OPENCODE_CONFIG_DIR;
-  process.env.OPENCODE_CONFIG_DIR = join(root, "isolated-opencode");
-  process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
-  process.env.OPENWORK_DEV_MODE = "1";
-  stops.push(async () => {
-    if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-    else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
-    if (previousDevMode === undefined) delete process.env.OPENWORK_DEV_MODE;
-    else process.env.OPENWORK_DEV_MODE = previousDevMode;
-    if (previousConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
-    else process.env.OPENCODE_CONFIG_DIR = previousConfigDir;
-    await rm(root, { recursive: true, force: true });
-  });
-  await mkdir(join(root, ".git"), { recursive: true });
-  const config = serverConfig(root);
+  const { config, root } = await fixtureWorkspace(prefix);
   const fixture = await startFixtureMcp(resourceContent, connectionId);
   const mcpConfig = {
     type: "remote",
@@ -352,6 +343,92 @@ async function fixtureLaunch(config: ServerConfig, root: string) {
   return { launchId: app.launchId, sessionId: "session-a", resourceUri: app.resourceUri, assertSessionActive: async () => {} };
 }
 
+async function fixtureWorkspace(prefix: string) {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
+  const previousDevMode = process.env.OPENWORK_DEV_MODE;
+  const previousConfigDir = process.env.OPENCODE_CONFIG_DIR;
+  process.env.OPENCODE_CONFIG_DIR = join(root, "isolated-opencode");
+  process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
+  process.env.OPENWORK_DEV_MODE = "1";
+  stops.push(async () => {
+    if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+    else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
+    if (previousDevMode === undefined) delete process.env.OPENWORK_DEV_MODE;
+    else process.env.OPENWORK_DEV_MODE = previousDevMode;
+    if (previousConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+    else process.env.OPENCODE_CONFIG_DIR = previousConfigDir;
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(join(root, ".git"), { recursive: true });
+  return { config: serverConfig(root), root };
+}
+
+async function directConnectFixture() {
+  const { config, root } = await fixtureWorkspace("openwork-mcp-app-direct-");
+  const connectionId = "emc_direct_fixture";
+  const providerPath = `/mcp/agent/connections/${connectionId}`;
+  const tool: Tool = {
+    name: "render.fixture",
+    inputSchema: { type: "object", properties: {} },
+    annotations: { readOnlyHint: true },
+    _meta: { ui: { resourceUri: RESOURCE_URI, visibility: ["model", "app"] } },
+  };
+  const tools = { member: [tool], private: [tool] };
+  const requests: Array<{ path: string; method: unknown; privateAuth: boolean; appHostCapability: boolean; params: unknown }> = [];
+  const descriptor = { connectionId, name: "Direct fixture", description: null, url: "", exposeDirectly: true };
+  const http = Bun.serve({
+    hostname: "127.0.0.1", port: 0,
+    fetch: async (request): Promise<Response> => {
+      if (request.method !== "POST") return new Response(null, { status: 405 });
+      const body: unknown = await request.json();
+      if (!isRecord(body)) return new Response(null, { status: 400 });
+      const privateAuth = request.headers.get("authorization") === "Bearer app-host-token";
+      const appHostCapability = request.headers.get(CONNECT_MCP_APP_HOST_CAPABILITY_HEADER) === CONNECT_MCP_APP_HOST_CAPABILITY;
+      const path = new URL(request.url).pathname;
+      requests.push({ path, method: body.method, privateAuth, appHostCapability, params: body.params });
+      const result = (value: unknown) => Response.json({ jsonrpc: "2.0", id: body.id, result: value });
+      const error = () => Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Not available" } });
+      if (path !== "/mcp/agent" && path !== providerPath) return error();
+      if (body.method === "initialize") return result({
+        protocolVersion: "2025-06-18", capabilities: { tools: {}, resources: {} },
+        serverInfo: { name: "direct-fixture", version: "1.0.0" },
+      });
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      if (body.method === "tools/list") return result({ tools: privateAuth ? tools.private : tools.member });
+      if (body.method === "tools/call") return result({ content: [{ type: "text", text: "Fixture launched" }] });
+      if (body.method !== "resources/read" || !privateAuth || !appHostCapability || !isRecord(body.params)) return error();
+      if (path === "/mcp/agent" && body.params.uri === CONNECT_MCP_SERVER_INDEX_URI) return result({ contents: [{
+        uri: CONNECT_MCP_SERVER_INDEX_URI, mimeType: "application/json",
+        text: JSON.stringify({ schemaVersion: "openwork.connect/mcp-servers/1", servers: [descriptor] }),
+      }] });
+      if (path === providerPath && body.params.uri === RESOURCE_URI) return result({ contents: [{
+        uri: RESOURCE_URI, mimeType: "text/html;profile=mcp-app", text: RESOURCE_HTML,
+      }] });
+      return error();
+    },
+  });
+  stops.push(() => { http.stop(true); });
+  const origin = `http://127.0.0.1:${http.port}`;
+  descriptor.url = `${origin}${providerPath}`;
+  const cloudMcp = { type: "remote", url: `${origin}/mcp/agent`, enabled: true, headers: { Authorization: "Bearer member-token" }, oauth: false };
+  await writeGlobalRuntimeOpencodeConfig(config, () => ({ mcp: { "openwork-cloud": cloudMcp } }));
+  const reconciled = await reconcileOpenWorkConnectMcpServers({
+    config, workspace: config.workspaces[0]!, cloudMcp, appHostAuthorization: "Bearer app-host-token",
+  });
+  expect(reconciled.status).toBe("synced");
+  const directName = connectDirectMcpRuntimeName(descriptor);
+  expect(reconciled.directNames).toEqual([directName]);
+  requests.length = 0;
+  return {
+    config, root, descriptor, tools, requests, directName,
+    resolve: () => resolveMcpAppResource({
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      projectedToolName: projectedMcpToolName(directName, tool.name),
+    }),
+  };
+}
+
 describe("MCP Apps host transport", () => {
   test("uses OpenCode's exact projected MCP tool naming", () => {
     expect(projectedMcpToolName("sales force", "render.pipeline")).toBe("sales_force_render_pipeline");
@@ -376,6 +453,133 @@ describe("MCP Apps host transport", () => {
       prefersBorder: true,
     });
 
+  });
+
+  test("resolves a managed direct launch with private auth without granting ordinary resource access", async () => {
+    const fixture = await directConnectFixture();
+    const memberHeaders = { Authorization: "Bearer member-token", [CONNECT_MCP_APP_HOST_CAPABILITY_HEADER]: CONNECT_MCP_APP_HOST_CAPABILITY };
+    const launch = await mcpPost(fetch, fixture.descriptor.url, memberHeaders, {
+      jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "render.fixture", arguments: {} },
+    });
+    expect(launch.payload).toMatchObject({ result: { content: [{ text: "Fixture launched" }] } });
+    const denied = await mcpPost(fetch, fixture.descriptor.url, memberHeaders, {
+      jsonrpc: "2.0", id: 2, method: "resources/read", params: { uri: RESOURCE_URI },
+    });
+    expect(denied.payload).toMatchObject({ error: { code: -32601 } });
+    fixture.requests.length = 0;
+
+    const app = await fixture.resolve();
+    expect(app).toMatchObject({
+      serverName: connectMcpAppHostName(fixture.descriptor.connectionId),
+      toolName: "render.fixture", resourceUri: RESOURCE_URI, html: RESOURCE_HTML,
+    });
+    expect(fixture.requests.filter((request) => request.method === "tools/list").map((request) => request.privateAuth)).toEqual([false, true]);
+    expect(fixture.requests.filter((request) => request.method === "resources/read")).toEqual([{
+      path: new URL(fixture.descriptor.url).pathname, method: "resources/read",
+      privateAuth: true, appHostCapability: true, params: { uri: RESOURCE_URI },
+    }]);
+    const runtime = await readRuntimeOpencodeConfig(fixture.config, WORKSPACE_ID);
+    expect(runtime.mcp?.[fixture.directName]?.headers).toEqual({ Authorization: "Bearer member-token" });
+    expect(JSON.stringify({ runtime, app })).not.toContain("app-host-token");
+    if (!app) throw new Error("Missing App");
+    fixture.requests.length = 0;
+    await callMcpAppTool({
+      serverConfig: fixture.config, workspaceId: WORKSPACE_ID, workspaceRoot: fixture.root,
+      serverName: app.serverName, name: app.toolName, resourceUri: app.resourceUri,
+    });
+    expect(fixture.requests.filter((request) => request.method === "tools/call")).toEqual([{
+      path: new URL(fixture.descriptor.url).pathname, method: "tools/call",
+      privateAuth: true, appHostCapability: true, params: { name: "render.fixture", arguments: {} },
+    }]);
+  });
+
+  test.each(["missing", "revoked", "renamed", "duplicate"])("rejects a %s direct descriptor without private requests", async (change) => {
+    const fixture = await directConnectFixture();
+    const descriptor = fixture.descriptor;
+    await writeOpenWorkConnectMcpAppHostCatalog(fixture.config, WORKSPACE_ID, {
+      schemaVersion: "openwork.connect/mcp-servers/1",
+      servers: change === "missing" ? [] : change === "duplicate" ? [descriptor, descriptor] : [{
+        ...descriptor,
+        ...(change === "revoked" ? { exposeDirectly: false } : { name: "Renamed fixture" }),
+      }],
+    });
+    await expect(fixture.resolve()).rejects.toMatchObject({ code: "server_unavailable" });
+    expect(fixture.requests).toEqual([]);
+  });
+
+  test.each(["connection", "origin", "headers"])("rejects a direct runtime %s mismatch before contacting any provider", async (change) => {
+    const fixture = await directConnectFixture();
+    await writeRuntimeOpencodeConfig(fixture.config, WORKSPACE_ID, (current) => ({
+      ...current,
+      mcp: {
+        ...runtimeMcpMap(current),
+        [fixture.directName]: {
+          ...current.mcp?.[fixture.directName],
+          ...(change === "headers" ? { headers: { Authorization: "Bearer arbitrary-token" } } : {
+            url: change === "origin" ? "https://untrusted.invalid/mcp" : fixture.descriptor.url.replace("emc_direct_fixture", "emc_other_fixture"),
+          }),
+        },
+      },
+    }));
+    await expect(fixture.resolve()).rejects.toMatchObject({ code: "server_unavailable" });
+    expect(fixture.requests).toEqual([]);
+  });
+
+  test("does not promote a user-configured copy of a direct server to private authority", async () => {
+    const fixture = await directConnectFixture();
+    const runtime = await readRuntimeOpencodeConfig(fixture.config, WORKSPACE_ID);
+    await writeJsoncFile(opencodeConfigPath(fixture.root), { mcp: runtime.mcp });
+    await writeRuntimeOpencodeConfig(fixture.config, WORKSPACE_ID, () => ({}));
+    await expect(fixture.resolve()).rejects.toMatchObject({ code: "resource_read_failed" });
+    expect(fixture.requests.some((request) => request.privateAuth)).toBe(false);
+  });
+
+  test("does not infer a direct connection from a guessed name or hash", async () => {
+    const fixture = await directConnectFixture();
+    const guessedName = fixture.directName.replace("direct-fixture", "guessed");
+    await writeRuntimeOpencodeConfig(fixture.config, WORKSPACE_ID, (current) => ({
+      ...current, mcp: { [guessedName]: current.mcp?.[fixture.directName]! },
+    }));
+    await expect(resolveMcpAppResource({
+      serverConfig: fixture.config, workspaceId: WORKSPACE_ID, workspaceRoot: fixture.root,
+      projectedToolName: projectedMcpToolName(guessedName, "render.fixture"),
+    })).rejects.toMatchObject({ code: "server_unavailable" });
+    expect(fixture.requests).toEqual([]);
+  });
+
+  test("does not fall back to ordinary resources when private direct authorization is missing", async () => {
+    const fixture = await directConnectFixture();
+    await writeOpenWorkConnectMcpAppHostAuthorization(fixture.config, WORKSPACE_ID, "", fixture.descriptor.url);
+    await expect(fixture.resolve()).rejects.toMatchObject({ code: "connect_catalog_missing_app_host_auth" });
+    expect(fixture.requests.some((request) => request.privateAuth || request.method === "resources/read")).toBe(false);
+  });
+
+  test.each(["name", "resource"])("revalidates the original direct tool's exact %s on the private connection", async (change) => {
+    const fixture = await directConnectFixture();
+    fixture.tools.private = [{
+      ...fixture.tools.private[0]!,
+      ...(change === "name" ? { name: "render_fixture" } : {
+        _meta: { ui: { resourceUri: UPDATED_RESOURCE_URI, visibility: ["model", "app"] } },
+      }),
+    }];
+    await expect(fixture.resolve()).rejects.toMatchObject({ code: change === "name" ? "tool_not_found" : "tool_resource_mismatch" });
+    expect(fixture.requests.filter((request) => request.method === "tools/list").map((request) => request.privateAuth)).toEqual([false, true]);
+    expect(fixture.requests.some((request) => request.method === "resources/read")).toBe(false);
+  });
+
+  test("rejects ambiguous direct tool projections before using private authority", async () => {
+    const fixture = await directConnectFixture();
+    fixture.tools.member.push({ ...fixture.tools.member[0]!, name: "render_fixture" });
+    await expect(fixture.resolve()).rejects.toMatchObject({ code: "ambiguous_tool" });
+    expect(fixture.requests.some((request) => request.privateAuth || request.method === "resources/read")).toBe(false);
+  });
+
+  test.each(["direct", "private"])("preserves the %s workspace tool deny when translating a direct launch", async (identity) => {
+    const fixture = await directConnectFixture();
+    const name = identity === "direct" ? fixture.directName : connectMcpAppHostName(fixture.descriptor.connectionId);
+    await writeJsoncFile(opencodeConfigPath(fixture.root), { tools: { [projectedMcpToolName(name, "render.fixture")]: false } });
+    await expect(fixture.resolve()).rejects.toMatchObject({ code: "tool_denied" });
+    expect(fixture.requests.some((request) => request.method === "resources/read")).toBe(false);
   });
 
   test("lists cold-launchable MCP Apps with their input requirements", async () => {
