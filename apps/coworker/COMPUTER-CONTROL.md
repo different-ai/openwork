@@ -3,8 +3,10 @@
 ## Product decision
 
 Computer control belongs to a saved private discussion, not to the coworker's
-whole workspace. A person chooses a computer, allows that discussion, and then
-approves one native app/window when the coworker requests it. Setup, permission,
+whole workspace. A person chooses a computer and explicitly enables app access
+for requested tasks in that discussion. Each admitted open is scoped to one
+eligible app/window: a single window opens automatically; multiple windows
+require the person's selection in the embedded Computer view. Setup, permission,
 task execution, and observed task completion are four different states.
 
 The first implementation supplies **This Mac**, using the shared
@@ -24,11 +26,12 @@ candidate, not a release claim.
    checks are unverified, not granted. The guide rechecks while open, on return
    to the app, and through **Check permissions**. Granting macOS permissions
    does not enable the discussion.
-3. Choose **Allow for this discussion**, then ask for the task normally.
+3. Choose **Enable for this discussion**, then ask for the task normally.
 4. The coworker discovers available app identities and asks for a scoped session.
-   The person selects the exact window and approves observe, assist, or control.
-5. The native panel retains the purpose, window, expiry, Take over, Continue and
-   Stop controls. Healthy enabled access uses a discreet green dot on the
+   The broker validates the exact admitted app, mode, purpose and ownership
+   before opening a single eligible window or accepting a multiple-window choice.
+5. The watch-only floating Computer view shows the selected window, recent frames,
+   input feedback, Take over, Continue and Stop. Healthy enabled access uses a discreet green dot on the
    Computer icon, not a persistent composer banner. The accessible name describes
    the discussion allowance; the tooltip includes the observed session phase.
    Access alone does not mean work is running. The details popover retains the
@@ -44,15 +47,17 @@ candidate, not a release claim.
    lease. Confirmed off state removes the dot and strip; without a status slot,
    the icon and popover still expose status and revocation.
 
-The strip points to the native floating preview for **Take over** and **Continue**;
-it does not add a renderer-side resume action. Paused tools wait for the person
+The strip points to the embedded Computer view for **Take over** and **Continue**.
+These explicit controls reach the native session through scoped host notifications.
+Paused tools wait for the person
 within a bounded execution; the model cannot resume them or repeat an interrupted
 action automatically. The popover remains the setup and review surface. Neither
-renderer surface displays computer screenshots. The native preview shows only the
-latest redacted observation sent through the tool flow, with screenshot age and
-stale/paused states, never live video. Pointer markers identify dispatched input,
-not verified results or the person's live cursor. Hiding or collapsing the preview
-does not revoke access; menu-bar controls restore it or stop the session.
+setup surface grants macOS permissions by itself. The floating view shows recent
+redacted window frames, separate from actionable model observations; it never
+forwards the person's clicks or typing. Pointer markers identify actual input,
+not verified results or the person's live cursor. Minimizing the view, hiding
+Coworker or switching discussions stops preview capture, not work or access.
+Native menu-bar Take over, Continue and Stop remain available.
 
 The guide's settings buttons run `ComputerUse permissions accessibility` or
 `ComputerUse permissions screenRecording` as a direct child, keeping the same
@@ -60,7 +65,9 @@ responsible-app context as the probe and MCP session. Only this explicit action
 requests the corresponding macOS permission and opens its System Settings pane.
 It starts no control session. System Settings opening is not proof of permission;
 Coworker waits for a new probe. The native generic `setup` command remains for
-other clients. Native window approval and human-only continuation remain required.
+other clients. Native permissions, window-scope checks and human-only continuation
+remain required. Enabling Computer does not authorize purchases, sending messages,
+deleting files or other sensitive actions.
 
 The guide names the shared **OpenWork Computer Use** helper, the possible
 responsible **Open Coworker** entry, version-dependent macOS pane naming and
@@ -71,18 +78,19 @@ macOS permissions.
 
 Leaving the discussion stops its UI observer, not its work. A completed turn
 closes its native session; discussion opt-in can remain until revoked or the app
-restarts. A later turn still requires a new native app/window approval. Native
+restarts. A later turn needs its own validated, scoped app/window open. Native
 Stop revokes discussion opt-in when observed, including during cleanup.
 
 ## Reuse, not another computer runtime
 
 The local adapter launches the same native helper used by OpenWork. It inherits
 window-only capture, protected-field omission, freshness checks, at-most-once
-dispatch receipts, app identity checks, exclusive control, native consent,
-human-only continuation, idle/expiry limits, and the menu-bar task panel.
+dispatch receipts, app identity checks, exclusive control, native permissions,
+human-only continuation, idle/expiry limits, and the menu-bar controls.
 
-Coworker uses the helper's `mcp-coworker` presentation mode, separate from
-`mcp-hosted` approval and automatic interruption recovery. The `move` action
+Coworker uses the helper's `mcp-coworker-hosted` embedded presentation mode,
+separate from `mcp-hosted` automatic interruption recovery. Standalone clients
+retain their native approval UI. The `move` action
 delivers window-scoped hover in control mode using a fresh screenshot; it does
 not promise to move the global Mac cursor.
 
@@ -93,7 +101,7 @@ introduced.
 
 | Layer | Owner |
 |---|---|
-| Compact discussion UI and typed IPC | `src/ui/computer-control.tsx`, `src/lib/bridge.ts` |
+| Compact discussion UI, watch view and typed IPC | `src/ui/computer-control.tsx`, `src/ui/computer-panel.tsx`, `src/lib/bridge.ts` |
 | Ephemeral opt-in, target pinning, receipts and cleanup | `electron/computer-control.mjs` |
 | Engine-native tool identity and image attachment delivery | `electron/computer-plugin.mjs` |
 | Native helper discovery, readiness, dedicated MCP lifetime | `electron/computer-local.mjs` |
@@ -183,8 +191,9 @@ control, or claim that a remote task works while the Coworker desktop is offline
 - Local native support: macOS 14+. Windows/Linux native adapters are absent.
 - Private person-request discussions only. Groups, Workers, consultations,
   automatic continuations and scheduled responsibilities do not inherit access.
-- No persistent grants, arbitrary remote endpoint entry, live video or
-  conversation deep link inside the native helper.
+- No persistent grants, arbitrary remote endpoint entry or conversation deep
+  link inside the native helper. Watch frames do not renew a control lease or
+  become actionable observations.
 - Helper staging reuses Desktop's generator and bundle identity. Packaging
   checks the actual target CPU and signature, failing instead of shipping an
   incompatible host-only binary. Cross-CPU/universal distribution remains gated
@@ -193,9 +202,11 @@ control, or claim that a remote task works while the Coworker desktop is offline
   cancellation races, native handoff, stale observation, no input replay and
   uncertain cleanup. They are not native journey proof.
 
-The new journey is `evals/specs/open-coworker-computer-control.e2e.test.ts`. It
+The existing journey is `evals/specs/open-coworker-computer-control.e2e.test.ts`. It
 uses the real Coworker engine/plugin, a localhost model witness and the existing
-disposable two-window native fixture. After explicit local-test authorization:
+disposable two-window native fixture. Its native-panel selectors still need
+adaptation to the embedded view; it is not proof of this candidate's new UI.
+After explicit local-test authorization:
 
 ```sh
 pnpm evals:e2e open-coworker-computer-control --local

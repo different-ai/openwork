@@ -15,7 +15,7 @@ import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/p
 import path from "node:path";
 import { openworkConfigDir } from "@openwork/paths";
 import { DOCUMENTS_INDEX_FILE, documentsIndexTemplate } from "./documents.mjs";
-import { parseFrontmatter, serializeFrontmatter } from "./frontmatter.mjs";
+import { parseFrontmatter as parseFlatFrontmatter, serializeFrontmatter as serializeFlatFrontmatter } from "./frontmatter.mjs";
 import {
   addToMemoryIndex,
   isMemoryFileName,
@@ -26,8 +26,27 @@ import {
 } from "./memory-index.mjs";
 import { TEAM_ROSTER_FILE, refreshTeamRosters, roleById, writeTeamRoster } from "./team.mjs";
 import { effortStopOf } from "../src/lib/effort.ts";
+import { normalizeModelSelectionPreferences } from "../src/lib/model-intelligence-index.ts";
 
-export { parseFrontmatter, serializeFrontmatter };
+// The shared document codec is flat. Only coworker preferences use a nested JSON object.
+export function parseFrontmatter(content) {
+  const parsed = parseFlatFrontmatter(content);
+  if (Object.hasOwn(parsed.data, "modelSelectionPreferences")) {
+    let input = parsed.data.modelSelectionPreferences;
+    if (typeof input === "string") {
+      try { input = JSON.parse(input); } catch { /* Malformed preferences read as defaults. */ }
+    }
+    parsed.data.modelSelectionPreferences = normalizeModelSelectionPreferences(input);
+  }
+  return parsed;
+}
+
+export function serializeFrontmatter(data, body) {
+  if (!Object.hasOwn(data, "modelSelectionPreferences")) return serializeFlatFrontmatter(data, body);
+  const preferences = normalizeModelSelectionPreferences(data.modelSelectionPreferences);
+  const content = serializeFlatFrontmatter({ ...data, modelSelectionPreferences: undefined }, body);
+  return content.replace("---\n", `---\nmodelSelectionPreferences: ${JSON.stringify(preferences)}\n`);
+}
 
 export const COWORKERS_DIR_NAME = "coworkers";
 const COWORKER_CONFIG_FILE = "coworker.md";
@@ -453,7 +472,7 @@ function opencodeConfigTemplate() {
   )}\n`;
 }
 
-function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, personality: voice, roleId, suggestedBy, createdAt, templateOrigin = "", templateVersion = "" }) {
+function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, personality: voice, roleId, suggestedBy, createdAt, modelSelectionPreferences, templateOrigin = "", templateVersion = "" }) {
   return serializeFrontmatter(
     {
       name,
@@ -471,6 +490,7 @@ function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avata
       modelVariant: "",
       modelChosenBy: "",
       modelMode: "fixed",
+      modelSelectionPreferences: normalizeModelSelectionPreferences(modelSelectionPreferences),
       effortPreference: "balanced",
       automations: [],
       createdAt,
@@ -542,6 +562,7 @@ async function readCoworkerRecord(coworkersDir, slug) {
     modelChosenBy: modelChosenByOf(data.modelChosenBy),
     /** `auto`: a quick, standard, or deep model per message around `model`; `fixed`: `model` every time. */
     modelMode: modelModeOf(data.modelMode),
+    modelSelectionPreferences: normalizeModelSelectionPreferences(data.modelSelectionPreferences),
     /** The effort dial: how hard the person wants this coworker to work in general; each turn's effort is derived from it, never taken as is. */
     effortPreference: effortStopOf(data.effortPreference),
     automations,
@@ -590,7 +611,7 @@ export async function createCoworker(coworkersDir, input) {
   await mkdir(path.join(root, WORKSPACE_DIR), { recursive: true });
   await writeFile(
     path.join(root, COWORKER_CONFIG_FILE),
-    coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, personality: voice, roleId, suggestedBy, createdAt, templateOrigin: input?.templateOrigin, templateVersion: input?.templateVersion }),
+    coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, personality: voice, roleId, suggestedBy, createdAt, modelSelectionPreferences: input?.modelSelectionPreferences, templateOrigin: input?.templateOrigin, templateVersion: input?.templateVersion }),
     "utf8",
   );
   const reusableInstructions = typeof input?.templateInstructions === "string" ? input.templateInstructions.trim() : "";
@@ -688,6 +709,9 @@ export async function updateCoworker(coworkersDir, slug, patch) {
   }
   if (typeof patch?.modelChosenBy === "string") data.modelChosenBy = modelChosenByOf(patch.modelChosenBy);
   if (patch?.modelMode === "auto" || patch?.modelMode === "fixed") data.modelMode = patch.modelMode;
+  data.modelSelectionPreferences = normalizeModelSelectionPreferences(
+    patch?.modelSelectionPreferences !== undefined ? patch.modelSelectionPreferences : data.modelSelectionPreferences,
+  );
   if (typeof patch?.effortPreference === "string") data.effortPreference = effortStopOf(patch.effortPreference);
   if (typeof patch?.avatarColor === "string") data.avatarColor = avatarColor(patch.avatarColor);
   if (typeof patch?.avatarGlasses === "string") data.avatarGlasses = avatarGlasses(patch.avatarGlasses);

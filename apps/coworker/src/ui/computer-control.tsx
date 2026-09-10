@@ -3,18 +3,19 @@ import { createPortal } from "react-dom";
 import { coworkerBridge, type ComputerPermission, type ComputerSnapshot } from "@/lib/bridge";
 import { AlertIcon, Button, ErrorNote, IconButton, inputClass } from "@/ui/kit";
 import { ComputerSetup } from "@/ui/computer-setup";
+import { ComputerPanel } from "@/ui/computer-panel";
 import { useActivityPopover } from "@/ui/work-popover";
 
 const NATIVE_PHASE_LABELS: Record<string, string> = {
   person_interacting: "You have control",
   ready_to_continue: "Ready to continue",
-  refreshing: "Refreshing approved window",
+  refreshing: "Connecting to app window",
   working: "Working",
-  "native-approval": "Waiting for window approval",
+  "native-approval": "Choosing an app window",
 };
 
 /** Mounted only for a real private discussion, keyed by slug and native thread id. */
-export function ComputerControl({ slug, threadId, statusSlot, openRequest = 0, onOpenRequestHandled, onBackToConversation }: { slug: string; threadId: string; statusSlot?: HTMLElement | null; openRequest?: number; onOpenRequestHandled?: () => void; onBackToConversation?: () => void }) {
+export function ComputerControl({ slug, threadId, statusSlot, floatingSlot, openRequest = 0, onOpenRequestHandled, onBackToConversation }: { slug: string; threadId: string; statusSlot?: HTMLElement | null; floatingSlot?: HTMLElement | null; openRequest?: number; onOpenRequestHandled?: () => void; onBackToConversation?: () => void }) {
   const [open, setOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
@@ -132,13 +133,26 @@ export function ComputerControl({ slug, threadId, statusSlot, openRequest = 0, o
   const phase = snapshot?.cleanupPending ? "Cleanup pending"
     : session?.state === "unavailable" ? "Status unavailable"
     : session?.state === "paused" || session?.phase === "person_interacting" || session?.phase === "ready_to_continue" ? "You have control"
-    : session?.state === "opening" ? "Waiting for window approval"
+    : session?.state === "opening" ? "Choosing an app window"
     : session?.phase ? NATIVE_PHASE_LABELS[session.phase] ?? session.phase.replaceAll("_", " ").replaceAll("-", " ")
     : "Access allowed";
   const approvedScope = [session?.appName, session?.windowTitle].filter(Boolean).join(" / ");
 
   return (
     <>
+      {floatingSlot && snapshot && canStop ? <ComputerPanel
+        key={`${slug}:${threadId}:${snapshot.targetId}`}
+        slug={slug}
+        threadId={threadId}
+        slot={floatingSlot}
+        enabled={snapshot.enabled}
+        canStop={canStop}
+        controlsBusy={busy !== null}
+        stopping={busy === "stop"}
+        cleanupPending={Boolean(snapshot.cleanupPending)}
+        stopError={actionError}
+        onStop={() => void act("stop")}
+      /> : null}
       <IconButton
         label={`Computer control: ${needsAttention ? "check status" : snapshot ? status : "open settings"}`}
         tooltip={`Computer · ${needsAttention ? "Check status" : [status, session ? phase : readiness].filter(Boolean).join(" · ")}`}
@@ -165,7 +179,7 @@ export function ComputerControl({ slug, threadId, statusSlot, openRequest = 0, o
                 <span role="status" data-testid="coworker-computer-strip-phase" className={readError || snapshot?.cleanupPending || session?.state === "unavailable" ? "text-amber" : "text-ready"}>{readError ? "Last known: " : ""}{phase}</span>
               </div>
               {approvedScope ? <p data-testid="coworker-computer-strip-scope" className="text-snow">Approved app/window: {approvedScope}</p> : null}
-              <p>{session?.state === "paused" ? "Paused for you. Choose Continue in the floating preview when you’re ready." : session?.state === "opening" ? "Choose the window you want your coworker to use." : session ? "Watch screenshots and pointer actions in the floating preview. Take over at any time." : "Ask your coworker to work in a Mac app. You’ll choose which window it can use."}</p>
+              <p>{session?.state === "paused" ? "Paused for you. Choose Continue in the Computer view when you’re ready." : session?.state === "opening" ? "Choose a window in the Computer view if more than one is available." : session ? "Watch the app in the floating Computer view. Take over at any time." : "Access is enabled. Ask your coworker to work in a supported Mac app."}</p>
             </div>
             <Button type="button" variant="danger" className="shrink-0 text-xs" disabled={busy !== null} aria-busy={busy === "stop"} data-testid="coworker-computer-strip-stop" onClick={() => void act("stop")}>Stop &amp; revoke</Button>
           </div>
@@ -176,7 +190,7 @@ export function ComputerControl({ slug, threadId, statusSlot, openRequest = 0, o
       ) : null}
       {open && anchor ? (
         <ComputerControlPopover anchor={anchor} id={id} onClose={() => setOpen(false)}>
-          <p>Let your coworker see an approved app window, click, type, hover, and select. Watch its latest screenshots and actions in a floating preview.</p>
+          <p>Enable Computer to authorize your coworker to use supported apps for tasks you request in this discussion: see window content, click, type, hover, and select. That content can be sent to your selected AI model provider.</p>
           {readError ? <div role="alert" data-testid="coworker-computer-read-error"><ErrorNote>{snapshot ? "Updates unavailable. Last known state is shown; a connection failure does not confirm a stop. " : "Computer control is unavailable. "}{readError}</ErrorNote></div> : null}
           {actionError ? <div role="alert" data-testid="coworker-computer-action-error"><ErrorNote>{actionError}</ErrorNote></div> : null}
           <div className="space-y-1.5">
@@ -204,16 +218,16 @@ export function ComputerControl({ slug, threadId, statusSlot, openRequest = 0, o
           </dl>
           {snapshot?.detail ? <p>{snapshot.detail}</p> : null}
           {snapshot?.cleanupPending ? <p className="text-amber" data-testid="coworker-computer-cleanup-pending">Native cleanup is still pending. A stop is not yet confirmed.</p> : null}
-          {!canStop ? <p>{snapshot?.readiness === "ready" ? "Allow this discussion, then ask for a task. You’ll approve the app and window before work starts." : "Set up macOS permissions first. Then choose which app window your coworker can use."}</p> : null}
+          {!canStop ? <p>{snapshot?.readiness === "ready" ? "Enabling does not start work. Ask for a task; a single eligible window opens automatically. If there are several, choose one in the Computer view." : "Set up macOS permissions first, then enable app access for this discussion."}</p> : null}
           <div className="flex flex-wrap gap-2">
-            {!canStop && snapshot?.readiness === "ready" ? <Button type="button" variant="primary" className="text-xs" disabled={!canAllow || busy !== null} aria-busy={busy === "allow"} data-testid="coworker-computer-allow" onClick={() => void act("allow")}>Allow for this discussion</Button> : null}
+            {!canStop && snapshot?.readiness === "ready" ? <Button type="button" variant="primary" className="text-xs" disabled={!canAllow || busy !== null} aria-busy={busy === "allow"} data-testid="coworker-computer-allow" onClick={() => void act("allow")}>Enable for this discussion</Button> : null}
             {snapshot?.targetId === "this-mac" ? <Button type="button" variant={!canStop && snapshot.readiness === "setup-required" ? "primary" : "ghost"} className="text-xs" disabled={busy !== null} data-testid="coworker-computer-setup" onClick={() => { setOpen(false); setSetupOpen(true); }}>{snapshot.readiness === "setup-required" ? "Set up permissions" : "Setup & permissions"}</Button> : null}
             {canStop ? <Button type="button" variant="danger" className="text-xs" disabled={busy !== null} aria-busy={busy === "stop"} data-testid="coworker-computer-stop" onClick={() => void act("stop")}>Stop &amp; revoke</Button> : null}
             <Button type="button" variant="ghost" className="text-xs" disabled={refreshing || busy !== null} aria-busy={refreshing} data-testid="coworker-computer-refresh" onClick={() => void refresh()}>Check status</Button>
           </div>
           {snapshot?.session ? (
-            <section className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3" aria-label="Native computer session" data-testid="coworker-computer-session">
-              <h3 className="font-semibold text-snow">Native session</h3>
+            <section className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3" aria-label="Computer session" data-testid="coworker-computer-session">
+              <h3 className="font-semibold text-snow">Current app</h3>
               <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
                 <dt>State</dt><dd className="text-snow">{NATIVE_PHASE_LABELS[snapshot.session.state] ?? snapshot.session.state}</dd>
                 <dt>Purpose</dt><dd>{snapshot.session.purpose}</dd>
@@ -228,8 +242,9 @@ export function ComputerControl({ slug, threadId, statusSlot, openRequest = 0, o
           ) : null}
           <details className="space-y-2">
             <summary className="cursor-pointer text-snow">Access &amp; privacy</summary>
-            <p>Only the approved window is captured, not your whole desktop. Screenshots go to your selected model provider. The preview shows the latest observation, not live video; its pointer marks dispatched input, not the Mac cursor.</p>
-            <p>Your input pauses control. Choose Continue in the preview to resume. Stop &amp; revoke ends access; leaving this discussion or hiding the preview does not. Each new session needs window approval. Workers need separate task approval.</p>
+            <p>Only the selected app window is captured, not your whole desktop. Its content can be sent to your selected model provider. The floating view shows recent frames; its pointer marks actual computer input, not task completion or your Mac cursor.</p>
+            <p>Your input pauses control. Take over and Continue are separate, explicit controls in the Computer view. Enabling access does not approve purchases, sending messages, deleting files, or other sensitive actions. Workers need separate task approval.</p>
+            <p>Stop &amp; revoke ends discussion access. Minimizing the view, switching discussions, or hiding Coworker stops preview capture, not work or access. macOS permissions remain separate.</p>
             <p>Use Browser for websites. Computer use runs on this Mac, not a remote desktop.</p>
           </details>
         </ComputerControlPopover>

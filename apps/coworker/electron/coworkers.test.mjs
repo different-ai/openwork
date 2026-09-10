@@ -17,11 +17,13 @@ import {
   listCoworkers,
   listLongTermMemories,
   listRetiredCoworkers,
+  parseFrontmatter,
   readCoworkerFile,
   repairCoworkerContract,
   resolveCoworkerFile,
   restoreCoworker,
   retireCoworker,
+  serializeFrontmatter,
   updateCoworker,
   writeCoworkerFile,
 } from "./coworkers.mjs";
@@ -197,6 +199,8 @@ test("updateCoworker patches profile and platform references", async () => {
   const coworkersDir = await tempCoworkersDir();
   const created = await createCoworker(coworkersDir, { name: "Ops" });
   assert.equal(created.model, "");
+  const defaults = { priority: "balanced", preferred: { quick: [], deep: [] }, avoided: [] };
+  assert.deepEqual(created.modelSelectionPreferences, defaults);
   assert.equal(created.thinkingModel, "", "missing Worker choices inherit the coworker");
   assert.equal(created.deliveryModel, "");
   const updated = await updateCoworker(coworkersDir, "ops", {
@@ -232,6 +236,23 @@ test("updateCoworker patches profile and platform references", async () => {
   const inherited = await updateCoworker(coworkersDir, "ops", { thinkingModel: "", thinkingModelVariant: "" });
   assert.equal(inherited.thinkingModel, "");
   assert.equal(inherited.deliveryModel, patch.deliveryModel);
+  const anchor = await updateCoworker(coworkersDir, "ops", { model: "anthropic/claude-haiku-4-5", modelVariant: "high", modelMode: "auto", modelChosenBy: "person", effortPreference: "light" });
+  const ids = Array.from({ length: 10 }, (_, index) => `openrouter/vendor/model-${index}`);
+  const preferences = { priority: "cost", preferred: { quick: ids.slice(0, 8), deep: ["openrouter/vendor/deep"] }, avoided: ids.slice(0, 8) };
+  const saved = await updateCoworker(coworkersDir, "ops", { modelSelectionPreferences: {
+    priority: "cost", preferred: { quick: [null, "not-full", "https://invalid", ...ids, ids[0]], deep: [" openrouter/vendor/deep ", "openrouter/vendor/deep"] }, avoided: ids,
+  } });
+  assert.deepEqual(saved, { ...anchor, modelSelectionPreferences: preferences }, "preference-only changes preserve model, mode, chooser, effort and Worker choices");
+  const configPath = path.join(created.path, "coworker.md");
+  assert.match(await readFile(configPath, "utf8"), /^modelSelectionPreferences: \{/m, "preferences are a nested object, not a quoted string");
+  assert.deepEqual(parseFrontmatter(await readFile(configPath, "utf8")).data.modelSelectionPreferences, preferences, "nested preferences persist on disk");
+  assert.deepEqual((await updateCoworker(coworkersDir, "ops", { mission: "Keep records" })).modelSelectionPreferences, preferences);
+  assert.deepEqual((await getCoworker(coworkersDir, "ops")).modelSelectionPreferences, preferences);
+  assert.deepEqual((await updateCoworker(coworkersDir, "ops", { modelSelectionPreferences: { priority: "invalid" } })).modelSelectionPreferences, defaults, "whole replacement normalizes malformed input");
+  const legacy = parseFrontmatter(await readFile(configPath, "utf8"));
+  delete legacy.data.modelSelectionPreferences;
+  await writeFile(configPath, serializeFrontmatter(legacy.data, legacy.body), "utf8");
+  assert.deepEqual((await getCoworker(coworkersDir, "ops")).modelSelectionPreferences, defaults, "legacy records read defaults without requiring migration");
 });
 
 test("the record says who chose the model: the app's pick may be swapped once, the person's never, and a record that never said is the person's", async () => {
@@ -385,7 +406,9 @@ test("coworker file access is contained to the coworker directory", async () => 
 
 test("retirement archives the whole home and restore brings it back intact", async () => {
   const coworkersDir = await tempCoworkersDir();
-  const created = await createCoworker(coworkersDir, { name: "Archivist", role: "Records" });
+  const preferences = { priority: "capability", preferred: { quick: ["anthropic/quick"], deep: ["anthropic/deep"] }, avoided: ["anthropic/old"] };
+  const created = await createCoworker(coworkersDir, { name: "Archivist", role: "Records", modelSelectionPreferences: preferences });
+  assert.deepEqual(created.modelSelectionPreferences, preferences);
   await updateCoworker(coworkersDir, "archivist", { workspaceId: "ws_archive", model: "anthropic/claude-haiku-4-5" });
   await writeCoworkerFile(coworkersDir, "archivist", "workspace/report.md", "# Report\n");
   await writeCoworkerFile(coworkersDir, "archivist", "memory/long-term/people.md", "# People\n");
@@ -408,6 +431,7 @@ test("retirement archives the whole home and restore brings it back intact", asy
   assert.equal(restored.slug, created.slug);
   assert.equal(restored.workspaceId, "ws_archive");
   assert.equal(restored.model, "anthropic/claude-haiku-4-5");
+  assert.deepEqual(restored.modelSelectionPreferences, preferences, "creation preferences survive unrelated edits, retirement and restore");
   assert.equal(await readCoworkerFile(coworkersDir, "archivist", "workspace/report.md"), "# Report\n");
   const config = await readFile(path.join(restored.path, "coworker.md"), "utf8");
   assert.doesNotMatch(config, /retiredSlug|retiredAt/, "restore removes the archive markers");

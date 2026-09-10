@@ -17,7 +17,10 @@
  * choice (or inherit the standard) separately at creation.
  */
 import type { ModelChosenBy } from "./bridge.ts";
-import { recommendModel, type EngineModelCatalog, type EngineModelOption } from "./threads.ts";
+import type { EngineModelCatalog, EngineModelOption } from "./threads.ts";
+import { chooseIndexedFallbackModel, chooseIndexedModel, MODEL_INTELLIGENCE_INDEX, type ModelSelectionDecision, type ModelSelectionOptions, type ModelSelectionPreferences } from "./model-intelligence.ts";
+import { effortForTurn, effortStopOf, laneWithPreference, replyKindForLane } from "./effort.ts";
+export { costsNoMoreThan } from "./model-intelligence.ts";
 
 // ---------------------------------------------------------------------------
 // Who chose the model, and the effort that travels with it
@@ -164,31 +167,25 @@ export function classifyRequest(prompt: string): ModelLane {
   return "standard";
 }
 
-/** Names providers give their fastest models. */
-const FAST_NAMES = /\b(?:mini|flash(?:-lite)?|haiku|lite|nano|fast|small|instant|turbo|8b|7b|3b|1b|micro|tiny)\b|-(?:mini|flash|haiku|lite|nano|small|fast)(?:$|[-\d])/i;
-/** Names providers give their most capable or most thoughtful models. */
-const DEEP_NAMES = /\b(?:opus|pro|max|ultra|large|thinking|reason(?:er|ing)?|deep|r1|o[1-9](?:-pro)?|405b|235b|120b|70b|72b)\b|-(?:pro|max|thinking|large)(?:$|[-\d])/i;
-
-function usable(model: EngineModelOption, excluded: ReadonlySet<string>): boolean {
-  return model.toolCall && model.status !== "deprecated" && !excluded.has(model.id);
-}
-
-/**
- * A lane pick's known token prices never exceed the standard model's. One provider can mix
- * free and paid models (the free provider does: a free standard model beside
- * dozens of paid ones), so "same provider" alone is no promise about the bill.
- */
-export function costsNoMoreThan(candidate: Pick<EngineModelOption, "cost" | "knownPrice">, standard: Pick<EngineModelOption, "cost" | "knownPrice">): boolean {
-  return candidate.knownPrice === true && standard.knownPrice === true
-    && candidate.cost.input <= standard.cost.input && candidate.cost.output <= standard.cost.output;
-}
-
-function newestFirst(left: EngineModelOption, right: EngineModelOption): number {
-  return right.releaseDate.localeCompare(left.releaseDate) || Number(right.isProviderDefault) - Number(left.isProviderDefault) || left.label.localeCompare(right.label);
-}
-
-function nameOf(model: EngineModelOption): string {
-  return `${model.modelId} ${model.modelLabel}`;
+/** Shared private/group discussion choice; initial model recommendation belongs to the caller. */
+export function resolveDiscussionModel(
+  catalog: Pick<EngineModelCatalog, "models">,
+  coworker: { model: string; modelMode?: string; effortPreference?: string; modelVariant?: string; modelSelectionPreferences?: ModelSelectionPreferences },
+  requestText: string,
+): ModelSelectionDecision & { variant: string; lane: ModelLane } {
+  const stop = effortStopOf(coworker.effortPreference);
+  const messageLane = laneWithPreference(classifyRequest(requestText), stop);
+  const automatic = modelModeOf(coworker) === "auto";
+  const fixed = automatic ? null : catalog.models.find((model) => model.id === coworker.model) ?? null;
+  const choice = automatic
+    ? chooseIndexedModel(catalog, messageLane, { standard: coworker.model, preferences: coworker.modelSelectionPreferences })
+    : { model: fixed, reason: fixed ? "Kept the exact fixed model; automatic model preferences do not apply." : `The saved model "${coworker.model}" is not available. Choose another AI model or connect its provider. No replacement was selected.`, indexVersion: MODEL_INTELLIGENCE_INDEX.version };
+  return {
+    ...choice,
+    // Fixed mode reports the standard lane, but the message still determines thinking effort.
+    lane: automatic ? messageLane : "standard",
+    variant: effortForTurn({ kind: replyKindForLane(messageLane), stop, fixedVariant: coworker.modelVariant ?? "", variants: choice.model?.variants ?? [] }),
+  };
 }
 
 /**
@@ -198,45 +195,15 @@ function nameOf(model: EngineModelOption): string {
  * its own. Unknown prices keep the standard model. Every candidate can use
  * tools and is not deprecated. An explicit missing, deprecated, tool-less or
  * excluded standard returns null; only an unspecified standard is recommended.
+ * Unknown metadata can retain an explicit anchor's legacy support flags, but
+ * cannot qualify a substitution as tool-capable or active.
  */
 export function chooseModelForLane(
   catalog: Pick<EngineModelCatalog, "models">,
   lane: ModelLane,
-  options: { standard?: string; exclude?: readonly string[] } = {},
+  options: ModelSelectionOptions = {},
 ): EngineModelOption | null {
-  const excluded = new Set(options.exclude ?? []);
-  const candidates = catalog.models.filter((model) => usable(model, excluded));
-  if (candidates.length === 0) return null;
-  const standard = options.standard !== undefined
-    ? candidates.find((model) => model.id === options.standard) ?? null
-    : recommendModel({ models: candidates });
-  if (!standard || lane === "standard") return standard;
-
-  const siblings = candidates.filter((model) => model.providerId === standard.providerId && model.id !== standard.id && costsNoMoreThan(model, standard));
-  const standardIsFast = !standard.reasoning && FAST_NAMES.test(nameOf(standard));
-  const standardIsDeep = standard.reasoning && DEEP_NAMES.test(nameOf(standard));
-
-  if (lane === "quick") {
-    // Already on a fast model: stay. Otherwise the newest fast, non-reasoning
-    // sibling; then a non-reasoning standard model keeps itself; then any
-    // non-reasoning sibling; then the standard model.
-    if (standardIsFast) return standard;
-    const fast = siblings.filter((model) => !model.reasoning && FAST_NAMES.test(nameOf(model))).sort(newestFirst);
-    if (fast.length > 0) return fast[0] ?? standard;
-    if (!standard.reasoning) return standard;
-    const plain = siblings.filter((model) => !model.reasoning).sort(newestFirst);
-    return plain[0] ?? standard;
-  }
-
-  // Deep: already on the most capable kind: stay. Otherwise the most capable
-  // reasoning sibling by name, newest first; then a reasoning standard model
-  // keeps itself; then any reasoning sibling; then the standard model.
-  if (standardIsDeep) return standard;
-  const reasoning = siblings.filter((model) => model.reasoning);
-  const named = reasoning.filter((model) => DEEP_NAMES.test(nameOf(model))).sort(newestFirst);
-  if (named.length > 0) return named[0] ?? standard;
-  if (standard.reasoning) return standard;
-  return reasoning.sort(newestFirst)[0] ?? standard;
+  return chooseIndexedModel(catalog, lane, options).model;
 }
 
 /**
@@ -247,14 +214,9 @@ export function chooseModelForLane(
 export function chooseFallbackModel(
   catalog: Pick<EngineModelCatalog, "models">,
   lane: ModelLane,
-  options: { standard: string; exclude: readonly string[] },
+  options: { standard: string; exclude: readonly string[]; preferences?: ModelSelectionPreferences },
 ): EngineModelOption | null {
-  const standard = catalog.models.find((model) => model.id === options.standard);
-  if (!standard || standard.knownPrice !== true) return null;
-  const excluded = new Set(options.exclude);
-  const models = catalog.models.filter((model) => usable(model, excluded)
-    && model.providerId === standard.providerId && costsNoMoreThan(model, standard));
-  return chooseModelForLane({ models }, lane, { standard: usable(standard, excluded) ? standard.id : undefined });
+  return chooseIndexedFallbackModel(catalog, lane, options).model;
 }
 
 /**
@@ -291,10 +253,10 @@ export function describeModelTier(model: Pick<EngineModelOption, "tier">): strin
 }
 
 /** A one-line preview of what Automatic would do with the connected catalog, for the picker. */
-export function previewAutomaticChoice(catalog: Pick<EngineModelCatalog, "models">, standard: string): { quick: EngineModelOption | null; standard: EngineModelOption | null; deep: EngineModelOption | null } {
+export function previewAutomaticChoice(catalog: Pick<EngineModelCatalog, "models">, standard: string, preferences?: ModelSelectionPreferences): { quick: EngineModelOption | null; standard: EngineModelOption | null; deep: EngineModelOption | null } {
   return {
-    quick: chooseModelForLane(catalog, "quick", { standard }),
-    standard: chooseModelForLane(catalog, "standard", { standard }),
-    deep: chooseModelForLane(catalog, "deep", { standard }),
+    quick: chooseModelForLane(catalog, "quick", { standard, preferences }),
+    standard: chooseModelForLane(catalog, "standard", { standard, preferences }),
+    deep: chooseModelForLane(catalog, "deep", { standard, preferences }),
   };
 }

@@ -17,6 +17,7 @@ import type { GroupDocument, GroupDocumentSave, GroupDocumentSaved, GroupDocumen
 import type { LocalSchedule } from "./local-schedule.ts";
 import type { EffortStop } from "./effort.ts";
 import type { ModelMode } from "./model-choice.ts";
+import type { ModelSelectionPreferences } from "./model-intelligence-index.ts";
 import type { Personality } from "./personalities";
 import type { WorkerEvent, WorkerLifespan, WorkerSummary } from "./workers";
 import type { AssignedCoworkerTemplate } from "@openwork/types/coworker-template";
@@ -149,6 +150,8 @@ export type CoworkerSummary = {
   modelChosenBy: ModelChosenBy;
   /** `auto`: a quick, standard, or deep model per message around `model`; `fixed`: `model` every time. */
   modelMode: ModelMode;
+  /** Saved ranking preferences used only by Automatic; never change the fixed model or effort. */
+  modelSelectionPreferences?: ModelSelectionPreferences;
   /** The effort dial (Light … All in): a preference each turn's effort is derived from, never used as is. */
   effortPreference: EffortStop;
   automations: string[];
@@ -223,6 +226,27 @@ export type LongTermMemory = {
   updatedAt: number;
 };
 
+export type AutomaticMemoryExcerpt = {
+  id: string;
+  sourceId: string;
+  speaker: string;
+  text: string;
+  at: number;
+};
+
+export type AutomaticMemorySummary = {
+  text: string;
+  createdAt: number;
+  updatedAt: number;
+  sources: Array<Omit<AutomaticMemoryExcerpt, "text"> & { evidence: string }>;
+};
+
+export type AutomaticMemory = {
+  recent: AutomaticMemoryExcerpt[];
+  shortTerm: AutomaticMemorySummary[];
+  longTerm: AutomaticMemorySummary[];
+};
+
 export type LocalResponsibilityRun = {
   id: string;
   /** `queued` runs wait for a free slot on this Mac and start by themselves. */
@@ -266,6 +290,8 @@ export type CoworkerSettings = {
   maxRunsPerDay: number;
   progressSummariesEnabled: boolean;
   progressSummaryModelId: string;
+  automaticMemoryEnabled: boolean;
+  memoryModelId: string;
 };
 
 /** One recorded change to the coworker's memory or soul, by the coworker, the person, or an undo. */
@@ -406,6 +432,20 @@ export type BrowserCommand =
 
 export type ComputerPermission = "accessibility" | "screenRecording";
 
+export type ComputerPresentation = {
+  id: string;
+  phase: string;
+  appName?: string;
+  windowTitle?: string;
+  task?: string;
+  mode?: string;
+  status?: string;
+  canContinue?: boolean;
+  windows?: Array<{ id: number; title: string }>;
+  frame?: { sequence: number; capturedAt: number; width: number; height: number; mimeType: "image/png"; data: string };
+  inputs: Array<{ sequence: number; at: number; action: string; phase: string; x?: number; y?: number }>;
+};
+
 export type ComputerSnapshot = {
   revision: number;
   targetId: string;
@@ -471,6 +511,8 @@ export const coworkerBridge = {
   },
   computer: {
     snapshot: (slug: string, threadId: string) => invoke<ComputerSnapshot>("computer.snapshot", { slug, threadId }),
+    presentation: (input: { slug: string; threadId: string; visible: boolean }) => invoke<ComputerPresentation | null>("computer.presentation", input),
+    interact: (input: { slug: string; threadId: string; id: string; action: "approve" | "deny" | "takeover" | "resume"; windowId?: number }) => invoke<void>("computer.interact", input),
     configure: (input: { slug: string; threadId: string; expectedRevision: number; enabled: boolean; targetId: string }) => invoke<ComputerSnapshot>("computer.configure", input),
     stop: (input: { slug: string; threadId: string; expectedRevision: number }) => invoke<ComputerSnapshot>("computer.stop", input),
     setup: (targetId: string, permission: ComputerPermission) => invoke<void>("computer.setup", { targetId, permission }),
@@ -501,9 +543,9 @@ export const coworkerBridge = {
     list: () => invoke<CoworkerSummary[]>("coworkers.list"),
     get: (slug: string) => invoke<CoworkerSummary>("coworkers.get", { slug }),
     openFolder: (slug?: string) => invoke<void>("coworkers.openFolder", { slug }),
-    create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses; personality: Personality; roleId?: string; firstNote?: string }) =>
+    create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses; personality: Personality; roleId?: string; firstNote?: string; modelSelectionPreferences?: ModelSelectionPreferences }) =>
       invoke<CoworkerSummary>("coworkers.create", input),
-    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "thinkingModel" | "thinkingModelVariant" | "deliveryModel" | "deliveryModelVariant" | "modelChosenBy" | "modelMode" | "effortPreference" | "avatarColor" | "avatarGlasses" | "personality">>) =>
+    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "thinkingModel" | "thinkingModelVariant" | "deliveryModel" | "deliveryModelVariant" | "modelChosenBy" | "modelMode" | "modelSelectionPreferences" | "effortPreference" | "avatarColor" | "avatarGlasses" | "personality">>) =>
       invoke<CoworkerSummary>("coworkers.update", { slug, patch }),
     ensureWorkspace: (slug: string) => invoke<CoworkerSummary>("coworkers.ensureWorkspace", { slug }),
     /** Retire: archive the whole home under `.retired/`; nothing is deleted. */
@@ -570,6 +612,9 @@ export const coworkerBridge = {
       invoke<{ ok: boolean }>("coworkers.files.write", { slug, path, content }),
   },
   memory: {
+    automatic: (slug: string, groupId?: string) => invoke<AutomaticMemory | null>("coworkers.memory.automatic", { slug, groupId }),
+    clearAutomatic: (slug: string, groupId?: string) => invoke<boolean>("coworkers.memory.clearAutomatic", { slug, groupId }),
+    automaticGroups: (slug: string) => invoke<Array<{ id: string; name: string }>>("coworkers.memory.automaticGroups", { slug }),
     list: (slug: string) => invoke<LongTermMemory[]>("coworkers.memory.list", { slug }),
     create: (slug: string, input: { title: string; summary?: string }) =>
       invoke<LongTermMemory>("coworkers.memory.create", { slug, ...input }),

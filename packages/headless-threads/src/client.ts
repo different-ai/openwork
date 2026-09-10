@@ -243,7 +243,9 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     const path = `${opencodePath}/session/${encodeURIComponent(threadId)}/prompt_async`;
     const result = await opencode.session.promptAsync({
       sessionID: threadId,
-      parts: [{ type: "text", text: input.prompt }],
+      parts: input.context
+        ? [{ type: "text", text: input.context, synthetic: true }, { type: "text", text: input.prompt }]
+        : [{ type: "text", text: input.prompt }],
       ...(input.messageId === undefined ? {} : { messageID: input.messageId }),
       ...(input.tools === undefined ? {} : { tools: input.tools }),
       ...(input.agent === undefined ? {} : { agent: input.agent }),

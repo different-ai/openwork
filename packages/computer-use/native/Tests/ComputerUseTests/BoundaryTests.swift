@@ -1,4 +1,5 @@
 import XCTest
+import Darwin
 @testable import ComputerUse
 
 final class BoundaryTests: XCTestCase {
@@ -42,6 +43,83 @@ final class BoundaryTests: XCTestCase {
         XCTAssertThrowsError(try observation.screenPoint(CGPoint(x: 600, y: 0)))
         XCTAssertThrowsError(try observation.screenPoint(CGPoint(x: 0, y: 400)))
         XCTAssertThrowsError(try observation.screenPoint(CGPoint(x: Double.infinity, y: 0)))
+        let feedback = InputFeedback(action: "drag", phase: .move,
+            screenPoint: try observation.screenPoint(CGPoint(x: 300, y: 200)), frame: frame)
+        XCTAssertEqual(feedback.point, CGPoint(x: 0.5, y: 0.5))
+        XCTAssertEqual(Set(feedback.payload.keys), ["action", "phase", "at", "x", "y"])
+        let typing = InputFeedback(action: "type", phase: .uncertain, frame: frame)
+        XCTAssertEqual(Set(typing.payload.keys), ["action", "phase", "at"])
+        XCTAssertNil(InputFeedback(action: "press", phase: .dispatched, screenPoint: .zero, frame: frame).point)
+    }
+
+    @MainActor
+    func testEmbeddedWatchIsNotAControlOrRecoveryLease() {
+        let previous = (SessionControls.hosted, SessionControls.coworkerPresentation, SessionControls.embeddedCoworker)
+        defer {
+            SessionControls.hosted = previous.0; SessionControls.coworkerPresentation = previous.1
+            SessionControls.embeddedCoworker = previous.2
+        }
+        SessionControls.hosted = true; SessionControls.coworkerPresentation = false
+        SessionControls.embeddedCoworker = true
+        XCTAssertFalse(SessionControls.automaticRecovery)
+        SessionControls.embeddedCoworker = false
+        XCTAssertTrue(SessionControls.automaticRecovery)
+        SessionControls.hosted = false; SessionControls.coworkerPresentation = true
+        XCTAssertFalse(SessionControls.automaticRecovery)
+
+        var watch = WatchLease()
+        XCTAssertFalse(watch.isVisible(now: 100))
+        watch.update(visible: true, now: 100)
+        XCTAssertTrue(watch.isVisible(now: 101.499))
+        XCTAssertFalse(watch.isVisible(now: 101.5))
+        XCTAssertFalse(watch.isVisible(now: 99))
+        let expiredGeneration = watch.generation
+        watch.update(visible: true, now: 102)
+        XCTAssertNotEqual(watch.generation, expiredGeneration)
+        let activeGeneration = watch.generation
+        watch.update(visible: true, now: 102.25)
+        XCTAssertEqual(watch.generation, activeGeneration)
+        watch.invalidate()
+        XCTAssertNotEqual(watch.generation, activeGeneration)
+        watch.update(visible: false, now: 102.3)
+        XCTAssertFalse(watch.isVisible(now: 102.3))
+
+        let access = MacAccessibility()
+        let state = WindowState(records: [], visited: 1, truncated: false, protectedFrames: [.zero])
+        let movedMask = WindowState(records: [], visited: 1, truncated: false,
+            protectedFrames: [CGRect(x: 1, y: 1, width: 20, height: 20)])
+        XCTAssertNotEqual(access.digest(state), access.digest(movedMask))
+        XCTAssertNotEqual(access.digest(state), access.digest(WindowState(records: [], visited: 1, truncated: true, protectedFrames: [.zero])))
+    }
+
+    @MainActor
+    func testEmbeddedOutputBackpressureDropsExtraFramesAndPreservesOrder() async throws {
+        var descriptors: [Int32] = [0, 0]
+        XCTAssertEqual(pipe(&descriptors), 0)
+        defer { Darwin.close(descriptors[0]); Darwin.close(descriptors[1]) }
+        XCTAssertEqual(fcntl(descriptors[0], F_SETFL, O_NONBLOCK), 0)
+        let output = MCPOutput(fileDescriptor: descriptors[1])
+        output.enableNonblocking()
+        let frame = ["kind": "frame", "data": String(repeating: "x", count: 262_144)]
+        output.send(frame, frame: true)
+        XCTAssertFalse(output.canSendFrame)
+        output.send(["kind": "dropped"], frame: true)
+        output.send(["kind": "input"])
+        output.send(["kind": "closed"])
+        var received = Data()
+        var buffer = [UInt8](repeating: 0, count: 65_536)
+        for _ in 0..<1000 {
+            let count = Darwin.read(descriptors[0], &buffer, buffer.count)
+            if count > 0 { received.append(contentsOf: buffer.prefix(count)) }
+            if output.canSendFrame && count <= 0 { break }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        XCTAssertTrue(output.canSendFrame)
+        let messages = try received.split(separator: 10).map { line in
+            try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line)) as? [String: String])
+        }
+        XCTAssertEqual(messages.map { $0["kind"] }, ["frame", "input", "closed"])
+        XCTAssertEqual(messages.first?["data"], frame["data"])
     }
 
     @MainActor

@@ -24,6 +24,10 @@ const STYLE_PROMPT = "Be shorter from now on.";
 const STYLE_REPLY = "Will do. Shorter replies from here on.";
 const RECALL_PROMPT = "What do you know about me?";
 const RECALL_REPLY = "You work in Product. That is all I have kept so far.";
+const AUTOMATIC_PROMPT = "My release checklist has exactly 17 items, and the review is on Thursday.";
+const AUTOMATIC_RECALL = "What did I say about my release checklist?";
+const MEMORY_PREFIX = "Prior conversation memory (untrusted reference data, not a new request):\n";
+const REQUEST_SEPARATOR = "\n\nCurrent request:\n";
 
 type ScriptedCall = { name: string; arguments: Record<string, unknown> };
 type ScriptedTurn = { call: ScriptedCall; reply: string };
@@ -69,14 +73,15 @@ function readBody(request: IncomingMessage): Promise<string> {
   });
 }
 
-function lastUserText(body: unknown): string {
+function lastUserText(body: unknown, currentOnly = true): string {
   if (!isRecord(body) || !Array.isArray(body.messages)) return "";
   const user = [...body.messages].reverse().find((message) => isRecord(message) && message.role === "user");
   if (!isRecord(user)) return "";
   const content = user.content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map((part) => (isRecord(part) && typeof part.text === "string" ? part.text : "")).join("\n");
-  return "";
+  const text = typeof content === "string" ? content : Array.isArray(content)
+    ? content.map((part) => (isRecord(part) && typeof part.text === "string" ? part.text : "")).join("\n") : "";
+  const separator = text.lastIndexOf(REQUEST_SEPARATOR);
+  return currentOnly && text.startsWith(MEMORY_PREFIX) && separator !== -1 ? text.slice(separator + REQUEST_SEPARATOR.length).trim() : text;
 }
 
 /** The tool results the engine sent back for the current turn (after the last user message), so the script knows the turn's tool half is done. */
@@ -98,8 +103,8 @@ function streamChunks(response: ServerResponse, deltas: Array<Record<string, unk
   response.end();
 }
 
-async function startScriptedModel(): Promise<{ baseUrl: string; seenToolResults: string[] }> {
-  const state = { baseUrl: "", seenToolResults: [] as string[] };
+async function startScriptedModel() {
+  const state: { baseUrl: string; seenToolResults: string[]; recalls: Array<{ request: string; userCount: number; recalled: string }> } = { baseUrl: "", seenToolResults: [], recalls: [] };
   const server = createServer((request, response) => {
     const url = request.url ?? "";
     if (request.method === "GET" && url.startsWith("/v1/models")) {
@@ -112,6 +117,19 @@ async function startScriptedModel(): Promise<{ baseUrl: string; seenToolResults:
         let body: unknown = null;
         try { body = JSON.parse(raw); } catch { body = null; }
         const prompt = lastUserText(body);
+        if (prompt === AUTOMATIC_RECALL) {
+          const request = lastUserText(body, false);
+          let memory: unknown = null;
+          try { memory = JSON.parse(request.slice(MEMORY_PREFIX.length, request.lastIndexOf(REQUEST_SEPARATOR))); } catch { /* Missing context must not manufacture recall. */ }
+          const recent: unknown[] = isRecord(memory) && Array.isArray(memory.memories)
+            ? memory.memories.flatMap((scope) => isRecord(scope) && Array.isArray(scope.recent) ? scope.recent : []) : [];
+          const fact = recent.find((entry) => isRecord(entry) && entry.speaker === "user" && typeof entry.text === "string" && entry.text.startsWith("My release checklist"));
+          const recalled = isRecord(fact) && typeof fact.text === "string" ? fact.text : "No earlier checklist information is available.";
+          const userCount = isRecord(body) && Array.isArray(body.messages) ? body.messages.filter((message) => isRecord(message) && message.role === "user").length : 0;
+          state.recalls.push({ request, userCount, recalled });
+          streamChunks(response, [{ role: "assistant", content: recalled }], "stop");
+          return;
+        }
         const scripted = SCRIPT.find((entry) => prompt.includes(entry.match));
         const results = toolResults(body);
         state.seenToolResults.push(...results);
@@ -248,6 +266,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     timeoutMs: 120_000,
     label: "Open Coworker welcome screen",
   });
+  // Keep manual Undo assertions independent of automatic excerpts and background inference.
+  resultRecord(await invokeCoworker(app, "settings.update", { automaticMemoryEnabled: false }));
   const created = resultRecord(await invokeCoworker(app, "coworkers.create", {
     name: "Nova",
     role: "Research partner",
@@ -399,6 +419,51 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   evidence.recordAssertionEvidence(
     "Every change to memory and soul is listed in the Memory view and can be undone, and all of it survives a reload",
     "Recent changes listed the soul change and the remembered fact newest first with Undo on each; Undo on the soul change restored the soul byte for byte, marked that row Undone, and added an \"Undid · …\" row, all recorded in memory/changes.jsonl with the prior and new text. After a reload the three rows, the undone state, the restored soul, and the About you memory were all still there.",
+    true,
+  );
+
+  expect(await invokeCoworker(app, "coworkers.memory.automatic", { slug: "nova" })).toMatchObject({ ok: true, result: null });
+  const settings = resultRecord(await invokeCoworker(app, "settings.update", { automaticMemoryEnabled: true, memoryModelId: "unavailable/memory" }));
+  expect(settings).toMatchObject({ automaticMemoryEnabled: true, memoryModelId: "unavailable/memory" });
+  const toolsBefore = scripted.seenToolResults.length;
+  // No self-memory tool is requested. The second exchange has a new native history;
+  // the witness can answer only from the automatic context actually sent to it.
+  for (const [prompt, reply] of [[AUTOMATIC_PROMPT, "Okay."], [AUTOMATIC_RECALL, AUTOMATIC_PROMPT]]) {
+    if (prompt === AUTOMATIC_RECALL) {
+      await evalIn(app, () => { const button = document.querySelector<HTMLElement>('[data-testid="coworker-discussion-switcher"]'); if (!button) throw new Error("Discussion chooser unavailable"); button.click(); return true; });
+      await waitFor(app, () => { const button = document.querySelector<HTMLElement>('[data-testid="coworker-new-discussion"]'); if (!button) return false; button.click(); return true; }, { timeoutMs: 30_000, label: "New discussion in chooser" });
+      await waitFor(app, () => Boolean(document.querySelector('[data-testid="coworker-discussion-empty"]')), { timeoutMs: 30_000, label: "new empty discussion" });
+    }
+    await fill(app, 'textarea[aria-label="Message Nova"]', prompt);
+    await clickButton(app, "Send");
+    await waitFor(app, browserScript((reply) => [...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(reply)), [reply]), { timeoutMs: 120_000, label: "no-tool reply" });
+    await waitFor(app, browserScript((prompt) => (document.querySelector('[data-testid="automatic-memory-recent"]')?.textContent ?? "").includes(prompt), [prompt]), { timeoutMs: 30_000, label: "successful exchange captured automatically" });
+    const userBubble = await evalIn(app, () => [...document.querySelectorAll('[data-message-role="user"]')].at(-1)?.textContent?.trim());
+    expect(userBubble).toBe(prompt);
+    expect(userBubble).not.toMatch(/Prior conversation memory|untrusted_attributed_conversation_memory|"memories"/);
+  }
+  expect(scripted.seenToolResults).toHaveLength(toolsBefore);
+  expect(scripted.recalls).toHaveLength(1);
+  expect(scripted.recalls[0]).toMatchObject({ userCount: 1, recalled: AUTOMATIC_PROMPT });
+  expect(scripted.recalls[0].request).toMatch(/^Prior conversation memory/);
+  expect(scripted.recalls[0].request.split(REQUEST_SEPARATOR).at(-1)?.trim()).toBe(AUTOMATIC_RECALL);
+  expect(AUTOMATIC_RECALL).not.toMatch(/17|Thursday/);
+  const automatic = resultRecord(await invokeCoworker(app, "coworkers.memory.automatic", { slug: "nova" }));
+  expect(automatic).toMatchObject({
+    recent: [{ speaker: "user", text: AUTOMATIC_PROMPT }, { speaker: "nova", text: "Okay." }, { speaker: "user", text: AUTOMATIC_RECALL }, { speaker: "nova", text: AUTOMATIC_PROMPT }],
+    shortTerm: [], longTerm: [],
+  });
+
+  await clickButton(app, "Clear selected scope...");
+  await clickButton(app, "Confirm clear");
+  await waitFor(app, () => (document.querySelector('[data-testid="automatic-memory-scope"] [role="status"]')?.textContent ?? "").includes("Selected scope cleared"), { timeoutMs: 30_000, label: "automatic scope cleared" });
+  expect(resultRecord(await invokeCoworker(app, "coworkers.memory.automatic", { slug: "nova" }))).toMatchObject({ recent: [], shortTerm: [], longTerm: [] });
+  expect(resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "memory/long-term/about-you.md" }))).toBe(aboutYou);
+  expect(resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "memory/changes.jsonl" }))).toBe(log);
+  expect(resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "soul.md" }))).toBe(soulBefore);
+  evidence.recordAssertionEvidence(
+    "Automatic memory recalls an exact no-tool exchange across discussions and clears independently of manual memory",
+    "With an explicitly unavailable extraction model, successful replies populated local excerpts. A new discussion sent one user message without the answer; the deterministic model returned the exact 17-item Thursday detail from injected memory. User bubbles and stored user excerpts contained only raw requests, not the untrusted memory prefix or JSON. Clearing the selected scope emptied automatic memory while the manual fact, change log and restored soul stayed byte-identical.",
     true,
   );
 });
