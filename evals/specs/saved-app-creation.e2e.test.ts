@@ -518,9 +518,53 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.screenshot();
     await user.click("Cancel");
     expect((await readApp()).onDashboard).toBe(true);
+    // Z2 DIAGNOSTIC (temporary): capture renderer errors around the route change.
+    await seed.evalIn(world.app, () => {
+      const w = window as unknown as { __z2?: { errors: string[] } };
+      if (w.__z2) return;
+      const bucket = { errors: [] as string[] };
+      w.__z2 = bucket;
+      const originalError = console.error.bind(console);
+      console.error = (...args: unknown[]) => { bucket.errors.push("console.error: " + args.map((a) => (a instanceof Error ? `${a.message}\n${a.stack ?? ""}` : String(a))).join(" ").slice(0, 2000)); originalError(...args); };
+      window.addEventListener("error", (event) => bucket.errors.push(`window.error: ${event.message}`));
+      window.addEventListener("unhandledrejection", (event) => bucket.errors.push(`unhandledrejection: ${String(event.reason)}`));
+    });
+    const z2Snapshot = () => probe.eval(world.app, () => {
+      const w = window as unknown as { __z2?: { errors: string[] } };
+      const labels = (selector: string) => [...document.querySelectorAll<HTMLElement>(selector)].map((el) => `${el.getAttribute("aria-label") ?? el.innerText.trim().slice(0, 40)}${el.matches(":disabled") ? "(disabled)" : ""}`);
+      return {
+        hash: location.hash,
+        dashboardPage: Boolean(document.querySelector("[data-dashboard-page]")),
+        appHeader: Boolean(document.querySelector("[data-app-header]")),
+        primarySlotText: document.querySelector<HTMLElement>("[data-workspace-primary-slot]")?.innerText.replace(/\s+/g, " ").slice(0, 600) ?? null,
+        menus: document.querySelectorAll('[role="menu"]').length,
+        menuItems: labels('[role="menuitem"]'),
+        dialogs: document.querySelectorAll('[role="dialog"], [role="alertdialog"]').length,
+        buttons: labels("button"),
+        bodyPointerEvents: document.body.style.pointerEvents || getComputedStyle(document.body).pointerEvents,
+        inert: [...document.querySelectorAll("[inert]")].map((el) => el.tagName + "#" + (el.id || el.className.toString().slice(0, 40))),
+        ariaHidden: [...document.querySelectorAll('[aria-hidden="true"]')].filter((el) => el.parentElement === document.body || el.parentElement?.id === "root").map((el) => el.tagName + "#" + (el.id || el.className.toString().slice(0, 40))),
+        statuses: [...document.querySelectorAll('[role="status"], [role="alert"]')].map((el) => `${el.getAttribute("aria-label") ?? ""}|${(el.textContent ?? "").trim().slice(0, 80)}`),
+        errors: w.__z2?.errors ?? [],
+      };
+    });
+    const z2Before = await z2Snapshot();
+    console.log("Z2 before go:", JSON.stringify(z2Before));
     await world.open("/dashboard");
+    const z2AfterGo = await z2Snapshot();
+    console.log("Z2 right after go:", JSON.stringify(z2AfterGo));
     await user.click("App options for Team briefing");
-    await user.click("Delete Team briefing");
+    const z2AfterClick = await z2Snapshot();
+    console.log("Z2 right after options click:", JSON.stringify(z2AfterClick));
+    try {
+      await user.click("Delete Team briefing");
+    } catch (error) {
+      await user.screenshot();
+      console.log("Z2 at failure:", JSON.stringify(await z2Snapshot()));
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      console.log("Z2 +3s:", JSON.stringify(await z2Snapshot()));
+      throw error;
+    }
     await user.click("Delete app");
     await user.see({ text: "Make this dashboard yours" }, { timeoutMs: 30_000 });
     await user.reload();
