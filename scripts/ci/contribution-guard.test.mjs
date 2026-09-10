@@ -49,7 +49,9 @@ test("a sign-off from someone else fails; the GitHub noreply address of the PR a
     commits: [commit("c".repeat(40), "chore: three", { signoff: "Other <other@example.com>" })],
   }));
   assert.equal(mismatch.verdict, "fail");
-  assert.match(mismatch.dco[0], /does not match the author email <dev@example.com>/);
+  assert.match(mismatch.dco[0], /^ccccccc "chore: three": Signed-off-by email does not match/);
+  // Public logs must never carry contributor identifiers (Warden EQE-3T4).
+  assert.doesNotMatch(report(mismatch), /@example\.com|@contributor|contributor'/);
 
   const noreply = evaluate(forkPull({
     commits: [commit("d".repeat(40), "chore: four", { signoff: `Dev <12345+${LOGIN}@users.noreply.github.com>` })],

@@ -37,9 +37,10 @@ export function checkSignoffs(commits, prAuthorLogin) {
     const author = (commit.commit.author?.email ?? "").toLowerCase();
     const emails = signoffEmails(commit.commit.message);
     if (emails.some((email) => email === author || isNoreplyFor(email, prAuthorLogin))) continue;
+    // Never echo emails or logins: this report lands in public logs and the step summary.
     const subject = commit.commit.message.split(/\r?\n/, 1)[0];
     const reason = emails.length
-      ? `Signed-off-by <${emails.join(">, <")}> does not match the author email <${author}> or @${prAuthorLogin}'s GitHub noreply address`
+      ? "Signed-off-by email does not match the commit author email or the PR author's GitHub noreply address"
       : "missing Signed-off-by trailer";
     problems.push(`${commit.sha.slice(0, 7)} "${subject}": ${reason}`);
   }
