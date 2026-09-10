@@ -13,6 +13,8 @@ interface MessageListContextValue {
   readOnly: boolean
   workspaceId: string
   sessionId: string
+  /** Verified principal/org, endpoint, workspace and session; absent means no retention. */
+  uiStateOwner?: string | null
   showThinking: boolean
   highlightQuery?: string
   developerMode: boolean
@@ -27,7 +29,8 @@ interface MessageListContextValue {
   dispatchAction: (action: DispatchAction) => void
   setPrompt: (prompt: string) => void
   onRevertToUserMessage: (messageId: string) => void
-  onForkAtMessage: (messageId: string) => void
+  onForkAtMessage: (messageId: string) => void | Promise<void>
+  forkingMessageId?: string
   onEditUserMessage: (messageId: string, text: string) => void
   /** Open a sub-agent (child) session in the main chat surface. */
   onOpenSubagentSession?: (sessionId: string) => void
@@ -48,11 +51,13 @@ interface MessageListProviderProps {
   children: React.ReactNode
   workspaceId: string
   sessionId: string
+  uiStateOwner?: string | null
   showThinking: boolean
   highlightQuery?: string
   developerMode: boolean
   onRevertToUserMessage: (messageId: string) => void
-  onForkAtMessage: (messageId: string) => void
+  onForkAtMessage: (messageId: string) => void | Promise<void>
+  forkingMessageId?: string
   onEditUserMessage: (messageId: string, text: string) => void
   onOpenSubagentSession?: (sessionId: string) => void
   onResumeInterrupted?: (recoveryPrompt: string) => void
@@ -81,6 +86,7 @@ export function MessageListProvider({
   children,
   workspaceId,
   sessionId,
+  uiStateOwner,
   showThinking,
   highlightQuery,
   developerMode,
@@ -92,6 +98,7 @@ export function MessageListProvider({
   setPrompt,
   onRevertToUserMessage,
   onForkAtMessage,
+  forkingMessageId,
   onEditUserMessage,
   onOpenSubagentSession,
   onResumeInterrupted,
@@ -160,8 +167,10 @@ export function MessageListProvider({
       readOnly,
       workspaceId,
       sessionId,
+      uiStateOwner,
       showThinking,
       highlightQuery,
+      forkingMessageId,
       developerMode,
       displaySuggestions,
       providerConnectedCount,
@@ -179,8 +188,10 @@ export function MessageListProvider({
       readOnly,
       workspaceId,
       sessionId,
+      uiStateOwner,
       showThinking,
       highlightQuery,
+      forkingMessageId,
       developerMode,
       displaySuggestions,
       providerConnectedCount,

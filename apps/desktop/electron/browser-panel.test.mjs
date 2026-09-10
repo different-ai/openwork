@@ -10,6 +10,7 @@ import { EventEmitter } from "node:events";
 export const effects = [];
 export const controls = {
   ready: true,
+  focusedContents: null,
   confirm: async () => 0, beforeLoad: async () => {}, beforeCommand: async () => {}, beforeDiscovery: async () => {},
   invoke: async () => true,
 };
@@ -37,6 +38,8 @@ export const session = { fromPartition() {
   return browserSession;
 } };
 export const shell = { async openExternal(url) { effects.push({ type: "external", url }); } };
+export const menuTemplates = [];
+export const Menu = { buildFromTemplate(template) { menuTemplates.push(template); return template; }, setApplicationMenu() {} };
 export const createdViews = [];
 export const navigation = { load: async () => {} };
 export class BrowserWindow {
@@ -87,6 +90,11 @@ export class WebContentsView {
       once(event, handler) { listeners.once(event, handler); },
       removeListener(event, handler) { listeners.removeListener(event, handler); },
       emit(event, ...args) { listeners.emit(event, null, ...args); },
+      input(input) {
+        let prevented = false;
+        listeners.emit("before-input-event", { preventDefault() { prevented = true; } }, input);
+        return prevented;
+      },
       setWindowOpenHandler(handler) { this.windowOpenHandler = handler; },
       destroyed: false,
       isDestroyed() { return this.destroyed; },
@@ -122,7 +130,8 @@ export class WebContentsView {
         this.emit("did-start-navigation", this.url, false, true);
         this.emit("did-navigate", this.url);
       },
-      focus() {},
+      isFocused() { return controls.focusedContents === this; },
+      focus() { controls.focusedContents = this; this.emit("focus"); },
       close(options) {
         if (options?.waitForBeforeUnload && this.closeMode === "pending") return;
         if (options?.waitForBeforeUnload && this.closeMode === "veto") { this.emit("will-prevent-unload"); return; }
@@ -166,7 +175,8 @@ export function load(url, context, next) {
 register(`data:text/javascript,${encodeURIComponent(hooks)}`);
 const { createBrowserPanel } = await import("./browser-panel.mjs");
 // @ts-expect-error The registered test-only Electron stub exports its witnesses.
-const { createdViews, effects, controls, browserSession, navigation, requestHooks, exposed, webFrame, preloadCalls, ipcRenderer } = await import("electron");
+const { createdViews, effects, controls, browserSession, navigation, requestHooks, exposed, webFrame, preloadCalls, ipcRenderer, menuTemplates } = await import("electron");
+const { createApplicationMenu } = await import("./app-menu.mjs");
 
 const PANEL_BOUNDS = { x: 800, y: 40, width: 400, height: 900 };
 const LINK = { url: "https://example.com/a%2Fb?x=one%20two&x=%2F#section", point: { x: 20, y: 30 }, sessionId: "A" };
@@ -177,6 +187,7 @@ const RESET_SEQUENCE = [
 
 function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) {
   effects.length = 0;
+  controls.focusedContents = null;
   controls.confirm = async () => 0;
   controls.beforeLoad = async () => {};
   controls.beforeCommand = async () => {};
@@ -206,9 +217,11 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
       destroyed: false,
       isDestroyed() { return this.destroyed; },
       send(channel, payload) { sent.push({ channel, payload }); },
+      focus() { controls.focusedContents = this; },
     }),
     destroyed: false,
     isDestroyed() { return this.destroyed; },
+    close() { this.destroyed = true; },
   });
   const handlers = new Map();
   const ipcMain = {
@@ -225,6 +238,7 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
     closeNativeContextMenu: () => { if (menus.length) menus.at(-1).closed = true; },
   });
   panel.registerIpc(ipcMain);
+  panel.registerWindowShortcuts(mainWindow);
   const mainContents = mainWindow.webContents;
   const emit = (channel, event, ...args) => handlers.get(channel)?.(event, ...args);
   const invoke = (channel, ...args) => {
@@ -259,6 +273,273 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+const shortcut = (key, extra = {}) => ({
+  type: "keyDown", key, meta: process.platform === "darwin", control: process.platform !== "darwin",
+  alt: false, shift: false, isAutoRepeat: false, ...extra,
+});
+function mainInput(contents, input) {
+  let prevented = false;
+  contents.emit("before-input-event", { preventDefault() { prevented = true; } }, input);
+  return prevented;
+}
+
+test("native page shortcuts close once, keep the window and neighbor alive, and reopen in LIFO order with fresh targets", async () => {
+  const { invoke, mainWindow, mainContents, onScreen, views, panel } = createPanel();
+  invoke("openwork:browser:setVisibleSession", "A");
+  const neighbor = invoke("openwork:browser:createTab", "https://example.com/neighbor", "B");
+  const first = invoke("openwork:browser:createTab", "https://example.com/first", "A");
+  const second = invoke("openwork:browser:createTab", "https://example.com/second", "A");
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  await flush();
+  const secondContents = onScreen().webContents;
+  secondContents.focus();
+  assert.equal(secondContents.input(shortcut("w", { shift: true })), false);
+  assert.equal(secondContents.input(shortcut("w")), true);
+  assert.equal(secondContents.destroyed, true);
+  assert.equal(mainWindow.destroyed, false);
+  assert.equal(invoke("openwork:browser:state").activeTabId, first.tabId);
+  const firstContents = onScreen().webContents;
+  assert.equal(firstContents.input(shortcut("w", { isAutoRepeat: true })), true);
+  assert.equal(firstContents.destroyed, false, "holding W must not close its neighbor");
+  assert.equal(firstContents.input(shortcut("w")), true);
+  assert.equal(mainInput(mainContents, shortcut("w")), true, "last-tab browser context protects the window");
+  assert.equal(mainWindow.destroyed, false);
+  assert.deepEqual(invoke("openwork:browser:state").tabs.map(tab => tab.id), [neighbor.tabId]);
+  assert.equal(mainInput(mainContents, shortcut("t")), true);
+  await flush();
+  let state = invoke("openwork:browser:state");
+  const reopenedFirst = state.tabs.find(tab => tab.url.endsWith("/first"));
+  assert.ok(reopenedFirst && reopenedFirst.id !== first.tabId);
+  assert.equal(reopenedFirst.ownerSessionId, "A");
+  assert.equal(reopenedFirst.automationProtected, false);
+  assert.equal(reopenedFirst.browserApproval, null);
+  assert.deepEqual(reopenedFirst.siteTools, []);
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  onScreen().webContents.focus();
+  assert.equal(onScreen().webContents.input(shortcut("t")), true);
+  // Key-up must not invalidate an in-flight reopen's focus identity.
+  assert.equal(onScreen().webContents.input(shortcut("t", { type: "keyUp" })), true);
+  await flush();
+  state = invoke("openwork:browser:state");
+  const reopenedSecond = state.tabs.find(tab => tab.url.endsWith("/second"));
+  assert.ok(reopenedSecond && reopenedSecond.id !== second.tabId);
+  assert.equal(state.activeTabId, reopenedSecond.id);
+  assert.equal(views()[0].webContents.destroyed, false, "other conversation's native page survives");
+  assert.notEqual(onScreen().webContents.targetId, secondContents.targetId);
+  assert.equal(mainWindow.destroyed, false);
+  panel.destroy();
+});
+
+test("toolbar and menu Close share browser focus, while chat and other windows retain native Close", async () => {
+  const { invoke, mainContents, mainWindow, panel, onScreen } = createPanel();
+  invoke("openwork:browser:setVisibleSession", "A");
+  const tab = invoke("openwork:browser:createTab", "https://example.com/toolbar", "A");
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  await flush();
+  mainContents.focus();
+  invoke("openwork:browser:shortcut-focus", tab.tabId);
+  createApplicationMenu({ appName: "OpenWork", docsUrl: "https://example.com/docs", getWindow: () => mainWindow,
+    closeBrowserTab: host => panel.closeFocusedBrowserTab(host) }).install();
+  const close = menuTemplates.at(-1).find(item => item.label === "File").submenu.find(item => item.label === "Close");
+  assert.equal(close.role, undefined, "no native role can bypass browser routing");
+  assert.equal(close.accelerator, "CommandOrControl+W");
+  close.click(null, mainWindow);
+  assert.equal(mainWindow.destroyed, false);
+  assert.deepEqual(invoke("openwork:browser:state").tabs, []);
+  assert.equal(mainInput(mainContents, shortcut("t")), true);
+  await flush();
+  const reopened = invoke("openwork:browser:state").tabs[0];
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  mainContents.focus();
+  invoke("openwork:browser:shortcut-focus", reopened.id);
+  assert.equal(mainInput(mainContents, shortcut("w")), true, "toolbar W is stopped before the menu");
+  assert.equal(onScreen(), null);
+  const otherWindow = { closed: false, close() { this.closed = true; } };
+  close.click(null, otherWindow);
+  assert.equal(otherWindow.closed, true);
+  invoke("openwork:browser:shortcut-focus", null);
+  assert.equal(mainInput(mainContents, shortcut("t")), false, "chat T reaches the existing conversation shortcut");
+  close.click(null, mainWindow);
+  assert.equal(mainWindow.destroyed, true, "outside browser context native Close is unchanged");
+  panel.destroy();
+});
+
+test("browser shortcut ownership rejects background input, forged focus, hidden panels, and conversation changes", async () => {
+  const { invoke, emit, mainContents, views, panel } = createPanel();
+  invoke("openwork:browser:setVisibleSession", "A");
+  const a = invoke("openwork:browser:createTab", "https://example.com/a", "A");
+  const b = invoke("openwork:browser:createTab", "https://example.com/b", "B");
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  await flush();
+  views()[1].webContents.focus();
+  assert.equal(views()[1].webContents.input(shortcut("w")), false, "emulated/background focus cannot claim shortcuts");
+  mainContents.focus();
+  emit("openwork:browser:shortcut-focus", { sender: views()[0].webContents }, a.tabId);
+  assert.equal(mainInput(mainContents, shortcut("w")), false);
+  emit("openwork:browser:shortcut-focus", { sender: mainContents, senderFrame: {} }, a.tabId);
+  assert.equal(mainInput(mainContents, shortcut("t")), false);
+  invoke("openwork:browser:shortcut-focus", b.tabId);
+  assert.equal(mainInput(mainContents, shortcut("w")), false);
+  invoke("openwork:browser:shortcut-focus", a.tabId);
+  invoke("openwork:browser:hide");
+  assert.equal(mainInput(mainContents, shortcut("w")), false);
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  invoke("openwork:browser:shortcut-focus", a.tabId);
+  assert.equal(mainInput(mainContents, shortcut("w")), true);
+  invoke("openwork:browser:setVisibleSession", "B");
+  assert.equal(mainInput(mainContents, shortcut("t")), false);
+  invoke("openwork:browser:show", PANEL_BOUNDS, "B");
+  invoke("openwork:browser:shortcut-focus", b.tabId);
+  assert.equal(mainInput(mainContents, shortcut("t")), true);
+  await flush();
+  assert.deepEqual(invoke("openwork:browser:state").tabs.map(tab => tab.id), [b.tabId], "B cannot reopen A's closed tab");
+  mainInput(mainContents, { type: "keyDown", key: "Tab" });
+  assert.equal(mainInput(mainContents, shortcut("t")), false);
+  panel.destroy();
+});
+
+test("reopen checks current policy, keeps failed history, serializes requests, and cancels a stale owner", async () => {
+  let denied = false;
+  let pending = null;
+  const { invoke, mainContents, panel } = createPanel(async () => {
+    if (denied) throw new Error("organization_policy_denied");
+    if (pending) await pending.promise;
+  });
+  invoke("openwork:browser:setVisibleSession", "A");
+  const a = invoke("openwork:browser:createTab", "https://example.com/reopen", "A");
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  await flush();
+  mainContents.focus();
+  invoke("openwork:browser:shortcut-focus", a.tabId);
+  mainInput(mainContents, shortcut("w"));
+  denied = true;
+  mainInput(mainContents, shortcut("t"));
+  await flush();
+  assert.deepEqual(invoke("openwork:browser:state").tabs, []);
+  assert.ok(effects.some(effect => effect.type === "dialog"));
+  denied = false;
+  pending = gate();
+  mainInput(mainContents, shortcut("t"));
+  mainInput(mainContents, shortcut("t"));
+  await flush();
+  pending.finish();
+  pending = null;
+  await flush();
+  assert.equal(invoke("openwork:browser:state").tabs.length, 1, "one failed history entry reopens only once");
+  const reopened = invoke("openwork:browser:state").tabs[0];
+  invoke("openwork:browser:shortcut-focus", reopened.id);
+  invoke("openwork:browser:closeTab", reopened.id);
+  pending = gate();
+  mainInput(mainContents, shortcut("t"));
+  await flush();
+  invoke("openwork:browser:closeSessionTabs", "A");
+  pending.finish();
+  pending = null;
+  await flush();
+  assert.deepEqual(invoke("openwork:browser:state").tabs, [], "owner deletion invalidates an in-flight reopen");
+  panel.destroy();
+});
+
+test("explicit closes have bounded history, while owner and app cleanup cannot be reopened", async () => {
+  const { invoke, mainContents, panel } = createPanel();
+  invoke("openwork:browser:setVisibleSession", "A");
+  for (let index = 0; index < 23; index++) {
+    const tab = invoke("openwork:browser:createTab", `https://example.com/${index}`, "A");
+    await flush();
+    invoke("openwork:browser:shortcut-focus", tab.tabId);
+    invoke("openwork:browser:closeTab", tab.tabId);
+  }
+  const sentinel = invoke("openwork:browser:createTab", "about:blank", "A");
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  await flush();
+  for (let index = 22; index >= 3; index--) {
+    mainContents.focus();
+    invoke("openwork:browser:shortcut-focus", sentinel.tabId);
+    mainInput(mainContents, shortcut("t"));
+    await flush();
+    const tab = invoke("openwork:browser:state").tabs.find(tab => tab.id !== sentinel.tabId);
+    assert.equal(tab.url, `https://example.com/${index}`);
+    // A native/page close is cleanup, not another explicit user close.
+    const contents = createdViews.at(-1).webContents;
+    contents.close();
+  }
+  mainContents.focus();
+  invoke("openwork:browser:shortcut-focus", sentinel.tabId);
+  mainInput(mainContents, shortcut("t"));
+  await flush();
+  assert.deepEqual(invoke("openwork:browser:state").tabs.map(tab => tab.id), [sentinel.tabId]);
+  invoke("openwork:browser:closeTab", sentinel.tabId);
+  invoke("openwork:browser:closeSessionTabs", "A");
+  assert.equal(mainInput(mainContents, shortcut("t")), false);
+  panel.destroy();
+});
+
+test("keyboard focus on an inactive browser tab never falls through to window close", async () => {
+  const { invoke, mainContents, mainWindow, panel } = createPanel();
+  invoke("openwork:browser:setVisibleSession", "A");
+  const first = invoke("openwork:browser:createTab", "https://example.com/inactive", "A");
+  const active = invoke("openwork:browser:createTab", "https://example.com/active", "A");
+  await flush();
+  // Tab-strip buttons remain focusable while an artifact occupies the viewport.
+  mainContents.focus();
+  invoke("openwork:browser:shortcut-focus", first.tabId);
+  assert.equal(mainInput(mainContents, shortcut("w")), true);
+  assert.deepEqual(invoke("openwork:browser:state").tabs.map(tab => tab.id), [active.tabId]);
+  assert.equal(mainWindow.destroyed, false);
+  panel.destroy();
+});
+
+test("reopen targets the loading tab immediately and geometry staging preserves last-tab recovery", async () => {
+  const { invoke, mainContents, mainWindow, panel, views } = createPanel();
+  invoke("openwork:browser:setVisibleSession", "A");
+  const original = invoke("openwork:browser:createTab", "https://example.com/original", "A");
+  const closed = invoke("openwork:browser:createTab", "https://example.com/closed", "A");
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  await flush();
+  mainContents.focus();
+  invoke("openwork:browser:shortcut-focus", closed.tabId);
+  mainInput(mainContents, shortcut("w"));
+  const loading = gate();
+  controls.beforeLoad = () => loading.promise;
+  mainInput(mainContents, shortcut("t"));
+  await flush();
+  const reopened = invoke("openwork:browser:state").activeTabId;
+  assert.notEqual(reopened, original.tabId);
+  invoke("openwork:browser:hide", { preserveShortcutFocus: true });
+  mainContents.focus();
+  assert.equal(mainInput(mainContents, shortcut("t", { type: "keyUp" })), true);
+  assert.equal(mainInput(mainContents, shortcut("w")), true, "W closes the new target before navigation finishes");
+  assert.equal(mainWindow.destroyed, false);
+  assert.deepEqual(invoke("openwork:browser:state").tabs.map(tab => tab.id), [original.tabId]);
+  assert.equal(views().at(-1).webContents.destroyed, true);
+  loading.finish();
+  await flush();
+  panel.destroy();
+});
+
+test("leaving the browser while reopen policy waits cancels the pending request", async () => {
+  let pending = null;
+  const { invoke, mainContents, panel } = createPanel(async () => { if (pending) await pending.promise; });
+  invoke("openwork:browser:setVisibleSession", "A");
+  const kept = invoke("openwork:browser:createTab", "https://example.com/kept", "A");
+  const closed = invoke("openwork:browser:createTab", "https://example.com/closed", "A");
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  await flush();
+  mainContents.focus();
+  invoke("openwork:browser:shortcut-focus", closed.tabId);
+  mainInput(mainContents, shortcut("w"));
+  pending = gate();
+  mainInput(mainContents, shortcut("t"));
+  await flush();
+  invoke("openwork:browser:hide");
+  pending.finish();
+  pending = null;
+  await flush();
+  assert.deepEqual(invoke("openwork:browser:state").tabs.map(tab => tab.id), [kept.tabId]);
+  assert.equal(mainInput(mainContents, shortcut("t")), false);
+  panel.destroy();
+});
 
 test("page link menus open a policy-checked tab in the source conversation without replacing the source", async () => {
   const pending = gate();
@@ -1223,6 +1504,7 @@ test("tab external actions remain policy checked and non-HTTP addresses cannot l
 
 test("link points stay in CSS coordinates and native cancellation releases listeners without closing another popup", async () => {
   const { openLinkMenu, mainContents, mainWindow, views, policies } = createPanel();
+  const navigationListeners = mainContents.listenerCount("did-start-navigation");
   mainContents.getZoomFactor = () => 2;
   const point = { x: 25.25, y: 40.75 };
   const menu = await openLinkMenu({ ...LINK, point });
@@ -1235,7 +1517,7 @@ test("link points stay in CSS coordinates and native cancellation releases liste
   assert.deepEqual(views(), []);
   assert.equal(menu.closed, false, "the helper already dismissed or superseded this popup");
   assert.equal(mainWindow.listenerCount("blur"), 0);
-  assert.equal(mainContents.listenerCount("did-start-navigation"), 0);
+  assert.equal(mainContents.listenerCount("did-start-navigation"), navigationListeners);
   assert.equal(mainContents.listenerCount("destroyed"), 0);
 });
 

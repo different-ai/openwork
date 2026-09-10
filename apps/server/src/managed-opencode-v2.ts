@@ -204,11 +204,22 @@ export async function createManagedOpencodeV2Server(
           capabilities: {
             tools: typeof config.tool_call === "boolean" ? config.tool_call : true,
             input: modalities.input ?? ["text"],
-            output: modalities.output ?? ["text"],
+            output: config.reasoning === true
+              ? [...new Set([...(Array.isArray(modalities.output) ? modalities.output : ["text"]), "reasoning"])]
+              : modalities.output ?? ["text"],
           },
           limit: config.limit ?? { context: 128_000, output: 8_192 },
           ...(typeof config.family === "string" ? { family: config.family } : {}),
           ...(isRecord(config.options) ? { settings: config.options } : {}),
+          ...(isRecord(config.variants) ? {
+            variants: Object.entries(config.variants).flatMap(([id, value]) => {
+              if (!isRecord(value) || value.disabled === true) return [];
+              const { disabled, ...settings } = value;
+              // Mirrored adapters are native: unlike v1 AI SDK options, their
+              // model settings take generation options under providerOptions.
+              return [{ id, settings: { providerOptions: settings } }];
+            }),
+          } : {}),
           ...(isRecord(config.headers) ? { headers: config.headers } : {}),
           ...(config.status === "deprecated" ? { disabled: true } : {}),
         };

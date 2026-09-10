@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto"
 import type { createDenDb } from "@openwork-ee/den-db"
-import { and, desc, eq } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, type SQL } from "@openwork-ee/den-db/drizzle"
 import { WorkflowRunTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { keysetAfter, keysetPage, type KeysetCursor } from "./list-pagination.js"
 import type { CodemodeRunResult } from "./mcp/codemode-run.js"
 
 type CodemodeDb = ReturnType<typeof createDenDb>["db"]
@@ -122,18 +123,21 @@ export async function listWorkflowRuns(database: CodemodeDb, input: {
   organizationId: DenTypeId<"organization">
   orgMembershipId?: DenTypeId<"member">
   limit?: number
+  cursor?: KeysetCursor
 }) {
   const limit = Math.min(200, Math.max(1, input.limit ?? 50))
+  const conditions: Array<SQL | undefined> = [eq(WorkflowRunTable.organization_id, input.organizationId)]
+  if (input.orgMembershipId) conditions.push(eq(WorkflowRunTable.org_membership_id, input.orgMembershipId))
+  if (input.cursor) conditions.push(keysetAfter({ at: WorkflowRunTable.created_at, id: WorkflowRunTable.id }, input.cursor))
   const rows = await database
     .select()
     .from(WorkflowRunTable)
-    .where(input.orgMembershipId
-      ? and(
-        eq(WorkflowRunTable.organization_id, input.organizationId),
-        eq(WorkflowRunTable.org_membership_id, input.orgMembershipId),
-      )
-      : eq(WorkflowRunTable.organization_id, input.organizationId))
-    .orderBy(desc(WorkflowRunTable.created_at))
-    .limit(limit)
-  return rows.map((row) => ({ ...row, tool_calls: parseCodemodeToolCalls(row.tool_calls) }))
+    .where(and(...conditions))
+    .orderBy(desc(WorkflowRunTable.created_at), desc(WorkflowRunTable.id))
+    .limit(limit + 1)
+  const page = keysetPage(rows, limit, (row) => ({ at: row.created_at, id: row.id }))
+  return {
+    items: page.items.map((row) => ({ ...row, tool_calls: parseCodemodeToolCalls(row.tool_calls) })),
+    nextCursor: page.nextCursor,
+  }
 }

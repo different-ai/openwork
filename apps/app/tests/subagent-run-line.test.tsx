@@ -111,4 +111,17 @@ describe("SubagentRunLine", () => {
     expect(subagentRunActivity({ ...input, syncDegraded: true })).toBe("reconnecting");
     expect(subagentRunActivity({ ...input, inFlight: false })).toBe("completed");
   });
+
+  test("shows static uncertainty for a restored task whose native start is absent", () => {
+    const part = {
+      ...taskPart("input-streaming"),
+      toolCallId: "call-unknown-start",
+      callProviderMetadata: { opencode: { partId: "part-unknown-start" } },
+    };
+    const html = render(part);
+    expect(html).toContain('data-subagent-activity="waiting-start"');
+    expect(html).toContain("Waiting for task update");
+    expect(html).not.toContain("Working 0s");
+    expect(html).not.toContain("ow-text-shimmer");
+  });
 });

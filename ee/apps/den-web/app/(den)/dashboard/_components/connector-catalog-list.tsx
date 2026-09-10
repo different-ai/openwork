@@ -344,8 +344,16 @@ export function ConnectorCatalog({
     connectorMatchesFilter(filter, preset.displayName, preset.description, preset.presetId));
   const microsoftVisible = connectorMatchesFilter(filter, "Microsoft 365", "Outlook Email", "Outlook", "OneDrive", "microsoft-365");
   const microsoftConnection = connections.find((connection) => connection.id === MICROSOFT_365_QUICK_ADD_ID || connection.nativeProviderKey === "microsoft-365");
+  const representedConnectionIds = new Set([
+    ...popular.map((connector) => configuredConnectionForPopular(connector, connections, presets)?.id),
+    ...more.map((preset) => connectionForPresetUrl(connections, preset.url)?.id),
+    ...(microsoftVisible ? [microsoftConnection?.id] : []),
+  ]);
+  const configuredMatches = filtering ? connections.filter((connection) =>
+    !representedConnectionIds.has(connection.id)
+    && connectorMatchesFilter(filter, connection.name, connection.url)) : [];
   const showMore = filtering || moreOpen;
-  const nothingMatches = filtering && popular.length === 0 && more.length === 0 && !microsoftVisible;
+  const nothingMatches = filtering && popular.length === 0 && more.length === 0 && !microsoftVisible && configuredMatches.length === 0;
   const total = availablePopular.length + remainingPresets(presets).length + 1;
   const matching = popular.length + more.length + Number(microsoftVisible);
   const shown = popular.length + (showMore ? more.length + Number(microsoftVisible) : 0);
@@ -359,7 +367,35 @@ export function ConnectorCatalog({
 
       <p role="status" className="mb-4 text-[13px] text-gray-500" data-testid="connector-catalog-count">
         {filtering ? `${matching} of ${total} integrations match` : `Showing ${shown} of ${total} integrations`}
+        {configuredMatches.length > 0 ? `, plus ${configuredMatches.length} configured ${configuredMatches.length === 1 ? "connector" : "connectors"}` : ""}
       </p>
+
+      {configuredMatches.length > 0 ? (
+        <section className="mb-8" data-testid="configured-connector-matches">
+          <SectionTitle>Configured ({configuredMatches.length})</SectionTitle>
+          <div className="grid gap-x-8 sm:grid-cols-2">
+            {configuredMatches.map((connection) => (
+              <CatalogRow
+                key={connection.id}
+                id={connection.id}
+                name={connection.name}
+                description={connection.url}
+                icon={{ serviceUrl: connection.url }}
+                connection={connection}
+                href={configuredConnectionHref(connection.id)}
+                effort="guided"
+                adding={false}
+                setupRequired={setupRequired?.(connection)}
+                onRecover={onRecover}
+                recovering={recoveringConnectionId === connection.id}
+                onAdd={() => onManage(connection)}
+                onManage={onManage}
+                onRemove={onRemove}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {nothingMatches ? (
         <p className="text-[13px] text-gray-400">No connectors match &quot;{filter}&quot;. Paste an MCP server URL to add it directly.</p>

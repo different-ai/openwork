@@ -53,6 +53,7 @@ import { WebfetchTool } from "@/components/tools/webfetch"
 import { WebsearchTool } from "@/components/tools/websearch"
 import { useMessageList, useSessionErrorMessage } from "@/components/chat/message-list-provider"
 import { TaskSuggestions } from "@/components/chat/task-suggestions"
+import { ProgressiveMessageList, type MessageListViewport } from "@/components/chat/progressive-message-list"
 import {
   DescriptiveButtonContent,
   DescriptiveButtonDescription,
@@ -531,6 +532,7 @@ const AssistantMessage = React.memo(
               return (
                 <ReasoningBlock
                   key={`reasoning-${index}`}
+                  disclosureKey={JSON.stringify(["reasoning", message.id, index])}
                   text={group.text}
                   isStreaming={group.isStreaming}
                 />
@@ -548,7 +550,7 @@ const AssistantMessage = React.memo(
             if (group.kind === "tool-aggregate") {
               return (
                 <div key={`tool-aggregate-${index}`} className="w-full">
-                  <ToolAggregateGroup parts={group.parts} thoughts={group.thoughts} />
+                  <ToolAggregateGroup messageId={message.id} parts={group.parts} thoughts={group.thoughts} />
                 </div>
               )
             }
@@ -683,7 +685,8 @@ function renderUserTextWithSkillChips(text: string, highlightQuery: string | und
 
 const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
-    const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
+    const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
+    const branching = forkingMessageId === message.id
     const { onOpenTarget } = useOpenTargets()
     const openLink = (event: React.MouseEvent) => {
       if (!onOpenTarget || !(event.target instanceof Element)) return
@@ -705,7 +708,7 @@ const UserMessage = React.memo(
       { type: "item", id: "copy", label: "Copy", icon: <Copy className="size-4" />, onSelect: () => navigator.clipboard.writeText(messageText) },
     )
     menuActions.push(
-      { type: "item", id: "branch", label: "Branch in new chat", icon: <Split className="size-4 rotate-90" />, onSelect: () => onForkAtMessage(message.id) },
+      { type: "item", id: "branch", label: branching ? "Branching..." : "Branch in new chat", icon: <Split className="size-4 rotate-90" />, disabled: Boolean(forkingMessageId), onSelect: () => onForkAtMessage(message.id) },
       { type: "item", id: "revert", label: "Revert", icon: <Undo2 className="size-4" />, disabled: readOnly, onSelect: () => onRevertToUserMessage(message.id) },
     )
 
@@ -757,7 +760,8 @@ const UserMessage = React.memo(
                 {!isStreaming && (
                   <MessageActions
                     className={cn(
-                      "flex items-center gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100"
+                      "flex items-center gap-0 transition-opacity duration-150 group-hover:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100",
+                      branching ? "opacity-100" : "opacity-0"
                     )}
                   >
                     <MessageTimestamp message={message} className="mr-1.5" />
@@ -775,16 +779,19 @@ const UserMessage = React.memo(
                         </Button>
                       </MessageAction>
                     ) : null}
-                    <MessageAction tooltip="Branch in new chat">
+                    <MessageAction tooltip={branching ? "Branching..." : "Branch in new chat"}>
                       <Button
                         variant="ghost"
                         size="icon"
-                        aria-label="Branch in new chat"
+                        aria-label={branching ? "Branching..." : "Branch in new chat"}
+                        aria-busy={branching || undefined}
+                        disabled={Boolean(forkingMessageId)}
                         onClick={() => onForkAtMessage(message.id)}
                       >
-                        <Split className="rotate-90" />
+                        {branching ? <LoaderCircle className="motion-safe:animate-spin" /> : <Split className="rotate-90" />}
                       </Button>
                     </MessageAction>
+                    {branching ? <span role="status" className="sr-only">Branching...</span> : null}
                     <MessageAction tooltip="Revert">
                       <Button
                         variant="ghost"
@@ -1205,7 +1212,7 @@ function MessageGroup({
   isLastGroup,
   isStreaming,
 }: AssistantMessageGroupProps) {
-  const { onRevertToUserMessage, onForkAtMessage, showThinking, readOnly } = useMessageList()
+  const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, showThinking, readOnly } = useMessageList()
   const lastItem = items[items.length - 1]
   // Branch/revert must target a real server-side message id. Synthetic
   // client-side messages (e.g. session errors) don't exist on the server and
@@ -1253,7 +1260,7 @@ function MessageGroup({
     item.message.role === "assistant" && !isSessionErrorMessage(item.message)
       ? getAssistantRenderGroups(item.message.parts, showThinking).flatMap((group, groupIndex) =>
         group.kind === "reasoning"
-          ? [{ key: `${item.message.id}-${groupIndex}`, text: group.text, isStreaming: group.isStreaming }]
+          ? [{ key: JSON.stringify(["reasoning", item.message.id, groupIndex]), text: group.text, isStreaming: group.isStreaming }]
           : []
       )
       : []
@@ -1287,7 +1294,7 @@ function MessageGroup({
         key={`folded-reasoning-${reasoning.key}`}
         className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10"
       >
-        <ReasoningBlock text={reasoning.text} isStreaming={reasoning.isStreaming} />
+        <ReasoningBlock disclosureKey={reasoning.key} text={reasoning.text} isStreaming={reasoning.isStreaming} />
       </Message>
     ))
     : []
@@ -1319,7 +1326,7 @@ function MessageGroup({
       nodes.push(
         <div key={`aggregate-${run.key}`}>
           <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
-            <ToolAggregateGroup parts={run.parts} className="w-full" />
+            <ToolAggregateGroup messageId={run.key} parts={run.parts} className="w-full" />
           </Message>
         </div>
       )
@@ -1372,21 +1379,24 @@ function MessageGroup({
       ))}
       {renderItems(proseItems, stepItems.length, collapseSteps)}
       {lastTextMessage && !isStreaming && (
-        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 opacity-0 transition-opacity duration-150 group-hover/message-group:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100 md:px-8">
+        <div className={cn("mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 transition-opacity duration-150 group-hover/message-group:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100 md:px-8", forkingMessageId && forkingMessageId === lastRealItem?.message.id ? "opacity-100" : "opacity-0")}>
           <MessageActions className="flex gap-0">
             <CopyMessageButton messages={renderableItems.map((item) => item.message)} />
             {lastRealItem ? (
               <>
-                <MessageAction tooltip="Branch in new chat">
+                <MessageAction tooltip={forkingMessageId === lastRealItem.message.id ? "Branching..." : "Branch in new chat"}>
                   <Button
                     variant="ghost"
                     size="icon"
-                    aria-label="Branch in new chat"
+                    aria-label={forkingMessageId === lastRealItem.message.id ? "Branching..." : "Branch in new chat"}
+                    aria-busy={forkingMessageId === lastRealItem.message.id || undefined}
+                    disabled={Boolean(forkingMessageId)}
                     onClick={() => onForkAtMessage(lastRealItem.message.id)}
                   >
-                    <Split className="rotate-90" />
+                    {forkingMessageId === lastRealItem.message.id ? <LoaderCircle className="motion-safe:animate-spin" /> : <Split className="rotate-90" />}
                   </Button>
                 </MessageAction>
+                {forkingMessageId === lastRealItem.message.id ? <span role="status" className="sr-only">Branching...</span> : null}
                 <MessageAction tooltip="Revert">
                   <Button
                     variant="ghost"
@@ -1449,6 +1459,7 @@ interface MessageListProps {
   activityStatus: SessionActivityStatus
   retryStatus?: RetryStatus | null
   syncHealth?: RunSyncHealth
+  viewport?: MessageListViewport
 }
 
 export function shouldShowMessageListLoading(
@@ -1465,7 +1476,7 @@ export function shouldShowRunReconnecting(status: ThreadStatus, syncDegraded: bo
   return status === "submitted" || status === "streaming" || status === "retrying"
 }
 
-export function MessageList({ messages, status, activityStatus, retryStatus, syncHealth }: MessageListProps) {
+export function MessageList({ messages, status, activityStatus, retryStatus, syncHealth, viewport }: MessageListProps) {
   const { workspaceId, sessionId } = useMessageList()
   const workspace = useWorkspaceMaybe()
   const tasks = React.useMemo(() => activeDelegatedTasks(messages), [messages])
@@ -1553,10 +1564,14 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
       activityStatus={activityStatus}
       currentToolCallIds={currentToolCallIds}
     >
-      <div className={cn("flex flex-col gap-2 @container/message-list")}>
-        {messages.length === 0 && <TaskSuggestions className="mx-auto w-full max-w-3xl shrink-0 px-3 pb-3 md:px-5 md:pb-5 grow" />}
-
-        {items.map((item) => {
+      <ProgressiveMessageList
+        groups={items}
+        viewport={viewport}
+        className="@container/message-list"
+        getGroupKey={(item) => isMessageGroup(item) ? item.messages[0]?.message.id ?? "empty-assistant-group" : item.message.id}
+        getMessageIds={(item) => isMessageGroup(item) ? item.messages.flatMap(({ message }) => [message.id, `${message.id}:steps`]) : [item.message.id]}
+        header={messages.length === 0 && <TaskSuggestions className="mx-auto w-full max-w-3xl shrink-0 px-3 pb-3 md:px-5 md:pb-5 grow" />}
+        renderGroup={(item) => {
         if (isMessageGroup(item)) {
           return (
             <MemoizedMessageGroup
@@ -1581,13 +1596,13 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
             isLastStep={isLastStep}
           />
         )
-        })}
-
+        }}
+      >
         {showLoading && <LoadingMessage elapsedSeconds={runElapsedSeconds} />}
         {showReconnecting && <ReconnectingMessage lastConfirmedAt={syncHealth?.lastConfirmedAt ?? null} />}
         {retryStatus ? <RetryMessage status={retryStatus} /> : null}
         {error && !hasSessionErrorMessage ? <ErrorMessage error={error} /> : null}
-      </div>
+      </ProgressiveMessageList>
     </CurrentToolLifecycleProvider>
     </ParentRunActiveContext.Provider>
   )

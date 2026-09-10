@@ -34,18 +34,9 @@ function defaultBehaviorOption(): ModelBehaviorOption {
 }
 
 export const normalizeModelBehaviorValue = (value: string | null) => {
-  if (!value) return null;
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return null;
-  if (
-    normalized === "balance" ||
-    normalized === "balanced" ||
-    normalized === "default" ||
-    normalized === "provider-default"
-  ) {
-    return null;
-  }
-  return normalized;
+  // Variant IDs are opaque catalog keys. Changing case or treating a named
+  // variant as an alias can make a supported selection fail native resolution.
+  return value?.trim() ? value : null;
 };
 
 const getVariantKeys = (model: ProviderModel) => {

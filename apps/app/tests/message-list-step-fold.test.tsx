@@ -5,6 +5,7 @@ import type { DynamicToolUIPart, UIMessage } from "ai";
 
 import { MessageList } from "../src/components/chat/message-list";
 import { MessageListProvider } from "../src/components/chat/message-list-provider";
+import { createDefaultPlatform, PlatformProvider } from "../src/react-app/kernel/platform";
 
 function bashPart(id: string): DynamicToolUIPart {
   return {
@@ -49,6 +50,7 @@ function withoutWindow<T>(run: () => T): T {
 
 function renderList(messages: UIMessage[]) {
   return withoutWindow(() => renderToStaticMarkup(
+    <PlatformProvider value={createDefaultPlatform()}>
     <MessageListProvider
       workspaceId="ws"
       sessionId="session"
@@ -67,6 +69,7 @@ function renderList(messages: UIMessage[]) {
     >
       <MessageList messages={messages} status="ready" />
     </MessageListProvider>
+    </PlatformProvider>
   ));
 }
 

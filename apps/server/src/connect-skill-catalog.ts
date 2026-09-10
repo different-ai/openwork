@@ -3,10 +3,7 @@ import { z } from "zod";
 
 import {
   escapeXml,
-  isRecord,
-  jsonRpcResult,
-  mcpPost,
-  stringHeaders,
+  readMcpResourceText,
   type McpFetch,
 } from "./connect-mcp-transport.js";
 import { readConnectCloudMcp, writeConnectCloudMcp } from "./connect-state.js";
@@ -43,37 +40,12 @@ const catalogCache = new Map<string, { expiresAt: number; value: Promise<OpenWor
  * so callers can fall back to another candidate config.
  */
 export async function readMcpSkillIndex(config: Record<string, unknown>, fetcher: McpFetch): Promise<OpenWorkConnectSkill[] | null> {
-  const url = typeof config.url === "string" ? config.url : "";
-  if (!/^https?:\/\//.test(url) || config.enabled === false) return null;
-  const baseHeaders = stringHeaders(config.headers);
-  const initialized = await mcpPost(fetcher, url, baseHeaders, {
-    id: 1,
-    jsonrpc: "2.0",
-    method: "initialize",
-    params: {
-      capabilities: {},
-      clientInfo: { name: "openwork-server-skill-catalog", version: "1.0.0" },
-      protocolVersion: "2025-06-18",
-    },
+  const text = await readMcpResourceText({
+    config,
+    fetcher,
+    uri: SKILL_INDEX_URI,
+    clientName: "openwork-server-skill-catalog",
   });
-  if (!initialized.response.ok || !jsonRpcResult(initialized.payload)) return null;
-  const sessionHeaders = {
-    ...baseHeaders,
-    ...(initialized.response.headers.get("mcp-session-id") ? { "mcp-session-id": initialized.response.headers.get("mcp-session-id")! } : {}),
-    ...(initialized.response.headers.get("mcp-protocol-version") ? { "mcp-protocol-version": initialized.response.headers.get("mcp-protocol-version")! } : {}),
-  };
-  await mcpPost(fetcher, url, sessionHeaders, { jsonrpc: "2.0", method: "notifications/initialized", params: {} });
-  const resource = await mcpPost(fetcher, url, sessionHeaders, {
-    id: 2,
-    jsonrpc: "2.0",
-    method: "resources/read",
-    params: { uri: SKILL_INDEX_URI },
-  });
-  if (!resource.response.ok) return null;
-  const result = jsonRpcResult(resource.payload);
-  const contents = result?.contents;
-  if (!Array.isArray(contents)) return null;
-  const text = contents.find((item) => isRecord(item) && item.uri === SKILL_INDEX_URI && typeof item.text === "string")?.text;
   if (typeof text !== "string") return null;
   return skillIndexSchema.parse(JSON.parse(text)).skills;
 }
