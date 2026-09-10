@@ -5,7 +5,7 @@ import { facilitatorPrompt, earlierSpeakerOrders, routeWithFacilitator, facilita
 
 /** The window only submits requests and reads projections. All group execution
  * and cancellation remain alive when that window navigates or reloads. */
-export function createGroupExecution({ directory, collaboration, coworkerFor, coordinator, catalogFor, clientFor, setupTimeoutMs = 30_000, replyTimeoutMs = 180_000, pollMs = 750 }) {
+export function createGroupExecution({ directory, collaboration, coworkerFor, coordinator, catalogFor, clientFor, onPublished = async () => {}, setupTimeoutMs = 30_000, replyTimeoutMs = 180_000, pollMs = 750 }) {
   const active = new Map();
   let timer;
   let closed = false;
@@ -28,6 +28,7 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
     }
     // The receipt follows both writes; a crash before it retries the same event, never inference.
     await collaboration.change((state) => { state.executions[entry.id].groupReply.published = true; });
+    if (event.status !== "passed") await onPublished(entry).catch(() => {});
     return event;
   }
   async function participant(groupId, slug, signal = AbortSignal.timeout(setupTimeoutMs)) {

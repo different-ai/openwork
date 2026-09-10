@@ -128,6 +128,8 @@ export interface HeadlessThread {
 
 export interface HeadlessThreadTurnInput {
   prompt: string;
+  /** Supplemental reference data, sent as a synthetic part, not displayed as the person's message. */
+  context?: string;
   model?: HeadlessThreadModel;
   /** Native tool permissions for this session's turn; omitted preserves the engine's defaults. */
   tools?: Record<string, boolean>;

@@ -39,6 +39,8 @@ import { installBrowserPlugin } from "./browser-plugin.mjs";
 import { DISCUSSION_REGISTRY_FILE, parseDiscussionRegistry } from "../src/lib/discussions.ts";
 import { installProgressPlugin } from "./progress-plugin.mjs";
 import { createProgressSummaries } from "./progress-summaries.mjs";
+import { installMemoryPlugin } from "./memory-model.mjs";
+import { createConversationMemory } from "./conversation-memory.mjs";
 import { connectedModelCatalog, createCoworkerThreads, eligibleProgressModels } from "../src/lib/threads.ts";
 import { cloudModelOptions, resolveCloudModel } from "../src/lib/cloud-responsibilities.ts";
 import { createDenAutomationsClient, listAssignedCoworkerTemplates } from "../src/lib/den.ts";
@@ -900,13 +902,20 @@ const collaboration = createCollaboration({
   },
   invalidateWorker: (slug, id) => { void workerControls.revokeId(slug, id); },
   onExecutionEnd: (entry) => computerControl.endTurn(entry),
+  memoryContext: (owner) => conversationMemory.context(owner),
+  onSuccess: (entry) => entry.owner.kind === "private" ? captureConversationMemory(entry) : Promise.resolve(),
   publish: (task) => maintenanceAdmission.run(async () => {
     if (!task.groupId) return;
     await appendGroupEvent(coworkersDir, task.groupId, { id: `evt_${collaborationId(task.id, "answer").slice(5)}`, kind: task.state === "succeeded" ? "coworker" : "status", slug: task.to, threadId: task.owner.threadId, status: task.state, text: task.state === "succeeded" ? task.result : `${task.label}: ${task.error || "The request stopped."}` });
+    if (task.state === "succeeded") {
+      const entry = await collaboration.read((state) => state.executions[task.executionId]);
+      if (entry) await captureConversationMemory(entry).catch(() => {});
+    }
   }),
   publishExecution: (entry) => maintenanceAdmission.run(async () => {
     const task = await collaboration.read((state) => state.tasks[entry.taskId]);
     if (entry.owner.groupId && task.kind !== "consultation") await appendGroupEvent(coworkersDir, entry.owner.groupId, { id: `evt_${collaborationId(entry.id, "follow-up").slice(5)}`, kind: entry.state === "succeeded" ? "coworker" : "status", slug: entry.owner.slug, threadId: entry.owner.threadId, turnId: entry.owner.turnId, status: entry.state, text: entry.state === "succeeded" ? entry.result : `The follow-up could not finish: ${entry.error}` });
+    if (entry.owner.groupId && task.kind !== "consultation" && entry.state === "succeeded") await captureConversationMemory(entry).catch(() => {});
     const children = await collaboration.read((state) => state.tasks[entry.taskId].dependencies.map((id) => state.tasks[id]));
     for (const child of children.filter((task) => task.kind === "worker")) await appendWorkerEvent(coworkersDir, child.origin.slug, child.workerId, { id: `evt_${collaborationId(entry.id, child.id, "review").slice(5)}`, kind: "review", reviewThreadId: entry.owner.threadId, text: entry.state === "succeeded" ? "The coworker reviewed this in the original conversation." : "The follow-up did not finish. Its receipt is in the original conversation.", ...(entry.state === "succeeded" ? {} : { error: entry.error }) });
   }),
@@ -976,6 +985,7 @@ const groupExecution = createGroupExecution({
     return connectedModelCatalog(result);
   },
   clientFor: (slug, options) => maintenanceAdmission.run(() => collaborationClient(slug, options)),
+  onPublished: (entry) => captureConversationMemory(entry),
 });
 
 const groupDocumentTools = new Set(groupDocumentToolCatalog().map((tool) => tool.name));
@@ -1071,6 +1081,20 @@ const progressSummaries = createProgressSummaries({
   }).map((entry) => ({ executionId: entry.id, budgetId: entry.taskId, createdAt: Math.min(entry.createdAt, state.tasks[entry.taskId].createdAt), slug: entry.owner.slug, threadId: entry.owner.threadId, groupId: entry.owner.groupId }))),
   readActivity: async (entry) => (await readCollaborationActivity({ ...(entry.groupId ? { groupId: entry.groupId } : { slug: entry.slug, threadId: entry.threadId }), executionId: entry.executionId }))[0],
 });
+
+const conversationMemory = createConversationMemory({
+  directory: coworkersDir,
+  settings: () => readSettings(settingsPath),
+  ready: readyProgressTransport,
+  groupsFor: async (slug) => (await listGroups(coworkersDir)).filter((group) => group.archivedAt === null && group.participantSlugs.includes(slug)).map((group) => group.id),
+});
+
+async function captureConversationMemory(entry) {
+  const coworker = await getCoworker(coworkersDir, entry.owner.slug);
+  // A retired coworker's late completion must not populate a same-name replacement.
+  if (!entry.workspaceId || entry.workspaceId !== coworker.workspaceId) return false;
+  return conversationMemory.capture(entry);
+}
 
 /** Activity observation never starts a server, installs tools, or cancels parent work. */
 async function readCollaborationActivity(scope) {
@@ -1829,6 +1853,7 @@ async function prepareCoordinatorWorkspace() {
   await ensurePlatformServer();
   const coordinator = await ensureCoordinatorHome(coworkersDir);
   await installProgressPlugin(coordinator);
+  await installMemoryPlugin(coordinator);
   if (coordinator.workspaceId) {
     await warmCoworkerWorkspace(coordinator);
     progressCoordinator = coordinator;
@@ -2588,6 +2613,18 @@ const commands = {
   /** Recent changes to memory and soul, newest first, by the coworker or the person. */
   "coworkers.memory.changes": async ({ slug, limit }) => readChanges(coworkersDir, slug, Number.isFinite(limit) ? { limit } : {}),
   "coworkers.memory.undo": async ({ slug, changeId }) => undoChange(coworkersDir, slug, String(changeId ?? "")),
+  "coworkers.memory.automatic": async ({ slug, groupId }) => {
+    await getCoworker(coworkersDir, slug);
+    return conversationMemory.read({ slug, kind: groupId ? "group" : "private", groupId });
+  },
+  "coworkers.memory.clearAutomatic": async ({ slug, groupId }) => {
+    await getCoworker(coworkersDir, slug);
+    return conversationMemory.clear({ slug, kind: groupId ? "group" : "private", groupId });
+  },
+  "coworkers.memory.automaticGroups": async ({ slug }) => {
+    await getCoworker(coworkersDir, slug);
+    return (await listGroups(coworkersDir)).filter((group) => group.archivedAt === null && group.participantSlugs.includes(slug)).map(({ id, name }) => ({ id, name }));
+  },
   "localResponsibilities.list": async ({ slug }) => listLocalResponsibilities(coworkersDir, slug),
   "localResponsibilities.create": async ({ slug, name, instructions, schedule }) =>
     createLocalResponsibility(coworkersDir, slug, { name, instructions, schedule }, Date.now(), await localScheduleOptions()),
@@ -2639,6 +2676,7 @@ const commands = {
   "settings.update": async (patch) => {
     const next = await updateSettings(settingsPath, patch);
     progressSummaries.configure(next);
+    conversationMemory.configure(next);
     if (patch?.maxParallelLocalRuns !== undefined) void drainLocalRunQueue();
     return next;
   },
@@ -2716,6 +2754,7 @@ const maintenance = createMaintenance({
   restoreDefaults: async () => {
     const next = await updateSettings(settingsPath, normalizeSettings({}));
     progressSummaries.configure(next);
+    conversationMemory.configure(next);
     return next;
   },
 });
@@ -2724,6 +2763,7 @@ async function stopForMaintenance() {
   if (localResponsibilitiesTimer) clearInterval(localResponsibilitiesTimer);
   localResponsibilitiesTimer = null;
   progressSummaries.stop();
+  await conversationMemory.stop();
   voice.reset();
   for (const attempt of signInAttempts.values()) attempt.controller.abort();
   responsibilityAbort.abort(new Error("Fresh start is stopping local work."));
@@ -2999,6 +3039,7 @@ if (!singleInstanceLock) {
       await groupExecution.start();
       await collaboration.start();
       progressSummaries.start();
+      conversationMemory.start();
       // Ordinary initialization, never triggered by a progress note or activity read.
       void maintenanceAdmission.run(ensureCoordinatorWorkspace).catch(() => {});
     }).catch((error) => {
@@ -3039,6 +3080,7 @@ if (!singleInstanceLock) {
         if (choice.response !== 1) return;
       }
       progressSummaries.stop();
+      await conversationMemory.stop();
       browserControl.destroy();
       await groupExecution.stop();
       if (localResponsibilitiesTimer) {

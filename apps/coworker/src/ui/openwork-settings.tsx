@@ -378,6 +378,7 @@ export function OpenWorkSettings({
                   </section>
                 ) : null}
                 <ProgressSummariesCard active={active} />
+                <AutomaticMemoryCard active={active} />
               </>
             ) : null}
 
@@ -584,6 +585,56 @@ function ProgressSummariesCard({ active }: { active: boolean }) {
     </div>
   </SettingsCard>;
 }
+function AutomaticMemoryCard({ active }: { active: boolean }) {
+  const [settings, setSettings] = useState<CoworkerSettings | null>(null);
+  const [models, setModels] = useState<ProgressModelOption[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    void Promise.all([coworkerBridge.settings.get(), coworkerBridge.settings.progressModels()]).then(([next, choices]) => {
+      if (!cancelled) { setSettings(next); setModels(choices); setError(""); }
+    }).catch(() => { if (!cancelled) setError("Automatic memory preferences could not be read."); });
+    return () => { cancelled = true; };
+  }, [active]);
+  async function choose(patch: Partial<Pick<CoworkerSettings, "automaticMemoryEnabled" | "memoryModelId">>) {
+    setSaving(true);
+    setError("");
+    try { setSettings(await coworkerBridge.settings.update(patch)); }
+    catch { setError("That automatic memory preference could not be saved."); }
+    finally { setSaving(false); }
+  }
+  const selected = settings?.memoryModelId ?? "";
+  const missing = selected && !models.some((model) => model.id === selected);
+  return <SettingsCard testId="automatic-memory-card">
+    <div className="space-y-3 p-4">
+      <label className="flex items-center justify-between gap-4 text-sm font-semibold text-snow">
+        Automatic conversation memory
+        <input type="checkbox" aria-label="Enable automatic memory" checked={settings?.automaticMemoryEnabled ?? true} disabled={!settings || saving} onChange={(event) => void choose({ automaticMemoryEnabled: event.target.checked })} />
+      </label>
+      <p className="text-xs leading-relaxed text-mist">On by default. After successful private and group replies, Open Coworker automatically keeps bounded recent conversation excerpts locally. It sends bounded excerpts and existing memory context to the selected model's provider to distill short-term and long-term memories.</p>
+      <p className="text-[11px] leading-relaxed text-mist">Recent local recall works without an eligible model. This setting never changes the model that answers your messages. Read the excerpts, their sources, and summaries or clear a selected scope in each coworker's Memory view.</p>
+      <label className="block space-y-1 text-xs text-mist">
+        <span>Memory model</span>
+        <select aria-label="Automatic memory model" className="block w-full min-w-0 rounded-lg border border-line bg-ink p-2 text-snow" value={selected} disabled={!settings || saving} onChange={(event) => void choose({ memoryModelId: event.target.value })}>
+          <option value="">Automatic (cheapest eligible connected model)</option>
+          {missing ? <option value={selected} disabled>{selected} (not currently eligible)</option> : null}
+          {models.map((model) => <option key={model.id} value={model.id}>{model.label} (${model.cost.input} input / ${model.cost.output} output per million tokens)</option>)}
+        </select>
+      </label>
+      {missing ? <p className="text-xs text-mist">The selected model is unavailable or ineligible. It will not be replaced automatically; recent local recall can continue while automatic memory is on.</p> : !models.length ? <p className="text-xs text-mist">No eligible model is ready. Recent local recall can continue while automatic memory is on, without summary calls.</p> : null}
+      <details className="text-[11px] leading-relaxed text-mist">
+        <summary className="cursor-pointer">Privacy, model requirements and limits</summary>
+        <p className="mt-2">Private discussions and shared group memory are kept in separate scopes. Excerpts are bounded, not complete transcripts. Turning this off stops automatic capture and recall; it does not delete saved memory.</p>
+        <p className="mt-2">Only eligible connected, non-reasoning text models with verified low prices are offered: at most $0.50 input and $2.00 output per million tokens. Automatic selects the cheapest eligible model; an explicit selection never falls back to a different model.</p>
+        <p className="mt-2">At most 120 automatic memory calls total per UTC day across all scopes, at least 15 seconds apart for the same scope. Each request times out within 15 seconds and allows at most 1,000 output tokens.</p>
+      </details>
+      {error ? <ErrorNote>{error}</ErrorNote> : null}
+    </div>
+  </SettingsCard>;
+}
+
 const GAP_CHOICES = [15, 30, 60];
 const PER_DAY_CHOICES = [1, 2, 4, 6, 8, 12];
 
