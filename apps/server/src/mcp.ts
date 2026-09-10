@@ -4,6 +4,8 @@ import type { McpItem, ServerConfig } from "./types.js";
 import { sanitizeDiagnosticString } from "./diagnostic-sanitizer.js";
 import { readJsoncFile } from "./jsonc.js";
 import { opencodeConfigPath } from "./workspace-files.js";
+import { buildOpenworkRuntimeConfigObject } from "./openwork-runtime-config.js";
+import type { EffectiveEnginePermissionRule } from "./agent-context-engine-inspection.js";
 import { validateMcpConfig, validateMcpName, validateUserMcpName } from "./validators.js";
 import {
   readRuntimeOpencodeConfig,
@@ -437,11 +439,10 @@ function toolPolicyRules(policy: ToolPolicyMap): Array<{
   });
 }
 
-function deniedToolIds(
+function configuredToolPolicyRules(
   configs: Record<string, unknown>[],
   agentName: string,
-  toolIds: string[],
-): string[] {
+): EffectiveEnginePermissionRule[] {
   // OpenCode merges the deprecated top-level `tools` map and the current
   // `permission` map independently, then applies every permission key after
   // every tools key. A project `tools: { x: true }` therefore cannot undo a
@@ -456,7 +457,15 @@ function deniedToolIds(
     mergeConfiguredPolicies(configs, (config) => policyForAgentContainer(config, "agent", agentName)),
     mergeConfiguredPolicies(configs, (config) => policyForAgentContainer(config, "mode", agentName)),
   );
-  const rules = [...toolPolicyRules(topLevel), ...toolPolicyRules(agent)];
+  return [...toolPolicyRules(topLevel), ...toolPolicyRules(agent)];
+}
+
+function deniedToolIds(
+  configs: Record<string, unknown>[],
+  agentName: string,
+  toolIds: string[],
+): string[] {
+  const rules = configuredToolPolicyRules(configs, agentName);
   return toolIds.filter((toolId) => {
     const decision = rules.slice().reverse().find((rule) => (
       openCodeWildcardMatch(toolId, rule.permission)
@@ -526,6 +535,25 @@ async function inspectMcpConfigLayer(
     options.signal?.throwIfAborted();
     return { data: {}, status: "unreadable" };
   }
+}
+
+/** Current configured rules, in the same layer and agent order used by OpenCode. */
+export async function readMcpToolPolicy(
+  serverConfig: ServerConfig,
+  workspaceRoot: string,
+): Promise<EffectiveEnginePermissionRule[] | null> {
+  const options = { maxBytes: DIAGNOSTIC_STATIC_CONFIG_MAX_BYTES };
+  const [global, injected, project] = await Promise.all([
+    inspectMcpConfigLayer(resolveGlobalOpenCodeConfigPath(), options),
+    buildOpenworkRuntimeConfigObject(serverConfig),
+    inspectMcpConfigLayer(opencodeConfigPath(workspaceRoot), options),
+  ]);
+  if ([global, project].some(layer => layer.status === "invalid" || layer.status === "unreadable")) return null;
+  const agentName = project.data.default_agent ?? injected.default_agent ?? global.data.default_agent;
+  return configuredToolPolicyRules(
+    [global.data, injected, project.data],
+    typeof agentName === "string" ? agentName : "openwork",
+  );
 }
 
 export async function listMcpFromRuntimeSnapshot(
