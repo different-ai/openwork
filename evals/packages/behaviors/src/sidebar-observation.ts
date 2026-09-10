@@ -31,6 +31,8 @@ interface SidebarGeometry {
   at: number;
   scrollTop: number;
   viewport: { top: number; bottom: number };
+  /** The "Workspaces" heading lane above the first workspace row. */
+  lane: { top: number; bottom: number } | null;
   hash: string;
   selected: string[];
   management: string | null;
@@ -71,6 +73,7 @@ export async function observeSidebarExpansion(surface: Surface) {
       const content = document.querySelector<HTMLElement>('[data-sidebar="content"]');
       if (!content) throw new Error("Sidebar scroller is unavailable");
       const viewport = content.getBoundingClientRect();
+      const lane = content.querySelector<HTMLElement>(".group\\/workspaces-header")?.getBoundingClientRect();
       const rows = [...content.querySelectorAll<HTMLElement>(
         '[data-sidebar-session-id], [data-sidebar-workspace-title], [data-session-group], [role="button"][aria-expanded]',
       )].filter(row => row.getClientRects().length && getComputedStyle(row).visibility !== "hidden")
@@ -93,7 +96,8 @@ export async function observeSidebarExpansion(surface: Surface) {
         });
       return {
         at: performance.now(), scrollTop: content.scrollTop,
-        viewport: { top: viewport.top, bottom: viewport.bottom }, rows,
+        viewport: { top: viewport.top, bottom: viewport.bottom },
+        lane: lane ? { top: lane.top, bottom: lane.bottom } : null, rows,
         hash: location.hash,
         selected: [...document.querySelectorAll<HTMLElement>('[data-session-tab-active="true"]')]
           .map(row => row.dataset.sessionTabId ?? ""),
