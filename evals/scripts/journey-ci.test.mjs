@@ -58,6 +58,11 @@ test('registered case metadata names exact files, supported execution axes, and 
   const entries = await catalog();
   assert.deepEqual(registeredCases.map(({ spec, id, engines }) => ({ spec, id, engines })), [
     {
+      spec: 'composer-model-picker-no-subscribe-promo.e2e.test.ts',
+      id: 'MODEL-01',
+      engines: ['v2'],
+    },
+    {
       spec: 'task-activity-shimmer.e2e.test.ts',
       id: 'ACT-01',
       engines: ['v1', 'v2'],
