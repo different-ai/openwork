@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 // Extract one release's entry from packages/docs/changelog.mdx and print it as
 // GitHub Release notes markdown. Lines of the existing release body that carry
-// the Windows code-signing note (*Windows ...*) are preserved at the end so the
-// generated notes replace only the static "What's new" boilerplate.
+// the Windows code-signing note (*Windows ...*) and Slack notification markers
+// are preserved at the end so rewrites cannot re-enable an attempted notification.
 //
 // Usage:
 //   node scripts/release/release-notes-from-changelog.mjs <tag> [--docs <path>] [--existing-body <path>]
 
 import { readFileSync } from "node:fs";
+import { getSlackReleaseMarkers } from "./slack-release-markers.mjs";
 
 const args = process.argv.slice(2);
 const tag = args.find((arg) => !arg.startsWith("--"));
@@ -57,9 +58,11 @@ if (body.length === 0) fail(`${tag} has an empty changelog entry in ${docsPath}`
 
 const preserved = [];
 if (existingBodyPath) {
-  for (const line of readFileSync(existingBodyPath, "utf8").split("\n")) {
+  const existingBody = readFileSync(existingBodyPath, "utf8");
+  for (const line of existingBody.split("\n")) {
     if (/^\*Windows .*\*\s*$/.test(line)) preserved.push(line.trim());
   }
+  preserved.push(...getSlackReleaseMarkers(existingBody));
 }
 
 const notes = [

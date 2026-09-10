@@ -28,6 +28,8 @@ jobs:
     if: github.repository == 'different-ai/openwork'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
+    outputs:
+      stable: ${{ steps.guard.outputs.stable }}
     env:
       BASE_BRANCH: dev
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
@@ -211,3 +213,34 @@ jobs:
             --existing-body /tmp/existing_release_body.md > /tmp/release_notes.md
           gh release edit "$TAG" --notes-file /tmp/release_notes.md
           echo "Replaced the static release body of $TAG with the generated changelog entry."
+
+  notify-slack:
+    # Never expose the Slack secret to the agent-writable changelog checkout.
+    # This fresh job executes only the notifier from the protected dev branch.
+    needs: changelog
+    if: needs.changelog.outputs.stable == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 3
+    continue-on-error: true
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout trusted notifier
+        uses: actions/checkout@v6
+        with:
+          ref: dev
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Notify Slack of published release
+        timeout-minutes: 2
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_RELEASE_CHANNEL_ID: ${{ vars.SLACK_RELEASE_CHANNEL_ID }}
+        run: node scripts/release/notify-slack.mjs
