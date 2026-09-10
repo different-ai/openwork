@@ -538,11 +538,12 @@ curl --fail --silent --show-error \
   http://127.0.0.1:3005/api/auth/get-session >/dev/null
 ```
 
-Den Web proxies `/api/auth/*` server-side to Den API, so this single request
-produces a span in `openwork-den-web` and a span in `openwork-den-api`; an
-anonymous session lookup returns `200` with a `null` body. Logs from both
-services carry trace and span IDs. Den API also exports Hono request-duration
-and active-request metrics.
+Den Web proxies `/api/auth/*` server-side to Den API and forwards the active
+`traceparent`, so your observability backend should show `openwork-den-web` and
+`openwork-den-api` with one connected trace for the request; an anonymous
+session lookup returns `200` with a `null` body. Logs from both services carry
+trace and span IDs. Den API also exports Hono request-duration and
+active-request metrics.
 
 Do not use `/api/den/...` for this check: Den Web answers those paths with a
 `307` redirect to the public API origin instead of proxying them, `curl --fail`
