@@ -68,6 +68,7 @@ test("sidebar brand painted bounds align with the action rail without changing c
             labelClipped: label.scrollWidth > label.clientWidth,
             contained: left >= slot.left && top >= slot.top && left + width <= slot.right && top + height <= slot.bottom,
             filter: getComputedStyle(image).filter, fit: getComputedStyle(image).objectFit,
+            objectPosition: getComputedStyle(image).objectPosition,
             transform: getComputedStyle(image).transform, aspect: svg.getAttribute("preserveAspectRatio"),
             bbox: { x: box.x, y: box.y, width: box.width, height: box.height },
             pathsUnchanged: JSON.stringify([...svg.querySelectorAll('path')].map(path => [path.getAttribute("d"), path.getAttribute("fill")])) === JSON.stringify([...marketing.querySelectorAll('path')].map(path => [path.getAttribute("d"), path.getAttribute("fill")])),
@@ -86,7 +87,7 @@ test("sidebar brand painted bounds align with the action rail without changing c
       const sized = close(geometry.painted.width, 16 * factor) && close(geometry.painted.height, 20 * factor);
       const mode = `${dark ? "dark" : "light"}, ${fontSize}px root`;
       console.log(mode, JSON.stringify(geometry));
-      currentTestEvidence()?.recordAssertionEvidence(`Stock mark geometry (${mode})`, JSON.stringify(geometry), aligned && sized && !geometry.clipped && geometry.contained);
+      currentTestEvidence()?.recordAssertionEvidence(`Stock mark geometry (${mode})`, JSON.stringify(geometry), aligned && sized && !geometry.clipped && geometry.contained && geometry.objectPosition === "50% 50%");
       await screenshot(app);
       expect.soft(aligned, `painted mark and labels share their rails (${mode})`).toBe(true);
       expect.soft(sized, `visible mark is 16x20 at 16px root (${mode})`).toBe(true);
@@ -98,6 +99,7 @@ test("sidebar brand painted bounds align with the action rail without changing c
       expect.soft(geometry.rowHeight).toBe(44 * factor);
       expect.soft(geometry.label).toBe("OpenWork");
       expect.soft(geometry.fit).toBe("contain");
+      expect.soft(geometry.objectPosition).toBe("50% 50%");
       expect.soft(geometry.transform).toBe("none");
       expect.soft(geometry.aspect).not.toBe("none");
       expect.soft(geometry.filter).toBe(dark ? "invert(1)" : "none");
@@ -107,13 +109,13 @@ test("sidebar brand painted bounds align with the action rail without changing c
     }
   }
 
-  await evalIn(app, () => {
+  const logo = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="32"><rect width="120" height="32" fill="#25262b"/><text x="12" y="22" fill="white">Studio</text></svg>');
+  await evalIn(app, browserScript(logo => {
     document.documentElement.style.fontSize = "16px";
-    const logo = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="32"><rect width="120" height="32" fill="#25262b"/><text x="12" y="22" fill="white">Studio</text></svg>');
     const config = { brandAppName: "Studio", brandLogoUrl: logo };
     window.__openworkApplyDesktopConfig(config);
     window.__openworkSetDesktopConfigRefreshResult(config);
-  });
+  }, [logo]));
   await waitFor(app, () => Boolean(document.querySelector('[data-testid="brand-logo"] img')), { timeoutMs: 10_000 });
   for (const dark of [false, true]) {
     await setSidebarBrandTheme(app, dark);
@@ -127,13 +129,14 @@ test("sidebar brand painted bounds align with the action rail without changing c
       return {
         theme: getComputedStyle(document.documentElement).colorScheme,
         stockVisible: Boolean(document.querySelector('[data-sidebar-brand]')),
-        alt: image.alt, width: box.width, height: box.height, rowHeight: row.height,
+        src: image.src, alt: image.alt, width: box.width, height: box.height, rowHeight: row.height,
         inset: box.left - row.left, filter: getComputedStyle(image).filter,
         contained: box.left >= row.left && box.right <= row.right && box.top >= row.top && box.bottom <= row.bottom,
       };
     }, { awaitPromise: true });
     console.log("custom", dark, JSON.stringify(custom));
-    expect(custom).toEqual({ theme: dark ? "dark" : "light", stockVisible: false, alt: "Organization logo", width: 120, height: 32, rowHeight: 56, inset: 12, filter: "none", contained: true });
+    currentTestEvidence()?.recordAssertionEvidence(`Custom wordmark source (${dark ? "dark" : "light"})`, JSON.stringify({ expectedSrc: logo, actualSrc: custom.src }), custom.src === logo);
+    expect(custom).toEqual({ theme: dark ? "dark" : "light", stockVisible: false, src: logo, alt: "Organization logo", width: 120, height: 32, rowHeight: 56, inset: 12, filter: "none", contained: true });
     currentTestEvidence()?.recordAssertionEvidence(`Custom wordmark unchanged (${dark ? "dark" : "light"})`, JSON.stringify(custom), true);
     await screenshot(app);
   }
