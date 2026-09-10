@@ -49,7 +49,7 @@ Common misses:
 
 ### Before enterprise activation
 
-An OpenWork Enterprise install that has not yet been linked to your organization makes no request outside the machine. Until the person enters the workspace address, the desktop does not probe `app.openworklabs.com` for runtime configuration, does not send analytics to `us.i.posthog.com`, does not check `github.com` for updates or downloads (the one exception is an install whose architecture does not match the machine, which looks up the correct download), and does not fetch OpenWork Cloud inventory. The first outbound request goes to the workspace address that was entered. Analytics and update checks start only after activation completes and your desktop policy has been read once.
+An OpenWork Enterprise install that has not yet been linked to your organization makes no request outside the machine. Until the person enters the workspace address, the desktop does not probe `app.openworklabs.com` for runtime configuration, does not send analytics to `us.i.posthog.com`, does not check `github.com` for updates or downloads (the one exception is an install whose architecture does not match the machine, which looks up the correct download), does not fetch OpenWork Cloud inventory, and on Windows and Linux does not download the Chromium spellchecker dictionary from `redirector.gvt1.com`. The first outbound request goes to the workspace address that was entered. Analytics and update checks start only after activation completes and your desktop policy has been read once.
 
 ## Den runtime destinations
 

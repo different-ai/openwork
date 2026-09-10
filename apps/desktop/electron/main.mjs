@@ -1208,6 +1208,7 @@ async function persistConnectLinkClaims(claims) {
     desktopActivationRequired(DESKTOP_DISTRIBUTION, previous)
     && !desktopActivationRequired(DESKTOP_DISTRIBUTION, config)
   ) {
+    session.defaultSession.setSpellCheckerEnabled(true);
     await uiControlServer.start().catch((error) => {
       console.warn("[ui-control] failed to start", error);
     });
@@ -2007,6 +2008,7 @@ const desktopCommandHandlers = {
         desktopActivationRequired(DESKTOP_DISTRIBUTION, previous)
         && !desktopActivationRequired(DESKTOP_DISTRIBUTION, next)
       ) {
+        session.defaultSession.setSpellCheckerEnabled(true);
         await uiControlServer.start().catch((error) => {
           console.warn("[ui-control] failed to start", error);
         });
@@ -2878,6 +2880,13 @@ or use: pnpm dev:worktree`);
       console.warn("[nuke] pending cleanup failed", error);
     });
     const bootstrapConfig = await workspaceStore.getDesktopBootstrapConfig();
+    // On Windows and Linux Chromium's spellchecker downloads its Hunspell
+    // dictionary from Google (redirector.gvt1.com) as soon as a text field
+    // mounts. An unactivated install must not reach anything before its Den
+    // is known, so the spellchecker stays off until activation completes.
+    if (desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)) {
+      session.defaultSession.setSpellCheckerEnabled(false);
+    }
     currentDisplayAppName = applyBrandAppName(
       BLANK_SLATE_LAUNCH.enabled || DESKTOP_DISTRIBUTION.flavor === "enterprise"
         ? null

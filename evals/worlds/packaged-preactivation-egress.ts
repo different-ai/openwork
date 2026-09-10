@@ -23,6 +23,10 @@ import type { ElectronSurfaceOptions } from "@openwork/hosts";
  * absolute URL or a `CONNECT host:443` tunnel for HTTPS. Loopback is bypassed
  * by Chromium's implicit proxy rules and never shows up. The proxy answers
  * 403 and closes, so nothing actually leaves the machine during the run.
+ * Chromium's own background traffic is caught too: on Linux the unfixed build
+ * also surfaced the spellchecker's Hunspell dictionary download
+ * (redirector.gvt1.com), which macOS never makes because it uses the native
+ * spellchecker.
  *
  * Not covered: Node's own `fetch` in the main process ignores Chromium proxy
  * switches. The desktop only uses it for its loopback local server.
