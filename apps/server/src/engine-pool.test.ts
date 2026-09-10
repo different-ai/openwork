@@ -423,6 +423,43 @@ describe("engine pool", () => {
     expect(fixture.hookCalls.reloadInPlace).toBe(1);
   });
 
+  test("an in-place reload of one workspace does not skip the other workspaces' stale instances", async () => {
+    // In-place reload disposes ONE directory instance. The other workspaces'
+    // instances were built against the previous config and stay stale until
+    // their own reload, so the fingerprint guard must be per directory.
+    const fixture = await createFixture();
+    const { pool, primary } = await createPool(fixture);
+    const reloaded: string[] = [];
+    fixture.hooks.reloadInPlace = async (_config, workspace) => { reloaded.push(workspace.id); };
+    const second: WorkspaceInfo = { ...fixture.workspace, id: "ws_second", path: join(fixture.root, "second") };
+    await fixture.setRuntimeConfig(JSON.stringify({ generation: 2 }));
+
+    expect(await pool.requestRollover({ reason: "config_changed", workspace: fixture.workspace }))
+      .toEqual({ action: "reloaded_in_place" });
+    expect(await pool.requestRollover({ reason: "config_changed", workspace: second }))
+      .toEqual({ action: "reloaded_in_place" });
+    expect(reloaded).toEqual([fixture.workspace.id, second.id]);
+    expect(pool.primaryUrl()).toBe(primary.url);
+
+    // Both directories now match the current config: repeats are no-ops.
+    expect(await pool.requestRollover({ reason: "repeat", workspace: fixture.workspace }))
+      .toEqual({ action: "skipped", reason: "unchanged" });
+    expect(await pool.requestRollover({ reason: "repeat", workspace: second }))
+      .toEqual({ action: "skipped", reason: "unchanged" });
+    expect(reloaded).toEqual([fixture.workspace.id, second.id]);
+
+    // A rollover to a fresh process rebuilds every instance, so nothing is
+    // stale until the config changes again.
+    await fixture.setRuntimeConfig(JSON.stringify({ generation: 3 }));
+    await fixture.setBusy(portOf(primary.url), ["ses_live"]);
+    expect((await pool.requestRollover({ reason: "config_changed", workspace: fixture.workspace })).action)
+      .toBe("rolled_over");
+    expect(await pool.requestRollover({ reason: "repeat", workspace: second }))
+      .toEqual({ action: "skipped", reason: "unchanged" });
+    expect(reloaded).toEqual([fixture.workspace.id, second.id]);
+    await fixture.setBusy(portOf(primary.url), []);
+  });
+
   test("provider sync holds the serving primary until a standby is healthy and keeps it on spawn failure", async () => {
     const fixture = await createFixture();
     const { pool, primary } = await createPool(fixture);
