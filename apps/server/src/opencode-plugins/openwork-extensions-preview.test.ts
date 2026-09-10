@@ -492,6 +492,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
   });
 
   test("uses the factory engine client as transform steering source of truth", async () => {
+    startFakeOpenWorkServer();
     const requests: unknown[] = [];
     const mcp = {
       result: { data: { "openwork-cloud": { status: "connected" } } },
@@ -512,6 +513,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
   });
 
   test("uses neutral transform steering when the engine reports failed Cloud status", async () => {
+    startFakeOpenWorkServer();
     const requests: unknown[] = [];
     const mcp = {
       result: { data: { "openwork-cloud": { status: "failed" } } },
@@ -539,6 +541,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
   });
 
   test("extends the engine system entry instead of adding a second system message", async () => {
+    startFakeOpenWorkServer();
     const mcp = {
       async status() {
         return { data: { "openwork-cloud": { status: "connected" } } };
