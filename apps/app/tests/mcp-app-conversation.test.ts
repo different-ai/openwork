@@ -185,6 +185,42 @@ describe("App future context and reviewed conversation admission", () => {
     }
   });
 
+  test("late rejection of payload A revalidates acknowledged B and sends it once without clearing state", async () => {
+    const previousFetch = globalThis.fetch;
+    const entered = Promise.withResolvers<void>();
+    const delayed = Promise.withResolvers<void>();
+    let validations = 0;
+    const { origin, actions } = fixture(async () => {
+      if (++validations === 2) { entered.resolve(); await delayed.promise; }
+    });
+    const prompts: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.endsWith("/prompt")) prompts.push(await request.text());
+      return Response.json({ data: {} });
+    };
+    try {
+      await actions.updateModelContext(content("payload A"));
+      const client = createClientV2("http://owner.invalid/workspace/workspace-b/opencode2", "/b", {});
+      const openworkPrompt = createMcpAppPromptDispatch({ origin, parts: [{ type: "text", text: "ordinary user turn" }], assertCurrent: () => {} });
+      const pending = client.session.promptAsync({ sessionID: "session-b", model: { providerID: "fixture", modelID: "fixture" }, parts: [] }, { meta: { openworkPrompt } });
+      await entered.promise;
+      expect(await actions.updateModelContext(content("payload B"))).toEqual({});
+      expect(validations).toBe(3);
+      expect(prompts).toEqual([]);
+      delayed.reject(new Error("Payload A validation failed late"));
+      expect((await pending).error).toBeUndefined();
+      expect(validations).toBe(4);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]?.match(/payload B/g)).toHaveLength(1);
+      expect(prompts[0]).not.toContain("payload A");
+      const retained = (await prepareMcpAppContext(origin))();
+      expect(retained).toHaveLength(1);
+      expect(retained?.[0]?.text).toContain("payload B");
+      expect(validations).toBe(5);
+    } finally { delayed.resolve(); actions.dispose(); globalThis.fetch = previousFetch; }
+  });
+
   for (const preparation of ["model", "instructions"]) {
     for (const change of ["close", "switch", "cancel"]) {
       test(`V2 ${preparation} preparation cannot dispatch an App message after ${change}`, async () => {

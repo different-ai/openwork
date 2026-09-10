@@ -159,7 +159,7 @@ export async function prepareMcpAppContext(origin: McpAppOrigin): Promise<() => 
     if (!pending.length) break;
     await Promise.all(pending.map(async ({ state, entry }) => {
       try { await entry.validate(); validated.add(entry.view); }
-      catch { if (state.context?.view === entry.view) state.context = undefined; }
+      catch { if (state.context === entry) state.context = undefined; }
     }));
   }
   return () => {
