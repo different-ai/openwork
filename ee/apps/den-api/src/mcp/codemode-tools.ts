@@ -1,4 +1,5 @@
 import { Tool, toolError } from "@openwork/codemode"
+import { mcpToolVisibleTo } from "@openwork/types/mcp-tool-visibility"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { Effect } from "effect"
 import type { Hono } from "hono"
@@ -323,7 +324,7 @@ export async function buildExternalMcpToolTree(input: {
         undefined,
         deadline,
       )
-      return { connection, tools }
+      return { connection, tools: tools.filter((tool) => mcpToolVisibleTo(tool, "model")) }
     } catch {
       return undefined
     }

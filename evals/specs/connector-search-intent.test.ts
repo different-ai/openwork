@@ -24,16 +24,27 @@ test("gateway discovery preserves setup intent and execution scopes", { timeout:
     { name: "unknown_scope_fixture" },
     { name: "contradictory_scope_fixture", annotations: { readOnlyHint: true, destructiveHint: true } },
   ];
+  const audienceCases = [
+    { name: "audience_app_helper", visibility: ["app"], model: false, app: true },
+    { name: "audience_model_helper", visibility: ["model"], model: true, app: false },
+    { name: "audience_default_helper", visibility: undefined, model: true, app: true },
+    { name: "audience_hidden_helper", visibility: [], model: false, app: false },
+    { name: "audience_invalid_helper", visibility: ["model", "app", "invalid"], model: false, app: false },
+  ];
   const orgName = `Connector Search ${Date.now()}`;
   await using den = await server({
     place,
     web: false,
     org: { name: orgName, members: {} },
-    mocks: { connector: mcpMock({ port: 3986, allowUnauthenticatedMcp: true, tools: scopeCases.map(({ name, annotations }) => ({
+    mocks: { connector: mcpMock({ port: 3986, allowUnauthenticatedMcp: true, tools: [...scopeCases.map(({ name, annotations }) => ({
       name, annotations, description: `Scope fixture ${name}`, inputSchema: { type: "object" },
       _meta: { ui: { resourceUri: "ui://scope/fixture.html", visibility: ["model", "app"] } },
-      result: { content: [{ type: "text", text: "scope result" }] },
-    })) }) },
+      result: { content: [{ type: "text" as const, text: "scope result" }] },
+    })), ...audienceCases.map(({ name, visibility }) => ({
+      name, description: "Audience parity helper", inputSchema: { type: "object" },
+      _meta: { ui: { visibility } },
+      result: { content: [{ type: "text" as const, text: "audience result" }] },
+    }))] }) },
   });
   const database = den.database;
   if (!database) throw new Error("Scope authority fixtures require a cold-booted owned Den database");
@@ -148,19 +159,23 @@ test("gateway discovery preserves setup intent and execution scopes", { timeout:
     [restrictedScopes, appTokenHash, String(orgId)]);
   expect(await queryDenDatabase(database.url, "SELECT scopes FROM oauthAccessToken WHERE token = ? AND reference_id = ?",
     [appTokenHash, String(orgId)])).toEqual([{ scopes: restrictedScopes }]);
-  async function call(bearer: string, name: string, args: Record<string, unknown>, endpoint = "/mcp/agent") {
+  async function rpc(bearer: string, method: string, params: Record<string, unknown>, endpoint = "/mcp/agent") {
     const response = await fetch(`${den.ref.apiUrl}${endpoint}`, {
       method: "POST",
-      headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: ++requestId, method: "tools/call", params: { name, arguments: args } }),
+      headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json", accept: "application/json, text/event-stream",
+        "x-openwork-mcp-client-audience": "app-host" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: ++requestId, method, params }),
       signal: AbortSignal.timeout(60_000),
     });
     const raw = await response.text();
     expect(response.status, raw).toBe(200);
     const line = raw.split("\n").find(value => value.startsWith("data:"));
-    const rpc = record(JSON.parse(line ? line.slice(5) : raw));
-    expect(rpc.error, JSON.stringify(rpc.error)).toBeUndefined();
-    return record(rpc.result);
+    return record(JSON.parse(line ? line.slice(5) : raw));
+  }
+  async function call(bearer: string, name: string, args: Record<string, unknown>, endpoint = "/mcp/agent") {
+    const response = await rpc(bearer, "tools/call", { name, arguments: args }, endpoint);
+    expect(response.error, JSON.stringify(response.error)).toBeUndefined();
+    return record(response.result);
   }
   const discovered = rows((await search({ query: "Scope Fixture false", type: "mcp", limit: 20 })).payload.matches);
   const beforeReadControls = await den.mocks.connector.toolCalls();
@@ -224,4 +239,44 @@ test("gateway discovery preserves setup intent and execution scopes", { timeout:
   expect(deniedCalls).toBe(24);
   expect(acceptedCalls).toBe(24);
   evidence.recordAssertionEvidence("Provider read-only hints never grant external execution authority", "Read-only tokens denied all four provider tools, including the misleading readOnlyHint:true tool, through generic, direct, compatibility, Code Mode and both App-host dispatch forms: 24 denials with zero provider calls. A genuinely minted App token was narrowed to mcp:read mcp:app-host in this owned database before first use, not issued by a changed production mint. Full-scope and unchanged App-host tokens produced exactly 24 expected calls.", true);
+  const compatibilityPath = `/mcp/agent/connections/${compatibilityId}`;
+  for (const bearer of [fullToken, appToken]) {
+    const isApp = bearer === appToken;
+    const expected = audienceCases.filter(entry => entry[isApp ? "app" : "model"]).map(entry => entry.name).sort();
+    const searched = await call(bearer, "search_capabilities", { query: "audience parity", limit: 20, audience: isApp ? "model" : "app" }, compatibilityPath);
+    const matches = rows(record(searched.structuredContent).matches);
+    expect(matches.map(entry => entry.name).sort()).toEqual(expected);
+    expect(matches.every(entry => entry.kind === undefined && entry.mcpApp === undefined)).toBe(true);
+    const listed = record((await rpc(bearer, "tools/list", {}, isApp ? compatibilityPath : `/mcp/agent/connections/${directId}`)).result);
+    expect(rows(listed.tools).filter(entry => String(entry.name).startsWith("audience_")).map(entry => entry.name).sort()).toEqual(expected);
+    // Even the private token must not turn the central registry or Code Mode into an App surface.
+    const central = await call(bearer, "search_capabilities", { query: "audience parity", type: "mcp", limit: 20 });
+    const centralMatches = rows(record(central.structuredContent).matches).filter(entry => String(entry.name).startsWith(`mcp:${compatibilityId}:`));
+    expect(centralMatches.map(entry => String(entry.name).split(":").at(-1)).sort()).toEqual(audienceCases.filter(entry => entry.model).map(entry => entry.name).sort());
+    for (const fixture of audienceCases) {
+      const before = await den.mocks.connector.toolCalls();
+      const result = await rpc(bearer, "tools/call", { name: "execute_capability", arguments: {
+        name: fixture.name, body: { marker: fixture.name }, audience: "app", appHostClient: true,
+      } }, compatibilityPath);
+      const after = await den.mocks.connector.toolCalls();
+      if (fixture[isApp ? "app" : "model"]) {
+        expect(result.error).toBeUndefined();
+        expect(record(result.result).isError).not.toBe(true);
+        expect(after.slice(before.length)).toEqual([expect.objectContaining({ name: fixture.name, args: { marker: fixture.name } })]);
+      } else {
+        expect(result.error).toBeDefined();
+        expect(after).toEqual(before);
+      }
+      if (!fixture.model) {
+        const beforeCentral = await den.mocks.connector.toolCalls();
+        expect((await call(bearer, "execute_capability", { name: `mcp:${compatibilityId}:${fixture.name}`, body: {} })).isError).toBe(true);
+        const modelPath = centralMatches[0]?.scriptPath;
+        if (typeof modelPath !== "string") throw new Error("Missing Code Mode namespace control");
+        const helperPath = `${modelPath.slice(0, modelPath.lastIndexOf("."))}.${fixture.name}`;
+        expect((await call(bearer, "execute_capability_script", { code: `return await ${helperPath}({})` })).isError).toBe(true);
+        expect(await den.mocks.connector.toolCalls()).toEqual(beforeCentral);
+      }
+    }
+  }
+  evidence.recordAssertionEvidence("Model and private App audiences remain separate, including resource-less helpers", "Authenticated private search, tools/list and wrapped execution included App-only and default helpers without launcher metadata. Ordinary compatibility and direct discovery stayed model-only despite forged audience headers and arguments. The central gateway and Code Mode rejected hidden helpers even with the private App token; rejected calls left the provider witness unchanged.", true);
 });

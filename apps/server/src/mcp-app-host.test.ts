@@ -85,6 +85,7 @@ async function startFixtureMcp(
   const calls: Array<{ name: string; arguments?: Record<string, unknown> }> = [];
   let launchVisible = true;
   let launchPresent = true;
+  let detailUi: { resourceUri?: string; visibility?: unknown } = { visibility: ["app"] };
   const mcp = new Server(
     { name: "mcp-app-fixture", version: "1.0.0" },
     {
@@ -99,6 +100,17 @@ async function startFixtureMcp(
   );
   mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
+      ...(connectionId ? [{
+        name: "execute_capability",
+        inputSchema: { type: "object" as const, properties: { name: { type: "string" }, body: { type: "object" } }, required: ["name"] },
+        annotations: { readOnlyHint: false },
+        _meta: { ui: { visibility: ["app"] } },
+      }, {
+        name: "search_capabilities",
+        inputSchema: { type: "object" as const, properties: { query: { type: "string" } } },
+        annotations: { readOnlyHint: true },
+        _meta: { ui: { visibility: ["app"] } },
+      }] : []),
       {
         name: "render_fixture",
         description: "Render the fixture",
@@ -138,7 +150,7 @@ async function startFixtureMcp(
         description: "Read fixture detail",
         inputSchema: { type: "object", properties: { id: { type: "string" } } },
         annotations: { readOnlyHint: true, destructiveHint: false },
-        _meta: { ui: { visibility: ["app"] } },
+        _meta: { ui: detailUi },
       },
       {
         name: "read_bound_detail",
@@ -268,6 +280,7 @@ async function startFixtureMcp(
     calls,
     hideLaunch: () => { launchVisible = false; },
     removeLaunch: () => { launchPresent = false; },
+    setDetailUi: (ui: typeof detailUi) => { detailUi = ui; },
     activateUpdatedResource: async () => {
       activeResourceUri = UPDATED_RESOURCE_URI;
       // A stateful SDK server transport owns one initialized MCP session. The
@@ -291,6 +304,7 @@ async function configuredFixture(
   calls: Array<{ name: string; arguments?: Record<string, unknown> }>;
   hideLaunch: () => void;
   removeLaunch: () => void;
+  setDetailUi: (ui: { resourceUri?: string; visibility?: unknown }) => void;
 }> {
   const { config, root } = await fixtureWorkspace(prefix);
   const fixture = await startFixtureMcp(resourceContent, connectionId);
@@ -333,6 +347,7 @@ async function configuredFixture(
     calls: fixture.calls,
     hideLaunch: fixture.hideLaunch,
     removeLaunch: fixture.removeLaunch,
+    setDetailUi: fixture.setDetailUi,
   };
 }
 
@@ -706,6 +721,7 @@ describe("MCP Apps host transport", () => {
     expect(names).toContain("render_fixture");
     // Connect launches resolve by connection reference, so app-only tools qualify.
     expect(names).toContain("read_bound_detail");
+    expect(names).not.toContain("read_detail");
     expect(names).not.toContain("save_artifact_view");
     const renderFixture = connect?.apps.find((app) => app.toolName === "render_fixture");
     expect(renderFixture?.connectionId).toBe(connectionId);
@@ -1099,6 +1115,57 @@ describe("MCP Apps host transport", () => {
       content: [{ type: "text", text: "detail:approved" }],
       structuredContent: { id: "approved" },
     });
+  });
+
+  test("private Connect wrappers validate the inner helper against the trusted launch and workspace policy", async () => {
+    const connectionId = "emc_01mcpappwrapperfixture";
+    const serverName = connectMcpAppHostName(connectionId);
+    const { config, root, calls, setDetailUi, hideLaunch } = await configuredFixture(
+      "openwork-mcp-app-wrapper-", undefined, serverName, connectionId,
+    );
+    const app = await resolveConnectMcpAppResource({
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      launch: { connectionId, toolName: "render_fixture", resourceUri: RESOURCE_URI },
+      context: { sessionId: "session-a", readOnly: false },
+    });
+    const request = {
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, serverName,
+      launchId: app.launchId, sessionId: "session-a", resourceUri: RESOURCE_URI,
+      assertSessionActive: async () => {}, name: "execute_capability", approved: true,
+      arguments: { name: "read_detail", body: { id: "wrapper-detail" } },
+    };
+    await expect(callMcpAppTool({ ...request, approved: false })).rejects.toMatchObject({ code: "tool_requires_approval" });
+    expect(calls).toEqual([]);
+    for (const ui of [{ visibility: ["app"] }, {}, { visibility: ["app"], resourceUri: RESOURCE_URI }]) {
+      setDetailUi(ui);
+      await callMcpAppTool(request);
+      expect(calls.at(-1)).toEqual({ name: "execute_capability", arguments: request.arguments });
+    }
+    for (const [ui, code] of [
+      [{ visibility: ["model"] }, "tool_not_visible"],
+      [{ visibility: ["app", "invalid"] }, "tool_not_visible"],
+      [{ visibility: [] }, "tool_not_visible"],
+      [{ visibility: "app" }, "tool_not_visible"],
+      [{ visibility: ["app"], resourceUri: UPDATED_RESOURCE_URI }, "tool_resource_mismatch"],
+    ] satisfies Array<[{ visibility: unknown; resourceUri?: string }, string]>) {
+      setDetailUi(ui);
+      await expect(callMcpAppTool(request)).rejects.toMatchObject({ code });
+      await expect(callMcpAppTool({ ...request, name: "read_detail", arguments: {} })).rejects.toMatchObject({ code });
+    }
+    for (const name of ["unknown", "execute_capability", "search_capabilities", "mcp:another-connection:read_detail"]) {
+      await expect(callMcpAppTool({ ...request, arguments: { name, body: {} } })).rejects.toMatchObject({ code: "tool_not_found" });
+    }
+    expect(calls).toHaveLength(3);
+    setDetailUi({ visibility: ["app"] });
+    await Bun.write(join(root, "opencode.json"), JSON.stringify({
+      permission: { [projectedMcpToolName(serverName, "read_detail")]: "deny" },
+    }));
+    await expect(callMcpAppTool(request)).rejects.toMatchObject({ code: "tool_denied" });
+    await expect(callMcpAppTool({ ...request, name: "read_detail", arguments: {} })).rejects.toMatchObject({ code: "tool_denied" });
+    await Bun.write(join(root, "opencode.json"), "{}");
+    hideLaunch();
+    await expect(callMcpAppTool(request)).rejects.toMatchObject({ code: "stale_launch_context" });
+    expect(calls).toHaveLength(3);
   });
 
   test("rejects private MCP egress outside explicit development mode", async () => {

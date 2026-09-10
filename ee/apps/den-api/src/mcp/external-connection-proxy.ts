@@ -12,6 +12,7 @@ import {
 import { StreamableHTTPTransport } from "@hono/mcp"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable } from "@openwork-ee/den-db/schema"
+import { mcpToolVisibleTo } from "@openwork/types/mcp-tool-visibility"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Context, Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
@@ -116,29 +117,9 @@ const appGatewayTools: ExternalMcpProxyTool[] = boundedGatewayTools.map((tool) =
   _meta: { ui: { visibility: ["app"] } },
 }))
 
-/**
- * A provider tool the model may see on a directly exposed connection. Tools
- * that declare an app-only UI visibility stay private to the App host.
- */
-function toolVisibleToModel(tool: ExternalMcpProxyTool): boolean {
-  const meta = isRecord(tool._meta) ? tool._meta : {}
-  const ui = isRecord(meta.ui) ? meta.ui : {}
-  if (ui.visibility === undefined) return true
-  return Array.isArray(ui.visibility) && ui.visibility.includes("model")
-}
-
-function toolVisibleToApp(tool: ExternalMcpProxyTool): boolean {
-  const meta = isRecord(tool._meta) ? tool._meta : {}
-  const ui = isRecord(meta.ui) ? meta.ui : {}
-  if (ui.visibility === undefined) return true
-  return Array.isArray(ui.visibility)
-    && ui.visibility.every((entry) => entry === "model" || entry === "app")
-    && ui.visibility.includes("app")
-}
-
 function appOnlyProxyTool(tool: ExternalMcpProxyTool): ExternalMcpProxyTool | null {
+  if (!mcpToolVisibleTo(tool, "app")) return null
   const resourceUri = externalMcpAppResourceUri(tool)
-  if (!resourceUri || !toolVisibleToApp(tool)) return null
   const meta = isRecord(tool._meta) ? tool._meta : {}
   const ui = isRecord(meta.ui) ? meta.ui : {}
   return {
@@ -147,7 +128,7 @@ function appOnlyProxyTool(tool: ExternalMcpProxyTool): ExternalMcpProxyTool | nu
       ...meta,
       ui: {
         ...ui,
-        resourceUri,
+        ...(resourceUri ? { resourceUri } : {}),
         visibility: ["app"],
       },
     },
@@ -201,9 +182,9 @@ export function createExternalConnectionProxyServer(input: {
     )).filter((tool) => (
       !PROXY_GATEWAY_TOOL_NAMES.has(tool.name)
       && !evaluateToolPolicy(connection.toolPolicy, tool.name).blocked
+      && mcpToolVisibleTo(tool, input.appHostClient === true ? "app" : "model")
     ))
   }
-  const listDirectTools = async () => (await listProviderTools()).filter(toolVisibleToModel)
   const listAppTools = async () => (
     await listProviderTools()
   ).flatMap((tool) => {
@@ -223,7 +204,7 @@ export function createExternalConnectionProxyServer(input: {
       ...(downstreamUi ? { extensions: { [EXTENSION_ID]: downstreamUi } } : {}),
     },
     instructions: input.appHostClient
-      ? `This member-authorized OpenWork Connect endpoint exposes only app-visible MCP App tools and their bound resources for ${connection.name}. Ordinary provider capabilities remain available exclusively through search_capabilities and execute_capability.`
+      ? `This member-authorized OpenWork Connect endpoint exposes app-visible tools, including resource-less helpers, and their bound App resources for ${connection.name}. Search and execute use the same app-visible catalog.`
       : directClient
         ? `This member-authorized OpenWork Connect endpoint exposes the tools of ${connection.name} directly, subject to your organization's access grants and tool policy. Resources are not exposed.`
         : `This compatibility endpoint exposes only bounded search_capabilities and execute_capability for ${connection.name}. Direct provider tools, MCP App launch tools, and resources are not exposed.`,
@@ -234,13 +215,13 @@ export function createExternalConnectionProxyServer(input: {
       tools: input.appHostClient
         ? [...appGatewayTools, ...await listAppTools()]
         : directClient
-          ? await listDirectTools()
+          ? await listProviderTools()
           : boundedGatewayTools,
     }))
     server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const args = toolArguments(request.params.arguments)
       if (directClient) {
-        const tool = (await listDirectTools()).find((tool) => tool.name === request.params.name)
+        const tool = (await listProviderTools()).find((tool) => tool.name === request.params.name)
         if (!tool) {
           throw new McpError(ErrorCode.InvalidRequest, `Tool ${request.params.name} is not available on ${connection.name}.`)
         }
