@@ -32,8 +32,15 @@ function renderedCount(value: unknown): number {
   return value.messageCount;
 }
 
-test("opening a long conversation shows it from its first message", async ({ user, agent, probe, step, world }) => {
+test("opening a long conversation shows the latest first and preserves access to its entire history", async ({ user, agent, probe, step, world }) => {
   const messagesPath = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/opencode/session/${encodeURIComponent(world.session.sessionId)}/message`;
+  const surface = `[data-session-surface-id="${world.session.sessionId}"]`;
+  const latestVisible = async () => {
+    const { elements } = await probe.dom(`${surface} [data-thread-scroll], ${surface} [data-message-id]`);
+    const viewport = elements[0];
+    const latest = elements.slice(1).find((element) => element.text.includes(longHistoryLast));
+    return Boolean(viewport && latest && latest.rect.height > 0 && latest.rect.bottom > viewport.rect.top && latest.rect.top < viewport.rect.bottom);
+  };
 
   await step("the engine stores more messages than one newest-first page holds", async () => {
     const stored = await probe.desktopApi(messagesPath);
@@ -62,7 +69,9 @@ test("opening a long conversation shows it from its first message", async ({ use
 
   await step("clicking the long conversation renders every stored message", async () => {
     await user.click({ role: "button", label: new RegExp(`^${longHistoryTitle}`) });
-    await user.see({ text: longHistoryLast }, { timeoutMs: 60_000 });
+    // Read-only geometry: `user.see` may scroll a target into view and would
+    // conceal a regression where opening incorrectly lands at the first row.
+    await probe.eventually(latestVisible, { within: 60_000, label: "latest message visible without scrolling", until: Boolean });
     const rendered = await probe.eventually(async () => renderedCount(await agent.run("session.read_transcript", { count: 1 })), {
       within: 60_000,
       label: "rendered transcript length",
@@ -70,6 +79,11 @@ test("opening a long conversation shows it from its first message", async ({ use
     });
     expect(rendered).toBe(longHistoryCount);
     expect(rendered).not.toBe(oldPageSize);
+    await probe.eventually(async () => {
+      expect(await latestVisible()).toBe(true);
+      return (await probe.dom(`${surface} [data-thread-history-complete="true"]`)).elements.length;
+    }, { within: 30_000, label: "background history mounting preserves the latest viewport", until: (count) => count === 1 });
+    expect((await probe.dom(`${surface} [data-thread-loading]`)).elements).toHaveLength(0);
   });
 
   await step("the first message is reachable at the top of the transcript", async () => {
@@ -79,5 +93,21 @@ test("opening a long conversation shows it from its first message", async ({ use
       `The conversation transcript visibly starts with a user message reading "${longHistoryFirst}"`,
       "The transcript shows no loading indicator, error card, or empty-conversation placeholder",
     ]);
+  });
+
+  // Baseline branch coverage after full loading, not the delayed-preview race.
+  await step("after full loading, branching at the first message excludes later history and leaves the source unchanged", async () => {
+    await user.click({ role: "button", label: "Branch in new chat", nth: 0 });
+    // count limits returned messages; messageCount is the entire rendered transcript.
+    await probe.eventually(async () => renderedCount(await agent.run("session.read_transcript", { count: 1 })), {
+      within: 30_000,
+      label: "branch contains only the clicked message",
+      until: (count) => count === 1,
+    });
+    await user.see({ text: longHistoryFirst });
+    await user.notSee({ text: longHistoryLast });
+    const source = await probe.desktopApi(messagesPath);
+    expect(source.status).toBe(200);
+    expect(messageTexts(source.body)).toHaveLength(longHistoryCount);
   });
 });

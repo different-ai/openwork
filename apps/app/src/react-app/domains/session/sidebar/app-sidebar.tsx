@@ -146,7 +146,7 @@ import {
 } from "./sidebar-lanes";
 import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
 import { isSameWorkbenchSession, useWorkbenchStore, workbenchSessionKey } from "../chat/workbench-store";
-import { useNewTaskDraftState } from "../sync/draft-store";
+import { useNewTaskDraftState, useSessionDraftState } from "../sync/draft-store";
 import { SidebarDestination } from "./sidebar-destination";
 import { SessionTitle } from "./session-title";
 
@@ -2134,6 +2134,9 @@ function SessionMenuItem({
   workspaceName,
 }: SessionMenuItemProps) {
   const ctx = useSidebarContext();
+  const { snapshot } = useSessionDraftState(ctx.newTaskDraftScope, workspaceId, session.id);
+  const hasDraft = Boolean(snapshot?.text.trim());
+  const draftLabel = t("workspace_list.new_task_draft");
   const attachedAsSideChat = useWorkbenchStore((state) => Object.values(state.sideChats).some((chat) =>
     isSameWorkbenchSession(chat, { workspaceId, sessionId: session.id })));
   const [isTitleHovered, setIsTitleHovered] = React.useState(false);
@@ -2248,7 +2251,7 @@ function SessionMenuItem({
               setIsTitleFocused(true);
             }}
             onBlur={() => setIsTitleFocused(false)}
-            aria-label={accessibleState}
+            aria-label={hasDraft ? `${accessibleState}, ${draftLabel}` : accessibleState}
             aria-description={shortcutDigit === undefined ? undefined : sessionNumberShortcutDescription(ctx.sessionNumberShortcutOs, shortcutDigit)}
             aria-keyshortcuts={ariaKeyShortcuts}
             className={cn(rowButtonClass, "w-full text-start")}
@@ -2256,6 +2259,11 @@ function SessionMenuItem({
           >
             {leading}
             <SessionTitle intent={titleIntent} title={displayTitle} tooltip={itemTitle} />
+            {hasDraft ? (
+              <span data-testid={`sidebar-session-draft-${session.id}`} className="shrink-0 text-xs text-muted-foreground">
+                {draftLabel}
+              </span>
+            ) : null}
             <SessionNumberShortcutSlot digit={shortcutDigit} />
           </SidebarMenuSubButton>
           {trailing}

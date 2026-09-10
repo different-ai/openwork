@@ -1,10 +1,10 @@
 import { allocateFreePort, browserScript, clickAt, evaluate, hoverAt, reload, type Point, type Surface, typeText, waitForLocated } from "@openwork/cdp";
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, realpath, rm, symlink } from "node:fs/promises";
 import { engineSessionProbe, observeSidebarExpansion, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
 import { resolveEvalEngine, SkipError } from "@openwork/env";
 import type { Place, Seed } from "@openwork/env";
-import { daytonaSandbox, desktop as launchDesktop, startMockOnSandbox } from "@openwork/hosts";
+import { daytonaSandbox, defaultDaytonaExec, desktop as launchDesktop, execInSandbox, startMockOnSandbox } from "@openwork/hosts";
 import { startMockMcp } from "@openwork/labs";
 
 const stormProviderId = "active-session-storm-mock";
@@ -1846,11 +1846,81 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
 }
 
 export async function archiveSessions(seed: Seed) {
-  const engine = resolveEvalEngine();
   const app = await seed.desktop({ name: "session-archive-undo" });
-  const workspacePath = seed.tmpPath("session-archive-undo");
-  const workspace = await seed.workspace(app, workspacePath);
-  const [candidate, neighbor] = await seed.sessions(app, ["Archive candidate", "Archive neighbor"]);
+  return archiveWorld(seed, app, seed.tmpPath("session-archive-undo"), ["Archive candidate", "Archive neighbor"]);
+}
+
+/**
+ * Archive in a workspace the desktop stores by a linked path. The folder does
+ * not exist when the workspace is added, so the desktop keeps the path as
+ * given (`<root>/link/OpenWork Chat`) while the engine resolves it and stamps
+ * every session with the real path (`<root>/real/OpenWork Chat`) — the shape a
+ * fresh macOS profile has under `/var` -> `/private/var`.
+ */
+export async function archiveSessionsInLinkedWorkspace(seed: Seed) {
+  if (resolveEvalEngine() !== "v1") throw new SkipError("Archive is unavailable in the v2 preview; session-archive-undo covers that.");
+  const app = await seed.desktop({ name: "session-archive-linked-path" });
+  const root = seed.tmpPath("session-archive-linked");
+  const real = `${root}/real`;
+  const link = `${root}/link`;
+  // The real parent as the app host resolves it; `seed.tmpPath` itself may sit behind a symlink (macOS /tmp).
+  let resolvedReal: string;
+  if (app.handle.sandboxId) {
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    const script = `mkdir -p ${quote(real)} && ln -sfn ${quote(real)} ${quote(link)} && readlink -f ${quote(real)}`;
+    const result = await execInSandbox(defaultDaytonaExec, app.handle.sandboxId, `printf %s ${Buffer.from(script).toString("base64")} | base64 -d | bash`, { timeoutMs: 15_000, context: "Arrange the linked workspace parent" });
+    resolvedReal = result.stdout.trim();
+    if (result.code !== 0 || !resolvedReal.startsWith("/")) throw new Error(`Linked workspace parent arrangement failed: ${result.stderr || result.stdout}`);
+  } else {
+    await mkdir(real, { recursive: true });
+    await symlink(real, link);
+    resolvedReal = await realpath(real);
+  }
+  const world = await archiveWorld(seed, app, `${link}/OpenWork Chat`, ["Split pane conversation", "Other pane"], { create: true });
+  return {
+    ...world,
+    realWorkspacePath: `${resolvedReal}/OpenWork Chat`,
+    /** The path the desktop persisted for the workspace, exactly as it will address the engine. */
+    storedWorkspacePath: async () => {
+      const value = await seed.evalIn(app, browserScript((workspaceId) =>
+        window.__openwork?.slice?.("route")?.workspaces?.find(item => item.id === workspaceId)?.path ?? null, [world.workspace.workspaceId]));
+      if (typeof value !== "string") throw new Error(`Stored workspace path was malformed: ${JSON.stringify(value)}`);
+      return value;
+    },
+    /** The directory the engine stamped on each session, read through the workspace mount. */
+    engineDirectories: async (): Promise<Record<string, string>> => {
+      const value = await seed.evalIn(app, browserScript(async (workspaceId) => {
+        const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+        if (!info?.running || !info.baseUrl) throw new Error("OpenWork server is unavailable");
+        const response = await fetch(`${String(info.baseUrl).replace(/\/+$/, "")}/workspace/${encodeURIComponent(workspaceId)}/opencode/session?limit=200`, {
+          headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") }, signal: AbortSignal.timeout(15000),
+        });
+        if (!response.ok) throw new Error("Workspace session listing failed with HTTP " + response.status);
+        const sessions = await response.json();
+        if (!Array.isArray(sessions)) throw new Error("Workspace session listing was not an array");
+        return Object.fromEntries(sessions.filter((session) => typeof session?.id === "string" && typeof session?.directory === "string")
+          .map((session) => [session.id, session.directory]));
+      }, [world.workspace.workspaceId]), { awaitPromise: true, timeoutMs: 20_000 });
+      if (!isRecord(value) || !Object.values(value).every((directory) => typeof directory === "string")) {
+        throw new Error(`Engine directories were malformed: ${JSON.stringify(value)}`);
+      }
+      return Object.fromEntries(Object.entries(value).map(([id, directory]) => [id, String(directory)]));
+    },
+    splitFacts: () => seed.evalIn(app, () => {
+      const layout = window.__openworkControl?.context?.()?.conversations?.layout;
+      return {
+        primarySessionId: (layout?.kind === "split" ? layout.primarySessionId : undefined) ?? (layout?.kind === "single" ? layout.sessionId : undefined) ?? "",
+        secondarySessionId: (layout?.kind === "split" ? layout.secondarySessionId : undefined) ?? "",
+        secondaryPaneCount: document.querySelectorAll('[data-workbench-pane="secondary"]').length,
+      };
+    }),
+  };
+}
+
+async function archiveWorld(seed: Seed, app: Surface, workspacePath: string, titles: [string, string], options: { create?: boolean } = {}) {
+  const engine = resolveEvalEngine();
+  const workspace = await seed.workspace(app, workspacePath, options);
+  const [candidate, neighbor] = await seed.sessions(app, titles);
   if (!candidate || !neighbor) throw new Error("Archive world did not create both sessions.");
   await seed.evalIn(app, browserScript((workspaceId) => {
     const original = window.fetch.bind(window);

@@ -69,7 +69,7 @@ const claimLinkSchema = z.object({
   role: z.string(),
   token: z.string(),
   url: z.string(),
-  expiresAt: z.string(),
+  expiresAt: z.string().datetime(),
 })
 
 const bootstrapWorkspaceResponseSchema = z.object({
@@ -82,7 +82,7 @@ const bootstrapWorkspaceResponseSchema = z.object({
   }),
   setup: z.object({
     id: denTypeIdSchema("workspaceBootstrap"),
-    expiresAt: z.string(),
+    expiresAt: z.string().datetime(),
   }),
   skill: z.object({
     id: denTypeIdSchema("configObject"),

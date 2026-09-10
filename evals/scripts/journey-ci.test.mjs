@@ -82,6 +82,11 @@ test('registered case metadata names exact files, supported execution axes, and 
       id: 'STOP-01',
       engines: ['v1', 'v2'],
     },
+    {
+      spec: 'saved-app-creation.e2e.test.ts',
+      id: 'APP-ISOLATION',
+      engines: ['v1', 'v2'],
+    },
   ]);
   for (const registered of registeredCases) {
     assert(entries.some(entry => entry.spec === registered.spec));

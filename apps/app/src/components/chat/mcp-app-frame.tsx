@@ -493,7 +493,7 @@ export function McpAppSandboxView({ app, toolName, inputArguments, result, unava
           await bridge.sendSandboxResourceReady({
             html: secureMcpAppHtml(app),
             csp: app.csp,
-            sandbox: "allow-scripts allow-same-origin",
+            sandbox: "allow-scripts",
           })
           checkpoint(resourceSendAttempts === 1 ? "resource-sent" : `resource-resent-${resourceSendAttempts}`)
           if (resourceAccepted || initialized) return

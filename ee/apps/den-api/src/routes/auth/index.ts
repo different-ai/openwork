@@ -860,7 +860,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
       summary: "Verify an initial administrator setup code",
       description: "Validates a configured administrator email and one-time operator code, then returns a short-lived setup grant for Better Auth account creation.",
       responses: {
-        200: jsonResponse("Bootstrap grant issued successfully.", z.object({ grant: z.string(), expiresAt: z.string() })),
+        200: jsonResponse("Bootstrap grant issued successfully.", z.object({ grant: z.string(), expiresAt: z.string().datetime() })),
         403: jsonResponse("Bootstrap verification failed.", z.object({ error: z.literal("bootstrap_verification_failed"), message: z.string() })),
         409: jsonResponse("Bootstrap is unavailable.", z.object({ error: z.literal("bootstrap_unavailable"), message: z.string() })),
       },

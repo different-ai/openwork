@@ -1,9 +1,39 @@
 import { expect } from "vitest";
 import { saveWorkflow, runWorkflow } from "@openwork/behaviors";
 import { spec } from "@openwork/testkit";
-import { creationPrompt, creationReply, field, record, savedAppCreation } from "../worlds/saved-apps.ts";
+import { creationPrompt, creationReply, field, record, savedAppCreation, isolatedMcpApps, isolationPrompt, isolationReply } from "../worlds/saved-apps.ts";
 
 const test = spec.world(savedAppCreation, { timeout: 900_000 });
+
+const isolationTest = spec.world(isolatedMcpApps, {
+  resources: { surfaces: ["appWeb"], services: ["mock"] },
+  needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 300_000,
+});
+
+isolationTest("APP-ISOLATION embedded MCP Apps isolate siblings while SDK initialization and helper calls work", async ({ world, agent, user, probe, evidence }) => {
+  const sinceIso = new Date().toISOString();
+  await agent.send(isolationPrompt);
+  await user.see({ text: isolationReply }, { timeoutMs: 120_000 });
+  const reports = await probe.eventually(() => world.reports(), {
+    within: 30_000, label: "both SDK Apps received their own input, result, and helper reply",
+    until: values => values.length === 2 && values.every(value => value.complete === true),
+  });
+  for (const label of ["A", "B"]) {
+    expect(reports.find(value => value.label === label)).toMatchObject({
+      input: { marker: `input-${label}` }, result: [{ type: "text", text: `initial-${label}` }],
+      helper: [{ type: "text", text: `helper-${label}` }], complete: true,
+    });
+  }
+  expect(reports.find(value => value.label === "A")).toMatchObject({
+    siblingReads: 0, siblingInjections: 0, readDenied: 1, injectionDenied: 1, forgedMessages: 1,
+  });
+  const firstCalls = await world.first.toolCalls({ name: "read_detail", sinceIso, atLeast: 1 });
+  const secondCalls = await world.second.toolCalls({ name: "read_detail", sinceIso, atLeast: 1 });
+  expect(firstCalls.map(call => call.args)).toEqual([{ marker: "legitimate-A" }]);
+  expect(secondCalls.map(call => call.args)).toEqual([{ marker: "legitimate-B" }]);
+  evidence.recordAssertionEvidence("Sibling Apps cannot read or inject into each other", "App A attempted sibling DOM reads, proxy script injection, and a forged helper request; both DOM operations raised SecurityError and neither provider observed the forged call.", true);
+  evidence.recordAssertionEvidence("Opaque Apps retain the standard SDK round trip", "Both real SDK Apps initialized through the shared renderer, received their distinct launch input and result, and completed exactly one legitimate helper call on their own provider.", true);
+});
 
 test("create, preview, save and reopen an app without changing already-open results", async ({ world, user, probe, seed, step, evidence }) => {
   await step("advertise direct artifact creation guidance and prerequisites", async () => {

@@ -22,6 +22,7 @@ import {
   saveWorkflow,
   testWorkflowDraft,
 } from "../../workflows.js"
+import { keysetCursorQuerySchema, nextCursorSchema } from "../../list-pagination.js"
 import { orgMemberRoute, jsonValidator, queryValidator } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { listTeamsForMember } from "../../orgs.js"
@@ -97,7 +98,10 @@ const detailParamsSchema = z.object({
 const detailQuerySchema = z.object({
   maxAgeMs: z.coerce.number().int().min(60_000).max(30 * 24 * 60 * 60_000).optional(),
 })
-const snapshotsQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(200).optional() })
+const snapshotsQuerySchema = z.object({
+  cursor: keysetCursorQuerySchema.optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+})
 const draftSchema = z.object({
   name: z.string().trim().min(1).max(255),
   description: z.string().trim().max(4_000).optional(),
@@ -112,7 +116,7 @@ const versionSchema = draftSchema.extend({
   receiptId: z.string().min(1).max(160).describe("Copy receiptId from the immediately preceding successful draft test. Submit the exact same name, description, code, exampleInput, inputSchema, outputSchema, and requiredCapabilities used by that test."),
 })
 const versionsResponseSchema = z.object({ items: z.array(workflowVersionSchema) })
-const snapshotsResponseSchema = z.object({ items: z.array(workflowArtifactSnapshotSchema) })
+const snapshotsResponseSchema = z.object({ items: z.array(workflowArtifactSnapshotSchema), nextCursor: nextCursorSchema })
 const workflowLibraryDetailSchema = z.object({
   workflow: z.object({
     type: z.literal("workflow"), id: z.string(), plugin: z.object({ id: z.string(), name: z.string() }).nullable(), name: z.string(), description: z.string().nullable(),
@@ -230,6 +234,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows",
     describeRoute({
       tags: ["Workflows"], summary: "List accessible Workflows",
+      description: "Lists every Workflow the calling member can reach through Plugin or direct grants, each with the Plugin it executes under, its latest immutable version id, declared inputSchema and outputSchema, and the capabilities it calls. Workflows whose latest version cannot be parsed are omitted. Use the returned configObjectVersionId to run an exact version.",
       responses: { 200: jsonResponse("Workflows returned.", listSchema), 401: jsonResponse("Sign-in required.", unauthorizedSchema) },
     }),
     orgMemberRoute(),
@@ -244,6 +249,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     describeRoute({
       operationId: saveWorkflowOperationId,
       tags: ["Workflows"], summary: "Save a successful Code Mode run as a Workflow inside an OpenWork Connect Plugin",
+      description: "Turns the caller's most recent successful execute_capability_script run into a reusable Workflow: code must match that run byte-for-byte and the run must be less than 15 minutes old (400 workflow_recent_receipt_required), and the tool calls the run made become the Workflow's requiredCapabilities (400 workflow_capability_unavailable when one is no longer in the caller's tool tree). Omit pluginId to save into the member's private My Workflows Plugin, created on first use; passing pluginId requires editor access to that Plugin. Saving a name that already exists in the Plugin adds a new immutable version to that Workflow, which requires manager access to it.",
       responses: {
         201: jsonResponse("Workflow saved.", savedSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
@@ -278,6 +284,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId",
     describeRoute({
       tags: ["Workflows"], summary: "Inspect a Workflow",
+      description: "Returns the Workflow's library entry (caller role, connection readiness, result freshness, view state, Automation count), its detail (current and past versions, latest snapshot, latest successful snapshot), and the generated Artifact views bound to it. maxAgeMs (60 seconds to 30 days, default 24 hours) is the threshold that classifies the latest result as fresh or stale. Version code and example input are redacted for members without manager access; when generated Artifact views are disabled for the deployment, views is empty and viewState is default.",
       responses: { 200: jsonResponse("Workflow returned.", workflowLibraryDetailSchema), 404: jsonResponse("Workflow not found.", notFoundSchema) },
     }),
     orgMemberRoute(), queryValidator(detailQuerySchema),
@@ -303,9 +310,13 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
 
   app.get(
     "/v1/apps",
-    describeRoute({ tags: ["Apps"], summary: "List saved reusable apps", responses: {
-      200: jsonResponse("Saved apps returned.", z.object({ enabled: z.boolean(), sharingEnabled: z.boolean(), items: z.array(savedAppSummarySchema) })),
-    } }),
+    describeRoute({
+      tags: ["Apps"], summary: "List saved reusable apps",
+      description: "Lists active Artifact views that have a saved revision and whose Workflow the caller can read, newest first, each with the Workflow title, whether the caller can manage it, and whether it is on the caller's personal dashboard. When generated Artifact views are disabled for the deployment, returns enabled: false and an empty list.",
+      responses: {
+        200: jsonResponse("Saved apps returned.", z.object({ enabled: z.boolean(), sharingEnabled: z.boolean(), items: z.array(savedAppSummarySchema) })),
+      },
+    }),
     orgMemberRoute(),
     async (c) => {
       if (!env.generatedArtifactViewsEnabled) return c.json({ enabled: false, sharingEnabled: false, items: [] })
@@ -321,11 +332,15 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
 
   app.post(
     "/v1/apps/:appId/share",
-    describeRoute({ tags: ["Apps"], summary: "Share a saved app with a teammate", responses: {
-      200: jsonResponse("App shared to the teammate's dashboard.", z.object({ ok: z.literal(true) })),
-      403: jsonResponse("Only app managers can share.", forbiddenSchema),
-      404: jsonResponse("App or teammate not found.", notFoundSchema),
-    } }),
+    describeRoute({
+      tags: ["Apps"], summary: "Share a saved app with a teammate",
+      description: "Grants the teammate identified by email viewer access to the app's underlying Workflow and places the app on their personal dashboard; result data is never copied. An existing editor or manager grant for that teammate is kept, so repeated shares never downgrade access. Requires manager access to the Workflow and an app with an active saved revision; fails with teammate_not_found when no active member of the organization has that email.",
+      responses: {
+        200: jsonResponse("App shared to the teammate's dashboard.", z.object({ ok: z.literal(true) })),
+        403: jsonResponse("Only app managers can share.", forbiddenSchema),
+        404: jsonResponse("App or teammate not found.", notFoundSchema),
+      },
+    }),
     orgMemberRoute(),
     jsonValidator(z.object({ email: z.string().trim().email().max(320) })),
     async (c) => {
@@ -343,9 +358,13 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
 
   app.get(
     "/v1/apps/:appId",
-    describeRoute({ tags: ["Apps"], summary: "Open an app or an exact draft preview", responses: {
-      200: jsonResponse("App preview returned.", savedAppDetailSchema),
-    } }),
+    describeRoute({
+      tags: ["Apps"], summary: "Open an app or an exact draft preview",
+      description: "Returns the app with the compiled HTML of one revision and the artifact payload it should render. Without revisionId the active saved revision is used; pass revisionId to preview an exact draft revision instead. The data comes from the Workflow's latest successful snapshot, or from the snapshot named by receiptId. When the revision has not finished building, no readable successful result exists, or the result's output schema no longer matches the revision, html and payload are null and previewNotice explains why.",
+      responses: {
+        200: jsonResponse("App preview returned.", savedAppDetailSchema),
+      },
+    }),
     orgMemberRoute(),
     queryValidator(z.object({ revisionId: z.string().trim().min(1).max(160).optional(), receiptId: z.string().trim().min(1).max(160).optional() })),
     async (c) => {
@@ -362,9 +381,13 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
 
   app.post(
     "/v1/apps/:appId/dashboard",
-    describeRoute({ tags: ["Apps"], summary: "Add or remove an app on your personal dashboard", responses: {
-      200: jsonResponse("Dashboard updated.", z.object({ ok: z.literal(true) })),
-    } }),
+    describeRoute({
+      tags: ["Apps"], summary: "Add or remove an app on your personal dashboard",
+      description: "Adds (added: true) or removes (added: false) the app on the calling member's personal dashboard. Adding requires an app with an active saved revision that the caller can read; removal also works after access to the app has been revoked. Both directions are idempotent.",
+      responses: {
+        200: jsonResponse("Dashboard updated.", z.object({ ok: z.literal(true) })),
+      },
+    }),
     orgMemberRoute(), jsonValidator(z.object({ added: z.boolean() })),
     async (c) => {
       if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
@@ -381,9 +404,13 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
 
   app.post(
     "/v1/apps/:appId/save",
-    describeRoute({ tags: ["Apps"], summary: "Save an exact app revision for reuse", responses: {
-      200: jsonResponse("App saved.", generatedArtifactViewSchema),
-    } }),
+    describeRoute({
+      tags: ["Apps"], summary: "Save an exact app revision for reuse",
+      description: "Activates the exact revisionId as the app's saved revision, sets its title and useInWorkflow flag, and places the app on the caller's dashboard in one transaction. Requires manager access to the Workflow; the revision must have finished building (artifact_view_revision_not_ready) and its output schema must match the Workflow's current version (artifact_view_schema_incompatible). expectedActiveRevisionId must equal the revision that is active right now (null when none); otherwise the save is refused with 409 app_changed_since_preview so a stale preview cannot overwrite a newer save.",
+      responses: {
+        200: jsonResponse("App saved.", generatedArtifactViewSchema),
+      },
+    }),
     orgMemberRoute(),
     jsonValidator(saveAppSchema),
     async (c) => {
@@ -403,6 +430,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId/views",
     describeRoute({
       tags: ["Workflows"], summary: "List generated Artifact views for a Workflow",
+      description: "Lists the generated Artifact views bound to this Workflow, newest first, each with its recent revisions and their build status. Requires read access to the Workflow. Returns an empty list when generated Artifact views are disabled for the deployment.",
       responses: {
         200: jsonResponse("Artifact views returned.", artifactViewsResponseSchema),
         400: jsonResponse("Invalid Workflow id.", invalidRequestSchema),
@@ -429,6 +457,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/artifact-views/:artifactViewId/revisions/:revisionId/activate",
     describeRoute({
       tags: ["Codemode Runs"], summary: "Activate or roll back an immutable Artifact view revision",
+      description: "Makes revisionId the active revision of the Artifact view and marks the view active; selecting an older revision performs a rollback without changing its bytes. The revision must have built successfully and not be retired (artifact_view_revision_not_ready), and its output schema digest must match the Workflow's current version (artifact_view_schema_incompatible). Requires manager access to the Workflow.",
       responses: {
         200: jsonResponse("Artifact view activated.", generatedArtifactViewSchema),
         400: jsonResponse("Invalid view revision.", invalidRequestSchema),
@@ -455,6 +484,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/artifact-views/:artifactViewId/retire",
     describeRoute({
       tags: ["Codemode Runs"], summary: "Retire a generated Artifact view",
+      description: "Retires the Artifact view: its status becomes retired, it loses its active revision and useInWorkflow flag, and it is removed from every member's dashboard. Immutable revisions are kept, so activating one later restores the view. Requires manager access to the Workflow.",
       responses: {
         200: jsonResponse("Artifact view retired.", generatedArtifactViewSchema),
         400: jsonResponse("Invalid view.", invalidRequestSchema),
@@ -481,6 +511,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId/versions",
     describeRoute({
       tags: ["Workflows"], summary: "List immutable Workflow versions",
+      description: "Lists the Workflow's immutable versions, newest first, each with its code, call graph, schemas, requiredCapabilities, digests, and the caller's own Automations that pin it. Code, example input, and source-derived graph labels are redacted for members without manager access. Requires read access to the Workflow.",
       responses: {
         200: jsonResponse("Workflow versions returned.", versionsResponseSchema),
         400: jsonResponse("Invalid Workflow id.", invalidRequestSchema),
@@ -506,6 +537,8 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId/snapshots",
     describeRoute({
       tags: ["Workflows"], summary: "List Workflow artifact snapshots",
+      description: "Lists run receipts of saved versions of this Workflow, most recently finished first, including failed runs and runs whose content was deleted (value and markdown are null and contentDeletedAt is set). Draft test runs are not snapshots and never appear here. limit caps the result at 1 to 200 rows (default 100). "
+        + "Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page. Requires read access to the Workflow.",
       responses: {
         200: jsonResponse("Artifact snapshots returned.", snapshotsResponseSchema),
         400: jsonResponse("Invalid Workflow id or query.", invalidRequestSchema),
@@ -519,11 +552,13 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       if (!params.success) return c.json({ error: "invalid_request", message: "Invalid Workflow id." }, 400)
       try {
         const { actorContext } = await contextFor(c)
-        return c.json({ items: await listWorkflowSnapshots({
+        const query = c.req.valid("query")
+        return c.json(await listWorkflowSnapshots({
           context: actorContext,
           configObjectId: params.data.configObjectId,
-          limit: c.req.valid("query").limit,
-        }) })
+          limit: query.limit,
+          cursor: query.cursor,
+        }))
       } catch (error) {
         const failure = routeFailure(error)
         return c.json(failure.body, failure.status)
@@ -535,6 +570,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId/snapshots/:receiptId",
     describeRoute({
       tags: ["Workflows"], summary: "Inspect one Workflow artifact snapshot",
+      description: "Returns one run receipt of a saved version of this Workflow: the validated result value, its Markdown rendering, code and schema digests, tool calls, status, error details, and whether it was produced by an Automation. value and markdown are null once the content has been deleted. Requires read access to the Workflow; receiptId must belong to this Workflow.",
       responses: {
         200: jsonResponse("Artifact snapshot returned.", workflowArtifactSnapshotSchema),
         404: jsonResponse("Artifact snapshot not found.", notFoundSchema),
@@ -563,6 +599,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/test",
     describeRoute({
       tags: ["Workflows"], summary: "Test the exact Workflow draft and return the receiptId required to create that unchanged version",
+      description: "Executes the draft code once with exampleInput against the caller's live tools, validating the input against inputSchema and the result against outputSchema, and records a durable test receipt. The returned receiptId is the proof required by POST /v1/workflows/{configObjectId}/versions and is only accepted when every draft field is resubmitted unchanged within 15 minutes. Requires manager access to the Workflow; a script failure, argument mismatch, or result mismatch is returned as a 400 with the error code and message.",
       responses: { 200: jsonResponse("Workflow draft tested.", workflowTestResultSchema), 400: jsonResponse("Test rejected.", invalidRequestSchema) },
     }),
     orgMemberRoute(), jsonValidator(testSchema),
@@ -596,6 +633,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId/versions",
     describeRoute({
       tags: ["Workflows"], summary: "Create an immutable Workflow version using the immediately preceding matching test receipt and unchanged draft",
+      description: "Appends a new immutable version to the Workflow and updates its name and description. receiptId must reference a successful draft test by the caller that is less than 15 minutes old, has not already produced a version, and whose code, exampleInput, inputSchema, outputSchema, name, description, and requiredCapabilities all match this body byte-for-byte (400 workflow_matching_test_receipt_required). Every capability the test actually called must be listed in requiredCapabilities and still be available to the caller (400 workflow_capability_unavailable). Requires manager access to the Workflow.",
       responses: { 201: jsonResponse("Workflow version created.", workflowDetailSchema), 400: jsonResponse("Version rejected.", invalidRequestSchema) },
     }),
     orgMemberRoute(), jsonValidator(versionSchema),
@@ -624,6 +662,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId/run",
     describeRoute({
       tags: ["Workflows"], summary: "Run an exact Workflow version",
+      description: "Executes the version identified by configObjectVersionId of this Workflow, under the Plugin named by pluginId, with input as the script's input, using the caller's live tools, and records a snapshot receipt. The input is validated against the version's inputSchema and the result against its outputSchema; a mismatch is rejected with 400 invalid_capability_arguments, a required capability that is unavailable with capability_unavailable, and a thrown script error with script_failed. The caller needs a Workflow, Plugin, or Marketplace grant that covers this Workflow; an unknown Workflow or Plugin returns unknown_capability and a missing grant returns forbidden, both as 400.",
       responses: {
         200: jsonResponse("Workflow executed.", runResultSchema),
         400: jsonResponse("Execution rejected.", invalidRequestSchema),
@@ -667,6 +706,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId/snapshots/:receiptId/content",
     describeRoute({
       tags: ["Workflows"], summary: "Delete artifact content while retaining its audit receipt",
+      description: "Clears the stored input, result value, and Markdown of one snapshot and stamps contentDeletedAt, while the receipt itself (digests, tool calls, status, timings) stays in history. When the snapshot came from an Automation, that Automation's latest successful result is re-pointed to its newest remaining readable snapshot. Idempotent: deleting already-deleted content returns the snapshot unchanged. Requires manager access to the Workflow.",
       responses: {
         200: jsonResponse("Artifact content deleted.", workflowArtifactSnapshotSchema),
         400: jsonResponse("Invalid snapshot id.", invalidRequestSchema),

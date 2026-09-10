@@ -2825,15 +2825,26 @@ export class DenClient extends HeyApiClient {
   /**
    * List Workflow runs
    *
-   * Lists Workflow run receipts visible to the active organization member.
+   * Lists Workflow run receipts visible to the active organization member, newest first. Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page.
    */
   public getV1WorkflowRuns<ThrowOnError extends boolean = false>(
     parameters?: {
+      cursor?: string;
       limit?: number;
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "limit" }] }]);
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "cursor" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    );
     return (options?.client ?? this.client).get<GetV1WorkflowRunsResponses, GetV1WorkflowRunsErrors, ThrowOnError>({
       url: "/v1/workflow-runs",
       ...options,
@@ -2843,6 +2854,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List accessible Workflows
+   *
+   * Lists every Workflow the calling member can reach through Plugin or direct grants, each with the Plugin it executes under, its latest immutable version id, declared inputSchema and outputSchema, and the capabilities it calls. Workflows whose latest version cannot be parsed are omitted. Use the returned configObjectVersionId to run an exact version.
    */
   public getV1Workflows<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1WorkflowsResponses, GetV1WorkflowsErrors, ThrowOnError>({
@@ -2853,6 +2866,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Save a successful Code Mode run as a Workflow inside an OpenWork Connect Plugin
+   *
+   * Turns the caller's most recent successful execute_capability_script run into a reusable Workflow: code must match that run byte-for-byte and the run must be less than 15 minutes old (400 workflow_recent_receipt_required), and the tool calls the run made become the Workflow's requiredCapabilities (400 workflow_capability_unavailable when one is no longer in the caller's tool tree). Omit pluginId to save into the member's private My Workflows Plugin, created on first use; passing pluginId requires editor access to that Plugin. Saving a name that already exists in the Plugin adds a new immutable version to that Workflow, which requires manager access to it.
    */
   public saveWorkflow<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2896,6 +2911,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Inspect a Workflow
+   *
+   * Returns the Workflow's library entry (caller role, connection readiness, result freshness, view state, Automation count), its detail (current and past versions, latest snapshot, latest successful snapshot), and the generated Artifact views bound to it. maxAgeMs (60 seconds to 30 days, default 24 hours) is the threshold that classifies the latest result as fresh or stale. Version code and example input are redacted for members without manager access; when generated Artifact views are disabled for the deployment, views is empty and viewState is default.
    */
   public getV1WorkflowsByConfigObjectId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2928,6 +2945,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List saved reusable apps
+   *
+   * Lists active Artifact views that have a saved revision and whose Workflow the caller can read, newest first, each with the Workflow title, whether the caller can manage it, and whether it is on the caller's personal dashboard. When generated Artifact views are disabled for the deployment, returns enabled: false and an empty list.
    */
   public getV1Apps<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1AppsResponses, unknown, ThrowOnError>({
@@ -2938,6 +2957,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Share a saved app with a teammate
+   *
+   * Grants the teammate identified by email viewer access to the app's underlying Workflow and places the app on their personal dashboard; result data is never copied. An existing editor or manager grant for that teammate is kept, so repeated shares never downgrade access. Requires manager access to the Workflow and an app with an active saved revision; fails with teammate_not_found when no active member of the organization has that email.
    */
   public postV1AppsByAppIdShare<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2975,6 +2996,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Open an app or an exact draft preview
+   *
+   * Returns the app with the compiled HTML of one revision and the artifact payload it should render. Without revisionId the active saved revision is used; pass revisionId to preview an exact draft revision instead. The data comes from the Workflow's latest successful snapshot, or from the snapshot named by receiptId. When the revision has not finished building, no readable successful result exists, or the result's output schema no longer matches the revision, html and payload are null and previewNotice explains why.
    */
   public getV1AppsByAppId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3005,6 +3028,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Add or remove an app on your personal dashboard
+   *
+   * Adds (added: true) or removes (added: false) the app on the calling member's personal dashboard. Adding requires an app with an active saved revision that the caller can read; removal also works after access to the app has been revoked. Both directions are idempotent.
    */
   public postV1AppsByAppIdDashboard<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3038,6 +3063,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Save an exact app revision for reuse
+   *
+   * Activates the exact revisionId as the app's saved revision, sets its title and useInWorkflow flag, and places the app on the caller's dashboard in one transaction. Requires manager access to the Workflow; the revision must have finished building (artifact_view_revision_not_ready) and its output schema must match the Workflow's current version (artifact_view_schema_incompatible). expectedActiveRevisionId must equal the revision that is active right now (null when none); otherwise the save is refused with 409 app_changed_since_preview so a stale preview cannot overwrite a newer save.
    */
   public postV1AppsByAppIdSave<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3077,6 +3104,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List generated Artifact views for a Workflow
+   *
+   * Lists the generated Artifact views bound to this Workflow, newest first, each with its recent revisions and their build status. Requires read access to the Workflow. Returns an empty list when generated Artifact views are disabled for the deployment.
    */
   public getV1WorkflowsByConfigObjectIdViews<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3098,6 +3127,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Activate or roll back an immutable Artifact view revision
+   *
+   * Makes revisionId the active revision of the Artifact view and marks the view active; selecting an older revision performs a rollback without changing its bytes. The revision must have built successfully and not be retired (artifact_view_revision_not_ready), and its output schema digest must match the Workflow's current version (artifact_view_schema_incompatible). Requires manager access to the Workflow.
    */
   public postV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivate<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3130,6 +3161,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Retire a generated Artifact view
+   *
+   * Retires the Artifact view: its status becomes retired, it loses its active revision and useInWorkflow flag, and it is removed from every member's dashboard. Immutable revisions are kept, so activating one later restores the view. Requires manager access to the Workflow.
    */
   public postV1ArtifactViewsByArtifactViewIdRetire<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3151,6 +3184,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List immutable Workflow versions
+   *
+   * Lists the Workflow's immutable versions, newest first, each with its code, call graph, schemas, requiredCapabilities, digests, and the caller's own Automations that pin it. Code, example input, and source-derived graph labels are redacted for members without manager access. Requires read access to the Workflow.
    */
   public getV1WorkflowsByConfigObjectIdVersions<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3172,6 +3207,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create an immutable Workflow version using the immediately preceding matching test receipt and unchanged draft
+   *
+   * Appends a new immutable version to the Workflow and updates its name and description. receiptId must reference a successful draft test by the caller that is less than 15 minutes old, has not already produced a version, and whose code, exampleInput, inputSchema, outputSchema, name, description, and requiredCapabilities all match this body byte-for-byte (400 workflow_matching_test_receipt_required). Every capability the test actually called must be listed in requiredCapabilities and still be available to the caller (400 workflow_capability_unavailable). Requires manager access to the Workflow.
    */
   public postV1WorkflowsByConfigObjectIdVersions<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3226,10 +3263,13 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List Workflow artifact snapshots
+   *
+   * Lists run receipts of saved versions of this Workflow, most recently finished first, including failed runs and runs whose content was deleted (value and markdown are null and contentDeletedAt is set). Draft test runs are not snapshots and never appear here. limit caps the result at 1 to 200 rows (default 100). Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page. Requires read access to the Workflow.
    */
   public getV1WorkflowsByConfigObjectIdSnapshots<ThrowOnError extends boolean = false>(
     parameters: {
       configObjectId: string;
+      cursor?: string;
       limit?: number;
     },
     options?: Options<never, ThrowOnError>,
@@ -3240,6 +3280,7 @@ export class DenClient extends HeyApiClient {
         {
           args: [
             { in: "path", key: "configObjectId" },
+            { in: "query", key: "cursor" },
             { in: "query", key: "limit" },
           ],
         },
@@ -3258,6 +3299,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Inspect one Workflow artifact snapshot
+   *
+   * Returns one run receipt of a saved version of this Workflow: the validated result value, its Markdown rendering, code and schema digests, tool calls, status, error details, and whether it was produced by an Automation. value and markdown are null once the content has been deleted. Requires read access to the Workflow; receiptId must belong to this Workflow.
    */
   public getV1WorkflowsByConfigObjectIdSnapshotsByReceiptId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3290,6 +3333,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Test the exact Workflow draft and return the receiptId required to create that unchanged version
+   *
+   * Executes the draft code once with exampleInput against the caller's live tools, validating the input against inputSchema and the result against outputSchema, and records a durable test receipt. The returned receiptId is the proof required by POST /v1/workflows/{configObjectId}/versions and is only accepted when every draft field is resubmitted unchanged within 15 minutes. Requires manager access to the Workflow; a script failure, argument mismatch, or result mismatch is returned as a 400 with the error code and message.
    */
   public postV1WorkflowsTest<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3340,6 +3385,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Run an exact Workflow version
+   *
+   * Executes the version identified by configObjectVersionId of this Workflow, under the Plugin named by pluginId, with input as the script's input, using the caller's live tools, and records a snapshot receipt. The input is validated against the version's inputSchema and the result against its outputSchema; a mismatch is rejected with 400 invalid_capability_arguments, a required capability that is unavailable with capability_unavailable, and a thrown script error with script_failed. The caller needs a Workflow, Plugin, or Marketplace grant that covers this Workflow; an unknown Workflow or Plugin returns unknown_capability and a missing grant returns forbidden, both as 400.
    */
   public postV1WorkflowsByConfigObjectIdRun<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3381,6 +3428,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete artifact content while retaining its audit receipt
+   *
+   * Clears the stored input, result value, and Markdown of one snapshot and stamps contentDeletedAt, while the receipt itself (digests, tool calls, status, timings) stays in history. When the snapshot came from an Automation, that Automation's latest successful result is re-pointed to its newest remaining readable snapshot. Idempotent: deleting already-deleted content returns the snapshot unchanged. Requires manager access to the Workflow.
    */
   public deleteV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdContent<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3413,6 +3462,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List dashboards
+   *
+   * Lists every dashboard in the organization, ordered by name, with its ordered MCP App elements. Workspace owners and admins only; members read the dashboards granted to them through GET /v1/me/dashboards.
    */
   public getV1Dashboards<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1DashboardsResponses, GetV1DashboardsErrors, ThrowOnError>({
@@ -3423,6 +3474,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create dashboard
+   *
+   * Creates an organization-owned dashboard: a named, ordered list of up to 50 MCP App elements, each pointing at a ui:// resource served by a connected MCP server. Nobody sees the dashboard until access is granted through POST /v1/dashboards/{dashboardId}/access.
    */
   public postV1Dashboards<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3456,6 +3509,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete dashboard
+   *
+   * Soft-deletes the dashboard so it disappears from admin lists and from every member's granted dashboards. Its access grants are kept but stop applying; there is no restore.
    */
   public deleteV1DashboardsByDashboardId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3477,6 +3532,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Get dashboard
+   *
+   * Returns one dashboard with its ordered MCP App elements. Deleted dashboards answer 404.
    */
   public getV1DashboardsByDashboardId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3498,6 +3555,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update dashboard
+   *
+   * Partially updates a dashboard. Send name, elements, or both; when elements is present it replaces the whole ordered element list.
    */
   public patchV1DashboardsByDashboardId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3537,6 +3596,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List dashboard access grants
+   *
+   * Lists every access grant on the dashboard, oldest first, including revoked grants (removedAt set). Each grant targets exactly one member, one team, or the whole organization.
    */
   public getV1DashboardsByDashboardIdAccess<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3603,6 +3664,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Revoke dashboard access
+   *
+   * Revokes one access grant by setting removedAt; the grant row is kept so regranting the same subject reactivates it. Revoking an already revoked grant answers 204 again.
    */
   public deleteV1DashboardsByDashboardIdAccessByGrantId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3635,6 +3698,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List dashboards granted to the current member
+   *
+   * Returns the dashboards the signed-in member can see: granted directly, through one of their teams, or org-wide, deduplicated and ordered by name. The desktop MCP Apps dashboard renders these as read-only tiles.
    */
   public getV1MeDashboards<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1MeDashboardsResponses, GetV1MeDashboardsErrors, ThrowOnError>({
@@ -3742,6 +3807,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete desktop policy
+   *
+   * Soft-deletes a custom desktop policy, disables it, and releases its stable externalKey for reuse. The default policy cannot be deleted (400 default_policy_required).
    */
   public deleteV1DesktopPoliciesByDesktopPolicyId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3786,6 +3853,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update desktop policy
+   *
+   * Rewrites one desktop policy. The full write body is required: the policy document is replaced (access, execution, and onboarding prompts omitted from it are carried over from the stored document) and the member, team, and role assignments are replaced with the ones sent. The default policy keeps its name, priority, and assignments and cannot be disabled (400 default_policy_required).
    */
   public patchV1DesktopPoliciesByDesktopPolicyId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3835,6 +3904,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List desktop policies
+   *
+   * Returns the organization's desktop policies, default policy first and then by name, each with its member, team, and role assignments, alongside the definitions catalog describing every setting a policy document can control. Workspace owners and admins can read; writes require super-admin.
    */
   public getV1DesktopPolicies<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<
@@ -3846,6 +3917,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create desktop policy
+   *
+   * Creates a desktop policy from a policy document plus optional priority, enabled flag, and assignments to members, teams, or roles (owner, admin, member). Requires the Enterprise plan; referenced members and teams must belong to the organization.
    */
   public postV1DesktopPolicies<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3979,6 +4052,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read the OpenWork Models task analytics choice
+   *
+   * Returns the organization's task analytics state for OpenWork Models: whether the feature is available and the organization has an active Models subscription, whether collection is enabled and when it was consented to, and whether export to a configured Langfuse host is on. Any member can read it.
    */
   public getV1InferenceAnalyticsSettings<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1InferenceAnalyticsSettingsResponses, unknown, ThrowOnError>({
@@ -3989,6 +4064,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Choose whether to collect task analytics included with OpenWork Models
+   *
+   * Turns task analytics collection on or off for the organization. Workspace owners and admins only. Enabling requires the feature, an active OpenWork Models subscription, and consentVersion 1 (403 models_analytics_unavailable otherwise); repeating an already enabled choice keeps the original consent time as the collection cutoff, and disabling also switches export off.
    */
   public patchV1InferenceAnalyticsSettings<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4081,6 +4158,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read task activity collected after the analytics choice
+   *
+   * Returns the task analytics events recorded for the organization over the last `days` days (default 30, max 90), newest first, 200 per page with a `next` cursor made of before + beforeId. Filter by memberId, taskId, or sessionId. Workspace owners and admins only; answers 403 models_analytics_unavailable while collection is disabled.
    */
   public getV1InferenceAnalyticsActivity<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -4117,6 +4196,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read provider-reported consumption for OpenWork Models
+   *
+   * Aggregates provider-reported OpenWork Models calls per model, provider, member, and day over the last `days` days (default 30, max 90): call counts, failed and incomplete calls, input, output, and cache-read tokens, and cost in USD. Optionally filter by memberId. Workspace owners and admins only; answers 403 models_analytics_unavailable while collection is disabled and 400 narrow_date_range when the range would produce more than 10,000 groups.
    */
   public getV1InferenceAnalyticsConsumption<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -4404,6 +4485,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Cancel an organization SSO authentication test
+   *
+   * Marks the caller's in-flight SSO test intent as cancelled so it can no longer be started or completed. Only the administrator who created the intent can cancel it; unknown or foreign intents are ignored and still answer 204.
    */
   public postV1SsoTestByIntentIdCancel<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4425,6 +4508,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Enable the tested organization SSO configuration
+   *
+   * Switches the organization's SSO connection to enabled once its domain is verified and the current configuration revision has a successful test. Any other state, including a configuration edited after its last test, answers 409 with an explanatory message. Requires the Enterprise plan; the change is recorded in the organization audit log.
    */
   public postV1SsoEnable<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).post<PostV1SsoEnableResponses, PostV1SsoEnableErrors, ThrowOnError>({
@@ -4435,6 +4520,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Disable organization SSO
+   *
+   * Switches the organization's SSO connection to disabled while keeping its provider configuration, so it can be tested and enabled again later. Answers 404 when the organization has no SSO connection; the change is recorded in the organization audit log.
    */
   public postV1SsoDisable<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).post<PostV1SsoDisableResponses, PostV1SsoDisableErrors, ThrowOnError>({
@@ -5149,6 +5236,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete the calling member's LLM provider credential
+   *
+   * Removes the calling member's own stored credential on a granted per-member provider. Answers 200 even when no credential was stored. A credential an admin has blocked is admin-owned and cannot be removed by the member (409 credential_blocked).
    */
   public deleteV1LlmProvidersByLlmProviderIdMyCredential<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5287,6 +5376,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Block one member's LLM provider credential
+   *
+   * Admin-only. Marks one member's credential on the provider as blocked: it is no longer used for inference and the member can neither delete nor overwrite it. Storing a new credential for that member through the admin PUT endpoint is the unblock path.
    */
   public postV1LlmProvidersByLlmProviderIdMemberCredentialsByOrgMembershipIdBlock<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7717,6 +7808,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Get the tool policy for an External MCP Connection
+   *
+   * Returns the admin-managed tool policy for one connection: whether every tool is disabled, the individual tool names that are disabled, and who last changed it. Disabled tools are hidden from capability search and Code Mode and refused when called. Workspace owners and admins only.
    */
   public getV1McpConnectionsByConnectionIdToolPolicy<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7738,6 +7831,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update the tool policy for an External MCP Connection
+   *
+   * Replaces the connection's tool policy with the full desired state: allDisabled plus the complete list of disabled tool names (duplicates are collapsed). The policy takes effect immediately for capability search, Code Mode, and tool execution and records the calling admin as its author.
    */
   public putV1McpConnectionsByConnectionIdToolPolicy<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7924,6 +8019,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Remove an External MCP Connection
+   *
+   * Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. Workspace owners and super-admins can remove any connection; other members only the connections they created. Session callers must have signed in within the last 15 minutes (403 reauth); API-key callers are exempt.
    */
   public deleteV1McpConnectionsByConnectionId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -11713,15 +11810,26 @@ export class DenClient extends HeyApiClient {
   /**
    * List workers
    *
-   * Lists the workers that belong to the caller's active organization, including each worker's latest known instance state.
+   * Lists the workers that belong to the caller's active organization, newest first, including each worker's latest known instance state. Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page.
    */
   public getV1Workers<ThrowOnError extends boolean = false>(
     parameters?: {
+      cursor?: string;
       limit?: number;
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "limit" }] }]);
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "cursor" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    );
     return (options?.client ?? this.client).get<GetV1WorkersResponses, GetV1WorkersErrors, ThrowOnError>({
       url: "/v1/workers",
       ...options,

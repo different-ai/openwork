@@ -67,6 +67,50 @@ function renderList(messages: UIMessage[], status: ThreadStatus, syncHealth?: Ru
 }
 
 describe("message-list loading feedback", () => {
+  test("updates a live assistant group and its last-group props without resetting expanded tool details", async () => {
+    const ownedDom = typeof window === "undefined";
+    if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
+    const actEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const tools: UIMessage["parts"] = [0, 1].map((index) => ({
+      type: "dynamic-tool", toolName: "bash", toolCallId: `render-state-${index}`,
+      state: "output-available", input: { command: `pwd ${index}` }, output: "done",
+    }));
+    const assistant: UIMessage = { id: "live-answer", role: "assistant", parts: [...tools, { type: "text", text: "First answer" }] };
+    try {
+      await act(async () => root.render(list([userMessage, assistant], "streaming")));
+      const aggregate = container.querySelector('[data-tool-aggregate="render-state-1"]');
+      const expand = aggregate?.querySelector<HTMLButtonElement>("button");
+      if (!expand) throw new Error("Missing aggregate expansion button");
+      await act(async () => expand.click());
+      const detail = aggregate?.querySelector<HTMLButtonElement>('[data-tool-aggregate-detail="command"]');
+      if (!detail) throw new Error("Missing command detail");
+      await act(async () => detail.click());
+      expect(detail.getAttribute("aria-expanded")).toBe("true");
+      const branchesWhileStreaming = container.querySelectorAll('[aria-label="Branch in new chat"]').length;
+      const live: UIMessage = { ...assistant, parts: [...tools, { type: "text", text: "First answer continues" }] };
+      await act(async () => root.render(list([userMessage, live], "streaming")));
+      expect(container.textContent).toContain("First answer continues");
+      await act(async () => root.render(list([userMessage, live], "ready")));
+      expect(container.querySelectorAll('[aria-label="Branch in new chat"]').length).toBeGreaterThan(branchesWhileStreaming);
+      const older: UIMessage = { ...userMessage, id: "older-user" };
+      const followup: UIMessage = { ...userMessage, id: "next-user" };
+      await act(async () => root.render(list([older, userMessage, live, followup], "streaming")));
+      expect(container.querySelector('[data-tool-aggregate="render-state-1"]')).toBe(aggregate);
+      expect(aggregate?.querySelector('[data-tool-aggregate-detail="command"]')).toBe(detail);
+      expect(detail.getAttribute("aria-expanded")).toBe("true");
+      expect(container.textContent).toContain("First answer continues");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+      if (ownedDom) await GlobalRegistrator.unregister();
+    }
+  });
+
   test("acknowledges a submitted message before streaming starts", () => {
     const markup = renderList([userMessage], "submitted");
 

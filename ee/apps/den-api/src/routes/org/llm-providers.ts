@@ -1543,6 +1543,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Delete the calling member's LLM provider credential",
+      description: "Removes the calling member's own stored credential on a granted per-member provider. Answers 200 even when no credential was stored. A credential an admin has blocked is admin-owned and cannot be removed by the member (409 credential_blocked).",
       responses: {
         200: jsonResponse("Member credential deleted.", memberCredentialDeleteResponseSchema),
         400: jsonResponse("The provider is not per-member.", z.union([invalidRequestSchema, notPerMemberSchema])),
@@ -1737,6 +1738,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Block one member's LLM provider credential",
+      description: "Admin-only. Marks one member's credential on the provider as blocked: it is no longer used for inference and the member can neither delete nor overwrite it. Storing a new credential for that member through the admin PUT endpoint is the unblock path.",
       responses: {
         200: jsonResponse("Member credential blocked.", memberCredentialSummarySchema),
         400: jsonResponse("The provider or member id is invalid.", invalidRequestSchema),

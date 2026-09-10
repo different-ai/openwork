@@ -15,7 +15,7 @@ import {
 import { databaseBrandAssetStorage } from "../../brand-asset-storage.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
-import { forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { binaryResponse, forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { updateOrganizationSettings } from "../../orgs.js"
 import type { ManagedBrandAssetMetadata } from "../../organization-limits.js"
 import { orgRoleRoute, publicRoute } from "../../middleware/index.js"
@@ -32,7 +32,7 @@ const managedBrandAssetSchema = z.object({
   height: z.number().int().positive(),
   byteLength: z.number().int().positive(),
   originalName: z.string(),
-  uploadedAt: z.string(),
+  uploadedAt: z.string().datetime(),
 })
 
 const uploadResponseSchema = z.object({
@@ -123,7 +123,10 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
       summary: "Read an immutable organization brand asset",
       description: "Serves a capability-signed, content-addressed organization logo or app icon from this Den deployment.",
       responses: {
-        200: { description: "Immutable brand image bytes." },
+        200: binaryResponse(
+          "Immutable brand image bytes. The media type follows the `{version}` extension (`.png` -> `image/png`, `.jpg` -> `image/jpeg`); served with `Cache-Control: public, max-age=31536000, immutable` and an `ETag` equal to the content hash.",
+          ["image/png", "image/jpeg"],
+        ),
         404: jsonResponse("The managed brand asset could not be found.", notFoundSchema),
       },
     }),

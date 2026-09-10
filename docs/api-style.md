@@ -45,6 +45,10 @@ in the document (the generator uses `includeEmptyPaths`) and are caught by
 - Operations tagged `Internal` (Automation runner protocol, development-only
   email outbox) stay in the served `/openapi.json` but are removed from the
   published snapshot by `scripts/generate-openapi-snapshot.ts`.
+- Component schemas that no remaining operation references (transitively
+  through `$ref`) are pruned from the snapshot too. This covers schemas whose
+  only routes are `hide: true` and the self-describing `OpenApiDocument`; the
+  served `/openapi.json` keeps them (`oas3-unused-component`, warn).
 
 ### Security is explicit
 
@@ -170,8 +174,9 @@ RFC 8414, RFC 7591, RFC 9728, OpenID Connect Discovery 1.0). For them:
 | `/health`, `/ready` have no 4xx | liveness probes answer with status codes only | `.spectral.yaml` overrides |
 | Deprecated `/v1/skill-hubs*` and `POST /v1/memory` answer only `410` | intentional tombstones | `.spectral.yaml` overrides |
 | `DELETE /v1/memory/{id}` answers only `401`/`404` | listed with the tombstones; whether it should also document a 2xx is an open follow-up | `.spectral.yaml` overrides |
-| `array-items` is a warning, not an error | the two `prefixItems` tuples are valid OpenAPI 3.1 | `.spectral.yaml` rules |
+| `array-items` is a warning, not an error | `prefixItems` tuples are valid OpenAPI 3.1; the only one (`ExternalMcpClientMetadata`, a hidden route) is no longer in the snapshot, so the override currently matches nothing | `.spectral.yaml` rules |
 | `Internal` operations are absent from the snapshot | runner protocol and dev outbox are not a third-party surface | `scripts/generate-openapi-snapshot.ts` |
+| Unreferenced component schemas are absent from the snapshot | they belong to `hide: true` routes or to `/openapi.json` itself | `scripts/generate-openapi-snapshot.ts` |
 
 ## Follow-ups (not enforced yet)
 
@@ -180,8 +185,11 @@ linter's reach. Each is a wire or schema change and needs its own change with
 a compatibility plan:
 
 - One timestamp encoding (epoch-ms integers in Automation schemas).
-- One pagination model (offset admin pages; limit-only `/v1/workflow-runs`,
-  `/v1/workflows/{id}/snapshots`, `/v1/workers`; `limit` typed as string).
+- One pagination model (offset admin pages; `limit` typed as string).
+  `/v1/workflow-runs`, `/v1/workflows/{id}/snapshots` and `/v1/workers` now
+  accept an optional `cursor` and return `nextCursor` (additive; keyset on
+  the existing sort order, shared helper in
+  `ee/apps/den-api/src/list-pagination.ts`).
 - Typed path parameters instead of bare `{id}`.
 - Static-vs-parameter path pairs (`/versions/latest`, `/workflows/test`,
   `/plugins/import-mcps-from-github-url`, `/mcp-connections/*`).
@@ -190,6 +198,5 @@ a compatibility plan:
 - `state` vs `status` naming.
 - `readOnly` on server-set fields; ETag / idempotency keys; examples.
 - Response arrays and enums that should be required.
-- 25 unused component schemas.
 - `410` tombstones inside `v1` and `DELETE /v1/memory/{id}`.
 - `200` responses that need a real body schema.
