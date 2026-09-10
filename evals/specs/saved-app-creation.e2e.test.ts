@@ -550,21 +550,30 @@ test("create, preview, save and reopen an app without changing already-open resu
     });
     const z2Before = await z2Snapshot();
     console.log("Z2 before go:", JSON.stringify(z2Before));
-    await world.open("/dashboard");
+    // Raw hash set = the pre-fix `world.open` behaviour, to reproduce the race.
+    await seed.evalIn(world.app, () => { window.location.hash = "#/dashboard"; });
     const z2AfterGo = await z2Snapshot();
     console.log("Z2 right after go:", JSON.stringify(z2AfterGo));
     await user.click("App options for Team briefing");
     const z2AfterClick = await z2Snapshot();
     console.log("Z2 right after options click:", JSON.stringify(z2AfterClick));
+    let z2Reproduced = false;
     try {
       await user.click("Delete Team briefing");
     } catch (error) {
+      z2Reproduced = true;
       await user.screenshot();
-      console.log("Z2 at failure:", JSON.stringify(await z2Snapshot()));
+      console.log("Z2 at failure:", JSON.stringify(await z2Snapshot()), String(error).slice(0, 300));
       await new Promise((resolve) => setTimeout(resolve, 3_000));
       console.log("Z2 +3s:", JSON.stringify(await z2Snapshot()));
-      throw error;
+      // Continue through the fixed path so the rest of the journey is exercised.
+      await user.press("Escape");
+      await world.open("/dashboard");
+      console.log("Z2 after fixed open:", JSON.stringify(await z2Snapshot()));
+      await user.click("App options for Team briefing");
+      await user.click("Delete Team briefing");
     }
+    console.log("Z2 reproduced:", z2Reproduced);
     await user.click("Delete app");
     await user.see({ text: "Make this dashboard yours" }, { timeoutMs: 30_000 });
     await user.reload();
