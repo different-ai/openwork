@@ -38,8 +38,11 @@ recorded scenario and ref before adopting it. A stage is not a git ref.
 
 Use reviewed repository code: previews execute that ref’s build scripts. Do not
 load production credentials or attach shared secrets volumes. Push the intended
-commit and use its full 40-character SHA so Daytona can fetch it. Both launch
-and update reject mutable branch names. Then:
+commit and use its full 40-character SHA so Daytona can fetch it. When
+`OPENWORK_EVAL_REF` is omitted, launch resolves remote `origin/dev` once to a
+full SHA, prints it, and records it in the world outputs. This assumes `dev`
+is the reviewed baseline. Explicit launch refs and update refs still reject
+mutable branch names. To preview a specific commit:
 
 ```sh
 OPENWORK_EVAL_REF=<pushed-sha> infisical run --silent --env dev -- pnpm world up preview-den --stage pr-1234 --place daytona --detach --timeout 600000 -- --scenario fresh --lifetime 120
@@ -52,10 +55,11 @@ ready world is quick. Never promise seconds for an unmeasured cold boot.
 For an immutable published desktop preview, run:
 
 ```sh
-OPENWORK_EVAL_REF=<pushed-den-sha> pnpm world up preview-desktop --stage pr-1234 --place daytona --detach --timeout 600000 -- --release 0.18.44 --distribution enterprise --scenario blank
+pnpm world up preview-desktop --stage pr-1234 --place daytona --detach --timeout 600000 -- --release 0.18.44 --distribution enterprise --scenario blank
 ```
 
-`OPENWORK_EVAL_REF` pins only the independently provisioned Den source.
+`OPENWORK_EVAL_REF` pins only the independently provisioned Den source; omit
+it to use the current remote `dev` commit, independently of the desktop version.
 The world driver and release installer run from the local checkout's HEAD, and
 the desktop sandbox uses the snapshot's inherited display/browser helpers.
 `--release` selects desktop bytes; none of these identities falls back to

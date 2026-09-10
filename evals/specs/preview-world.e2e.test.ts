@@ -94,8 +94,19 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
     }
     await assert.rejects(exec("python3", [join(root, ".opencode/skills/preview-my-work/scripts/update-preview.py"), "preview-den", "--stage", stage, "--ref", "dev"], { cwd: root, timeout: 10000 }), (error: unknown) => record(error) && error.code === 2 && typeof error.stderr === "string" && error.stderr.includes("full 40-character commit SHA"));
     evidence.recordAssertionEvidence("Mutable refs are rejected before preview execution", "Launch with a branch name fails without a live receipt; the updater rejects a branch name before reading a receipt or invoking Daytona.", true);
-    assert.equal(await up("preview-den", "fresh"), 0);
+    const { stdout: remoteDev } = await exec("git", ["ls-remote", "--exit-code", "origin", "refs/heads/dev"], { cwd: root, timeout: 30000 });
+    const expectedDefaultRef = remoteDev.trim().split(/\s+/)[0];
+    assert.match(expectedDefaultRef ?? "", /^[0-9a-f]{40}$/);
+    try {
+      delete process.env.OPENWORK_EVAL_REF;
+      assert.equal(await up("preview-den", "fresh"), 0);
+    } finally {
+      process.env.OPENWORK_EVAL_REF = pinnedRef;
+    }
     const den = await snapshot("preview-den");
+    assert.equal(den.outputs.ref, expectedDefaultRef);
+    assert.equal(den.outputs.denRef, expectedDefaultRef);
+    evidence.recordAssertionEvidence("Omitting the preview ref pins remote dev", "Fresh Den launches without OPENWORK_EVAL_REF and records the remote dev commit SHA in both ref outputs.", true);
     assert.equal(den.outputs.scenario, "fresh");
     assert.equal(den.outputs.password, undefined);
     assert.equal((await fetch(den.outputs.preview)).status, 200);
@@ -107,6 +118,8 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
 
     assert.equal(await up("preview-desktop", "restricted"), 0);
     const desktop = await snapshot("preview-desktop");
+    assert.equal(desktop.outputs.ref, pinnedRef);
+    assert.equal(desktop.outputs.denRef, pinnedRef);
     assert.notEqual(desktop.outputs.denSandbox, den.outputs.denSandbox);
     assert.ok(desktop.outputs.desktopSandbox);
     assert.equal((await fetch(desktop.outputs.preview)).status, 200);
