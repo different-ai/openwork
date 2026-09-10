@@ -132,6 +132,12 @@ packaged journeys. Both specs are `placement: 'local'` in
 exit 2) when `OPENWORK_EVAL_ELECTRON_BINARY` is unset, so a run without a
 binary can never pass by accident.
 
+Run them from a checkout of the tag (`git worktree add /tmp/ow-vX.Y.Z vX.Y.Z`,
+then `pnpm install --frozen-lockfile` there) so the specs' expectations match
+the binary. `dev`'s specs move ahead of published binaries: its
+`packaged-first-launch` fails 0.18.45 and 0.18.46 enterprise on the
+pre-activation IPC rejection fixed by #4727, which no release carries yet.
+
 Download and unpack the enterprise + cloud assets of the tag (`ditto` keeps
 the signature intact; the quarantine flag must go or macOS blocks the spawn):
 
@@ -180,10 +186,12 @@ OPENWORK_EVAL_RELEASED_BASELINE_BINARY="/tmp/ow-release/enterprise-$B/OpenWork E
 Each command prints a JSON verdict line; only `"verdict":"passed"` with
 `"skipped":0` counts. This covers mac-arm64 only, and the update is simulated
 by launching the new binary on the old profile — the real electron-updater
-download/apply is not exercised. An activated install does check for updates
-and installs the newest release over its bundle on quit, which is why the
-world launches a private copy of the `.app` each time and why the version pin
-matters: a run that reports a newer version than `$V` booted the wrong binary.
+download/apply is not exercised. An activated install (and, before 0.18.46,
+an unactivated one) checks for updates and installs the newest release over
+its bundle on quit. `released-enterprise-activated` launches a private copy
+of the `.app` each time so the download stays pristine; `packaged-first-launch`
+launches it in place, so re-extract the zip before re-running it. A run that
+reports a newer version than `$V` booted the wrong binary.
 
 ---
 
