@@ -9,6 +9,7 @@
     "lib": ["es2024", "dom", "dom.iterable", "esnext.disposable"],
     "jsx": "react-jsx",
     "resolveJsonModule": true,
+    "allowJs": true,
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
