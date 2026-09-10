@@ -113,6 +113,7 @@ import {
 import type { SidebarContextValue } from "./app-sidebar-provider";
 import {
   MAX_SESSIONS_PREVIEW,
+  buildGlobalArchivedSessions,
   flattenSessionRows,
   formatSessionRelativeTime,
   getRootSessions,
@@ -124,7 +125,7 @@ import {
   workspaceLabel,
   workspaceConversationCount,
 } from "./utils";
-import type { FlattenedSessionRow, SessionListItem } from "./utils";
+import type { FlattenedSessionRow, GlobalArchivedSessionEntry, SessionListItem } from "./utils";
 import {
   useSessionManagementStore,
   usePinnedSessionIds,
@@ -938,15 +939,10 @@ export function AppSidebar(props: AppSidebarProps) {
       return entry ? [entry] : [];
     });
   }, [pinnedIds, props.workspaceSessionGroups]);
-  const archivedSessions = React.useMemo(() => {
-    const entries: GlobalArchivedSessionEntry[] = [];
-    for (const group of props.workspaceSessionGroups) {
-      for (const session of partitionArchivedSessions(group.sessions).archived) {
-        entries.push({ group, session });
-      }
-    }
-    return entries;
-  }, [props.workspaceSessionGroups]);
+  const archivedSessions = React.useMemo(
+    () => buildGlobalArchivedSessions(props.workspaceSessionGroups),
+    [props.workspaceSessionGroups],
+  );
 
   return (
     <SidebarContext.Provider value={contextValue}>
@@ -1171,11 +1167,6 @@ function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[]
     </SidebarGroup>
   );
 }
-
-type GlobalArchivedSessionEntry = {
-  group: WorkspaceSessionGroup;
-  session: SessionListItem;
-};
 
 function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEntry[] }) {
   const [expanded, setExpanded] = React.useState(false);
