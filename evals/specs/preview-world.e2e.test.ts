@@ -22,6 +22,21 @@ const exec = promisify(execFile);
 const root = fileURLToPath(new URL("../..", import.meta.url));
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 
+// The pooled lane exports its worker's shared Den/desktop sandboxes for a spec's
+// own seeds. Preview worlds refuse to run on borrowed infrastructure, so hide
+// those overrides from the worlds this spec launches and restore them after.
+const POOLED_SLOT_ENV = ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DAYTONA_DEN_SANDBOX", "OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX", "OPENWORK_EVAL_DAYTONA_SANDBOX"] as const;
+function withoutPooledSlotEnv(): () => void {
+  const saved = POOLED_SLOT_ENV.map((key) => [key, process.env[key]] as const);
+  for (const key of POOLED_SLOT_ENV) delete process.env[key];
+  return () => {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+}
+
 async function rfbHandshake(url: string): Promise<string> {
   const endpoint = new URL("/websockify", url);
   endpoint.protocol = "wss:";
@@ -73,6 +88,7 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
   const snapshots = await mkdtemp(join(tmpdir(), "openwork-preview-proof-"));
   const previous = process.env.OPENWORK_WORLD_SNAPSHOT_DIR;
   process.env.OPENWORK_WORLD_SNAPSHOT_DIR = snapshots;
+  const restorePooledSlotEnv = withoutPooledSlotEnv();
   const stage = `proof-${Date.now()}`;
   const options = { cwd: root, worldsDirectory: join(root, "worlds"), print: (line: string) => console.error(line) };
   const up = (name: string, scenario: string, lifetime = "30") => main(["up", name, "--stage", stage, "--place", "daytona", "--detach", "--timeout", "600000", "--", "--scenario", scenario, "--lifetime", lifetime], options);
@@ -173,6 +189,7 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
     }
     if (previous === undefined) delete process.env.OPENWORK_WORLD_SNAPSHOT_DIR;
     else process.env.OPENWORK_WORLD_SNAPSHOT_DIR = previous;
+    restorePooledSlotEnv();
     await rm(snapshots, { recursive: true, force: true });
   }
 });
@@ -182,6 +199,7 @@ test("preview-desktop retains an exact blank published release and tears down it
   const snapshots = await mkdtemp(join(tmpdir(), "openwork-release-preview-proof-"));
   const previous = process.env.OPENWORK_WORLD_SNAPSHOT_DIR;
   process.env.OPENWORK_WORLD_SNAPSHOT_DIR = snapshots;
+  const restorePooledSlotEnv = withoutPooledSlotEnv();
   const suffix = Date.now();
   const stage = `release-${suffix}`;
   const invalidStage = `invalid-${suffix}`;
@@ -317,6 +335,7 @@ test("preview-desktop retains an exact blank published release and tears down it
     }
     if (previous === undefined) delete process.env.OPENWORK_WORLD_SNAPSHOT_DIR;
     else process.env.OPENWORK_WORLD_SNAPSHOT_DIR = previous;
+    restorePooledSlotEnv();
     await rm(snapshots, { recursive: true, force: true });
   }
 });
