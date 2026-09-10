@@ -14,13 +14,16 @@ import type {
 import {
   CLOUD_MCP_SERVER_NAME,
   clearCloudMcpScopedMetadata,
+  clearCloudMcpUnhealthyRemintAttempt,
   clearCloudMcpUserState,
   getCloudMcpScopeKey,
   isCloudMcpSyncMarkerFresh,
   normalizeCloudMcpScope,
   readCloudMcpSyncMarker,
+  readCloudMcpUnhealthyRemintAttempt,
   readCloudMcpUserState,
   writeCloudMcpSyncMarker,
+  writeCloudMcpUnhealthyRemintAttempt,
   writeCloudMcpUserState,
   type CloudMcpScope,
   type CloudMcpUserState,
@@ -110,6 +113,10 @@ type CleanupClient = {
 };
 
 const repairInFlight = new Map<string, Promise<CloudMcpOperationResult>>();
+// Older Den releases may not issue a private App-host token. Keep ordinary
+// Connect working without reminting on every focus/maintenance tick. Explicit
+// Repair bypasses this cooldown; sign-out clears the scoped attempt marker.
+const APP_HOST_AUTHORIZATION_RETRY_MS = 60 * 60 * 1_000;
 
 const APP_VERSION = String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").trim();
 const APP_BUILD_SHA = String(import.meta.env.VITE_OPENWORK_BUILD_SHA ?? import.meta.env.VITE_OPENWORK_GIT_SHA ?? "").trim();
@@ -306,24 +313,54 @@ async function mintAndPost(input: CloudMcpReconcilerInput, scope: CloudMcpScope)
   };
 }
 
+function needsAppHostAuthorizationRepair(health: OpenworkCloudMcpHealth, scope: CloudMcpScope, now: number): boolean {
+  if (health.appHostAuthorizationReady !== false) return false;
+  const attempt = readCloudMcpUnhealthyRemintAttempt(scope);
+  if (!attempt) return true;
+  const elapsed = now - attempt.attemptedAt;
+  return elapsed < 0 || elapsed >= APP_HOST_AUTHORIZATION_RETRY_MS;
+}
+
 async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpScope): Promise<CloudMcpOperationResult> {
+  const now = input.now ?? Date.now();
+  let appHostOnlyHealth: OpenworkCloudMcpHealth | null = null;
   if (!input.force) {
     const healthResult = await probeHealth(input, scope, { writeFreshnessMarker: true });
-    if (healthResult.health?.usable) return { ...healthResult, status: "unchanged" };
+    if (healthResult.health?.appHostAuthorizationReady === true) clearCloudMcpUnhealthyRemintAttempt(scope);
+    if (healthResult.health?.usable && !needsAppHostAuthorizationRepair(healthResult.health, scope, now)) {
+      return { ...healthResult, status: "unchanged" };
+    }
+    if (healthResult.health?.usable) appHostOnlyHealth = healthResult.health;
   }
 
   const marker = readCloudMcpSyncMarker(scope);
   if (!input.force && marker && isCloudMcpSyncMarkerFresh({
     expiresAt: marker.expiresAt,
-    now: input.now ?? Date.now(),
+    now,
     refreshMarginMs: input.refreshMarginMs,
   })) {
     const health = await input.client.getOpenworkCloudMcpHealth(scope.workspaceId, input.context.providerModel);
-    if (health.usable) return { status: "unchanged", health, attempts: 0, markerWritten: false, reminted: false };
+    if (health.usable && !needsAppHostAuthorizationRepair(health, scope, now)) {
+      return { status: "unchanged", health, attempts: 0, markerWritten: false, reminted: false };
+    }
+    appHostOnlyHealth = health.usable ? health : null;
   }
 
-  const first = await mintAndPost(input, scope);
+  const deferAppHostRepair = (): CloudMcpOperationResult => {
+    writeCloudMcpUnhealthyRemintAttempt({ ...scope, attemptedAt: now });
+    // Preserve the last observed ordinary health, not a claim that private
+    // authorization was repaired. A supplemental failure must not block chat.
+    return { status: "failed", health: appHostOnlyHealth, attempts: 1, markerWritten: false, reminted: false };
+  };
+  let first: Awaited<ReturnType<typeof mintAndPost>>;
+  try {
+    first = await mintAndPost(input, scope);
+  } catch (error) {
+    if (!appHostOnlyHealth) throw error;
+    return deferAppHostRepair();
+  }
   if (!first.token) {
+    if (appHostOnlyHealth) return deferAppHostRepair();
     return { status: "skipped", health: null, skippedReason: "mint_failed", attempts: 1, markerWritten: false, reminted: false };
   }
 
@@ -339,9 +376,14 @@ async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpSco
     if (second.health) health = second.health;
   }
 
+  if (health?.appHostAuthorizationReady === false) {
+    writeCloudMcpUnhealthyRemintAttempt({ ...scope, attemptedAt: now });
+  } else if (health?.appHostAuthorizationReady === true) {
+    clearCloudMcpUnhealthyRemintAttempt(scope);
+  }
   const markerWritten = writeUsableMarker({ health, scope, expiresAt: token.expiresAt });
   return {
-    status: health?.usable ? "repaired" : "failed",
+    status: health?.usable && health.appHostAuthorizationReady !== false ? "repaired" : "failed",
     health,
     attempts,
     markerWritten,

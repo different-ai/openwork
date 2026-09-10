@@ -157,7 +157,7 @@ export type SessionPageSidebarProps = {
   startupPhase: BootPhase;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
-  onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
+  onPrefetchSession?: (workspaceId: string, sessionId: string) => void | (() => void);
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
   onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
   onCreateTaskWithPrompt?: (
@@ -988,11 +988,8 @@ export function SessionPage(props: SessionPageProps) {
       workspaceTitle: workspaceName,
       primarySessionId: props.selectedSessionId,
       sessionsKnown: workspaceGroup?.status === "ready",
-      sessions: (workspaceGroup?.sessions ?? []).filter((session) => (
-        !session.time?.archived
-        || session.id === props.selectedSessionId
-        || (splitSession?.workspaceId === props.selectedWorkspaceId && splitSession.sessionId === session.id)
-      )).map((session) => ({
+      archivedSessionIds: (workspaceGroup?.sessions ?? []).filter((session) => session.time?.archived).map((session) => session.id),
+      sessions: (workspaceGroup?.sessions ?? []).map((session) => ({
         workspaceId: props.selectedWorkspaceId,
         sessionId: session.id,
         title: getDisplaySessionTitle(session.title),
@@ -1004,7 +1001,6 @@ export function SessionPage(props: SessionPageProps) {
     props.selectedWorkspaceId,
     props.sidebar.workspaceSessionGroups,
     syncWorkbench,
-    splitSession,
     workspaceName,
   ]);
   useEffect(() => {
@@ -1068,6 +1064,8 @@ export function SessionPage(props: SessionPageProps) {
       props.surface,
   );
   const canRenderSplitSurface = Boolean(canRenderReactSurface && splitSession);
+  const showConversationPanes = !props.primarySlot && !hasMainContentTakeover && !showDelayedSessionLoadingState && canRenderReactSurface;
+  const showSecondaryPane = showConversationPanes && canRenderSplitSurface && (!isMobile || narrowPane === "split");
   const splitWorkspaceTitle = splitSession
     ? splitSession.workspaceTitle ?? workspaceTitleForId(props.sidebar.workspaceSessionGroups, splitSession.workspaceId)
     : "";
@@ -1373,6 +1371,7 @@ export function SessionPage(props: SessionPageProps) {
           selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
           developerMode={props.sidebar.developerMode}
           selectedSessionId={props.sidebar.selectedSessionId}
+          visibleSecondarySessionId={showSecondaryPane && splitPaneRuntime?.status === "ready" ? splitSession?.sessionId : null}
           showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
           sessionStatusById={props.sidebar.sessionStatusById}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
@@ -1727,7 +1726,7 @@ export function SessionPage(props: SessionPageProps) {
                 )
               ) : null}
 
-              {!props.primarySlot && !hasMainContentTakeover && !showDelayedSessionLoadingState && canRenderReactSurface ? (
+              {showConversationPanes ? (
                 <div className="flex h-full min-h-0 flex-col">
                   <WorkbenchPanelGroup
                     owner={props.surface?.draftScope ? JSON.stringify([
@@ -1794,7 +1793,7 @@ export function SessionPage(props: SessionPageProps) {
                       </div>
                       </ResizablePanel>
                     ) : null}
-                    {canRenderSplitSurface && splitSession && splitPaneRuntime && (!isMobile || narrowPane === "split") ? (
+                    {showSecondaryPane && splitSession && splitPaneRuntime ? (
                       <>
                         {!isMobile ? <ResizableHandle /> : null}
                         <ResizablePanel

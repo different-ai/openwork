@@ -26,6 +26,7 @@ import {
   applyPendingDeltasToTranscript,
   coalescePendingDeltas,
   ensureWorkspaceSessionSync,
+  revalidateWorkspaceSessionSync,
   permissionKey,
   markSessionSnapshotFetchStart,
   snapshotKey,
@@ -681,6 +682,118 @@ describe("session transcript sync", () => {
       releaseBackground();
       releaseVisible();
       cleanup();
+      __setSessionSyncDeltaFlushSchedulerForTest(null);
+    }
+  });
+
+  test.each([false, true])("both pane attachments stay foreground across owner ordering and release (reverse: %s)", async (reverse) => {
+    const input = { workspaceId: "workspace-panes", baseUrl: "http://localhost/panes", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const scheduled: Array<{ lane: DeltaFlushLane; run: () => void; cancelled: boolean }> = [];
+    __setSessionSyncDeltaFlushSchedulerForTest((lane, run) => {
+      const task = { lane, run, cancelled: false };
+      scheduled.push(task);
+      return () => { task.cancelled = true; };
+    });
+    const client = getReactQueryClient();
+    const releases: Array<() => void> = [];
+    const ids = ["pane-a", "pane-b", "hidden"];
+    for (const id of ids) {
+      releases.push(trackWorkspaceSessionSync(input, id));
+      client.setQueryData<UIMessage[]>(transcriptKey(input.workspaceId, id), [{
+        id: "message", role: "assistant", parts: [{ type: "text", text: "", providerMetadata: { opencode: { partId: "part" } } }],
+      }]);
+    }
+    const queue = (id: string, delta: string) => __applySessionSyncEventForTest(input, {
+      type: "message.part.delta",
+      properties: { sessionID: id, messageID: "message", partID: "part", field: "text", delta },
+    });
+    const text = (id: string) => client.getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, id))?.[0]?.parts[0];
+    const flush = (lane: DeltaFlushLane) => {
+      const task = scheduled.findLast((task) => !task.cancelled);
+      expect(task?.lane).toBe(lane);
+      if (!task) throw new Error("Missing scheduled flush");
+      task.cancelled = true;
+      task.run();
+    };
+    try {
+      queue("pane-a", "1");
+      expect(scheduled.at(-1)?.lane).toBe("background");
+      const paneOrder = reverse ? ["pane-b", "pane-a"] : ["pane-a", "pane-b"];
+      const owners = paneOrder.map((visibleSessionId) => ensureWorkspaceSessionSync({ ...input, visibleSessionId }));
+      releases.push(...owners);
+      const duplicate = ensureWorkspaceSessionSync({ ...input, visibleSessionId: "pane-a" });
+      const background = ensureWorkspaceSessionSync(input);
+      releases.push(duplicate, background);
+      __setWorkspaceSessionSyncStatusFetcherForTest(async () => Object.fromEntries(ids.map((id) => [id, { type: "busy" }])));
+      await revalidateWorkspaceSessionSync(input);
+      queue("pane-a", "2");
+      queue("pane-b", "b");
+      queue("hidden", "h");
+      expect(scheduled[0]?.cancelled).toBe(true);
+      flush("foreground");
+      expect(text("pane-a")).toMatchObject({ text: "12" });
+      expect(text("pane-b")).toMatchObject({ text: "b" });
+      expect(text("hidden")).toMatchObject({ text: "" });
+      flush("background");
+      expect(text("hidden")).toMatchObject({ text: "h" });
+
+      // Releasing either route first cannot remove the other pane or a second
+      // attachment of the same pane. Cleanup is idempotent.
+      owners[paneOrder.indexOf("pane-a")]!();
+      owners[paneOrder.indexOf("pane-a")]!();
+      background();
+      queue("pane-a", "3");
+      flush("foreground");
+      expect(text("pane-a")).toMatchObject({ text: "123" });
+      queue("pane-a", "4");
+      const foregroundTask = scheduled.at(-1);
+      duplicate();
+      expect(foregroundTask?.cancelled).toBe(true);
+      flush("background");
+      expect(text("pane-a")).toMatchObject({ text: "1234" });
+      queue("pane-b", "2");
+      flush("foreground");
+
+      seedPermissionState(input.workspaceId, "pane-b", [permission("pending", "pane-b")]);
+      seedQuestionState(input.workspaceId, "pane-b", [question("question", "pane-b")]);
+      owners[paneOrder.indexOf("pane-b")]!();
+      queue("pane-b", "3");
+      flush("background");
+      expect(text("pane-b")).toMatchObject({ text: "b23" });
+      expect(client.getQueryData(permissionKey(input.workspaceId, "pane-b"))).toMatchObject([{ id: "pending" }]);
+      expect(client.getQueryData(questionKey(input.workspaceId, "pane-b"))).toMatchObject([{ id: "question" }]);
+      await revalidateWorkspaceSessionSync(input);
+      expect(useSessionActivityStore.getState().getStatus(input.workspaceId, "pane-b")).toBe("waiting");
+      expect(useSessionActivityStore.getState().recordsByWorkspaceId[input.workspaceId]?.hidden?.runActive).toBe(true);
+      queue("hidden", "2");
+      flush("background");
+      expect(text("hidden")).toMatchObject({ text: "h2" });
+      expect(__hasWorkspaceSessionSyncForTest(input)).toBe(true);
+    } finally {
+      for (const release of releases) release();
+      cleanup();
+      __setSessionSyncDeltaFlushSchedulerForTest(null);
+      for (const id of ids) useSessionActivityStore.getState().removeSession(input.workspaceId, id);
+    }
+  });
+
+  test("foreground membership is isolated by workspace and server, not the session ID", () => {
+    const input = { workspaceId: "workspace-owner", baseUrl: "http://localhost/one", openworkToken: "token" };
+    const otherServer = { ...input, baseUrl: "http://localhost/two" };
+    const otherWorkspace = { ...input, workspaceId: "workspace-other" };
+    const cleanups = [input, otherServer, otherWorkspace].map(__createWorkspaceSessionSyncForTest);
+    const lanes: DeltaFlushLane[] = [];
+    __setSessionSyncDeltaFlushSchedulerForTest((lane) => { lanes.push(lane); return () => {}; });
+    const release = ensureWorkspaceSessionSync({ ...input, visibleSessionId: "same-id" });
+    try {
+      for (const owner of [input, otherServer, otherWorkspace]) {
+        __queueSessionSyncDeltaForTest(owner, { sessionId: "same-id", messageId: "m", partId: "p", reasoning: false, delta: "x" });
+      }
+      expect(lanes).toEqual(["foreground", "background", "background"]);
+    } finally {
+      release();
+      for (const cleanup of cleanups) cleanup();
       __setSessionSyncDeltaFlushSchedulerForTest(null);
     }
   });

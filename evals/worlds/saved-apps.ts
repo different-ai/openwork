@@ -75,7 +75,7 @@ export async function isolatedMcpApps(seed: Seed) {
         import { App } from "@modelcontextprotocol/ext-apps";
         const label = ${JSON.stringify(label)};
         const app = new App({ name: "isolation-" + label, version: "1" }, {});
-        const report = { label, input: null, result: null, helper: null, siblingReads: 0, siblingInjections: 0, readDenied: 0, injectionDenied: 0, forgedMessages: 0, complete: false };
+        const report = { label, input: null, result: null, helper: null, helperError: null, siblingReads: 0, siblingInjections: 0, readDenied: 0, injectionDenied: 0, forgedMessages: 0, complete: false };
         const publish = () => { document.body.dataset.isolationReport = JSON.stringify(report); };
         app.ontoolinput = ({ arguments: args }) => { report.input = args; publish(); };
         let received = false;
@@ -100,8 +100,10 @@ export async function isolatedMcpApps(seed: Seed) {
               report.forgedMessages += 1;
             }
           }
-          const resultFromHelper = await app.callServerTool({ name: "read_detail", arguments: { marker: "legitimate-" + label } });
-          report.helper = resultFromHelper.content;
+          try {
+            const resultFromHelper = await app.callServerTool({ name: "read_detail", arguments: { marker: "legitimate-" + label } });
+            report.helper = resultFromHelper.content;
+          } catch (error) { report.helperError = error.message; }
           await app.sendSizeChanged({ height: 220 });
           report.complete = true;
           document.querySelector("p").textContent = "App " + label + " received its own result and helper reply";
@@ -137,8 +139,8 @@ export async function isolatedMcpApps(seed: Seed) {
       sample_b: { type: "remote", url: app.mocks.second.mcpUrl, enabled: true, oauth: false },
     },
   });
-  await seed.session(app, { title: "Independent embedded apps" });
-  return { app, first: app.mocks.first, second: app.mocks.second,
+  const session = await seed.session(app, { title: "Independent embedded apps" });
+  return { app, session, first: app.mocks.first, second: app.mocks.second,
     reports: async () => (await inAppDocuments(app, "isolation")).map(value => record(JSON.parse(value))),
   };
 }
