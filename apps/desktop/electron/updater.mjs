@@ -306,6 +306,10 @@ export function registerUpdaterIpc({
   platform = process.platform,
   arch = process.arch,
   env = process.env,
+  // Throws while the installation still has to be activated. Until then no Den
+  // is known, so the organization's allowed-versions policy cannot be honoured
+  // and the renderer must not be able to check for, stage, or install updates.
+  assertActivation = () => {},
 }) {
   let autoUpdaterInstance = null;
   let autoUpdaterLoadPromise = null;
@@ -673,6 +677,7 @@ export function registerUpdaterIpc({
   }));
 
   ipcMain.handle("openwork:updater:check", async (_event, rawChannel, rawTargetVersion) => queueUpdaterOperation(async () => {
+    assertActivation();
     // A check selects a feed for this operation only. The persisted preference
     // belongs exclusively to setChannel so a stale check cannot undo a choice.
     const channel = rawChannel === undefined
@@ -733,6 +738,7 @@ export function registerUpdaterIpc({
   }));
 
   ipcMain.handle("openwork:updater:download", async () => queueUpdaterOperation(async () => {
+    assertActivation();
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
     try {
@@ -777,6 +783,7 @@ export function registerUpdaterIpc({
   }));
 
   ipcMain.handle("openwork:updater:installAndRestart", async () => queueUpdaterOperation(async () => {
+    assertActivation();
     if (!updateDownloaded) return { ok: false, reason: "update-not-downloaded" };
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };

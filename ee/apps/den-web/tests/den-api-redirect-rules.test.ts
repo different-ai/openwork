@@ -6,9 +6,9 @@ import { redirectToDenApi } from "../app/api/_lib/den-api-redirect";
 import { readPublicWebOrigin } from "../app/_lib/public-web-origin";
 import { denApiRedirectOrigin, denApiRedirects } from "../next-config-den-api-redirects.cjs";
 
-type RedirectEnv = Partial<Record<"DEN_API_BASE" | "DEN_BASE_URL" | "DEN_WEB_PUBLIC_ORIGIN", string>>;
+type RedirectEnv = Partial<Record<"DEN_API_BASE" | "DEN_API_PUBLIC_URL" | "DEN_BASE_URL" | "DEN_WEB_PUBLIC_ORIGIN", string>>;
 
-const ENV_KEYS = ["DEN_API_BASE", "DEN_BASE_URL", "DEN_WEB_PUBLIC_ORIGIN"] as const;
+const ENV_KEYS = ["DEN_API_BASE", "DEN_API_PUBLIC_URL", "DEN_BASE_URL", "DEN_WEB_PUBLIC_ORIGIN"] as const;
 const previousEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
 function applyEnv(env: RedirectEnv) {
@@ -33,7 +33,33 @@ describe("Den API build-time redirect rules", () => {
     expect(denApiRedirects({})).toEqual([]);
   });
 
-  test("prefers an explicit DEN_API_BASE origin", () => {
+  test("prefers the browser-reachable DEN_API_PUBLIC_URL over an in-network DEN_API_BASE", () => {
+    // The compose/Helm shape: DEN_API_BASE is the container-internal upstream
+    // for the /api/auth/* proxy; browsers must be sent to the public origin.
+    const env = {
+      DEN_API_BASE: "http://den:8788",
+      DEN_API_PUBLIC_URL: "http://localhost:18788/",
+      DEN_BASE_URL: "http://localhost:13005",
+    };
+
+    expect(denApiRedirectOrigin(env)).toBe("http://localhost:18788");
+    expect(denApiRedirects(env)).toEqual([
+      {
+        source: "/api/den/:path*",
+        destination: "http://localhost:18788/:path*",
+        permanent: false,
+      },
+    ]);
+    expect(denApiRedirects(env)[0]?.destination).not.toContain("den:8788");
+  });
+
+  test("ignores a DEN_API_PUBLIC_URL without a scheme and falls back to DEN_API_BASE", () => {
+    const env = { DEN_API_PUBLIC_URL: "localhost:18788", DEN_API_BASE: "http://den:8788", DEN_BASE_URL: "http://localhost:13005" };
+
+    expect(denApiRedirectOrigin(env)).toBe("http://den:8788");
+  });
+
+  test("falls back to an explicit DEN_API_BASE origin when no public URL is set", () => {
     const env = { DEN_API_BASE: "https://api.openworklabs.com/", DEN_BASE_URL: "https://app.openworklabs.com" };
 
     expect(denApiRedirectOrigin(env)).toBe("https://api.openworklabs.com");
@@ -69,6 +95,9 @@ describe("Den API build-time redirect rules", () => {
       { DEN_API_BASE: "https://api.openworklabs.com", DEN_BASE_URL: "https://app.openworklabs.com" },
       { DEN_BASE_URL: "https://app.openworklabs.com" },
       { DEN_BASE_URL: "http://localhost:3005", DEN_API_BASE: "http://127.0.0.1:8790" },
+      { DEN_BASE_URL: "http://localhost:13005", DEN_API_BASE: "http://den:8788", DEN_API_PUBLIC_URL: "http://localhost:18788" },
+      { DEN_BASE_URL: "http://localhost:13005", DEN_API_BASE: "http://den:8788", DEN_API_PUBLIC_URL: "localhost:18788" },
+      { DEN_BASE_URL: "https://app.openworklabs.com", DEN_API_PUBLIC_URL: "https://api.openworklabs.com/" },
       { DEN_WEB_PUBLIC_ORIGIN: "https://den.example.org" },
       { DEN_API_BASE: "not a url", DEN_BASE_URL: "https://app.openworklabs.com" },
     ];

@@ -1,5 +1,5 @@
 import { legacyExecutionPermissions } from "./managed-policy-rules.js";
-import { managedPolicyPluginPath } from "./managed-policy-plugin.js";
+import { isManagedPolicyPlugin } from "./managed-policy-plugin.js";
 /**
  * Runtime OpenCode configuration injected via a server-managed config file
  * passed to the engine as OPENCODE_CONFIG.
@@ -91,7 +91,6 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       },
     },
     plugin: [
-      managedPolicyPluginPath(),
       openworkChromeDevtoolsPluginPath(),
       // Registration order is prompt order: the knowledge plugin appends the
       // operating rules first, then the extensions plugin adds app-control
@@ -105,7 +104,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkAnthropicAdaptiveThinkingPluginPath(),
       openworkAnthropicToolSchemaPluginPath(),
       openworkTitleRecoveryPluginPath(),
-      ...runtimePluginList(runtimeConfig),
+      ...runtimePluginList(runtimeConfig).filter((plugin) => !isManagedPolicyPlugin(plugin)),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
     mcp: Object.fromEntries(Object.entries(runtimeMcpMap(runtimeConfig))

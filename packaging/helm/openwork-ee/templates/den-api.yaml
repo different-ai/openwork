@@ -81,7 +81,7 @@ spec:
       {{- end }}
       containers:
         - name: den-api
-          image: "{{ .Values.denApi.image.repository }}:{{ default .Values.image.tag .Values.denApi.image.tag }}"
+          image: "{{ .Values.denApi.image.repository }}:{{ include "openwork-ee.imageTag" (dict "root" . "componentTag" .Values.denApi.image.tag) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

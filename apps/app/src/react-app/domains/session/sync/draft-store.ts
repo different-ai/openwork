@@ -48,6 +48,12 @@ export const SESSION_DRAFT_STORAGE_KEY = "openwork.session-drafts.v2";
 export const LEGACY_SESSION_DRAFT_STORAGE_KEY = "openwork.session-drafts.v1";
 export const LOCAL_SESSION_DRAFT_SCOPE = "local";
 export const MAX_SESSION_DRAFT_COUNT = 100;
+/**
+ * Reserved session slot for the prompt typed in a workspace's new-task
+ * composer before its session exists. Engine session ids are `ses_…`, so this
+ * can never collide with a real conversation.
+ */
+export const NEW_TASK_DRAFT_SESSION_ID = "__new-task__";
 
 const EMPTY_DOCUMENT: DraftDocument = {
   version: 2,
@@ -403,4 +409,14 @@ export function useSessionDraftState(
     () => ({ scopeKey: key, snapshot, save, clear }),
     [clear, key, save, snapshot],
   );
+}
+
+/**
+ * The persisted prompt of a workspace's not-yet-created session. Navigating
+ * to another conversation unmounts the new-task composer, so its text has to
+ * outlive the component to be recoverable; the sidebar reads the same slot to
+ * offer a way back.
+ */
+export function useNewTaskDraftState(scopeId: string | null | undefined, workspaceId: string | null | undefined) {
+  return useSessionDraftState(scopeId, workspaceId ?? "", NEW_TASK_DRAFT_SESSION_ID);
 }

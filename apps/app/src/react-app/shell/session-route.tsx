@@ -81,6 +81,7 @@ import {
   describeTaskCreateRetry,
   describeWorkspaceCreateError,
   createRouteSession,
+  createRouteSessionOnEngine,
   deleteRouteSession,
   downloadWorkspaceJson,
   folderNameFromPath,
@@ -488,6 +489,7 @@ export function SessionRoute() {
     legacySelectedWorkspaceId,
     setLegacySelectedWorkspaceId,
     retryingWorkspaceIds,
+    loadedWorkspaceIds,
     setRetryingWorkspaceIds,
     startupRetryTimerRef,
     selectedWorkspaceId,
@@ -584,6 +586,7 @@ export function SessionRoute() {
     : undefined, [local.prefs.defaultModel?.modelID, local.prefs.defaultModel?.providerID]);
   const sessionMcpMaintenance = useSessionMcpMaintenance({
     cloudSignedIn: denAuth.isSignedIn,
+    cloudAuthStatus: denAuth.status,
     client: selectedWorkspaceEndpoint?.client ?? null,
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
     opencodeClient,
@@ -770,8 +773,8 @@ export function SessionRoute() {
 
 
   const workspaceSessionGroups = useMemo(
-    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(retryingWorkspaceIds)),
-    [errorsByWorkspaceId, retryingWorkspaceIds, sessionsByWorkspaceId, workspaces],
+    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(retryingWorkspaceIds), loadedWorkspaceIds),
+    [errorsByWorkspaceId, retryingWorkspaceIds, sessionsByWorkspaceId, workspaces, loadedWorkspaceIds],
   );
   useSessionGroupSync({ workspaces, endpointForWorkspace });
   const selectedWorkspaceGroupState = sessionManagementStore((state) => (
@@ -1959,6 +1962,7 @@ export function SessionRoute() {
         selectedWorkspaceEndpoint?.opencodeBaseUrl ?? null,
         selectedWorkspaceId || null,
       ]),
+      draftScope: sessionDraftScope,
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
       modelOptions: organizationAssignedModelOptions,
       modelUnavailable: selectedModelUnavailable,
@@ -3495,9 +3499,11 @@ export function SessionRoute() {
           };
           const workspace = workspaces.find((item) => item.id === workspaceId);
           if (!workspace) throw new Error("Workspace is unavailable. Try again.");
-          const endpoint = endpointForWorkspace(workspace);
-          if (!endpoint?.token) throw new Error("Workspace is disconnected. Reconnect and try again.");
-          const session = await createRouteSession(endpoint, workspace.path?.trim() || undefined);
+          const workspaceEndpoint = endpointForWorkspace(workspace);
+          if (!workspaceEndpoint?.token) throw new Error("Workspace is disconnected. Reconnect and try again.");
+          // The scoped auto-send mark must name the engine that owns the new
+          // session; the session surface consumes it under that same base URL.
+          const { session, endpoint } = await createRouteSessionOnEngine(workspaceEndpoint, workspace.path?.trim() || undefined);
           const continuation = handoff
             ? snapshotComposerSessionState(handoff.getContinuation())
             : null;
