@@ -5,19 +5,10 @@ import type { createClient } from "../../../../app/lib/opencode";
 import type { OpenworkServerClient, OpenworkWorkspaceInfo } from "../../../../app/lib/openwork-server";
 import { deleteRouteSession } from "../../../shell/route-workspaces";
 import type { ResolvedWorkspaceEndpoint } from "../../../../app/lib/workspace-endpoint";
-import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
-
-type SessionLike = {
-  id?: string;
-  title?: string;
-  time?: {
-    updated?: number;
-    created?: number;
-  };
-};
+import { controlWorkspaceLabel as workspaceLabel, listControlSessions, type ControlSessionLike as SessionLike } from "./list-control-sessions";
 
 type SessionControlWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -42,10 +33,6 @@ type UseSessionControlActionsInput = {
   archiveSession: (sessionId: string, archived: boolean) => Promise<boolean>;
 };
 
-function workspaceLabel(workspace: SessionControlWorkspace) {
-  return workspace.displayName?.trim() || workspace.name?.trim() || workspace.path?.trim() || "workspace";
-}
-
 function findSessionWorkspace(
   workspaces: SessionControlWorkspace[],
   sessionsByWorkspaceId: Record<string, SessionLike[]>,
@@ -67,6 +54,11 @@ function stringArg(args: unknown, name: string) {
 
 function booleanArg(args: unknown, name: string) {
   return objectArgs(args)[name] === true;
+}
+
+function numberArg(args: unknown, name: string) {
+  const value = objectArgs(args)[name];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 export function useSessionControlActions(input: UseSessionControlActionsInput) {
@@ -108,25 +100,21 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.list_sessions",
     label: "List available sessions",
-    description: "Return sessions across workspaces. Entries include `pinned`, and pinned sessions come first.",
+    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
     kind: "query",
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
-    execute: () => {
-      const out: { sessionId: string; title: string; workspace: string; updatedAt: number; pinned: boolean }[] = [];
-      for (const workspace of workspaces) {
-        const list = sessionsByWorkspaceId[workspace.id] ?? [];
-        for (const session of list) {
-          const sessionId = session.id?.trim() ?? "";
-          if (!sessionId) continue;
-          const title = getDisplaySessionTitle(session.title ?? "");
-          const updatedAt = session.time?.updated ?? session.time?.created ?? 0;
-          out.push({ sessionId, title, workspace: workspaceLabel(workspace), updatedAt, pinned: pinnedIds.includes(sessionId) });
-        }
-      }
-      out.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt);
-      return out.slice(0, 30);
-    },
+    args: [
+      { name: "limit", type: "number", required: false, description: "Maximum sessions to return. Omit to return all loaded sessions." },
+      { name: "workspaceId", type: "string", required: false, description: "Workspace ID or display name. Omit to include every workspace." },
+    ],
+    execute: (args) => listControlSessions({
+      workspaces,
+      sessionsByWorkspaceId,
+      pinnedIds,
+      workspaceId: stringArg(args, "workspaceId") || undefined,
+      limit: numberArg(args, "limit"),
+    }),
   }), [pinnedIds, sessionsByWorkspaceId, workspaces]);
   useControlAction(listSessionsControlAction);
 
