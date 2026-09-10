@@ -1446,7 +1446,7 @@ export function createClientV2(
   opencode2BaseUrl: string,
   directory: string | undefined,
   auth: { token?: string },
-): ReturnType<typeof createClient> {
+) {
   const baseUrl = opencode2BaseUrl.replace(/\/+$/, "");
   const fetchImpl = createV2Fetch(auth);
   const compatibilityClient = createClient(baseUrl, directory, { mode: "openwork", token: auth.token });
@@ -1649,19 +1649,24 @@ export function createClientV2(
 
   const session = {
     list: async (
-      parameters: DirectoryParameters & { limit?: number } = {},
+      parameters: DirectoryParameters & { limit?: number; cursor?: string } = {},
       options?: RequestOptions,
-    ): Promise<FieldsResult<Session[]>> => {
+    ): Promise<FieldsResult<Session[]> & { nextCursor?: string | null }> => {
       const query = new URLSearchParams();
       if (parameters.limit !== undefined) query.set("limit", String(parameters.limit));
+      if (parameters.cursor !== undefined) query.set("cursor", parameters.cursor);
       const suffix = query.size ? `?${query.toString()}` : "";
       const result = await request("GET", `/api/session${suffix}`, undefined, options?.signal);
       if (!result.response.ok) return failedResult(result);
+      const next = readRecord(result.payload, "cursor")?.next;
+      if (!Array.isArray(responseData(result.payload)) || (next !== undefined && typeof next !== "string")) {
+        return failedResult({ ...result, payload: { name: "InvalidV2SessionListResponse" } });
+      }
       const data = responseItems(result.payload).flatMap((item) => {
         const mapped = mapV2Session(item, directory);
         return mapped ? [mapped] : [];
       });
-      return successfulResult(result, data);
+      return { ...successfulResult(result, data), nextCursor: next ?? null };
     },
     create: createSession,
     get: getSession,
@@ -1926,7 +1931,7 @@ export function createClientV2(
   Object.assign(compatibilityClient.mcp, adapter.mcp);
   Object.assign(compatibilityClient.event, adapter.event);
   v2Clients.add(compatibilityClient);
-  return compatibilityClient;
+  return Object.assign(compatibilityClient, { listSessionsPage: session.list });
 }
 
 export type OpencodeV2Client = ReturnType<typeof createClientV2>;
