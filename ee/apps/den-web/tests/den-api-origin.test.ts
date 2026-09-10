@@ -4,8 +4,16 @@ import { NextRequest } from "next/server";
 import { denApiCredentialsForEndpoint, denApiEndpointForWebOrigin, denApiOriginForWebOrigin, setDenApiOriginOverride } from "../app/(den)/_lib/den-api-origin";
 import { redirectToDenApi } from "../app/api/_lib/den-api-redirect";
 
+const ENV_KEYS = ["DEN_API_BASE", "DEN_API_PUBLIC_URL"] as const;
+const previousEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+
 afterEach(() => {
   setDenApiOriginOverride(null);
+  for (const key of ENV_KEYS) {
+    const value = previousEnv[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 });
 
 describe("Den API browser origin", () => {
@@ -19,6 +27,33 @@ describe("Den API browser origin", () => {
 
   test("leaves existing api hosts stable", () => {
     expect(denApiOriginForWebOrigin("https://api.openworklabs.com")).toBe("https://api.openworklabs.com");
+  });
+
+  test("sends browsers to DEN_API_PUBLIC_URL, not the in-network DEN_API_BASE upstream", () => {
+    process.env.DEN_API_BASE = "http://den:8788";
+    process.env.DEN_API_PUBLIC_URL = "http://localhost:18788/";
+
+    expect(denApiOriginForWebOrigin("http://localhost:13005")).toBe("http://localhost:18788");
+
+    const request = new NextRequest("http://localhost:13005/api/den/health");
+    const response = redirectToDenApi(request, "/api/den");
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost:18788/health");
+    expect(response.headers.get("location")).not.toContain("den:8788");
+  });
+
+  test("keeps the documented DEN_API_BASE fallback when no public URL is configured", () => {
+    process.env.DEN_API_BASE = "http://127.0.0.1:8790";
+    delete process.env.DEN_API_PUBLIC_URL;
+
+    expect(denApiOriginForWebOrigin("http://localhost:3005")).toBe("http://127.0.0.1:8790");
+  });
+
+  test("skips a DEN_API_PUBLIC_URL without a scheme and falls back like the build-time rule", () => {
+    process.env.DEN_API_BASE = "http://den:8788";
+    process.env.DEN_API_PUBLIC_URL = "localhost:18788";
+
+    expect(denApiOriginForWebOrigin("http://localhost:13005")).toBe("http://den:8788");
   });
 
   test("builds direct API URLs instead of same-origin Den proxy URLs", () => {

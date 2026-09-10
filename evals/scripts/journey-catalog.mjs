@@ -11,6 +11,8 @@ const definitions = {
   // Boots the packaged enterprise artifact twice (fresh and pre-activated); only packaged-smoke provides that binary.
   'packaged-preactivation-updater.e2e.test.ts': { name: 'Keep an unactivated enterprise install from updating itself', placement: 'local' },
   'packaged-activated-launch.e2e.test.ts': { name: 'Open an already-activated enterprise install', placement: 'local' },
+  // Boots the packaged enterprise artifact and asks it to quit (SIGTERM and Browser.close); only packaged-smoke provides that binary.
+  'desktop-quit-path.e2e.test.ts': { name: 'Quit an enterprise install cleanly', placement: 'local' },
   // Boots a RELEASED enterprise binary (and optionally an older baseline) already activated against a real Den; skips without OPENWORK_EVAL_ELECTRON_BINARY.
   'released-enterprise-activated.e2e.test.ts': { name: 'Open and update an activated enterprise install against its Den', placement: 'local' },
   'org-team-lifecycle-critical-path.e2e.test.ts': { name: 'Set up a working two-person team', critical: true, model: 'live' },
