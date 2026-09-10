@@ -1303,6 +1303,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
       ? false
       : (failureCount) => !evalSnapshotFailureRef.current && failureCount < 3,
   });
+  // The owner can change under an unchanged (workspace, session) key: chat
+  // routing resolves to /opencode2 after boot, and the draft scope resolves once
+  // identity verifies. An in-flight owned read rejects on that flip and nothing
+  // else refetches, so re-read under the new owner instead of leaving the error.
+  // A first load has no data yet, and a refetch alone then joins the doomed
+  // in-flight read instead of cancelling it, so cancel explicitly first.
+  const snapshotOwnerRef = useRef({ queryKey: snapshotQueryKey, owner: sessionOwner });
+  useEffect(() => {
+    const previous = snapshotOwnerRef.current;
+    snapshotOwnerRef.current = { queryKey: snapshotQueryKey, owner: sessionOwner };
+    if (previous.queryKey !== snapshotQueryKey || previous.owner === sessionOwner) return;
+    const filters = { queryKey: snapshotQueryKey, exact: true };
+    void queryClient.cancelQueries(filters).then(() => queryClient.invalidateQueries(filters));
+  }, [queryClient, sessionOwner, snapshotQueryKey]);
 
   const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
   const archived = Boolean(props.archived || currentSnapshot?.session.time.archived);
