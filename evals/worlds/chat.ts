@@ -230,13 +230,21 @@ async function splitPaneQuestions(
   name: string,
   agentWorkloads: MockAgentWorkload[],
   policy: Record<string, unknown> = { permission: { question: "allow" } },
+  options: { createWorkspace?: boolean } = {},
 ) {
   const providerId = "split-send-mock";
   const modelId = "split-send-model";
   const mock = seed.mock({ agentWorkloads });
   const den = await seed.den({ mocks: { agent: mock } });
   const app = await seed.desktop({ name, den, as: "admin", model: `${providerId}/${modelId}` });
-  const workspace = await seed.workspace(app, seed.tmpPath(name));
+  // Worlds whose `policy` must govern the agent create the workspace at the
+  // declared tmp path. Without `create`, the seed adopts the first-launch
+  // default workspace, which the dev profile places inside the repo checkout on
+  // Daytona; the engine then merges the repo's `.opencode/opencode.json`
+  // (`"permission": "allow"`) after the workspace's own opencode.json, so a
+  // workspace `bash: "ask"` never holds (observed agent ruleset
+  // `[* allow, bash ask, * allow]`; the last match wins).
+  const workspace = await seed.workspace(app, seed.tmpPath(name), options.createWorkspace ? { create: true } : {});
   // Arrange an allowed native question tool independently of custom-agent defaults.
   // TODO(primitive): write workspace fixture files through a first-class seed API.
   const questionPolicyWritten = await seed.evalIn(app, browserScript(async (workspaceId, content) => {
@@ -328,7 +336,7 @@ export async function permissionStopRecovery(seed: Seed) {
       } }],
     })),
     { promptMarker: followup.prompt, latestUserTurn: true, finalReply: followup.reply, steps: [] },
-  ], { permission: { bash: "ask" } });
+  ], { permission: { bash: "ask" } }, { createWorkspace: true });
   const stoppedSession = await seedSessionRetry(seed, base.app, { title: "Stop permission task" });
   const otherSession = await seedSessionRetry(seed, base.app, { title: "Keep permission task" });
   return { ...base, engine, retry, followup, stopped: { ...stopped, ...stoppedSession }, other: { ...other, ...otherSession } };
