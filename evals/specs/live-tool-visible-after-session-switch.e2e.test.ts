@@ -2,7 +2,6 @@ import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import {
   control,
-  createAndSelectWorkspace,
   engineSessionProbe,
   evalIn,
   go,
@@ -14,38 +13,22 @@ import {
 import { resolveEvalEngine } from "@openwork/env";
 import { screenshot } from "@openwork/test-evidence";
 import {
-  app,
   eventually,
-  localMysqlIsRunning,
-  localRedisIsRunning,
-  mcpMock,
-  needs,
-  server,
   spec,
-  test,
 } from "@openwork/testkit";
-import type { App } from "@openwork/testkit";
+import type { Surface as App } from "@openwork/cdp";
 import { sessionSwitchLatencyWeb } from "../worlds/session-switch-latency.ts";
+import { queuedSessionSwitchWeb } from "../worlds/queued-session-switch-web.ts";
 
 const providerId = "live-tool-switch-mock";
 const modelId = "live-tool-switch-model";
 const modelName = "Live tool switch model";
 const evalEngine = resolveEvalEngine();
 const shellToolName = evalEngine === "v2" ? "shell" : "bash";
-const e2eTestsEnabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
-const daytonaEnabled = process.env.OPENWORK_EVAL_DAYTONA === "1";
-const configuredDen = Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());
-const localServicesRequired = !daytonaEnabled && !configuredDen;
-const mysqlOpen = await localMysqlIsRunning();
-const redisOpen = await localRedisIsRunning();
-const runnable = e2eTestsEnabled && (!localServicesRequired || (mysqlOpen && redisOpen));
-const skipSuffix = !e2eTestsEnabled
-  ? " skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1"
-  : localServicesRequired && !mysqlOpen
-    ? " skipped — needs MySQL on 127.0.0.1:3306"
-    : localServicesRequired && !redisOpen
-      ? " skipped — needs Redis on 127.0.0.1:6379"
-      : "";
+const queueSwitchTest = spec.world(queuedSessionSwitchWeb, {
+  timeout: 12 * 60_000,
+  resources: { surfaces: ["appWeb"], services: ["mock"] },
+});
 
 interface ToolFact {
   tool: string;
@@ -84,11 +67,12 @@ function parseVisibleToolFact(value: unknown): VisibleToolFact {
 
 async function configureWorkspaces(appSurface: App, workspaceIds: string[], baseUrl: string): Promise<void> {
   const result = await evalIn(appSurface, browserScript(async (workspaceIds, providerId, modelName, value, modelId, inputModelName, inputProviderId, inputModelId, inputValue) => {
-    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-    if (!info?.running || !info.baseUrl) return "local_server_unavailable";
-    const root = String(info.baseUrl).replace(/\/+$/, "");
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    if (!port || !token) return "local_server_unavailable";
+    const root = `http://127.0.0.1:${port}`;
     const headers = {
-      Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     };
     for (const workspaceId of workspaceIds) {
@@ -160,6 +144,12 @@ async function createSession(appSurface: App): Promise<string> {
 
 async function openNewTask(appSurface: App, workspaceId: string): Promise<void> {
   await go(appSurface, `/workspace/${workspaceId}/session`);
+  await waitFor(appSurface, browserScript((workspaceId) => {
+    const button = document.querySelector<HTMLButtonElement>(`[data-sidebar-workspace-id="${workspaceId}"] [data-workspace-new-task]`);
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
+  }, [workspaceId]), { timeoutMs: 30_000, label: "workspace new-task action available" });
   await waitForText(appSurface, "What do you need done?", { timeoutMs: 60_000 });
 }
 
@@ -168,7 +158,6 @@ async function clickSessionRow(appSurface: App, workspaceId: string, sessionId: 
     const row = document.querySelector<HTMLElement>(value);
     const control = row?.querySelector<HTMLElement>(inputValue);
     if (!(row instanceof HTMLElement) || !(control instanceof HTMLElement)) return false;
-    row.scrollIntoView({ block: "center" });
     control.click();
     return true;
   }, [`[data-sidebar-session-id="${sessionId}"][data-sidebar-session-workspace-id="${workspaceId}"]`, `[data-session-tab-id="${sessionId}"]`]));
@@ -180,12 +169,16 @@ async function clickSessionRow(appSurface: App, workspaceId: string, sessionId: 
   }, [sessionId, workspaceId]), { timeoutMs: 60_000, label: `workspace ${workspaceId} session ${sessionId} visible after sidebar click` });
 }
 
+async function nativeProbe(appSurface: App, workspaceId: string) {
+  const endpoint = await evalIn(appSurface, browserScript(() => ({
+    serverUrl: `http://127.0.0.1:${localStorage.getItem("openwork.server.port")}`,
+    token: localStorage.getItem("openwork.server.token") ?? "",
+  }), []));
+  return engineSessionProbe({ ...endpoint, engine: evalEngine, workspaceId });
+}
+
 async function readSessionFacts(appSurface: App, workspaceId: string, sessionId: string): Promise<SessionFacts> {
-  const probe = engineSessionProbe({
-    engine: evalEngine,
-    surface: appSurface,
-    workspaceId,
-  });
+  const probe = await nativeProbe(appSurface, workspaceId);
   const snapshot = await probe.snapshot(sessionId);
   if (!snapshot.ok) return { sessionId: "", text: "", tools: [] };
   const parts = snapshot.data.messages.flatMap((message) => message.parts);
@@ -206,11 +199,7 @@ async function readSessionFacts(appSurface: App, workspaceId: string, sessionId:
 }
 
 async function approvePendingPermission(appSurface: App, workspaceId: string, sessionId: string): Promise<number> {
-  const statuses = await engineSessionProbe({
-    engine: evalEngine,
-    surface: appSurface,
-    workspaceId,
-  }).approvePendingPermissions(sessionId);
+  const statuses = await (await nativeProbe(appSurface, workspaceId)).approvePendingPermissions(sessionId);
   if (statuses.some((status) => status < 200 || status >= 300)) {
     throw new Error(`Permission approval failed: ${JSON.stringify(statuses)}`);
   }
@@ -296,117 +285,25 @@ async function queueFollowUp(appSurface: App, sessionId: string, text: string, c
 
 // Run the identical journey with OPENWORK_EVAL_ENGINE=v1 and v2. Keep the
 // cross-workspace regression as well as creating a second task in one workspace.
-for (const scope of ["same workspace", "different workspaces"]) {
-test.skipIf(!runnable)(
-  `two long-running chats restore live transcripts and drain isolated queues — ${scope}, ${evalEngine}${skipSuffix}`,
+for (const [caseId, scope] of [["QUEUE-01", "same workspace"], ["QUEUE-02", "different workspaces"]]) {
+queueSwitchTest(
+  `${caseId} two long-running chats restore live transcripts and drain isolated queues — ${scope}, ${evalEngine}`,
   { timeout: 12 * 60_000 },
-  async ({ evidence, place }) => {
-    needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
-    const runId = `${Date.now().toString(36)}-${process.pid}`;
-    const promptMarker = `LIVE-TOOL-SWITCH-${runId}`;
-    const firstMarker = `FIRST-${promptMarker}`;
-    const firstToolDescription = `First tool in chat A — ${promptMarker}`;
-    const toolDescription = `Waiting in chat A — ${promptMarker}`;
-    const completionMarker = `DONE-${promptMarker}`;
-    const replyA = `REPLY-A-${runId}`;
-    const promptB = `SECOND-CHAT-${runId}`;
-    const replyB = `REPLY-B-${runId}`;
-    const progressA = `PROGRESS-A-${runId}`;
-    const continuedProgressA = `CONTINUED-A-${runId}`;
-    const progressB = `PROGRESS-B-${runId}`;
-    const queuedA = [`FOLLOW-UP-A1-${runId}`, `FOLLOW-UP-A2-${runId}`];
-    const queuedB = `FOLLOW-UP-B-${runId}`;
-    const queuedRepliesA = [`ANSWER-A1-${runId}`, `ANSWER-A2-${runId}`];
-    const queuedReplyB = `ANSWER-B-${runId}`;
-    const commandB = `sleep 180 && printf '%s\\n' 'TOOL-B-${runId}'`;
-    const firstCommand = `sleep 45 && printf '%s\\n' '${firstMarker}'`;
-    const command = `sleep 45 && printf '%s\\n' '${completionMarker}'`;
-    const continuedCommand = `sleep 30 && printf '%s\\n' 'LAST-TOOL-A-${runId}'`;
+  async ({ evidence, world }) => {
+    const { app: desktopApp, agentMock, runId, promptMarker, firstMarker, firstToolDescription,
+      toolDescription, completionMarker, replyA, promptB, replyB, progressA, continuedProgressA,
+      progressB, queuedA, queuedB, queuedRepliesA, queuedReplyB, commandB, firstCommand, command, continuedCommand } = world;
     const matchesDescription = (tool: ToolFact, description: string) =>
       evalEngine === "v2" || tool.description === description;
 
-    await using den = await server({
-      place,
-      mocks: {
-        agent: mcpMock({
-          agentWorkloads: [{
-            promptMarker,
-            latestUserTurn: true,
-            finalReply: replyA,
-            finalReplyChunkSize: 4,
-            steps: [
-              {
-                tool: shellToolName,
-                arguments: {
-                  command: firstCommand,
-                  timeout: 90_000,
-                  ...(evalEngine === "v1" ? { description: firstToolDescription } : {}),
-                },
-              },
-              {
-                tool: shellToolName,
-                text: progressA,
-                arguments: {
-                  command,
-                  timeout: 90_000,
-                  ...(evalEngine === "v1" ? { description: toolDescription } : {}),
-                },
-              },
-              {
-                tool: shellToolName,
-                text: continuedProgressA,
-                arguments: {
-                  command: continuedCommand,
-                  timeout: 90_000,
-                  ...(evalEngine === "v1" ? { description: "Chat A continues after returning" } : {}),
-                },
-              },
-            ],
-          }, {
-            promptMarker: promptB,
-            latestUserTurn: true,
-            finalReply: replyB,
-            finalReplyChunkSize: 4,
-            steps: [{
-              tool: shellToolName,
-              text: progressB,
-              arguments: {
-                command: commandB,
-                timeout: 240_000,
-                ...(evalEngine === "v1" ? { description: "Long-running tool in chat B" } : {}),
-              },
-            }],
-          }, ...queuedA.map((promptMarker, index) => ({
-            promptMarker,
-            latestUserTurn: true,
-            finalReply: queuedRepliesA[index],
-            finalReplyDelayMs: 1000,
-            steps: [],
-          })), {
-            promptMarker: queuedB,
-            latestUserTurn: true,
-            finalReply: queuedReplyB,
-            steps: [],
-          }],
-        }),
-      },
-      org: {
-        name: "Live Tool Switch",
-        admin: { name: "Switch Admin" },
-        members: { member: { name: "Switch Member" } },
-      },
-    });
-    await using desktopApp = await app({ den, as: "member", place });
-
-    const workspaceA = await createAndSelectWorkspace(desktopApp, {
-      path: `/tmp/openwork-live-tool-switch-${runId}-a`,
-    });
-    const workspaceB = scope === "same workspace" ? workspaceA : await createAndSelectWorkspace(desktopApp, {
-      path: `/tmp/openwork-live-tool-switch-${runId}-b`,
-      create: true,
-    });
+    const workspaceA = world.workspaceA;
+    const workspaceB = scope === "same workspace" ? workspaceA : world.workspaceB;
     expect(workspaceA.workspaceId === workspaceB.workspaceId).toBe(scope === "same workspace");
-    await configureWorkspaces(desktopApp, [...new Set([workspaceA.workspaceId, workspaceB.workspaceId])], den.mocks.agent.url);
+    await configureWorkspaces(desktopApp, [...new Set([workspaceA.workspaceId, workspaceB.workspaceId])], agentMock.url);
+    evidence.recordJsonArtifact("Configured native workspace providers", {
+      a: await world.providerState(workspaceA.workspaceId),
+      b: await world.providerState(workspaceB.workspaceId),
+    });
     await openNewTask(desktopApp, workspaceA.workspaceId);
     const chatA = await createSession(desktopApp);
     await control(desktopApp, "session.rename", { sessionId: chatA, title: "Chat A" });
@@ -610,7 +507,7 @@ test.skipIf(!runnable)(
     expect(drainedA.text).not.toMatch(/\d+ queued/);
     expect(drainedA.text).not.toContain(queuedB);
     expect(drainedA.text).not.toContain(queuedReplyB);
-    const queuedRequestsA = (await den.mocks.agent.agentRequests())
+    const queuedRequestsA = (await agentMock.agentRequests())
       .filter((request) => request.kind === "final" && queuedA.includes(request.promptMarker ?? ""));
     expect(queuedRequestsA.map((request) => request.promptMarker)).toEqual(queuedA);
     evidence.recordAssertionEvidence(
@@ -668,7 +565,7 @@ test.skipIf(!runnable)(
     expect(continuedB.assistantText.split(queuedReplyB)).toHaveLength(2);
     expect(continuedB.assistantText.indexOf(replyB)).toBeLessThan(continuedB.assistantText.indexOf(queuedReplyB));
     expect(continuedB.text).not.toMatch(/\d+ queued/);
-    const queuedRequestsB = (await den.mocks.agent.agentRequests({ promptMarker: queuedB }))
+    const queuedRequestsB = (await agentMock.agentRequests({ promptMarker: queuedB }))
       .filter((request) => request.kind === "final");
     expect(queuedRequestsB).toHaveLength(1);
     evidence.recordAssertionEvidence(

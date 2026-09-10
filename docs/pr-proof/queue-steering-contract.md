@@ -49,15 +49,27 @@ Those red receipts remain historical evidence; no engine was fixed or forked:
 The current test names and claims deliberately distinguish native acceptance
 from provider execution. They do not reinterpret those historical reds as green.
 
-## Remaining scope
+## Workspace-switch proof
 
-Cross-workspace/background draining and the natural return viewport are not
-certified by this same-workspace scenario. The forced tool scrolling was removed
-and the natural viewport assertion remains in the existing switch journey.
-An attempted explicit web port encountered fixture provisioning limits: desktop
-workspace creation did not select a second workspace on web, and the native
-second-workspace API rejected the fixture's non-owner token with 401
-`Invalid host token`. That port is separate from the scoped steering proof.
+The existing switch journey now uses an explicit isolated app-web world:
+`QUEUE-01` selects the same-workspace case and `QUEUE-02` the cross-workspace
+case, on either engine. Original overlapping tools, queue ordering, per-session
+isolation, background draining, and natural-return visibility assertions remain.
+No `scrollIntoView` is used by the journey.
+
+The fixture provisions its second workspace through `seed.workspace` using a
+host credential from the newly created isolated runtime manifest. That credential
+stays inside the fixture; the browser continues using its client token. The
+initial 401 from trying a client token on the host API is retained as historical
+setup evidence, not bypassed by disabling authentication. Deterministic providers
+are configured through the owned engine-global provider API.
+
+This exposed a server reload bug: after one directory refreshed the global
+fingerprint, the pool skipped an explicit reload for a stale sibling directory.
+The explicit operation route now uses the existing manual-reload path. Automatic
+syncs retain fingerprint deduplication; no engine implementation was changed.
+
+## Remaining scope
 
 UI Stop-pauses-queue, parallel execution, and end-to-end unknown-admission fault
 injection are not claimed here. Existing unit admission/no-replay coverage is

@@ -423,6 +423,24 @@ describe("engine pool", () => {
     expect(fixture.hookCalls.reloadInPlace).toBe(1);
   });
 
+  test("explicit sibling-workspace reload refreshes its instance despite an unchanged global fingerprint", async () => {
+    const fixture = await createFixture();
+    const { pool, primary } = await createPool(fixture);
+    const sibling = { ...fixture.workspace, id: "ws_sibling", path: `${fixture.workspace.path}/sibling` };
+    const reloaded: string[] = [];
+    fixture.hooks.reloadInPlace = async (_config, workspace) => { reloaded.push(workspace.id); };
+    await fixture.setRuntimeConfig(JSON.stringify({ generation: 2 }));
+    expect(await pool.requestRollover({ reason: "config_changed", workspace: fixture.workspace }))
+      .toEqual({ action: "reloaded_in_place" });
+    expect(await pool.requestRollover({ reason: "operation_route", workspace: sibling, manual: true }))
+      .toEqual({ action: "reloaded_in_place" });
+    expect(reloaded).toEqual([fixture.workspace.id, sibling.id]);
+    expect(await pool.requestRollover({ reason: "automatic_sync", workspace: sibling }))
+      .toEqual({ action: "skipped", reason: "unchanged" });
+    expect(pool.primaryUrl()).toBe(primary.url);
+    expect(pool.snapshot().generations).toHaveLength(1);
+  });
+
   test("provider sync holds the serving primary until a standby is healthy and keeps it on spawn failure", async () => {
     const fixture = await createFixture();
     const { pool, primary } = await createPool(fixture);

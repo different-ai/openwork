@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { waitUntilInteractive } from "@openwork/behaviors";
 import { navigate } from "@openwork/cdp";
-import type { AttachedSurface } from "@openwork/cdp";
+import type { AttachedSurface, Surface } from "@openwork/cdp";
 import {
   chrome,
   defaultDaytonaExec,
@@ -21,6 +21,7 @@ import { launchHeadlessWeb, resolveHeadlessWorldRuntimePaths } from "@openwork/w
 import { resolveEvalEngine } from "./eval-engine.ts";
 import type { MockBoot, MockHandle } from "./mock.ts";
 import type { Place } from "./place.ts";
+import { provisionOwnedWorkspace, configureOwnedProviders } from "./app-web-workspace.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const REMOTE_REPO_ROOT = "/workspace";
@@ -36,6 +37,8 @@ export interface SeedAppWebOptions {
 
 /** A test-owned real app-web stack. This is distinct from seed.web(), which drives Den. */
 export interface AppWeb extends AttachedSurface {
+  configureProviders(provider: Record<string, unknown>): Promise<void>;
+  provisionWorkspace(folderPath: string): Promise<{ workspaceId: string }>;
   webUrl: string;
   openworkUrl: string;
   workspaceRoot: string;
@@ -45,6 +48,8 @@ export interface AppWeb extends AttachedSurface {
 }
 
 interface AppWebRuntime {
+  configureProviders(provider: Record<string, unknown>): Promise<void>;
+  provisionWorkspace(folderPath: string): Promise<{ workspaceId: string }>;
   webUrl: string;
   openworkUrl: string;
   runtimeDirectory: string;
@@ -110,9 +115,13 @@ function safeWorldSegment(value: string): string {
   return value.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).join("-") || "app-web";
 }
 
+export function isAppWeb(surface: Surface): surface is AppWeb {
+  return "provisionWorkspace" in surface && typeof surface.provisionWorkspace === "function";
+}
+
 function attachAppWebMetadata(
   surface: AttachedSurface,
-  metadata: Pick<AppWeb, "webUrl" | "openworkUrl" | "workspaceRoot" | "mocks" | "actualSourceSha" | "source">,
+  metadata: Pick<AppWeb, "webUrl" | "openworkUrl" | "workspaceRoot" | "mocks" | "actualSourceSha" | "source" | "provisionWorkspace" | "configureProviders">,
   stop: () => Promise<void>,
 ): asserts surface is AppWeb {
   Object.assign(surface, metadata);
@@ -188,6 +197,7 @@ async function startLocalRuntime(worldName: string, workspaceRoot: string): Prom
       mkdir(workspaceRoot, { recursive: true }),
       ...runtimeDirectories(fixtureRoot).map((path) => mkdir(path, { recursive: true })),
     ]);
+    workspaceRoot = await realpath(workspaceRoot);
     const runtime = await launchHeadlessWeb({
       repoRoot: REPO_ROOT,
       name: worldName,
@@ -197,6 +207,8 @@ async function startLocalRuntime(worldName: string, workspaceRoot: string): Prom
     });
     return {
       webUrl: runtime.manifest.webUrl,
+      provisionWorkspace: (folderPath) => provisionOwnedWorkspace(runtime.manifest, folderPath),
+      configureProviders: (provider) => configureOwnedProviders(runtime.manifest, provider),
       openworkUrl: runtime.manifest.openworkUrl,
       runtimeDirectory,
       fixtureRoot,
@@ -298,6 +310,18 @@ await stopHeadlessRuntime(manifest);
 await Promise.all(input.remove.map((path) => rm(path, { recursive: true, force: true })));
 `;
 
+const REMOTE_WORKSPACE_SOURCE = `
+import { readHeadlessRuntimeManifest } from "/workspace/packages/world/src/headless-web.ts";
+import { provisionOwnedWorkspace, configureOwnedProviders } from "/workspace/evals/packages/env/src/app-web-workspace.ts";
+const input = JSON.parse(Buffer.from(process.argv[2], "base64url").toString("utf8"));
+const manifest = await readHeadlessRuntimeManifest(input.runtimeManifestPath);
+if (!manifest || manifest.openworkUrl !== input.openworkUrl) throw new Error("Owned app-web manifest mismatch");
+if (input.operation === "providers") {
+  await configureOwnedProviders(manifest, input.provider);
+  console.log(JSON.stringify({ ok: true }));
+} else console.log(JSON.stringify(await provisionOwnedWorkspace(manifest, input.folderPath)));
+`;
+
 async function startRemoteRuntime(
   sandbox: string,
   worldName: string,
@@ -308,6 +332,7 @@ async function startRemoteRuntime(
   const runtimeDirectory = posix.join(REMOTE_REPO_ROOT, "tmp", "worlds", "runtime", worldName);
   const launchModulePath = `/tmp/${worldName}-launch.mjs`;
   const stopModulePath = `/tmp/${worldName}-stop.mjs`;
+  const workspaceModulePath = `/tmp/${worldName}-workspace.mjs`;
   const output = await runRemoteModule(sandbox, launchModulePath, REMOTE_LAUNCH_SOURCE, {
     directories: [workspaceRoot, ...runtimeDirectories(fixtureRoot)],
     env: isolatedRuntimeEnvironment(fixtureRoot),
@@ -326,6 +351,23 @@ async function startRemoteRuntime(
   assertLoopbackRuntimeUrl("Remote app-web openworkUrl", receipt.openworkUrl);
   return {
     webUrl: receipt.webUrl,
+    configureProviders: async (provider) => {
+      const output = await runRemoteModule(sandbox, workspaceModulePath, REMOTE_WORKSPACE_SOURCE, {
+        runtimeManifestPath: receipt.runtimeManifestPath, openworkUrl: receipt.openworkUrl, operation: "providers", provider,
+      }, `configure owned app-web providers ${worldName}`, 60_000);
+      const value: unknown = JSON.parse(output.trim());
+      if (typeof value !== "object" || value === null || !("ok" in value) || value.ok !== true) throw new Error("Owned provider configuration was not acknowledged.");
+    },
+    provisionWorkspace: async (folderPath) => {
+      const output = await runRemoteModule(sandbox, workspaceModulePath, REMOTE_WORKSPACE_SOURCE, {
+        runtimeManifestPath: receipt.runtimeManifestPath, openworkUrl: receipt.openworkUrl, folderPath,
+      }, `provision owned app-web workspace ${worldName}`, 60_000);
+      const value: unknown = JSON.parse(output.trim());
+      if (typeof value !== "object" || value === null || !("workspaceId" in value) || typeof value.workspaceId !== "string") {
+        throw new Error("Owned remote workspace provisioning returned no identity.");
+      }
+      return { workspaceId: value.workspaceId };
+    },
     openworkUrl: receipt.openworkUrl,
     runtimeDirectory,
     fixtureRoot,
@@ -333,7 +375,7 @@ async function startRemoteRuntime(
     stop: async () => {
       await runRemoteModule(sandbox, stopModulePath, REMOTE_STOP_SOURCE, {
         runtimeManifestPath: receipt.runtimeManifestPath,
-        remove: [runtimeDirectory, fixtureRoot, launchModulePath, stopModulePath],
+        remove: [runtimeDirectory, fixtureRoot, launchModulePath, stopModulePath, workspaceModulePath],
       }, `stop remote app-web runtime ${worldName}`, 60_000);
     },
   };
@@ -500,6 +542,14 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
       await cleanupAppWeb({ browserStop: originalBrowserStop, runtime, mocks, remote });
     };
     attachAppWebMetadata(browser, {
+      configureProviders: async (provider) => {
+        if (stopped || !runtime) throw new Error("Owned app-web runtime has stopped.");
+        await runtime.configureProviders(provider);
+      },
+      provisionWorkspace: async (folderPath) => {
+        if (stopped || !runtime) throw new Error("Owned app-web runtime has stopped.");
+        return runtime.provisionWorkspace(folderPath);
+      },
       webUrl: runtime.webUrl,
       openworkUrl: runtime.openworkUrl,
       workspaceRoot,
