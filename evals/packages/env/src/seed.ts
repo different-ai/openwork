@@ -21,6 +21,8 @@ export interface SeedDesktopOptions {
   name?: string;
   /** Extra environment for this isolated Electron process. */
   env?: Record<string, string>;
+  /** Refuse the pooled lane's shared sandbox; this desktop gets one of its own. */
+  ownSandbox?: boolean;
 }
 
 export interface SeedWebOptions {

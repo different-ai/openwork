@@ -464,6 +464,7 @@ export class SeedChannel implements Seed {
         name: options.name,
         host: this.#runtime.place.host(),
         profileDir: options.profileDir,
+        ownSandbox: options.ownSandbox,
         env: options.model
           ? { ...options.env, OPENWORK_EVAL_MODEL: options.model }
           : options.env,
