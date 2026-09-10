@@ -6,6 +6,7 @@ import { createClient, unwrap } from "@/app/lib/opencode";
 import { hasTerminalSessionReply, holdSessionWork, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop } from "@/app/lib/opencode-interruption";
 import { setSessionArchived } from "@/app/lib/opencode-session";
 import { isOpencodeV2BaseUrl, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
+import { readSessionTree } from "@/app/lib/session-ownership";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -151,20 +152,7 @@ export function useSessionArchive(input: {
     let archived = false;
     try {
       if (isOpencodeV2BaseUrl(baseUrl)) throw new Error(V2_SESSION_ARCHIVE_UNAVAILABLE);
-      const readTree = async () => {
-        const root = unwrap(await client.session.get({ sessionID: sessionId, directory: workspace.path }, options));
-        if (root.id !== sessionId || root.directory !== workspace.path) throw new Error("Could not verify the conversation's workspace.");
-        const ids = [sessionId];
-        for (let index = 0; index < ids.length; index += 1) {
-          const children = unwrap(await client.session.children({ sessionID: ids[index], directory: workspace.path }, options));
-          for (const child of children) {
-            if (child.parentID !== ids[index] || child.directory !== workspace.path) throw new Error("Could not verify a subtask's owner.");
-            if (!ids.includes(child.id)) ids.push(child.id);
-            if (ids.length > 256) throw new Error("Too many subtasks to verify safely.");
-          }
-        }
-        return ids;
-      };
+      const readTree = () => readSessionTree(client, sessionId, workspace.path, options);
       // Native Stop reaches the root immediately, concurrent with discovery.
       // Archive also accounts for older/background subtasks that would be hidden.
       let rootStop: Promise<void> | undefined;

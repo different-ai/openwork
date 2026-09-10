@@ -41,6 +41,7 @@ import {
 } from "./external-mcp-tool-arguments.js"
 import { compareCapabilityMatches, tokenize } from "./search.js"
 import type { CapabilityMatch } from "./search.js"
+import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import {
   codemodeScriptPath,
   resolveCodemodeConnectionNamespaceContext,
@@ -915,7 +916,9 @@ export type ExternalCapabilityExecuteResult =
         | "provider_error"
         | "invalid_capability_arguments"
         | "policy_blocked"
+        | "insufficient_mcp_scope"
       message: string
+      requiredScope?: "mcp:read" | "mcp:write"
       referenceId?: string
       retryable?: boolean
       providerError?: ExternalMcpProviderError
@@ -1092,12 +1095,13 @@ export async function probeExternalConnectionStatus(input: {
 export async function executeExternalCapability(input: {
   organizationId: string
   member: McpMemberIdentity | null
+  scopes: ReadonlySet<string>
   connectionId: string
   toolName: string
   args: unknown
   schemaDigest?: string
   redirectUriBase: string
-  /** Fail closed unless the live provider catalog still marks this exact tool read-only. */
+  /** Additional provider-hint restriction; never replaces write-scope authorization. */
   requireReadOnly?: boolean
   /** Fail closed when the live input schema no longer matches schemaDigest. */
   requireSchemaMatch?: boolean
@@ -1221,6 +1225,17 @@ export async function executeExternalCapability(input: {
         message: `No current tool named "${input.toolName}" exists on "${connection.name}". Call search_capabilities again.`,
         sameArgumentsRetryable: false,
         retry: { action: "search_capabilities", searchRequired: true },
+      }
+    }
+
+    // Provider-controlled hints cannot prove a tool will not mutate through its credential.
+    const requiredScope = DEN_MCP_WRITE_SCOPE
+    if (!input.scopes.has(requiredScope)) {
+      return {
+        ok: false,
+        error: "insufficient_mcp_scope",
+        requiredScope,
+        message: `${input.toolName} requires the ${requiredScope} scope.`,
       }
     }
 

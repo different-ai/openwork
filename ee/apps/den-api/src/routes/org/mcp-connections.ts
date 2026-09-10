@@ -2218,6 +2218,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Get the tool policy for an External MCP Connection",
+      description: "Returns the admin-managed tool policy for one connection: whether every tool is disabled, the individual tool names that are disabled, and who last changed it. Disabled tools are hidden from capability search and Code Mode and refused when called. Workspace owners and admins only.",
       responses: {
         200: jsonResponse("External MCP tool policy.", connectionToolPolicyResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -2246,6 +2247,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Update the tool policy for an External MCP Connection",
+      description: "Replaces the connection's tool policy with the full desired state: allDisabled plus the complete list of disabled tool names (duplicates are collapsed). The policy takes effect immediately for capability search, Code Mode, and tool execution and records the calling admin as its author.",
       responses: {
         200: jsonResponse("External MCP tool policy updated.", connectionToolPolicyResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -2911,6 +2913,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Remove an External MCP Connection",
+      description: "Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. Workspace owners and super-admins can remove any connection; other members only the connections they created. Session callers must have signed in within the last 15 minutes (403 reauth); API-key callers are exempt.",
       responses: {
         200: emptyResponse("Removed."),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),

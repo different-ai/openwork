@@ -231,6 +231,7 @@ const externalMcpProviderErrorOutputSchema = z.object({
 const externalCapabilityErrorPayloadSchema = z.object({
   error: z.string(),
   message: z.string(),
+  requiredScope: z.enum(["mcp:read", "mcp:write"]).optional(),
   referenceId: z.string().optional(),
   retryable: z.boolean().optional(),
   providerError: externalMcpProviderErrorOutputSchema.optional(),
@@ -260,6 +261,7 @@ export function externalCapabilityErrorToolResult(
   const payload = externalCapabilityErrorPayloadSchema.parse({
     error: result.error,
     message: result.message,
+    ...(result.requiredScope ? { requiredScope: result.requiredScope } : {}),
     ...(result.referenceId === undefined ? {} : { referenceId: result.referenceId }),
     ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
     ...(result.providerError ? { providerError: result.providerError } : {}),
@@ -536,6 +538,7 @@ const externalMcpSource: CapabilitySource = {
     return leavesFromBuilt(await buildExternalMcpToolTree({
       organizationId: ctx.organizationId,
       member: ctx.member,
+      scopes: ctx.principal.scopes,
       redirectUriBase: ctx.redirectUriBase,
       namespaceContext: await ctx.resolveNamespaceContext(),
     }))
@@ -574,6 +577,7 @@ const externalMcpSource: CapabilitySource = {
     const result = await executeExternalCapability({
       organizationId: ctx.organizationId,
       member: ctx.member,
+      scopes: ctx.principal.scopes,
       connectionId: parsed.connectionId,
       toolName: parsed.toolName,
       args: normalizeToolBody(input.body),

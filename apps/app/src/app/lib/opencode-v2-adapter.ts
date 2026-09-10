@@ -1803,7 +1803,7 @@ export function createClientV2(
       const result = await request("GET", `/api/session${suffix}`, undefined, options?.signal);
       if (!result.response.ok) return failedResult(result);
       const next = readRecord(result.payload, "cursor")?.next;
-      if (!Array.isArray(responseData(result.payload)) || (next !== undefined && typeof next !== "string")) {
+      if (!Array.isArray(responseData(result.payload)) || (next !== undefined && next !== null && typeof next !== "string")) {
         return failedResult({ ...result, payload: { name: "InvalidV2SessionListResponse" } });
       }
       const data = responseItems(result.payload).flatMap((item) => {

@@ -905,10 +905,10 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
               Add connector
             </Link>
           ) : (
-            <Link href={configuredRoute} className={buttonVariants({ variant: "secondary" })} data-testid="connectors-open-configured">
-              Configured
-              <ChevronRight className="h-4 w-4" aria-hidden="true" />
-            </Link>
+            <DenButton variant="primary" onClick={() => openAdvancedSetup()} data-testid="connectors-add-connector">
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Add connector
+            </DenButton>
           )}
         />
       )}

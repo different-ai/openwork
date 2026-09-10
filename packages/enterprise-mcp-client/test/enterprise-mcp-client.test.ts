@@ -27,7 +27,7 @@ import {
   assertEnterpriseMcpResourceResult,
   collectEnterpriseMcpResources,
 } from "../src/resource-catalog.js"
-import { selectClientAuthMethod } from "@modelcontextprotocol/client"
+import { InsufficientScopeError, selectClientAuthMethod, UnauthorizedError } from "@modelcontextprotocol/client"
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/client"
 
 const rpcRequestSchema = z.object({
@@ -169,6 +169,11 @@ function sendJson(response: ServerResponse, status: number, body: unknown, heade
 }
 
 async function sendMcpResponse(request: IncomingMessage, response: ServerResponse, options: { rejectToolsList?: boolean } = {}): Promise<void> {
+  if (request.method === "GET") {
+    response.writeHead(200, { "content-type": "text/event-stream" })
+    response.end()
+    return
+  }
   const parsed: unknown = JSON.parse(await requestBody(request))
   const rpc = rpcRequestSchema.parse(parsed)
   if (rpc.method === "notifications/initialized") {
@@ -208,6 +213,7 @@ async function sendMcpResponse(request: IncomingMessage, response: ServerRespons
 async function startOAuthMcpServer(options: {
   rejectAuthenticatedMcp?: boolean
   rejectAuthenticatedToolsList?: boolean
+  omitRefreshToken?: boolean
   clientMetadataSupported?: boolean
   scopeLessChallenge?: boolean
   advertisedScopes?: string[]
@@ -270,7 +276,7 @@ async function startOAuthMcpServer(options: {
         }
         sendJson(response, 200, {
           access_token: "enterprise-access-token",
-          refresh_token: "enterprise-refresh-token",
+          ...(options.omitRefreshToken ? {} : { refresh_token: "enterprise-refresh-token" }),
           token_type: "Bearer",
           expires_in: 3600,
           scope: "tools.read",
@@ -2146,6 +2152,105 @@ describe("enterprise MCP OAuth persistence contract", () => {
     assert.equal(persistence.credential?.tokens.access_token, "first-refreshed-access-token")
     assert.equal(persistence.credential?.tokens.refresh_token, "first-rotated-refresh-token")
   })
+
+  for (const method of ["server/discover", "tools/list"]) {
+    for (const status of [401, 403]) {
+      it(`preserves a ${status} ${method} rejection after exchange without restarting OAuth`, async (t) => {
+        const server = await startOAuthMcpServer({ omitRefreshToken: status === 401 })
+        try {
+          const persistence = new MemoryOAuthPersistence()
+          const saveCredential = t.mock.method(persistence.credentials, "save")
+          const state = t.mock.method(EnterpriseMcpOAuthProvider.prototype, "state")
+          const saveCodeVerifier = t.mock.method(EnterpriseMcpOAuthProvider.prototype, "saveCodeVerifier")
+          const redirect = t.mock.method(EnterpriseMcpOAuthProvider.prototype, "redirectToAuthorization")
+          const events: EnterpriseMcpDiagnosticEvent[] = []
+          let rejectedRequests = 0
+          const client = createEnterpriseMcpClient({
+            operationTimeoutMs: 5_000,
+            diagnosticSink: (event) => events.push(event),
+            fetch: async (url, init) => {
+              if (new URL(url).pathname === "/mcp"
+                && new Headers(init?.headers).get("authorization") === "Bearer enterprise-access-token"
+                && requestText(init?.body)) {
+                const request = rpcRequestSchema.parse(JSON.parse(requestText(init?.body)))
+                if (request.method === method) {
+                  rejectedRequests += 1
+                  return Response.json({ error: status === 401 ? "invalid_token" : "insufficient_scope" }, {
+                    status,
+                    headers: {
+                      "www-authenticate": status === 401
+                        ? `Bearer resource_metadata="${server.origin}/.well-known/oauth-protected-resource/mcp"`
+                        : 'Bearer error="insufficient_scope", scope="tools.read tools.write"',
+                    },
+                  })
+                }
+              }
+              return fetch(url, init)
+            },
+          })
+          const connection: EnterpriseMcpConnection = {
+            id: "oauth-candidate-rejection",
+            serverUrl: `${server.origin}/mcp`,
+            authorization: { type: "oauth", persistence },
+          }
+          const redirectUri = "https://den.example.test/oauth-candidate-rejection"
+          const authorizationId = "signed-candidate-state"
+          const started = await client.connect({ connection, redirectUri, authorizationId })
+          assert.equal(started.status, "needs_auth")
+          if (started.status !== "needs_auth") throw new Error("Expected OAuth authorization to be required.")
+          assert.equal(new URL(started.authorizeUrl).searchParams.get("state"), authorizationId)
+          const transaction = persistence.authorizationRecords.get(authorizationId)
+          assert.ok(transaction)
+          const registration = persistence.registration
+          const requestPhase = method === "server/discover" ? "mcp-discovery" : "mcp-tool-discovery"
+
+          await assert.rejects(client.completeAuthorization({
+            connection,
+            redirectUri,
+            code: "approved-code",
+            authorizationId,
+          }), (error: unknown) => {
+            assert.ok(error instanceof EnterpriseMcpClientError)
+            assert.equal(error.code, "MCP_AUTHORIZATION_CALLBACK_FAILED")
+            assert.equal(error.operationPhase, "authorization-callback")
+            assert.ok(!(error.cause instanceof EnterpriseMcpOAuthContractError))
+            if (status === 401) {
+              assert.ok(error.cause instanceof UnauthorizedError)
+            } else {
+              assert.ok(error.cause instanceof InsufficientScopeError)
+              assert.equal(error.cause.requiredScope, "tools.read tools.write")
+            }
+            assert.equal(error.requestPhase, requestPhase)
+            return true
+          })
+
+          assert.equal(rejectedRequests, 1)
+          assert.equal(state.mock.callCount(), 1)
+          assert.equal(saveCodeVerifier.mock.callCount(), 1)
+          assert.equal(redirect.mock.callCount(), 1)
+          assert.equal(saveCredential.mock.callCount(), 0)
+          assert.equal(persistence.invalidationCount, 1)
+          assert.equal(persistence.credential, undefined)
+          assert.equal(persistence.registration, registration)
+          assert.equal(persistence.authorizationRecords.get(authorizationId), transaction)
+          const callbackRequests = events.filter((event) => event.kind === "request"
+            && event.operationPhase === "authorization-callback")
+          assert.deepEqual(callbackRequests.filter((event) => event.kind === "request"
+            && event.outcome === "started" && event.requestPhase?.startsWith("oauth-"))
+            .map((event) => event.requestPhase), ["oauth-token-exchange"])
+          assert.ok(callbackRequests.some((event) => event.kind === "request"
+            && event.requestPhase === "oauth-token-exchange" && event.outcome === "succeeded"))
+          assert.ok(callbackRequests.some((event) => event.kind === "request"
+            && event.requestPhase === requestPhase && event.outcome === "failed" && event.httpStatus === status))
+          assert.ok(events.some((event) => event.kind === "operation"
+            && event.operationPhase === "authorization-callback" && event.outcome === "failed"
+            && event.requestPhase === requestPhase))
+        } finally {
+          await server.close()
+        }
+      })
+    }
+  }
 
   it("invalidates exchanged tokens when callback validation cannot initialize MCP", async () => {
     const server = await startOAuthMcpServer({ rejectAuthenticatedMcp: true })

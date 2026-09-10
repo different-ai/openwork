@@ -13,7 +13,7 @@ import { buildGmailDraftRaw, gmailDraftUrl, gmailThreadUrl, normalizeGmailHeader
 import type { GmailDraftAttachment, GmailDraftQuote } from "../../capability-sources/gmail.js"
 import { gmailFileInputPreflight, gmailFileInputPreflightSchema } from "../../capability-sources/gmail-file-input.js"
 import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
-import { listNativeProviderUsableEntries, resolveDefaultNativeProviderCredentialId } from "../../capability-sources/native-provider-connections.js"
+import { listNativeProviderUsableEntries, nativeProviderConnectionPolicyError, resolveDefaultNativeProviderCredentialId, type NativeProviderPolicyError } from "../../capability-sources/native-provider-connections.js"
 import {
   buildDriveMultipartUpload,
   buildDriveSearchQuery,
@@ -305,6 +305,7 @@ export type GoogleWorkspaceAccessToken =
   | { kind: "ok"; accessToken: string; account: ConnectedAccountRow; enabledScopes: string[]; enabledFeatures?: string[] }
   | { kind: "needs_connection"; message: string }
   | { kind: "google_api_error"; message: string }
+  | NativeProviderPolicyError
 
 type CalendarConferenceData = {
   createRequest: {
@@ -409,7 +410,8 @@ async function googleWorkspaceToken(input: {
     })
   }
   if (!credentialProviderId) {
-    return { kind: "needs_connection", message: CONNECT_GOOGLE_ACCOUNT_MESSAGE }
+    return await nativeProviderConnectionPolicyError(input.organizationId)
+      ?? { kind: "needs_connection", message: CONNECT_GOOGLE_ACCOUNT_MESSAGE }
   }
 
   const token = await getValidAccessToken({
@@ -626,7 +628,7 @@ async function executeGmailDraft(
   payload: OrganizationContext,
   attachments: GmailDraftAttachment[],
   connectionId?: string | null,
-): Promise<{ status: 200 | 400 | 409 | 422 | 502; body: Record<string, unknown> }> {
+): Promise<{ status: 200 | 400 | 403 | 409 | 422 | 502; body: Record<string, unknown> }> {
   const { to, cc, bcc, subject, body, threadId } = input
   if (!threadId && GMAIL_REPLY_SUBJECT_RE.test(subject)) {
     return {
@@ -646,8 +648,8 @@ async function executeGmailDraft(
   if (token.kind === "google_api_error") {
     return { status: 502, body: { error: "google_api_error", message: token.message } }
   }
-  if (token.kind === "needs_connection") {
-    return { status: 409, body: { error: "needs_connection", message: token.message } }
+  if (token.kind === "needs_connection" || token.kind === "policy_blocked") {
+    return { status: token.kind === "policy_blocked" ? 403 : 409, body: { error: token.kind, message: token.message } }
   }
 
   if (threadId && missingScope(token.account, [GMAIL_READ_SCOPE])) {
@@ -783,8 +785,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (token.kind === "google_api_error") {
         return c.json({ error: "google_api_error", message: token.message }, 502)
       }
-      if (token.kind === "needs_connection") {
-        return c.json({ error: "needs_connection", message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") {
+        return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       }
       if (missingScope(token.account, [DRIVE_FILE_SCOPE, DRIVE_FULL_SCOPE])) {
         return c.json({ error: "needs_connection", message: missingPermissionMessage("Google Drive write") }, 409)
@@ -902,8 +904,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (token.kind === "google_api_error") {
         return c.json({ error: "google_api_error", message: token.message }, 502)
       }
-      if (token.kind === "needs_connection") {
-        return c.json({ error: "needs_connection", message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") {
+        return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       }
       if (missingScope(token.account, [GMAIL_READ_SCOPE])) {
         return c.json({ error: "needs_connection", message: missingPermissionMessage("Gmail read") }, 409)
@@ -971,8 +973,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (token.kind === "google_api_error") {
         return c.json({ error: "google_api_error", message: token.message }, 502)
       }
-      if (token.kind === "needs_connection") {
-        return c.json({ error: "needs_connection", message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") {
+        return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       }
       if (missingScope(token.account, [GMAIL_READ_SCOPE])) {
         return c.json({ error: "needs_connection", message: missingPermissionMessage("Gmail read") }, 409)
@@ -1016,8 +1018,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (token.kind === "google_api_error") {
         return c.json({ error: "google_api_error", message: token.message }, 502)
       }
-      if (token.kind === "needs_connection") {
-        return c.json({ error: "needs_connection", message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") {
+        return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       }
       if (missingScope(token.account, [GMAIL_READ_SCOPE])) {
         return c.json({ error: "needs_connection", message: missingPermissionMessage("Gmail read") }, 409)
@@ -1065,8 +1067,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (token.kind === "google_api_error") {
         return c.json({ error: "google_api_error", message: token.message }, 502)
       }
-      if (token.kind === "needs_connection") {
-        return c.json({ error: "needs_connection", message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") {
+        return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       }
       if (missingScope(token.account, [CALENDAR_READ_SCOPE, CALENDAR_EVENTS_SCOPE])) {
         return c.json({ error: "needs_connection", message: missingPermissionMessage("Google Calendar read") }, 409)
@@ -1115,8 +1117,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (token.kind === "google_api_error") {
         return c.json({ error: "google_api_error", message: token.message }, 502)
       }
-      if (token.kind === "needs_connection") {
-        return c.json({ error: "needs_connection", message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") {
+        return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       }
       if (missingScope(token.account, [CALENDAR_EVENTS_SCOPE])) {
         return c.json({ error: "needs_connection", message: missingPermissionMessage("Google Calendar write") }, 409)
@@ -1184,8 +1186,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (token.kind === "google_api_error") {
         return c.json({ error: "google_api_error", message: token.message }, 502)
       }
-      if (token.kind === "needs_connection") {
-        return c.json({ error: "needs_connection", message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") {
+        return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       }
       if (missingScope(token.account, [CALENDAR_EVENTS_SCOPE])) {
         return c.json({ error: "needs_connection", message: missingPermissionMessage("Google Calendar write") }, 409)
@@ -1247,8 +1249,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (token.kind === "google_api_error") {
         return c.json({ error: "google_api_error", message: token.message }, 502)
       }
-      if (token.kind === "needs_connection") {
-        return c.json({ error: "needs_connection", message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") {
+        return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       }
       const permissionMessage = driveReadPermissionMessage(token.account)
       if (permissionMessage) {
@@ -1310,8 +1312,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (token.kind === "google_api_error") {
         return c.json({ error: "google_api_error", message: token.message }, 502)
       }
-      if (token.kind === "needs_connection") {
-        return c.json({ error: "needs_connection", message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") {
+        return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       }
       const permissionMessage = driveReadPermissionMessage(token.account)
       if (permissionMessage) {
@@ -1465,8 +1467,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (token.kind === "google_api_error") {
         return c.json({ error: "google_api_error", message: token.message }, 502)
       }
-      if (token.kind === "needs_connection") {
-        return c.json({ error: "needs_connection", message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") {
+        return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       }
       if (missingScope(token.account, [DRIVE_FILE_SCOPE, DRIVE_FULL_SCOPE])) {
         return c.json({ error: "needs_connection", message: missingPermissionMessage("Google Drive write") }, 409)

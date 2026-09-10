@@ -9,7 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
-import { hasTerminalSessionReply, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
+import { hasTerminalSessionReply, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
 import { createClient, createPromptMessageID, hasAcceptedPromptMessage, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl, v2PromptText } from "@/app/lib/opencode-v2-adapter";
 import * as opencodeSessionNative from "@/app/lib/opencode-session-native";
@@ -2044,9 +2044,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
   };
 
-  // Core sender shared by initial send and steered follow-ups. OpenCode
-  // accepts follow-up user turns mid-run (steering) — the running loop picks
-  // up the new message — so this is safe to call while the agent is busy.
+  // Immediate sends interrupt foreground delegation, but otherwise steer the
+  // running loop. Explicit queueing and automatic draining stay separate.
   const sendDraft = useCallback(async (nextDraft: ComposerDraft, itemId: string, onPrepared?: (text?: string) => void): Promise<CloudMcpSubmissionResult | { outcome: "unknown" }> => {
     const messageId = nextDraft.messageId ?? createPromptMessageID();
     const generation = getQueuedSendGeneration(props.sessionId);
@@ -2056,8 +2055,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setError(null);
     try {
       if (archived || !archiveStateKnown) throw new Error("This session is read-only. Restore it before sending.");
-      const result = await submitAfterInterruption(props.opencodeBaseUrl, props.sessionId,
-        () => props.onSendDraft({ ...nextDraft, messageId }, props.sessionId, onPrepared), messageId);
+      const result = await submitImmediateSessionTurn<CloudMcpSubmissionResult>(props.opencodeBaseUrl, opencodeClient, props.sessionId,
+        snapshot?.messages ?? [], async () => {
+          if (getQueuedSendGeneration(props.sessionId) !== generation) {
+            return { outcome: "cancelled", reason: "context_changed" };
+          }
+          return props.onSendDraft({ ...nextDraft, messageId }, props.sessionId, onPrepared);
+        }, { directory: props.workspaceRoot.trim() || undefined, messageID: messageId });
       dispatchQueuedDrain(props.sessionId, {
         type: "send_result", itemId, outcome: result.outcome, at: Date.now(),
         deferredMessageID: nextDraft.command ? messageId : undefined,
@@ -2095,7 +2099,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       pendingSendsRef.current.delete(submissionId);
       setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
-  }, [archived, archiveStateKnown, props.onSendDraft, props.opencodeBaseUrl, props.sessionId, props.workspaceId, renderedMessages.length, sessionOwner, setError]);
+  }, [archived, archiveStateKnown, opencodeClient, props.onSendDraft, props.opencodeBaseUrl, props.sessionId, props.workspaceId, props.workspaceRoot, renderedMessages.length, sessionOwner, setError, snapshot]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);

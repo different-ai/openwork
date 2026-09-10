@@ -44,6 +44,9 @@ const definitions = {
       { id: 'STEER-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } },
     ],
   },
+  'saved-app-creation.e2e.test.ts': {
+    cases: [{ id: 'APP-ISOLATION', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
+  },
 };
 
 export const registeredCases = Object.freeze(Object.entries(definitions).flatMap(([spec, definition]) =>

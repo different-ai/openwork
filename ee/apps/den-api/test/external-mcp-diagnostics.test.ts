@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { exchangeAuthorization, OAuthError, parseErrorResponse } from "@modelcontextprotocol/client"
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js"
 import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
 import {
@@ -14,6 +15,7 @@ import {
   externalMcpDiagnosticForLog,
   safeExternalMcpEndpointForLog,
   safeExternalMcpCauseChain,
+  type ExternalMcpDiagnosticPhase,
 } from "../src/capability-sources/external-mcp-diagnostics.js"
 import { PrivateUrlError } from "../src/capability-sources/url-guard.js"
 import { connectCallbackPage } from "../src/capability-sources/oauth-callback-page.js"
@@ -338,6 +340,27 @@ describe("external MCP diagnostics", () => {
     expect(safeExternalMcpCauseChain(error)).toEqual([{ name: "Error" }])
   })
 
+  test("does not promote unrecognized OAuth codes or arbitrary string codes", () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_unknown_oauth_code")
+    tracker.begin("AUTH_TOKEN_ACQUISITION")
+    for (const error of [
+      new OAuthError("private-provider-code", "raw-body-secret"),
+      new OAuthError("constructor", "raw-body-secret"),
+      Object.assign(new Error("raw-body-secret"), { code: "invalid_grant" }),
+    ]) {
+      const diagnosticError = tracker.error(error)
+      expect(diagnosticError.diagnostic).toMatchObject({
+        code: "MCP_AUTH_TOKEN_ACQUISITION",
+        actionOwner: "openwork",
+      })
+      expect(diagnosticError.safeCauseChain).toEqual([{ name: error.name }])
+      const logged = JSON.stringify(externalMcpDiagnosticForLog(diagnosticError, "ignored", "AUTH_TOKEN_ACQUISITION"))
+      expect(logged).not.toContain("raw-body-secret")
+      expect(logged).not.toContain("private-provider-code")
+      expect(logged).not.toContain("invalid_grant")
+    }
+  })
+
   test("safe endpoint logs omit credentials, query parameters, and fragments", () => {
     const endpoint = safeExternalMcpEndpointForLog("https://user:password@mcp.example.invalid/tenant/server?token=secret#fragment")
     expect(endpoint).toEqual({ origin: "https://mcp.example.invalid", pathHash: "sha256:8ab7ab56bba09945" })
@@ -477,6 +500,42 @@ describe("external MCP diagnostics", () => {
       phase: "AUTH_RESOURCE_VALIDATION",
       code: "MCP_OAUTH_INSUFFICIENT_SCOPE",
     })
+  })
+
+  test.each([401, 403])("classifies callback token-only resource verification HTTP %s without claiming missing state", async (status) => {
+    for (const method of ["server/discover", "initialize"]) {
+      const tracker = new ExternalMcpDiagnosticTracker("req_callback_resource", {
+        authType: "oauth",
+        credentialMode: "per_member",
+      })
+      tracker.passed("AUTH_TOKEN_ACQUISITION")
+      const diagnosticFetch = createExternalMcpDiagnosticFetch({
+        endpoint: "https://mcp.example.invalid/mcp",
+        tracker,
+        fetch: async () => new Response(null, { status }),
+      })
+      await diagnosticFetch("https://mcp.example.invalid/mcp", {
+        method: "POST",
+        headers: { authorization: "Bearer callback-token-secret", "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: {} }),
+      })
+      const error = tracker.error(new Error("Token-only verification failed"), "MCP_INITIALIZE")
+      expect(error.diagnostic).toMatchObject({
+        phase: "AUTH_RESOURCE_VALIDATION",
+        operationPhase: "MCP_INITIALIZE",
+        code: `MCP_OAUTH_HTTP_${status}`,
+        category: "oauth_resource_rejected",
+        highestPassed: "reachable",
+        actionOwner: "member",
+        retryable: status === 401,
+        httpStatus: status,
+        message: "The MCP resource rejected the supplied authorization.",
+      })
+      expect(error.diagnostic.code).not.toBe("MCP_OAUTH_AUTHORIZATION_MISSING")
+      expect(error.diagnostic.message).not.toContain("authorization server")
+      expect(JSON.stringify(externalMcpDiagnosticForLog(error, "ignored", "AUTH_TOKEN_ACQUISITION")))
+        .not.toContain("callback-token-secret")
+    }
   })
 
   test("classifies allowlisted provider tool results with bounded provider text", () => {
@@ -1109,6 +1168,148 @@ describe("external MCP diagnostics", () => {
       code: "MCP_PROVIDER_TOOL_ERROR",
       payloadBytes: 0,
     })
+  })
+
+  for (const status of [undefined, 400, 401]) {
+    test.each([
+      ["invalid_client", "AUTH_CLIENT_REGISTRATION", "oauth_client_registration", "MCP_OAUTH_CLIENT_REJECTED", "organization_admin", false],
+      ["unauthorized_client", "AUTH_CLIENT_REGISTRATION", "oauth_client_registration", "MCP_OAUTH_CLIENT_REJECTED", "organization_admin", false],
+      ["invalid_client_metadata", "AUTH_CLIENT_REGISTRATION", "oauth_client_registration", "MCP_OAUTH_CLIENT_REJECTED", "organization_admin", false],
+      ["invalid_grant", "AUTH_TOKEN_ACQUISITION", "oauth_token_failure", "MCP_OAUTH_INVALID_GRANT", "member", false],
+      ["invalid_request", "AUTH_TOKEN_ACQUISITION", "oauth_request_rejected", "MCP_OAUTH_INVALID_REQUEST", "organization_admin", false],
+      ["invalid_scope", "AUTH_USER_OR_WORKLOAD", "oauth_invalid_scope", "MCP_OAUTH_INVALID_SCOPE", "organization_admin", false],
+      ["invalid_target", "AUTH_RESOURCE_VALIDATION", "oauth_invalid_target", "MCP_OAUTH_INVALID_TARGET", "organization_admin", false],
+      ["invalid_token", "AUTH_RESOURCE_VALIDATION", "oauth_invalid_token", "MCP_OAUTH_INVALID_TOKEN", "member", false],
+      ["insufficient_scope", "AUTH_RESOURCE_VALIDATION", "oauth_insufficient_scope", "MCP_OAUTH_INSUFFICIENT_SCOPE", "organization_admin", false],
+      ["method_not_allowed", "AUTH_TOKEN_ACQUISITION", "oauth_method_not_allowed", "MCP_OAUTH_METHOD_NOT_ALLOWED", "provider_admin", false],
+      ["too_many_requests", "AUTH_TOKEN_ACQUISITION", "oauth_provider_throttled", "MCP_OAUTH_TOO_MANY_REQUESTS", "provider_admin", true],
+      ["unsupported_token_type", "AUTH_TOKEN_ACQUISITION", "oauth_unsupported_token_type", "MCP_OAUTH_UNSUPPORTED_TOKEN_TYPE", "provider_admin", false],
+      ["access_denied", "AUTH_USER_OR_WORKLOAD", "oauth_access_denied", "MCP_OAUTH_ACCESS_DENIED", "member", false],
+      ["unsupported_grant_type", "AUTH_TOKEN_ACQUISITION", "oauth_request_rejected", "MCP_OAUTH_UNSUPPORTED_GRANT_TYPE", "organization_admin", false],
+      ["unsupported_response_type", "AUTH_TOKEN_ACQUISITION", "oauth_request_rejected", "MCP_OAUTH_UNSUPPORTED_RESPONSE_TYPE", "organization_admin", false],
+      ["temporarily_unavailable", "AUTH_TOKEN_ACQUISITION", "oauth_provider_unavailable", "MCP_OAUTH_TEMPORARILY_UNAVAILABLE", "provider_admin", true],
+      ["server_error", "AUTH_TOKEN_ACQUISITION", "oauth_provider_unavailable", "MCP_OAUTH_SERVER_ERROR", "provider_admin", true],
+    ])(`classifies SDK v2 %s with ${status === undefined ? "no captured HTTP response" : `HTTP ${status}`}`, async (oauthCode, phase, category, code, actionOwner, retryable) => {
+      const tracker = new ExternalMcpDiagnosticTracker(`req_v2_${oauthCode}`)
+      tracker.begin("AUTH_TOKEN_ACQUISITION")
+      const fetchToken = async () => Response.json({
+        error: oauthCode,
+        error_description: "Token exchange failed; client_secret=description-secret",
+        private_detail: "sdk-raw-body-secret",
+        access_token: "response-token-secret",
+      }, { status: status ?? 400 })
+      const diagnosticFetch = createExternalMcpDiagnosticFetch({
+        endpoint: "https://mcp.example.invalid/mcp",
+        tracker,
+        fetch: fetchToken,
+      })
+      let sdkError: unknown
+      try {
+        await exchangeAuthorization("https://login.example.invalid", {
+          metadata: {
+            issuer: "https://login.example.invalid",
+            authorization_endpoint: "https://login.example.invalid/authorize",
+            token_endpoint: "https://login.example.invalid/token",
+            response_types_supported: ["code"],
+          },
+          clientInformation: { client_id: "diagnostic-client" },
+          authorizationCode: "request-code-secret",
+          codeVerifier: "request-pkce-secret",
+          redirectUri: "https://den.example.invalid/callback",
+          fetchFn: status === undefined
+            ? fetchToken
+            : (url, init) => diagnosticFetch(typeof url === "string" || url instanceof URL ? url : url.url, init),
+        })
+      } catch (error) {
+        sdkError = error
+      }
+      expect(sdkError).toBeInstanceOf(OAuthError)
+      if (!(sdkError instanceof OAuthError)) throw new Error("The SDK did not return an OAuthError")
+      expect(sdkError.name).toBe("OAuthError")
+      expect(sdkError.code).toBe(oauthCode)
+      expect(sdkError.message).toContain("description-secret")
+
+      for (const source of [sdkError, new EnterpriseMcpClientError({
+        operationPhase: "authorization-callback",
+        requestPhase: "oauth-token-exchange",
+        cause: sdkError,
+      })]) {
+        const error = tracker.error(source)
+        expect(error.diagnostic).toMatchObject({ phase, category, code, actionOwner, retryable })
+        expect(error.diagnostic.httpStatus).toBe(status)
+        expect(error.safeCauseChain).toContainEqual({ name: "OAuthError", code: oauthCode })
+        const logged = externalMcpDiagnosticForLog(error, "ignored", "AUTH_TOKEN_ACQUISITION")
+        const html = connectCallbackPage({ ok: false, name: "Diagnostic MCP", message: error.message, referenceId: error.diagnostic.referenceId })
+        const serialized = `${JSON.stringify(logged)} ${html}`
+        for (const secret of ["description-secret", "sdk-raw-body-secret", "response-token-secret", "request-code-secret", "request-pkce-secret"]) {
+          expect(serialized).not.toContain(secret)
+        }
+        if (status !== undefined) {
+          expect(error.diagnostic.providerResponseExcerpt).toContain("client_secret=[redacted]")
+        }
+      }
+
+      if (oauthCode === "invalid_grant") {
+        const refresh = new ExternalMcpDiagnosticTracker("req_v2_refresh", { authType: "oauth", credentialMode: "shared" })
+        expect(refresh.error(sdkError, "CONTINUITY_REFRESH").diagnostic).toMatchObject({
+          phase: "CONTINUITY_REFRESH",
+          code: "MCP_OAUTH_INVALID_GRANT",
+          actionOwner: "organization_admin",
+          operatorAction: "Reconnect the organization-managed provider account, then retry.",
+        })
+      }
+    })
+  }
+
+  test.each([undefined, 400, 401])("does not expose SDK v2 raw OAuth parse-error bodies with HTTP %s", async (status) => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_oauth_parse_error")
+    tracker.begin("AUTH_TOKEN_ACQUISITION")
+    const fetchToken = async () => Response.json({ private_detail: "sdk-raw-body-secret" }, { status: status ?? 400 })
+    const diagnosticFetch = createExternalMcpDiagnosticFetch({
+      endpoint: "https://mcp.example.invalid/mcp",
+      tracker,
+      fetch: fetchToken,
+    })
+    const response = status === undefined ? await fetchToken() : await diagnosticFetch("https://login.example.invalid/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "authorization_code", code: "request-code-secret" }),
+    })
+    const sdkError = await parseErrorResponse(response)
+    expect(sdkError).toBeInstanceOf(OAuthError)
+    expect(sdkError.message).toContain("sdk-raw-body-secret")
+    const error = tracker.error(sdkError)
+    expect(error.diagnostic).toMatchObject({
+      phase: "AUTH_TOKEN_ACQUISITION",
+      code: "MCP_OAUTH_SERVER_ERROR",
+      message: "OpenWork could not complete the OAuth token exchange.",
+    })
+    expect(error.diagnostic.httpStatus).toBe(status)
+    expect(error.safeCauseChain).toEqual([{ name: "OAuthError", code: "server_error" }])
+    const logged = JSON.stringify(externalMcpDiagnosticForLog(error, "ignored", "AUTH_TOKEN_ACQUISITION"))
+    expect(logged).not.toContain("sdk-raw-body-secret")
+    expect(logged).not.toContain("request-code-secret")
+  })
+
+  test.each(["AUTH_TOKEN_ACQUISITION", "CONTINUITY_REFRESH"] satisfies ExternalMcpDiagnosticPhase[])("keeps a local %s failure neutral before any fetch", (phase) => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_local_oauth", { authType: "oauth", credentialMode: "shared" })
+    tracker.begin(phase)
+    const error = tracker.error(new TypeError("Local setup failed with local-secret"))
+    expect(error.diagnostic).toMatchObject({
+      phase,
+      code: `MCP_${phase}`,
+      highestPassed: "configured",
+      actionOwner: "openwork",
+      retryable: false,
+      message: phase === "CONTINUITY_REFRESH"
+        ? "OpenWork could not complete the OAuth token refresh."
+        : "OpenWork could not complete the OAuth token exchange.",
+    })
+    expect(error.diagnostic.httpStatus).toBeUndefined()
+    expect(error.diagnostic.outbound).toBeUndefined()
+    expect(error.diagnostic.message).not.toContain("rejected")
+    expect(error.diagnostic.operatorAction).toContain("OpenWork's OAuth diagnostics")
+    expect(JSON.stringify(externalMcpDiagnosticForLog(error, "ignored", phase))).not.toContain("local-secret")
   })
 
   test("typed OAuth token errors override generic HTTP 400 classification", async () => {
