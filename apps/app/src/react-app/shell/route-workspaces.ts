@@ -67,12 +67,24 @@ async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promis
     : endpoint;
 }
 
-export async function createRouteSession(endpoint: ResolvedWorkspaceEndpoint, directory?: string): Promise<Session> {
+/**
+ * Create a session on the engine that routes this workspace's chats and return
+ * that engine's endpoint too: anything keyed by the session's `opencodeBaseUrl`
+ * (the surface's owner scope) must use the resolved URL, not the v1 default.
+ */
+export async function createRouteSessionWithEndpoint(
+  endpoint: ResolvedWorkspaceEndpoint,
+  directory?: string,
+): Promise<{ session: Session; endpoint: ResolvedWorkspaceEndpoint }> {
   const native = await routeSessionEndpoint(endpoint);
   const client = isOpencodeV2BaseUrl(native.opencodeBaseUrl)
     ? createClientV2(native.opencodeBaseUrl, directory, { token: native.token })
     : createClient(native.opencodeBaseUrl, directory, { token: native.token, mode: "openwork" });
-  return unwrap(await client.session.create({ directory }));
+  return { session: unwrap(await client.session.create({ directory })), endpoint: native };
+}
+
+export async function createRouteSession(endpoint: ResolvedWorkspaceEndpoint, directory?: string): Promise<Session> {
+  return (await createRouteSessionWithEndpoint(endpoint, directory)).session;
 }
 
 export async function deleteRouteSession(endpoint: ResolvedWorkspaceEndpoint, sessionId: string): Promise<boolean> {

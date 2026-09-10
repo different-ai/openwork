@@ -81,6 +81,7 @@ import {
   describeTaskCreateRetry,
   describeWorkspaceCreateError,
   createRouteSession,
+  createRouteSessionWithEndpoint,
   deleteRouteSession,
   downloadWorkspaceJson,
   folderNameFromPath,
@@ -3499,7 +3500,13 @@ export function SessionRoute() {
           if (!workspace) throw new Error("Workspace is unavailable. Try again.");
           const endpoint = endpointForWorkspace(workspace);
           if (!endpoint?.token) throw new Error("Workspace is disconnected. Reconnect and try again.");
-          const session = await createRouteSession(endpoint, workspace.path?.trim() || undefined);
+          // The auto-send is scoped by the engine URL the surface will own the
+          // session under, so key it with the endpoint that created the session
+          // (v2 routing rewrites it; the workspace default is always v1).
+          const { session, endpoint: sessionEndpoint } = await createRouteSessionWithEndpoint(
+            endpoint,
+            workspace.path?.trim() || undefined,
+          );
           const continuation = handoff
             ? snapshotComposerSessionState(handoff.getContinuation())
             : null;
@@ -3528,7 +3535,7 @@ export function SessionRoute() {
               markComposerAutoSend(session.id, {
                 scopeKey: composerAutoSendScopeKey({
                   draftScope: sessionDraftScope,
-                  opencodeBaseUrl: endpoint.opencodeBaseUrl,
+                  opencodeBaseUrl: sessionEndpoint.opencodeBaseUrl,
                   workspaceId,
                   sessionId: session.id,
                 }),
