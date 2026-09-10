@@ -4,17 +4,172 @@ Initial Helm chart for the OpenWork EE Den stack:
 
 - `den-api` control plane on port `8788`
 - `den-web` web app on port `3005`
-- optional OpenWork Gateway service on port `8791` (`inference.enabled`)
+- optional OpenWork Gateway service on port `8791` (`gateway.enabled`)
 
-Gateway retains the chart's `inference.*` values, secret keys, image repository,
-resource names and selectors for upgrade safety. The chart emits legacy env
-names for pinned older images; new deployments can use `GATEWAY_*` in the app's
-environment. Do not configure a separate `GATEWAY_ADMIN_TOKEN` when retention is
-enabled: use the shared `inference.retention.adminTokenSecret` reference instead.
+Gateway retains the chart's legacy `inference.*` aliases, secret keys, image
+repository, resource names and selectors for upgrade safety. Only explicit
+`gateway.enabled: true` advertises the new capability; legacy service enablement
+alone does not. Gateway here means `ee/apps/gateway`, not the separate
+`den-gateway` web edge application.
 See [Gateway configuration and stable contracts](../../../ee/apps/gateway/README.md).
 - shared ConfigMap and Secret templating
 - optional Ingress for web and API hosts
 - pre-install/pre-upgrade migration Job scaffold
+
+## Gateway Compatibility (Chart 0.2.0)
+
+`gateway: {}` is intentionally sparse, with **no canonical defaults** that could
+mask an existing `inference.enabled: true`. An absent root (including old
+`--reuse-values` releases) is treated as `{}`; an explicitly supplied non-map is
+rejected. Supported structural overrides are
+`enabled`, `replicaCount`, `image`, `service`, `containerPort`, `env`,
+`podAnnotations`, `podLabels`, `resources`, `probes`, and `retention`.
+
+| Configuration | Service | `GATEWAY_ENABLED` in Den API / Gateway |
+| --- | --- | --- |
+| Defaults | Absent | `false` / absent |
+| `inference.enabled: true`, no canonical enablement | Retained | `false` / `false` |
+| `gateway.enabled: false`, even with legacy true | Absent | `false` / absent |
+| `gateway.enabled: true` with valid configuration | Present | `true` / `true` |
+
+For every structural key, canonical **presence** wins, not truthiness. Nonempty
+maps merge recursively; `{}`, `[]`, `false`, `0`, and `""` replace the inherited
+value. For example, `gateway.env: {}` clears all inherited env overrides,
+`gateway.service.annotations: {}` clears legacy annotations, and
+`gateway.replicaCount: 0` scales down without disabling capability intent.
+`gateway.probes: {}` removes both probes. Clearing a required field (such as
+`gateway.image: {}` or service port `0`) fails with a configuration error when
+the service is enabled. An empty image **tag** clears a legacy tag and uses
+`image.tag`, then `Chart.appVersion`, for both the Deployment and retention job.
+These clear semantics apply to the canonical-over-legacy merge **after Helm has
+coalesced its values**. They work when migrating reused legacy `inference.*`
+configuration: for example, a new `gateway.env: {}` clears old `inference.env`.
+The root `gateway: {}` itself means no overrides, not removal of the legacy service.
+
+Helm can refill an empty map with saved **canonical** values before any chart
+template runs. After a release has saved `gateway.env.SAVED`, a later
+`--reuse-values --set-json 'gateway.env={}'` retains that entry; the chart cannot
+recover the original empty-map intent. The same limitation applies to nested
+maps from earlier values files. To clear previously canonical maps, use
+`--reset-values` with a complete, reviewed values file that omits the old entries
+and explicitly includes the desired empty maps. Preserve all other deployment
+configuration and Secret references in that file. Do not rely on a final empty
+override file or `--reset-then-reuse-values` to discard saved maps. `null` is
+Helm's deletion operator, not a supported chart clear value here.
+
+The `*-inference` Service, Deployment, container name, selectors and default
+`ghcr.io/different-ai/openwork-inference` repository are unchanged. Existing Den
+web/API ingress hosts and resource names are untouched. This chart does not
+create Gateway ingress automatically: provision a desktop-reachable TLS endpoint
+using your existing ingress/mesh or `gateway.service` load balancer settings.
+
+Explicit enablement with an existing Secret:
+
+```yaml
+gateway:
+  enabled: true
+config:
+  internal:
+    gatewayProxyBaseUrl: http://openwork-ee-inference:8791
+    inferenceProxyBaseUrl: https://existing-models.example.com # Keep your existing Models endpoint.
+  public:
+    gatewayPublicBaseUrl: https://gateway.example.com
+secret:
+  create: false
+  existingSecret: openwork-ee-secrets
+```
+
+Set the internal hostname to your release's retained Service name. Both URLs
+must be explicit origins without credentials, non-root paths, queries, or
+fragments. Public origins must use HTTPS and a qualified, non-local hostname;
+internal origins may use HTTP. Loopback origins are rejected. A trailing `/`
+is permitted. Helm performs static validation; the application's shared Gateway
+environment parser performs final URL, database and encryption validation at
+startup. Rendering cannot verify DNS, TLS, Secret contents, or reachability.
+
+`config.internal.gatewayProxyBaseUrl` overrides legacy
+`config.internal.inferenceProxyBaseUrl` **by presence**, including `""`. An empty
+canonical URL clears the legacy one and fails validation if Gateway is enabled.
+Without the canonical key, an explicitly configured legacy URL satisfies the
+internal origin requirement. The generated in-cluster URL remains available for
+legacy service-only installations, but is not sufficient for new opt-in.
+`config.public.gatewayPublicBaseUrl` has no inferred public fallback. Legacy
+Models retain a valid desktop origin from `INFERENCE_PROXY_BASE_URL`, otherwise
+use the configured public Gateway origin, never its internal Service address.
+When a canonical proxy or public destination is configured, Helm emits the nonempty existing `config.internal.inferenceProxyBaseUrl`
+as that legacy variable, or the public origin if unset/empty; keep your existing
+Models endpoint in this legacy setting despite its `internal` name. Gateway's
+canonical internal URL still wins for internal resolution, including empty clears.
+Public destinations survive management disable: runtime Models selection prefers a
+valid legacy Models public origin, then a valid Gateway public origin, regardless
+of the flag. The chart retains shared public configuration on disabled deployments;
+existing per-app public URL overrides remain honored there. Without a usable public
+destination, historical disabled Models fallback remains and may be private/loopback.
+Optional malformed Gateway settings do not add disabled-mode startup requirements.
+`config.inference.*` Models billing and upstream settings remain unchanged.
+
+The enabled Den API and Gateway receive required `secretKeyRef` entries for the
+same `DEN_DB_ENCRYPTION_KEY` and database credentials. `config.databaseMode: mysql`
+uses `secret.keys.databaseUrl`; `planetscale` uses `databaseHost`,
+`databaseUsername`, and `databasePassword`. Key remapping is supported. The
+existing Secret must contain nonempty credentials and an encryption key of at
+least 32 characters; it is never read by Helm. Chart-created Secrets use
+`secret.values` and reject missing/placeholder Gateway credentials early.
+Pre-install migration hooks keep their existing inline-secret behavior for
+chart-created Secrets; use an existing Secret to avoid inline hook credentials.
+Regardless of runtime mode, enabled migration Jobs also require the existing
+`secret.keys.databaseUrl` / `secret.values.databaseUrl` TCP configuration described
+under [Migration TCP configuration](#migration-tcp-configuration).
+
+Admin and webhook endpoints are independently opt-in for canonical deployments:
+
+```yaml
+gateway:
+  enabled: true
+  admin:
+    enabled: true
+  webhook:
+    enabled: true
+secret:
+  keys:
+    gatewayAdminToken: GATEWAY_ADMIN_TOKEN
+    gatewayWebhookSecret: GATEWAY_WEBHOOK_SECRET
+```
+
+These optional `secret.keys.gateway*` and `secret.values.gateway*` keys override
+their `inference*` aliases by presence. Defaults retain the old Secret keys.
+Only enabled features require token references; disabled features explicitly
+clear both token env aliases so `envFrom` cannot accidentally turn them on.
+Shared deployment flags, origins, database keys, and tokens must not be overridden
+through per-app `env` when enabled; Helm rejects conflicting configuration.
+
+Retention is separate from member Automations and remains opt-in after the
+accounting migration:
+
+```yaml
+gateway:
+  retention:
+    enabled: true
+    adminTokenSecret: gateway-retention
+    adminTokenKey: GATEWAY_ADMIN_TOKEN
+```
+
+Set service enablement as well (`gateway.enabled` or legacy `inference.enabled`).
+Retention's reference is authoritative for **both** `GATEWAY_ADMIN_TOKEN` and
+`INFERENCE_ADMIN_TOKEN` on the Gateway and CronJob, even if the shared Secret
+contains different tokens. It enables admin access without requiring
+`gateway.admin.enabled`. Do not set token env overrides. The retained CronJob
+name, schedule and internal Service target do not change automatically.
+
+Render-only verification: `bash packaging/helm/openwork-ee/tests/gateway.sh`.
+This does not deploy resources, run migrations, or invoke the retention endpoint.
+`bash packaging/helm/openwork-ee/tests/upgrade-and-migration.sh` additionally
+simulates reused computed chart values without the new Gateway defaults and
+checks the rendered migration environment against the real bootstrap connection
+parser functions in isolation. It never executes the bootstrap entrypoint or
+opens a database connection. Run this contract test from a repository checkout
+with Node.js and Helm available; it reads the backend parser source, not a deployed
+application or a database.
 
 ## Install
 
@@ -878,6 +1033,32 @@ on a deployment where Den's network position and the set of people who can add
 MCP connections are both trusted.
 
 ## Migrations
+
+### Migration TCP configuration
+
+The bootstrap script requires a TCP MySQL connection even when the application
+runtime uses the PlanetScale HTTP driver. The chart always gives the migration
+Job `DATABASE_URL` through the existing `secret.keys.databaseUrl` mapping,
+independently of `config.databaseMode`. This preserves the legacy URL path and
+its TLS options. No new migration values are required.
+
+For chart-created Secrets, set `secret.values.databaseUrl` to an explicit
+`mysql://user:password@tcp-host:3306/database?sslmode=verify-full` URL for the
+**same database** used by the application. For an existing Secret, put that URL
+in its mapped `DATABASE_URL` key. Runtime `DATABASE_HOST`, `DATABASE_USERNAME`
+and `DATABASE_PASSWORD` alone are not sufficient for bootstrap's TCP phase;
+the application database mode must not determine the migration environment.
+The chart does not expose bootstrap's alternative `DATABASE_NAME`/`DATABASE_PORT`
+configuration: specify the database name and TCP port in the URL instead.
+
+When migrations are enabled, Helm validates the required key mappings and, for
+chart-created Secrets, a nonempty MySQL URL with username, host, database and a
+valid TCP port. PlanetScale mode also rejects the chart's placeholder URL rather
+than silently targeting the default MySQL host. Existing Secret contents cannot
+be checked at render time; the required key reference and bootstrap parser enforce
+them at startup. TCP connectivity, TLS trust, DDL privileges, and matching the
+runtime database remain operator responsibilities. With `migrations.enabled:
+false`, no migration TCP configuration is required by this chart validation.
 
 The migration Job runs as a Helm `pre-install,pre-upgrade` hook by default:
 

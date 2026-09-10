@@ -1,3 +1,5 @@
+{{- include "openwork-ee.gateway.validate" . }}
+{{- $gateway := include "openwork-ee.gateway" . | fromYaml }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -77,8 +79,11 @@ data:
   WORKER_PROVISIONING_RECONCILE_STALE_MS: {{ .Values.config.provisioner.reconcileStaleMs | quote }}
   WORKER_PROVISIONING_RECONCILE_BATCH_SIZE: {{ .Values.config.provisioner.reconcileBatchSize | quote }}
   WORKER_URL_TEMPLATE: {{ .Values.config.provisioner.workerUrlTemplate | quote }}
-  {{ if or .Values.inference.enabled .Values.config.internal.inferenceProxyBaseUrl }}
-  INFERENCE_PROXY_BASE_URL: {{ include "openwork-ee.inferenceInternalUrl" . | quote }}
+  {{ if or $gateway.enabled .Values.config.internal.inferenceProxyBaseUrl (hasKey .Values.config.internal "gatewayProxyBaseUrl") }}
+  {{ if or (eq (include "openwork-ee.gatewayEnabled" .) "true") (hasKey .Values.config.internal "gatewayProxyBaseUrl") }}
+  GATEWAY_PROXY_BASE_URL: {{ include "openwork-ee.inferenceInternalUrl" . | quote }}
+  {{ end }}
+  INFERENCE_PROXY_BASE_URL: {{ include "openwork-ee.modelsProxyUrl" . | quote }}
   {{ end }}
   POLAR_FEATURE_GATE_ENABLED: {{ .Values.config.polar.featureGateEnabled | quote }}
   DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS: {{ .Values.config.daytona.signedPreviewExpiresSeconds | quote }}
