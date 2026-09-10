@@ -322,6 +322,19 @@ function shortOutput(output: string) {
 }
 
 describe("Den DB migration readiness wiring", () => {
+  test("Drizzle tooling resolves workspace sources without a prerequisite production build", () => {
+    const { scripts } = JSON.parse(readRepoFile("ee/packages/den-db/package.json"))
+    const node = "node --conditions=development --import tsx"
+    for (const command of ["generate", "migrate", "push"]) {
+      const repair = command === "generate" ? "" : ` && ${node} scripts/ensure-schema-repairs.ts`
+      assert.equal(scripts[`db:${command}`], `${node} ./node_modules/drizzle-kit/bin.cjs ${command} --config drizzle.config.ts${repair}`)
+    }
+
+    const buildAssets = readRepoFile("ee/packages/den-db/scripts/build-assets.mjs")
+    assert.match(buildAssets, /spawnSync\(process\.execPath, \["--conditions=development", "--import", "tsx"/)
+    assert.match(buildAssets, /throw new Error\(`drizzle-kit export did not emit SQL/)
+  })
+
   test("oauth access token lookup has a token prefix index", () => {
     const authSchema = readRepoFile("ee/packages/den-db/src/schema/auth.ts")
     const migrations = readDenDbMigrations()

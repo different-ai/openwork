@@ -22,8 +22,8 @@ function sqlFromDrizzleKitExport(stdout, stderr) {
 }
 
 function generateCurrentSchemaSql() {
-  // Resolve NodeNext .js specifiers to their TypeScript workspace sources.
-  const result = spawnSync(process.execPath, ["--import", "tsx", path.join(packageDir, "node_modules", "drizzle-kit", "bin.cjs"), "export", "--config", "drizzle.config.ts"], {
+  // Resolve workspace exports and NodeNext .js specifiers to source, even before dependencies are built.
+  const result = spawnSync(process.execPath, ["--conditions=development", "--import", "tsx", path.join(packageDir, "node_modules", "drizzle-kit", "bin.cjs"), "export", "--config", "drizzle.config.ts"], {
     cwd: packageDir,
     encoding: "utf8",
     env: process.env,
