@@ -242,6 +242,7 @@ jobs:
           echo "den_web_upload=$den_web_upload" >> "$GITHUB_OUTPUT"
 
       - name: Build and optionally push without Sentry source-map upload
+        id: build
         # Build every image except the ones whose Sentry-enabled step below owns
         # them. Stated as an exclusion so a newly added matrix entry builds by
         # default instead of silently skipping and failing the smoke step.
@@ -264,6 +265,7 @@ jobs:
             ${{ matrix.image == 'openwork-den-web' && 'DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=0' || '' }}
 
       - name: Build and push with Sentry source-map upload
+        id: build_sentry
         if: ${{ (matrix.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (matrix.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true') }}
         uses: docker/build-push-action@v6
         with:
@@ -289,6 +291,32 @@ jobs:
             sentry_url=${{ secrets.SENTRY_URL }}
             sentry_release=${{ secrets.SENTRY_RELEASE }}
             sentry_dist=${{ secrets.SENTRY_DIST }}
+
+      # The compose pin job consumes the digest this build produced, not
+      # whatever the mutable version tag resolves to later.
+      - name: Record pushed image digest
+        if: ${{ needs.artifact-version.outputs.publish == 'true' && github.ref_type == 'tag' && (matrix.image == 'openwork-den-api' || matrix.image == 'openwork-den-web') }}
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest || steps.build_sentry.outputs.digest }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Build did not report a digest for $IMAGE: '$DIGEST'" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/ee-image-digests"
+          printf '%s\n' "$DIGEST" > "$RUNNER_TEMP/ee-image-digests/$IMAGE"
+
+      - name: Upload pushed image digest
+        if: ${{ needs.artifact-version.outputs.publish == 'true' && github.ref_type == 'tag' && (matrix.image == 'openwork-den-api' || matrix.image == 'openwork-den-web') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ee-image-digest-${{ matrix.image }}
+          path: ${{ runner.temp }}/ee-image-digests/${{ matrix.image }}
+          retention-days: 7
+          if-no-files-found: error
 
       - name: Assert Den DB migration assets
         if: ${{ github.event_name == 'pull_request' && matrix.image == 'openwork-den-api' }}
@@ -514,21 +542,36 @@ jobs:
           fi
           echo "release=true" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve published image digests
+      - name: Download pushed image digests
+        if: steps.guard.outputs.release == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: ee-image-digest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/ee-image-digests
+
+      # Use the digest the build job recorded; the registry lookup only confirms
+      # the version tag still points at that same build.
+      - name: Verify published image digests
         if: steps.guard.outputs.release == 'true'
         id: digests
         run: |
           set -euo pipefail
 
           for image in openwork-den-api openwork-den-web; do
-            digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' \
-              "${REGISTRY}/${GITHUB_REPOSITORY_OWNER}/${image}:${VERSION}")"
-            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              echo "Unexpected digest for ${image}:${VERSION}: $digest" >&2
+            built="$(tr -d '[:space:]' < "$RUNNER_TEMP/ee-image-digests/$image")"
+            if [[ ! "$built" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Recorded digest for ${image} is malformed: '$built'" >&2
               exit 1
             fi
-            echo "${image}=${digest}" >> "$GITHUB_OUTPUT"
-            echo "${image}:${VERSION} -> ${digest}"
+            registry="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' \
+              "${REGISTRY}/${GITHUB_REPOSITORY_OWNER}/${image}:${VERSION}")"
+            if [ "$registry" != "$built" ]; then
+              echo "${image}:${VERSION} resolves to ${registry} but this run pushed ${built}; refusing to pin." >&2
+              exit 1
+            fi
+            echo "${image}=${built}" >> "$GITHUB_OUTPUT"
+            echo "${image}:${VERSION} -> ${built}"
           done
 
       - name: Rewrite compose pins
