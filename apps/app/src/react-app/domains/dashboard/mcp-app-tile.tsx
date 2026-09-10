@@ -42,6 +42,7 @@ type TileState =
       app: OpenworkMcpAppResource;
       result: PreservedMcpAppResult;
       endpoint: DashboardLaunchEndpoint;
+      lifetime?: { active: boolean };
       cachedAt: number;
       /** True only when the successful call did not need an approval override. */
       autoLaunchEligible?: boolean;
@@ -155,7 +156,8 @@ export function McpAppTile({
   // reuses the same in-flight promise; a null promise marks a settled nonce so
   // later re-renders cannot repeat an already-executed data-modifying call.
   const launchRef = useRef<{ nonce: number; promise: Promise<TileState> | null } | null>(null);
-  const lifetime = useMemo(() => ({ active: true }), [cacheScopeKey, entry.id, entry.projectedToolName, launchArguments, launchEndpoints]);
+  const lifetime = useMemo(() => ({ active: true }), [cacheScopeKey, entry.id, entry.projectedToolName, launchArguments, nonce]);
+  const endpointsRef = useRef(launchEndpoints);
   const ownedLaunches = useRef(new Map<string, DashboardLaunchEndpoint>());
   const releaseLaunches = () => {
     for (const [id, endpoint] of ownedLaunches.current) void endpoint.client.releaseMcpApp(endpoint.workspaceId, id).catch(() => undefined);
@@ -165,6 +167,16 @@ export function McpAppTile({
     lifetime.active = true;
     return () => { lifetime.active = false; releaseLaunches(); };
   }, [lifetime]);
+  useLayoutEffect(() => {
+    endpointsRef.current = launchEndpoints;
+    for (const [id, owner] of ownedLaunches.current) {
+      if (launchEndpoints.some(endpoint => endpoint.client === owner.client && endpoint.workspaceId === owner.workspaceId)) continue;
+      lifetime.active = false;
+      void owner.client.releaseMcpApp(owner.workspaceId, id).catch(() => undefined);
+      ownedLaunches.current.delete(id);
+      setState(current => current.phase === "ready" ? { ...current, app: { ...current.app, launchId: undefined } } : current);
+    }
+  }, [launchEndpoints, lifetime]);
 
   useEffect(() => {
     let cancelled = false;
@@ -213,6 +225,10 @@ export function McpAppTile({
             if (app?.launchId) void endpoint.client.releaseMcpApp(endpoint.workspaceId, app.launchId).catch(() => undefined);
             assertActive();
           }
+          if (!endpointsRef.current.some(current => current.client === endpoint.client && current.workspaceId === endpoint.workspaceId)) {
+            if (app?.launchId) void endpoint.client.releaseMcpApp(endpoint.workspaceId, app.launchId).catch(() => undefined);
+            continue;
+          }
           if (app) {
             if (app.launchId) ownedLaunches.current.set(app.launchId, endpoint);
             resolved = { endpoint, app };
@@ -260,10 +276,12 @@ export function McpAppTile({
         assertActive();
         if (!approved) return { phase: "error", message: "The app launch was declined." };
         result = await endpoint.client.callMcpAppTool(endpoint.workspaceId, { ...request, approved: true });
+        assertActive();
         launchApprovedRef.current = true;
         onApprovedLaunchRef.current?.();
         onAutoLaunchDisabledRef.current?.();
       }
+      assertActive();
       if (result.isError) {
         return {
           phase: "error",
@@ -277,6 +295,7 @@ export function McpAppTile({
         phase: "ready",
         app,
         endpoint,
+        lifetime,
         cachedAt: Date.now(),
         result: {
           content: result.content,
@@ -382,13 +401,15 @@ export function McpAppTile({
   };
 
   const interactiveEndpoint = state.phase === "ready"
-    ? launchEndpoints.find((endpoint) => endpoint.workspaceId === state.endpoint.workspaceId && endpoint.client === state.endpoint.client) ?? null
+    && launchEndpoints.some((endpoint) => endpoint.workspaceId === state.endpoint.workspaceId && endpoint.client === state.endpoint.client)
+    ? state.endpoint
     : null;
   const origin = useMemo(() => interactiveEndpoint
-    ? { ...interactiveEndpoint, sessionId: null, readOnly: state.phase !== "ready" || !state.app.launchId }
-    : null, [interactiveEndpoint, state]);
+    ? { ...interactiveEndpoint, sessionId: null, readOnly: state.phase !== "ready" || !state.app.launchId || state.lifetime !== lifetime || !lifetime.active }
+    : null, [interactiveEndpoint, state, lifetime]);
   const badge = (() => {
     if (state.phase === "ready" && !interactiveEndpoint) return "Saved locally · workspace unavailable";
+    if (state.phase === "ready" && origin?.readOnly && refreshState !== "refreshing") return "Saved locally · run required";
     if (state.phase === "ready" && refreshState === "refreshing") return "Saved locally · refreshing";
     if (state.phase === "ready" && refreshState === "failed") return "Saved locally · refresh failed";
     if (state.phase === "ready" && refreshState === "approval-required") return "Saved locally · run required";

@@ -20,7 +20,7 @@ import {
   writeOpenWorkConnectMcpAppHostAuthorization,
   writeOpenWorkConnectMcpAppHostCatalog,
 } from "./connect-mcp-server-catalog.js";
-import { readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig, writeGlobalRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import { ENGINE_GLOBAL_RUNTIME_CONFIG_ID, readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig, writeGlobalRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import {
   callMcpAppTool,
   listMcpAppCatalog,
@@ -877,15 +877,46 @@ describe("MCP Apps host transport", () => {
     }
   });
 
-  test("same-name configuration replacement and restoration cannot reuse an existing launch", async () => {
-    const { config, root, calls } = await configuredFixture("openwork-app-config-replaced-");
+  test("unrelated provider, plugin and other MCP runtime edits preserve a live App lease", async () => {
+    const { config, root, calls } = await configuredFixture("openwork-app-unrelated-runtime-");
     const launch = await fixtureLaunch(config, root);
     const original = (await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.fixture;
     if (!original) throw new Error("Missing fixture config");
-    await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, () => ({ mcp: { fixture: { ...original, headers: { Authorization: "Bearer replacement-fixture" } } } }));
-    await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, () => ({ mcp: { fixture: original } }));
-    await expect(callMcpAppTool({ serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
-      serverName: "fixture", name: "read_detail", ...launch })).rejects.toMatchObject({ code: "stale_launch_context" });
+    for (const workspaceId of [WORKSPACE_ID, ENGINE_GLOBAL_RUNTIME_CONFIG_ID]) {
+      await writeRuntimeOpencodeConfig(config, workspaceId, current => ({
+        ...current,
+        provider: { ...current.provider, unrelated: { options: { apiKey: "synthetic-provider-key" } } },
+        plugin: ["unrelated-fixture-plugin"],
+        mcp: { ...current.mcp, unrelated: original },
+      }));
+    }
+    expect(await callMcpAppTool({ serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      serverName: "fixture", name: "read_detail", arguments: { id: "same-lease" }, ...launch })).toMatchObject({
+      structuredContent: { id: "same-lease" },
+    });
+    expect(calls).toEqual([{ name: "read_detail", arguments: { id: "same-lease" } }]);
+  });
+
+  test.each([WORKSPACE_ID, ENGINE_GLOBAL_RUNTIME_CONFIG_ID])("target MCP replacement/removal and restoration in %s invalidate its lease", async (scope) => {
+    const { config, root, calls } = await configuredFixture("openwork-app-config-replaced-");
+    const original = (await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.fixture;
+    if (!original) throw new Error("Missing fixture config");
+    if (scope === ENGINE_GLOBAL_RUNTIME_CONFIG_ID) {
+      await writeGlobalRuntimeOpencodeConfig(config, () => ({ mcp: { fixture: original } }));
+      await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, () => ({}));
+    }
+    for (const remove of [false, true]) {
+      const launch = await fixtureLaunch(config, root);
+      await writeRuntimeOpencodeConfig(config, scope, current => {
+        if (!current.mcp) throw new Error("Missing runtime MCP map");
+        if (remove) delete current.mcp.fixture;
+        else current.mcp.fixture = { ...original, headers: { Authorization: "Bearer replacement-fixture" } };
+        return current;
+      });
+      await writeRuntimeOpencodeConfig(config, scope, () => ({ mcp: { fixture: original } }));
+      await expect(callMcpAppTool({ serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+        serverName: "fixture", name: "read_detail", ...launch })).rejects.toMatchObject({ code: "stale_launch_context" });
+    }
     expect(calls).toEqual([]);
   });
 

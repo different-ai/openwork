@@ -24,7 +24,7 @@ import {
   LocalManagedMcpPrivateUrlError,
 } from "./local-managed-mcp-url-guard.js";
 import { diagnoseMcpToolDenies, listMcpFromRuntimeSnapshot } from "./mcp.js";
-import { readEffectiveRuntimeOpencodeConfig, readRuntimeOpencodeConfigRevisions } from "./runtime-opencode-config-store.js";
+import { readEffectiveRuntimeOpencodeConfig, readRuntimeMcpConfigRevisions } from "./runtime-opencode-config-store.js";
 import { localManagedMcpAppIdentity } from "./local-managed-mcp.js";
 
 async function listMcp(serverConfig: ServerConfig, workspaceId: string, workspaceRoot: string) {
@@ -100,7 +100,8 @@ function staleLaunch(): McpAppHostError {
 /** Values and private credential revisions stay on the host, never in the resource response. */
 async function launchFingerprint(input: { serverConfig: ServerConfig; workspaceId: string }, serverName: string, config: Record<string, unknown>): Promise<string> {
   const managed = await localManagedMcpAppIdentity(input.serverConfig, input.workspaceId, serverName, config.url);
-  const runtimeRevisions = await readRuntimeOpencodeConfigRevisions(input.serverConfig, input.workspaceId);
+  const runtimeRevisions = readRuntimeMcpConfigRevisions(input.serverConfig, input.workspaceId,
+    serverName.startsWith(CONNECT_MCP_APP_HOST_NAME_PREFIX) ? "openwork-cloud" : serverName);
   const privateRevision = serverName.startsWith(CONNECT_MCP_APP_HOST_NAME_PREFIX)
     ? await readOpenWorkConnectMcpAppHostAuthorizationRevision(input.serverConfig, input.workspaceId) : null;
   return createHash("sha256").update(JSON.stringify({ config, managed, runtimeRevisions, privateRevision })).digest("hex");
