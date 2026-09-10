@@ -1959,6 +1959,7 @@ export function SessionRoute() {
         selectedWorkspaceEndpoint?.opencodeBaseUrl ?? null,
         selectedWorkspaceId || null,
       ]),
+      draftScope: sessionDraftScope,
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
       modelOptions: organizationAssignedModelOptions,
       modelUnavailable: selectedModelUnavailable,

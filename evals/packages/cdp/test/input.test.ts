@@ -42,6 +42,7 @@ test("parseTarget normalizes bare, structured, and regular-expression targets", 
     nth: 0,
     composer: false,
   });
+  assert.equal(parseTarget({ role: "switch", label: "Check automatically" }).role, "switch");
 });
 
 test("mapKey produces CDP key fields and modifier bits", () => {

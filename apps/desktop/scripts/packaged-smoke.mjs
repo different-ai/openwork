@@ -82,6 +82,11 @@ try {
       bootPackagedDesktop("desktop-updater-gate-enterprise", "packaged-preactivation-updater", flavorBinary, 300_000);
     }
   }
+  // The same enterprise artifact, booted as an already-activated install (the update path for existing customers).
+  bootPackagedDesktop("desktop-boot-enterprise-activated", "packaged-activated-launch", join(flavorOutput("enterprise"), "linux-unpacked", "openwork-enterprise"), 150_000);
+  // The same enterprise artifact asked to quit (SIGTERM and Browser.close, fresh and activated): it must exit 0 inside
+  // the bound. Linux has no crash reports to read, so the journey names that half skipped and the exit signal is the witness.
+  bootPackagedDesktop("desktop-quit-enterprise", "desktop-quit-path", join(flavorOutput("enterprise"), "linux-unpacked", "openwork-enterprise"), 300_000);
   report.passed = true;
 } finally {
   report.totalMilliseconds = Math.round(performance.now() - started);

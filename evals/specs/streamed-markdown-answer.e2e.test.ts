@@ -2,7 +2,7 @@ import { expect } from "vitest";
 import { eventually, observeTranscript, readTranscriptMessages, spec } from "@openwork/testkit";
 import { streamedMarkdown, streamedMarkdownMarker, streamedMarkdownReasoning, streamedToolHistory } from "../worlds/chat.ts";
 import {
-  chatStreamContinuity,
+  chatStreamContinuityWeb,
   streamedContinuityBullets,
   streamedContinuityChunks,
   streamedContinuityMarker,
@@ -382,7 +382,10 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
   });
 });
 
-const continuityTest = spec.world(chatStreamContinuity, { timeout: 420_000 });
+const continuityTest = spec.world(chatStreamContinuityWeb, {
+  timeout: 420_000,
+  resources: { surfaces: ["appWeb"], services: ["mock"] },
+});
 const normalizedLines = (text: string) => text.split("\n").map((line) => line.trim()).filter(Boolean).join("\n");
 const partialThirdPrefix = [streamedContinuityBullets[0], streamedContinuityBullets[1], streamedContinuityPartialThird].join("\n");
 const partialFifthPrefix = [...streamedContinuityBullets.slice(0, 4), streamedContinuityPartialFifth].join("\n");
@@ -464,10 +467,10 @@ continuityTest("CONT-01 restores the exact cumulative prefix while one answer st
   };
   for (const bullet of streamedContinuityBullets) expect(streamedContinuityPrompt).not.toContain(bullet);
 
-  await step("the selected engine runs in the requested real app surface without substituting fixtures", async () => {
+  await step("the selected engine runs in the real headless app-web world", async () => {
     const facts = await world.runtimeFacts();
     evidence.recordJsonArtifact("CONT-01 runtime placement", facts);
-    expect(facts.surface).toBe(world.surface);
+    expect(facts.surface).toBe("web");
     expect(facts.requestedPlacement).toBe(facts.resolvedPlacement);
     expect(facts.actualHostKind).toBe(facts.resolvedPlacement);
     if (facts.actualHostKind === "daytona") expect(facts.actualSandboxId).toMatch(/^.+$/);
@@ -482,15 +485,13 @@ continuityTest("CONT-01 restores the exact cumulative prefix while one answer st
       expect(facts.engineRunning).toBe(true);
       expect(facts.syntheticModelInNativeResponse).toBe(true);
     }
-    if (world.surface === "web") {
-      expect(facts.electronBridge).toBe(false);
-      expect(facts.origin).toBe(facts.expectedOrigin);
-      expect(facts.browser).toMatch(/Chrome\//);
-    } else {
-      expect(facts.electronBridge).toBe(true);
-    }
+    expect(facts.electronBridge).toBe(false);
+    expect(facts.origin).toBe(facts.expectedOrigin);
+    expect(facts.browser).toMatch(/HeadlessChrome\//);
+    if (facts.actualHostKind === "daytona") expect(facts.actualSourceSha).toMatch(/^[0-9a-f]{40,64}$/);
+    else if (facts.actualSourceSha !== null) expect(facts.actualSourceSha).toMatch(/^[0-9a-f]{40,64}$/);
     evidence.recordAssertionEvidence(
-      "Continuity surface and engine fixture are real and selected",
+      "Continuity headless app-web and engine fixture are real",
       `${facts.surface}; ${world.engine}; requested/resolved/actual placement=${facts.requestedPlacement}/${facts.resolvedPlacement}/${facts.actualHostKind}; sandbox=${facts.actualSandboxId ?? "none"}; ${facts.browser}; native ${facts.nativeStatus}; no Electron bridge=${String(!facts.electronBridge)}`,
       true,
     );

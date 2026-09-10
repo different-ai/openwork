@@ -121,16 +121,9 @@ function requestedPlacement(place: Place): Place["kind"] {
   return value;
 }
 
-export async function sessionSwitchLatency(seed: Seed, context: { place: Place }) {
-  const requestedSurface = process.env.OPENWORK_EVAL_APP_SURFACE?.trim() || "web";
-  if (requestedSurface !== "electron" && requestedSurface !== "web") {
-    throw new Error(`OPENWORK_EVAL_APP_SURFACE must be web or electron; received ${JSON.stringify(requestedSurface)}.`);
-  }
-  if (requestedSurface !== "web") {
-    throw new Error(`The session-switch latency contract does not support surface ${requestedSurface}; expected web.`);
-  }
+/** Headless app-web SWITCH-10 fixture with placement supplied by the runner. */
+export async function sessionSwitchLatencyWeb(seed: Seed, context: { place: Place }) {
   const declaredPlacement = requestedPlacement(context.place);
-
   const engine = resolveEvalEngine();
   const providerId = "switch-10-provider-fixture";
   const modelId = "switch-10-model-fixture";
@@ -160,7 +153,6 @@ export async function sessionSwitchLatency(seed: Seed, context: { place: Place }
     name: "switch-10-session-latency",
     workspacePath,
     mocks: { agent: mock },
-    headless: process.env.OPENWORK_EVAL_CHROME_HEADLESS === "1",
   });
   await setViewport(app, { width: WIDTH, height: HEIGHT, deviceScaleFactor: 1 });
   const agentMock = app.mocks.agent;
@@ -501,6 +493,7 @@ export async function sessionSwitchLatency(seed: Seed, context: { place: Place }
       return {
         surface: window.__OPENWORK_ELECTRON__ ? "electron" : "web",
         electronBridge: Boolean(window.__OPENWORK_ELECTRON__),
+        browser: navigator.userAgent,
         origin: location.origin,
         expectedOrigin,
         actualSourceSha,

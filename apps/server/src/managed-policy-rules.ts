@@ -17,9 +17,9 @@ export const desktopPolicyTargets = {
 } satisfies Record<DesktopPolicyKey, string>;
 
 export const executionPolicyTargets = {
-  commands: ["engine.shell", "tool.before", "shell.before", "engine.proxy"],
-  blockedCommands: ["engine.shell", "tool.before", "shell.before", "engine.proxy"],
-  browserOrigins: ["engine.webfetch", "tool.before", "browser.request"],
+  commands: ["engine.shell", "engine.proxy"],
+  blockedCommands: ["engine.shell", "engine.proxy"],
+  browserOrigins: ["engine.webfetch", "browser.request"],
   blockBrowserUploads: ["browser.request"],
 } satisfies Record<keyof DesktopExecutionPolicy, readonly string[]>;
 
