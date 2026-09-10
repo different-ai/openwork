@@ -2,6 +2,7 @@ export * from "./place.ts";
 export * from "./recipe.ts";
 export * from "./seed.ts";
 export * from "./needs.ts";
+export * from "./world-resources.ts";
 export * from "./mock.ts";
 export * from "./den.ts";
 export * from "./desktop-app.ts";

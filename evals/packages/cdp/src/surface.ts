@@ -7,6 +7,12 @@ import type { CdpClient, CdpFunctionArgument, CdpTarget, EvaluateOptions } from 
 
 export type SurfaceKind = "electron" | "chrome";
 
+/** How a locally spawned surface process ended, as Node reports it. */
+export interface SurfaceExit {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
+
 export interface SurfaceHandle {
   name: string;
   kind: SurfaceKind;
@@ -16,6 +22,8 @@ export interface SurfaceHandle {
   profileDir?: string;
   sandboxId?: string;
   meta?: Record<string, string>;
+  /** Settles when the process this host spawned exits; absent for surfaces on remote hosts. */
+  exit?: Promise<SurfaceExit>;
 }
 
 export interface Surface {

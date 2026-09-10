@@ -1,3 +1,5 @@
+import { planWorlds, worldContract } from "../scripts/world-plan.ts";
+
 const TEST_FILE = /\.test\.[cm]?[jt]sx?$/;
 const GLOB_MARKER = /[*?{}[\]]/;
 const VITEST_VALUE_OPTIONS = new Set(["-t", "--testNamePattern", "--reporter", "--config", "--project"]);
@@ -26,7 +28,7 @@ function explicitTestFiles(argv: readonly string[]): string[] {
   return positionalArguments(argv).filter((argument) => TEST_FILE.test(argument) && !GLOB_MARKER.test(argument));
 }
 
-export function shouldPrepareSuite(argv: readonly string[]): boolean {
+export function parallelSuite(argv: readonly string[]): boolean {
   const testArguments = positionalArguments(argv).filter(
     (argument) => argument.includes(".test.") || GLOB_MARKER.test(argument),
   );
@@ -45,9 +47,17 @@ export function suiteWorkerCount(argv: readonly string[], env: NodeJS.ProcessEnv
   return fileCount > 0 ? Math.min(fileCount, workers) : workers;
 }
 
-export function workerSlot(workerId: string | undefined, slotCount: number): number {
-  if (!Number.isInteger(slotCount) || slotCount < 1) throw new Error("Stack preparation requires at least one worker slot.");
-  const parsed = Number.parseInt(workerId ?? "", 10);
-  const worker = Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
-  return (worker - 1) % slotCount;
+export function planSuite(files: readonly string[], options: { pattern?: RegExp; surface?: string } = {}) {
+  // The shared planner accepts a regex source, not flags. Refuse to silently
+  // change configured regex semantics before provisioning anything.
+  if (options.pattern?.flags) throw new Error("World planning requires a testNamePattern without regex flags.");
+  const plan = planWorlds(files, { pattern: options.pattern?.source, surface: options.surface });
+  return {
+    ...plan,
+    preparation: "none",
+    diagnostic: [
+      "[openwork/evals] world plan: lazy per-world allocation; suite preparation=none",
+      ...plan.worlds.map(world => `[openwork/evals] ${world.file}:${world.line} ${worldContract(world)}`),
+    ].join("\n"),
+  };
 }

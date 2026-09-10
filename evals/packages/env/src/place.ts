@@ -1,11 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { connect } from "node:net";
-import { provisionDesktopSandbox, deleteSandboxes, daytonaSandbox } from "@openwork/hosts";
+import { provisionDesktopSandbox, provisionWebSandbox, deleteSandboxes, daytonaSandbox } from "@openwork/hosts";
 import { createConnection } from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import { daytonaPlacement, resolveEvalRef } from "./eval-ref.ts";
 import type {
   ChromeSurfaceOptions,
+  DesktopSandbox,
   ElectronSurfaceOptions,
   Host,
   RetainedElectronSurface,
@@ -179,7 +180,7 @@ class DaytonaPlacementHost implements Host {
     this.#preparedHost = preparedSandbox ? daytonaSandbox(preparedSandbox) : undefined;
   }
 
-  async #provision(name: string, options?: ElectronSurfaceOptions): Promise<PlacedSurface> {
+  async #provision(name: string, surface: "desktop" | "web", options?: ElectronSurfaceOptions): Promise<PlacedSurface> {
     if (this.#preparedSandbox && this.#preparedHost) {
       if (options?.release) throw new Error("Published release previews require a newly owned Daytona sandbox.");
       return {
@@ -188,13 +189,15 @@ class DaytonaPlacementHost implements Host {
         created: false,
       };
     }
-    const provisioned = await provisionDesktopSandbox({
+    const provisionOptions = {
       ref: this.#ref,
       name,
-      ...(options?.release ? { release: options.release } : {}),
       ...(process.env.OPENWORK_WORLD_PREVIEW_DAYTONA === "1" ? { autoStopMinutes: 0 } : {}),
-      log: (line) => console.error(`[openwork/testkit] ${line}`),
-    });
+      log: (line: string) => console.error(`[openwork/testkit] ${line}`),
+    };
+    const provisioned: DesktopSandbox = surface === "web"
+      ? await provisionWebSandbox(provisionOptions)
+      : await provisionDesktopSandbox({ ...provisionOptions, ...(options?.release ? { release: options.release } : {}) });
     return {
       host: daytonaSandbox(provisioned.sandbox),
       sandbox: provisioned.sandbox,
@@ -204,7 +207,7 @@ class DaytonaPlacementHost implements Host {
   }
 
   async spawnElectron(name: string, options?: ElectronSurfaceOptions): Promise<SurfaceHandle> {
-    const placed = await this.#provision(name, options);
+    const placed = await this.#provision(name, "desktop", options);
     try {
       const handle = await placed.host.spawnElectron(name, {
         ...options,
@@ -236,7 +239,7 @@ class DaytonaPlacementHost implements Host {
   }
 
   async spawnElectronRetained(name: string, options?: ElectronSurfaceOptions): Promise<RetainedElectronSurface> {
-    const placed = await this.#provision(name, options);
+    const placed = await this.#provision(name, "desktop", options);
     try {
       if (!placed.host.spawnElectronRetained) throw new Error("The selected host cannot retain a failed Electron launch.");
       const surface = await placed.host.spawnElectronRetained(name, {
@@ -269,7 +272,7 @@ class DaytonaPlacementHost implements Host {
   }
 
   async spawnChrome(name: string, options?: ChromeSurfaceOptions): Promise<SurfaceHandle> {
-    const placed = await this.#provision(name);
+    const placed = await this.#provision(name, "web");
     try {
       const handle = await placed.host.spawnChrome(name, options);
       this.#surfaces.set(handle, placed);
