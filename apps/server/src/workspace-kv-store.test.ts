@@ -139,6 +139,35 @@ describe("workspace kv store", () => {
     expect(await store.get(config, WORKSPACE_ID)).toEqual({ enabled: true });
   });
 
+  test("getExisting reads and parses rows without initializing storage or shared connections", async () => {
+    const { config, dbPath } = await tempWorkspace();
+    const readOnlyConfig = { ...config, readOnly: true };
+    const store = recordStore("workspace_kv_existing");
+
+    expect(await store.getExisting(readOnlyConfig, WORKSPACE_ID)).toBeUndefined();
+    expect(existsSync(dbPath)).toBe(false);
+    const sqlite = new Database(dbPath, { create: true });
+    try {
+      sqlite.run("CREATE TABLE unrelated (value TEXT)");
+      const schema = sqlite.query("SELECT type, name, sql FROM sqlite_master ORDER BY name").all();
+      expect(await store.getExisting(readOnlyConfig, WORKSPACE_ID)).toBeUndefined();
+      expect(sqlite.query("SELECT type, name, sql FROM sqlite_master ORDER BY name").all()).toEqual(schema);
+      expect(workspaceKvStoreCacheStatsForTests(dbPath)).toEqual({ connectionEntries: 0, tableEntries: 0 });
+
+      sqlite.run("CREATE TABLE workspace_kv_existing (workspace_id TEXT PRIMARY KEY, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
+      sqlite.query("INSERT INTO workspace_kv_existing VALUES (?, ?, ?)").run(WORKSPACE_ID, JSON.stringify({ enabled: true }), 1);
+      const populatedSchema = sqlite.query("SELECT type, name, sql FROM sqlite_master ORDER BY name").all();
+      expect(await store.getExisting(readOnlyConfig, WORKSPACE_ID)).toEqual({ enabled: true });
+      expect(await store.getExisting(readOnlyConfig, "missing")).toBeUndefined();
+      sqlite.query("UPDATE workspace_kv_existing SET config_json = ? WHERE workspace_id = ?").run("{", WORKSPACE_ID);
+      expect(await store.getExisting(readOnlyConfig, WORKSPACE_ID)).toEqual({});
+      expect(sqlite.query("SELECT type, name, sql FROM sqlite_master ORDER BY name").all()).toEqual(populatedSchema);
+      expect(workspaceKvStoreCacheStatsForTests(dbPath)).toEqual({ connectionEntries: 0, tableEntries: 0 });
+    } finally {
+      sqlite.close();
+    }
+  });
+
   test("returns each migrated store's documented defaults for missing and malformed rows", async () => {
     const { root, config, dbPath } = await tempWorkspace();
 

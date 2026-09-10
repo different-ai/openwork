@@ -19,7 +19,8 @@ import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
 import { createClient, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl, v2PromptText, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe, forkSession, listCommands, revertSession, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
-import { getNativeSessionMessages } from "@/app/lib/opencode-session-native";
+import { composeNativeSessionSnapshot, getNativeSessionMessages } from "@/app/lib/opencode-session-native";
+import { prefetchOpeningSessionHistory, sessionHistoryIdentity } from "@/react-app/domains/session/surface/session-history";
 import { sendSessionCommand, sessionWorkHeld } from "@/app/lib/opencode-interruption";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
@@ -541,6 +542,28 @@ export function SessionRoute() {
     navigationGeneration: routeNavigationRef.current.generation,
   };
   const archiveDisabledReason = isOpencodeV2BaseUrl(opencodeBaseUrl) ? V2_SESSION_ARCHIVE_UNAVAILABLE : undefined;
+  const canPrefetchSelectedWorkspace = Boolean(opencodeClient && selectedWorkspaceEndpoint && !selectedWorkspaceError);
+  const prefetchRuntimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId;
+  const cancelOpeningPrefetchRef = useRef<(() => void) | undefined>(undefined);
+  const handlePrefetchSession = useCallback((workspaceId: string, sessionId: string) => {
+    // Only the selected workspace has a confirmed runtime here. Never infer an
+    // endpoint for a pinned/other-workspace row just to warm its transcript.
+    if (workspaceId !== selectedWorkspaceId || !canPrefetchSelectedWorkspace || !prefetchRuntimeWorkspaceId || !selectedWorkspaceServerToken
+      || !sessionsByWorkspaceIdRef.current[workspaceId]?.some((session) => session.id === sessionId)) return;
+    const endpoint = { opencodeBaseUrl: opencodeBaseUrl.trim(), token: selectedWorkspaceServerToken.trim() };
+    const cancel = prefetchOpeningSessionHistory(getReactQueryClient(), {
+      ...sessionHistoryIdentity({ draftScope: sessionDraftScope, opencodeBaseUrl: endpoint.opencodeBaseUrl, runtimeWorkspaceId: prefetchRuntimeWorkspaceId, sessionId }),
+      sessionId,
+      authToken: endpoint.token,
+      readSnapshot: (signal, window) => composeNativeSessionSnapshot(endpoint, sessionId, { ...window, signal }),
+    });
+    if (cancel) cancelOpeningPrefetchRef.current = cancel;
+    return cancel;
+  }, [selectedWorkspaceId, canPrefetchSelectedWorkspace, prefetchRuntimeWorkspaceId, opencodeBaseUrl, selectedWorkspaceServerToken, sessionDraftScope, sessionsByWorkspaceIdRef]);
+  useEffect(() => () => {
+    cancelOpeningPrefetchRef.current?.();
+    cancelOpeningPrefetchRef.current = undefined;
+  }, [handlePrefetchSession]);
   // The dashboard is user-scoped while MCP servers are workspace-scoped: the
   // selected workspace's runtime is primary, and every other available one is
   // a per-tile fallback so tiles keep working when the selected workspace does
@@ -1579,25 +1602,26 @@ export function SessionRoute() {
           return false;
         }
       },
-      onForkAtMessage: (messageId: string | null, sessionId: string) => {
-        void (async () => {
-          const targetSessionId = sessionId.trim() || selectedSessionId;
-          if (!targetSessionId) return;
-          try {
-            const forked = await forkSession(opencodeClient, targetSessionId, messageId ?? undefined);
-            writeLastSessionFor(selectedWorkspaceId, forked.id);
-            rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
-            setSessionsByWorkspaceId((current) => ({
-              ...current,
-              [selectedWorkspaceId]: mergeWorkspaceRouteSession(current[selectedWorkspaceId] ?? [], forked),
-            }));
-            navigateToWorkspaceSession(selectedWorkspaceId, forked.id);
-            void refreshRouteState();
-          } catch (error) {
-            console.warn("[fork] failed", error);
-            toast.error(t("session.branch_failed"));
-          }
-        })();
+      onForkAtMessage: async (messageId: string | null, sessionId: string, isCurrent: () => boolean) => {
+        const targetSessionId = sessionId.trim() || selectedSessionId;
+        if (!targetSessionId) return;
+        const navigationOwner = selectedConversationRef.current;
+        const paneOwner = focusedWorkbenchPaneOwner();
+        const forked = await forkSession(opencodeClient, targetSessionId, messageId ?? undefined);
+        if (!isCurrent()
+          || selectedConversationRef.current.navigationGeneration !== navigationOwner.navigationGeneration
+          || selectedConversationRef.current.workspaceId !== navigationOwner.workspaceId
+          || selectedConversationRef.current.sessionId !== navigationOwner.sessionId
+          || selectedConversationRef.current.draftScope !== navigationOwner.draftScope
+          || focusedWorkbenchPaneOwner() !== paneOwner) return;
+        writeLastSessionFor(selectedWorkspaceId, forked.id);
+        rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
+        setSessionsByWorkspaceId((current) => ({
+          ...current,
+          [selectedWorkspaceId]: mergeWorkspaceRouteSession(current[selectedWorkspaceId] ?? [], forked),
+        }));
+        navigateToWorkspaceSession(selectedWorkspaceId, forked.id);
+        void refreshRouteState();
       },
       onChangeModel: (model: { providerID: string; modelID: string }) => {
         local.setPrefs((previous) => ({
@@ -1879,24 +1903,25 @@ export function SessionRoute() {
           return false;
         }
       },
-      onForkAtMessage: (messageId: string | null, sessionId: string) => {
-        void (async () => {
-          const targetSessionId = sessionId.trim() || session.sessionId;
-          try {
-            const forked = await forkSession(workspaceOpencodeClient, targetSessionId, messageId ?? undefined);
-            writeLastSessionFor(workspace.id, forked.id);
-            rememberPendingCreatedSession(workspace.id, forked.id);
-            setSessionsByWorkspaceId((current) => ({
-              ...current,
-              [workspace.id]: mergeWorkspaceRouteSession(current[workspace.id] ?? [], forked),
-            }));
-            navigateToWorkspaceSession(workspace.id, forked.id);
-            void refreshRouteState();
-          } catch (error) {
-            console.warn("[fork] failed", error);
-            toast.error(t("session.branch_failed"));
-          }
-        })();
+      onForkAtMessage: async (messageId: string | null, sessionId: string, isCurrent: () => boolean) => {
+        const targetSessionId = sessionId.trim() || session.sessionId;
+        const navigationOwner = selectedConversationRef.current;
+        const paneOwner = focusedWorkbenchPaneOwner();
+        const forked = await forkSession(workspaceOpencodeClient, targetSessionId, messageId ?? undefined);
+        if (!isCurrent()
+          || selectedConversationRef.current.navigationGeneration !== navigationOwner.navigationGeneration
+          || selectedConversationRef.current.workspaceId !== navigationOwner.workspaceId
+          || selectedConversationRef.current.sessionId !== navigationOwner.sessionId
+          || selectedConversationRef.current.draftScope !== navigationOwner.draftScope
+          || focusedWorkbenchPaneOwner() !== paneOwner) return;
+        writeLastSessionFor(workspace.id, forked.id);
+        rememberPendingCreatedSession(workspace.id, forked.id);
+        setSessionsByWorkspaceId((current) => ({
+          ...current,
+          [workspace.id]: mergeWorkspaceRouteSession(current[workspace.id] ?? [], forked),
+        }));
+        navigateToWorkspaceSession(workspace.id, forked.id);
+        void refreshRouteState();
       },
     };
     return {
@@ -3464,7 +3489,7 @@ export function SessionRoute() {
           writeLastSessionFor(workspaceId, sessionId);
           navigateToWorkspaceSession(workspaceId, sessionId);
         },
-        onPrefetchSession: () => {},
+        onPrefetchSession: handlePrefetchSession,
         onCreateTaskInWorkspace: (workspaceId, groupId) => {
           const { focusedPane, secondary } = useWorkbenchStore.getState();
           const hasWorkspaceError = Boolean(errorsByWorkspaceId[workspaceId]?.trim())

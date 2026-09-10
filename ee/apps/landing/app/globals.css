@@ -197,30 +197,46 @@ body {
   margin-right: auto;
 }
 
-/* Hero dither mask. Desktop: clear behind the left headline column (anchored to the
-   centered container), fade in across the right half, clear behind the top wordmark,
-   fade out toward the bottom. Below lg the headline spans the full width, so the
-   dither is pushed to the right edge and softened. */
-.lp-hero-dither {
-  -webkit-mask-image:
-    linear-gradient(to right, transparent 0, transparent calc(50% + 10px), rgba(0, 0, 0, 0.2) calc(50% + 80px), rgba(0, 0, 0, 0.6) calc(50% + 170px), #000 calc(50% + 260px), #000 100%),
-    linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.15) 150px, rgba(0, 0, 0, 0.65) 250px, #000 310px, #000 480px, rgba(0, 0, 0, 0.5) 740px, transparent 1080px);
-  mask-image:
-    linear-gradient(to right, transparent 0, transparent calc(50% + 10px), rgba(0, 0, 0, 0.2) calc(50% + 80px), rgba(0, 0, 0, 0.6) calc(50% + 170px), #000 calc(50% + 260px), #000 100%),
-    linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.15) 150px, rgba(0, 0, 0, 0.65) 250px, #000 310px, #000 480px, rgba(0, 0, 0, 0.5) 740px, transparent 1080px);
-  -webkit-mask-composite: source-in;
-  mask-composite: intersect;
+/* Pixel wordmark with "Work" set in the body face. */
+.lp-wordmark-sans {
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 500;
+  letter-spacing: -0.05em;
 }
 
+/* Hero dither mask, in page coordinates (the nav is 97px tall, the wordmark band ends
+   around 400px). The visible region is the union of two areas:
+     1. a soft radial sweeping in from the top-right corner, outside the content column,
+        so the dither resumes past the "k" on a curved, fading edge;
+     2. the right half of the page below the wordmark band (clear behind the headline
+        column), fading out toward the bottom.
+   Layer order: radial, then (below-band  intersect  right-half). */
+.lp-hero-dither {
+  -webkit-mask-image:
+    radial-gradient(1100px 800px at calc(50% + 1000px) 157px, #000 0, #000 20%, rgba(0, 0, 0, 0.5) 32%, rgba(0, 0, 0, 0.15) 40%, transparent 46%),
+    linear-gradient(to bottom, transparent 0, transparent 395px, rgba(0, 0, 0, 0.45) 455px, #000 525px, #000 620px, rgba(0, 0, 0, 0.5) 820px, transparent 1080px),
+    linear-gradient(to right, transparent 0, transparent calc(50% + 10px), rgba(0, 0, 0, 0.6) calc(50% + 170px), #000 calc(50% + 260px), #000 100%);
+  mask-image:
+    radial-gradient(1100px 800px at calc(50% + 1000px) 157px, #000 0, #000 20%, rgba(0, 0, 0, 0.5) 32%, rgba(0, 0, 0, 0.15) 40%, transparent 46%),
+    linear-gradient(to bottom, transparent 0, transparent 395px, rgba(0, 0, 0, 0.45) 455px, #000 525px, #000 620px, rgba(0, 0, 0, 0.5) 820px, transparent 1080px),
+    linear-gradient(to right, transparent 0, transparent calc(50% + 10px), rgba(0, 0, 0, 0.6) calc(50% + 170px), #000 calc(50% + 260px), #000 100%);
+  -webkit-mask-composite: source-over, source-in, source-over;
+  mask-composite: add, intersect, add;
+}
+
+/* Below lg the headline spans the full width and the wordmark is short, so the dither
+   is kept clear of the wordmark band, pushed to the right edge, and softened. */
 @media (max-width: 1023px) {
   .lp-hero-dither {
     opacity: 0.4;
     -webkit-mask-image:
       linear-gradient(to right, transparent 0, transparent 52%, rgba(0, 0, 0, 0.35) 70%, #000 88%, #000 100%),
-      linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.2) 110px, #000 200px, #000 420px, rgba(0, 0, 0, 0.5) 620px, transparent 860px);
+      linear-gradient(to bottom, transparent 0, transparent 230px, rgba(0, 0, 0, 0.25) 290px, #000 360px, #000 520px, rgba(0, 0, 0, 0.5) 700px, transparent 900px);
     mask-image:
       linear-gradient(to right, transparent 0, transparent 52%, rgba(0, 0, 0, 0.35) 70%, #000 88%, #000 100%),
-      linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.2) 110px, #000 200px, #000 420px, rgba(0, 0, 0, 0.5) 620px, transparent 860px);
+      linear-gradient(to bottom, transparent 0, transparent 230px, rgba(0, 0, 0, 0.25) 290px, #000 360px, #000 520px, rgba(0, 0, 0, 0.5) 700px, transparent 900px);
+    -webkit-mask-composite: source-in;
+    mask-composite: intersect;
   }
 }
 
@@ -245,6 +261,64 @@ body {
   background: #ece8de;
   border: 1px solid rgba(148, 163, 184, 0.18);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+/* Hero buttons: 43px pill, 16px regular text, trailing glyph icon. */
+.lp-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 43px;
+  padding: 0 22px;
+  border-radius: 9999px;
+  background-color: var(--lp-ink);
+  color: #f7f7f4;
+  border: 1px solid var(--lp-ink);
+  font-size: 16px;
+  line-height: 16px;
+  font-weight: 400;
+  white-space: nowrap;
+  text-decoration: none;
+  transition:
+    color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 100ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.lp-btn:hover {
+  background-color: #102638;
+  border-color: #102638;
+}
+
+.lp-btn:active {
+  transform: scale(0.98);
+}
+
+.lp-btn-icon {
+  display: flex;
+  padding-left: 4px;
+  font-size: 16px;
+  line-height: 16px;
+  transition: transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.lp-btn:hover .lp-btn-icon {
+  transform: translateY(1px);
+}
+
+.lp-btn--secondary {
+  background-color: #e9edf2;
+  color: var(--lp-ink);
+  border-color: rgba(1, 22, 39, 0.04);
+}
+
+.lp-btn--secondary:hover {
+  background-color: #dfe5ec;
+  border-color: rgba(1, 22, 39, 0.06);
+}
+
+.lp-btn--secondary:hover .lp-btn-icon {
+  transform: translateX(2px);
 }
 
 .doc-button {

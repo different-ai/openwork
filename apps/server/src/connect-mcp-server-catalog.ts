@@ -253,11 +253,28 @@ export async function readOpenWorkConnectMcpAppHostAuthorization(
   config: ServerConfig,
   workspaceId: string,
   endpointUrl: string,
+  options?: { readOnly?: boolean },
 ): Promise<string | null> {
-  const credential = await appHostAuthorizationStore.get(config, workspaceId);
+  const credential = options?.readOnly
+    ? await appHostAuthorizationStore.getExisting(config, workspaceId)
+    : await appHostAuthorizationStore.get(config, workspaceId);
   const expectedOrigin = endpointOrigin(endpointUrl);
   if (!credential || !expectedOrigin || credential.origin !== expectedOrigin) return null;
   return privateAppHostAuthorization(credential.authorization);
+}
+
+/**
+ * Local provisioning for the caller's validated effective Cloud config only;
+ * never validates tokens or proves provider availability or access.
+ */
+export async function readOpenWorkConnectMcpAppHostAuthorizationReady(
+  config: ServerConfig,
+  workspaceId: string,
+  cloudMcp: Record<string, unknown> | null,
+): Promise<boolean | null> {
+  if (!cloudMcp || cloudMcp.type !== "remote" || cloudMcp.enabled !== true || typeof cloudMcp.url !== "string"
+    || !await trustedAppHostCloudEndpoint(cloudMcp)) return null;
+  return await readOpenWorkConnectMcpAppHostAuthorization(config, workspaceId, cloudMcp.url, { readOnly: true }) !== null;
 }
 
 export async function writeOpenWorkConnectMcpAppHostAuthorization(
@@ -268,11 +285,19 @@ export async function writeOpenWorkConnectMcpAppHostAuthorization(
 ): Promise<void> {
   const authorization = privateAppHostAuthorization(value);
   const origin = endpointOrigin(sourceUrl);
+  const previous = await appHostAuthorizationStore.getRow(config, workspaceId);
+  if (authorization && origin && previous?.value?.authorization === authorization && previous.value.origin === origin) return;
   await appHostAuthorizationStore.set(
     config,
     workspaceId,
     authorization && origin ? { authorization, origin } : null,
+    Math.max(Date.now(), (previous?.updatedAt ?? 0) + 1),
   );
+}
+
+/** Private storage generation, including revoke/re-authorize cycles with the same bearer. */
+export async function readOpenWorkConnectMcpAppHostAuthorizationRevision(config: ServerConfig, workspaceId: string): Promise<number | null> {
+  return (await appHostAuthorizationStore.getRow(config, workspaceId))?.updatedAt ?? null;
 }
 
 export async function findOpenWorkConnectMcpAppHostServer(
