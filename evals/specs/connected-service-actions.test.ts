@@ -27,8 +27,9 @@ test("connected service actions reach only the selected account and enforce writ
   const selected = "selected@example.test";
   const readonly = "readonly@example.test";
   await using provider = await startMockGoogle({ accounts: [primary, selected, readonly], port: 0 });
+  const organizationName = `Service Actions ${Date.now()}`;
   await using den = await server({
-    place, web: false, org: { name: `Service Actions ${Date.now()}`, members: { writer: {}, reader: {} } },
+    place, web: false, org: { name: organizationName, members: { writer: {}, reader: {} } },
     env: {
       DEN_GOOGLE_OAUTH_AUTHORIZE_URL: provider.authorizeUrl,
       DEN_GOOGLE_OAUTH_TOKEN_URL: provider.tokenUrl,
@@ -43,16 +44,20 @@ test("connected service actions reach only the selected account and enforce writ
   const writer = den.members.writer;
   const reader = den.members.reader;
   const writeFeatures = ["gmailManage", "calendarWrite", "sheetsWrite", "driveFile"];
-  const connect = async (member: DenSession, providerKey: string, name: string, features: string[], email: string) => {
-    const connection = await createNativeConnector(den.admin, {
+  const connect = async (member: DenSession, providerKey: string, name: string, features: string[], email: string, legacy = false) => {
+    const connection = legacy ? { id: providerKey, name } : await createNativeConnector(den.admin, {
       providerKey, name, features, clientId: `synthetic-${name}`, clientSecret: "synthetic-service-actions-secret",
     });
-    if (providerKey === "microsoft-365") {
+    if (legacy || providerKey === "microsoft-365") {
       const configured = await denFetch(den.admin, `/v1/oauth-providers/${connection.id}/client`, {
         method: "POST", headers: { authorization: `Bearer ${den.admin.token}` },
-        body: JSON.stringify({ tenantId: "12345678-1234-1234-1234-123456789abc" }),
+        body: JSON.stringify({
+          ...(legacy ? { features, clientId: `synthetic-${name}`, clientSecret: "synthetic-service-actions-secret" } : {}),
+          ...(providerKey === "microsoft-365" ? { tenantId: "12345678-1234-1234-1234-123456789abc" } : {}),
+        }),
       });
       expect(configured.response.status, configured.text).toBe(200);
+      expect(configured.body).toMatchObject({ providerId: connection.id });
     }
     const started = await denFetch(member, `/v1/mcp-connections/${connection.id}/connect/start`, {
       headers: { authorization: `Bearer ${member.token}` },
@@ -367,6 +372,123 @@ test("connected service actions reach only the selected account and enforce writ
       email: selected, tokenId: selectedTokens.get(google.id) }]);
   }
   evidence.recordAssertionEvidence("Gmail system labels cannot be renamed or deleted", "Both operations read the selected label type and return protected_label. Only the authenticated GET reaches the provider; no mutation or state change occurs.", true);
+
+  // Legacy defaults and selected connectors must obey the same organization switch.
+  const legacyGoogle = await connect(writer, "google-workspace", "Google Workspace", writeFeatures, selected, true);
+  const legacyMicrosoft = await connect(writer, "microsoft-365", "Microsoft 365", ["filesWrite"], selected, true);
+  const policyConnections = [
+    { connection: google, providerKey: "google-workspace", providerPath: "/drive/v3/files" },
+    { connection: microsoft, providerKey: "microsoft-365", providerPath: "/v1.0/me/drive/items/parent-2/children" },
+    { connection: legacyGoogle, providerKey: "google-workspace", providerPath: "/drive/v3/files" },
+    { connection: legacyMicrosoft, providerKey: "microsoft-365", providerPath: "/v1.0/me/drive/items/parent-2/children" },
+  ];
+  const policyMatches = new Map<string, Record<string, unknown>>();
+  const folderBody = { name: "Policy recovery", parentId: "parent-2" };
+  const folderReceipt = { ok: true, file: { name: folderBody.name } };
+  for (const { connection, providerKey } of policyConnections) {
+    const [match] = await discover(connection, providerKey, "drive-folders", ["POST"]);
+    expect(match).toBeDefined();
+    expect(typeof match.scriptPath).toBe("string");
+    policyMatches.set(connection.id, match);
+  }
+  const legacyConnections = policyConnections.slice(2);
+  for (const { connection, providerKey, providerPath } of legacyConnections) {
+    const before = await snapshot(selected);
+    const executed = await denFetch(writer, `/v1/capabilities/${providerKey}/drive-folders`, {
+      method: "POST", headers: { authorization: `Bearer ${writer.token}` }, body: JSON.stringify(folderBody),
+    });
+    expect(executed.response.status, executed.text).toBe(200);
+    expect(executed.body).toMatchObject(folderReceipt);
+    const observed = rows((await snapshot(selected)).requests).slice(rows(before.requests).length);
+    expect(observed).toEqual([expect.objectContaining({ method: "POST", path: providerPath, email: selected })]);
+    selectedTokens.set(connection.id, text(observed[0].tokenId));
+  }
+  const orgs = await denFetch(den.admin, "/v1/me/orgs", { headers: { authorization: `Bearer ${den.admin.token}` } });
+  expect(orgs.response.status, orgs.text).toBe(200);
+  const organizationId = text(rows(record(orgs.body).orgs).find((org) => org.name === organizationName)?.id);
+  const beforeDisable = await snapshot(selected);
+  for (const enabled of [false, true]) {
+    const switched = await denFetch(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
+      method: "PUT", headers: { authorization: `Bearer ${den.admin.token}` },
+      body: JSON.stringify({ capabilities: { mcpConnections: enabled } }),
+    });
+    expect(switched.response.status, switched.text).toBe(200);
+    expect(switched.body).toMatchObject({ capabilities: { mcpConnections: enabled } });
+    const usable = await denFetch(writer, "/v1/mcp-connections?scope=usable", { headers: { authorization: `Bearer ${writer.token}` } });
+    expect(usable.response.status, usable.text).toBe(200);
+    const usableIds = rows(record(usable.body).connections).map((entry) => entry.id);
+    if (enabled) expect(usableIds).toEqual(expect.arrayContaining(policyConnections.map(({ connection }) => connection.id)));
+    else expect(usableIds).toEqual([]);
+    const manageable = await denFetch(den.admin, "/v1/mcp-connections?scope=manageable", { headers: { authorization: `Bearer ${den.admin.token}` } });
+    expect(manageable.response.status, manageable.text).toBe(200);
+    expect(rows(record(manageable.body).connections).map((entry) => entry.id)).toEqual(expect.arrayContaining([google.id, microsoft.id]));
+    for (const { connection, providerPath } of policyConnections) {
+      const match = policyMatches.get(connection.id);
+      if (!match) throw new Error("Missing previously discovered policy action");
+      const search = await gateway(writerToken, "search_capabilities", { query: `${connection.name} drive-folders`, type: "api", limit: 20 });
+      const nativeNames = rows(search.payload.matches).map((entry) => text(entry.name)).filter((name) => name.startsWith("native:"));
+      if (enabled) expect(nativeNames).toContain(match.name);
+      else expect(nativeNames).toEqual([]);
+      for (const executor of ["execute_capability", "execute_capability_script"]) {
+        const before = await snapshot(selected);
+        const executed = await gateway(writerToken, executor, executor === "execute_capability"
+          ? { name: match.name, body: folderBody }
+          : { code: `return await ${text(match.scriptPath)}(input)`, input: { body: folderBody } });
+        if (enabled) {
+          expect(executed.result.isError, JSON.stringify(executed.payload)).not.toBe(true);
+          expect(executed.payload).toMatchObject(folderReceipt);
+          const observed = rows((await snapshot(selected)).requests).slice(rows(before.requests).length);
+          expect(observed).toEqual([expect.objectContaining({ method: "POST", path: providerPath, email: selected, tokenId: selectedTokens.get(connection.id) })]);
+        } else {
+          expect(executed.result.isError).toBe(true);
+          expect(executed.payload).toMatchObject({ error: executor === "execute_capability" ? "unknown_capability" : "script_failed" });
+          expect(await snapshot(selected)).toEqual(before);
+        }
+      }
+      const config = await denFetch(den.admin, `/v1/oauth-providers/${connection.id}/client`, { headers: { authorization: `Bearer ${den.admin.token}` } });
+      expect(config.response.status, config.text).toBe(200);
+      expect(config.body).toMatchObject({ configured: true, providerId: connection.id });
+      if (!enabled) {
+        const saved = await denFetch(den.admin, `/v1/oauth-providers/${connection.id}/client`, {
+          method: "POST", headers: { authorization: `Bearer ${den.admin.token}` },
+          body: JSON.stringify({ features: record(config.body).features }),
+        });
+        expect(saved.response.status, saved.text).toBe(200);
+        expect(saved.body).toMatchObject({ providerId: connection.id, features: record(config.body).features });
+      }
+    }
+    for (const { connection, providerKey, providerPath } of legacyConnections) {
+      const before = await snapshot(selected);
+      const executed = await denFetch(writer, `/v1/capabilities/${providerKey}/drive-folders`, {
+        method: "POST", headers: { authorization: `Bearer ${writer.token}` }, body: JSON.stringify(folderBody),
+      });
+      expect(executed.response.status, executed.text).toBe(enabled ? 200 : 409);
+      expect(executed.body).toMatchObject(enabled ? folderReceipt : { error: "needs_connection" });
+      if (enabled) {
+        const observed = rows((await snapshot(selected)).requests).slice(rows(before.requests).length);
+        expect(observed).toEqual([expect.objectContaining({ method: "POST", path: providerPath, email: selected, tokenId: selectedTokens.get(connection.id) })]);
+      } else expect(await snapshot(selected)).toEqual(before);
+    }
+    for (const { email, initial } of [{ email: primary, initial: untouched }, { email: readonly, initial: readerBefore }]) {
+      const account = await snapshot(email);
+      expect(account.state).toEqual(initial.state);
+      expect(account.requests).toEqual(initial.requests);
+    }
+    const after = await snapshot(selected);
+    if (!enabled) expect(after).toEqual(beforeDisable);
+    else {
+      expect(after.totalRequests).toBe(Number(beforeDisable.totalRequests) + 10);
+      for (const field of ["folders", "onedriveFolders"]) {
+        expect(rows(record(after.state)[field])).toHaveLength(rows(record(beforeDisable.state)[field]).length + 5);
+      }
+    }
+    evidence.recordAssertionEvidence(enabled
+      ? "Re-enabling native connections restores the same accounts without reconnecting"
+      : "Organization disable stops selected and legacy native execution while preserving admin management",
+    enabled
+      ? "The retained generic and Code Mode capabilities and default REST routes each made exactly one request with their original selected credential. Only the selected account gained ten folders; other accounts stayed unchanged."
+      : "The actual admin capability switch hid native search and usable connections. Generic, Code Mode, and legacy default REST writes were denied with zero provider calls or account changes; admins could still list and save the existing client configuration.", true);
+  }
   const final = await snapshot(selected);
   for (const [connection, features, action] of [
     [google, ["gmailRead", "calendarRead", "sheetsRead"], cases[0]],
