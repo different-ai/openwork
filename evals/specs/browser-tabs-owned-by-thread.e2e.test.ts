@@ -292,7 +292,10 @@ test("a background conversation reads its owned page silently and requests atten
     expect(blank.label).toBe("New tab");
     expect(settled).toBe(false);
     expect((await witness()).pageRequests).toEqual(requests);
-    expect(state.nativeViews.find((view) => view.tabId === blank.id)).toMatchObject({ attached: false, aboveApp: false, bounds: { x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT } });
+    // A consent tab has no document yet: it stays off every host, unsized, and
+    // allocates no hidden window until its approved first navigation completes.
+    expect(state).toMatchObject({ backgroundWindowCount: 0 });
+    expect(state.nativeViews.find((view) => view.tabId === blank.id)).toMatchObject({ attached: false, aboveApp: false, bounds: { x: 0, y: 0, width: 0, height: 0 } });
     await user.see(tabButton("reading"));
     await user.notSee(tabButton("research"));
     await user.notSee({ role: "button", label: "Allow origin in this tab" });
@@ -324,6 +327,10 @@ test("a background conversation reads its owned page silently and requests atten
     await user.click(conversation(reading.title));
     const metrics = await probe.eventually(() => probe.browserTabMetrics(researchTab.targetId), { within: 15_000, until: (value) => value.width === BACKGROUND_TAB_VIEWPORT.width && value.hasFocus, label: "the hidden page has its background viewport and focus" });
     expect(metrics).toMatchObject({ ...BACKGROUND_TAB_VIEWPORT, hasFocus: true });
+    // Once it holds a document, the owned page lives in the single hidden host at the background viewport.
+    const parked = await probe.browserState();
+    expect(parked).toMatchObject({ backgroundWindowCount: 1, backgroundWindowVisible: false });
+    expect(parked.nativeViews.find((view) => view.tabId === researchTab.tabId)).toMatchObject({ attached: false, aboveApp: false, bounds: { x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT } });
     const observed = await task("observe", { includeImage: true });
     expect(observed.text).toContain("Project status");
     expect(browserImageTarget(observed.image)).toMatchObject(BACKGROUND_TAB_VIEWPORT);
@@ -422,7 +429,7 @@ test("a background conversation reads its owned page silently and requests atten
     await user.see({ text: /Browser tab is protected or busy/ });
     expect(await agent.run("browser.release_tab", { tabId: readingTab.tabId }))
       .toMatchObject({ tabId: readingTab.tabId, released: true });
-    expect((await world.readBrowserState()).tabs.map(tab => tab.id).sort())
+    expect((await probe.browserState()).tabs.map(tab => tab.id).sort())
       .toEqual([readingTab.tabId, researchTab.tabId].sort());
     expect(await witness()).toMatchObject({ records: [{ method: "dom", count: 1, signedIn: false }], inputValue: "ok", sessionReads: 0 });
   });
