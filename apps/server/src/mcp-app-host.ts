@@ -1,15 +1,19 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SSEClientTransport, SseError } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   CONNECT_MCP_APP_HOST_CAPABILITY,
   CONNECT_MCP_APP_HOST_CAPABILITY_HEADER,
+  CONNECT_MCP_APP_HOST_NAME_PREFIX,
   connectMcpAppHostName,
   findOpenWorkConnectMcpAppHostServer,
   readOpenWorkConnectMcpAppHostAuthorization,
   readOpenWorkConnectMcpAppHostCatalog,
   refreshOpenWorkConnectMcpAppHostCatalog,
+  type ConnectMcpCatalogDiagnostic,
 } from "./connect-mcp-server-catalog.js";
 import type { ServerConfig } from "./types.js";
 import {
@@ -188,6 +192,30 @@ function clientOptions() {
   };
 }
 
+/** Transport messages can echo URLs, headers and arbitrary provider bodies. Only
+ * expose typed statuses and fixed categories, never their raw messages. */
+function connectionFailure(error: unknown): string {
+  if ((error instanceof StreamableHTTPError || error instanceof SseError)
+    && typeof error.code === "number" && error.code >= 100 && error.code <= 599) {
+    return `HTTP ${error.code}`;
+  }
+  if (error instanceof UnauthorizedError) return "authentication failed";
+  if (error instanceof McpError && error.code === ErrorCode.RequestTimeout) return "request timed out";
+  let cause = error;
+  for (let depth = 0; depth < 4 && cause instanceof Error; depth += 1) {
+    if (cause.name === "TimeoutError" || cause.name === "AbortError") return "request timed out or aborted";
+    if ("code" in cause && typeof cause.code === "string") {
+      if (["CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN",
+        "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "ERR_TLS_CERT_ALTNAME_INVALID"].includes(cause.code)) return "TLS certificate validation failed";
+      if (["ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT"].includes(cause.code)) return "request timed out";
+      if (["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN"].includes(cause.code)) return "network connection failed";
+    }
+    cause = cause.cause;
+  }
+  if (error instanceof McpError) return "MCP initialization rejected";
+  return "connection or protocol negotiation failed";
+}
+
 async function withRemoteClient<T>(
   config: Record<string, unknown>,
   run: (client: Client) => Promise<T>,
@@ -210,8 +238,8 @@ async function withRemoteClient<T>(
     () => new StreamableHTTPClientTransport(url, { requestInit, fetch: guardedFetch }),
     () => new SSEClientTransport(url, { requestInit, fetch: guardedFetch }),
   ];
-  let lastError: unknown;
-  for (const createTransport of attempts) {
+  const failures: string[] = [];
+  for (const [index, createTransport] of attempts.entries()) {
     const client = new Client({ name: "openwork-mcp-app-host", version: "1.0.0" }, clientOptions());
     let connected = false;
     try {
@@ -220,14 +248,20 @@ async function withRemoteClient<T>(
       return await run(client);
     } catch (error) {
       if (connected) throw error;
-      lastError = error;
+      failures.push(`${index === 0 ? "Streamable HTTP POST" : "Legacy SSE fallback"}: ${connectionFailure(error)}`);
+      // MCP 2025-11-25 backwards compatibility applies only to a rejected
+      // InitializeRequest, not auth/network errors or the initialized notification.
+      // The SDK handles optional-stream GET 405 itself; it is not a fallback signal.
+      if (index !== 0 || client.getServerVersion() !== undefined
+        || !(error instanceof StreamableHTTPError)
+        || (error.code !== 400 && error.code !== 404 && error.code !== 405)) break;
     } finally {
       await client.close().catch(() => undefined);
     }
   }
   throw new McpAppHostError(
     "mcp_unreachable",
-    lastError instanceof Error ? lastError.message : "The MCP server could not be reached.",
+    failures.join("; "),
   );
 }
 
@@ -281,12 +315,25 @@ function decodeResourceHtml(content: { text?: string; blob?: string }): { html: 
   throw new McpAppHostError("invalid_resource", "The MCP App resource must contain exactly one of text or blob HTML.");
 }
 
+function connectCatalogError(diagnostic: Exclude<ConnectMcpCatalogDiagnostic, "ready" | "empty">): McpAppHostError {
+  const messages = {
+    missing_app_host_auth: "The Connect MCP App host needs a fresh private authorization. Sync OpenWork Connect and try again.",
+    untrusted_origin: "The Connect MCP catalog origin is not trusted. Activate the enterprise Den origin before loading Apps.",
+    invalid_catalog: "The Connect MCP catalog is invalid. Ask your administrator to check the Den catalog.",
+    invalid_proxy_descriptor: "The Connect MCP catalog contains an invalid provider proxy descriptor. Ask your administrator to correct it in Den.",
+    discovery_unavailable: "The Connect MCP catalog could not be discovered. Try again; this does not establish that the connection is missing.",
+  };
+  return new McpAppHostError(`connect_catalog_${diagnostic}`, messages[diagnostic]);
+}
+
 async function privateConnectMcpConfig(input: {
   serverConfig: ServerConfig;
   workspaceId: string;
   connectionId?: string;
   serverName?: string;
 }): Promise<{ serverName: string; config: Record<string, unknown> } | null> {
+  // Ordinary user-configured servers do not depend on Connect discovery.
+  if (input.connectionId === undefined && !input.serverName?.startsWith(CONNECT_MCP_APP_HOST_NAME_PREFIX)) return null;
   let descriptor = await findOpenWorkConnectMcpAppHostServer(
     input.serverConfig,
     input.workspaceId,
@@ -294,6 +341,9 @@ async function privateConnectMcpConfig(input: {
   );
   if (!descriptor) {
     const refreshed = await refreshOpenWorkConnectMcpAppHostCatalog(input.serverConfig, input.workspaceId);
+    if (refreshed.diagnostic !== "ready" && refreshed.diagnostic !== "empty") {
+      throw connectCatalogError(refreshed.diagnostic);
+    }
     if (refreshed.status === "synced") {
       descriptor = await findOpenWorkConnectMcpAppHostServer(
         input.serverConfig,
@@ -308,7 +358,7 @@ async function privateConnectMcpConfig(input: {
     input.workspaceId,
     descriptor.url,
   );
-  if (!appHostAuthorization) return null;
+  if (!appHostAuthorization) throw connectCatalogError("missing_app_host_auth");
   return {
     serverName: connectMcpAppHostName(descriptor.connectionId),
     config: {

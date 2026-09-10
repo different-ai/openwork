@@ -3,8 +3,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, jest, mock, spyOn, t
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, useCallback, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import { useSessionScrollController } from "../src/react-app/domains/session/surface/scroll-controller";
-import { flushSessionScrollState, getSessionScrollState, useSessionScrollStore } from "../src/react-app/domains/session/surface/scroll-store";
+import { SESSION_SCROLL_NAVIGATION_EVENT, useSessionScrollController } from "../src/react-app/domains/session/surface/scroll-controller";
+import { flushSessionScrollState, getSessionScrollState, readPersistedSessionScrollState, sessionScrollKey, useSessionScrollStore } from "../src/react-app/domains/session/surface/scroll-store";
 
 const ownedDom = typeof window === "undefined";
 if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
@@ -53,8 +53,8 @@ afterAll(async () => {
   if (ownedDom) await GlobalRegistrator.unregister();
 });
 
-function state(id = "a") {
-  return getSessionScrollState(useSessionScrollStore.getState().sessions, id);
+function state(id = "a", owner?: string) {
+  return getSessionScrollState(useSessionScrollStore.getState().sessions, id, owner);
 }
 
 function runFrames() {
@@ -76,13 +76,14 @@ function observeStorageWrites() {
   return writes;
 }
 
-function fixture() {
+function fixture(geometryOwner?: string) {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
   const layout = {
     height: 1_000,
     viewportHeight: 200,
+    complete: true,
     messages: [
       { id: "first", top: 0, height: 300 },
       { id: "reading", top: 300, height: 300 },
@@ -102,6 +103,7 @@ function fixture() {
       Object.defineProperties(node, {
         scrollHeight: { configurable: true, get: () => layout.height },
         clientHeight: { configurable: true, get: () => layout.viewportHeight },
+        clientWidth: { configurable: true, get: () => 500 },
         scrollTop: { configurable: true, get: () => scrollTop, set: (top: number) => {
           scrollWrites.push(top);
           scrollTop = Math.max(0, Math.min(top, layout.height - layout.viewportHeight));
@@ -111,12 +113,13 @@ function fixture() {
       });
     }, []);
     const scroll = useSessionScrollController({
-      selectedSessionId: sessionId, submittedMessageId: null, historyReady: ready, renderedMessages: [...layout.messages], containerRef, contentRef,
+      selectedSessionId: sessionId, geometryOwner, submittedMessageId: null, historyReady: ready, renderedMessages: [...layout.messages], containerRef, contentRef,
     });
     controls = scroll;
     return <div ref={setContainer} onScroll={scroll.handleScroll} onWheel={(event) => scroll.markScrollGesture(event.target)}
       onPointerDown={(event) => { if (event.target === event.currentTarget) scroll.markScrollGesture(event.target); }}>
       <div ref={contentRef}>
+        <div data-thread-history-complete={layout.complete} data-thread-loading={!ready ? "" : undefined} />
         {layout.messages.map((message) => <div key={message.id} data-message-id={message.id} ref={(node) => {
           if (node) node.getBoundingClientRect = () => new DOMRect(0, 40 + message.top - scrollTop, 500, message.height);
         }}>{message.id}</div>)}
@@ -158,6 +161,99 @@ function fixture() {
 }
 
 describe("session reading position", () => {
+  test("signals explicit navigation for pending Find cancellation, not passive sticky reconciliation", async () => {
+    const view = fixture();
+    await view.render();
+    const navigation = mock(() => {});
+    view.container.addEventListener(SESSION_SCROLL_NAVIGATION_EVENT, navigation);
+    view.layout.height += 100;
+    view.resize();
+    runFrames();
+    expect(navigation).not.toHaveBeenCalled();
+    view.controls.markScrollGesture(view.container);
+    view.scroll(0);
+    expect(navigation).toHaveBeenCalledTimes(1);
+    view.controls.jumpToLatest("auto");
+    expect(navigation).toHaveBeenCalledTimes(2);
+    runFrames();
+    view.controls.jumpToStartOfMessage("auto");
+    expect(navigation).toHaveBeenCalledTimes(3);
+  });
+
+  test("restores estimated loading geometry without consuming an anchor absent from a partial preview", async () => {
+    const store = useSessionScrollStore.getState();
+    store.setManualScroll("a", 325, null, { messageId: "reading", offset: -25 });
+    store.setGeometry("a", { owner: "owner-a", scrollHeight: 1000, viewportWidth: 500, before: 0, after: 0, messageIds: ["first", "reading", "latest"] });
+    const saved = state();
+    const view = fixture("owner-a");
+    view.layout.complete = false;
+    view.layout.messages = [];
+    await view.render("a", false);
+    expect(view.container.scrollTop).toBe(325);
+    view.layout.messages = [{ id: "latest", top: 600, height: 400 }];
+    await view.render();
+    expect(state("a", "owner-a")).toEqual(saved);
+    view.layout.messages.unshift({ id: "reading", top: 420, height: 180 });
+    await view.render();
+    expect(view.container.scrollTop).toBe(445);
+    expect(state("a", "owner-a")).toEqual(saved);
+  });
+
+  test("records complete geometry and nearby IDs without replacing it with partial or zero-sized layout", async () => {
+    const view = fixture("owner-a");
+    await view.render();
+    view.wheel(325);
+    expect(state("a", "owner-a").geometry).toEqual({ owner: "owner-a", scrollHeight: 1000, viewportWidth: 500, before: 0, after: 0, messageIds: ["first", "reading", "latest"] });
+    const geometry = state("a", "owner-a").geometry;
+    view.layout.complete = false;
+    view.layout.height = 1200;
+    await view.render();
+    view.wheel(350);
+    expect(state("a", "owner-a").geometry).toEqual(geometry);
+    useSessionScrollStore.getState().setStickyBottom(sessionScrollKey("a", "owner-a"), null);
+    flushSessionScrollState();
+    expect(JSON.parse(localStorage.getItem(storageKey)!)).toMatchObject({ [sessionScrollKey("a", "owner-a")]: { mode: "stickyBottom", geometry } });
+  });
+
+  test("two owners with the same session ID keep independent manual positions and geometry", async () => {
+    const first = fixture("owner-a");
+    const second = fixture("owner-b");
+    second.layout.viewportHeight = 320;
+    await first.render();
+    first.wheel(325);
+    const saved = state("a", "owner-a");
+    await second.render();
+    expect(state("a", "owner-b").mode).toBe("stickyBottom");
+    now += 1_000;
+    first.resize();
+    runFrames();
+    expect(first.container.scrollTop).toBe(325);
+    expect(state("a", "owner-a")).toEqual(saved);
+    second.wheel(120);
+    expect(state("a", "owner-b")).toMatchObject({ mode: "manual", scrollTop: 120, geometry: { owner: "owner-b" } });
+    first.controls.jumpToLatest("auto");
+    runFrames();
+    expect(second.container.scrollTop).toBe(120);
+    expect(state("a", "owner-b").mode).toBe("manual");
+  });
+
+  test("does not consume a legacy anchor against a too-short preview", async () => {
+    useSessionScrollStore.getState().setManualScroll("a", 325, null, { messageId: "reading", offset: -25 });
+    const saved = state();
+    const view = fixture();
+    view.layout.complete = false;
+    view.layout.height = 200;
+    view.layout.messages = [{ id: "reading", top: 0, height: 100 }];
+    await view.render();
+    view.scroll(0);
+    expect(state()).toEqual(saved);
+    view.layout.height = 1000;
+    view.layout.messages[0].top = 300;
+    await view.render();
+    expect(view.container.scrollTop).toBe(325);
+    expect(state()).toEqual(saved);
+  });
+
   test("remembers native reflow adjustments without applying a competing scroll", async () => {
     useSessionScrollStore.getState().setManualScroll("a", 325, null, { messageId: "reading", offset: -25 });
     const view = fixture();
@@ -443,6 +539,86 @@ describe("session reading position", () => {
 });
 
 describe("scroll persistence", () => {
+  test("hydrates legacy pixels, legacy geometry and owner-keyed positions after geometry eviction", () => {
+    const geometry = { owner: "owner-a", scrollHeight: 1000, viewportWidth: 500, before: 0, after: 0, messageIds: ["reading"] };
+    localStorage.setItem(storageKey, JSON.stringify({
+      pixels: { mode: "manual", scrollTop: 125 },
+      legacy: { mode: "manual", scrollTop: 325, anchor: { messageId: "reading", offset: -25 }, geometry },
+      [sessionScrollKey("a", "owner-a")]: { mode: "manual", scrollTop: 450, owner: "owner-a", anchor: { messageId: "reading", offset: -150 } },
+    }));
+    useSessionScrollStore.setState({ sessions: readPersistedSessionScrollState() });
+    const store = useSessionScrollStore.getState();
+    expect(store.sessions.pixels).toMatchObject({ mode: "manual", scrollTop: 125 });
+    expect(store.sessions.legacy).toMatchObject({ mode: "manual", owner: "owner-a", geometry });
+    store.claimOwner("legacy", "owner-b");
+    expect(state("legacy", "owner-b").mode).toBe("stickyBottom");
+    store.claimOwner("legacy", "owner-a");
+    expect(state("legacy", "owner-a")).toMatchObject({ mode: "manual", scrollTop: 325, anchor: { messageId: "reading", offset: -25 } });
+    expect(state("a", "owner-a")).toMatchObject({ mode: "manual", scrollTop: 450, owner: "owner-a" });
+    expect(state("a", "owner-b").mode).toBe("stickyBottom");
+    flushSessionScrollState();
+  });
+
+  test.each([undefined, { messageId: "reading", offset: -25 }])("claims a geometry-free legacy position once without losing its pixels or anchor (%j)", (anchor) => {
+    const store = useSessionScrollStore.getState();
+    store.setManualScroll("a", 325, null, anchor);
+    const saved = state();
+    expect(state("a", "owner-a")).toEqual(saved);
+    store.claimOwner("a", "owner-a");
+    store.claimOwner("a", "owner-b");
+    expect(state("a", "owner-a")).toEqual({ ...saved, owner: "owner-a" });
+    expect(state("a", "owner-b").mode).toBe("stickyBottom");
+    expect(useSessionScrollStore.getState().sessions.a).toBeUndefined();
+    flushSessionScrollState();
+    const persisted = JSON.parse(localStorage.getItem(storageKey)!);
+    expect(persisted[sessionScrollKey("a", "owner-a")]).toEqual({ mode: "manual", scrollTop: 325, owner: "owner-a", ...(anchor ? { anchor } : {}) });
+    expect(persisted.a).toBeUndefined();
+  });
+
+  test("legacy geometry can only migrate to its recorded owner and cannot overwrite a newer position", () => {
+    const store = useSessionScrollStore.getState();
+    store.setManualScroll("a", 325, null, { messageId: "reading", offset: -25 });
+    store.setGeometry("a", { owner: "owner-a", scrollHeight: 1000, viewportWidth: 500, before: 0, after: 0, messageIds: ["reading"] });
+    expect(state("a", "owner-b").mode).toBe("stickyBottom");
+    store.claimOwner("a", "owner-b");
+    expect(useSessionScrollStore.getState().sessions.a).toBeDefined();
+    store.setManualScroll(sessionScrollKey("a", "owner-a"), 100, null);
+    store.claimOwner("a", "owner-a");
+    expect(state("a", "owner-a")).toMatchObject({ mode: "manual", scrollTop: 100 });
+    expect(useSessionScrollStore.getState().sessions.a).toBeUndefined();
+  });
+
+  test("geometry eviction retains position ownership across persistence and cannot leak to another owner", () => {
+    const store = useSessionScrollStore.getState();
+    const key = sessionScrollKey("a", "owner-a");
+    store.setManualScroll(key, 325, null, { messageId: "reading", offset: -25 });
+    for (let index = 0; index < 65; index++) {
+      const owner = index === 0 ? "owner-a" : `owner-${index}`;
+      store.setGeometry(sessionScrollKey("a", owner), { owner, scrollHeight: 1000, viewportWidth: 500, before: 0, after: 0, messageIds: ["reading"] });
+    }
+    expect(Object.values(useSessionScrollStore.getState().sessions).filter((entry) => entry.geometry)).toHaveLength(64);
+    expect(state("a", "owner-a").geometry).toBeUndefined();
+    expect(state("a", "owner-a")).toMatchObject({ mode: "manual", scrollTop: 325, anchor: { messageId: "reading", offset: -25 } });
+    expect(state("a", "new-owner").mode).toBe("stickyBottom");
+    flushSessionScrollState();
+    expect(JSON.parse(localStorage.getItem(storageKey)!)[key]).toEqual({ mode: "manual", scrollTop: 325, owner: "owner-a", anchor: { messageId: "reading", offset: -25 } });
+  });
+
+  test("evicting unclaimed legacy geometry does not make its position ownerless", () => {
+    const store = useSessionScrollStore.getState();
+    store.setManualScroll("a", 325, null);
+    store.setGeometry("a", { owner: "owner-a", scrollHeight: 1000, viewportWidth: 500, before: 0, after: 0, messageIds: ["reading"] });
+    for (let index = 0; index < 64; index++) {
+      const owner = `other-${index}`;
+      store.setGeometry(sessionScrollKey("a", owner), { owner, scrollHeight: 1000, viewportWidth: 500, before: 0, after: 0, messageIds: ["reading"] });
+    }
+    expect(state().geometry).toBeUndefined();
+    store.claimOwner("a", "owner-b");
+    expect(state("a", "owner-b").mode).toBe("stickyBottom");
+    store.claimOwner("a", "owner-a");
+    expect(state("a", "owner-a")).toMatchObject({ mode: "manual", scrollTop: 325, owner: "owner-a" });
+  });
+
   test("coalesces hot scroll writes, keeps memory immediate and does not persist clipped-message controls", () => {
     const writes = observeStorageWrites();
     const store = useSessionScrollStore.getState();

@@ -525,7 +525,7 @@ test("every runner endpoint re-checks that the token owner is still an active me
     "runner endpoints must authorize through authenticateRunner (token + live membership), not the raw token check",
   )
   const sse = routesSource.slice(
-    routesSource.indexOf("/v1/automation-runners/events\", async"),
+    routesSource.indexOf("/v1/automation-runners/events\","),
     routesSource.indexOf("/v1/automation-runner/work"),
   )
   assert.match(sse, /Date\.now\(\) >= identity\.expiresAt\) break/)
@@ -555,7 +555,7 @@ test("idle runner keepalives do not persist liveness in the database", () => {
   const routesSource = readFileSync(join(import.meta.dir, "../src/routes/automations/index.ts"), "utf8")
   const repositorySource = readFileSync(join(import.meta.dir, "../src/automations/repository.ts"), "utf8")
   const sse = routesSource.slice(
-    routesSource.indexOf("/v1/automation-runners/events\", async"),
+    routesSource.indexOf("/v1/automation-runners/events\","),
     routesSource.indexOf("/v1/automation-runner/work"),
   )
   const manualRun = routesSource.slice(

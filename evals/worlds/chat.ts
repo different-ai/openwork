@@ -1,20 +1,38 @@
 import { browserScript, reattachSurface, type Surface } from "@openwork/cdp";
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
 import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
-import type { MockAgentWorkload } from "@openwork/labs";
+import type { MockAgentWorkload, MockMcpHandle } from "@openwork/labs";
 import { chatContinuity } from "./chat-continuity.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 
+type AppSurface = "electron" | "web";
+
 declare global {
   interface Window {
     __openworkSubmissionFault?: { attempts: number; release: () => void };
+    __openworkStoppingFault?: {
+      state: {
+        attempts: number;
+        held: number;
+        nativeStatus: number | null;
+        nativeFailed: boolean;
+        released: boolean;
+        failed: boolean;
+        clickCaptured: boolean;
+        trusted: boolean;
+        elapsedMs: number | null;
+        expired: boolean;
+      };
+      fail: () => void;
+      dispose: () => void;
+    };
   }
 }
 
@@ -167,7 +185,7 @@ export async function configureProvider(
 
 async function seedControls(
   seed: Seed,
-  app: Awaited<ReturnType<Seed["desktop"]>>,
+  app: Surface,
   calls: readonly { action: string; args?: unknown }[],
 ): Promise<void> {
   for (const call of calls) await arrangeControl(seed, app, call.action, call.args);
@@ -175,7 +193,7 @@ async function seedControls(
 
 export async function arrangeControl(
   seed: Seed,
-  app: Awaited<ReturnType<Seed["desktop"]>>,
+  app: Surface,
   action: string,
   args?: unknown,
 ): Promise<unknown> {
@@ -230,13 +248,35 @@ async function splitPaneQuestions(
   name: string,
   agentWorkloads: MockAgentWorkload[],
   policy: Record<string, unknown> = { permission: { question: "allow" } },
+  surface: AppSurface = "electron",
 ) {
   const providerId = "split-send-mock";
   const modelId = "split-send-model";
-  const mock = seed.mock({ agentWorkloads });
-  const den = await seed.den({ mocks: { agent: mock } });
-  const app = await seed.desktop({ name, den, as: "admin", model: `${providerId}/${modelId}` });
-  const workspace = await seed.workspace(app, seed.tmpPath(name));
+  const mock = seed.mock({ isolatedProcessEnv: surface === "web", agentWorkloads });
+  // Electron stores realpath'd workspace roots; give the web server the same root
+  // so Stop's engine-directory verification matches (macOS /tmp is a symlink).
+  const requestedPath = seed.tmpPath(name);
+  const workspacePath = surface === "web"
+    ? join(realpathSync(dirname(requestedPath)), basename(requestedPath))
+    : requestedPath;
+  let app: Surface;
+  let agentMock: MockMcpHandle;
+  if (surface === "web") {
+    const web = await seed.appWeb({
+      name,
+      workspacePath,
+      mocks: { agent: mock },
+    });
+    app = web;
+    const configured = web.mocks.agent;
+    if (!configured) throw new Error(`The app-web fixture did not boot the ${name} model witness.`);
+    agentMock = configured;
+  } else {
+    const den = await seed.den({ mocks: { agent: mock } });
+    app = await seed.desktop({ name, den, as: "admin", model: `${providerId}/${modelId}` });
+    agentMock = den.mocks.agent;
+  }
+  const workspace = await seed.workspace(app, workspacePath);
   // Arrange an allowed native question tool independently of custom-agent defaults.
   // TODO(primitive): write workspace fixture files through a first-class seed API.
   const questionPolicyWritten = await seed.evalIn(app, browserScript(async (workspaceId, content) => {
@@ -255,12 +295,12 @@ async function splitPaneQuestions(
       [providerId]: {
         npm: "@ai-sdk/openai-compatible",
         name: "Split send mock",
-        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-split-send" },
+        options: { baseURL: `${agentMock.url}/v1`, apiKey: "sk-split-send" },
         models: { [modelId]: { name: "Split send model" } },
       },
     },
   });
-  return { app, workspace, mock: den.mocks.agent };
+  return { app, workspace, mock: agentMock };
 }
 
 export async function delegatedQuestionHandoff(seed: Seed) {
@@ -778,6 +818,12 @@ export async function streamedToolHistory(seed: Seed) {
   const den = await seed.den({ mocks: { agent: mock } });
   const app = await seed.desktop({ name: "streamed-tool-history", den, as: "admin", model: `${providerId}/${modelId}` });
   const workspace = await seed.workspace(app, seed.tmpPath("streamed-tool-history"));
+  const profile = await seed.api(den.admin, "/v1/me");
+  if (!profile.response.ok || !isRecord(profile.body) || !isRecord(profile.body.user)
+    || typeof profile.body.user.id !== "string" || !profile.body.user.id.trim()) {
+    throw new Error("Streamed history fixture could not resolve its authenticated principal");
+  }
+  const principalId = profile.body.user.id.trim();
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     permission: { bash: "allow" },
     provider: { [providerId]: {
@@ -822,7 +868,7 @@ export async function streamedToolHistory(seed: Seed) {
       }
     }
   }, [historyPath, history, toolNames.map(command), providerId, modelId]), { awaitPromise: true, timeoutMs: 185_000 });
-  return { app, workspace, session, neighbor, historyPath, history, toolNames, latestTool, prompt, opening, middle, closing };
+  return { app, workspace, session, neighbor, principalId, historyPath, history, toolNames, latestTool, prompt, opening, middle, closing };
 }
 
 export const streamedMarkdownMarker = "STREAM_MARKDOWN_ANSWER";
@@ -1715,12 +1761,226 @@ export async function taskActivity(seed: Seed) {
   return { app, workspace, session };
 }
 
-export async function unfinishedTools(seed: Seed) {
-  const app = await seed.desktop({ name: "unfinished-tool-lifecycle" });
-  const workspace = await seed.workspace(app, seed.tmpPath("unfinished-tool-lifecycle"));
-  const session = await seedSessionRetry(seed, app);
-  await arrangeControl(seed, app, "eval.session_lifecycle.seed_unfinished_tools", { lifecycle: "active" });
-  return { app, workspace, session };
+async function stoppingFeedbackFault(
+  seed: Seed,
+  app: Surface,
+  workspaceId: string,
+  sessionId: string,
+) {
+  await seed.evalIn(app, browserScript((workspaceId, sessionId) => {
+    if (window.__openworkStoppingFault) throw new Error("A Stop feedback fault is already active");
+    const port = localStorage.getItem("openwork.server.port");
+    if (!port) throw new Error("Stop feedback fault requires the local server port");
+    const serverOrigin = `http://127.0.0.1:${port}`;
+    const encodedWorkspaceId = encodeURIComponent(workspaceId);
+    const encodedSessionId = encodeURIComponent(sessionId);
+    const paths = new Set(["workspace", "w"].flatMap((mount) => [
+      `/${mount}/${encodedWorkspaceId}/opencode/session/${encodedSessionId}/abort`,
+      `/${mount}/${encodedWorkspaceId}/opencode2/api/session/${encodedSessionId}/interrupt`,
+    ]));
+    const originalFetch = window.fetch;
+    let releaseHold = () => {};
+    const hold = new Promise<void>((resolve) => { releaseHold = resolve; });
+    const state = {
+      attempts: 0,
+      held: 0,
+      nativeStatus: null as number | null,
+      nativeFailed: false,
+      released: false,
+      failed: false,
+      clickCaptured: false,
+      trusted: false,
+      elapsedMs: null as number | null,
+      expired: false,
+    };
+    let clickedAt = 0;
+    let frame = 0;
+    let expiry: ReturnType<typeof setTimeout> | null = null;
+    const sessionRoot = () => [...document.querySelectorAll<HTMLElement>("[data-session-surface-id]")]
+      .find((candidate) => candidate.dataset.sessionSurfaceId === sessionId) ?? null;
+    const visible = (element: HTMLElement | null) => {
+      if (!element) return false;
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return element.getClientRects().length > 0 && rect.width > 0 && rect.height > 0
+        && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) > 0;
+    };
+    const sample = () => {
+      if (!state.clickCaptured || state.elapsedMs !== null) return;
+      const button = sessionRoot()?.querySelector<HTMLButtonElement>('button[aria-label="Stopping…"][aria-busy="true"]') ?? null;
+      if (button?.disabled && visible(button)) state.elapsedMs = performance.now() - clickedAt;
+    };
+    const paint = () => { sample(); frame = requestAnimationFrame(paint); };
+    const capture = (event: MouseEvent) => {
+      if (state.clickCaptured || !event.isTrusted || !(event.target instanceof Element)) return;
+      const button = event.target.closest<HTMLButtonElement>('button[aria-label="Stop"]');
+      const root = sessionRoot();
+      if (!button || !root?.contains(button)) return;
+      state.clickCaptured = true;
+      state.trusted = true;
+      clickedAt = performance.now();
+      expiry = setTimeout(() => { state.expired = true; }, 2_000);
+      queueMicrotask(sample);
+    };
+    window.addEventListener("click", capture, true);
+    const observer = new MutationObserver(sample);
+    observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true });
+    frame = requestAnimationFrame(paint);
+
+    const wrappedFetch: typeof window.fetch = async (...args) => {
+      const input = args[0];
+      const init = args[1];
+      const requestUrl = new URL(input instanceof Request ? input.url : String(input), location.href);
+      const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+      if (state.released || method !== "POST" || requestUrl.origin !== serverOrigin || !paths.has(requestUrl.pathname)) {
+        return originalFetch(...args);
+      }
+      state.attempts += 1;
+      state.held += 1;
+      try {
+        await hold;
+        if (state.failed) {
+          state.nativeStatus = 503;
+          return new Response(JSON.stringify({ message: "Stop unavailable" }), {
+            status: 503,
+            statusText: "Service Unavailable",
+            headers: { "content-type": "application/json" },
+          });
+        }
+        try {
+          const response = await originalFetch(...args);
+          state.nativeStatus = response.status;
+          return response;
+        } catch (error) {
+          state.nativeFailed = true;
+          throw error;
+        }
+      } finally {
+        state.held -= 1;
+      }
+    };
+    window.fetch = wrappedFetch;
+    const release = (failed: boolean) => {
+      if (state.released) return;
+      state.failed = failed;
+      state.released = true;
+      releaseHold();
+    };
+    const dispose = () => {
+      release(true);
+      if (window.fetch === wrappedFetch) window.fetch = originalFetch;
+      if (expiry) clearTimeout(expiry);
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+      window.removeEventListener("click", capture, true);
+    };
+    window.__openworkStoppingFault = { state, fail: () => release(true), dispose };
+  }, [workspaceId, sessionId]));
+
+  let disposed = false;
+  return {
+    async read() {
+      return seed.evalIn(app, browserScript((sessionId) => {
+        const fault = window.__openworkStoppingFault;
+        if (!fault) throw new Error("Stop feedback fault lost its document");
+        const root = [...document.querySelectorAll<HTMLElement>("[data-session-surface-id]")]
+          .find((candidate) => candidate.dataset.sessionSurfaceId === sessionId) ?? null;
+        const stopping = root?.querySelector<HTMLButtonElement>('button[aria-label="Stopping…"]') ?? null;
+        const retry = root?.querySelector<HTMLButtonElement>('button[aria-label="Stop"]') ?? null;
+        const run = root?.querySelector<HTMLButtonElement>('button[aria-label="Run task"]') ?? null;
+        const error = root?.querySelector<HTMLElement>('[data-testid="session-error-card"]') ?? null;
+        const aggregate = root?.querySelector<HTMLElement>("[data-tool-aggregate]") ?? null;
+        const composer: unknown = window.__openwork?.slice("composer");
+        const snapshotQuery = composer && typeof composer === "object" && "snapshotQuery" in composer
+          ? composer.snapshotQuery
+          : null;
+        const visible = (element: HTMLElement | null) => {
+          if (!element) return false;
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return element.getClientRects().length > 0 && rect.width > 0 && rect.height > 0
+            && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) > 0;
+        };
+        return {
+          ...fault.state,
+          stoppingVisible: visible(stopping),
+          stoppingDisabled: stopping?.disabled ?? false,
+          ariaBusy: stopping?.getAttribute("aria-busy") ?? null,
+          spinnerVisible: visible(stopping?.querySelector<HTMLElement>("svg.lucide-loader-circle.animate-spin") ?? null),
+          retryEnabled: Boolean(retry && visible(retry) && !retry.disabled),
+          runVisible: visible(run),
+          errorText: error?.innerText.replace(/\s+/g, " ").trim() ?? "",
+          aggregateText: aggregate?.innerText.replace(/\s+/g, " ").trim() ?? "",
+          snapshotMessageCount: snapshotQuery && typeof snapshotQuery === "object" && "dataMessageCount" in snapshotQuery
+            && typeof snapshotQuery.dataMessageCount === "number" ? snapshotQuery.dataMessageCount : 0,
+          surfaceError: composer && typeof composer === "object" && "error" in composer ? composer.error : null,
+        };
+      }, [sessionId]));
+    },
+    async fail() {
+      await seed.evalIn(app, () => {
+        const fault = window.__openworkStoppingFault;
+        if (!fault || fault.state.held < 1) throw new Error("No native Stop response is held");
+        fault.fail();
+      });
+    },
+    async [Symbol.asyncDispose]() {
+      if (disposed) return;
+      disposed = true;
+      await seed.evalIn(app, () => {
+        window.__openworkStoppingFault?.dispose();
+        delete window.__openworkStoppingFault;
+      });
+    },
+  };
+}
+
+export async function unfinishedToolsWeb(seed: Seed) {
+  const engine = resolveEvalEngine();
+  const prompt = "Hold the native tool open for Stop feedback proof.";
+  const warmup = { prompt: "Create the Stop feedback fixture.", reply: "Stop feedback fixture ready." };
+  const base = await splitPaneQuestions(seed, "unfinished-tool-lifecycle", [
+    { promptMarker: warmup.prompt, latestUserTurn: true, finalReply: warmup.reply, steps: [] },
+    {
+      promptMarker: prompt,
+      latestUserTurn: true,
+      finalReply: "The held tool finished without Stop.",
+      steps: [{ tool: engine === "v2" ? "shell" : "bash", arguments: {
+        command: "sleep 120",
+        description: "Hold the native tool for Stop feedback",
+        timeout: 180_000,
+      } }],
+    },
+  ], { permission: { bash: "allow" } }, "web");
+  const session = await seedSessionRetry(seed, base.app);
+  // v2 exposes live runs through /session/active ({ type: "running" }) rather than /session/status.
+  const statusPath = `/workspace/${encodeURIComponent(base.workspace.workspaceId)}`
+    + `/${engine === "v2" ? "opencode2/api/session/active" : "opencode/session/status"}`;
+  return {
+    ...base,
+    session,
+    prompt,
+    warmup,
+    engine,
+    startStopFault: () => stoppingFeedbackFault(seed, base.app, base.workspace.workspaceId, session.sessionId),
+    nativeStatus: () => seed.evalIn(base.app, browserScript(async (statusPath, sessionId) => {
+      const port = localStorage.getItem("openwork.server.port");
+      const token = localStorage.getItem("openwork.server.token");
+      const response = await fetch(`http://127.0.0.1:${port}${statusPath}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return `http-${response.status}`;
+      const payload: unknown = await response.json();
+      // v2 wraps its body in { data }; v1 answers with the bare status map.
+      const statuses: unknown = payload && typeof payload === "object" && "data" in payload ? payload.data : payload;
+      if (!statuses || typeof statuses !== "object") return "missing";
+      // The engine only lists sessions with live work; an absent session is idle.
+      if (!(sessionId in statuses)) return "idle";
+      const status: unknown = Object.entries(statuses).find(([id]) => id === sessionId)?.[1];
+      if (!status || typeof status !== "object" || !("type" in status) || typeof status.type !== "string") return "invalid";
+      return status.type === "running" ? "busy" : status.type;
+    }, [statusPath, session.sessionId]), { awaitPromise: true }),
+  };
 }
 
 /** Signed-in chat with a deterministic model and a scheduled desktop task. */
