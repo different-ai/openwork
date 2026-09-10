@@ -3,7 +3,11 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 import { contextMenuTemplate, createNativeContextMenus, editingMenuTemplate } from "./context-menu.mjs";
 
+/** @typedef {import("@openwork/types/desktop-ipc").NativeContextMenuItem} NativeContextMenuItem */
+
+/** @returns {NativeContextMenuItem} */
 const item = (id, overrides = {}) => ({ type: "item", id, label: id, ...overrides });
+/** @param {NativeContextMenuItem[]} [items] */
 const request = (items = [item("rename")]) => ({ requestId: "request", items, point: { x: 10.5, y: 20 } });
 
 function fixture() {
@@ -118,6 +122,7 @@ test("inspection describes the open and last popups as plain data, and choose se
   const { controller, menus } = fixture();
   assert.deepEqual(controller.inspect(), { open: false, current: null, last: null });
   assert.equal(controller.choose("rename"), false, "nothing to choose before a popup");
+  /** @type {NativeContextMenuItem[]} */
   const items = [item("open"), item("group", { submenu: [item("nested")] }), { type: "separator" }, item("copy-url", { label: "Copy Link Address" }), item("blocked", { enabled: false })];
   const result = controller.show(request(items));
   const inspected = controller.inspect();
