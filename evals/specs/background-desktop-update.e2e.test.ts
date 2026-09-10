@@ -107,6 +107,11 @@ test("updates download outside Settings and offer a persistent, optional restart
   }, { within: 5_000, label: "Keep working dismisses the restart dialog", until: Boolean });
   expect(await world.snapshot()).toMatchObject({ installs: 0, installAttempts: 0 });
 
+  // The background behavior above is proven. Isolate the manual install-error
+  // retries below from another background check after a fresh policy arrives.
+  await world.openSettings();
+  await user.click({ label: "Check automatically" });
+  await world.openWorkspace();
   await world.setCustomBranding();
   await probe.eventually(world.snapshot, {
     within: 5_000, label: "custom logo is preserved instead of the default wordmark",
