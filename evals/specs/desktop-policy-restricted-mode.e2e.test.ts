@@ -273,6 +273,13 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
     await member.user.notSee(settingsMenuItem);
     const menuText = await member.probe.text();
     await member.user.press("Escape");
+    // The menu has no exit motion, but its unmount is still a React commit
+    // away from the key event. Observe the closed state, then hold it.
+    await member.probe.eventually(() => member.probe.eval(() => document.querySelector('[data-slot="dropdown-menu-content"]') === null), {
+      within: 10_000,
+      label: "account menu finishes closing",
+      until: (closed) => closed,
+    });
     await member.user.notSee(accountMenuItem, { timeoutMs: 10_000 });
     return menuText;
   });
