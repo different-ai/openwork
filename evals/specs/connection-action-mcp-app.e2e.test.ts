@@ -1,11 +1,11 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { connectionActionMcpApp, connectionActionPrompt, connectionActionReply, connectionStatusPrompt, ordinaryDiscoveryPrompt, ordinaryDiscoveryReply } from "../worlds/library.ts";
+import { connectionActionMcpApp, connectionActionPrompt, connectionActionReply, connectionStatusPrompt, isRecord, ordinaryDiscoveryPrompt, ordinaryDiscoveryReply } from "../worlds/library.ts";
 
 const test = spec.world(connectionActionMcpApp, { timeout: 600_000 });
 
 function record(value: unknown): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Expected an object");
+  if (!isRecord(value)) throw new Error("Expected an object");
   return value;
 }
 
