@@ -96,3 +96,25 @@ export function resolveEntitledOrgDefaultModel(
     ? { providerID: replacement.providerID, modelID: replacement.modelID }
     : null;
 }
+
+export type OrgDefaultModelReplacementInput = FilterEntitledModelOptionsInput & {
+  currentDefault: ModelRef | null;
+  /** Connected providers of the selected workspace engine. */
+  runtimeOptions: readonly ModelEntitlementOption[];
+  /** Organization-assigned models: the stand-in before a workspace engine exists. */
+  assignedOptions: readonly ModelEntitlementOption[];
+};
+
+/**
+ * Which organization model, if any, should replace the stored default. The
+ * workspace engine's catalog is the source of truth; organization-assigned
+ * models stand in only when that catalog has nothing to offer.
+ */
+export function resolveOrgDefaultModelReplacement(
+  input: OrgDefaultModelReplacementInput,
+): ModelRef | null {
+  return resolveEntitledOrgDefaultModel(
+    input.runtimeOptions.length > 0 ? input.runtimeOptions : input.assignedOptions,
+    input,
+  );
+}

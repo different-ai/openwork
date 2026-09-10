@@ -153,7 +153,7 @@ import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provi
 import { assignedModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
 import {
   filterEntitledModelOptions,
-  resolveEntitledOrgDefaultModel,
+  resolveOrgDefaultModelReplacement,
   type ModelEntitlementOption,
 } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import {
@@ -1003,17 +1003,15 @@ export function SessionRoute() {
     return () => window.removeEventListener(openModelPickerEvent, handler);
   }, []);
   const entitledOrgDefaultModel = useMemo(() => {
-    const runtimeOptions = providerListModelEntitlementOptions(
-      cloudProviderList ?? providerListQuery.data,
-    );
-    return resolveEntitledOrgDefaultModel(
-      runtimeOptions.length > 0 ? runtimeOptions : organizationAssignedModelOptions,
-      {
-        currentDefault: local.prefs.defaultModel,
-        restrictToCloud: restrictToCloudProviders,
-        checkRestriction: checkDesktopRestriction,
-      },
-    );
+    return resolveOrgDefaultModelReplacement({
+      runtimeOptions: providerListModelEntitlementOptions(
+        cloudProviderList ?? providerListQuery.data,
+      ),
+      assignedOptions: organizationAssignedModelOptions,
+      currentDefault: local.prefs.defaultModel,
+      restrictToCloud: restrictToCloudProviders,
+      checkRestriction: checkDesktopRestriction,
+    });
   }, [
     checkDesktopRestriction,
     cloudProviderList,
