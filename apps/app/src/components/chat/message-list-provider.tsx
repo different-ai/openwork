@@ -27,7 +27,8 @@ interface MessageListContextValue {
   dispatchAction: (action: DispatchAction) => void
   setPrompt: (prompt: string) => void
   onRevertToUserMessage: (messageId: string) => void
-  onForkAtMessage: (messageId: string) => void
+  onForkAtMessage: (messageId: string) => void | Promise<void>
+  forkingMessageId?: string
   onEditUserMessage: (messageId: string, text: string) => void
   /** Open a sub-agent (child) session in the main chat surface. */
   onOpenSubagentSession?: (sessionId: string) => void
@@ -52,7 +53,8 @@ interface MessageListProviderProps {
   highlightQuery?: string
   developerMode: boolean
   onRevertToUserMessage: (messageId: string) => void
-  onForkAtMessage: (messageId: string) => void
+  onForkAtMessage: (messageId: string) => void | Promise<void>
+  forkingMessageId?: string
   onEditUserMessage: (messageId: string, text: string) => void
   onOpenSubagentSession?: (sessionId: string) => void
   onResumeInterrupted?: (recoveryPrompt: string) => void
@@ -92,6 +94,7 @@ export function MessageListProvider({
   setPrompt,
   onRevertToUserMessage,
   onForkAtMessage,
+  forkingMessageId,
   onEditUserMessage,
   onOpenSubagentSession,
   onResumeInterrupted,
@@ -162,6 +165,7 @@ export function MessageListProvider({
       sessionId,
       showThinking,
       highlightQuery,
+      forkingMessageId,
       developerMode,
       displaySuggestions,
       providerConnectedCount,
@@ -181,6 +185,7 @@ export function MessageListProvider({
       sessionId,
       showThinking,
       highlightQuery,
+      forkingMessageId,
       developerMode,
       displaySuggestions,
       providerConnectedCount,

@@ -76,6 +76,7 @@ import { PaperGrainGradient } from "@openwork/ui/react";
 import { useShellConfig } from "@/react-app/shell/shell-config";
 import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog";
 import { SessionDebugPanel } from "./debug-panel";
+import { runSessionBranchAction, useSessionBranchAction } from "./session-branch-action";
 import { deriveComposerHistory, deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
 import { pendingMessageParts, useDisplayedMessages } from "./use-displayed-messages";
 import {
@@ -643,7 +644,7 @@ export type SessionSurfaceProps = {
   onOpenSettingsSection?: ((section: ComposerSettingsSection) => void) | undefined;
   onRevertToMessage?: (messageId: string, sessionId: string) => Promise<boolean>;
   onRestoreRevertedSession?: (sessionId: string) => Promise<boolean>;
-  onForkAtMessage?: (messageId: string | null, sessionId: string) => void;
+  onForkAtMessage?: (messageId: string | null, sessionId: string, isCurrent: () => boolean) => Promise<void>;
   /** Open a sub-agent (child) session in the main chat surface. */
   onOpenSubagentSession?: (sessionId: string) => void;
   onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions, sessionId?: string) => void;
@@ -2012,7 +2013,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   // Immediate sends interrupt foreground delegation, but otherwise steer the
   // running loop. Explicit queueing and automatic draining stay separate.
-  const sendDraft = useCallback(async (nextDraft: ComposerDraft, itemId: string, onPrepared?: (text?: string) => void): Promise<CloudMcpSubmissionResult | { outcome: "unknown" }> => {
+  const sendDraft = useCallback(async (
+    nextDraft: ComposerDraft,
+    itemId: string,
+    onPrepared?: (text?: string) => void,
+    options: { consumeQueuedItem?: boolean } = {},
+  ): Promise<CloudMcpSubmissionResult | { outcome: "unknown" }> => {
     const messageId = nextDraft.messageId ?? createPromptMessageID();
     const generation = getQueuedSendGeneration(props.sessionId);
     const submissionId = Symbol();
@@ -2032,6 +2038,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
           }
           return props.onSendDraft({ ...nextDraft, messageId }, props.sessionId, onPrepared);
         }, { directory: props.workspaceRoot.trim() || undefined, messageID: messageId });
+      // Drain listeners can reconcile idle and claim another item synchronously.
+      // Consume the submitted row while its send slot is still held.
+      if (options.consumeQueuedItem && (result.outcome === "sent" || result.outcome === "accepted")) {
+        removeQueuedDraftFromStore(props.sessionId, itemId);
+      }
       dispatchQueuedDrain(props.sessionId, {
         type: "send_result", itemId, outcome: result.outcome, at: Date.now(),
         deferredMessageID: nextDraft.command ? messageId : undefined,
@@ -2048,6 +2059,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return result;
     } catch (nextError) {
       if (isPromptAdmissionUnknown(nextError)) {
+        if (options.consumeQueuedItem) removeQueuedDraftFromStore(props.sessionId, itemId);
         dispatchQueuedDrain(props.sessionId, { type: "send_unknown", itemId, messageID: messageId, at: Date.now(), deferred: Boolean(nextDraft.command) });
         if (activeSessionOwnerRef.current === sessionOwner) setAwaitingAssistantBaseline(null);
         // A server that answered with a failure has explained itself: show that
@@ -2078,7 +2090,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       pendingSendsRef.current.delete(submissionId);
       setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
-  }, [archived, archiveStateKnown, opencodeClient, openingHistory.ensureFullSnapshot, props.onSendDraft, props.opencodeBaseUrl, props.sessionId, props.workspaceId, props.workspaceRoot, renderedMessages.length, sessionOwner, setError]);
+  }, [archived, archiveStateKnown, opencodeClient, openingHistory.ensureFullSnapshot, props.onSendDraft, props.opencodeBaseUrl, props.sessionId, props.workspaceId, props.workspaceRoot, removeQueuedDraftFromStore, renderedMessages.length, sessionOwner, setError]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
@@ -2246,7 +2258,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Promote a queued follow-up to an immediate send (steer-style), instead of
   // waiting for the idle drain. Guarded against the drain effect so the same
   // draft cannot be delivered twice.
-  const [sendingQueued, setSendingQueued] = useState(false);
+  const sendingQueuedId = queuedDrainState.phase.kind === "sending"
+    ? queuedDrainState.phase.itemId
+    : undefined;
+  const sendingQueued = Boolean(sendingQueuedId);
   const sendQueuedDraftNow = useCallback(async (id: string) => {
     if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     if (drainingQueueRef.current || sendingQueued) return;
@@ -2255,34 +2270,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!item || !target) return;
     if (!claimQueuedSend(props.sessionId, item.id, true)) return;
     const generation = getQueuedSendGeneration(props.sessionId);
-    setSendingQueued(true);
-    removeQueuedDraftFromStore(props.sessionId, id);
     try {
-      const result = await sendDraft(target, item.id);
+      const result = await sendDraft(target, item.id, undefined, { consumeQueuedItem: true });
       if (result.outcome === "blocked" || result.outcome === "cancelled") {
-        if (getQueuedSendGeneration(props.sessionId) === generation) {
-          prependQueuedDrafts(props.sessionId, [{ id: item.id, draft: target }]);
-        } else {
-          target.attachments.forEach(revokeAttachmentPreview);
-        }
         return;
       }
       target.attachments.forEach(revokeAttachmentPreview);
     } catch {
-      if (getQueuedSendGeneration(props.sessionId) === generation) {
-        prependQueuedDrafts(props.sessionId, [{ id: item.id, draft: target }]);
-      }
+      // sendDraft owns the error and halts admission. Keep the row for an
+      // explicit retry without touching any newer composer input.
     } finally {
       if (getQueuedSendGeneration(props.sessionId) !== generation) target.attachments.forEach(revokeAttachmentPreview);
-      setSendingQueued(false);
     }
   }, [
     archived,
     archiveStateKnown,
-    prependQueuedDrafts,
     props.opencodeBaseUrl,
     props.sessionId,
-    removeQueuedDraftFromStore,
     sendDraft,
     sendingQueued,
   ]);
@@ -3026,14 +3030,34 @@ export function SessionSurface(props: SessionSurfaceProps) {
     void props.onRevertToMessage?.(messageId, props.sessionId);
   }, [archived, archiveStateKnown, props.onRevertToMessage, props.opencodeBaseUrl, props.sessionId]);
 
+  const branchAction = useSessionBranchAction(sessionOwner);
+  const forkingMessageId = branchAction?.status === "pending" ? branchAction.messageId : undefined;
+  useEffect(() => {
+    if (branchAction?.status === "failed") setError(parseSessionError(branchAction.error));
+  }, [branchAction, setError]);
+  const branchOwnerRef = useRef<{ owner: string; controlTarget: boolean } | null>(null);
+  if (branchOwnerRef.current?.owner !== sessionOwner || branchOwnerRef.current.controlTarget !== props.isControlTarget) {
+    branchOwnerRef.current = { owner: sessionOwner, controlTarget: props.isControlTarget };
+  }
+  useEffect(() => {
+    branchOwnerRef.current ??= { owner: sessionOwner, controlTarget: props.isControlTarget };
+    return () => { branchOwnerRef.current = null; };
+  }, []);
   const handleForkAtMessage = useCallback((messageId: string) => {
-    if (!props.onForkAtMessage) return;
-    void openingHistory.runWithFullSnapshot((full) => {
+    const fork = props.onForkAtMessage;
+    if (!fork) return;
+    setError(null);
+    const owner = branchOwnerRef.current;
+    const isCurrent = () => branchOwnerRef.current === owner;
+    return runSessionBranchAction(sessionOwner, messageId, () => openingHistory.runWithFullSnapshot((full) => {
       // Use the untruncated timeline: even a hidden next message is a boundary,
       // and a singleton preview never means "fork the entire conversation".
-      props.onForkAtMessage?.(resolveForkBoundaryId(full.messages.map(({ info }) => info), messageId), props.sessionId);
-    }, { fresh: true }).catch((error) => setError(parseSessionError(error)));
-  }, [openingHistory.runWithFullSnapshot, props.onForkAtMessage, props.sessionId, setError]);
+      if (!isCurrent()) return;
+      return fork(resolveForkBoundaryId(full.messages.map(({ info }) => info), messageId), props.sessionId, isCurrent);
+    }, { fresh: true })).catch(() => {
+      // The owner-scoped subscriber presents failure, including after remount.
+    });
+  }, [openingHistory.runWithFullSnapshot, props.onForkAtMessage, props.sessionId, sessionOwner, setError]);
 
   const handleEditUserMessage = useCallback((messageId: string, text: string) => {
     if (archived) return;
@@ -3258,6 +3282,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       setPrompt={handleMessageListSetPrompt}
                       onRevertToUserMessage={handleRevertToUserMessage}
                       onForkAtMessage={handleForkAtMessage}
+                      forkingMessageId={forkingMessageId}
                       onEditUserMessage={handleEditUserMessage}
                       onOpenSubagentSession={props.onOpenSubagentSession}
                       onResumeInterrupted={archived ? undefined : handleResumeInterrupted}
@@ -3441,6 +3466,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     onReorder={(ids) => reorderQueuedDrafts(props.sessionId, ids)}
                     onEdit={editQueuedDraft}
                     sending={sendingQueued}
+                    sendingId={sendingQueuedId}
                   />
                 ) : null}
                 {props.activeQuestion ? (

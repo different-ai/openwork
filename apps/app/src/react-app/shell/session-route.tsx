@@ -1580,25 +1580,26 @@ export function SessionRoute() {
           return false;
         }
       },
-      onForkAtMessage: (messageId: string | null, sessionId: string) => {
-        void (async () => {
-          const targetSessionId = sessionId.trim() || selectedSessionId;
-          if (!targetSessionId) return;
-          try {
-            const forked = await forkSession(opencodeClient, targetSessionId, messageId ?? undefined);
-            writeLastSessionFor(selectedWorkspaceId, forked.id);
-            rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
-            setSessionsByWorkspaceId((current) => ({
-              ...current,
-              [selectedWorkspaceId]: mergeWorkspaceRouteSession(current[selectedWorkspaceId] ?? [], forked),
-            }));
-            navigateToWorkspaceSession(selectedWorkspaceId, forked.id);
-            void refreshRouteState();
-          } catch (error) {
-            console.warn("[fork] failed", error);
-            toast.error(t("session.branch_failed"));
-          }
-        })();
+      onForkAtMessage: async (messageId: string | null, sessionId: string, isCurrent: () => boolean) => {
+        const targetSessionId = sessionId.trim() || selectedSessionId;
+        if (!targetSessionId) return;
+        const navigationOwner = selectedConversationRef.current;
+        const paneOwner = focusedWorkbenchPaneOwner();
+        const forked = await forkSession(opencodeClient, targetSessionId, messageId ?? undefined);
+        if (!isCurrent()
+          || selectedConversationRef.current.navigationGeneration !== navigationOwner.navigationGeneration
+          || selectedConversationRef.current.workspaceId !== navigationOwner.workspaceId
+          || selectedConversationRef.current.sessionId !== navigationOwner.sessionId
+          || selectedConversationRef.current.draftScope !== navigationOwner.draftScope
+          || focusedWorkbenchPaneOwner() !== paneOwner) return;
+        writeLastSessionFor(selectedWorkspaceId, forked.id);
+        rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
+        setSessionsByWorkspaceId((current) => ({
+          ...current,
+          [selectedWorkspaceId]: mergeWorkspaceRouteSession(current[selectedWorkspaceId] ?? [], forked),
+        }));
+        navigateToWorkspaceSession(selectedWorkspaceId, forked.id);
+        void refreshRouteState();
       },
       onChangeModel: (model: { providerID: string; modelID: string }) => {
         local.setPrefs((previous) => ({
@@ -1880,24 +1881,25 @@ export function SessionRoute() {
           return false;
         }
       },
-      onForkAtMessage: (messageId: string | null, sessionId: string) => {
-        void (async () => {
-          const targetSessionId = sessionId.trim() || session.sessionId;
-          try {
-            const forked = await forkSession(workspaceOpencodeClient, targetSessionId, messageId ?? undefined);
-            writeLastSessionFor(workspace.id, forked.id);
-            rememberPendingCreatedSession(workspace.id, forked.id);
-            setSessionsByWorkspaceId((current) => ({
-              ...current,
-              [workspace.id]: mergeWorkspaceRouteSession(current[workspace.id] ?? [], forked),
-            }));
-            navigateToWorkspaceSession(workspace.id, forked.id);
-            void refreshRouteState();
-          } catch (error) {
-            console.warn("[fork] failed", error);
-            toast.error(t("session.branch_failed"));
-          }
-        })();
+      onForkAtMessage: async (messageId: string | null, sessionId: string, isCurrent: () => boolean) => {
+        const targetSessionId = sessionId.trim() || session.sessionId;
+        const navigationOwner = selectedConversationRef.current;
+        const paneOwner = focusedWorkbenchPaneOwner();
+        const forked = await forkSession(workspaceOpencodeClient, targetSessionId, messageId ?? undefined);
+        if (!isCurrent()
+          || selectedConversationRef.current.navigationGeneration !== navigationOwner.navigationGeneration
+          || selectedConversationRef.current.workspaceId !== navigationOwner.workspaceId
+          || selectedConversationRef.current.sessionId !== navigationOwner.sessionId
+          || selectedConversationRef.current.draftScope !== navigationOwner.draftScope
+          || focusedWorkbenchPaneOwner() !== paneOwner) return;
+        writeLastSessionFor(workspace.id, forked.id);
+        rememberPendingCreatedSession(workspace.id, forked.id);
+        setSessionsByWorkspaceId((current) => ({
+          ...current,
+          [workspace.id]: mergeWorkspaceRouteSession(current[workspace.id] ?? [], forked),
+        }));
+        navigateToWorkspaceSession(workspace.id, forked.id);
+        void refreshRouteState();
       },
     };
     return {
