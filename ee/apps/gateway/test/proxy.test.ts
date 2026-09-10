@@ -1060,8 +1060,8 @@ test("injects stream_options.include_usage and logs one row with usage from the 
     fetch: async (input, init) => {
       upstreamRequests.push({ url: requestUrl(input), method: init?.method, body: readInitBody(init?.body), headers: new Headers(init?.headers) })
       return sseResponse([
-        'data: {"id":"gen-1","model":"z-ai/glm-5.2","choices":[{"delta":{"content":"Hel"}}]}\n\n',
-        'data: {"id":"gen-1","model":"z-ai/glm-5.2","choices":[{"delta":{"content":"lo"}}]}\n\ndata: {"id":"gen-1","model":"z-ai/glm-5.2","choices":[],"usage":{"prompt_tokens":1',
+        'data: {"id":"gen-1","model":"z-ai/glm-5.2","choices":[{"index":0,"delta":{"content":"Hel"}}]}\n\n',
+        'data: {"id":"gen-1","model":"z-ai/glm-5.2","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":"stop"}]}\n\ndata: {"id":"gen-1","model":"z-ai/glm-5.2","choices":[],"usage":{"prompt_tokens":1',
         '2,"completion_tokens":5,"total_tokens":17,"cost":0.00123,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens_details":{"reasoning_tokens":2}}}\n\n',
         "data: [DONE]\n\n",
       ], { headers: { "content-type": "text/event-stream", "x-request-id": "upstream-req-1" } })
@@ -1114,7 +1114,7 @@ test("injects stream_options.include_usage and logs one row with usage from the 
 })
 
 test("logs usage from a non-streaming JSON response without altering the bytes", async () => {
-  const upstreamBody = JSON.stringify({ id: "gen-2", model: "z-ai/glm-5.2-upstream", choices: [], usage: { prompt_tokens: 3, completion_tokens: 4 } })
+  const upstreamBody = JSON.stringify({ id: "gen-2", model: "z-ai/glm-5.2-upstream", choices: [{ index: 0, message: { role: "assistant", content: "Hello" }, finish_reason: "stop" }], usage: { prompt_tokens: 3, completion_tokens: 4 } })
   const { app, logRows } = createTestServer({
     fetch: async () => new Response(upstreamBody, { status: 200, headers: { "content-type": "application/json" } }),
   })
@@ -1194,7 +1194,7 @@ test("logs client_aborted when the client cancels mid-stream", async () => {
   const { app, logRows } = createTestServer({
     fetch: async () => new Response(new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(encoder.encode('data: {"model":"z-ai/glm-5.2","choices":[{"delta":{"content":"partial"}}]}\n\n'))
+        controller.enqueue(encoder.encode('data: {"model":"z-ai/glm-5.2","choices":[{"index":0,"delta":{"content":"partial"}}]}\n\n'))
       },
       cancel() {
         upstreamCancelled = true

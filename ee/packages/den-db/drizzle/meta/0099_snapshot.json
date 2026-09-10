@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "77d92f5c-83db-4218-a845-cd9f71339b2a",
-  "prevId": "17d704e9-8fe6-4f06-8b52-e1c7d08bc3a2",
+  "id": "05ebd400-0ee8-423c-84de-98d18b5aae7f",
+  "prevId": "01cdf7cf-fa2d-4891-a708-1c498213c2c7",
   "tables": {
     "account": {
       "name": "account",
@@ -12278,6 +12278,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
+        },
+        "created_by_org_membership_id": {
+          "name": "created_by_org_membership_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -13124,6 +13131,14 @@
           "notNull": true,
           "autoincrement": false,
           "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
+        },
+        "model_ids": {
+          "name": "model_ids",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(JSON_ARRAY())"
         }
       },
       "indexes": {

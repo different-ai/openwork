@@ -300,15 +300,16 @@ test("authenticated incurred usage settles after key revocation, including a lat
   assert.deepEqual(fixture.bucketCharges, [{ amount: 1 }])
 })
 
-test("authenticated usage with an unknown inference key or Gateway key attribution is skipped without settlement", async () => {
+test("unknown Models keys are skipped and Gateway key attribution is rejected without settlement", async () => {
   const fixture = createWebhookTestServer()
   for (const inferenceKeyId of [createDenTypeId("inferenceKey"), createDenTypeId("gatewayKey")]) {
     const response = await fixture.app.fetch(webhookRequest(fixture.usagePayload({
       requestId: "request-unknown-key", eventId: "event-unknown-key", generationId: "generation-unknown-key",
       requestModel: "z-ai/glm-5.2", responseModel: "z-ai/glm-5.2", inferenceKeyId,
     })))
-    assert.equal(response.status, 200)
-    assert.deepEqual(await responseJson(response), { ok: true, ingested: 0, skipped: 1, deferred: 0, invalid: 0, failed: 0 })
+    const invalid = inferenceKeyId.startsWith("gky_")
+    assert.equal(response.status, invalid ? 400 : 200)
+    assert.deepEqual(await responseJson(response), { ok: !invalid, ingested: 0, skipped: invalid ? 0 : 1, deferred: 0, invalid: invalid ? 1 : 0, failed: 0 })
   }
   assert.equal(fixture.calls.settleUsage, 0)
   assert.equal(fixture.insertedEntries.length, 0)

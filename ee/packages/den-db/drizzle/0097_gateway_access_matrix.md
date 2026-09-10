@@ -1,4 +1,4 @@
-# Gateway Matrix Migration 0095
+# Gateway Matrix Migration 0097
 
 Status: complete registered SQL migration and source-serialized snapshot.
 Offline generation and schema-delta inspection only; no database execution,
@@ -9,15 +9,15 @@ the historical plan.
 
 ## Registration
 
-`0095_gateway_access_matrix.sql` is registered at journal index 95, version 5.
-`meta/0095_snapshot.json` is the full 110-table snapshot produced directly from
+`0097_gateway_access_matrix.sql` is registered at journal index 97, version 5.
+`meta/0097_snapshot.json` is the full 110-table snapshot produced directly from
 `src/schema.ts` by `drizzle-kit/api.generateMySQLDrizzleJson`, with development
 conditions resolving source exports. Its id is
 `77d92f5c-83db-4218-a845-cd9f71339b2a`; prevId is
-`17d704e9-8fe6-4f06-8b52-e1c7d08bc3a2` (0094). Existing SQL and metadata through
-0094 are unchanged. Journal registration is not a claim of database application.
+`17d704e9-8fe6-4f06-8b52-e1c7d08bc3a2` (0096). Existing SQL and metadata through
+0096 are unchanged. Journal registration is not a claim of database application.
 
-At the original 0095 source revision, reproduce the offline source/snapshot
+At the original 0097 source revision, reproduce the offline source/snapshot
 comparison from `ee/packages/den-db`:
 
 ```sh
@@ -27,10 +27,10 @@ pnpm exec node --conditions=development --import tsx scripts/generate-gateway-ma
 
 These historical generator commands intentionally reject a newer schema or
 journal tip. After later migrations, use `db:migrate:local --check-artifacts`
-to inspect the registered chain; do not regenerate 0095 against current source.
+to inspect the registered chain; do not regenerate 0097 against current source.
 
 The generator rejects unrelated table/view drift. The schema-delta mode uses
-Drizzle's `generateMySQLMigration` on an in-memory copy of 0094 with the eight
+Drizzle's `generateMySQLMigration` on an in-memory copy of 0096 with the eight
 explicit table/column/index renames accounted for, avoiding interactive rename
 prompts. It never edits persisted history or executes SQL. The resulting
 schema-only delta has four creates, additions/index replacements and the nullable
@@ -41,19 +41,19 @@ their table-derived Drizzle snapshot labels change without rebuilding them.
 
 ## Launcher Contract
 
-- Run registered migrations in order. A fresh database must reach 0094 before
-  0095. A database created by schema push may be baselined ONLY after the launcher
-  verifies the full 0094 schema, including indexes, types, nullability, encrypted
+- Run registered migrations in order. A fresh database must reach 0096 before
+  0097. A database created by schema push may be baselined ONLY after the launcher
+  verifies the full 0096 schema, including indexes, types, nullability, encrypted
   inference_keys.encrypted_key, all eleven observation-count columns and the lock.
-  Never stamp 0095 merely because current schema exports contain Gateway tables.
-- Execute all statements of 0095 sequentially on ONE dedicated MySQL connection.
+  Never stamp 0097 merely because current schema exports contain Gateway tables.
+- Execute all statements of 0097 sequentially on ONE dedicated MySQL connection.
   Split on the standard `--> statement-breakpoint` markers. Stop on first error;
   no force/ignore mode and no separate pooled connection per statement.
 - The embedded preflight is automatic: no exported helper or extra runner hook
   is required. It uses a connection-local TEMPORARY table with primary-key
   sentinels. Invalid source data attempts a duplicate sentinel INSERT, which
   raises MySQL error 1062 naming the failed check BEFORE the first persistent DDL.
-  There are ten `INSERT ... SELECT '0095_...'` checks. A launcher may extract
+  There are ten `INSERT ... SELECT '0097_...'` checks. A launcher may extract
   their SELECT portions for an earlier read-only preflight before creating its
   own durable interruption marker; the embedded checks must still execute.
 - Require CREATE TEMPORARY TABLES permission, ordinary migration DDL/DML rights,
@@ -65,25 +65,25 @@ their table-derived Drizzle snapshot labels change without rebuilding them.
   preflight through completion. A migration lock alone does not exclude app
   writers. MySQL DDL auto-commits, so this is not an online/atomic migration.
 - Record the migration receipt only after all SQL succeeds. On preflight failure,
-  persistent data/schema is unchanged by 0095; close the connection to discard
+  persistent data/schema is unchanged by 0097; close the connection to discard
   its temporary table before retrying. On failure AFTER the first rename, stop
   startup and inspect the partial state; never blindly replay or baseline it.
-- Do not run schema push against pre-matrix data. Do not regenerate 0093/0094.
+- Do not run schema push against pre-matrix data. Do not regenerate 0095/0096.
 
 ## Preflight Failures
 
 | Duplicate-entry marker | Required action before retry |
 | --- | --- |
-| 0095_requires_mysql_8_0_16_or_later | Use a supported MySQL server, not MariaDB/TiDB |
-| 0095_requires_strict_sql_mode | Enable strict SQL mode on the migration connection |
-| 0095_requires_complete_0094_schema | Apply/verify schema through 0094; do not guess a baseline |
-| 0095_gateway_tables_already_exist | Inspect mixed/already-migrated state and its journal; do not overwrite |
-| 0095_missing_legacy_indexes | Restore/verify the required 0093 indexes before attempting 0095 |
-| 0095_invalid_typeid | Inspect canonical row/reference IDs; do not truncate or reinterpret them |
-| 0095_orphan_or_cross_org_resource | Resolve the operational resource ownership mismatch explicitly |
-| 0095_invalid_credential_subject | Resolve subject/member mismatches or duplicate provider/subject rows with an approved preservation plan; never expose/delete secrets |
-| 0095_invalid_audience | Resolve a grant with both member and team populated |
-| 0095_duplicate_audience_grants | Resolve equivalent audience duplicates explicitly; no silent deduplication |
+| 0097_requires_mysql_8_0_16_or_later | Use a supported MySQL server, not MariaDB/TiDB |
+| 0097_requires_strict_sql_mode | Enable strict SQL mode on the migration connection |
+| 0097_requires_complete_0096_schema | Apply/verify schema through 0096; do not guess a baseline |
+| 0097_gateway_tables_already_exist | Inspect mixed/already-migrated state and its journal; do not overwrite |
+| 0097_missing_legacy_indexes | Restore/verify the required 0095 indexes before attempting 0097 |
+| 0097_invalid_typeid | Inspect canonical row/reference IDs; do not truncate or reinterpret them |
+| 0097_orphan_or_cross_org_resource | Resolve the operational resource ownership mismatch explicitly |
+| 0097_invalid_credential_subject | Resolve subject/member mismatches or duplicate provider/subject rows with an approved preservation plan; never expose/delete secrets |
+| 0097_invalid_audience | Resolve a grant with both member and team populated |
+| 0097_duplicate_audience_grants | Resolve equivalent audience duplicates explicitly; no silent deduplication |
 
 These checks do not print secret material. They deliberately do not require
 historical log/rollup references to still have live parents. Their row IDs remain

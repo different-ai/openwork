@@ -54,8 +54,8 @@ export function loadMigrationPlan(folder: string) {
       throw new MigrationSafetyError("Migration snapshot chain is incomplete or mismatched")
     }
   }
-  if (!plan.some((entry) => entry.tag === "0095_gateway_access_matrix" && entry.snapshot)) {
-    throw new MigrationSafetyError("0095_gateway_access_matrix SQL, journal entry and generated snapshot must be finalized together before local startup. No database changes made.")
+  if (!plan.some((entry) => entry.tag === "0097_gateway_access_matrix" && entry.snapshot)) {
+    throw new MigrationSafetyError("0097_gateway_access_matrix SQL, journal entry and generated snapshot must be finalized together before local startup. No database changes made.")
   }
   if (!plan.at(-1)?.snapshot) throw new MigrationSafetyError("Missing final migration snapshot; refusing to start a partial migration plan")
   return plan
@@ -202,13 +202,13 @@ export function schemaDifferences(expected: Map<string, string>, actual: Map<str
 }
 
 export function planAuthLookupIndexRepairs(plan: MigrationPlan, actual: Map<string, string>) {
-  const snapshot = plan.find((entry) => entry.tag === "0094_inference_accounting_observations")?.snapshot
-  if (!snapshot) throw new MigrationSafetyError("Missing canonical 0094 snapshot")
+  const snapshot = plan.find((entry) => entry.tag === "0096_inference_accounting_observations")?.snapshot
+  if (!snapshot) throw new MigrationSafetyError("Missing canonical 0096 snapshot")
   const expected = snapshotShape(snapshot)
   const differences = schemaDifferences(expected, actual)
   if (differences.length === 0) return []
   // This is a repair plan, not a matcher exception. Only these non-unique
-  // prefix indexes may be added, and the resulting schema must match 0094.
+  // prefix indexes may be added, and the resulting schema must match 0096.
   const allowed = [
     { tag: "0073_young_scrambler", table: "account", name: "account_account_id_provider_id", columns: ["account_id", "provider_id"] },
     { tag: "0046_messy_reaper", table: "oauthAccessToken", name: "oauth_access_token_token", columns: ["token"] },
@@ -229,15 +229,15 @@ export function planAuthLookupIndexRepairs(plan: MigrationPlan, actual: Map<stri
 
 export function recognizeBaseline(plan: MigrationPlan, actual: Map<string, string>) {
   if ([...actual.keys()].some((key) => key.startsWith("table:gateway_"))) {
-    throw new MigrationSafetyError(`Gateway tables exist without migration receipts (already pushed or partial 0095). Historical groups/sets cannot be reconstructed safely from this state. ${recovery}`)
+    throw new MigrationSafetyError(`Gateway tables exist without migration receipts (already pushed or partial 0097). Historical groups/sets cannot be reconstructed safely from this state. ${recovery}`)
   }
   // Never baseline the matrix migration, even if a future snapshot matches.
   for (let index = plan.length - 1; index >= 0; index--) {
     const entry = plan[index]
-    if (Number(entry.tag.slice(0, 4)) > 94 || !entry.snapshot) continue
+    if (Number(entry.tag.slice(0, 4)) > 96 || !entry.snapshot) continue
     if (schemaDifferences(snapshotShape(entry.snapshot), actual).length === 0) return index + 1
   }
-  throw new MigrationSafetyError(`Unjournaled schema does not match a known pre-matrix snapshot (0094 or earlier); unknown, mixed and partial schemas cannot be auto-baselined. ${recovery}`)
+  throw new MigrationSafetyError(`Unjournaled schema does not match a known pre-matrix snapshot (0096 or earlier); unknown, mixed and partial schemas cannot be auto-baselined. ${recovery}`)
 }
 
 export async function preflightRepairs(executor: Executor, shape: Map<string, string>) {
@@ -252,8 +252,8 @@ export async function preflightRepairs(executor: Executor, shape: Map<string, st
 }
 
 export async function foundationSql(plan: MigrationPlan) {
-  const source = plan.find((entry) => entry.tag.startsWith("0094_"))?.snapshot
-  if (!source) throw new MigrationSafetyError("Missing 0094 foundation snapshot")
+  const source = plan.find((entry) => entry.tag.startsWith("0096_"))?.snapshot
+  if (!source) throw new MigrationSafetyError("Missing 0096 foundation snapshot")
   const foundation = structuredClone(source)
   const sql = plan.map((entry) => entry.sql.join("\n")).join("\n")
   const owned = new Set([...sql.matchAll(/CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+`([^`]+)`|RENAME\s+TABLE\s+`[^`]+`\s+TO\s+`([^`]+)`/gi)].map((match) => match[1] || match[2]))

@@ -1,5 +1,4 @@
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
-import type { InferenceRequestOutcome } from "@openwork/types/den/inference"
 import { createInferenceEgressFetch, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
 import { Hono } from "hono"
 import type { Context } from "hono"
@@ -27,8 +26,7 @@ import type { AnalyticsObserver, beginModelAnalytics } from "./task-analytics.js
 import { completeChatResponse, inferenceError, readResponseJson, relayChatStream, upstreamError } from "./chat-response.js"
 import { registerGatewayRoutes } from "./gateway.js"
 import type { GatewayDependencies } from "./gateway.js"
-import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBody, RequestBodyLimitError, upstreamLifetime } from "./relay.js"
-import { createJsonBodyUsageParser } from "./usage/shared.js"
+import { isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./relay.js"
 import { createRequestLogRecorder, insertRequestLogIntoDb } from "./request-log.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
 import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usage/openai-chat.js"
@@ -230,43 +228,8 @@ function secondsUntil(date: Date) {
   return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 1000))
 }
 
-function trackAnalyticsStream(body: ReadableStream<Uint8Array> | null, observer: AnalyticsObserver | null, ok: boolean) {
-  const finish = (status: "completed" | "failed" | "cancelled") => {
-    try { observer?.finish(status) } catch { /* Optional analytics cannot interrupt inference. */ }
-  }
-  const complete = () => finish(ok ? "completed" : "failed")
-  if (!body) complete()
-  if (!body) return body
-  const reader = body.getReader()
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const chunk = await reader.read()
-        if (chunk.done) {
-          complete()
-          controller.close()
-          return
-        }
-        try { observer?.chunk(chunk.value) } catch { /* Forward the original bytes even if observation fails. */ }
-        controller.enqueue(chunk.value)
-      } catch (error) {
-        finish("failed")
-        controller.error(error)
-      }
-    },
-    async cancel(reason) {
-      finish("cancelled")
-      await reader.cancel(reason)
-    },
-  }, { highWaterMark: 0 })
-}
-
 function upstreamRequestId(headers: Headers) {
   return headers.get("x-request-id") ?? headers.get("request-id")
-}
-
-function upstreamOutcome(upstream: Response): InferenceRequestOutcome {
-  return upstream.ok ? "ok" : "upstream_error"
 }
 
 function recordUsage(recorder: RequestLogRecorder, usage: ParsedUsage, source: "stream" | "json") {
@@ -282,47 +245,6 @@ function recordUsage(recorder: RequestLogRecorder, usage: ParsedUsage, source: "
     upstreamRequestId: usage.upstreamRequestId,
     streamError: usage.streamError,
   })
-}
-
-function relayStreamResponse(upstream: Response, headers: Headers, recorder: RequestLogRecorder, lifetime: ReturnType<typeof upstreamLifetime>) {
-  if (!upstream.body) {
-    lifetime.dispose()
-    void recorder.finish({
-      status: upstream.status,
-      outcome: upstreamOutcome(upstream),
-      upstreamRequestId: upstreamRequestId(upstream.headers),
-      responseBytes: 0,
-    })
-    return new Response(null, { status: upstream.status, statusText: upstream.statusText, headers })
-  }
-
-  const json = isJsonContentType(upstream.headers.get("content-type"))
-  const parser = json ? createJsonBodyUsageParser(parseOpenAiChatJsonUsage) : isEventStreamContentType(upstream.headers.get("content-type")) ? createOpenAiChatSseUsageParser() : null
-  const decoder = new TextDecoder()
-  let responseBytes = 0
-  const finish = (outcome: InferenceRequestOutcome) => {
-    try { if (parser) recordUsage(recorder, parser.result(), json ? "json" : "stream") } catch { /* Preserve completion when observation fails. */ }
-    void recorder.finish({
-      status: upstream.status,
-      outcome,
-      upstreamRequestId: upstreamRequestId(upstream.headers),
-      responseBytes,
-    })
-  }
-  const body = trackStream(upstream.body, {
-    chunk(value) {
-      if (value.byteLength) recorder.markFirstByte()
-      responseBytes += value.byteLength
-      if (parser) parser.push(decoder.decode(value, { stream: true }))
-    },
-    done() {
-      finish(upstreamOutcome(upstream))
-    },
-    fail() {
-      finish(lifetime.signal.aborted && !lifetime.timedOut ? "client_aborted" : "upstream_error")
-    },
-  }, lifetime)
-  return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers })
 }
 
 async function prepareBody(request: Request, input: {
@@ -764,7 +686,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     const cancel = () => abort.abort()
     c.req.raw.signal.addEventListener("abort", cancel, { once: true })
     if (c.req.raw.signal.aborted) abort.abort()
-    const headerTimeout = setTimeout(() => abort.abort(), env.upstreamTimeoutMs)
+    const headerTimeout = setTimeout(() => abort.abort(), env.managedUpstreamTimeoutMs)
     try {
       validateInferenceUrl(env.openRouterUpstreamUrl, { base: true })
       abort.signal.throwIfAborted()
@@ -846,7 +768,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       // Read only a bounded error envelope to classify context overflow. The
       // provider's message and metadata never leave this scope or enter logs.
       if (upstream.status === 400) {
-        const timeout = setTimeout(() => abort.abort(), Math.min(env.upstreamTimeoutMs, 5000))
+        const timeout = setTimeout(() => abort.abort(), Math.min(env.managedUpstreamTimeoutMs, 5000))
         try {
           const payload = await readResponseJson(upstream.body, abort.signal, 65536)
           if (isJsonObject(payload) && isJsonObject(payload.error) && (
@@ -878,8 +800,8 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       const usageDecoder = new TextDecoder()
       return new Response(relayChatStream({
         body: upstream.body, abort, startedAt: analyticsStartedAt, idleMs: env.streamIdleMs, choiceCount,
-        onChunk(bytes) {
-          observeChunk(bytes)
+        onChunk: observeChunk,
+        onRawChunk(bytes) {
           recorder.markFirstByte()
           usageParser.push(usageDecoder.decode(bytes, { stream: true }))
         },
@@ -896,7 +818,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     }
     // Bound non-streaming bodies too. An HTTP 200 without a terminal choice is
     // not a completed inference response.
-    const bodyTimeout = setTimeout(() => abort.abort(), env.upstreamTimeoutMs)
+    const bodyTimeout = setTimeout(() => abort.abort(), env.managedUpstreamTimeoutMs)
     try {
       const value = await readResponseJson(upstream.body, abort.signal)
       recorder.markFirstByte()

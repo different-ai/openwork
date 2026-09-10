@@ -1,8 +1,8 @@
 # Gateway Provider Model Universe
 
-Additive successor to registered `0095_gateway_access_matrix`, serialized from
+Additive successor to registered `0097_gateway_access_matrix`, serialized from
 current schema source with Drizzle's offline API. The snapshot keeps format
-version 5 and points at 0095's snapshot ID. No previous SQL/snapshot is rewritten.
+version 5 and points at 0097's snapshot ID. No previous SQL/snapshot is rewritten.
 
 `gateway_providers.model_ids` is a JSON array policy, separate from stable
 `gateway_provider_models` records. An empty array follows all supported catalog
@@ -25,8 +25,8 @@ Offline generation (not migration execution):
 pnpm --dir ee/packages/den-db exec node --conditions=development --import tsx scripts/generate-gateway-universe-metadata.mjs
 ```
 
-The generator refuses any delta other than this column, requires 0095 to be the
-journal tip, and creates 0096 without overwriting existing snapshots. It does
+The generator refuses any delta other than this column, requires 0097 to be the
+journal tip, and creates 0098 without overwriting existing snapshots. It does
 not load environment files, connect to a database, build packages or run tests.
 The SQL intentionally stages Drizzle's single-column delta around the data
 backfill. Applying this migration remains a separate, explicitly authorized step.

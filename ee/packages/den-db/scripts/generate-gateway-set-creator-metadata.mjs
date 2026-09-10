@@ -6,15 +6,15 @@ import { generateMySQLDrizzleJson, generateMySQLMigration } from "drizzle-kit/ap
 import * as schema from "../src/schema.ts"
 
 const meta = new URL("../drizzle/meta/", import.meta.url)
-const previous = JSON.parse(await readFile(new URL("0096_snapshot.json", meta), "utf8"))
+const previous = JSON.parse(await readFile(new URL("0098_snapshot.json", meta), "utf8"))
 const journalPath = new URL("_journal.json", meta)
 const journalSource = await readFile(journalPath, "utf8")
 const journal = JSON.parse(journalSource)
 const last = journal.entries.at(-1)
-if (last?.idx !== 96 || last.tag !== "0096_gateway_provider_model_universe") {
-  throw new Error("Expected registered 0096; refusing to overwrite migration history")
+if (last?.idx !== 98 || last.tag !== "0098_gateway_provider_model_universe") {
+  throw new Error("Expected registered 0098; refusing to overwrite migration history")
 }
-const tag = "0097_gateway_credential_set_creator"
+const tag = "0099_gateway_credential_set_creator"
 const sql = await readFile(new URL(`../drizzle/${tag}.sql`, import.meta.url), "utf8")
 const snapshot = JSON.parse(JSON.stringify(await generateMySQLDrizzleJson(schema, previous.id)))
 const expected = structuredClone(previous)
@@ -32,8 +32,8 @@ if (statements.length !== 1 || statements[0] !== "ALTER TABLE `gateway_credentia
   throw new Error(`Unexpected schema/SQL delta: ${JSON.stringify(statements)}`)
 }
 if (await readFile(journalPath, "utf8") !== journalSource) throw new Error("Journal changed during serialization")
-await writeFile(new URL("0097_snapshot.json", meta), `${JSON.stringify(snapshot, null, 2)}\n`, { flag: "wx" })
-journal.entries.push({ idx: 97, version: snapshot.version, when: Math.max(Date.now(), last.when + 1), tag, breakpoints: true })
+await writeFile(new URL("0099_snapshot.json", meta), `${JSON.stringify(snapshot, null, 2)}\n`, { flag: "wx" })
+journal.entries.push({ idx: 99, version: snapshot.version, when: Math.max(Date.now(), last.when + 1), tag, breakpoints: true })
 await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`)
 console.log(`Registered ${tag}: version=${snapshot.version}; id=${snapshot.id}; prevId=${snapshot.prevId}`)
 console.log(`Drizzle schema delta: ${statements[0]}`)

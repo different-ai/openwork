@@ -34,7 +34,7 @@ retains its existing non-production defaults; use `.env.example` for a local set
 ## Stable Contracts
 
 The service rename keeps deployment and Models contracts stable. The Gateway
-access-matrix source batch requires registered migrations 0095 through 0097:
+access-matrix source batch requires registered migrations 0097 through 0099:
 
 - Hosted endpoint URLs, `/api/v1/*`, `/v1/inference*`, webhook and rollup paths,
   API response wrappers, SDK methods, and shared `inference` types stay stable.
@@ -56,7 +56,7 @@ access-matrix source batch requires registered migrations 0095 through 0097:
   Update any external monitors that match the old display text.
 
 No deployment or migration execution is performed by this source batch. Coordinate
-the schema/writer cutover described in `ee/packages/den-db/drizzle/0095_gateway_access_matrix.md`
+the schema/writer cutover described in `ee/packages/den-db/drizzle/0097_gateway_access_matrix.md`
 before running the new runtime. Do not deploy it against the old table names.
 
 ## Matrix Routing
@@ -145,7 +145,7 @@ before running the new runtime. Do not deploy it against the old table names.
   by current memberships; members in multiple teams contribute to each team, so
   summing team totals can exceed the organization total.
 
-This batch has not run tests, typechecks or builds. Migration 0096 uses offline
+This batch has not run tests, typechecks or builds. Migration 0098 uses offline
 Drizzle serialization only; no migration has been applied. Existing source fixtures
 under this app are updated. The separately owned `evals/specs/inference-gateway-*`
 journeys still need Gateway key, matrix seeding and renamed SQL/column updates

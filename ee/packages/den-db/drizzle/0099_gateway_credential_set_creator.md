@@ -1,20 +1,20 @@
 # Gateway Credential Set Creator
 
-Additive successor to registered `0096_gateway_provider_model_universe`.
+Additive successor to registered `0098_gateway_provider_model_universe`.
 The nullable `gateway_credential_sets.created_by_org_membership_id` records
 the membership that creates a new set. Existing rows remain NULL (unknown);
 there is no provider-owner backfill, foreign key, or historical name rewrite.
 Deleting a member does not erase an already recorded creator ID.
 
 Offline metadata generation uses the actual Drizzle serializer against current
-source and the 0096 snapshot, accepting only this one nullable column:
+source and the 0098 snapshot, accepting only this one nullable column:
 
 ```sh
 pnpm --dir ee/packages/den-db exec node --conditions=development --import tsx scripts/generate-gateway-set-creator-metadata.mjs
 ```
 
-The generator registers 0097 in the journal and writes a version-5 snapshot
-linked to 0096. It refuses unrelated schema/SQL drift or a different journal tip.
+The generator registers 0099 in the journal and writes a version-5 snapshot
+linked to 0098. It refuses unrelated schema/SQL drift or a different journal tip.
 Existing JSON defaults and migration-matcher normalization are unchanged.
 The existing local-startup migration runner reads this registered SQL normally;
 no migration, database connection, build, or service restart is performed here.

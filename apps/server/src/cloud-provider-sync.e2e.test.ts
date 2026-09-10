@@ -200,6 +200,7 @@ describe("cloud provider sync gateway", () => {
       if (path === "/v1/me/desktop-config") return org === "org_b" && denyPolicyB
         ? Response.json({ error: "denied" }, { status: 401 }) : Response.json({});
       if (org === "org_b") return Response.json({ error: "not_found" }, { status: 404 });
+      if (path === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
       return Response.json(path === "/v1/llm-providers" ? { llmProviders: [provider] } : { llmProvider: provider });
     } });
     stops.push(() => den.stop(true));
@@ -263,6 +264,7 @@ describe("cloud provider sync gateway", () => {
         input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1],
       ) => {
         const url = new URL(String(input));
+        if (url.hostname === "den.example.test" && url.pathname === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
         if (url.hostname === "den.example.test") return Response.json(url.pathname === "/v1/llm-providers"
           ? { llmProviders: [provider] } : { llmProvider: provider });
         if (init?.method === "PUT" && holdAuth) {
@@ -316,6 +318,7 @@ describe("cloud provider sync gateway", () => {
         const org = request.headers.get("x-openwork-legacy-org-id");
         denRequests.push(`${org} ${path}`);
         if (path === "/v1/me/desktop-config") return Response.json({ allowCustomProviders: false });
+        if (path === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
         if (path === "/v1/llm-providers") {
           if (org === "org_old") {
             reached.resolve();

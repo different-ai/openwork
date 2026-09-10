@@ -68,6 +68,11 @@ const upstream = createServer(async (request, response) => {
     response.end(Buffer.from([255, 254, 0, 128]))
     return
   }
+  if (config.mode === "managed-json") {
+    response.writeHead(200, { "content-type": "application/json" })
+    response.end(JSON.stringify({ choices: [{ index: 0, message: { role: "assistant", content: marker }, finish_reason: "stop" }] }))
+    return
+  }
   response.writeHead(200, { "content-type": "application/octet-stream" })
   response.end(Buffer.concat(chunks))
 })
@@ -107,6 +112,7 @@ app.post("/__test/config", async (c) => {
 })
 app.post("/__test/release", (c) => { release?.(); release = undefined; return c.json({ ok: true }) })
 registerProxyRoutes(app, {
+  async assertOrganizationManagedModelsAllowed() {},
   async findActiveGatewayKey(key) {
     return key.value === gatewayKey ? { id: "gky_fixture", organization_id: "org_fixture", org_membership_id: "om_fixture" } : null
   },
@@ -120,7 +126,7 @@ registerProxyRoutes(app, {
     buckets++
     return config.noTier === true
       ? { ok: false, bucketIds: {}, bucketLimits: {}, limitedBy: "no-tier", windowType: "monthly" }
-      : { ok: true, bucketIds: {}, bucketLimits: {} }
+      : { ok: true, admittedAt: new Date(), bucketIds: {}, bucketLimits: {} }
   },
   async insertRequestLog(row) {
     if (config.logFailure) throw new Error(marker)

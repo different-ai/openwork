@@ -9,7 +9,7 @@ function configuration(overrides: Record<string, string>, den = false) {
     const { env } = await import(${JSON.stringify(url)});
     console.log(JSON.stringify({
       port: env.port, proxyBaseUrl: ${den ? "env.inferenceProxyBaseUrl" : "env.proxyBaseUrl"},
-      creditsPerDollar: env.creditsPerDollar, timeout: env.upstreamTimeoutMs
+      creditsPerDollar: env.creditsPerDollar, timeout: env.upstreamTimeoutMs, managedTimeout: env.managedUpstreamTimeoutMs
     }));
   `], {
     encoding: "utf8",
@@ -29,7 +29,7 @@ test("legacy and canonical Gateway configuration resolve identically without cha
     }
     const result = configuration(values)
     assert.equal(result.status, 0, result.stderr)
-    assert.deepEqual(JSON.parse(result.stdout.trim()), { port: 18971, proxyBaseUrl: "https://inference.example.test", creditsPerDollar: 123, timeout: 2345 })
+    assert.deepEqual(JSON.parse(result.stdout.trim()), { port: 18971, proxyBaseUrl: "https://inference.example.test", creditsPerDollar: 123, timeout: 2345, managedTimeout: 2345 })
     const den = configuration(values, true)
     assert.equal(den.status, 0, den.stderr)
     assert.equal(JSON.parse(den.stdout.trim()).proxyBaseUrl, "https://inference.example.test")
@@ -45,7 +45,7 @@ test("canonical config wins over aliases and platform PORT; invalid canonical va
   }
   const result = configuration(values)
   assert.equal(result.status, 0, result.stderr)
-  assert.deepEqual(JSON.parse(result.stdout.trim()), { port: 18972, proxyBaseUrl: "https://gateway.example.test", creditsPerDollar: 321, timeout: 3456 })
+  assert.deepEqual(JSON.parse(result.stdout.trim()), { port: 18972, proxyBaseUrl: "https://gateway.example.test", creditsPerDollar: 321, timeout: 3456, managedTimeout: 3456 })
   const den = configuration(values, true)
   assert.equal(den.status, 0, den.stderr)
   assert.equal(JSON.parse(den.stdout.trim()).proxyBaseUrl, "https://gateway.example.test")
@@ -56,4 +56,19 @@ test("canonical config wins over aliases and platform PORT; invalid canonical va
   const platform = configuration({ PORT: "18973", INFERENCE_PORT: "18974" })
   assert.equal(platform.status, 0, platform.stderr)
   assert.equal(JSON.parse(platform.stdout.trim()).port, 18973)
+})
+
+test("managed defaults stay bounded while explicit Gateway timeout and legacy precedence are preserved", () => {
+  const defaults = configuration({})
+  assert.equal(defaults.status, 0, defaults.stderr)
+  assert.equal(JSON.parse(defaults.stdout.trim()).managedTimeout, 120000)
+  assert.equal(JSON.parse(defaults.stdout.trim()).timeout, 1800000)
+  for (const overrides of [
+    { INFERENCE_UPSTREAM_TIMEOUT_MS: "1800000" },
+    { GATEWAY_UPSTREAM_TIMEOUT_MS: "1800000", INFERENCE_UPSTREAM_TIMEOUT_MS: "invalid" },
+  ]) {
+    const result = configuration(overrides)
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(JSON.parse(result.stdout.trim()).managedTimeout, 1800000)
+  }
 })

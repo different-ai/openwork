@@ -1,29 +1,29 @@
--- Registered forward migration. See 0095_gateway_access_matrix.md.
+-- Registered forward migration. See 0097_gateway_access_matrix.md.
 -- Execute every statement on ONE connection, stop on the first error, and
--- quiesce writers/callbacks/refreshes before starting. Requires schema through 0094.
+-- quiesce writers/callbacks/refreshes before starting. Requires schema through 0096.
 -- No legacy inference key, OpenRouter, limit, bucket or ledger table is changed.
 -- A temporary primary-key guard fails actionably BEFORE persistent DDL, without
 -- relying on CHECK enforcement, stored routines, SIGNAL or client delimiters.
 -- On failure, the duplicate key names the failed preflight. Close the connection
 -- and fix the source deliberately; never IGNORE errors or silently delete rows.
-CREATE TEMPORARY TABLE `__gateway_0095_preflight` (
+CREATE TEMPORARY TABLE `__gateway_0097_preflight` (
   `failure` varchar(80) NOT NULL PRIMARY KEY
 );
 --> statement-breakpoint
-INSERT INTO `__gateway_0095_preflight` (`failure`) VALUES
-  ('0095_requires_mysql_8_0_16_or_later'),
-  ('0095_requires_strict_sql_mode'),
-  ('0095_requires_complete_0094_schema'),
-  ('0095_gateway_tables_already_exist'),
-  ('0095_missing_legacy_indexes'),
-  ('0095_invalid_typeid'),
-  ('0095_orphan_or_cross_org_resource'),
-  ('0095_invalid_credential_subject'),
-  ('0095_invalid_audience'),
-  ('0095_duplicate_audience_grants');
+INSERT INTO `__gateway_0097_preflight` (`failure`) VALUES
+  ('0097_requires_mysql_8_0_16_or_later'),
+  ('0097_requires_strict_sql_mode'),
+  ('0097_requires_complete_0096_schema'),
+  ('0097_gateway_tables_already_exist'),
+  ('0097_missing_legacy_indexes'),
+  ('0097_invalid_typeid'),
+  ('0097_orphan_or_cross_org_resource'),
+  ('0097_invalid_credential_subject'),
+  ('0097_invalid_audience'),
+  ('0097_duplicate_audience_grants');
 --> statement-breakpoint
-INSERT INTO `__gateway_0095_preflight` (`failure`)
-SELECT '0095_requires_mysql_8_0_16_or_later'
+INSERT INTO `__gateway_0097_preflight` (`failure`)
+SELECT '0097_requires_mysql_8_0_16_or_later'
 WHERE VERSION() LIKE '%MariaDB%' OR VERSION() LIKE '%TiDB%' OR NOT (
   CAST(SUBSTRING_INDEX(VERSION(), '.', 1) AS UNSIGNED) > 8
   OR (CAST(SUBSTRING_INDEX(VERSION(), '.', 1) AS UNSIGNED) = 8 AND (
@@ -32,13 +32,13 @@ WHERE VERSION() LIKE '%MariaDB%' OR VERSION() LIKE '%TiDB%' OR NOT (
   ))
 );
 --> statement-breakpoint
-INSERT INTO `__gateway_0095_preflight` (`failure`)
-SELECT '0095_requires_strict_sql_mode'
+INSERT INTO `__gateway_0097_preflight` (`failure`)
+SELECT '0097_requires_strict_sql_mode'
 WHERE FIND_IN_SET('STRICT_ALL_TABLES', @@SESSION.sql_mode) = 0
   AND FIND_IN_SET('STRICT_TRANS_TABLES', @@SESSION.sql_mode) = 0;
 --> statement-breakpoint
-INSERT INTO `__gateway_0095_preflight` (`failure`)
-SELECT '0095_requires_complete_0094_schema'
+INSERT INTO `__gateway_0097_preflight` (`failure`)
+SELECT '0097_requires_complete_0096_schema'
 WHERE (
   SELECT COUNT(*) FROM information_schema.tables
   WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' AND table_name IN (
@@ -57,8 +57,8 @@ WHERE (
     AND table_name = 'inference_keys' AND column_name = 'encrypted_key'
 );
 --> statement-breakpoint
-INSERT INTO `__gateway_0095_preflight` (`failure`)
-SELECT '0095_gateway_tables_already_exist'
+INSERT INTO `__gateway_0097_preflight` (`failure`)
+SELECT '0097_gateway_tables_already_exist'
 WHERE EXISTS (
   SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN (
     'gateway_providers', 'gateway_provider_models', 'gateway_provider_credentials',
@@ -68,8 +68,8 @@ WHERE EXISTS (
   )
 );
 --> statement-breakpoint
-INSERT INTO `__gateway_0095_preflight` (`failure`)
-SELECT '0095_missing_legacy_indexes'
+INSERT INTO `__gateway_0097_preflight` (`failure`)
+SELECT '0097_missing_legacy_indexes'
 WHERE EXISTS (
   SELECT 1 FROM (
     SELECT 'inference_providers' AS table_name, 'inference_providers_organization_id' AS index_name
@@ -99,8 +99,8 @@ WHERE EXISTS (
   WHERE actual.index_name IS NULL
 );
 --> statement-breakpoint
-INSERT INTO `__gateway_0095_preflight` (`failure`)
-SELECT '0095_invalid_typeid'
+INSERT INTO `__gateway_0097_preflight` (`failure`)
+SELECT '0097_invalid_typeid'
 WHERE EXISTS (
   SELECT 1 FROM (
     SELECT id AS value, 'ipr' AS prefix FROM inference_providers
@@ -128,8 +128,8 @@ WHERE EXISTS (
 --> statement-breakpoint
 -- History may reference retired resources. Only operational children require
 -- live parents; logs and rollups retain their historical references untouched.
-INSERT INTO `__gateway_0095_preflight` (`failure`)
-SELECT '0095_orphan_or_cross_org_resource'
+INSERT INTO `__gateway_0097_preflight` (`failure`)
+SELECT '0097_orphan_or_cross_org_resource'
 WHERE EXISTS (
   SELECT 1 FROM inference_providers p
   LEFT JOIN organization o ON o.id = p.organization_id
@@ -159,8 +159,8 @@ WHERE EXISTS (
   WHERE p.id IS NULL OR m.id IS NULL OR m.organization_id <> p.organization_id
 );
 --> statement-breakpoint
-INSERT INTO `__gateway_0095_preflight` (`failure`)
-SELECT '0095_invalid_credential_subject'
+INSERT INTO `__gateway_0097_preflight` (`failure`)
+SELECT '0097_invalid_credential_subject'
 WHERE EXISTS (
   SELECT 1 FROM inference_provider_credentials
   WHERE (org_membership_id IS NULL AND BINARY subject <> BINARY 'org')
@@ -170,20 +170,20 @@ WHERE EXISTS (
   GROUP BY inference_provider_id, subject HAVING COUNT(*) > 1
 );
 --> statement-breakpoint
-INSERT INTO `__gateway_0095_preflight` (`failure`)
-SELECT '0095_invalid_audience'
+INSERT INTO `__gateway_0097_preflight` (`failure`)
+SELECT '0097_invalid_audience'
 WHERE EXISTS (
   SELECT 1 FROM inference_provider_access WHERE org_membership_id IS NOT NULL AND team_id IS NOT NULL
 );
 --> statement-breakpoint
-INSERT INTO `__gateway_0095_preflight` (`failure`)
-SELECT '0095_duplicate_audience_grants'
+INSERT INTO `__gateway_0097_preflight` (`failure`)
+SELECT '0097_duplicate_audience_grants'
 WHERE EXISTS (
   SELECT 1 FROM inference_provider_access
   GROUP BY inference_provider_id, org_membership_id, team_id HAVING COUNT(*) > 1
 );
 --> statement-breakpoint
-DROP TEMPORARY TABLE `__gateway_0095_preflight`;
+DROP TEMPORARY TABLE `__gateway_0097_preflight`;
 --> statement-breakpoint
 -- All preflight statements succeeded. Persistent DDL starts here.
 RENAME TABLE

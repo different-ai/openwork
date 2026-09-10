@@ -118,8 +118,8 @@ if (process.env.OPENWORK_MANAGED_POLICY_TEST_CHILD !== "1") {
     expect(await result).toMatchObject({ code: "policy_identity_changed", status: 409 });
     await turn();
     expect(externalFetch.mock.calls.map(([url, init]) => [url, init?.headers])).toEqual([
-      [`${session.baseUrl}/v1/me/desktop-config`, { Authorization: "Bearer old-token", "x-openwork-legacy-org-id": "old-org" }],
-      [`${next.baseUrl}/v1/me/desktop-config`, { Authorization: "Bearer new-token", "x-openwork-legacy-org-id": "new-org" }],
+      [`${session.baseUrl}/v1/me/desktop-config`, { Accept: "application/json", Authorization: "Bearer old-token", "x-openwork-org-id": "old-org", "x-openwork-legacy-org-id": "old-org" }],
+      [`${next.baseUrl}/v1/me/desktop-config`, { Accept: "application/json", Authorization: "Bearer new-token", "x-openwork-org-id": "new-org", "x-openwork-legacy-org-id": "new-org" }],
     ]);
     expect(delay).toHaveBeenCalledTimes(1);
     expect(write).toHaveBeenCalledTimes(1);

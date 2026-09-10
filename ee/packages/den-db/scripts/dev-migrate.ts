@@ -28,27 +28,27 @@ export function localConnectionConfig(databaseUrl: string) {
 }
 
 export function matrixPreflightQueries(plan: MigrationPlan) {
-  const migration = plan.find((entry) => entry.tag === "0095_gateway_access_matrix")
-  if (!migration) throw new MigrationSafetyError("Missing 0095 preflight")
+  const migration = plan.find((entry) => entry.tag === "0097_gateway_access_matrix")
+  if (!migration) throw new MigrationSafetyError("Missing 0097 preflight")
   const statements = migration.sql.map((sql) => sql.replace(/^\s*--[^\n]*$/gm, "").trim())
   const rename = statements.findIndex((sql) => /^RENAME TABLE\b/i.test(sql))
   const queries = statements.slice(0, rename).flatMap((sql) => {
-    const match = /^INSERT INTO `__gateway_0095_preflight` \(`failure`\)\s+(SELECT '(0095_[a-z0-9_]+)'[\s\S]*)$/.exec(sql)
+    const match = /^INSERT INTO `__gateway_0097_preflight` \(`failure`\)\s+(SELECT '(0097_[a-z0-9_]+)'[\s\S]*)$/.exec(sql)
     return match ? [{ name: match[2], sql: match[1] }] : []
   })
-  const seed = statements.find((sql) => /^INSERT INTO `__gateway_0095_preflight` \(`failure`\) VALUES/.test(sql))
-  const names = seed ? [...seed.matchAll(/'(0095_[a-z0-9_]+)'/g)].map((match) => match[1]) : []
+  const seed = statements.find((sql) => /^INSERT INTO `__gateway_0097_preflight` \(`failure`\) VALUES/.test(sql))
+  const names = seed ? [...seed.matchAll(/'(0097_[a-z0-9_]+)'/g)].map((match) => match[1]) : []
   if (rename < 0 || names.length < 10 || queries.length !== names.length
     || new Set(queries.map((query) => query.name)).size !== names.length
     || names.some((name) => !queries.some((query) => query.name === name))) {
-    throw new MigrationSafetyError("0095 preflight layout changed; review local startup integration before execution.")
+    throw new MigrationSafetyError("0097 preflight layout changed; review local startup integration before execution.")
   }
   return queries
 }
 
 export async function preflightMatrix(executor: Executor, plan: MigrationPlan, completeSchema = true) {
   for (const query of matrixPreflightQueries(plan)) {
-    if (!completeSchema && query.name === "0095_requires_complete_0094_schema") continue
+    if (!completeSchema && query.name === "0097_requires_complete_0096_schema") continue
     if ((await executor.query(query.sql)).length) throw new MigrationSafetyError(`Preflight rejected ${query.name}; no rows were changed. ${recovery}`)
   }
 }
@@ -99,13 +99,13 @@ export async function migrateLocalDatabase(executor: Executor, plan: MigrationPl
     await preflightRepairs(executor, shape)
     const pending = plan.slice(applied)
     matrixPreflightQueries(plan)
-    if (pending.some((entry) => entry.tag === "0095_gateway_access_matrix") && shape.has("table:inference_providers")) {
-      await preflightMatrix(executor, plan, plan[applied - 1].tag.startsWith("0094_"))
-      console.log("[den-db] 0095 read-only data/schema guards passed")
+    if (pending.some((entry) => entry.tag === "0097_gateway_access_matrix") && shape.has("table:inference_providers")) {
+      await preflightMatrix(executor, plan, plan[applied - 1].tag.startsWith("0096_"))
+      console.log("[den-db] 0097 read-only data/schema guards passed")
     }
     const seed = empty ? await foundationSql(plan) : []
     for (const repair of lookupRepairs) console.log(`[den-db] Planned additive auth lookup index: ${repair.key.slice("index:".length)}`)
-    if (lookupRepairs.length) console.log("[den-db] Schema will match 0094 only after the planned indexes; apply must reverify before recording any baseline receipts")
+    if (lookupRepairs.length) console.log("[den-db] Schema will match 0096 only after the planned indexes; apply must reverify before recording any baseline receipts")
     console.log(`[den-db] ${empty ? "Empty database: replay from foundation" : baseline ? `Recognized schema: baseline through ${plan[applied - 1].tag} only` : `Verified ${applied} migration receipts`}; ${pending.length} migrations pending`)
     if (checkOnly) { console.log("[den-db] Read-only preflight complete; no schema, data or journal changes"); return }
 
@@ -117,8 +117,8 @@ export async function migrateLocalDatabase(executor: Executor, plan: MigrationPl
       const snapshot = plan[applied - 1].snapshot
       if (!snapshot) throw new MigrationSafetyError("Missing pre-baseline snapshot")
       const differences = schemaDifferences(snapshotShape(snapshot), (await inspectSchema(executor)).shape)
-      if (differences.length) throw new MigrationSafetyError(`Auth lookup index reconciliation did not reach exact 0094 (${differences.slice(0, 8).join(", ")}); no baseline receipts recorded. ${recovery}`)
-      console.log("[den-db] Auth lookup indexes reconciled; exact 0094 schema verified before baselining")
+      if (differences.length) throw new MigrationSafetyError(`Auth lookup index reconciliation did not reach exact 0096 (${differences.slice(0, 8).join(", ")}); no baseline receipts recorded. ${recovery}`)
+      console.log("[den-db] Auth lookup indexes reconciled; exact 0096 schema verified before baselining")
     }
     await executor.query(`CREATE TABLE IF NOT EXISTS \`${journalTable}\` (id serial PRIMARY KEY, hash text NOT NULL, created_at bigint) ENGINE=InnoDB`)
     if (baseline) {
@@ -133,7 +133,7 @@ export async function migrateLocalDatabase(executor: Executor, plan: MigrationPl
     for (const statement of seed) await executor.query(statement)
     for (const entry of pending) {
       await executor.query(`UPDATE \`${stateTable}\` SET step=? WHERE id=1`, [entry.tag])
-      if (entry.tag === "0095_gateway_access_matrix") await preflightMatrix(executor, plan)
+      if (entry.tag === "0097_gateway_access_matrix") await preflightMatrix(executor, plan)
       console.log(`[den-db] Applying ${entry.tag}`)
       for (const statement of entry.sql) if (statement.trim()) await executor.query(statement)
       await executor.query(`INSERT INTO \`${journalTable}\` (hash, created_at) VALUES (?, ?)`, [entry.hash, entry.folderMillis])

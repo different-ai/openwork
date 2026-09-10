@@ -125,9 +125,9 @@ test("Gateway keeps operator routes and separates Models keys; new admin and web
     expect(accepted.status).toBe(400)
     expect(await accepted.json()).toEqual({ error: "invalid_json" })
     expect((await operatorRequest("/internal/rollups/run", canonical ? "legacy-admin-fixture" : "wrong", "{")).status).toBe(401)
-    const webhook = await operatorRequest("/webhooks/openrouter", `${prefix}-webhook-fixture`, "{}")
+    const webhook = await operatorRequest("/webhooks/openrouter", `${prefix}-webhook-fixture`, '{"resourceSpans":[]}')
     expect(webhook.status).toBe(200)
-    expect(await webhook.json()).toEqual({ ok: true, ingested: 0, skipped: 0 })
+    expect(await webhook.json()).toEqual({ ok: true, ingested: 0, skipped: 0, deferred: 0, invalid: 0, failed: 0 })
     expect((await operatorRequest("/webhooks/openrouter", canonical ? "legacy-webhook-fixture" : "wrong", "{}")).status).toBe(401)
     const validKey = await f.request()
     expect(validKey.status).toBe(200)
@@ -199,16 +199,22 @@ test("credential retry yields a correlated 503 without forwarding tokens or aski
   }
 })
 
-test("both routes record body request IDs and semantic stream errors without changing the HTTP response", async () => {
+test("both routes record semantic stream errors; Models sanitizes the provider error while Gateway preserves native bytes", async () => {
   for (const route of ["gateway", "openwork"]) {
     await using f = await fixture({ mode: "semantic-error" })
     const response = await (route === "gateway"
       ? f.request("/chat/completions", { headers: { "api-key": gatewayKey, "content-type": "application/json" }, body: '{"model":"x","stream":true}' })
-      : f.openwork())
+      : f.openwork({ body: '{"model":"z-ai/glm-5.2","messages":[],"stream":true}' }))
     expect(response.status).toBe(200)
-    expect(await response.text()).toBe('data: {"id":"body-request-id","error":{"message":"redacted-provider-error"}}\n\n')
+    const text = await response.text()
+    if (route === "gateway") expect(text).toBe('data: {"id":"body-request-id","error":{"message":"redacted-provider-error"}}\n\n')
+    else {
+      expect(text).toContain("upstream_unavailable")
+      expect(text).not.toContain("redacted-provider-error")
+      expect(text).not.toContain("[DONE]")
+    }
     const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
-    expect(state.rows[0]).toMatchObject({ status: 200, outcome: "upstream_error", error_code: "upstream_stream_error", upstream_request_id: "body-request-id",
+    expect(state.rows[0]).toMatchObject({ status: 200, outcome: "upstream_error", error_code: route === "gateway" ? "upstream_stream_error" : "upstream_unavailable", upstream_request_id: "body-request-id",
       upstream_model: route === "gateway" ? "x" : "z-ai/glm-5.2" })
   }
 })
@@ -378,11 +384,17 @@ test("error responses are not buffered for logging and response cancellation clo
     await using f = await fixture({ mode: "error-hang" })
     const response = await (route === "gateway" ? f.request() : f.openwork())
     expect(response.status).toBe(429)
-    const reader = response.body!.getReader()
-    expect(new TextDecoder().decode((await reader.read()).value)).toContain(marker)
-    await reader.cancel()
+    if (route === "gateway") {
+      const reader = response.body!.getReader()
+      expect(new TextDecoder().decode((await reader.read()).value)).toContain(marker)
+      await reader.cancel()
+    } else {
+      const text = await response.text()
+      expect(text).toContain("upstream_rate_limited")
+      expect(text).not.toContain(marker)
+    }
     const state = await f.waitFor((s) => s.cancelled === 1 && Boolean(s.rows[0]?.completed_at))
-    expect(state.rows[0].outcome).toBe("client_aborted")
+    expect(state.rows[0].outcome).toBe(route === "gateway" ? "client_aborted" : "upstream_error")
     expect(f.output + JSON.stringify(state.reports)).not.toContain(marker)
   }
 })
@@ -399,19 +411,19 @@ test("invalid UTF-8 JSON and malformed event-stream responses retain every origi
   await binary.waitFor((s) => Boolean(s.rows[0]?.completed_at))
 })
 
-test("OpenWork relay handles bodyless responses, broken JSON and cancellation before headers", async () => {
+test("OpenWork rejects bodyless or broken completions and supports cancellation before headers", async () => {
   await using bodyless = await fixture({ mode: "bodyless" })
   const empty = await bodyless.openwork()
-  expect(empty.status).toBe(204)
-  expect(await empty.text()).toBe("")
+  expect(empty.status).toBe(502)
+  expect(await empty.json()).toMatchObject({ error: { code: "upstream_malformed_response" } })
   await bodyless.waitFor((s) => Boolean(s.rows[0]?.completed_at))
   await using broken = await fixture({ mode: "json-failure" })
-  const response = await broken.openwork()
-  expect(response.status).toBe(201)
-  const reader = response.body!.getReader()
-  expect((await reader.read()).done).toBe(false)
+  const pendingResponse = broken.openwork()
+  await broken.waitFor((s) => s.requests.length === 1)
   await broken.release()
-  await expect(reader.read()).rejects.toThrow()
+  const response = await pendingResponse
+  expect(response.status).toBe(502)
+  expect(await response.json()).toMatchObject({ error: { code: "upstream_malformed_response" } })
   expect((await broken.waitFor((s) => Boolean(s.rows[0]?.completed_at))).rows[0].outcome).toBe("upstream_error")
   await using waiting = await fixture({ mode: "headers-hang" })
   const abort = new AbortController()
@@ -450,8 +462,7 @@ test("access logs and reporters omit query secrets, prompts and free-text transp
   const response = await f.request(`/responses?arbitrary=${marker}`, { headers: { "api-key": gatewayKey, "x-extra": marker, "content-type": "application/json" }, body: JSON.stringify({ model: "x", input: marker }) })
   expect(response.status).toBe(502)
   const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
-  expect(f.output).toContain("[gateway-access] request")
-  expect(f.output).toContain("[gateway-access] response")
+  expect(f.output).toContain("[gateway-http]")
   expect(f.output + JSON.stringify(state.reports)).not.toContain(marker)
   await using failedLog = await fixture({ logFailure: true })
   expect((await failedLog.request()).status).toBe(503)
@@ -461,7 +472,7 @@ test("access logs and reporters omit query secrets, prompts and free-text transp
 
 test("OpenWork Models requires enabled metadata independently of bucket gating; org providers do not require a tier", async () => {
   for (const config of [{ enabled: false }, { enabled: true, noTier: true }, { enabled: true }]) {
-    await using f = await fixture(config)
+    await using f = await fixture({ ...config, mode: "managed-json" })
     const response = await fetch(`${f.url}/api/v1/chat/completions`, { method: "POST", headers: { authorization: "Bearer ow_inf_fixture", "content-type": "application/json" }, body: '{"model":"z-ai/glm-5.2","messages":[]}' })
     expect(response.status).toBe(config.enabled === false ? 403 : "noTier" in config ? 429 : 200)
     expect(response.headers.get("x-openwork-request-id")).toMatch(/^[a-f0-9]{32}$/)
@@ -474,12 +485,12 @@ test("OpenWork Models requires enabled metadata independently of bucket gating; 
 })
 
 test("optional observers cannot alter ordinary inference bytes", async () => {
-  await using f = await fixture({ observerFailure: true })
+  await using f = await fixture({ observerFailure: true, mode: "managed-json" })
   const response = await fetch(`${f.url}/api/v1/chat/completions`, { method: "POST", headers: { authorization: "Bearer ow_inf_fixture", "content-type": "application/json" }, body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: marker }] }) })
   expect(response.status).toBe(200)
   const bytes = new Uint8Array(await response.arrayBuffer())
   const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
-  expect([...bytes]).toEqual(state.requests[0].bytes)
+  expect(new TextDecoder().decode(bytes)).toBe(JSON.stringify({ choices: [{ index: 0, message: { role: "assistant", content: marker }, finish_reason: "stop" }] }))
   expect(new TextDecoder().decode(bytes)).toContain(marker)
   expect(f.output + JSON.stringify(state.reports)).not.toContain(marker)
 })

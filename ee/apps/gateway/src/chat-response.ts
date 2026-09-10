@@ -150,6 +150,7 @@ export function relayChatStream(input: {
   startedAt: number
   idleMs: number
   choiceCount?: number
+  onRawChunk?(bytes: Uint8Array): void
   onChunk?(bytes: Uint8Array): void
   onFinish(report: ChatCompletionReport): void
 }): ReadableStream<Uint8Array> {
@@ -194,6 +195,7 @@ export function relayChatStream(input: {
           if (settled) return
           if (chunk.done) throw new InvalidStream("upstream_incomplete", "The connection closed before the model completed its response. Partial output is preserved; review it before retrying.")
           bytes += chunk.value.byteLength
+          try { input.onRawChunk?.(chunk.value) } catch { /* Accounting must not bypass protocol validation. */ }
           parser.output = false
           // Forward one validated frame at a time so a malformed later frame does
           // not discard valid partial output from the same transport chunk.

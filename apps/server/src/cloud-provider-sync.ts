@@ -980,7 +980,7 @@ export class CloudProviderSync {
     if (!session) throw new ApiError(401, "no_session", "Sign in to OpenWork first");
     if (session.orgId !== orgId) throw new ApiError(403, "organization_mismatch", "The active organization changed");
     const query = credentialSetId ? `?credentialSetId=${encodeURIComponent(credentialSetId)}` : "";
-    const payload = await requestJson(this.fetchImpl, session, `/v1/inference-providers/${providerId}/oauth/start${query}`);
+    const payload = await requestJson(this.fetchImpl, session, `/v1/inference-providers/${providerId}/oauth/start${query}`, this.providerFetchController.signal);
     if (generation !== this.contextGeneration || this.session !== session) {
       throw new ApiError(409, "session_changed", "The active account changed; try again");
     }

@@ -6,7 +6,7 @@ import { generateMySQLDrizzleJson, generateMySQLMigration } from "drizzle-kit/ap
 import * as schema from "../src/schema.ts"
 
 const meta = new URL("../drizzle/meta/", import.meta.url)
-const previous = JSON.parse(await readFile(new URL("0094_snapshot.json", meta), "utf8"))
+const previous = JSON.parse(await readFile(new URL("0096_snapshot.json", meta), "utf8"))
 const journalPath = new URL("_journal.json", meta)
 const journalSource = await readFile(journalPath, "utf8")
 const journal = JSON.parse(journalSource)
@@ -39,7 +39,7 @@ for (const [name, table] of Object.entries(previous.tables)) {
         console.log(JSON.stringify({ table: name, field: key, previous: table[key], current: snapshot.tables[name]?.[key] }, null, 2))
       }
     }
-    throw new Error(`Unrelated schema drift at ${name}; resolve separately before registering 0095`)
+    throw new Error(`Unrelated schema drift at ${name}; resolve separately before registering 0097`)
   }
 }
 for (const name of Object.keys(snapshot.tables)) {
@@ -50,8 +50,8 @@ for (const name of added) {
 }
 if (!isDeepStrictEqual(previous.views, snapshot.views)) throw new Error("Unrelated view drift")
 
-const tag = "0095_gateway_access_matrix"
-const snapshotPath = new URL("0095_snapshot.json", meta)
+const tag = "0097_gateway_access_matrix"
+const snapshotPath = new URL("0097_snapshot.json", meta)
 if (process.argv.includes("--schema-delta")) {
   // In-memory comparison only: account for explicit data-preserving renames so
   // Kit never prompts or suggests DROP/CREATE for a table holding existing rows.
@@ -89,24 +89,24 @@ if (process.argv.includes("--schema-delta")) {
   if (statements.some((statement) => /DROP TABLE|DROP PRIMARY KEY|DROP COLUMN/i.test(statement))) {
     throw new Error("Unexpected destructive schema delta after explicit renames")
   }
-  console.log("Schema-only reference delta after the eight explicit renames (NOT execution SQL; staged backfills remain in 0095):")
+  console.log("Schema-only reference delta after the eight explicit renames (NOT execution SQL; staged backfills remain in 0097):")
   console.log(statements.join("\n"))
 } else if (process.argv.includes("--check")) {
   const saved = JSON.parse(await readFile(snapshotPath, "utf8"))
   const { id: _generatedId, ...generatedShape } = snapshot
   const { id: _savedId, ...savedShape } = saved
-  if (!isDeepStrictEqual(generatedShape, savedShape)) throw new Error("0095 snapshot no longer matches current source")
-  if (journal.entries.at(-1)?.tag !== tag || journal.entries.at(-1)?.idx !== 95) {
-    throw new Error("0095 is not the last registered migration")
+  if (!isDeepStrictEqual(generatedShape, savedShape)) throw new Error("0097 snapshot no longer matches current source")
+  if (journal.entries.at(-1)?.tag !== tag || journal.entries.at(-1)?.idx !== 97) {
+    throw new Error("0097 is not the last registered migration")
   }
-  console.log(`0095 source snapshot matches: ${Object.keys(saved.tables).length} tables; prevId=${saved.prevId}`)
+  console.log(`0097 source snapshot matches: ${Object.keys(saved.tables).length} tables; prevId=${saved.prevId}`)
 } else {
   const last = journal.entries.at(-1)
-  if (last?.idx !== 94 || last.tag !== "0094_inference_accounting_observations") {
-    throw new Error("Journal moved beyond 0094; refusing to overwrite concurrent migration metadata")
+  if (last?.idx !== 96 || last.tag !== "0096_inference_accounting_observations") {
+    throw new Error("Journal moved beyond 0096; refusing to overwrite concurrent migration metadata")
   }
   if (await readFile(journalPath, "utf8") !== journalSource) throw new Error("Journal changed during serialization")
-  const entry = { idx: 95, version: snapshot.version, when: Math.max(Date.now(), last.when + 1), tag, breakpoints: true }
+  const entry = { idx: 97, version: snapshot.version, when: Math.max(Date.now(), last.when + 1), tag, breakpoints: true }
   await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, { flag: "wx" })
   journal.entries.push(entry)
   await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`)
