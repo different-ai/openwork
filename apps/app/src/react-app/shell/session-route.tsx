@@ -488,6 +488,7 @@ export function SessionRoute() {
     legacySelectedWorkspaceId,
     setLegacySelectedWorkspaceId,
     retryingWorkspaceIds,
+    loadedWorkspaceIds,
     setRetryingWorkspaceIds,
     startupRetryTimerRef,
     selectedWorkspaceId,
@@ -770,8 +771,8 @@ export function SessionRoute() {
 
 
   const workspaceSessionGroups = useMemo(
-    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(retryingWorkspaceIds)),
-    [errorsByWorkspaceId, retryingWorkspaceIds, sessionsByWorkspaceId, workspaces],
+    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(retryingWorkspaceIds), loadedWorkspaceIds),
+    [errorsByWorkspaceId, retryingWorkspaceIds, sessionsByWorkspaceId, workspaces, loadedWorkspaceIds],
   );
   useSessionGroupSync({ workspaces, endpointForWorkspace });
   const selectedWorkspaceGroupState = sessionManagementStore((state) => (
