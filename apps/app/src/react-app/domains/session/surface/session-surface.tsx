@@ -1428,9 +1428,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.sessionId, props.workspaceId]);
 
   useEffect(() => {
-    if (!fullSnapshot) return;
-    seedSessionState(props.workspaceId, fullSnapshot);
-  }, [fullSnapshot, props.sessionId, props.workspaceId]);
+    if (!currentSnapshot) return;
+    seedSessionState(props.workspaceId, currentSnapshot, { preview: !hasFullHistory });
+  }, [currentSnapshot, hasFullHistory, props.sessionId, props.workspaceId]);
 
   const snapshot = resolveRenderedSessionSnapshot({
     sessionId: props.sessionId,
@@ -1491,8 +1491,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.sessionId]);
 
   const baseRenderedMessages = useMemo(
-    () => deriveRenderedSessionMessages({ transcriptState, snapshot }),
-    [snapshot, transcriptState],
+    () => deriveRenderedSessionMessages({ transcriptState, snapshot, historyComplete: hasFullHistory }),
+    [snapshot, transcriptState, hasFullHistory],
   );
   const pendingMessages = useComposerStateStore((state) => state.pendingMessages[sessionOwner]);
   const [submittedMessage, setSubmittedMessage] = useState<{ owner: string; id: string } | null>(null);
@@ -1811,7 +1811,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const handleOpenTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions) => {
     props.onOpenTarget?.(target, options, props.sessionId);
   }, [props.onOpenTarget, props.sessionId]);
-  const pendingSessionLoad = !snapshot && !snapshotQuery.isError && renderedMessages.length === 0;
+  const pendingSessionLoad = (!hasFullHistory && Boolean(revertMessageId))
+    || (!snapshot && !snapshotQuery.isError && renderedMessages.length === 0);
   const assistantOutputAfterAwaitStart = useMemo(() => {
     if (awaitingAssistantBaseline === null) return false;
     return renderedMessages
@@ -3027,10 +3028,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [archived, archiveStateKnown, props.onRevertToMessage, props.opencodeBaseUrl, props.sessionId]);
 
   const handleForkAtMessage = useCallback((messageId: string) => {
-    // OpenCode's fork copies messages strictly before the given id, so pass
-    // the next real message to make the branch include the clicked message.
-    props.onForkAtMessage?.(resolveForkBoundaryId(renderedMessagesRef.current, messageId), props.sessionId);
-  }, [props.onForkAtMessage, props.sessionId]);
+    if (!props.onForkAtMessage) return;
+    void openingHistory.runWithFullSnapshot((full) => {
+      // Use the untruncated timeline: even a hidden next message is a boundary,
+      // and a singleton preview never means "fork the entire conversation".
+      props.onForkAtMessage?.(resolveForkBoundaryId(full.messages.map(({ info }) => info), messageId), props.sessionId);
+    }, { fresh: true }).catch((error) => setError(parseSessionError(error)));
+  }, [openingHistory.runWithFullSnapshot, props.onForkAtMessage, props.sessionId, setError]);
 
   const handleEditUserMessage = useCallback((messageId: string, text: string) => {
     if (archived) return;
@@ -3043,9 +3047,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     if (!props.onRestoreRevertedSession || restoringRevertedMessages) return;
     setRestoringRevertedMessages(true);
-    void props.onRestoreRevertedSession(props.sessionId)
-      .finally(() => setRestoringRevertedMessages(false));
-  }, [archived, archiveStateKnown, props.onRestoreRevertedSession, props.opencodeBaseUrl, props.sessionId, restoringRevertedMessages]);
+    // The cache-only unrevert operation must not cancel the only full read.
+    void openingHistory.runWithFullSnapshot(() => props.onRestoreRevertedSession?.(props.sessionId))
+      .catch((error) => setError(parseSessionError(error)))
+      .finally(() => {
+        if (activeSessionOwnerRef.current === sessionOwner) setRestoringRevertedMessages(false);
+      });
+  }, [archived, archiveStateKnown, openingHistory.runWithFullSnapshot, props.onRestoreRevertedSession, props.opencodeBaseUrl, props.sessionId, restoringRevertedMessages, sessionOwner, setError]);
 
   const sessionScrollTopControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.scroll_top",
@@ -3188,6 +3196,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
               />
             ) : null}
             <SessionHistoryBoundary owner={sessionOwner} pending={pendingSessionLoad}
+              onRetry={snapshotQuery.isError && !snapshotQuery.isFetching && snapshot && !fullSnapshot ? () => { void snapshotQuery.refetch(); } : undefined}
               options={openingHistory.options} saved={initialScroll}>
             {(snapshotQuery.isError || error) && !snapshot && renderedMessages.length === 0 ? (
               <div className="px-6 py-8">
@@ -3271,12 +3280,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
               </DevProfiler>
             )}
             </SessionHistoryBoundary>
-            {snapshotQuery.isError && snapshot && !fullSnapshot ? (
-              <div role="alert" className="flex items-center justify-center gap-3 py-3 text-xs text-dls-secondary">
-                <span>The rest of this conversation could not be loaded.</span>
-                <button type="button" className="underline" onClick={() => void snapshotQuery.refetch()}>Retry</button>
-              </div>
-            ) : null}
             {!archived && admissionOutcomeUnresolved && queuedDrainState.phase.kind !== "admission_unknown" && renderedMessages.length > 0 ? (
               <AdmissionOutcomeUnknownCard
                 resuming={resuming}

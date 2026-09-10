@@ -94,4 +94,20 @@ test("opening a long conversation shows the latest first and preserves access to
       "The transcript shows no loading indicator, error card, or empty-conversation placeholder",
     ]);
   });
+
+  // Baseline branch coverage after full loading, not the delayed-preview race.
+  await step("after full loading, branching at the first message excludes later history and leaves the source unchanged", async () => {
+    await user.click({ role: "button", label: "Branch in new chat", nth: 0 });
+    // count limits returned messages; messageCount is the entire rendered transcript.
+    await probe.eventually(async () => renderedCount(await agent.run("session.read_transcript", { count: 1 })), {
+      within: 30_000,
+      label: "branch contains only the clicked message",
+      until: (count) => count === 1,
+    });
+    await user.see({ text: longHistoryFirst });
+    await user.notSee({ text: longHistoryLast });
+    const source = await probe.desktopApi(messagesPath);
+    expect(source.status).toBe(200);
+    expect(messageTexts(source.body)).toHaveLength(longHistoryCount);
+  });
 });

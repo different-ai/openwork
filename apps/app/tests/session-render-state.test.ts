@@ -3,6 +3,7 @@ import type { UIMessage } from "ai";
 
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { deriveRenderedSessionMessages } from "../src/react-app/domains/session/surface/session-render-state";
+import { resolveForkBoundaryId } from "../src/react-app/domains/session/sync/transcript-reconcile";
 import {
   mergeSnapshotAndLiveMessages,
   mergeSnapshotIntoCachedMessages,
@@ -253,6 +254,29 @@ describe("message merge duplicate and inclusion semantics", () => {
       expect(result[1]?.parts).toEqual(liveLast.parts);
       expect(result[2]).toBe(tail);
     }
+  });
+});
+
+describe("fork boundaries in complete history", () => {
+  const history = [{ id: "z-first" }, { id: "a-answer" }, { id: "m-next" }];
+
+  test("includes the clicked message using native history order and reserves null for the last message", () => {
+    expect(resolveForkBoundaryId(history, "z-first")).toBe("a-answer");
+    expect(resolveForkBoundaryId(history, "a-answer")).toBe("m-next");
+    expect(resolveForkBoundaryId(history, "m-next")).toBeNull();
+  });
+
+  test("rejects missing messages rather than forking the whole conversation", () => {
+    expect(() => resolveForkBoundaryId(history, "missing")).toThrow("no longer in this conversation");
+    expect(() => resolveForkBoundaryId([], "missing")).toThrow("no longer in this conversation");
+  });
+
+  test("resolves display-only rows and skips synthetic error boundaries", () => {
+    expect(resolveForkBoundaryId(history, "a-answer:steps")).toBe("m-next");
+    expect(resolveForkBoundaryId(history, "session-error:a-answer")).toBe("m-next");
+    const withError = [...history.slice(0, 2), { id: "session-error:a-answer" }, history[2]];
+    expect(resolveForkBoundaryId(withError, "a-answer")).toBe("m-next");
+    expect(resolveForkBoundaryId(withError, "session-error:a-answer")).toBe("m-next");
   });
 });
 

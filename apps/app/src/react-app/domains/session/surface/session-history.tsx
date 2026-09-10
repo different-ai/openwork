@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { queryOptions, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { LoaderCircle } from "lucide-react";
 import type { OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
@@ -53,11 +53,35 @@ export function useOpeningSessionHistory(input: {
     networkMode: "always",
   });
   const query = useQuery({ ...options, enabled: !hasFullSnapshot });
+  const activeOwner = useRef<string | null>(input.owner);
+  activeOwner.current = input.owner;
+  useEffect(() => {
+    activeOwner.current = input.owner;
+    return () => { activeOwner.current = null; };
+  }, [input.owner]);
   const ensureFullSnapshot = useCallback(() => client.ensureQueryData({
     queryKey: input.snapshotQueryKey,
     queryFn: ({ signal }) => input.readSnapshot(signal),
     networkMode: "always",
   }), [client, input.snapshotQueryKey, input.readSnapshot]);
+  const runWithFullSnapshot = useCallback(async (
+    action: (snapshot: OpenworkSessionSnapshot) => void | Promise<unknown>,
+    options: { fresh?: boolean } = {},
+  ) => {
+    if (activeOwner.current !== input.owner) return;
+    const snapshot = await (options.fresh ? client.fetchQuery({
+      // Branch must not join an older opening/send read or trust cached history.
+      // Concurrent branches share this uncapped read and its response boundary.
+      queryKey: ["react-session-branch-history", input.owner],
+      queryFn: ({ signal }) => input.readSnapshot(signal),
+      staleTime: 0,
+      gcTime: 15_000,
+      networkMode: "always",
+    }) : ensureFullSnapshot());
+    if (activeOwner.current !== input.owner) return;
+    if (snapshot.session.id !== input.sessionId) throw new Error("Conversation history belongs to another session.");
+    await action(snapshot);
+  }, [client, ensureFullSnapshot, input.owner, input.sessionId, input.readSnapshot]);
   const [backgroundOwner, setBackgroundOwner] = useState<string | null>(null);
   useEffect(() => {
     if (!query.isSuccess || hasFullSnapshot) return;
@@ -77,6 +101,7 @@ export function useOpeningSessionHistory(input: {
     snapshot: hasFullSnapshot ? null : query.data?.snapshot ?? null,
     backgroundReady: hasFullSnapshot || backgroundOwner === input.owner,
     ensureFullSnapshot,
+    runWithFullSnapshot,
   };
 }
 
@@ -98,14 +123,19 @@ export function SessionHistoryLoading({ saved }: { saved: SessionScrollState }) 
   </div>;
 }
 
-export function SessionHistoryBoundary({ owner, pending, options, saved, children }: {
+export function SessionHistoryBoundary({ owner, pending, options, saved, onRetry, children }: {
   owner: string;
   pending: boolean;
   options: OpeningOptions;
   saved: SessionScrollState;
+  onRetry?: () => void;
   children: ReactNode;
 }) {
   return <Suspense key={owner} fallback={<SessionHistoryLoading saved={saved} />}>
-    {pending ? <AwaitOpeningHistory options={options} saved={saved} /> : children}
+    {onRetry ? <div role="alert" className="flex items-center justify-center gap-3 py-3 text-xs text-dls-secondary">
+      <span>The rest of this conversation could not be loaded.</span>
+      <button type="button" className="underline" onClick={onRetry}>Retry</button>
+    </div> : null}
+    {pending ? (onRetry ? null : <AwaitOpeningHistory options={options} saved={saved} />) : children}
   </Suspense>;
 }
