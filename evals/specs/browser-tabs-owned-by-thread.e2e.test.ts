@@ -400,7 +400,9 @@ test("a background conversation reads its owned page silently and requests atten
   await step("A paused background conversation cannot open through the legacy automation command", async () => {
     await user.click({ role: "button", label: "Take over" });
     await user.click(conversation(reading.title));
-    const before = await probe.browserState();
+    // Baseline once the reading tab is back in the panel, so the comparison below sees only the rejected command's effect.
+    const before = await probe.eventually(() => probe.browserState(), { within: 15_000, until: (value) => value.visibleSessionId === reading.sessionId && value.activeTabId === readingTab.tabId
+      && value.nativeViews.some((view) => view.tabId === readingTab.tabId && view.attached && view.aboveApp), label: "the reading tab is attached in the panel before the paused open" });
     const requests = (await witness()).pageRequests;
     const response = await agent.desktopApi("/experimental/ui-control/request", { method: "POST", body: {
       kind: "command", input: { id: "browser.open_url", args: { url: `${world.origin}/paused-open`, provider: "builtin" }, origin: { sessionId: researching.sessionId } },
