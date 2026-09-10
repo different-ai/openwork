@@ -10,7 +10,7 @@ const isolationTest = spec.world(isolatedMcpApps, {
   needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 300_000,
 });
 
-isolationTest("embedded MCP Apps isolate siblings while SDK initialization and helper calls work", async ({ world, agent, user, probe, evidence }) => {
+isolationTest("APP-ISOLATION embedded MCP Apps isolate siblings while SDK initialization and helper calls work", async ({ world, agent, user, probe, evidence }) => {
   const sinceIso = new Date().toISOString();
   await agent.send(isolationPrompt);
   await user.see({ text: isolationReply }, { timeoutMs: 120_000 });
