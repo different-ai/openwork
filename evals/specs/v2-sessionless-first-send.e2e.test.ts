@@ -12,14 +12,19 @@ function textOf(value: unknown): string {
   return isRecord(value) && typeof value.text === "string" ? value.text : "";
 }
 
+function nativeItems(body: unknown): unknown[] {
+  if (Array.isArray(body)) return body;
+  if (isRecord(body) && Array.isArray(body.data)) return body.data;
+  throw new Error(`Unexpected native list: ${JSON.stringify(body)}`);
+}
+
 /**
  * Engine-native message list, normalized the way the app reads each engine:
  * v1 returns an array of `{ info: { role }, parts: [{ text }] }`; v2 returns
  * `{ data: [{ role | type, content: [{ text }] | text }] }`.
  */
 function nativeMessages(body: unknown): { role: string; text: string }[] {
-  const items = Array.isArray(body) ? body : isRecord(body) && Array.isArray(body.data) ? body.data : [];
-  return items.flatMap((message) => {
+  return nativeItems(body).flatMap((message) => {
     if (!isRecord(message)) return [];
     const info = isRecord(message.info) ? message.info : message;
     const role = typeof info.role === "string" ? info.role : typeof info.type === "string" ? info.type : "";
@@ -29,8 +34,7 @@ function nativeMessages(body: unknown): { role: string; text: string }[] {
 }
 
 function nativeSessionIds(body: unknown): string[] {
-  const items = Array.isArray(body) ? body : isRecord(body) && Array.isArray(body.data) ? body.data : [];
-  return items.flatMap((session) => isRecord(session) && typeof session.id === "string" ? [session.id] : []).sort();
+  return nativeItems(body).flatMap((session) => isRecord(session) && typeof session.id === "string" ? [session.id] : []).sort();
 }
 
 test("Run task on the sessionless New task route creates the session and delivers the first prompt", async ({ world, user, probe, step, evidence }) => {
@@ -66,7 +70,6 @@ test("Run task on the sessionless New task route creates the session and deliver
     expect(composer.route).toBe(world.sessionlessRoute);
   });
 
-  const sentAt = Date.now();
   await user.click("Run task");
   const hash = await probe.eventually(() => probe.hash(), {
     within: 30_000,
@@ -76,46 +79,47 @@ test("Run task on the sessionless New task route creates the session and deliver
   const sessionId = hash.slice(persistedPrefix.length);
   expect(sessionId).toMatch(/^ses_[^/?#]+$/);
 
-  await step("the prompt is visible in the new thread and the composer is empty", async () => {
-    await user.see({ text: prompt }, { timeoutMs: 20_000 });
-    const composer = await probe.eventually(() => probe.composer(), {
-      within: 20_000,
-      label: "composer cleared and one user turn shown",
-      until: (state) => state.draftText.trim() === "" && state.userMessageCount === 1,
-    });
+  await step(`the ${engine} first send clears the composer and reaches both thread and engine`, async () => {
+    await user.see("composer", { text: "" });
+    // Observe BOTH boundaries even on a regression: a missing visible message
+    // must not short-circuit the native probe and hide the empty engine list.
+    const path = world.messagesPath(sessionId);
+    const [visible, native] = await Promise.allSettled([
+      user.see({ text: prompt }, { timeoutMs: 20_000 }),
+      probe.eventually(() => probe.desktopApi(path), {
+        within: 20_000,
+        intervalMs: 1_000,
+        label: `${engine} engine user message for ${sessionId}`,
+        until: (response) => response.status === 200 && nativeMessages(response.body)
+          .some((message) => message.role === "user" && message.text.includes(prompt)),
+      }),
+    ]);
+    for (const [boundary, result] of [["thread", visible], ["engine", native]] satisfies [string, PromiseSettledResult<unknown>][]) {
+      evidence.recordAssertionEvidence(
+        `${engine} sessionless first prompt reaches the ${boundary}`,
+        result.status === "fulfilled" ? `The ${boundary} retained the submitted prompt.` : String(result.reason),
+        result.status === "fulfilled",
+      );
+    }
+    expect(visible.status, "prompt visible outside the empty composer").toBe("fulfilled");
+    if (native.status === "rejected") throw native.reason;
+    const messages = nativeMessages(native.value.body);
+    expect(messages.filter((message) => message.role === "user" && message.text.includes(prompt))).toHaveLength(1);
+    const composer = await probe.composer();
     expect(composer.route).toBe(`${persistedPrefix}${sessionId}`);
+    expect(composer.draftText.trim()).toBe("");
     expect(composer.userMessageCount).toBe(1);
   });
 
-  await step(`the ${engine} engine holds the user prompt for that session`, async () => {
-    const path = world.messagesPath(sessionId);
-    const messages = await probe.eventually(async () => {
-      const response = await probe.desktopApi(path);
-      expect(response.status, path).toBe(200);
-      return nativeMessages(response.body);
-    }, {
-      within: 20_000,
-      intervalMs: 1_000,
-      label: `${engine} engine user message for ${sessionId}`,
-      until: (value) => value.some((message) => message.role === "user" && message.text.includes(prompt)),
-    });
-    expect(messages.filter((message) => message.role === "user" && message.text.includes(prompt))).toHaveLength(1);
-    evidence.recordAssertionEvidence(
-      `the ${engine} engine received the sessionless first send`,
-      `GET ${path} listed a user message containing the prompt ${Date.now() - sentAt}ms after Run task; the thread showed the same prompt once and the composer was empty.`,
-      true,
-    );
-  });
-
   await step("exactly one session was created and the engine reply arrives in it", async () => {
-    const sessionsAfter = await probe.eventually(readSessions, {
-      within: 20_000,
-      label: "engine session list includes the created session",
-      until: (ids) => ids.includes(sessionId),
-    });
-    expect(sessionsAfter.filter((id) => !sessionsBefore.includes(id))).toEqual([sessionId]);
     await user.see({ text: world.reply }, { timeoutMs: 120_000 });
+    expect(await readSessions()).toEqual([...sessionsBefore, sessionId].sort());
     expect(await probe.hash()).toBe(`${persistedPrefix}${sessionId}`);
     expect((await probe.composer()).userMessageCount).toBe(1);
+    evidence.recordAssertionEvidence(
+      `${engine} creates exactly one session without replaying the first send`,
+      "After the real engine reply, the session inventory is the original inventory plus exactly the routed session; one user row remains and the composer is empty.",
+      true,
+    );
   });
 });

@@ -198,9 +198,7 @@ export async function sessionlessFirstSendWorld(seed: Seed) {
     port: await allocateFreePort(),
     agentWorkloads: [{ promptMarker: prompt, latestUserTurn: true, finalReply: reply, steps: [] }],
   }));
-  const app = await seed.desktop({ name: "sessionless-first-send", model: `${providerId}/${modelId}` });
-  const workspacePath = seed.tmpPath("sessionless-first-send");
-  const workspace = await seed.workspace(app, workspacePath);
+  const { app, workspace, workspacePath } = await workspaceWorld(seed);
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     provider: {
       [providerId]: {
