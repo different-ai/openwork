@@ -7,6 +7,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js"
 import type { DynamicToolUIPart } from "ai"
 import { ConnectionCard } from "../src/components/chat/connection-card"
+import { MessageListProvider } from "../src/components/chat/message-list-provider"
 import { WorkspaceProvider } from "../src/react-app/shell/workspace-provider"
 
 import {
@@ -14,6 +15,7 @@ import {
   normalizeMcpAppHostOrigin,
   OpenworkServerError,
   type OpenworkMcpAppResource,
+  type OpenworkServerClient,
 } from "../src/app/lib/openwork-server"
 import { formatMcpAppDiagnostic, safeMcpAppDiagnosticMessage } from "../src/components/chat/mcp-app-diagnostics"
 import {
@@ -29,6 +31,7 @@ import {
 
 function fixture(overrides: Partial<OpenworkMcpAppResource> = {}): OpenworkMcpAppResource {
   return {
+    launchId: "launch_fixture",
     serverName: "fixture",
     toolName: "render",
     resourceUri: "ui://fixture/view.html",
@@ -46,12 +49,14 @@ function fixture(overrides: Partial<OpenworkMcpAppResource> = {}): OpenworkMcpAp
 
 describe("MCP App iframe policy", () => {
   test.each([
-    { isError: true, readOnly: false },
-    { isError: false, readOnly: false },
-    { isError: undefined, readOnly: false },
-    { isError: false, readOnly: true },
-  ])("delivers complete launch results and truthful SDK responses (%j)", async ({ isError, readOnly }) => {
+    { isError: true, readOnly: false, preview: false },
+    { isError: false, readOnly: false, preview: false },
+    { isError: undefined, readOnly: false, preview: false },
+    { isError: false, readOnly: true, preview: false },
+    { isError: false, readOnly: true, preview: true },
+  ])("delivers complete launch results and truthful SDK responses (%j)", async ({ isError, readOnly, preview }) => {
     GlobalRegistrator.register({ url: "http://localhost/", happyDOM: { settings: { disableIframePageLoading: true } } })
+    const previousAct = Object.getOwnPropertyDescriptor(globalThis, "IS_REACT_ACT_ENVIRONMENT")
     Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true })
     const container = document.body.appendChild(document.createElement("div"))
     const root = createRoot(container)
@@ -88,15 +93,27 @@ describe("MCP App iframe policy", () => {
       ...(isError === undefined ? {} : { isError }),
     }
     const input = { query: "complete launch input" }
-    let toolCalls = 0
+    const resolutions: unknown[] = []
+    const toolCalls: unknown[] = []
+    const releases: unknown[] = []
     const opened: string[] = []
     Reflect.set(window, "__OPENWORK_ELECTRON__", { shell: { openExternal: async (url: string) => { opened.push(url); return { ok: true } } } })
-    const app = fixture()
-    const client = {
+    const app = fixture({ launchId: readOnly ? undefined : "launch_fixture" })
+    const client: OpenworkServerClient = {
       ...createOpenworkServerClient({ baseUrl: "http://localhost:1" }),
-      resolveMcpApp: async () => ({ app }),
+      resolveMcpApp: async (workspaceId, name, launch, context) => {
+        resolutions.push({ workspaceId, name, launch, context })
+        return { app }
+      },
       mcpAppSandbox: () => ({ url: "about:blank", expectedOrigin: "https://sandbox.example" }),
-      callMcpAppTool: async () => { toolCalls += 1; return result },
+      callMcpAppTool: async (workspaceId, payload) => { toolCalls.push({ workspaceId, payload }); return result },
+      releaseMcpApp: async (workspaceId, launchId) => { releases.push({ workspaceId, launchId }); return { released: true } },
+    }
+    const primaryClient: OpenworkServerClient = {
+      ...client,
+      resolveMcpApp: async () => { throw new Error("Must not resolve through the selected workspace") },
+      callMcpAppTool: async () => { throw new Error("Must not call through the selected workspace") },
+      releaseMcpApp: async () => { throw new Error("Must not release through the selected workspace") },
     }
     const part: DynamicToolUIPart = {
       type: "dynamic-tool", toolName: "fixture_render", toolCallId: "launch", state: "output-available",
@@ -105,11 +122,27 @@ describe("MCP App iframe policy", () => {
     try {
       await viewTransport.start()
       await act(async () => root.render(createElement(WorkspaceProvider, {
-        client: null, openworkServerClient: client, workspaceId: "fixture", selectedWorkspaceRoot: "/fixture",
-        children: readOnly
-          ? createElement(McpAppSandboxView, { app, toolName: part.toolName, inputArguments: input, result, readOnly, unavailableNotice: "Unavailable" })
-          : createElement(McpAppFrame, { part }),
+        client: null, openworkServerClient: primaryClient, workspaceId: "primary", selectedWorkspaceRoot: "/primary",
+        children: preview
+          ? createElement(McpAppSandboxView, {
+              origin: { client, workspaceId: "fixture", sessionId: null, readOnly: true },
+              app, toolName: part.toolName, inputArguments: input, result, unavailableNotice: "Unavailable",
+            })
+          : createElement(MessageListProvider, {
+              client, workspaceId: "fixture", sessionId: "session_fixture", mcpAppEngine: "v2", readOnly,
+              uiStateOwner: "fixture-principal/org/endpoint/workspace/session", showThinking: false, developerMode: false,
+              displaySuggestions: false, providerConnectedCount: 0,
+              dispatchAction: () => {}, setPrompt: () => {}, onRevertToUserMessage: () => {},
+              onForkAtMessage: () => {}, onEditUserMessage: () => {},
+              onMcpReconnect: async () => { throw new Error("Unexpected reconnect in protocol fixture") },
+              onMcpReopenAuthorization: async () => {}, onMcpRetry: () => {},
+              children: createElement(McpAppFrame, { part }),
+            }),
       })))
+      expect(resolutions).toEqual(preview ? [] : [{
+        workspaceId: "fixture", name: part.toolName, launch: undefined,
+        context: { client, workspaceId: "fixture", sessionId: "session_fixture", engine: "v2", readOnly },
+      }])
       const iframe = container.querySelector("iframe")
       if (!iframe?.contentWindow) throw new Error("Missing fixture iframe")
       await act(async () => window.dispatchEvent(new MessageEvent("message", {
@@ -152,16 +185,22 @@ describe("MCP App iframe policy", () => {
       expect(await request("ui/open-link", { url: "file:///not-a-web-link" })).toMatchObject(
         readOnly ? { error: { code: -32601 } } : { result: { isError: true } },
       )
-      expect(toolCalls).toBe(readOnly ? 0 : 1)
+      expect(toolCalls).toEqual(readOnly ? [] : [{ workspaceId: "fixture", payload: {
+        launchId: "launch_fixture", sessionId: "session_fixture", engine: "v2",
+        serverName: app.serverName, resourceUri: app.resourceUri, name: "read_detail", arguments: {},
+      } }])
       expect(opened).toEqual(readOnly ? [] : ["https://example.com/"])
     } finally {
       try {
         await act(async () => root.unmount())
         expect(messages.some(message => "method" in message && message.method === "ui/resource-teardown")).toBe(true)
+        expect(releases).toEqual(readOnly ? [] : [{ workspaceId: "fixture", launchId: "launch_fixture" }])
       } finally {
         connectSpy.mockRestore()
         await viewTransport.close()
         container.remove()
+        if (previousAct) Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct)
+        else Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT")
         await GlobalRegistrator.unregister()
       }
     }

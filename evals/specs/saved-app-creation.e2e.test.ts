@@ -56,9 +56,14 @@ isolationTest.skipIf(process.env.OPENWORK_EVAL_ENGINE === "v2")("APP-ARCHIVE arc
     until: values => values.length === 2 && values.every(value => value.complete === true && typeof value.helperError === "string"),
   });
   for (const label of ["A", "B"]) {
-    expect(archived.find(value => value.label === label)).toMatchObject({
-      input: { marker: `input-${label}` }, result: [{ type: "text", text: `initial-${label}` }], helper: null,
+    const report = archived.find(value => value.label === label);
+    expect(report).toMatchObject({
+      input: { marker: `input-${label}` },
+      result: { content: [{ type: "text", text: `initial-${label}` }], isError: false,
+        structuredContent: { serverTools: { provider: label }, schemaGuidance: `provider-${label}` }, _meta: { privateFixture: `view-only-${label}` } },
+      order: ["input", "result"], helper: null,
     });
+    expect(report?.capabilities).toEqual({});
   }
   expect((await world.first.toolCalls({ name: "read_detail", sinceIso, atLeast: 1 })).map(call => call.args)).toEqual([{ marker: "legitimate-A" }]);
   expect((await world.second.toolCalls({ name: "read_detail", sinceIso, atLeast: 1 })).map(call => call.args)).toEqual([{ marker: "legitimate-B" }]);

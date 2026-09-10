@@ -52,12 +52,22 @@ A tool that is not read-only runs only when the member clicks **Run**, unless an
 The shared chat and dashboard renderer uses the stable **2026-01-26** protocol with `ext-apps` **1.7.5**:
 
 - After initialization, the host sends complete `ui/notifications/tool-input` arguments before `ui/notifications/tool-result`. Result delivery retains `content`, `structuredContent`, `_meta`, and the optional `isError` flag, including explicit `false`.
-- Connector Apps advertise `serverTools` and `openLinks`. Tool calls use the existing same-server access and approval checks. Link requests use the host's HTTP(S)-only opener and report failures. Generated read-only result views advertise neither capability and reject both requests without acting.
+- Writable Apps advertise `serverTools` and `openLinks`. Tool calls retain the originating endpoint, workspace, session, engine (when supplied), and live launch lease through approval and dispatch. Link requests require an active writable view, use the host's HTTP(S)-only opener, and report failures.
 - Only `inline` display is available. Valid `ui/request-display-mode` requests return the current `inline` mode, including requests for fullscreen or picture-in-picture; they do not change the layout.
 - Size notifications adjust the inline height within host limits. Unmount retains the existing bounded `ui/resource-teardown` handshake and bridge close.
 - Message/context writes, View-provided tools, and resource proxy requests are not supported by this renderer. Unsupported requests receive protocol errors, not successful empty responses. There is no full progress or cancellation forwarding.
 
-Chat views mount from completed, preserved results; dashboard tiles mount after a successful launch. A cancelled in-flight launch therefore has no mounted recipient for `ui/notifications/tool-cancelled`. Cancelling another operation or unmounting an already completed result does not invent a cancellation notification. Early mounting and streaming launch input are not implemented. Dashboard launch failures keep the existing error tile rather than mounting a view.
+| Host surface | Tools and links | Ownership |
+| --- | --- | --- |
+| Active conversation, including a split pane | Advertised for writable views with a live lease | The message list supplies its own client, workspace and session, not the currently selected root workspace. |
+| Live dashboard tile | Advertised while its launch remains active | The exact endpoint and workspace that resolved the tile own its lease; there is no conversation session. |
+| Archived conversation | Neither advertised nor allowed | The original conversation supplies a read-only origin. |
+| Cached dashboard preview | Neither advertised nor allowed until a fresh launch succeeds | Cached data never persists a live lease; Run obtains a new one. |
+| Generated result preview | Neither advertised nor allowed | Explicit read-only origin without a conversation session. |
+
+Closing or replacing a view disables its pending actions and releases its owned lease. Dashboard endpoint removal also retires that endpoint's lease. A restored cached view cannot reuse the previous lease, and the server revalidates launch ownership before dispatching tools.
+
+Chat views mount from completed, preserved results; dashboard tiles render successful or saved results. A cancelled in-flight launch therefore has no mounted recipient for `ui/notifications/tool-cancelled`. Cancelling another operation or unmounting an already completed result does not invent a cancellation notification. Early mounting and streaming launch input are not implemented. Dashboard launch failures retain the existing error or saved-result presentation rather than mounting an actionable failed launch.
 
 ### Provider data and gateway additions
 
