@@ -1259,6 +1259,7 @@ export async function backgroundUpdateWorld(seed: Seed) {
       return {
         checks, downloads, installs, route: location.hash,
         installAttempts: window.__backgroundUpdateInstallAttempts,
+        automaticChecksEnabled: localStorage.getItem("openwork.react.settings.update-auto-check") !== "0",
         updateInTitlebar: Boolean(document.querySelector<HTMLElement>('header [data-update-button]')),
         updateInSidebar: Boolean(document.querySelector<HTMLElement>('[data-sidebar="footer"] [data-update-button]')),
         sidebarName: document.querySelector<HTMLElement>('[data-sidebar-brand]')?.textContent?.trim() ?? null,
@@ -1267,7 +1268,9 @@ export async function backgroundUpdateWorld(seed: Seed) {
     }),
     setCustomBranding: () => evalIn(app, () => {
       const logo = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="32"><rect width="120" height="32" rx="5" fill="#25262b"/><text x="12" y="22" font-family="sans-serif" font-size="18" fill="white">Studio</text></svg>');
-      window.__openworkApplyDesktopConfig({ brandAppName: "Studio", brandLogoUrl: logo });
+      const config = { brandAppName: "Studio", brandLogoUrl: logo };
+      window.__openworkApplyDesktopConfig(config);
+      window.__openworkSetDesktopConfigRefreshResult(config);
     }),
     tickUpdateInterval: () => evalIn(app, () => {
       const state = window.__backgroundUpdateWitness;
@@ -1284,6 +1287,61 @@ export async function backgroundUpdateWorld(seed: Seed) {
       window.__backgroundUpdateWitness.offset += 16 * 60 * 1000;
       window.dispatchEvent(new Event("focus"));
       window.dispatchEvent(new Event("online"));
+    }),
+    openSettings: () => go(app, `/workspace/${workspace.workspaceId}/settings/updates`),
+    openWorkspace: () => go(app, `/workspace/${workspace.workspaceId}/session`),
+  };
+}
+
+/** A desktop signed in to a real Den whose organization pins allowed desktop
+ * versions. The updater feed is faked; the version policy is Den's own. */
+export async function revokedUpdateWorld(seed: Seed) {
+  const den = await seed.den({
+    org: { name: `Update policy ${Date.now()}`, admin: { name: "Update Policy Admin" } },
+  });
+  const allowVersions = async (versions: string[]) => {
+    const result = await seed.api(den.admin, "/v1/org", {
+      method: "PATCH", body: JSON.stringify({ allowedDesktopVersions: versions }),
+    });
+    if (!result.response.ok) throw new Error(`Setting allowed desktop versions failed: HTTP ${result.response.status} ${result.text.slice(0, 300)}`);
+  };
+  await allowVersions(["9.9.9"]);
+  const app = await seed.desktop({ name: "revoked-update", den, as: "admin" });
+  const workspace = await seed.workspace(app, seed.tmpPath("revoked-update"));
+  await evalIn(app, async () => {
+    // Report the real installed version: a different one would re-key the
+    // background auto-check and start a second check beside the manual one.
+    const { currentVersion } = await window.__OPENWORK_ELECTRON__.updater.getChannel();
+    const state: Window["__backgroundUpdateWitness"] = { checks: 0, downloads: 0, installs: 0, offset: 0, finishDownload: null, intervalCheck: null };
+    window.__backgroundUpdateWitness = state;
+    window.__openworkReadDesktopVersionMetadataEval = () => ({
+      minAppVersion: "0.1.0", latestAppVersion: "9.9.9", publishedDesktopVersions: ["9.9.9"],
+    });
+    window.__openworkUpdaterEvalBridge = {
+      getChannel: async () => ({ channel: "stable", currentVersion }),
+      setChannel: async (channel) => ({ channel, currentVersion }),
+      check: async () => {
+        state.checks++;
+        return { available: true, channel: "stable", currentVersion, latestVersion: "9.9.9" };
+      },
+      download: async () => {
+        state.downloads++;
+        return { ok: true };
+      },
+      installAndRestart: async () => {
+        state.installs++;
+        return { ok: true };
+      },
+      onDownloadProgress: () => () => {},
+    };
+  }, { awaitPromise: true });
+  return {
+    app,
+    den,
+    allowVersions,
+    snapshot: () => evalIn(app, () => {
+      const { downloads, installs } = window.__backgroundUpdateWitness;
+      return { downloads, installs };
     }),
     openSettings: () => go(app, `/workspace/${workspace.workspaceId}/settings/updates`),
     openWorkspace: () => go(app, `/workspace/${workspace.workspaceId}/session`),

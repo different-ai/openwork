@@ -1,6 +1,5 @@
 /** @jsxImportSource react */
 import { useEffect } from "react";
-import { Dithering } from "@paper-design/shaders-react";
 
 import { t } from "../../../i18n";
 import { useBootState } from "../../shell/boot-state";
@@ -9,6 +8,7 @@ import {
   Page,
   PageTitlebarRegion,
 } from "@/components/page";
+import { DitherBackdrop } from "@/components/dither-backdrop";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { useShellConfig } from "../../shell/shell-config";
@@ -60,17 +60,7 @@ export function WelcomePage({
                 near-white ground. `dark:invert` flips the pixels to white so
                 the texture survives dark mode. */}
             <div className="pointer-events-none absolute inset-0 overflow-hidden opacity-[0.1] dark:invert">
-              <Dithering
-                className="size-full"
-                speed={0.01}
-                shape="warp"
-                type="2x2"
-                size={20.3}
-                scale={1.19}
-                frame={264559.21}
-                colorBack="#00000000"
-                colorFront="#000000"
-              />
+              <DitherBackdrop />
             </div>
 
             <div className="relative z-10 w-full max-w-[720px] rounded-3xl border border-border bg-background px-8 pb-12 pt-10 sm:px-16 sm:pb-16 sm:pt-14">
