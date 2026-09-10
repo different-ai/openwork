@@ -34,8 +34,10 @@ test("a render throw shows a recovery screen with the error instead of a blank w
   await step("technical details reveal the redacted message, stack and reporting actions on demand", async () => {
     await user.click({ role: "button", label: /technical details/i });
     await user.see({ text: MESSAGE });
-    // The URL keeps its path for diagnosis; the grant in its query never shows.
-    await user.notSee({ text: SECRET });
+    // The URL keeps its path for diagnosis; the grant in its query never shows
+    // anywhere on the page, message or stack.
+    expect(await probe.has("https://app.openworklabs.com/signin")).toBe(true);
+    expect(await probe.has(SECRET)).toBe(false);
     // The stack names the throwing component, so the failure is reportable.
     await user.see({ text: /at BrandThemeControlActions/ });
     await user.see({ role: "button", label: /copy details/i });
