@@ -76,6 +76,7 @@ import { PaperGrainGradient } from "@openwork/ui/react";
 import { useShellConfig } from "@/react-app/shell/shell-config";
 import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog";
 import { SessionDebugPanel } from "./debug-panel";
+import { runSessionBranchAction, useSessionBranchAction } from "./session-branch-action";
 import { deriveComposerHistory, deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
 import { pendingMessageParts, useDisplayedMessages } from "./use-displayed-messages";
 import {
@@ -93,7 +94,6 @@ import { setQueuedSendContext } from "@/react-app/domains/session/sync/queued-se
 import { useSessionScrollController } from "./scroll-controller";
 import { getSessionScrollState, useSessionScrollStore } from "./scroll-store";
 import { SessionHistoryBoundary, useOpeningSessionHistory, type OpeningHistoryWindow } from "./session-history";
-import { runSessionBranchAction, useSessionBranchAction } from "./session-branch-action";
 import { SessionScrollOverlay } from "./scroll-overlay";
 import { SessionFindBar } from "./find-bar";
 import { useSessionFindStore } from "./find-store";
