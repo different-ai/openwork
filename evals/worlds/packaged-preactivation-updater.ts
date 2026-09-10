@@ -13,14 +13,17 @@ import type { ElectronSurfaceOptions } from "@openwork/hosts";
  * before the organization's allowed-versions policy is known. `desktop()` cannot
  * be used because its readiness probe only recognises signed-in surfaces.
  *
- * The witness is the Electron main-process log: electron-updater logs
- * "Checking for update" when it fetches the release manifest and "Downloading
- * update from" when it starts staging one. Both happen in the main process, so
- * neither the renderer's Network domain nor its DOM can see them.
+ * The witness is the Electron main-process log: every `checkForUpdates()` call
+ * makes electron-updater log either "Checking for update" (it fetches the
+ * release manifest) or, for a package form that cannot self-update such as the
+ * unpacked Linux directory the smoke gate boots, the "APPIMAGE env is not
+ * defined" refusal. "Downloading update from" marks a download starting. All of
+ * these happen in the main process, so neither the renderer's Network domain
+ * nor its DOM can see them.
  */
 
 export interface UpdaterActivity {
-  /** Release-manifest fetches electron-updater started. */
+  /** Times the app asked electron-updater to check for an update. */
   checks: number;
   /** Update downloads electron-updater started. */
   downloads: number;
@@ -28,12 +31,13 @@ export interface UpdaterActivity {
   lines: string[];
 }
 
-const UPDATER_LOG_LINE = /^(?:Checking for update|Found version |Downloading update from |Update for version )/;
+const CHECK_ATTEMPT = /^(?:Checking for update|APPIMAGE env is not defined|SNAP env is defined, updater is disabled)/;
+const UPDATER_LOG_LINE = /^(?:Checking for update|APPIMAGE env is not defined|SNAP env is defined|Found version |Downloading update from |Update for version |\[updater\] )/;
 
 export function updaterActivityFromLog(log: string): UpdaterActivity {
   const lines = log.split(/\r?\n/).filter((line) => UPDATER_LOG_LINE.test(line));
   return {
-    checks: lines.filter((line) => line.startsWith("Checking for update")).length,
+    checks: lines.filter((line) => CHECK_ATTEMPT.test(line)).length,
     downloads: lines.filter((line) => line.startsWith("Downloading update from")).length,
     lines,
   };
