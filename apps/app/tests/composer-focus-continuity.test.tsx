@@ -1101,6 +1101,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     await act(async () => {
       fetchedSnapshot = createSnapshot({ type: "busy" }, 30);
       queryClient.setQueryData(snapshotKey(workspaceId, sessionId), fetchedSnapshot);
+      queryClient.setQueryData(statusKey(workspaceId, sessionId), fetchedSnapshot.status);
       renderSession();
     });
     await waitFor(() => container.querySelector('button[aria-label="Stop"]') !== null, "busy session for queue promotion");
@@ -1226,6 +1227,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
       useComposerStateStore.getState().appendQueuedDraft(sessionId, queueDraft("Do not retry uncertain admission"));
       fetchedSnapshot = createSnapshot({ type: "idle" }, 31);
       queryClient.setQueryData(snapshotKey(workspaceId, sessionId), fetchedSnapshot);
+      queryClient.setQueryData(statusKey(workspaceId, sessionId), fetchedSnapshot.status);
     });
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Send now"]')?.click());
     expect(sentDrafts).toHaveLength(sendsBeforeQueue + 5);
