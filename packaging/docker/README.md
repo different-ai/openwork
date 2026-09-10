@@ -6,9 +6,9 @@ Run Den API, Den web, and MySQL from published images without cloning or buildin
 
 ```bash
 curl -fsSLo docker-compose.eval.yml \
-  https://raw.githubusercontent.com/different-ai/openwork/9f8645ebc482c15ab99c0cf155aabaa411e1ca6a/packaging/docker/docker-compose.eval.yml
+  https://raw.githubusercontent.com/different-ai/openwork/d10e46e54c40838773355f5aa133d1574a312f3f/packaging/docker/docker-compose.eval.yml
 printf '%s  %s\n' \
-  '69cc7f2666157b7697ebf69b31b0c83887dd99e796c7d956f9ccaab8fa8bf2fc' \
+  '93d02d96f7c03f0f03ca3662068b56eb4a36ca96b8577105a732518408aaae4e' \
   'docker-compose.eval.yml' | shasum -a 256 --check
 umask 077
 printf 'OPENWORK_AUTH_SECRET=%s\nOPENWORK_DB_ENCRYPTION_KEY=%s\n' \
@@ -272,13 +272,9 @@ Caveats: `grafana/otel-lgtm` is intended for development, demos, and tests, not 
 
 ### Install links (self-host)
 
-Run the install-link migration once against the Den database:
+Install links are enabled for every organization by default; there is no separate migration step or `/admin` toggle. The regular `den-migrate` job creates the tables, and organization owners mint links from the dashboard or with `POST /v1/orgs/{organizationId}/install-links`. A platform admin can disable minting for one organization by setting `metadata.capabilities.installLinks: false` on it.
 
-```bash
-docker compose -f packaging/docker/docker-compose.den-dev.yml exec den sh -lc "node /app/ee/packages/den-db/dist/scripts/bootstrap.js"
-```
-
-Set `DEN_BOOTSTRAP_ADMIN_EMAILS` on the Den API service, restart it, open `/admin`, and toggle `Install links` for each org. Optional installer artifact env vars are `OPENWORK_INSTALLER_RELEASE_TAG`, `OPENWORK_INSTALLER_RELEASE_REPO`, and `OPENWORK_INSTALLER_ARTIFACTS_DIR`; see the [operator guide](../../docs/org-install-links.md).
+With no `allowedDesktopVersions` policy on the organization, a self-hosted (single-org) Den installs its own release version. Set `allowedDesktopVersions` to pin or advance the fleet, or set `OPENWORK_INSTALLER_RELEASE_TAG` to override the default. Optional installer artifact env vars are `OPENWORK_INSTALLER_RELEASE_TAG`, `OPENWORK_INSTALLER_RELEASE_REPO`, and `OPENWORK_INSTALLER_ARTIFACTS_DIR`; see the [operator guide](../../docs/org-install-links.md) and [Installer delivery](../../packages/docs/start-here/installer-delivery.mdx).
 
 ### Faster inner-loop alternative
 

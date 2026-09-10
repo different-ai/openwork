@@ -43,7 +43,7 @@ services:
     # intentionally no host port: MySQL stays internal to the compose network
 
   den-migrate:
-    image: ghcr.io/different-ai/openwork-den-api:0.18.37@sha256:5ae1fab94ae2badd49ae74649cfb38ca679a7afc7e9ae8926c927553a34caabd
+    image: ghcr.io/different-ai/openwork-den-api:0.18.46@sha256:e254a3842e7ecb6d0c7128b5f17201e92ac4ee566ad82c70c468938a3faa6407
     depends_on:
       mysql:
         condition: service_healthy
@@ -55,7 +55,7 @@ services:
       DEN_DB_ENCRYPTION_KEY: ${OPENWORK_DB_ENCRYPTION_KEY:?Set OPENWORK_DB_ENCRYPTION_KEY to at least 32 random characters}
 
   den:
-    image: ghcr.io/different-ai/openwork-den-api:0.18.37@sha256:5ae1fab94ae2badd49ae74649cfb38ca679a7afc7e9ae8926c927553a34caabd
+    image: ghcr.io/different-ai/openwork-den-api:0.18.46@sha256:e254a3842e7ecb6d0c7128b5f17201e92ac4ee566ad82c70c468938a3faa6407
     restart: unless-stopped
     depends_on:
       mysql:
@@ -89,7 +89,7 @@ services:
       WORKER_URL_TEMPLATE: https://workers.local/{workerId}
 
   web:
-    image: ghcr.io/different-ai/openwork-den-web:0.18.37@sha256:9ca96fb73bc3512852409f1508876e418cd56f6d5187ff4e0c683f5b69a2dda3
+    image: ghcr.io/different-ai/openwork-den-web:0.18.46@sha256:82affe9e09523852dbdb8ffd8c9ac36763a4f7d5d4e4c94d5e2b513e37e04a7b
     restart: unless-stopped
     depends_on:
       den:
@@ -103,9 +103,12 @@ services:
       retries: 30
       start_period: 60s
     environment:
+      # Den web origin (denUrls source of truth for readiness and derived URLs).
+      DEN_BASE_URL: http://localhost:${OPENWORK_WEB_PORT:-3005}
+      # Container-internal API base for server-side calls (proxy, readiness, SSO probe).
+      DEN_API_BASE: http://den:8788
       # Browser-reachable API origin (what runtime-config hands to clients).
-      DEN_API_BASE: http://localhost:${OPENWORK_API_PORT:-8788}
-      # Container-internal fallback for server-side calls.
+      DEN_API_PUBLIC_URL: http://localhost:${OPENWORK_API_PORT:-8788}
       DEN_AUTH_FALLBACK_BASE: http://den:8788
       DEN_AUTH_ORIGIN: http://localhost:${OPENWORK_WEB_PORT:-3005}
       DEN_WEB_PUBLIC_ORIGIN: http://localhost:${OPENWORK_WEB_PORT:-3005}

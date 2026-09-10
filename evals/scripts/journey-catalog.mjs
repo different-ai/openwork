@@ -11,8 +11,17 @@ const definitions = {
   'app-smoke.e2e.test.ts': { name: 'Open a working desktop', critical: true },
   // Boots the packaged cloud and enterprise artifacts; only packaged-smoke provides those binaries.
   'packaged-first-launch.e2e.test.ts': { name: 'Open a fresh cloud or enterprise install', placement: 'local' },
+  // Boots the packaged enterprise artifact twice (fresh and pre-activated); only packaged-smoke provides that binary.
+  'packaged-preactivation-updater.e2e.test.ts': { name: 'Keep an unactivated enterprise install from updating itself', placement: 'local' },
+  'packaged-activated-launch.e2e.test.ts': { name: 'Open an already-activated enterprise install', placement: 'local' },
+  // Boots a RELEASED enterprise binary (and optionally an older baseline) already activated against a real Den; skips without OPENWORK_EVAL_ELECTRON_BINARY.
+  'released-enterprise-activated.e2e.test.ts': { name: 'Open and update an activated enterprise install against its Den', placement: 'local' },
   'org-team-lifecycle-critical-path.e2e.test.ts': { name: 'Set up a working two-person team', critical: true, model: 'live' },
-  'desktop-policy-restricted-mode.e2e.test.ts': { name: 'Apply organization and team permissions', critical: true },
+  'desktop-policy-restricted-mode.e2e.test.ts': {
+    // The rollback case severs local child IPC and faults its loopback transport.
+    name: 'Apply organization and team permissions', critical: true, placement: 'local',
+    cases: [{ id: 'POLICY-ROLLBACK', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
+  },
   'cross-server-handoff-atomic-commit.e2e.test.ts': { name: 'Switch servers and recover enrollment', critical: true, placement: 'local' },
   'workspace-new-task-hit-target.e2e.test.ts': { name: 'Keep new tasks and sends instantly responsive', placement: 'local' },
   'streamed-markdown-answer.e2e.test.ts': {
