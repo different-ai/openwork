@@ -1,5 +1,5 @@
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { cp, rm } from "node:fs/promises";
+import { basename, dirname, join, relative } from "node:path";
 import { createAndSelectWorkspace, quitDesktop, signInDesktopAs } from "@openwork/behaviors";
 import { attachSurface, evaluateOnSurface, probeAppStateOnSurface } from "@openwork/cdp";
 import type { AppStateProbe, AttachedSurface, SurfaceHandle } from "@openwork/cdp";
@@ -152,6 +152,30 @@ async function withElectronBinary<T>(binary: string, run: () => Promise<T>): Pro
   }
 }
 
+/** The bundle electron-updater replaces in place: the nearest `.app` ancestor of the executable. */
+function appBundleOf(binary: string): string | null {
+  for (let dir = dirname(binary); dir !== dirname(dir); dir = dirname(dir)) {
+    if (dir.endsWith(".app")) return dir;
+  }
+  return null;
+}
+
+/**
+ * An activated installation checks for updates, and on quit electron-updater
+ * installs the newest published release over its own bundle. The release under
+ * test would then silently become a newer one between launches (0.18.45 booted
+ * as 0.18.46 within a single run once 0.18.46 was published), so every launch
+ * boots a private copy of the bundle and the downloaded release stays pristine.
+ * The copy keeps the code signature and notarization ticket intact.
+ */
+async function pristineCopy(binary: string, root: string): Promise<string> {
+  const bundle = appBundleOf(binary);
+  if (!bundle) return binary;
+  const copy = join(root, basename(bundle));
+  await cp(bundle, copy, { recursive: true, verbatimSymlinks: true });
+  return join(copy, relative(bundle, binary));
+}
+
 export interface LaunchOptions {
   binary: string;
   /** Caller-owned profile root; reuse it across launches to simulate a restart or an update. */
@@ -272,7 +296,11 @@ export async function releasedEnterpriseActivatedWorld(seed: Seed) {
     },
     async launch(options: LaunchOptions): Promise<ReleasedLaunch> {
       launchIndex += 1;
-      const launch = await launchReleased(host, `released-enterprise-${launchIndex}`, den, activatedAt, options);
+      const name = `released-enterprise-${launchIndex}`;
+      const bundleRoot = seed.tmpPath(`${name}-bundle`);
+      ownedProfiles.push(bundleRoot);
+      const binary = await pristineCopy(options.binary, bundleRoot);
+      const launch = await launchReleased(host, name, den, activatedAt, { ...options, binary });
       launches.push(launch);
       return launch;
     },

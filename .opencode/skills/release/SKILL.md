@@ -180,7 +180,10 @@ OPENWORK_EVAL_RELEASED_BASELINE_BINARY="/tmp/ow-release/enterprise-$B/OpenWork E
 Each command prints a JSON verdict line; only `"verdict":"passed"` with
 `"skipped":0` counts. This covers mac-arm64 only, and the update is simulated
 by launching the new binary on the old profile — the real electron-updater
-download/apply is not exercised.
+download/apply is not exercised. An activated install does check for updates
+and installs the newest release over its bundle on quit, which is why the
+world launches a private copy of the `.app` each time and why the version pin
+matters: a run that reports a newer version than `$V` booted the wrong binary.
 
 ---
 
