@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { afterAll, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
@@ -15,6 +15,8 @@ if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
 const { MessageList } = await import("../src/components/chat/message-list");
 const { MessageListProvider } = await import("../src/components/chat/message-list-provider");
 const mcpAppFrame = await import("../src/components/chat/mcp-app-frame");
+const { useWorkbenchUiState, MAX_WORKBENCH_DISCLOSURES } = await import("../src/react-app/domains/session/chat/workbench-ui-state");
+beforeEach(() => useWorkbenchUiState.setState({ disclosures: new Map() }));
 afterAll(async () => { if (ownedDom) await GlobalRegistrator.unregister(); });
 
 function bashPart(id: string): DynamicToolUIPart {
@@ -58,12 +60,16 @@ function withoutWindow<T>(run: () => T): T {
   }
 }
 
-function list(messages: UIMessage[], status: ThreadStatus = "ready", highlightQuery = "") {
+type Owner = { workspaceId: string; sessionId: string; uiStateOwner: string };
+
+function list(messages: UIMessage[], status: ThreadStatus = "ready", highlightQuery = "", owner?: Owner) {
   return (
     <PlatformProvider value={createDefaultPlatform()}>
     <MessageListProvider
-      workspaceId="ws"
-      sessionId="session"
+      key={owner?.uiStateOwner}
+      workspaceId={owner?.workspaceId ?? "ws"}
+      sessionId={owner?.sessionId ?? "session"}
+      uiStateOwner={owner?.uiStateOwner}
       showThinking={true}
       highlightQuery={highlightQuery}
       developerMode={false}
@@ -175,15 +181,15 @@ describe("finished turn step fold (single OpenCode message per turn)", () => {
   });
 });
 
-async function mounted(run: (container: HTMLDivElement, render: (messages: UIMessage[], status?: ThreadStatus, query?: string) => Promise<void>) => Promise<void>) {
+async function mounted(run: (container: HTMLDivElement, render: (messages: UIMessage[], status?: ThreadStatus, query?: string, owner?: Owner) => Promise<void>) => Promise<void>) {
   const actEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
   try {
-    await run(container, async (messages, status = "streaming", query = "") => {
-      await act(async () => root.render(list([userMessage, ...messages], status, query)));
+    await run(container, async (messages, status = "streaming", query = "", owner) => {
+      await act(async () => root.render(list([userMessage, ...messages], status, query, owner)));
     });
   } finally {
     await act(async () => root.unmount());
@@ -207,6 +213,40 @@ function stepToggle(container: HTMLElement) {
 }
 
 describe("long-task reading continuity", () => {
+  test.each([false, true])("restores explicit shell choice %s after A-B-A, isolates owners, and survives mounted cache eviction", async (open) => {
+    await mounted(async (container, render) => {
+      const a = { workspaceId: "ws-a", sessionId: "shared", uiStateOwner: "server-a/ws-a/shared" };
+      const b = { workspaceId: "ws-b", sessionId: "shared", uiStateOwner: "server-b/ws-b/shared" };
+      const c = { workspaceId: "ws-a", sessionId: "other", uiStateOwner: "server-a/ws-a/other" };
+      const run = longRun("same-message-id");
+      const status = open ? "ready" : "streaming";
+      await render([run], status, "", a);
+      const firstShell = container.querySelector("[data-step-run]");
+      expect(stepToggle(container).getAttribute("aria-expanded")).toBe(String(!open));
+      await act(async () => stepToggle(container).click());
+      expect(stepToggle(container).getAttribute("aria-expanded")).toBe(String(open));
+      for (const other of [b, c]) {
+        await render([run], status, "", other);
+        expect(firstShell?.isConnected).toBe(false);
+        expect(stepToggle(container).getAttribute("aria-expanded")).toBe(String(!open));
+        await render([run], status, "", a);
+        expect(container.querySelector("[data-step-run]")).not.toBe(firstShell);
+        expect(stepToggle(container).getAttribute("aria-expanded")).toBe(String(open));
+      }
+      await render([longRun("same-message-id", 12)], "ready", "", a);
+      expect(stepToggle(container).getAttribute("aria-expanded")).toBe(String(open));
+      const currentShell = container.querySelector("[data-step-run]");
+      await act(async () => {
+        for (let index = 0; index <= MAX_WORKBENCH_DISCLOSURES; index++) {
+          useWorkbenchUiState.getState().setDisclosure(`eviction-${index}`, false);
+        }
+      });
+      expect(useWorkbenchUiState.getState().disclosures.size).toBe(MAX_WORKBENCH_DISCLOSURES);
+      expect(container.querySelector("[data-step-run]")).toBe(currentShell);
+      expect(stepToggle(container).getAttribute("aria-expanded")).toBe(String(open));
+    });
+  });
+
   test("keeps actual expanded tool/detail nodes and focus through the first answer, more events, and completion", async () => {
     await mounted(async (container, render) => {
       const completed = longRun("continuity");

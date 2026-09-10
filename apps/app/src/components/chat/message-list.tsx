@@ -125,6 +125,7 @@ import { faviconUrlForHref } from "@/lib/favicon"
 import { useOpenArtifactPath } from "@/lib/artifacts"
 import { cn } from "@/lib/utils"
 import { DevProfiler } from "@/react-app/shell/dev-profiler"
+import { useWorkbenchDisclosure } from "@/react-app/domains/session/chat/workbench-ui-state"
 import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, formatMessageTimestamp, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, getSafeFileRevealPath } from "./utils"
 import { isAggregatableToolPart, type AnyToolPart } from "@/lib/tool-aggregate"
 import { resolveConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
@@ -496,9 +497,18 @@ type AssistantMessageProps = {
   hideReasoning?: boolean
 }
 
+// Leading work keeps its disclosure identity when the first prose part arrives;
+// the prose section has its own index space and must not inherit those choices.
+function messageDisclosureId(message: UIMessage) {
+  const id = message.id.endsWith(":steps") ? message.id.slice(0, -6) : message.id
+  const section = message.parts.some((part) => part.type === "text" || part.type === "file") ? "prose" : "steps"
+  return JSON.stringify([id, section])
+}
+
 const AssistantMessage = React.memo(
   ({ message, isStreaming, hideReasoning }: AssistantMessageProps) => {
     const { showThinking, highlightQuery } = useMessageList()
+    const disclosureMessageId = messageDisclosureId(message)
     const assistantRenderGroups = React.useMemo(
       () => {
         const groups = getAssistantRenderGroups(message.parts, showThinking)
@@ -533,7 +543,7 @@ const AssistantMessage = React.memo(
               return (
                 <ReasoningBlock
                   key={`reasoning-${index}`}
-                  disclosureKey={JSON.stringify(["reasoning", message.id, index])}
+                  disclosureKey={JSON.stringify(["reasoning", disclosureMessageId, index])}
                   text={group.text}
                   isStreaming={group.isStreaming}
                 />
@@ -551,7 +561,7 @@ const AssistantMessage = React.memo(
             if (group.kind === "tool-aggregate") {
               return (
                 <div key={`tool-aggregate-${index}`} className="w-full">
-                  <ToolAggregateGroup messageId={message.id} parts={group.parts} thoughts={group.thoughts} />
+                  <ToolAggregateGroup messageId={disclosureMessageId} parts={group.parts} thoughts={group.thoughts} />
                 </div>
               )
             }
@@ -1148,7 +1158,8 @@ function getRenderableMessage(message: UIMessage) {
 }
 
 /** Completion changes the summary, never the identity or the reader's choice. */
-function CompletedStepRun({ label, live, rowCount, mustShow, children }: {
+function CompletedStepRun({ disclosureKey, label, live, rowCount, mustShow, children }: {
+  disclosureKey: string
   label: string
   live: boolean
   rowCount: number
@@ -1156,10 +1167,12 @@ function CompletedStepRun({ label, live, rowCount, mustShow, children }: {
   children: React.ReactNode
 }) {
   const { highlightQuery } = useMessageList()
-  const [open, setOpen] = React.useState(() => live || mustShow || rowCount <= COLLAPSED_STEP_RUN_MIN_ROWS)
+  const [open, setOpen] = useWorkbenchDisclosure(disclosureKey, live || mustShow || rowCount <= COLLAPSED_STEP_RUN_MIN_ROWS)
   // Reveal requests/errors without reparenting them, and do not fold them again
   // when they settle: the reader may have started inspecting the revealed detail.
-  if (mustShow && !open) setOpen(true)
+  React.useLayoutEffect(() => {
+    if (mustShow && !open) setOpen(true)
+  }, [mustShow, open, setOpen])
   const searching = Boolean(highlightQuery?.trim())
   const expanded = open || mustShow || searching
 
@@ -1313,13 +1326,13 @@ function MessageGroup({
   // actions"); any prose, reasoning, or other tool breaks the run.
   const renderItems = (slice: UIMessageWithIndex[], offset: number, hideReasoning?: boolean) => {
     const nodes: React.ReactNode[] = []
-    let run: { parts: AnyToolPart[]; key: string } | null = null
+    let run: { parts: AnyToolPart[]; key: string; messageId: string } | null = null
     const flush = () => {
       if (!run) return
       nodes.push(
         <div key={`aggregate-${run.key}`}>
           <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
-            <ToolAggregateGroup messageId={run.key} parts={run.parts} className="w-full" />
+            <ToolAggregateGroup messageId={run.messageId} parts={run.parts} className="w-full" />
           </Message>
         </div>
       )
@@ -1331,7 +1344,7 @@ function MessageGroup({
           ? getAggregateOnlyParts(item.message, showThinking)
           : null
       if (aggregateParts) {
-        if (!run) run = { parts: [], key: aggregateParts[0].toolCallId }
+        if (!run) run = { parts: [], key: aggregateParts[0].toolCallId, messageId: messageDisclosureId(item.message) }
         run.parts.push(...aggregateParts)
         return
       }
@@ -1349,7 +1362,7 @@ function MessageGroup({
           message use, so a step row is spaced identically whether or not a
           message boundary happens to fall between it and the previous row. */}
       {stepItems.length > 0 ? (
-        <CompletedStepRun label={stepRunLabel} live={isLiveGroup} rowCount={stepRowCount} mustShow={mustShowSteps}>
+        <CompletedStepRun disclosureKey={JSON.stringify(["step-run", items[0].message.id])} label={stepRunLabel} live={isLiveGroup} rowCount={stepRowCount} mustShow={mustShowSteps}>
           <div className="flex flex-col gap-2">
             {renderItems(stepItems, 0)}
           </div>
