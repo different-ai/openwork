@@ -1188,6 +1188,15 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
   }, [workspace.workspaceId, point.x, point.y]));
   const prepareWorkspaceNewTask = async (): Promise<Point> => {
     const deadline = Date.now() + 5_000;
+    // A reload can leave the pointer over the replacement header. Leave it
+    // before entering again so the real hover transition is rearmed.
+    await hoverAt(app, { x: 0, y: 0 });
+    let outside = await newTaskGeometry({ x: 0, y: 0 });
+    while (outside.headerHover && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      outside = await newTaskGeometry({ x: 0, y: 0 });
+    }
+    if (outside.headerHover) throw new Error("New task header did not release hover before re-entry");
     const reset = await seed.evalIn(app, browserScript((workspaceId) => {
       const workspace = document.querySelector<HTMLElement>(`[data-sidebar-workspace-id="${workspaceId}"]`);
       const plus = workspace?.querySelector<HTMLElement>("[data-workspace-new-task]") ?? null;
