@@ -7,7 +7,8 @@ const test = spec.world(notificationCenter);
 
 const bell: Target = { role: "button", label: /^Notifications/ };
 const emptyTitle: Target = { text: "No notifications yet" };
-const emptyHint: Target = { text: "Confirmations of your own actions, like archiving a session, appear briefly instead." };
+const emptyHint: Target = { text: /^Background updates show up here: .*Confirmations of your own actions, like archiving a session, appear briefly instead\.$/ };
+const staleHint: Target = { text: /Updates from OpenWork Cloud and your workspaces/ };
 const archivedToast: Target = { text: "Session archived" };
 const undoButton: Target = { role: "button", label: "Undo" };
 
@@ -40,7 +41,7 @@ test("notification center keeps background events and leaves action confirmation
     await user.click(bell);
     await user.see(emptyTitle);
     await user.see(emptyHint);
-    await user.notSee({ text: "Updates from OpenWork Cloud and your workspaces" });
+    await user.notSee(staleHint);
     await user.screenshot();
     await user.press("Escape");
     await user.notSee(emptyTitle);
