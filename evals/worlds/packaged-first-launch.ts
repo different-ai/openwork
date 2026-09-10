@@ -28,12 +28,22 @@ export interface RendererException {
  * matched exactly against `rejectionMessage()`. Tracked debt: every entry
  * names a boot-time caller that should not reject, and the list shrinks back
  * to empty once that caller is fixed; anything not listed fails the launch
- * specs. Until the renderer guarded its fire-and-forget window-chrome IPC
- * (theme.ts, ui-state-store.ts) the one entry was
- * "Error: Error invoking remote method 'openwork:desktop': Error: OpenWork must
- * be activated from your Den portal before this command is available."
+ * specs.
+ *
+ * - The decorative `Dithering` background (`@paper-design/shaders-react`) on
+ *   the activation gate (enterprise-activation-gate.tsx) and the sign-in
+ *   surface (den-signin-surface.tsx) rejects when the GPU offers no WebGL,
+ *   which is every Xvfb CI runner and some VDI desktops. The page itself
+ *   still mounts. Clear when those surfaces skip the shader without WebGL.
+ *
+ * The renderer's fire-and-forget window-chrome IPC (theme.ts,
+ * ui-state-store.ts) used to add "Error: Error invoking remote method
+ * 'openwork:desktop': Error: OpenWork must be activated from your Den portal
+ * before this command is available." until it caught its own rejection.
  */
-export const KNOWN_LAUNCH_REJECTIONS: readonly string[] = [];
+export const KNOWN_LAUNCH_REJECTIONS: readonly string[] = [
+  "Error: Paper Shaders: WebGL is not supported in this browser",
+];
 
 const UNHANDLED_REJECTION_PREFIX = /^Uncaught \(in promise\)\s*/i;
 
