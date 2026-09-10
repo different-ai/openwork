@@ -5,12 +5,15 @@ export function readSidebarOverflow(surface: Surface, title = "") {
   return callFunctionOnSurface(surface, title => {
     const list = document.querySelector<HTMLElement>('[data-sidebar="content"]');
     const rail = document.querySelector<HTMLElement>('[data-sidebar="rail"]')?.getBoundingClientRect();
+    const titles = [...document.querySelectorAll<HTMLElement>("[data-session-title-text]")].map(node => node.textContent?.trim() ?? "");
     const text = [...document.querySelectorAll<HTMLElement>("[data-session-title-text]")]
       .find(node => node.textContent?.trim() === title);
     const viewport = text?.parentElement;
     return {
       list: list ? { clientWidth: list.clientWidth, scrollLeft: list.scrollLeft, scrollWidth: list.scrollWidth } : null,
       rail: rail ? { x: rail.left + rail.width / 2, y: rail.top + rail.height / 2 } : null,
+      // Every rendered title, so a missing `title` names what the sidebar showed instead.
+      titles,
       title: text && viewport ? { clientWidth: viewport.clientWidth, scrollWidth: text.scrollWidth,
         hiddenEdges: viewport.dataset.sessionTitleHiddenEdges ?? "", maskImage: getComputedStyle(viewport).maskImage } : null,
       rows: [...document.querySelectorAll<HTMLElement>("[data-sidebar-session-id]")].map(row => {

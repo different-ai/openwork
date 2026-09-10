@@ -73,12 +73,15 @@ async function expectListFits(app: Surface): Promise<void> {
 }
 
 async function titleState(app: Surface, title: string): Promise<TitleState> {
-  const value = (await readSidebarOverflow(app, title)).title;
+  const overflow = await readSidebarOverflow(app, title);
+  const value = overflow.title;
   if (!isRecord(value)
     || typeof value.clientWidth !== "number"
     || typeof value.hiddenEdges !== "string"
     || typeof value.maskImage !== "string"
-    || typeof value.scrollWidth !== "number") throw new Error(`Unexpected title state: ${JSON.stringify(value)}`);
+    || typeof value.scrollWidth !== "number") {
+    throw new Error(`Unexpected title state for ${JSON.stringify(title)}: ${JSON.stringify(value)}; rendered titles: ${JSON.stringify(overflow.titles)}`);
+  }
   return {
     clientWidth: value.clientWidth,
     hiddenEdges: value.hiddenEdges,
@@ -320,11 +323,14 @@ for (const mode of expansionModes) {
       } else {
         await user.hover({ role: "button", label: last.title });
       }
+      // Hovering the last row scrolls the list to its end, where an integer scroll offset can leave
+      // the row a fraction of a pixel past the list's fractional edge: same 1px tolerance as every
+      // other geometry comparison here.
       const before = await probe.eventually(() => world.observation.read(), {
         within: 10_000, label: "reorder targets visible and settled",
         until: value => (mode !== "group" || value.current.rows.every(row => !row.id.startsWith("session:")))
           && [sourceId, targetId].every(id => value.current.rows.some(row => row.id === id
-            && row.top >= value.current.viewport.top && row.bottom <= value.current.viewport.bottom && Math.abs(row.projectionY) < 1)),
+            && row.top >= value.current.viewport.top - 1 && row.bottom <= value.current.viewport.bottom + 1 && Math.abs(row.projectionY) < 1)),
       });
       const from = before.current.rows.find(row => row.id === sourceId)!;
       const to = before.current.rows.find(row => row.id === targetId)!;
