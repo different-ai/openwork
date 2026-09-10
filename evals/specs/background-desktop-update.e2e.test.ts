@@ -65,27 +65,26 @@ test("updates download outside Settings and offer a persistent, optional restart
   await user.notSee({ text: "Restart OpenWork?" });
   expect(await world.snapshot()).toMatchObject({ installs: 0, installAttempts: 0 });
 
-  await world.setCustomBranding();
-  await probe.eventually(world.snapshot, {
-    within: 5_000, label: "custom logo is preserved instead of the default wordmark",
-    until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "customLogoLoaded") === true,
-  });
-  expect(await world.snapshot()).toMatchObject({ sidebarName: null, customLogoLoaded: true });
   for (const [index, message] of [
     "Update installer could not start.",
     "Update installer connection failed.",
   ].entries()) {
     await user.click("Restart to update");
-    await user.see({ text: "Restart Studio?" });
+    await user.see({ text: "Restart OpenWork?" });
     expect(await world.snapshot()).toMatchObject({ installAttempts: index, installs: 0 });
     await user.click("Restart & update");
     await user.click({ role: "button", label: /^Notifications/ });
     await user.see({ text: message });
     await user.press("Escape");
-    await user.notSee({ text: "Restart Studio?" });
+    await user.notSee({ text: "Restart OpenWork?" });
     await user.notSee({ text: "Restart to update" });
     expect(await world.snapshot()).toMatchObject({ installAttempts: index + 1, installs: 0 });
+    // Coming back after the check interval must not restart the download loop
+    // on its own: the failure stays put until the person retries from Settings.
+    await world.returnToApp();
     await world.openSettings();
+    await user.see({ text: "Couldn't install the update" });
+    expect(await world.snapshot()).toMatchObject({ checks: index + 6, downloads: index + 3, installAttempts: index + 1, installs: 0 });
     await user.click({ role: "button", text: "Check now" });
     await probe.eventually(world.snapshot, {
       within: 5_000, label: "the user re-downloads after the failed install through Settings",
@@ -97,6 +96,13 @@ test("updates download outside Settings and offer a persistent, optional restart
     await user.see({ text: "Restart to update" });
     expect(await world.snapshot()).toMatchObject({ installAttempts: index + 1, installs: 0 });
   }
+
+  await world.setCustomBranding();
+  await probe.eventually(world.snapshot, {
+    within: 5_000, label: "custom logo is preserved instead of the default wordmark",
+    until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "customLogoLoaded") === true,
+  });
+  expect(await world.snapshot()).toMatchObject({ sidebarName: null, customLogoLoaded: true });
   await user.click("Restart to update");
   await user.see({ text: "Restart Studio?" });
   expect(await world.snapshot()).toMatchObject({ installAttempts: 2, installs: 0 });
