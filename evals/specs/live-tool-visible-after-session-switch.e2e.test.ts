@@ -682,17 +682,12 @@ test.skipIf(!runnable)(
       true,
     );
     await clickSessionRow(desktopApp, workspaceA.workspaceId, chatA);
-    // Follow-up turns can legitimately push the earlier tool above the viewport.
-    await evalIn(desktopApp, browserScript((sessionId, callId) => {
-      document.querySelector<HTMLElement>(`[data-session-surface-id="${sessionId}"] [data-tool-aggregate="${callId}"]`)
-        ?.scrollIntoView({ block: "center" });
-    }, [chatA, laterTool.callId]));
     const visibleAfterCompletion = await eventually(
       () => readVisibleTool(desktopApp, chatA, laterTool.callId),
       {
         within: 30_000,
         intervalMs: 250,
-        label: "completed tool remains visibly rendered",
+        label: "completed tool is visible in the natural navigation return viewport",
         until: (fact) => fact.currentSessionId === chatA && fact.found && fact.visible,
       },
     );

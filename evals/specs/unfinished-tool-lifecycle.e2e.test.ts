@@ -195,21 +195,36 @@ test("local signed-out failed-task recovery, queued follow-ups, and truthful unf
     await user.type("composer", world.bypassDirectPrompt, { verify: true });
     await user.press(sendNowShortcut);
     const handoff = await probe.eventually(async () => {
-      const [visible, rawSnapshot] = await Promise.all([world.dom(world.bypass.sessionId), native.snapshot(world.bypass.sessionId)]);
+      const [visible, rawSnapshot, requests] = await Promise.all([
+        world.dom(world.bypass.sessionId),
+        native.snapshot(world.bypass.sessionId),
+        relevantRequests([world.bypassDirectMarker, world.bypassQueuedBMarker, world.bypassQueuedCMarker]),
+      ]);
       const snapshot = compactSnapshot(rawSnapshot);
-      return { visible, snapshot };
+      return { visible, snapshot, requests };
     }, {
       within: 15_000,
       intervalMs: 100,
       label: "direct X is admitted while the original tool runs and B/C stay pending",
-      until: ({ visible, snapshot }) => includesExactlyOnce(visible.users, world.bypassDirectMarker)
+      until: ({ visible, snapshot, requests }) => includesExactlyOnce(visible.users, world.bypassDirectMarker)
+        && requests.some((request) => request.promptMarker === world.bypassDirectMarker)
+        && requests.every((request) => request.promptMarker === world.bypassDirectMarker)
         && visible.queued.length === 2
         && visible.queued[0]?.includes(world.bypassQueuedBMarker) === true
         && visible.queued[1]?.includes(world.bypassQueuedCMarker) === true
         && snapshot.data.messages.flatMap((message) => message.parts)
           .some((part) => part.tool === world.shellTool && part.status === "running" && part.input.command === world.bypassCommand),
+    }).catch(async (error) => {
+      evidence.recordJsonArtifact("Failed immediate provider admission diagnostic", {
+        error: error instanceof Error ? error.message : String(error),
+        requests: await relevantRequests([world.bypassInitialMarker, world.bypassDirectMarker, world.bypassQueuedBMarker, world.bypassQueuedCMarker]),
+        snapshot: compactSnapshot(await native.snapshot(world.bypass.sessionId)),
+        visible: await world.dom(world.bypass.sessionId),
+      });
+      throw error;
     });
     expect(handoff.snapshot.data.session?.id).toBe(world.bypass.sessionId);
+    expect(handoff.requests.map((request) => request.promptMarker)).toEqual([world.bypassDirectMarker]);
     evidence.recordJsonArtifact("Immediate X admission with B and C held in FIFO order", handoff);
     expect(handoff.visible.queued.every((text) => !text.includes(world.bypassDirectMarker))).toBe(true);
     expect(handoff.visible.users.some((text) => text.includes(world.bypassQueuedBMarker))).toBe(false);
