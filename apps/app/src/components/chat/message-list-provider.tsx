@@ -13,6 +13,8 @@ interface MessageListContextValue {
   readOnly: boolean
   workspaceId: string
   sessionId: string
+  /** Verified principal/org, endpoint, workspace and session; absent means no retention. */
+  uiStateOwner?: string | null
   showThinking: boolean
   highlightQuery?: string
   developerMode: boolean
@@ -49,6 +51,7 @@ interface MessageListProviderProps {
   children: React.ReactNode
   workspaceId: string
   sessionId: string
+  uiStateOwner?: string | null
   showThinking: boolean
   highlightQuery?: string
   developerMode: boolean
@@ -83,6 +86,7 @@ export function MessageListProvider({
   children,
   workspaceId,
   sessionId,
+  uiStateOwner,
   showThinking,
   highlightQuery,
   developerMode,
@@ -163,6 +167,7 @@ export function MessageListProvider({
       readOnly,
       workspaceId,
       sessionId,
+      uiStateOwner,
       showThinking,
       highlightQuery,
       forkingMessageId,
@@ -183,6 +188,7 @@ export function MessageListProvider({
       readOnly,
       workspaceId,
       sessionId,
+      uiStateOwner,
       showThinking,
       highlightQuery,
       forkingMessageId,
