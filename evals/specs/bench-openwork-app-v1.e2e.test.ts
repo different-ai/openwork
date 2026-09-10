@@ -7,6 +7,7 @@ import { arch, cpus, platform, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 import { clickButton, createAndSelectWorkspace, evalIn, readComposerState } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
+import { setViewport } from "@openwork/cdp";
 import { desktop } from "@openwork/hosts";
 import type { DesktopHandle } from "@openwork/hosts";
 import { eventually, needs, test } from "@openwork/testkit";
@@ -1041,6 +1042,11 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
             // This benchmark measures engine and UI latency, not plugins. On a fresh isolated HOME, the engine's external-plugin dependency bootstrap
             // (injected by apps/server/src/openwork-runtime-config.ts) can hold its install lock for minutes and block /config + /provider, so the picker
             // reports "No models found" and the run times out. OPENCODE_PURE skips plugin loading for both the v1 and v2 lanes alike.
+        // The completion milestone reads the sidebar's per-session loading
+        // indicator, which only renders at desktop width. A local host's window
+        // manager (tiling, for instance) may shrink the Electron window well
+        // below that, so pin the viewport the benchmark actually measures.
+        await setViewport(app, { width: 1280, height: 900, deviceScaleFactor: 1 });
             OPENCODE_PURE: "true",
             ANTHROPIC_API_KEY: "",
             OPENAI_API_KEY: "",
