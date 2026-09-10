@@ -254,12 +254,13 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
 }
 
 describe("OpenWorkExtensionsPreview MCP Apps result preservation", () => {
-  test("keeps standard MCP UI result fields in completed tool metadata", async () => {
+  test.each([true, false, undefined])("keeps standard MCP UI result fields in completed tool metadata (isError=%s)", async (isError) => {
     const plugin = await OpenWorkExtensionsPreview();
     const output: Record<string, unknown> = {
       content: [{ type: "text", text: "Fallback" }],
       structuredContent: { value: 42 },
       _meta: { receiptId: "receipt_1" },
+      ...(isError === undefined ? {} : { isError }),
     };
 
     await plugin["tool.execute.after"]?.(
@@ -272,6 +273,7 @@ describe("OpenWorkExtensionsPreview MCP Apps result preservation", () => {
         content: [{ type: "text", text: "Fallback" }],
         structuredContent: { value: 42 },
         _meta: { receiptId: "receipt_1" },
+        ...(isError === undefined ? {} : { isError }),
       },
     });
   });

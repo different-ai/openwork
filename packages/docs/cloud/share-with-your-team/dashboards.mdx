@@ -45,7 +45,25 @@ A tool that is not read-only runs only when the member clicks **Run**, unless an
 
 ## Build an MCP App widget
 
-[MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) are a standard extension of MCP (`io.modelcontextprotocol/ui`). An app is an ordinary MCP server with a tool that points to a UI resource and that resource served as HTML. Anything built to the specification runs in OpenWork and in any other host that implements it. The [`ext-apps` repository](https://github.com/modelcontextprotocol/ext-apps) provides the SDK and examples.
+[MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) are a standard extension of MCP (`io.modelcontextprotocol/ui`). An app is an ordinary MCP server with a tool that points to a UI resource and that resource served as HTML. OpenWork supports the subset below, not every optional feature of the specification. Apps must check the host's advertised capabilities. The [`ext-apps` repository](https://github.com/modelcontextprotocol/ext-apps) provides the SDK and examples.
+
+### Supported host protocol
+
+The shared chat and dashboard renderer uses the stable **2026-01-26** protocol with `ext-apps` **1.7.5**:
+
+- After initialization, the host sends complete `ui/notifications/tool-input` arguments before `ui/notifications/tool-result`. Result delivery retains `content`, `structuredContent`, `_meta`, and the optional `isError` flag, including explicit `false`.
+- Connector Apps advertise `serverTools` and `openLinks`. Tool calls use the existing same-server access and approval checks. Link requests use the host's HTTP(S)-only opener and report failures. Generated read-only result views advertise neither capability and reject both requests without acting.
+- Only `inline` display is available. Valid `ui/request-display-mode` requests return the current `inline` mode, including requests for fullscreen or picture-in-picture; they do not change the layout.
+- Size notifications adjust the inline height within host limits. Unmount retains the existing bounded `ui/resource-teardown` handshake and bridge close.
+- Message/context writes, View-provided tools, and resource proxy requests are not supported by this renderer. Unsupported requests receive protocol errors, not successful empty responses. There is no full progress or cancellation forwarding.
+
+Chat views mount from completed, preserved results; dashboard tiles mount after a successful launch. A cancelled in-flight launch therefore has no mounted recipient for `ui/notifications/tool-cancelled`. Cancelling another operation or unmounting an already completed result does not invent a cancellation notification. Early mounting and streaming launch input are not implemented. Dashboard launch failures keep the existing error tile rather than mounting a view.
+
+### Provider data and gateway additions
+
+Provider `structuredContent` is left unchanged, including fields named `serverTools` or `schemaGuidance`. OpenWork gateway additions use reserved `_meta` keys: `openwork/mcpApp` for the launch binding, `openwork/serverTools` for gateway tool names, and `openwork/schemaGuidance` for advisory schema warnings. Apps should read gateway tool names from `result._meta["openwork/serverTools"]`, not from provider `structuredContent.serverTools`.
+
+Schema guidance is also appended as a separate text content block under `openwork/schemaGuidance` so the model can use it without seeing private result `_meta`. Warnings do not invalidate a provider success or justify repeating a successful call. Gateway-generated error payloads may still include `schemaGuidance`; those payloads are not provider structured data.
 
 ### Requirements OpenWork checks
 
@@ -176,5 +194,5 @@ app.listen(3000);
 ## Tips
 
 - Keep the resource self-contained. If it loads remote assets, declare their origins in `_meta.ui.csp`.
-- Return the data the UI needs in `structuredContent`; text content is what the model sees.
+- Return shared result data in `structuredContent` and readable fallback text in `content`. Treat both as model-visible; put view-only data in result `_meta`.
 - One tool can drive one view. Ship several tools for several widgets.

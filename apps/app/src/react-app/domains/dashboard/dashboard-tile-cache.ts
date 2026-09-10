@@ -55,6 +55,7 @@ function parseResult(value: unknown): PreservedMcpAppResult | null {
   if (value._meta !== undefined && !isRecord(value._meta)) return null;
   return {
     content: value.content,
+    ...(typeof value.isError === "boolean" ? { isError: value.isError } : {}),
     ...(value.structuredContent ? { structuredContent: value.structuredContent } : {}),
     ...(value._meta ? { _meta: value._meta } : {}),
   };

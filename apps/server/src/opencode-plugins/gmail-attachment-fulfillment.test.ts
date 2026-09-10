@@ -253,6 +253,7 @@ test("real plugin fulfills before MCP App preservation and propagates hook failu
   const output = pending();
   await plugin["tool.execute.after"](invocation(), output);
   expect(output.metadata).toEqual({ openworkMcpApp: {
+    isError: false,
     content: [{ type: "text", text: JSON.stringify(receipt) }], structuredContent: receipt,
   } });
   expect(JSON.stringify(output)).not.toContain("file_input_requires_host");

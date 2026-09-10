@@ -51,6 +51,7 @@ function connectionActionMcpResultFromError(error: string): JSONValue | null {
   });
   if (!payload.success) return null;
   return {
+    isError: true,
     content: [{ type: "text", text: error }],
     structuredContent: payload.data,
   };

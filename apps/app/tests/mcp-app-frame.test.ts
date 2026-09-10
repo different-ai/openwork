@@ -1,6 +1,13 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
+import { GlobalRegistrator } from "@happy-dom/global-registrator"
+import { act, createElement } from "react"
+import { createRoot } from "react-dom/client"
+import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge"
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js"
 import type { DynamicToolUIPart } from "ai"
 import { ConnectionCard } from "../src/components/chat/connection-card"
+import { WorkspaceProvider } from "../src/react-app/shell/workspace-provider"
 
 import {
   createOpenworkServerClient,
@@ -16,6 +23,7 @@ import {
   gatewayMcpAppLaunch,
   isActionableMcpAppResolutionError,
   McpAppFrame,
+  McpAppSandboxView,
   secureMcpAppHtml,
 } from "../src/components/chat/mcp-app-frame"
 
@@ -37,6 +45,128 @@ function fixture(overrides: Partial<OpenworkMcpAppResource> = {}): OpenworkMcpAp
 }
 
 describe("MCP App iframe policy", () => {
+  test.each([
+    { isError: true, readOnly: false },
+    { isError: false, readOnly: false },
+    { isError: undefined, readOnly: false },
+    { isError: false, readOnly: true },
+  ])("delivers complete launch results and truthful SDK responses (%j)", async ({ isError, readOnly }) => {
+    GlobalRegistrator.register({ url: "http://localhost/", happyDOM: { settings: { disableIframePageLoading: true } } })
+    Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true })
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container)
+    const [viewTransport, hostTransport] = InMemoryTransport.createLinkedPair()
+    const connect = AppBridge.prototype.connect
+    const connectSpy = spyOn(AppBridge.prototype, "connect").mockImplementation(function () {
+      return connect.call(this, hostTransport)
+    })
+    const messages: JSONRPCMessage[] = []
+    let reply: ((message: JSONRPCMessage) => void) | undefined
+    viewTransport.onmessage = (message) => {
+      messages.push(message)
+      if ("id" in message && ("result" in message || "error" in message)) reply?.(message)
+      if ("method" in message && message.method === "ui/resource-teardown" && "id" in message) {
+        void viewTransport.send({ jsonrpc: "2.0", id: message.id, result: {} })
+      }
+    }
+    let id = 0
+    const request = async (method: string, params: Record<string, unknown> = {}) => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        const response = new Promise<JSONRPCMessage>((resolve, reject) => {
+          reply = resolve
+          timer = setTimeout(() => reject(new Error(`No response to ${method}`)), 1_000)
+        })
+        await viewTransport.send({ jsonrpc: "2.0", id: ++id, method, params })
+        return await response
+      } finally { clearTimeout(timer); reply = undefined }
+    }
+    const result = {
+      content: [{ type: "text", text: "Provider fallback" }],
+      structuredContent: { serverTools: { provider: true }, schemaGuidance: "provider data" },
+      _meta: { privateFixture: "view-only" },
+      ...(isError === undefined ? {} : { isError }),
+    }
+    const input = { query: "complete launch input" }
+    let toolCalls = 0
+    const opened: string[] = []
+    Reflect.set(window, "__OPENWORK_ELECTRON__", { shell: { openExternal: async (url: string) => { opened.push(url); return { ok: true } } } })
+    const app = fixture()
+    const client = {
+      ...createOpenworkServerClient({ baseUrl: "http://localhost:1" }),
+      resolveMcpApp: async () => ({ app }),
+      mcpAppSandbox: () => ({ url: "about:blank", expectedOrigin: "https://sandbox.example" }),
+      callMcpAppTool: async () => { toolCalls += 1; return result },
+    }
+    const part: DynamicToolUIPart = {
+      type: "dynamic-tool", toolName: "fixture_render", toolCallId: "launch", state: "output-available",
+      input, output: "Provider fallback", callProviderMetadata: { openwork: { mcpResult: result } },
+    }
+    try {
+      await viewTransport.start()
+      await act(async () => root.render(createElement(WorkspaceProvider, {
+        client: null, openworkServerClient: client, workspaceId: "fixture", selectedWorkspaceRoot: "/fixture",
+        children: readOnly
+          ? createElement(McpAppSandboxView, { app, toolName: part.toolName, inputArguments: input, result, readOnly, unavailableNotice: "Unavailable" })
+          : createElement(McpAppFrame, { part }),
+      })))
+      const iframe = container.querySelector("iframe")
+      if (!iframe?.contentWindow) throw new Error("Missing fixture iframe")
+      await act(async () => window.dispatchEvent(new MessageEvent("message", {
+        source: iframe.contentWindow, origin: "https://sandbox.example",
+        data: { method: "ui/notifications/sandbox-proxy-ready" },
+      })))
+      const initialized = await request("ui/initialize", {
+        appInfo: { name: "fixture", version: "1" }, appCapabilities: {}, protocolVersion: "2026-01-26",
+      })
+      expect(initialized).toMatchObject({ result: {
+        protocolVersion: "2026-01-26",
+        hostContext: { displayMode: "inline", availableDisplayModes: ["inline"] },
+      } })
+      if (!("result" in initialized)) throw new Error("Initialization failed")
+      expect(initialized.result.hostCapabilities).toEqual(readOnly ? {} : { serverTools: {}, openLinks: {} })
+      expect(messages.some(message => "method" in message && message.method === "ui/notifications/tool-result")).toBe(false)
+      await act(async () => { await viewTransport.send({ jsonrpc: "2.0", method: "ui/notifications/initialized" }) })
+      const delivered = messages.filter(message => "method" in message && message.method.startsWith("ui/notifications/tool-"))
+      expect(delivered).toEqual([
+        { jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: input } },
+        { jsonrpc: "2.0", method: "ui/notifications/tool-result", params: result },
+      ])
+      for (const mode of ["inline", "fullscreen", "pip"]) {
+        expect(await request("ui/request-display-mode", { mode })).toMatchObject({ result: { mode: "inline" } })
+      }
+      expect(await request("ui/request-display-mode", { mode: "invalid" })).toMatchObject({ error: { message: expect.stringContaining("Invalid input") } })
+      for (const [method, params] of [
+        ["ui/message", { role: "user", content: [{ type: "text", text: "not delivered" }] }],
+        ["ui/update-model-context", { content: [{ type: "text", text: "not stored" }] }],
+        ["resources/list", {}],
+      ] satisfies Array<[string, Record<string, unknown>]>) {
+        expect(await request(method, params)).toMatchObject({ error: { code: -32601 } })
+      }
+      expect(await request("tools/call", { name: "read_detail", arguments: {} })).toMatchObject(
+        readOnly ? { error: { code: -32601 } } : { result },
+      )
+      expect(await request("ui/open-link", { url: "https://example.com/" })).toMatchObject(
+        readOnly ? { error: { code: -32601 } } : { result: {} },
+      )
+      expect(await request("ui/open-link", { url: "file:///not-a-web-link" })).toMatchObject(
+        readOnly ? { error: { code: -32601 } } : { result: { isError: true } },
+      )
+      expect(toolCalls).toBe(readOnly ? 0 : 1)
+      expect(opened).toEqual(readOnly ? [] : ["https://example.com/"])
+    } finally {
+      try {
+        await act(async () => root.unmount())
+        expect(messages.some(message => "method" in message && message.method === "ui/resource-teardown")).toBe(true)
+      } finally {
+        connectSpy.mockRestore()
+        await viewTransport.close()
+        container.remove()
+        await GlobalRegistrator.unregister()
+      }
+    }
+  })
+
   test("connection status execution renders the native card even without preserved app metadata", () => {
     const part: DynamicToolUIPart = {
       type: "dynamic-tool", toolName: "openwork-cloud_execute_capability", toolCallId: "status-probe",

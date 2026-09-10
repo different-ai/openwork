@@ -124,6 +124,14 @@ describe("dashboard tile cache", () => {
     expect(storage.getItem(scope)).not.toContain("private-live-launch");
   });
 
+  test.each([true, false, undefined])("retains the result error flag across cache restoration (isError=%s)", (isError) => {
+    installWindow();
+    const scope = dashboardTileCacheScopeKey("user_fixture", "org_fixture");
+    const saved = { ...cache, result: { ...cache.result, ...(isError === undefined ? {} : { isError }), _meta: { privateFixture: "view-only" } } };
+    writeDashboardTileCache(scope, "tile_report", saved);
+    expect(readDashboardTileCache(scope, "tile_report", cache.cachedAt)).toEqual(saved);
+  });
+
   test("refreshes only visible, stale, non-refreshing tiles", () => {
     const dueAt = cache.cachedAt + DASHBOARD_AUTO_REFRESH_INTERVAL_MS;
     expect(shouldAutoRefreshDashboardTile({

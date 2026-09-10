@@ -218,9 +218,13 @@ does not bypass connection grants or organization tool policy.
 
 ## MCP Apps
 
-Some gateway results come back as MCP Apps: rich, interactive UI rendered from a tool result instead of plain text — great for dynamic interfaces like a created-skill confirmation card or a workflow result view. OpenWork implements the standard [MCP Apps extension](https://modelcontextprotocol.io/docs/extensions/apps) (`ui://` resources declared on tools), so first-party OpenWork apps render in any MCP client that supports the extension, and fall back to readable text everywhere else.
+Some gateway results come back as MCP Apps: interactive UI rendered from a tool result instead of plain text, such as a created-skill confirmation card or a workflow result view. These use the standard [MCP Apps extension](https://modelcontextprotocol.io/docs/extensions/apps) (`ui://` resources declared on tools). Rendering requires a compatible host and its advertised capabilities; clients without App support receive readable fallback content.
 
 To put an MCP App on a team dashboard, see [Dashboards](/cloud/share-with-your-team/dashboards).
+
+OpenWork's renderer supports a [documented subset of the stable 2026-01-26 host protocol](/cloud/share-with-your-team/dashboards#supported-host-protocol): complete launch input before result, inline display, bounded resizing and teardown, and gated server tools and links for connector Apps. Generated read-only views cannot call tools or open links. Message/context writes, View tools, resource proxies, streaming input, and full progress/cancellation forwarding are not supported. This is not a claim that every App feature runs in OpenWork.
+
+The gateway preserves provider `structuredContent` rather than adding fields to it. OpenWork launch and helper information lives in namespaced `_meta` keys (`openwork/mcpApp`, `openwork/serverTools`). Advisory schema warnings use `openwork/schemaGuidance` in `_meta` and a separate model-visible text block; private provider `_meta` is not copied into that text. See [Provider data and gateway additions](/cloud/share-with-your-team/dashboards#provider-data-and-gateway-additions).
 
 <Frame>
   ![The skill-created MCP App rendering in the OpenWork desktop app after a create-skill request](/images/skill-created-mcp-app-card.png)
