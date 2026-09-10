@@ -67,7 +67,7 @@ export function SiteNav(props: Props) {
 
   return (
     <header className={`sticky top-0 z-20 w-full transition-all duration-300 ${scrolled ? "bg-white/80 shadow-sm backdrop-blur-md" : ""}`}>
-      <div className="mx-auto flex w-full max-w-[1920px] flex-col px-[clamp(1.5rem,calc((100%-1128px)/2),4.75rem)]">
+      <div className="mx-auto flex w-full max-w-[1176px] flex-col px-6">
         <div className="grid min-h-[97px] grid-cols-[auto_1fr_auto] items-center py-4">
           <Link
             href="/"
