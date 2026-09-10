@@ -5,7 +5,12 @@ import { crashRecoveryWorld } from '../worlds/crash-recovery';
 import type { CrashRecoveryWorld } from '../worlds/crash-recovery';
 import type { RecoverySnapshot } from '../fixtures/crash-recovery/state';
 
-const test = spec.world(crashRecoveryWorld, { timeout: 90000, needs: { commands: ['git', ...(process.env.OPENWORK_EVAL_DAYTONA === '1' ? ['daytona'] : [])] } });
+const test = spec.world(crashRecoveryWorld, {
+  timeout: 90000,
+  needs: { commands: ['git', ...(process.env.OPENWORK_EVAL_DAYTONA === '1' ? ['daytona'] : [])] },
+  // Real app source in a standalone Chrome; no Den, mock services or Electron.
+  resources: { surfaces: ['appWeb'], services: [] },
+});
 const heading = 'OpenWork hit an unexpected error';
 const safeMessage = 'synthetic ordinary failure';
 const safeStack = `Error: ${safeMessage}\n    at SyntheticChild (file:///synthetic/source.tsx:12:34)`;

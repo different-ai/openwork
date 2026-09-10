@@ -23,6 +23,8 @@ const definitions = {
   },
   'cross-server-handoff-atomic-commit.e2e.test.ts': { name: 'Switch servers and recover enrollment', critical: true, placement: 'local' },
   'workspace-new-task-hit-target.e2e.test.ts': { name: 'Keep new tasks and sends instantly responsive', placement: 'local' },
+  // Drives the real error boundary and web error monitor in a standalone Chrome; needs no Den or Electron.
+  'crash-recovery.e2e.test.ts': { name: 'Recover from a render crash without leaking secrets' },
   'streamed-markdown-answer.e2e.test.ts': {
     cases: [{ id: 'CONT-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
   },
