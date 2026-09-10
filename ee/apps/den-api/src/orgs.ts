@@ -32,6 +32,7 @@ import {
   type MemberLifecycleValidation,
 } from "./organization-member-guards.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
+import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js"
 import { getScimManagedTeamIds } from "./scim-groups.js"
 import { effectiveOrganizationRole, listOrganizationAdminTeamGrants, withOrganizationTeamMutation, type OrganizationAdminTeam } from "./organization-team-roles.js"
 import {
@@ -1193,6 +1194,11 @@ export async function ensureSingletonOrganizationForUser(userId: UserId, options
         throw new Error("failed_to_create_single_org")
       }
     }
+  }
+
+  // Single-org session creation must not re-admit an identity the IdP deprovisioned.
+  if (await isScimDeprovisionedIdentity({ organizationId: organization.id, userId, email: userEmail })) {
+    return null
   }
 
   const activeOwnerCount = await countActiveOwners(organization.id)

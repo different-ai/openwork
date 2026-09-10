@@ -10,7 +10,7 @@ import {
   publicRoute,
   resolveMemberTeamsMiddleware,
 } from "../../middleware/index.js"
-import { emptyResponse, forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, notFoundSchema, okSchema, unauthorizedSchema } from "../../openapi.js"
 import {
   buildAuthorizeUrl,
   createOAuthStateToken,
@@ -561,6 +561,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
     "/v1/oauth-providers/:providerId/connect/callback",
     describeRoute({
       tags: ["Authentication"],
+      security: [],
       summary: "OAuth callback for a provider",
       description: "The provider redirects here with code+state after the member consents. Identity is carried entirely by the signed state token, not a session cookie, since the redirect may arrive in a fresh browser context. Serves a small static HTML page that deep-links back to OpenWork.",
       responses: {
@@ -745,7 +746,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       summary: "Disconnect the calling member's account for a provider",
       description: "Removes the stored credential. Mutation — intentionally kept out of the agent-callable MCP surface (see policy.ts BLOCKED_OPERATION_IDS).",
       responses: {
-        200: emptyResponse("Disconnected."),
+        200: jsonResponse("The stored credential was removed.", okSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         404: jsonResponse("Nothing was connected.", notFoundSchema),
       },

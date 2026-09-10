@@ -42,10 +42,12 @@ function publicWebOrigin(env) {
   return webOriginFromDenBaseUrl(env) ?? (trimmed(env.DEN_WEB_PUBLIC_ORIGIN).replace(/\/+$/, "") || null);
 }
 
-// Mirrors denApiOriginForWebOrigin(): DEN_API_BASE wins, else `api.` on the web host.
+// Mirrors denApiOriginForWebOrigin(): the browser-reachable DEN_API_PUBLIC_URL
+// wins, then the server-side DEN_API_BASE, else `api.` on the web host.
 function denApiRedirectOrigin(env = process.env) {
-  const configured = trimmed(env.DEN_API_BASE);
-  if (configured) {
+  for (const value of [env.DEN_API_PUBLIC_URL, env.DEN_API_BASE]) {
+    const configured = trimmed(value);
+    if (!configured) continue;
     const origin = originFromUrl(configured);
     if (origin) return origin;
   }

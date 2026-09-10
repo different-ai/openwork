@@ -3,6 +3,7 @@ import { memo, useCallback } from "react";
 import {
   selectSessionIsStickyBottom,
   selectSessionTopClippedMessageId,
+  sessionScrollKey,
   useSessionScrollStore,
 } from "./scroll-store";
 
@@ -59,6 +60,7 @@ const JumpToLatestButton = memo(function JumpToLatestButton({
 
 type SessionScrollOverlayProps = {
   sessionId: string;
+  owner?: string;
   isStreaming: boolean;
   onJumpToLatest: (behavior?: ScrollBehavior) => void;
   onJumpToStartOfMessage: (behavior?: ScrollBehavior) => void;
@@ -66,11 +68,12 @@ type SessionScrollOverlayProps = {
 
 export const SessionScrollOverlay = memo(function SessionScrollOverlay({
   sessionId,
+  owner,
   isStreaming,
   onJumpToLatest,
   onJumpToStartOfMessage,
 }: SessionScrollOverlayProps) {
-  const { isAtBottom, topClippedMessageId } = useSessionScrollOverlayState(sessionId);
+  const { isAtBottom, topClippedMessageId } = useSessionScrollOverlayState(sessionScrollKey(sessionId, owner));
   const showJumpToStart = !isStreaming && Boolean(topClippedMessageId);
   const showJumpToLatest = !isAtBottom;
 

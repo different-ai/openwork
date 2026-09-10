@@ -1,6 +1,6 @@
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
-import { listNativeProviderUsableEntries, type NativeProviderConnectionEntry } from "../capability-sources/native-provider-connections.js"
+import { listNativeProviderUsableEntries, nativeProviderConnectionPolicyError, type NativeProviderConnectionEntry } from "../capability-sources/native-provider-connections.js"
 import type { McpPrincipal } from "./auth.js"
 import type { AgentToolContentPart } from "./tool-content.js"
 import {
@@ -205,6 +205,10 @@ export async function executeNativeCapability(input: {
     catalog: input.catalog,
   })
   if (!resolved) {
+    const policyError = await nativeProviderConnectionPolicyError(input.organizationId)
+    if (policyError) {
+      return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: policyError.kind, message: policyError.message }) }] }
+    }
     return {
       isError: true,
       content: [{

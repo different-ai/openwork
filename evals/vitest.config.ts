@@ -1,6 +1,6 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
-import { shouldPrepareSuite, suiteWorkerCount } from "./runner/stack-suite.ts";
+import { parallelSuite, suiteWorkerCount } from "./runner/stack-suite.ts";
 
 const common = {
   environment: "node",
@@ -11,9 +11,8 @@ const appResolve = {
   alias: [{ find: /^@\//, replacement: appSource }],
 };
 
-const prepareSuite = shouldPrepareSuite(process.argv);
 const attachedDen = Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());
-const managedStack = prepareSuite && !attachedDen;
+const managedStack = parallelSuite(process.argv) && !attachedDen;
 const e2eWorkers = managedStack ? suiteWorkerCount(process.argv, process.env) : 1;
 const namedLiveSpec = process.argv.some((argument) => argument.endsWith(".live.test.ts") || argument.endsWith("/live.test.ts"));
 
@@ -41,7 +40,6 @@ export default defineConfig({
           testTimeout: 600_000,
           hookTimeout: 600_000,
           globalSetup: ["./runner/prepare-stack.ts"],
-          setupFiles: ["./runner/stack-env.ts"],
           include: ["specs/**/*.e2e.test.ts", "../scenarios/**/e2e.test.ts"],
         },
       },

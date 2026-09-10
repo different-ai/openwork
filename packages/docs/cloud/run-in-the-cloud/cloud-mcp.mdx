@@ -196,6 +196,26 @@ Search can include OpenWork Cloud resources such as skills, plugins, connectors,
 
 Availability is governed by organization membership, role, policy, and exposure allowlists. It intentionally does not expose authentication internals, admin-only system routes, webhooks, API-key creation or deletion, or credential-returning endpoints.
 
+### MCP token scopes
+
+`mcp:read` permits discovery, connection-status probes, and read-only native API
+operations. **Every external MCP provider tool invocation requires `mcp:write`,
+including tools advertising `readOnlyHint: true`.** The provider controls those
+hints, and OpenWork has no trusted classification proving that a provider tool
+cannot modify data through the connected credential. Hints describe a tool;
+they do not grant execution authorization.
+
+This requirement applies to generic execution, direct connections, compatibility
+wrappers, Code Mode, and MCP App helper calls. The private `mcp:app-host` scope
+selects the App audience; it does not replace `mcp:write`. Scripts that only
+compute or call read-only native APIs do not require write scope.
+
+The desktop app already requests both read and write scopes, and its separately
+minted App-host token carries both. Existing read-only tokens are not upgraded:
+to invoke an external provider tool, explicitly authorize the OpenWork client
+for `mcp:write`. This is separate from reconnecting the provider account, and
+does not bypass connection grants or organization tool policy.
+
 ## MCP Apps
 
 Some gateway results come back as MCP Apps: rich, interactive UI rendered from a tool result instead of plain text — great for dynamic interfaces like a created-skill confirmation card or a workflow result view. OpenWork implements the standard [MCP Apps extension](https://modelcontextprotocol.io/docs/extensions/apps) (`ui://` resources declared on tools), so first-party OpenWork apps render in any MCP client that supports the extension, and fall back to readable text everywhere else.

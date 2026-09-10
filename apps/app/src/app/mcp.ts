@@ -73,6 +73,25 @@ export async function removeMcpFromConfig(
   }
 }
 
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((part): part is string => typeof part === "string") : [];
+}
+
+/**
+ * Accept both command shapes users paste into opencode.json: OpenCode's
+ * `command: ["python3", "server.py"]` and the Claude Desktop / Cursor style
+ * `command: "python3", args: ["server.py"]`. Every reader downstream sees one
+ * array, so a string command no longer blanks the Settings page.
+ */
+function normalizeMcpServerConfig(value: object): McpServerConfig | null {
+  const config = value as McpServerConfig & { args?: unknown };
+  if (config.type !== "remote" && config.type !== "local") return null;
+  const rawCommand: unknown = config.command;
+  if (typeof rawCommand !== "string") return config;
+  const executable = rawCommand.trim();
+  return { ...config, command: executable ? [executable, ...stringList(config.args)] : undefined };
+}
+
 export function parseMcpServersFromContent(content: string): McpServerEntry[] {
   if (!content.trim()) return [];
 
@@ -89,10 +108,8 @@ export function parseMcpServersFromContent(content: string): McpServerEntry[] {
         return [];
       }
 
-      const config = value as McpServerConfig;
-      if (config.type !== "remote" && config.type !== "local") {
-        return [];
-      }
+      const config = normalizeMcpServerConfig(value);
+      if (!config) return [];
 
       return [{ name, config, source: "config.project" as const }];
     });

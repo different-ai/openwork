@@ -1006,7 +1006,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
   } finally {
     await act(async () => root.unmount());
     resetQueuedDrainForTests();
-    useComposerStateStore.setState({ sessions: {}, queuedDrafts: {}, history: {}, pendingMessages: {}, failedDrafts: {} });
+    useComposerStateStore.setState({ sessions: {}, queuedDrafts: {}, pendingMessages: {}, failedDrafts: {} });
     queryClient.clear();
     container.remove();
     mock.restore();

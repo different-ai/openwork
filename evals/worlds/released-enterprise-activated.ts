@@ -1,5 +1,7 @@
-import { cp, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, rm } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
+import { promisify } from "node:util";
 import { createAndSelectWorkspace, quitDesktop, signInDesktopAs } from "@openwork/behaviors";
 import { attachSurface, evaluateOnSurface, probeAppStateOnSurface } from "@openwork/cdp";
 import type { AppStateProbe, AttachedSurface, SurfaceHandle } from "@openwork/cdp";
@@ -166,14 +168,42 @@ function appBundleOf(binary: string): string | null {
  * test would then silently become a newer one between launches (0.18.45 booted
  * as 0.18.46 within a single run once 0.18.46 was published), so every launch
  * boots a private copy of the bundle and the downloaded release stays pristine.
- * The copy keeps the code signature and notarization ticket intact.
+ * The copy keeps the code signature and notarization ticket intact. `cp -c`
+ * clones through APFS clonefile(2), so a 250 MB bundle costs neither time nor
+ * disk; on other volumes cp falls back to a regular copy.
  */
 async function pristineCopy(binary: string, root: string): Promise<string> {
   const bundle = appBundleOf(binary);
   if (!bundle) return binary;
+  await mkdir(root, { recursive: true });
   const copy = join(root, basename(bundle));
-  await cp(bundle, copy, { recursive: true, verbatimSymlinks: true });
+  await execFileAsync("cp", ["-Rc", bundle, copy]);
   return join(copy, relative(bundle, binary));
+}
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Squirrel's ShipIt helper applies a staged update after the app exits, into
+ * the bundle the app ran from. Removing that copy while ShipIt is still moving
+ * files leaves a half-applied install and a resumable ShipIt state behind, so
+ * disposal waits for ShipIt to finish first.
+ */
+async function shipItIsRunning(): Promise<boolean> {
+  if (process.platform !== "darwin") return false;
+  try {
+    await execFileAsync("pgrep", ["-f", "com.differentai.openwork.ShipIt"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForShipItIdle(timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline && await shipItIsRunning()) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
 }
 
 export interface LaunchOptions {
@@ -319,6 +349,7 @@ export async function releasedEnterpriseActivatedWorld(seed: Seed) {
           // Every launch is best-effort disposed; the profile removal below still runs.
         }
       }
+      await waitForShipItIdle(60_000);
       for (const profile of ownedProfiles) await rm(profile, { recursive: true, force: true }).catch(() => undefined);
     },
   };
