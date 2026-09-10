@@ -13,7 +13,7 @@ const test = spec.world(archiveSessionsInLinkedWorkspace, {
 const archivedToast = { text: "Session archived" };
 const archiveFailedToast = { text: "Couldn't archive session" };
 
-test("archiving a split-pane session works when the desktop stores the workspace by a linked path", async ({ world, user, agent, probe, step }) => {
+test("archiving a split-pane session works when the desktop stores the workspace by a linked path", async ({ world, user, agent, probe, step, evidence }) => {
   const candidate = world.candidate.sessionId;
   const sibling = world.neighbor.sessionId;
   const route = (sessionId: string | null) => `#/workspace/${world.workspace.workspaceId}/session${sessionId ? `/${sessionId}` : ""}`;
@@ -32,6 +32,11 @@ test("archiving a split-pane session works when the desktop stores the workspace
     const stamps = await world.archivedAt();
     expect(stamps[candidate]).toBe(0);
     expect(stamps[sibling]).toBe(0);
+    evidence.recordAssertionEvidence(
+      "The desktop and the engine spell the same workspace differently",
+      `The persisted workspace path was the linked path ${world.workspacePath}; the engine stamped both seeded sessions with ${world.realWorkspacePath}, which differs from it. Neither session was archived.`,
+      true,
+    );
   });
 
   let sideChat = "";
@@ -69,6 +74,11 @@ test("archiving a split-pane session works when the desktop stores the workspace
     });
     expect(await probe.hash()).toBe(route(candidate));
     expect(await world.mutationRequests()).toEqual([expect.objectContaining({ method: "PATCH", path: expect.stringContaining(`/session/${sideChat}`) })]);
+    evidence.recordAssertionEvidence(
+      "A split-pane session in a linked-path workspace archives instead of failing verification",
+      `session.archive on the side chat ${sideChat} showed "Session archived" and never "Couldn't archive session" or "Could not verify the conversation's workspace."; the engine stamped only that session archived, the conversation and its neighbor stayed at 0, the secondary pane closed while the conversation route stayed selected, and exactly one PATCH targeted that session.`,
+      true,
+    );
   });
 
   await step("archiving the conversation from the sidebar succeeds, keeps its neighbor, and Undo restores it", async () => {
@@ -89,7 +99,6 @@ test("archiving a split-pane session works when the desktop stores the workspace
     });
     expect(sidebar.active).toContain(sibling);
     await probe.eventually(() => probe.hash(), { within: 15_000, label: "archive returns to the workspace start", until: (hash) => hash === route(null) });
-    await user.screenshot();
     await probe.eventually(() => world.undoToastSettled(), { within: 10_000, label: "undo pill settles", until: Boolean });
     await user.click({ role: "button", label: "Undo" });
     const restored = await probe.eventually(() => world.archivedAt(), {
@@ -98,5 +107,10 @@ test("archiving a split-pane session works when the desktop stores the workspace
     expect(restored[sibling]).toBe(0);
     expect(restored[sideChat]).toBeGreaterThan(0);
     await probe.eventually(() => probe.hash(), { within: 15_000, label: "Undo reopens the conversation", until: (hash) => hash === route(candidate) });
+    evidence.recordAssertionEvidence(
+      "The sidebar Archive button works in a linked-path workspace and Undo restores only its target",
+      `Hovering the conversation row and clicking Archive showed "Session archived" without the failure toast or a working-session prompt; the engine stamped the conversation archived while its neighbor stayed at 0, the sidebar moved only the conversation into Archived, the route returned to the workspace start, and Undo restored the conversation (neighbor still 0, the earlier side chat still archived) and reopened it.`,
+      true,
+    );
   });
 });
