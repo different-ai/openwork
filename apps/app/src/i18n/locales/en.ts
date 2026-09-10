@@ -2013,6 +2013,7 @@ export default {
   "workspace_list.session_actions": "Session actions",
   "workspace_list.title": "Workspaces",
   "workspace_list.session_active": "Session active",
+  "workspace_list.new_task_draft": "Draft",
   "workspace_list.session_needs_attention": "Needs your action",
   "workspace_list.session_unread": "Unread result",
   "workspace_list.session_streaming": "Session streaming",

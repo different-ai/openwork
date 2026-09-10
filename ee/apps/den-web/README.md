@@ -55,6 +55,7 @@ Tailwind 4 requires Safari 16.4+, Chrome 111+, or Firefox 128+; see the
 ### Optional env vars
 
 - `DEN_API_BASE` (server-only): upstream API base used by server-side health/readiness and compatibility auth proxy routes. Required outside local dev wrappers.
+- `DEN_API_PUBLIC_URL` (server/runtime): browser-reachable Den API origin handed to clients by `/api/runtime-config` and used as the `Location` of the legacy `/api/den/*` 307 redirect. Set it whenever `DEN_API_BASE` is a container-internal URL; when unset, the redirect falls back to `DEN_API_BASE`, then `api.<web host>`.
 - `DEN_AUTH_ORIGIN` (server-only): Origin header sent to Better Auth endpoints when the browser request does not include one. Required outside local dev wrappers.
 - `DEN_WEB_PUBLIC_ORIGIN` (server/runtime): public origin used for metadata.
 - `DEN_WEB_OPENWORK_APP_CONNECT_URL` (runtime): Base URL for "Open in App" links.
