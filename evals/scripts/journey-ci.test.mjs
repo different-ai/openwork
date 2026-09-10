@@ -77,6 +77,13 @@ test('registered case metadata names exact files, supported execution axes, and 
     assert(entries.some(entry => entry.spec === registered.spec));
     assert.equal('surfaces' in registered, false);
   }
+  assert(entries.some(entry => entry.spec.startsWith('scenarios/')));
+  assert(entries.every(entry => entry.worlds.length > 0));
+  assert.equal(new Set(entries.map(entry => entry.artifactId)).size, entries.length);
+  for (const entry of entries) {
+    assert.match(entry.artifactId, /^[A-Za-z0-9_-]+$/);
+    assert.equal(Buffer.from(entry.artifactId, 'base64url').toString('utf8'), entry.spec);
+  }
 });
 
 test('skips, no tests, missing summaries, setup and judging failures never pass', () => {
