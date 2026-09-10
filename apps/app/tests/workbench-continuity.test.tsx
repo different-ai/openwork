@@ -1,12 +1,31 @@
 /** @jsxImportSource react */
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { DynamicToolUIPart } from "ai";
 
-GlobalRegistrator.register();
-Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+const ownedDom = typeof globalThis.window === "undefined";
+if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
+const elementPrototype = HTMLElement.prototype;
+const originalDescriptors = new Map<string, PropertyDescriptor | undefined>(
+  ["offsetWidth", "offsetHeight", "ariaDisabled", "offsetLeft", "getBoundingClientRect"]
+    .map((name) => [name, Object.getOwnPropertyDescriptor(elementPrototype, name)]),
+);
+const actEnvironment = Object.getOwnPropertyDescriptor(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+afterAll(async () => {
+  try {
+    for (const [name, descriptor] of originalDescriptors) {
+      if (descriptor) Object.defineProperty(elementPrototype, name, descriptor);
+      else Reflect.deleteProperty(elementPrototype, name);
+    }
+    if (actEnvironment) Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+    else Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+  } finally {
+    if (ownedDom) await GlobalRegistrator.unregister();
+  }
+});
+Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, writable: true, value: true });
 // The actual panel library needs nonzero geometry. This is a component test,
 // not a browser layout/anchoring measurement.
 Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
@@ -32,6 +51,7 @@ Object.defineProperty(HTMLElement.prototype, "offsetLeft", {
 });
 Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
   configurable: true,
+  writable: true,
   value(this: HTMLElement) { return new DOMRect(this.offsetLeft, 0, this.offsetWidth, this.offsetHeight); },
 });
 
@@ -52,8 +72,11 @@ beforeEach(() => {
   root = createRoot(container);
 });
 afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
+  try {
+    await act(async () => root.unmount());
+  } finally {
+    container.remove();
+  }
 });
 
 function element(selector: string) {
