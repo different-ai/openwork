@@ -285,7 +285,11 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
         })
       : undefined
     const transport = new StreamableHTTPClientTransport(serverUrl, {
-      authProvider: oauthProvider,
+      // Callback validation may use the staged token, but must never start OAuth
+      // again (including refresh or scope step-up) when the resource rejects it.
+      authProvider: input.flow.kind === "callback" && oauthProvider
+        ? { token: async () => (await oauthProvider.tokens())?.access_token }
+        : oauthProvider,
       fetch: observer.fetch,
       requestInit: requestInit(input.connection.authorization),
     })
@@ -386,7 +390,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
         kind: "operation",
         connectionId: input.connection.id,
         operationPhase: input.operationPhase,
-        requestPhase: failureRequestPhase(session.observer),
+        requestPhase: wrapped.requestPhase,
         outcome: "failed",
         durationMs: clock.now() - startedAt,
       })
@@ -540,7 +544,14 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
           let exchangedTokens = false
           let operationFailed = false
           try {
-            await session.transport.finishAuth(code, input.responseIssuer)
+            if (!session.oauthProvider) throw new UnauthorizedError("OAuth callback requires an OAuthClientProvider")
+            const authResult = await auth(session.oauthProvider, {
+              serverUrl: session.serverUrl,
+              authorizationCode: code,
+              iss: input.responseIssuer,
+              fetchFn: session.observer.fetch,
+            })
+            if (authResult !== "AUTHORIZED") throw new UnauthorizedError("Failed to authorize")
             exchangedTokens = true
             await connectWithProtocolNegotiation({
               session,
@@ -550,9 +561,11 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             if (session.client.getServerCapabilities()?.tools) {
               await session.client.listTools(undefined, session.requestOptions)
             }
-            await session.oauthProvider?.commitPendingAuthorizationCodeCredential()
+            await session.oauthProvider.commitPendingAuthorizationCodeCredential()
           } catch (error) {
             operationFailed = true
+            // Preserve the rejection phase before cleanup or close can change it.
+            const requestPhase = failureRequestPhase(session.observer)
             let credentialCleanupError: unknown = null
             if (exchangedTokens && credentialPort) {
               try {
@@ -572,14 +585,18 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             if (credentialCleanupError) {
               throw new EnterpriseMcpClientError({
                 operationPhase: "authorization-callback",
-                requestPhase: session.observer.lastRequestPhase(),
+                requestPhase,
                 cause: new AggregateError(
                   [error, credentialCleanupError],
                   "Post-authorization validation failed and the exchanged credentials could not be invalidated.",
                 ),
               })
             }
-            throw error
+            throw error instanceof EnterpriseMcpClientError ? error : new EnterpriseMcpClientError({
+              operationPhase: "authorization-callback",
+              requestPhase,
+              cause: error,
+            })
           } finally {
             try {
               await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)

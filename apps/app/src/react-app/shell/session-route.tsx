@@ -81,7 +81,7 @@ import {
   describeTaskCreateRetry,
   describeWorkspaceCreateError,
   createRouteSession,
-  createRouteSessionWithEndpoint,
+  createRouteSessionOnEngine,
   deleteRouteSession,
   downloadWorkspaceJson,
   folderNameFromPath,
@@ -490,6 +490,7 @@ export function SessionRoute() {
     legacySelectedWorkspaceId,
     setLegacySelectedWorkspaceId,
     retryingWorkspaceIds,
+    loadedWorkspaceIds,
     setRetryingWorkspaceIds,
     startupRetryTimerRef,
     selectedWorkspaceId,
@@ -586,6 +587,7 @@ export function SessionRoute() {
     : undefined, [local.prefs.defaultModel?.modelID, local.prefs.defaultModel?.providerID]);
   const sessionMcpMaintenance = useSessionMcpMaintenance({
     cloudSignedIn: denAuth.isSignedIn,
+    cloudAuthStatus: denAuth.status,
     client: selectedWorkspaceEndpoint?.client ?? null,
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
     opencodeClient,
@@ -772,8 +774,8 @@ export function SessionRoute() {
 
 
   const workspaceSessionGroups = useMemo(
-    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(retryingWorkspaceIds)),
-    [errorsByWorkspaceId, retryingWorkspaceIds, sessionsByWorkspaceId, workspaces],
+    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(retryingWorkspaceIds), loadedWorkspaceIds),
+    [errorsByWorkspaceId, retryingWorkspaceIds, sessionsByWorkspaceId, workspaces, loadedWorkspaceIds],
   );
   useSessionGroupSync({ workspaces, endpointForWorkspace });
   const selectedWorkspaceGroupState = sessionManagementStore((state) => (
@@ -1578,25 +1580,26 @@ export function SessionRoute() {
           return false;
         }
       },
-      onForkAtMessage: (messageId: string | null, sessionId: string) => {
-        void (async () => {
-          const targetSessionId = sessionId.trim() || selectedSessionId;
-          if (!targetSessionId) return;
-          try {
-            const forked = await forkSession(opencodeClient, targetSessionId, messageId ?? undefined);
-            writeLastSessionFor(selectedWorkspaceId, forked.id);
-            rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
-            setSessionsByWorkspaceId((current) => ({
-              ...current,
-              [selectedWorkspaceId]: mergeWorkspaceRouteSession(current[selectedWorkspaceId] ?? [], forked),
-            }));
-            navigateToWorkspaceSession(selectedWorkspaceId, forked.id);
-            void refreshRouteState();
-          } catch (error) {
-            console.warn("[fork] failed", error);
-            toast.error(t("session.branch_failed"));
-          }
-        })();
+      onForkAtMessage: async (messageId: string | null, sessionId: string, isCurrent: () => boolean) => {
+        const targetSessionId = sessionId.trim() || selectedSessionId;
+        if (!targetSessionId) return;
+        const navigationOwner = selectedConversationRef.current;
+        const paneOwner = focusedWorkbenchPaneOwner();
+        const forked = await forkSession(opencodeClient, targetSessionId, messageId ?? undefined);
+        if (!isCurrent()
+          || selectedConversationRef.current.navigationGeneration !== navigationOwner.navigationGeneration
+          || selectedConversationRef.current.workspaceId !== navigationOwner.workspaceId
+          || selectedConversationRef.current.sessionId !== navigationOwner.sessionId
+          || selectedConversationRef.current.draftScope !== navigationOwner.draftScope
+          || focusedWorkbenchPaneOwner() !== paneOwner) return;
+        writeLastSessionFor(selectedWorkspaceId, forked.id);
+        rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
+        setSessionsByWorkspaceId((current) => ({
+          ...current,
+          [selectedWorkspaceId]: mergeWorkspaceRouteSession(current[selectedWorkspaceId] ?? [], forked),
+        }));
+        navigateToWorkspaceSession(selectedWorkspaceId, forked.id);
+        void refreshRouteState();
       },
       onChangeModel: (model: { providerID: string; modelID: string }) => {
         local.setPrefs((previous) => ({
@@ -1878,24 +1881,25 @@ export function SessionRoute() {
           return false;
         }
       },
-      onForkAtMessage: (messageId: string | null, sessionId: string) => {
-        void (async () => {
-          const targetSessionId = sessionId.trim() || session.sessionId;
-          try {
-            const forked = await forkSession(workspaceOpencodeClient, targetSessionId, messageId ?? undefined);
-            writeLastSessionFor(workspace.id, forked.id);
-            rememberPendingCreatedSession(workspace.id, forked.id);
-            setSessionsByWorkspaceId((current) => ({
-              ...current,
-              [workspace.id]: mergeWorkspaceRouteSession(current[workspace.id] ?? [], forked),
-            }));
-            navigateToWorkspaceSession(workspace.id, forked.id);
-            void refreshRouteState();
-          } catch (error) {
-            console.warn("[fork] failed", error);
-            toast.error(t("session.branch_failed"));
-          }
-        })();
+      onForkAtMessage: async (messageId: string | null, sessionId: string, isCurrent: () => boolean) => {
+        const targetSessionId = sessionId.trim() || session.sessionId;
+        const navigationOwner = selectedConversationRef.current;
+        const paneOwner = focusedWorkbenchPaneOwner();
+        const forked = await forkSession(workspaceOpencodeClient, targetSessionId, messageId ?? undefined);
+        if (!isCurrent()
+          || selectedConversationRef.current.navigationGeneration !== navigationOwner.navigationGeneration
+          || selectedConversationRef.current.workspaceId !== navigationOwner.workspaceId
+          || selectedConversationRef.current.sessionId !== navigationOwner.sessionId
+          || selectedConversationRef.current.draftScope !== navigationOwner.draftScope
+          || focusedWorkbenchPaneOwner() !== paneOwner) return;
+        writeLastSessionFor(workspace.id, forked.id);
+        rememberPendingCreatedSession(workspace.id, forked.id);
+        setSessionsByWorkspaceId((current) => ({
+          ...current,
+          [workspace.id]: mergeWorkspaceRouteSession(current[workspace.id] ?? [], forked),
+        }));
+        navigateToWorkspaceSession(workspace.id, forked.id);
+        void refreshRouteState();
       },
     };
     return {
@@ -3499,15 +3503,11 @@ export function SessionRoute() {
           };
           const workspace = workspaces.find((item) => item.id === workspaceId);
           if (!workspace) throw new Error("Workspace is unavailable. Try again.");
-          const endpoint = endpointForWorkspace(workspace);
-          if (!endpoint?.token) throw new Error("Workspace is disconnected. Reconnect and try again.");
-          // The auto-send is scoped by the engine URL the surface will own the
-          // session under, so key it with the endpoint that created the session
-          // (v2 routing rewrites it; the workspace default is always v1).
-          const { session, endpoint: sessionEndpoint } = await createRouteSessionWithEndpoint(
-            endpoint,
-            workspace.path?.trim() || undefined,
-          );
+          const workspaceEndpoint = endpointForWorkspace(workspace);
+          if (!workspaceEndpoint?.token) throw new Error("Workspace is disconnected. Reconnect and try again.");
+          // The scoped auto-send mark must name the engine that owns the new
+          // session; the session surface consumes it under that same base URL.
+          const { session, endpoint } = await createRouteSessionOnEngine(workspaceEndpoint, workspace.path?.trim() || undefined);
           const continuation = handoff
             ? snapshotComposerSessionState(handoff.getContinuation())
             : null;
@@ -3536,7 +3536,7 @@ export function SessionRoute() {
               markComposerAutoSend(session.id, {
                 scopeKey: composerAutoSendScopeKey({
                   draftScope: sessionDraftScope,
-                  opencodeBaseUrl: sessionEndpoint.opencodeBaseUrl,
+                  opencodeBaseUrl: endpoint.opencodeBaseUrl,
                   workspaceId,
                   sessionId: session.id,
                 }),

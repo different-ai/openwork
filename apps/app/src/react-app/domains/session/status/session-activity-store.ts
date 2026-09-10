@@ -320,8 +320,17 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
     set((state) => updateRecord(state, workspaceId, sessionId, (record) => {
       const progress = transcriptProgress(messages, record.progressParts);
       if (record.progressRevision === progress.revision) return record;
+      const hydratedActiveStartedAt = snapshot && record.progressRevision === null && record.runActive
+        ? progress.activeStartedAt
+        : 0;
       return {
         ...record,
+        // Snapshot fetch time establishes ordering, not execution age. Only a
+        // persisted in-flight part can move the first hydrated run anchor back;
+        // old terminal transcript rows must not age a newer accepted run.
+        runStartedAt: hydratedActiveStartedAt > 0
+          ? Math.min(record.runStartedAt || hydratedActiveStartedAt, hydratedActiveStartedAt)
+          : record.runStartedAt,
         progressRevision: progress.revision,
         progressParts: progress.parts,
         latestActivity: progress.label ?? record.latestActivity,

@@ -167,6 +167,7 @@ const applicationMenu = createApplicationMenu({
   appName: APP_NAME,
   docsUrl: DOCS_PAGE_URL,
   getWindow: () => createMainWindow(),
+  closeBrowserTab: (host) => browserPanel?.closeFocusedBrowserTab(host) ?? false,
 });
 
 let browserPanel = null;
@@ -397,7 +398,11 @@ async function resolveArchitectureInfo() {
   const version = app.getVersion();
   const targetArch = systemArch === "arm64" || systemArch === "x64" ? systemArch : appArch;
   const assetName = `openwork-${platformDownloadSlug()}-${downloadAssetArch(targetArch)}-${version}.${downloadAssetExtension()}`;
-  const latestDownloadUrl = await resolveCorrectArchitectureDownloadUrl(targetArch);
+  // The public release manifest only matters when the installed build does not
+  // match the machine; a matching install never shows a download, so it must
+  // not contact the release host (an unactivated enterprise install in
+  // particular has no business reaching anything before its Den is known).
+  const latestDownloadUrl = appArch === systemArch ? null : await resolveCorrectArchitectureDownloadUrl(targetArch);
   const hasCorrectArchitectureDownload = Boolean(latestDownloadUrl);
   return {
     appArch,
@@ -410,6 +415,28 @@ async function resolveArchitectureInfo() {
     downloadUrl: latestDownloadUrl || `${RELEASE_DOWNLOAD_BASE_URL}/${assetName}`,
     releaseUrl: RELEASE_PAGE_URL,
   };
+}
+
+// On Windows and Linux Chromium's spellchecker downloads its Hunspell
+// dictionary from Google (redirector.gvt1.com). Electron starts that load the
+// moment the default session object is first created, so an unactivated
+// install clears the dictionary list in the same synchronous step (the
+// download itself waits on a file-thread hop) and restores it once activation
+// completes. macOS uses the native spellchecker; these calls are no-ops there.
+// An empty persisted list is re-defaulted by Electron on the next boot, so a
+// quit before activation cannot leave the spellchecker off for good.
+let spellcheckerLanguagesHeldForActivation = null;
+function holdSpellcheckerUntilActivation(bootstrapConfig) {
+  if (!desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)) return;
+  const defaultSession = session.defaultSession;
+  spellcheckerLanguagesHeldForActivation = defaultSession.getSpellCheckerLanguages();
+  defaultSession.setSpellCheckerLanguages([]);
+}
+function releaseSpellcheckerAfterActivation() {
+  const languages = spellcheckerLanguagesHeldForActivation;
+  spellcheckerLanguagesHeldForActivation = null;
+  if (!languages || languages.length === 0) return;
+  session.defaultSession.setSpellCheckerLanguages(languages);
 }
 
 const APP_ICON_PATH = resolveAppIconPath();
@@ -1204,6 +1231,7 @@ async function persistConnectLinkClaims(claims) {
     desktopActivationRequired(DESKTOP_DISTRIBUTION, previous)
     && !desktopActivationRequired(DESKTOP_DISTRIBUTION, config)
   ) {
+    releaseSpellcheckerAfterActivation();
     await uiControlServer.start().catch((error) => {
       console.warn("[ui-control] failed to start", error);
     });
@@ -2003,6 +2031,7 @@ const desktopCommandHandlers = {
         desktopActivationRequired(DESKTOP_DISTRIBUTION, previous)
         && !desktopActivationRequired(DESKTOP_DISTRIBUTION, next)
       ) {
+        releaseSpellcheckerAfterActivation();
         await uiControlServer.start().catch((error) => {
           console.warn("[ui-control] failed to start", error);
         });
@@ -2589,6 +2618,7 @@ async function createMainWindow() {
     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
   }
   applicationMenu.applyVisibility(mainWindow);
+  browserPanel.registerWindowShortcuts(mainWindow);
 
   mainWindow.webContents.on("context-menu", (_event, params) => {
     void nativeContextMenus.showEditing(params).catch((error) => {
@@ -2862,6 +2892,7 @@ or use: pnpm dev:worktree`);
   });
 
   app.whenReady().then(async () => {
+    holdSpellcheckerUntilActivation(workspaceStore.readDesktopBootstrapConfigSync());
     const systemCaCertificates = await runtimeManager.systemCaCertificates();
     session.defaultSession.setCertificateVerifyProc(createSystemCaCertificateVerifyProc(systemCaCertificates));
     installMediaPermissionHandlers(session, () => mainWindow);

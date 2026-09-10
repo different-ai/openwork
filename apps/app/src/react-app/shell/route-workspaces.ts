@@ -70,11 +70,12 @@ async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promis
 }
 
 /**
- * Create a session on the engine that routes this workspace's chats and return
- * that engine's endpoint too: anything keyed by the session's `opencodeBaseUrl`
- * (the surface's owner scope) must use the resolved URL, not the v1 default.
+ * Create a session and report the engine endpoint that owns it. Callers that
+ * key follow-up state by `opencodeBaseUrl` (the hero's one-step auto-send) must
+ * use this endpoint, not the workspace's default v1 one, or the mounted
+ * session surface never finds that state when chat is routed to v2.
  */
-export async function createRouteSessionWithEndpoint(
+export async function createRouteSessionOnEngine(
   endpoint: ResolvedWorkspaceEndpoint,
   directory?: string,
 ): Promise<{ session: Session; endpoint: ResolvedWorkspaceEndpoint }> {
@@ -86,7 +87,7 @@ export async function createRouteSessionWithEndpoint(
 }
 
 export async function createRouteSession(endpoint: ResolvedWorkspaceEndpoint, directory?: string): Promise<Session> {
-  return (await createRouteSessionWithEndpoint(endpoint, directory)).session;
+  return (await createRouteSessionOnEngine(endpoint, directory)).session;
 }
 
 export async function deleteRouteSession(endpoint: ResolvedWorkspaceEndpoint, sessionId: string): Promise<boolean> {
@@ -518,10 +519,12 @@ export function toSessionGroups(
   sessionsByWorkspaceId: Record<string, RouteSession[]>,
   errorsByWorkspaceId: Record<string, string | null>,
   loadingWorkspaceIds: Set<string>,
+  loadedWorkspaceIds: ReadonlySet<string>,
 ): WorkspaceSessionGroup[] {
   return workspaces.map((workspace) => ({
     workspace,
     sessions: sessionsByWorkspaceId[workspace.id] ?? [],
+    sessionsLoaded: loadedWorkspaceIds.has(workspace.id),
     status: loadingWorkspaceIds.has(workspace.id)
       ? "loading"
       : errorsByWorkspaceId[workspace.id]

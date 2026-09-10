@@ -63,9 +63,13 @@ function isSyntheticMessageId(id: string) {
  * do not exist server-side and would corrupt the fork boundary. Returns null
  * when the branch point is the last message, meaning "fork the full session".
  */
-export function resolveForkBoundaryId(messages: UIMessage[], messageId: string): string | null {
-  const idx = messages.findIndex((message) => message.id === messageId);
-  if (idx < 0) return null;
+export function resolveForkBoundaryId(messages: readonly Pick<UIMessage, "id">[], messageId: string): string | null {
+  const nativeId = isSyntheticMessageId(messageId)
+    ? messageId.slice(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX.length)
+    : messageId.endsWith(":steps") ? messageId.slice(0, -":steps".length) : messageId;
+  const exact = messages.findIndex((message) => message.id === messageId);
+  const idx = exact < 0 ? messages.findIndex((message) => message.id === nativeId) : exact;
+  if (idx < 0) throw new Error("The branch message is no longer in this conversation.");
   for (let index = idx + 1; index < messages.length; index += 1) {
     const candidate = messages[index];
     if (candidate && !isSyntheticMessageId(candidate.id)) return candidate.id;

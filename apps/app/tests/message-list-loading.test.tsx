@@ -19,6 +19,7 @@ import { useSessionActivityStore } from "../src/react-app/domains/session/status
 import { activeDelegatedTasks, hasNoNewActivity, lastTaskProgressAt, transcriptProgress } from "../src/react-app/domains/session/status/session-progress";
 import type { TaskToolPart } from "../src/lib/build-in-tools";
 import { WorkspaceProvider } from "../src/react-app/shell/workspace-provider";
+import { createDefaultPlatform, PlatformProvider } from "../src/react-app/kernel/platform";
 import * as sessionSync from "../src/react-app/domains/session/sync/session-sync";
 
 const inspectChild = mock((_sessionId: string) => {});
@@ -36,6 +37,7 @@ const userMessage: UIMessage = {
 
 function list(messages: UIMessage[], status: ThreadStatus, syncHealth?: RunSyncHealth) {
   return (
+    <PlatformProvider value={createDefaultPlatform()}>
     <MessageListProvider
       workspaceId="ws"
       sessionId="session"
@@ -55,7 +57,8 @@ function list(messages: UIMessage[], status: ThreadStatus, syncHealth?: RunSyncH
       onMcpRetry={() => {}}
     >
       <MessageList messages={messages} status={status} activityStatus="thinking" syncHealth={syncHealth} />
-    </MessageListProvider>,
+    </MessageListProvider>
+    </PlatformProvider>
   );
 }
 
@@ -64,6 +67,50 @@ function renderList(messages: UIMessage[], status: ThreadStatus, syncHealth?: Ru
 }
 
 describe("message-list loading feedback", () => {
+  test("updates a live assistant group and its last-group props without resetting expanded tool details", async () => {
+    const ownedDom = typeof window === "undefined";
+    if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
+    const actEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const tools: UIMessage["parts"] = [0, 1].map((index) => ({
+      type: "dynamic-tool", toolName: "bash", toolCallId: `render-state-${index}`,
+      state: "output-available", input: { command: `pwd ${index}` }, output: "done",
+    }));
+    const assistant: UIMessage = { id: "live-answer", role: "assistant", parts: [...tools, { type: "text", text: "First answer" }] };
+    try {
+      await act(async () => root.render(list([userMessage, assistant], "streaming")));
+      const aggregate = container.querySelector('[data-tool-aggregate="render-state-1"]');
+      const expand = aggregate?.querySelector<HTMLButtonElement>("button");
+      if (!expand) throw new Error("Missing aggregate expansion button");
+      await act(async () => expand.click());
+      const detail = aggregate?.querySelector<HTMLButtonElement>('[data-tool-aggregate-detail="command"]');
+      if (!detail) throw new Error("Missing command detail");
+      await act(async () => detail.click());
+      expect(detail.getAttribute("aria-expanded")).toBe("true");
+      const branchesWhileStreaming = container.querySelectorAll('[aria-label="Branch in new chat"]').length;
+      const live: UIMessage = { ...assistant, parts: [...tools, { type: "text", text: "First answer continues" }] };
+      await act(async () => root.render(list([userMessage, live], "streaming")));
+      expect(container.textContent).toContain("First answer continues");
+      await act(async () => root.render(list([userMessage, live], "ready")));
+      expect(container.querySelectorAll('[aria-label="Branch in new chat"]').length).toBeGreaterThan(branchesWhileStreaming);
+      const older: UIMessage = { ...userMessage, id: "older-user" };
+      const followup: UIMessage = { ...userMessage, id: "next-user" };
+      await act(async () => root.render(list([older, userMessage, live, followup], "streaming")));
+      expect(container.querySelector('[data-tool-aggregate="render-state-1"]')).toBe(aggregate);
+      expect(aggregate?.querySelector('[data-tool-aggregate-detail="command"]')).toBe(detail);
+      expect(detail.getAttribute("aria-expanded")).toBe("true");
+      expect(container.textContent).toContain("First answer continues");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+      if (ownedDom) await GlobalRegistrator.unregister();
+    }
+  });
+
   test("acknowledges a submitted message before streaming starts", () => {
     const markup = renderList([userMessage], "submitted");
 
@@ -94,7 +141,10 @@ describe("message-list loading feedback", () => {
 const task: TaskToolPart = {
   type: "dynamic-tool", toolName: "task", toolCallId: "delegation", state: "input-available",
   input: { description: "Review project notes", prompt: "PRIVATE TASK PROMPT", subagent_type: "general" },
-  callProviderMetadata: { openwork: { childSessionId: "child" } },
+  callProviderMetadata: {
+    opencode: { partId: "part-delegation" },
+    openwork: { childSessionId: "child", toolStartedAt: 1_000 },
+  },
 };
 const delegated: UIMessage = { id: "assistant", role: "assistant", parts: [task] };
 const followup: UIMessage = { id: "followup", role: "user", parts: [{ type: "text", text: "What is the update?" }] };
@@ -141,8 +191,8 @@ describe("task-linked meaningful progress", () => {
     document.body.append(container);
     const root = createRoot(container);
     const revalidate = spyOn(sessionSync, "revalidateWorkspaceSessionSync").mockResolvedValue(undefined);
-    const view = () => <WorkspaceProvider client={null} workspaceId="ws" opencodeBaseUrl="http://localhost/test-engine" selectedWorkspaceRoot="/tmp/test">
-      {list([userMessage, delegated, followup], "streaming")}
+    const view = (messages: UIMessage[] = [userMessage, delegated, followup]) => <WorkspaceProvider client={null} workspaceId="ws" opencodeBaseUrl="http://localhost/test-engine" selectedWorkspaceRoot="/tmp/test">
+      {list(messages, "streaming")}
     </WorkspaceProvider>;
     const clock = spyOn(Date, "now").mockReturnValue(1_000);
     try {
@@ -162,9 +212,34 @@ describe("task-linked meaningful progress", () => {
       expect(lastTaskProgressAt(1_000, [task], records)).toBe(1_000);
       await act(async () => { root.render(view()); });
       let html = container.innerHTML;
-      expect(html).toContain('data-loading-message="no-new-activity"');
+      expect(html).toContain('data-subagent-activity="no-new-activity"');
+      expect(html).toContain("Still working — waiting for updates");
       expect(html).not.toContain('data-loading-message="working"');
       expect(html).not.toContain('data-testid="session-error-resume"');
+      const newTask: TaskToolPart = {
+        ...task,
+        toolCallId: "delegation-new-child",
+        callProviderMetadata: {
+          opencode: { partId: "part-delegation-new-child" },
+          openwork: { childSessionId: "child-new", toolStartedAt: 61_500 },
+        },
+      };
+      const oldCompleted: UIMessage = {
+        ...delegated,
+        parts: [{ ...task, state: "output-available", output: "PRIVATE OLD RESULT" }],
+      };
+      const newDelegated: UIMessage = {
+        id: "assistant-new-child",
+        role: "assistant",
+        parts: [newTask],
+        metadata: { opencode: { created: 61_500 } },
+      };
+      await act(async () => { root.render(view([userMessage, oldCompleted, followup, newDelegated])); });
+      html = container.innerHTML;
+      expect(html).toContain('data-subagent-run="delegation-new-child"');
+      expect(html).toContain('data-subagent-activity="shimmer"');
+      expect(html).not.toContain('data-subagent-run="delegation-new-child" data-subagent-session-id="child-new" data-subagent-activity="no-new-activity"');
+      await act(async () => { root.render(view()); });
       expect(revalidate).toHaveBeenCalledTimes(1);
       expect(revalidate).toHaveBeenCalledWith({ workspaceId: "ws", baseUrl: "http://localhost/test-engine" });
       const inspect = container.querySelector<HTMLButtonElement>('[data-subagent-run="delegation"] button');
@@ -189,7 +264,8 @@ describe("task-linked meaningful progress", () => {
         // Identical snapshots do not rerender: the ordinary UI tick must warn.
         await new Promise((resolve) => window.setTimeout(resolve, 1_100));
       });
-      expect(container.innerHTML).toContain('data-loading-message="no-new-activity"');
+      expect(container.innerHTML).toContain('data-subagent-activity="no-new-activity"');
+      expect(container.innerHTML).toContain("Still working — waiting for updates");
       await act(async () => { store.setWaitingRequest("ws", "child", "question", "question-1", true); });
       expect(container.innerHTML).not.toContain('data-loading-message="no-new-activity"');
       expect(container.innerHTML).toContain("Waiting for your answer");
@@ -227,6 +303,85 @@ describe("task-linked meaningful progress", () => {
     const response: UIMessage = { id: "response", role: "assistant", parts: [{ type: "text", text: "Already sent" }] };
     const before = transcriptProgress([delegated, response]);
     expect(transcriptProgress([result, response], before.parts).label).toBe("Tool result received");
+  });
+
+  test("hydrates active execution age from persisted transcript time without aging a new run from old terminal rows", () => {
+    const clock = spyOn(Date, "now").mockReturnValue(62_000);
+    try {
+      const active: UIMessage = {
+        ...delegated,
+        metadata: { opencode: { created: 1_000 } },
+      };
+      let store = useSessionActivityStore.getState();
+      store.seedSessionRun("ws", "child", { type: "busy" }, false, { snapshotStartedAt: 62_000 });
+      store.observeTranscript("ws", "child", [active], true);
+      let record = useSessionActivityStore.getState().recordsByWorkspaceId.ws?.child;
+      expect(record?.runStartedAt).toBe(1_000);
+      expect(record?.lastProgressAt).toBe(1_000);
+      expect(hasNoNewActivity({ active: true, lastProgressAt: record?.lastProgressAt ?? 0, now: 62_000 })).toBe(true);
+
+      clock.mockReturnValue(120_000);
+      store.observeTranscript("ws", "child", structuredClone([active]), true);
+      record = useSessionActivityStore.getState().recordsByWorkspaceId.ws?.child;
+      expect(record?.runStartedAt).toBe(1_000);
+      expect(record?.lastProgressAt).toBe(1_000);
+
+      useSessionActivityStore.setState({ recordsByWorkspaceId: {}, statusesByWorkspaceId: {} });
+      clock.mockReturnValue(62_000);
+      const terminal: UIMessage = {
+        ...delegated,
+        parts: [{ ...task, state: "output-available", output: "PRIVATE RESULT" }],
+        metadata: { opencode: { created: 1_000, completed: 2_000 } },
+      };
+      store = useSessionActivityStore.getState();
+      store.seedSessionRun("ws", "child", { type: "busy" }, false, { snapshotStartedAt: 62_000 });
+      store.observeTranscript("ws", "child", [terminal], true);
+      record = useSessionActivityStore.getState().recordsByWorkspaceId.ws?.child;
+      expect(record?.runStartedAt).toBe(62_000);
+      expect(record?.lastProgressAt).toBe(2_000);
+
+      useSessionActivityStore.setState({ recordsByWorkspaceId: {}, statusesByWorkspaceId: {} });
+      const fresh: UIMessage = { ...active, metadata: { opencode: { created: 61_500 } } };
+      store = useSessionActivityStore.getState();
+      store.seedSessionRun("ws", "child", { type: "busy" }, false, { snapshotStartedAt: 62_000 });
+      store.observeTranscript("ws", "child", [fresh], true);
+      record = useSessionActivityStore.getState().recordsByWorkspaceId.ws?.child;
+      expect(record?.runStartedAt).toBe(61_500);
+      expect(hasNoNewActivity({ active: true, lastProgressAt: record?.lastProgressAt ?? 0, now: 62_000 })).toBe(false);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("does not derive a new run's age from an unfinished tool before the latest user turn", () => {
+    const oldActive: UIMessage = { ...delegated, metadata: { opencode: { created: 1_000 } } };
+    const latestUser: UIMessage = { ...followup, metadata: { opencode: { created: 61_000 } } };
+    const historical = transcriptProgress([userMessage, oldActive, latestUser]);
+    expect(historical.activeStartedAt).toBe(0);
+    expect(Object.keys(historical.parts)).toContain("assistant:delegation");
+
+    const clock = spyOn(Date, "now").mockReturnValue(62_000);
+    try {
+      let store = useSessionActivityStore.getState();
+      store.seedSessionRun("ws", "fresh-run", { type: "busy" }, false, { snapshotStartedAt: 62_000 });
+      store.observeTranscript("ws", "fresh-run", [userMessage, oldActive, latestUser], true);
+      expect(useSessionActivityStore.getState().recordsByWorkspaceId.ws?.["fresh-run"]?.runStartedAt).toBe(62_000);
+
+      useSessionActivityStore.setState({ recordsByWorkspaceId: {}, statusesByWorkspaceId: {} });
+      const currentTask: TaskToolPart = { ...task, toolCallId: "delegation-current" };
+      const currentActive: UIMessage = {
+        id: "assistant-current",
+        role: "assistant",
+        parts: [currentTask],
+        metadata: { opencode: { created: 61_500 } },
+      };
+      store = useSessionActivityStore.getState();
+      store.seedSessionRun("ws", "fresh-run", { type: "busy" }, false, { snapshotStartedAt: 62_000 });
+      store.observeTranscript("ws", "fresh-run", [userMessage, oldActive, latestUser, currentActive], true);
+      expect(useSessionActivityStore.getState().recordsByWorkspaceId.ws?.["fresh-run"]?.runStartedAt).toBe(61_500);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   test("warns strictly after a minute, preserving authoritative waiting, retry and disconnection", () => {
