@@ -11,7 +11,8 @@ const test = spec.world(async seed => {
   resources: { surfaces: ["appWeb"], services: [] },
 });
 
-test("workspace inventory counts survive previews, pins, groups and drafts, and follow archive and Undo", async ({ world, user, agent, probe, step }) => {
+// Archive/Undo count transitions use session-archive-undo's real desktop engine.
+test("workspace inventory counts survive previews, pins, groups, drafts and reload", async ({ world, user, agent, probe, step }) => {
   const workspaceId = world.workspace.workspaceId;
   const count = { testId: `workspace-conversation-count-${workspaceId}` };
   const session = world.sessions.at(-1);
@@ -42,17 +43,6 @@ test("workspace inventory counts survive previews, pins, groups and drafts, and 
     await user.type("composer", "Unsent inventory note");
     await user.see({ testId: `sidebar-new-task-draft-${workspaceId}` });
     await user.see(count, { text: "21" });
-  });
-  await step("archiving a pinned conversation reduces ownership once and Undo restores it", async () => {
-    await user.click({ testId: `sidebar-session-${session.sessionId}` });
-    await user.see("composer", { editable: true });
-    await user.hover({ testId: `sidebar-session-${session.sessionId}` });
-    await user.click({ testId: `session-archive-${session.sessionId}` });
-    await user.see(count, { text: "20" });
-    await user.see({ text: "Session archived" });
-    await user.click({ role: "button", label: "Undo" });
-    await user.see(count, { text: "21" });
-    await user.see({ testId: `sidebar-session-${session.sessionId}` });
   });
   await step("a cold renderer reload retains the inventory and count explanation", async () => {
     await user.reload();
