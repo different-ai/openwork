@@ -247,7 +247,7 @@ function maxAllowedDesktopVersion(versions: string[]) {
   return maxVersion
 }
 
-async function installerReleaseTagForMetadata(metadataInput: unknown) {
+export async function installerReleaseTagForMetadata(metadataInput: unknown) {
   const metadata = normalizeOrganizationMetadata(organizationMetadataInput(metadataInput)).metadata
   const allowedVersions = metadata.allowedDesktopVersions
   if (!allowedVersions?.length) {

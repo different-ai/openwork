@@ -25,7 +25,7 @@ Demo-driven features start from a world script plus a spec in `evals/specs`.
 | substrate | What runs the Den control plane: local processes or `kind`. |
 | witness | A deterministic provider stand-in that records what it saw. |
 | fault | Declared misbehavior used to reproduce a failure condition. |
-| surface | A drivable UI: Electron, or Chrome on Den Web. |
+| surface | A drivable UI: `appWeb` (the app in headless Chrome), `desktop` (Electron), or `web` (Den UI in Chrome). |
 | origin | Whether a resource is launched or attached. See below. |
 | live | A spec attached to a live shared substrate; red is an incident signal about the service, not a verdict on the diff. |
 
@@ -77,14 +77,15 @@ prints `placement: <daytona|local> (<reason>)` for the placement asserted in the
 runtime environment. `--local` and `--daytona` override inherited placement;
 transport, engine, and surface selectors are never inferred as source opt-ins.
 
-Registered cases can select their engine and surface without raw environment
-variables. `--case` uses the surface default in the catalog; `CONT-01` and
-`SWITCH-10` default to web. `--surface` is optional disambiguation, though the
-copyable examples remain explicit. Use `pnpm evals:e2e --list` to see them.
+Registered cases select a concrete world and can select their engine without
+raw environment variables. `CONT-01` and `SWITCH-10` are fixed headless app-web
+worlds. Use `pnpm evals:e2e --list` to see the registered cases. The legacy
+`--surface` selector is migration validation only: it cannot change a declared
+world's implementation, and selecting Electron for either case is rejected.
 
 ```bash
-pnpm evals:e2e streamed-markdown-answer --local --engine v2 --surface web --case CONT-01
-pnpm evals:e2e live-tool-visible-after-session-switch --daytona --engine v1 --surface web --case SWITCH-10
+pnpm evals:e2e streamed-markdown-answer --local --engine v2 --case CONT-01
+pnpm evals:e2e live-tool-visible-after-session-switch --daytona --engine v1 --case SWITCH-10
 ```
 
 A focused web case avoids legacy Den/Electron suite preparation, but still
@@ -100,6 +101,30 @@ means that selected case passed; other cases in the file are reported as not
 run. A selected skip, unknown result, zero matches, or missing JSON report is
 incomplete; any non-selected case that executes is a contract failure.
 Daytona slot IDs and refs remain advanced environment configuration.
+
+### Bounded world migration
+
+The audited migration covers only `CONT-01` (`chatStreamContinuityWeb`) in
+`specs/streamed-markdown-answer.e2e.test.ts` and `SWITCH-10`
+(`sessionSwitchLatencyWeb`) in
+`specs/live-tool-visible-after-session-switch.e2e.test.ts`. Each binding declares
+`resources: { surfaces: ["appWeb"], services: ["mock"] }` and boots through
+`seed.appWeb`, whose default is `headless: true`. Neither world reads surface
+or headless environment selectors. CONT-01 tests ordinary app UI and has no
+native variant.
+
+Both cases assert the runtime user agent contains `HeadlessChrome`, that the
+Electron bridge is absent, and that the app origin, server health, and selected
+engine routes match the fixture. Source SHA metadata is recorded and checked
+when available (required on Daytona); this is not a full source receipt or
+proof of uncommitted source contents.
+
+The other cases and legacy worlds in these mixed files, including
+`streamedMarkdown`, `streamedToolHistory`, and the existing live-tool switching
+setup, are untouched and explicitly deferred. Shared `worlds/chat.ts` and the
+rest of the legacy world inventory are outside this bounded migration. Running
+an entire mixed file still includes its legacy setup; selecting a migrated case
+does not certify or migrate the other cases.
 
 | Exit | Named test | Unfiltered E2E suite | Publish |
 | --- | --- | --- | --- |
@@ -172,12 +197,44 @@ the world returns. E2E files automatically need
 
 ```ts
 export async function emptySession(seed: Seed) {
-  const app = await seed.desktop();
-  await seed.workspace(app, seed.tmpPath("empty-session"));
+  const workspacePath = seed.tmpPath("empty-session");
+  const app = await seed.appWeb({ workspacePath });
+  await seed.workspace(app, workspacePath);
   await seed.session(app);
   return { app };
 }
 ```
+
+Ordinary app UI authoring defaults to `seed.appWeb({ workspacePath })` (headless Chrome, the real
+app, server, and engine). Bind the world's resources explicitly at `spec.world`:
+
+```ts
+const test = spec.world(emptySession, {
+  resources: { surfaces: ["appWeb"], services: [] },
+});
+```
+
+Use `seed.desktop()` only for a native capability a browser cannot prove, and
+explain that capability in the binding's `nativeReason`, for example:
+
+```ts
+const nativeTest = spec.world(nativeFileDialog, {
+  resources: {
+    surfaces: ["desktop"],
+    services: [],
+    nativeReason: "Verify the operating-system file dialog opened through the Electron bridge.",
+  },
+});
+```
+
+Surfaces, services, and placement are separate: declare `den` and `mock` under
+`services` when the world creates them; choose local or Daytona with the runner's
+placement flags. `seed.web()` drives **Den UI**, not the app, and requires
+`surfaces: ["web"]` plus `services: ["den"]`. For declared worlds, the resource
+guard refuses an undeclared surface or service before launch, and a desktop
+declaration requires a non-empty `nativeReason`. Undeclared legacy worlds are
+temporarily allowed within the deferred migration scope; that compatibility is
+not the authoring default.
 
 `app` and `web` are conventional primary surface names. If the returned world
 has one of them (or exactly one surface), channel calls use it by default;
@@ -205,7 +262,9 @@ Before, composer reload coverage imported hosts, behaviors, CDP evaluation, and
 evidence APIs directly. After, the journey is only:
 
 ```ts
-const test = spec.world(emptySession);
+const test = spec.world(emptySession, {
+  resources: { surfaces: ["appWeb"], services: [] },
+});
 test("a draft survives reloads", async ({ user, probe, step }) => {
   await user.type("composer", "Keep this draft");
   const revision = await probe.storage("openwork.session-drafts.v2", pickRevision);
@@ -452,11 +511,10 @@ Without a placement flag, the CLI uses Daytona when `daytona snapshot list`
 succeeds and local otherwise, then prints the placement and reason. `--daytona`
 requires Daytona; `--local` forces local.
 
-Use `--engine v1|v2` for a named spec. A registered `--case` uses its catalog
-surface default; pass `--surface web|electron` to disambiguate explicitly as in
-the recommended examples above. Files run without `--case` retain their legacy
-environment-driven behavior. The test-evidence header records the selected
-engine.
+Use `--engine v1|v2` for a named spec. A registered `--case` selects its concrete
+world; the migrated cases use headless app-web on either placement. Legacy cases
+in files run without `--case` retain their existing environment-driven behavior.
+The test-evidence header records the selected engine.
 
 Use direct CDP tools only to explore or debug. Convert repeatable coverage into
 a testkit test.

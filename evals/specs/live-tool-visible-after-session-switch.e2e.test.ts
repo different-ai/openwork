@@ -25,7 +25,7 @@ import {
   test,
 } from "@openwork/testkit";
 import type { App } from "@openwork/testkit";
-import { sessionSwitchLatency } from "../worlds/session-switch-latency.ts";
+import { sessionSwitchLatencyWeb } from "../worlds/session-switch-latency.ts";
 
 const providerId = "live-tool-switch-mock";
 const modelId = "live-tool-switch-model";
@@ -701,7 +701,10 @@ test.skipIf(!runnable)(
 );
 }
 
-const latencyTest = spec.world(sessionSwitchLatency, { timeout: 8 * 60_000 });
+const latencyTest = spec.world(sessionSwitchLatencyWeb, {
+  timeout: 8 * 60_000,
+  resources: { surfaces: ["appWeb"], services: ["mock"] },
+});
 
 latencyTest("SWITCH-10 opens ten persisted conversations within the normal and warm latency ceilings", {
   timeout: 12 * 60_000,
@@ -862,6 +865,7 @@ latencyTest("SWITCH-10 opens ten persisted conversations within the normal and w
       modelVisible: true,
       viewport: { width: 1280, height: 900, devicePixelRatio: 1 },
     });
+    expect(runtime.browser).toMatch(/HeadlessChrome\//);
     expect(runtime.requestedPlacement).toBe(runtime.resolvedPlacement);
     expect(runtime.actualHostKind).toBe(runtime.resolvedPlacement);
     if (runtime.actualHostKind === "daytona") expect(runtime.actualSandboxId).toMatch(/^.+$/);

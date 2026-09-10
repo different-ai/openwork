@@ -9,7 +9,7 @@ Organization install links help members install the standard OpenWork desktop an
 
 | Deployment style | Download behavior | Required client access |
 | --- | --- | --- |
-| Internet-connected | Den validates the organization install token, then redirects the browser to the exact standard GitHub release asset under `OPENWORK_INSTALLER_RELEASE_REPO` and `OPENWORK_INSTALLER_RELEASE_TAG`. The organization token is not forwarded. | Den web/API, `github.com`, `release-assets.githubusercontent.com`, and `objects.githubusercontent.com` for legacy or rollback paths. |
+| Internet-connected | Den validates the organization install token, then redirects the browser to the exact GitHub release asset under `OPENWORK_INSTALLER_RELEASE_REPO` for the resolved version (see [Which version is installed](#which-version-is-installed)). The organization token is not forwarded. | Den web/API, `github.com`, `release-assets.githubusercontent.com`, and `objects.githubusercontent.com` for legacy or rollback paths. |
 | Semi-air-gapped installer delivery | Den streams the matching standard installer from `OPENWORK_INSTALLER_ARTIFACTS_DIR`. | Den web/API only for installer download. Desktop runtime dependencies may still need internet unless mirrored or disabled. |
 | Fully internal installer delivery | Same mounted-artifact path, with Den web/API and installer bytes available entirely inside the isolated network. | Internal Den web/API only for installer download. Full product isolation still requires the broader checklist in [Air-gapped deployment](/start-here/air-gapped-deployment). |
 
@@ -17,15 +17,27 @@ Organization install links help members install the standard OpenWork desktop an
 
 When `OPENWORK_INSTALLER_ARTIFACTS_DIR` points at a mounted directory and the expected file exists, Den streams that file directly. It does not fetch from GitHub, cache on first request, rewrap, ZIP, or hold the whole installer in memory.
 
-`OPENWORK_INSTALLER_RELEASE_TAG` selects the expected release version. The standard filenames use the release tag without a leading `v`:
+The expected filename depends on the deployment. A self-hosted Den (single-org mode, the default) serves the enterprise distribution; the hosted multi-org OpenWork Cloud serves the cloud distribution. Install links never serve the public `openwork-<platform>-<version>` filenames. The version in the filename is the resolved release tag without a leading `v`:
 
-- `openwork-mac-arm64-<version>.dmg`
-- `openwork-mac-x64-<version>.dmg`
-- `openwork-win-x64-<version>.exe`
-- `openwork-linux-x86_64-<version>.AppImage`
-- `openwork-linux-arm64-<version>.AppImage`
+- `openwork-enterprise-mac-arm64-<version>.dmg`
+- `openwork-enterprise-mac-x64-<version>.dmg`
+- `openwork-enterprise-win-x64-<version>.exe`
+- `openwork-enterprise-linux-x86_64-<version>.AppImage`
+- `openwork-enterprise-linux-arm64-<version>.AppImage`
+
+On hosted OpenWork Cloud the prefix is `openwork-cloud-` instead of `openwork-enterprise-`. A mounted file with any other name is ignored and the request falls through to the GitHub redirect.
 
 `OPENWORK_INSTALLER_RELEASE_REPO` controls the GitHub redirect path when Den does not find a mounted artifact. It is not an internal artifact registry setting.
+
+## Which version is installed
+
+Den resolves one release version per download request, in this order:
+
+1. If the organization's `allowedDesktopVersions` desktop policy is set, the highest listed version wins. This is the way to pin a fleet or to opt into a newer desktop than the Den itself.
+2. Otherwise, if `OPENWORK_INSTALLER_RELEASE_TAG` is set on Den API, that tag wins.
+3. Otherwise, a self-hosted Den running a published release image installs its own release version (the `version` reported by `GET /health` on Den API), so a self-hosted control plane never hands out a desktop newer than itself by default. Hosted OpenWork Cloud, and Den builds without a release version, install the latest published stable release instead.
+
+Mounted artifacts must match the resolved version. When you rely on the default in step 3, place the files for the Den release you run; when you set a policy or an override, place the files for that version.
 
 For multi-replica Den API deployments, mount the same read-only PVC at the same path on every replica. Connection grants are stored in MySQL, so preview and acceptance can land on different replicas safely, but installer bytes must be equally visible to each replica.
 
