@@ -3,6 +3,8 @@ import { readdir, readFile } from 'node:fs/promises';
 // One home for CI grouping, readable names, and execution requirements.
 // Unlisted specs are discovered automatically as full-regression journeys.
 const definitions = {
+  // Its registered OAuth callback and synthetic client exchange run on owned loopback services.
+  'mcp-connection-consent.e2e.test.ts': { name: 'Authorize a connected client once', placement: 'local' },
   'task-activity-shimmer.e2e.test.ts': {
     cases: [{ id: 'ACT-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
   },
