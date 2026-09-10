@@ -13,10 +13,13 @@ test("image menus copy decoded pixels and addresses only after selection", () =>
   const params = { mediaType: "image", hasImageContents: true, x: 12, y: 34, srcURL: "blob:local-image", linkURL: "https://example.com/image" };
   const items = contentMenuTemplate(contents, params, clipboard);
   assert.deepEqual(calls, []);
-  assert.deepEqual(items.map((item) => item.label), ["Copy Image", "Copy Image Address", "Copy Link Address"]);
-  for (const item of items) item.click();
+  assert.deepEqual(items.map((item) => "label" in item ? item.label : undefined), ["Copy Image", "Copy Image Address", "Copy Link Address"]);
+  for (const item of items) {
+    assert.ok("click" in item && typeof item.click === "function");
+    item.click();
+  }
   assert.deepEqual(calls, [[12, 34], params.srcURL, params.linkURL]);
-  assert.equal(contentMenuTemplate(contents, { ...params, hasImageContents: false }, clipboard).some((item) => item.label === "Copy Image"), false);
+  assert.equal(contentMenuTemplate(contents, { ...params, hasImageContents: false }, clipboard).some((item) => "label" in item && item.label === "Copy Image"), false);
 });
 
 function fixture() {
@@ -30,7 +33,8 @@ function fixture() {
     menus.push(menu);
     return menu;
   } };
-  return { menus, contents, window, controller: createNativeContextMenus({ Menu, getWindow: () => window }) };
+  const clipboard = { writeText() { assert.fail("Unexpected clipboard write"); } };
+  return { menus, contents, window, controller: createNativeContextMenus({ Menu, clipboard, getWindow: () => window }) };
 }
 
 test("native templates whitelist fields and cannot execute disabled descendants", () => {
