@@ -416,6 +416,28 @@ async function resolveArchitectureInfo() {
   };
 }
 
+// On Windows and Linux Chromium's spellchecker downloads its Hunspell
+// dictionary from Google (redirector.gvt1.com). Electron starts that load the
+// moment the default session object is first created, so an unactivated
+// install clears the dictionary list in the same synchronous step (the
+// download itself waits on a file-thread hop) and restores it once activation
+// completes. macOS uses the native spellchecker; these calls are no-ops there.
+// An empty persisted list is re-defaulted by Electron on the next boot, so a
+// quit before activation cannot leave the spellchecker off for good.
+let spellcheckerLanguagesHeldForActivation = null;
+function holdSpellcheckerUntilActivation(bootstrapConfig) {
+  if (!desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)) return;
+  const defaultSession = session.defaultSession;
+  spellcheckerLanguagesHeldForActivation = defaultSession.getSpellCheckerLanguages();
+  defaultSession.setSpellCheckerLanguages([]);
+}
+function releaseSpellcheckerAfterActivation() {
+  const languages = spellcheckerLanguagesHeldForActivation;
+  spellcheckerLanguagesHeldForActivation = null;
+  if (!languages || languages.length === 0) return;
+  session.defaultSession.setSpellCheckerLanguages(languages);
+}
+
 const APP_ICON_PATH = resolveAppIconPath();
 const APP_ICON_IMAGE = APP_ICON_PATH ? nativeImage.createFromPath(APP_ICON_PATH) : null;
 const BRAND_ICON_MAX_BYTES = 2 * 1024 * 1024;
@@ -1208,7 +1230,7 @@ async function persistConnectLinkClaims(claims) {
     desktopActivationRequired(DESKTOP_DISTRIBUTION, previous)
     && !desktopActivationRequired(DESKTOP_DISTRIBUTION, config)
   ) {
-    session.defaultSession.setSpellCheckerEnabled(true);
+    releaseSpellcheckerAfterActivation();
     await uiControlServer.start().catch((error) => {
       console.warn("[ui-control] failed to start", error);
     });
@@ -2008,7 +2030,7 @@ const desktopCommandHandlers = {
         desktopActivationRequired(DESKTOP_DISTRIBUTION, previous)
         && !desktopActivationRequired(DESKTOP_DISTRIBUTION, next)
       ) {
-        session.defaultSession.setSpellCheckerEnabled(true);
+        releaseSpellcheckerAfterActivation();
         await uiControlServer.start().catch((error) => {
           console.warn("[ui-control] failed to start", error);
         });
@@ -2868,6 +2890,7 @@ or use: pnpm dev:worktree`);
   });
 
   app.whenReady().then(async () => {
+    holdSpellcheckerUntilActivation(workspaceStore.readDesktopBootstrapConfigSync());
     const systemCaCertificates = await runtimeManager.systemCaCertificates();
     session.defaultSession.setCertificateVerifyProc(createSystemCaCertificateVerifyProc(systemCaCertificates));
     installMediaPermissionHandlers(session, () => mainWindow);
@@ -2880,13 +2903,6 @@ or use: pnpm dev:worktree`);
       console.warn("[nuke] pending cleanup failed", error);
     });
     const bootstrapConfig = await workspaceStore.getDesktopBootstrapConfig();
-    // On Windows and Linux Chromium's spellchecker downloads its Hunspell
-    // dictionary from Google (redirector.gvt1.com) as soon as a text field
-    // mounts. An unactivated install must not reach anything before its Den
-    // is known, so the spellchecker stays off until activation completes.
-    if (desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)) {
-      session.defaultSession.setSpellCheckerEnabled(false);
-    }
     currentDisplayAppName = applyBrandAppName(
       BLANK_SLATE_LAUNCH.enabled || DESKTOP_DISTRIBUTION.flavor === "enterprise"
         ? null
