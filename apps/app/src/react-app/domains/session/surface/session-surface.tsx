@@ -3147,13 +3147,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
             sessionScroll.markScrollGesture(event.currentTarget);
           }}
           onScroll={sessionScroll.handleScroll}
-          // Extra top padding while the find bar is open so it never covers
-          // the first message (short transcripts cannot scroll it clear).
-          className={`absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain touch-pan-y px-3 pb-4 sm:px-5 ${findOwned ? "pt-16" : "pt-4"}`}
+          className="absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain touch-pan-y px-3 pb-4 pt-4 sm:px-5"
         >
           {/* Chat column: tighter than the composer (800px) so messages
                keep a comfortable reading width and don't feel "too big". */}
           <div ref={contentRef} className="mx-auto w-full max-w-[720px]">
+            {/* Clearance so the find bar never covers the first message (short
+                 transcripts cannot scroll it clear). It lives in the content
+                 flow rather than as scroller padding: a padding change on the
+                 scroller suppresses scroll anchoring, so the transcript would
+                 shift under the reader and the saved reading anchor go stale. */}
+            {findOwned ? <div aria-hidden className="h-12" /> : null}
             {queuedDrainState.phase.kind === "admission_unknown" ? (
               <div role="alert" className="mb-4 rounded-xl border border-dls-border bg-dls-hover/60 px-4 py-3 text-sm">
                 <p className="font-medium">Message acceptance is unknown</p>
