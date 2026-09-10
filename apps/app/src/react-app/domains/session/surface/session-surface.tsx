@@ -1752,6 +1752,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
           : undefined;
         const withFollowup = Boolean(args && typeof args === "object" && Reflect.get(args, "withFollowup") === true);
         setEvalMarkdownMessages(createSubagentActivityEvalMessages(props.sessionId, childSessionId, withFollowup));
+        // A delegating parent is mid-run. Without a streaming thread status the
+        // list reads the parent as stopped and the unobserved child shows
+        // "Waiting for task result" instead of the Working shimmer.
+        setEvalThreadStatus("streaming");
         useSessionActivityStore.getState().setRunStatus(
           props.workspaceId,
           props.sessionId,
