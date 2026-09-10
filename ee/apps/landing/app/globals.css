@@ -247,6 +247,64 @@ body {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
 }
 
+/* Hero buttons: 43px pill, 16px regular text, trailing glyph icon. */
+.lp-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 43px;
+  padding: 0 22px;
+  border-radius: 9999px;
+  background-color: var(--lp-ink);
+  color: #f7f7f4;
+  border: 1px solid var(--lp-ink);
+  font-size: 16px;
+  line-height: 16px;
+  font-weight: 400;
+  white-space: nowrap;
+  text-decoration: none;
+  transition:
+    color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 100ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.lp-btn:hover {
+  background-color: #102638;
+  border-color: #102638;
+}
+
+.lp-btn:active {
+  transform: scale(0.98);
+}
+
+.lp-btn-icon {
+  display: flex;
+  padding-left: 4px;
+  font-size: 16px;
+  line-height: 16px;
+  transition: transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.lp-btn:hover .lp-btn-icon {
+  transform: translateY(1px);
+}
+
+.lp-btn--secondary {
+  background-color: #e9edf2;
+  color: var(--lp-ink);
+  border-color: rgba(1, 22, 39, 0.04);
+}
+
+.lp-btn--secondary:hover {
+  background-color: #dfe5ec;
+  border-color: rgba(1, 22, 39, 0.06);
+}
+
+.lp-btn--secondary:hover .lp-btn-icon {
+  transform: translateX(2px);
+}
+
 .doc-button {
   background-color: var(--lp-ink);
   color: #ffffff;

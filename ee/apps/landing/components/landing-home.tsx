@@ -24,7 +24,7 @@ import {
 } from "./lp-primitives";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
-import { DownloadLink } from "./download-link";
+import { HeroDownloadButton } from "./hero-download-button";
 
 type Props = {
   stars: string;
@@ -123,12 +123,13 @@ export function LandingHome(props: Props) {
                     Get Started for Free <ArrowRight size={18} />
                   </a>
                 ) : (
-                  <DownloadLink className="doc-button inline-flex !h-[52px] items-center gap-2 !px-6 !text-[17px]">
-                    Download for free <ArrowRight size={20} />
-                  </DownloadLink>
+                  <HeroDownloadButton />
                 )}
-                <a href="/enterprise" className="secondary-button !h-[52px] !px-6 !text-[17px]">
+                <a href="/enterprise" className="lp-btn lp-btn--secondary">
                   Explore enterprise
+                  <span className="lp-btn-icon" aria-hidden="true">
+                    →
+                  </span>
                 </a>
               </div>
 
