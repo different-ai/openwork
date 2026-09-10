@@ -40,10 +40,12 @@ case "--list-apps":
 case "relay":
     guard CommandLine.arguments.count == 3 else { exit(1) }
     runDesktopRelay(CommandLine.arguments[2])
-case "mcp", "mcp-hosted", "mcp-coworker":
-    SessionControls.hosted = command == "mcp-hosted"
+case "mcp", "mcp-hosted", "mcp-coworker", "mcp-coworker-hosted":
+    SessionControls.embeddedCoworker = command == "mcp-coworker-hosted"
+    SessionControls.hosted = command == "mcp-hosted" || SessionControls.embeddedCoworker
     // Presentation is independent of hosted approval and recovery policy.
     SessionControls.coworkerPresentation = command == "mcp-coworker"
+    if SessionControls.embeddedCoworker { MCPOutput.shared.enableNonblocking() }
     NSApplication.shared.setActivationPolicy(.accessory)
     let server = MCPServer()
     signal(SIGTERM, SIG_IGN); signal(SIGINT, SIG_IGN)
@@ -92,7 +94,7 @@ case "setup":
     reopen.resume()
     withExtendedLifetime((delegate, reopen)) { NSApplication.shared.run() }
 default:
-    fputs("Usage: ComputerUse [mcp|mcp-hosted|mcp-coworker|--check|--list-apps|setup|permissions accessibility|permissions screenRecording]\n", stderr)
+    fputs("Usage: ComputerUse [mcp|mcp-hosted|mcp-coworker|mcp-coworker-hosted|--check|--list-apps|setup|permissions accessibility|permissions screenRecording]\n", stderr)
     exit(1)
 }
 }

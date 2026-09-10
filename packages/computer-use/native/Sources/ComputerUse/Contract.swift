@@ -157,3 +157,42 @@ struct ObservationLease {
                        y: frame.minY + point.y * frame.height / CGFloat(imageHeight))
     }
 }
+
+// A display-only heartbeat, never an actionable observation or an idle renewal.
+struct WatchLease {
+    private(set) var generation = 0
+    private var heartbeat: TimeInterval?
+    mutating func update(visible: Bool, now: TimeInterval) {
+        if !visible || !isVisible(now: now) { generation += 1 }
+        heartbeat = visible ? now : nil
+    }
+    mutating func invalidate() { generation += 1 }
+    func isVisible(now: TimeInterval) -> Bool {
+        guard let heartbeat else { return false }
+        return now >= heartbeat && now - heartbeat < 1.5
+    }
+}
+
+struct InputFeedback {
+    enum Phase: String { case move, down, up, dispatched, uncertain }
+    let action: String
+    let phase: Phase
+    let point: CGPoint?
+    let at: Int64
+
+    init(action: String, phase: Phase, screenPoint: CGPoint? = nil, frame: CGRect) {
+        self.action = action; self.phase = phase
+        at = Int64(Date().timeIntervalSince1970 * 1000)
+        if let screenPoint, frame.width > 0, frame.height > 0 {
+            let x = (screenPoint.x - frame.minX) / frame.width
+            let y = (screenPoint.y - frame.minY) / frame.height
+            point = x.isFinite && y.isFinite && (0...1).contains(x) && (0...1).contains(y) ? CGPoint(x: x, y: y) : nil
+        } else { point = nil }
+    }
+
+    var payload: [String: Any] {
+        var value: [String: Any] = ["action": action, "phase": phase.rawValue, "at": at]
+        if let point { value["x"] = point.x; value["y"] = point.y }
+        return value
+    }
+}

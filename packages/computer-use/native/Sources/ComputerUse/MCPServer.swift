@@ -85,8 +85,7 @@ final class MCPServer {
     private func result(_ id: Any, _ value: [String: Any]) { send(["jsonrpc": "2.0", "id": id, "result": value]) }
     private func error(_ id: Any, _ code: Int, _ message: String) { send(["jsonrpc": "2.0", "id": id, "error": ["code": code, "message": message]]) }
     private func send(_ value: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else { return }
-        FileHandle.standardOutput.write(data + Data([10]))
+        MCPOutput.shared.send(value)
     }
     static func schemas() -> [[String: Any]] {
         let string: [String: Any] = ["type": "string", "minLength": 1, "maxLength": 256]

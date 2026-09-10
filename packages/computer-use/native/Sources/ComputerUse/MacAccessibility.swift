@@ -279,8 +279,10 @@ final class MacAccessibility {
         }
     }
 
-    func capture(target: WindowTarget, app: AppIdentity, bounds: CGRect, state: WindowState) async throws -> (Data, Int, Int) {
+    func capture(target: WindowTarget, app: AppIdentity, bounds: CGRect, state: WindowState,
+                 check: () throws -> Void = {}) async throws -> (Data, Int, Int, Int64) {
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+        try check()
         guard let window = content.windows.first(where: { $0.windowID == target.id && $0.owningApplication?.processID == app.pid }),
               window.frame == bounds else { throw UseError("stale_observation", "The selected window moved before capture.", next: "observe") }
         let config = SCStreamConfiguration()
@@ -290,6 +292,8 @@ final class MacAccessibility {
         config.showsCursor = false
         config.ignoreShadowsSingleWindow = true
         let image = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: window), configuration: config)
+        let capturedAt = Int64(Date().timeIntervalSince1970 * 1000)
+        try check()
         // Capture only the window; a failure never broadens into a display capture.
         guard let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
             bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
@@ -309,7 +313,7 @@ final class MacAccessibility {
         guard let redacted = context.makeImage(), let data = NSBitmapImageRep(cgImage: redacted).representation(using: .png, properties: [:]) else {
             throw UseError("capture_failed", "Could not encode this window.", next: "observe")
         }
-        return (data, image.width, image.height)
+        return (data, image.width, image.height, capturedAt)
     }
 
     func requirePermissions() throws {

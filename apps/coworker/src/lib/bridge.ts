@@ -432,6 +432,20 @@ export type BrowserCommand =
 
 export type ComputerPermission = "accessibility" | "screenRecording";
 
+export type ComputerPresentation = {
+  id: string;
+  phase: string;
+  appName?: string;
+  windowTitle?: string;
+  task?: string;
+  mode?: string;
+  status?: string;
+  canContinue?: boolean;
+  windows?: Array<{ id: number; title: string }>;
+  frame?: { sequence: number; capturedAt: number; width: number; height: number; mimeType: "image/png"; data: string };
+  inputs: Array<{ sequence: number; at: number; action: string; phase: string; x?: number; y?: number }>;
+};
+
 export type ComputerSnapshot = {
   revision: number;
   targetId: string;
@@ -497,6 +511,8 @@ export const coworkerBridge = {
   },
   computer: {
     snapshot: (slug: string, threadId: string) => invoke<ComputerSnapshot>("computer.snapshot", { slug, threadId }),
+    presentation: (input: { slug: string; threadId: string; visible: boolean }) => invoke<ComputerPresentation | null>("computer.presentation", input),
+    interact: (input: { slug: string; threadId: string; id: string; action: "approve" | "deny" | "takeover" | "resume"; windowId?: number }) => invoke<void>("computer.interact", input),
     configure: (input: { slug: string; threadId: string; expectedRevision: number; enabled: boolean; targetId: string }) => invoke<ComputerSnapshot>("computer.configure", input),
     stop: (input: { slug: string; threadId: string; expectedRevision: number }) => invoke<ComputerSnapshot>("computer.stop", input),
     setup: (targetId: string, permission: ComputerPermission) => invoke<void>("computer.setup", { targetId, permission }),

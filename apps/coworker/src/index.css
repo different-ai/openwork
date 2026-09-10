@@ -141,6 +141,38 @@ body.is-resizing-panel * {
   backdrop-filter: blur(32px) saturate(140%);
 }
 
+.coworker-computer-floating button:focus-visible {
+  outline: 2px solid var(--color-spark);
+  outline-offset: -2px;
+}
+
+.coworker-computer-pointer:is([data-action="move"], [data-action="drag"]) {
+  transition: left 80ms linear, top 80ms linear;
+}
+
+.coworker-computer-click {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  left: -12px;
+  top: -12px;
+  border: 2px solid var(--color-spark);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-spark) 20%, transparent);
+  animation: coworker-computer-click 650ms ease-out both;
+}
+
+@keyframes coworker-computer-click {
+  from { opacity: 1; transform: scale(0.5); }
+  to { opacity: 0; transform: scale(1.5); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coworker-computer-floating .coworker-computer-pointer { transition: none; }
+  .coworker-computer-click { animation: none; }
+  .coworker-computer-floating .button-busy-indicator { animation: none; }
+}
+
 .onboarding-launcher {
   background: rgb(18 24 34 / 0.72);
   -webkit-backdrop-filter: blur(30px) saturate(132%);
