@@ -29,11 +29,10 @@ export function useOpeningSessionHistory(input: {
   readSnapshot: (signal: AbortSignal, window?: OpeningHistoryWindow) => Promise<OpenworkSessionSnapshot>;
 }) {
   const client = useQueryClient();
+  const hasLegacyPosition = useSessionScrollStore((state) => Boolean(state.sessions[input.sessionId]));
   const saved = useMemo(() => {
-    const state = getSessionScrollState(useSessionScrollStore.getState().sessions, input.sessionId);
-    return state.geometry && state.geometry.owner !== input.owner
-      ? getSessionScrollState({}, null) : state;
-  }, [input.owner, input.sessionId]);
+    return getSessionScrollState(useSessionScrollStore.getState().sessions, input.sessionId, input.owner);
+  }, [input.owner, input.sessionId, hasLegacyPosition]);
   const hasFullSnapshot = client.getQueryData<OpenworkSessionSnapshot>(input.snapshotQueryKey)?.session.id === input.sessionId;
   const options = queryOptions({
     queryKey: ["react-session-opening", input.owner],

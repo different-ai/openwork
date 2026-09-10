@@ -2805,7 +2805,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     trailingHeight: initialScroll.mode === "manual" ? initialScroll.geometry?.after : undefined,
     historyComplete: hasFullHistory,
     revealAll: findOwned,
-    stickyBottom: () => getSessionScrollState(useSessionScrollStore.getState().sessions, props.sessionId).mode === "stickyBottom",
+    stickyBottom: () => getSessionScrollState(useSessionScrollStore.getState().sessions, props.sessionId, sessionOwner).mode === "stickyBottom",
     onReady: sessionScroll.refresh,
   };
 
@@ -3287,13 +3287,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
         </div>
         <SessionScrollOverlay
           sessionId={props.sessionId}
+          owner={sessionOwner}
           isStreaming={chatStreaming}
           onJumpToLatest={sessionScroll.jumpToLatest}
           onJumpToStartOfMessage={sessionScroll.jumpToStartOfMessage}
         />
         <SessionFindBar
+          key={sessionOwner}
           sessionId={props.sessionId}
           scrollRef={scrollRef}
+          historyComplete={hasFullHistory}
           onBeforeJump={handleFindBeforeJump}
         />
       </div>

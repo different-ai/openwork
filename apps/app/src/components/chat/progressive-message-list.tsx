@@ -45,6 +45,7 @@ type MountState = {
 type Segment = { key: string; start: number; end: number; height: number; placeholder: boolean }
 type Plan = { keys: string[]; heights: number[]; segments: Segment[]; complete: boolean }
 type ReadingPosition = {
+  reservedTop?: number
   element: HTMLElement | null
   messageId?: string
   key: string | undefined
@@ -272,6 +273,16 @@ class ProgressiveGroups<T> extends React.Component<ProgressiveMessageListProps<T
     const viewport = container.getBoundingClientRect()
     const sticky = Boolean(this.props.viewport?.stickyBottom())
       && container.scrollHeight - container.scrollTop - container.clientHeight <= 1
+    // A reserved region has no message anchor yet. Do not anchor to an offscreen
+    // preview row: full history moving that row would undo Home/top navigation.
+    const reserved = this.committed.segments.some((segment) => {
+      if (segment.end !== segment.start) return false
+      const rect = this.nodes.get(segment.key)?.getBoundingClientRect()
+      return rect && rect.top <= viewport.top && rect.bottom > viewport.top
+    })
+    if (container.scrollTop === 0 || reserved) {
+      return { reservedTop: container.scrollTop, element: null, key: undefined, offset: 0, fraction: 0, sticky }
+    }
     for (const node of this.nodes.values()) {
       if (!node.hasAttribute("data-thread-group")) continue
       const rect = node.getBoundingClientRect()
@@ -300,6 +311,10 @@ class ProgressiveGroups<T> extends React.Component<ProgressiveMessageListProps<T
           .find((message) => message.getAttribute("data-message-id") === snapshot.messageId) : null
       if (snapshot.sticky && this.props.viewport?.stickyBottom()) {
         container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+      } else if (snapshot.reservedTop !== undefined) {
+        container.scrollTop = snapshot.reservedTop
+        // The destination's groups only became available in this commit.
+        this.handleScroll()
       } else if (element) {
         const delta = element.getBoundingClientRect().top - container.getBoundingClientRect().top - snapshot.offset
         if (Math.abs(delta) > 0.5) container.scrollTop += delta

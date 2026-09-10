@@ -257,6 +257,35 @@ describe("progressive whole-group rendering", () => {
     expect(view.position("m0")).toBe(0)
   })
 
+  test.each([0, 1250, 30_050])("preserves navigation to reserved history at %s when full history arrives", async (top) => {
+    const full = groups(100)
+    for (const group of full) group.messages[0].height = 392
+    const view = fixture(full.slice(40, 44), {
+      anchorMessageId: "m40", historyComplete: false, scrollHeight: 39_992,
+      leadingHeight: 16_000, trailingHeight: 22_384,
+    })
+    await view.render()
+    view.read("m40")
+    // Home/scroll_top reaches a prefix with no message to anchor. Scrolling
+    // into either reserved side must not select an offscreen preview message.
+    await act(async () => view.scroll(top))
+    await view.render(full, { historyComplete: true })
+    expect(view.container.scrollTop).toBeCloseTo(top, 1)
+    const destination = view.mounted.find((id) => {
+      if (!id) return false
+      const position = view.position(`m${id.slice(1)}`)
+      return position <= 0 && position > -392
+    })
+    expect(destination).toBeDefined()
+    if (!destination) throw new Error("Reserved destination did not mount")
+    const messageId = `m${destination.slice(1)}`
+    const offset = view.position(messageId)
+    for (let i = 0; i < 20; i++) await batch()
+    expect(view.complete).toBe("true")
+    expect(view.position(messageId)).toBeCloseTo(offset, 1)
+    if (top === 0) expect(view.container.scrollTop).toBe(0)
+  })
+
   test("a queued background batch cannot discard groups requested by a simultaneous scroll", async () => {
     const view = fixture()
     await view.render()
