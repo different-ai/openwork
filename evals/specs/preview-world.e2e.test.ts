@@ -39,10 +39,15 @@ interface DaytonaSandboxSummary {
   autoStopInterval: number;
 }
 
+// `daytona sandbox list` paginates by cursor (`-c/--cursor`, `nextCursor` in the JSON body) in every
+// released CLI (v0.191.0 through v0.211.2, including the v0.204.0 CI pin); it has no page flag.
 async function daytonaSandboxes(): Promise<DaytonaSandboxSummary[]> {
   const summaries: DaytonaSandboxSummary[] = [];
-  for (let page = 1; ; page += 1) {
-    const result = await exec("daytona", ["sandbox", "list", "-f", "json", "-l", "200", "-p", String(page)], { timeout: 30000 });
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  for (;;) {
+    const args = ["sandbox", "list", "-f", "json", "-l", "200", ...(cursor === undefined ? [] : ["--cursor", cursor])];
+    const result = await exec("daytona", args, { timeout: 30000 });
     const value: unknown = JSON.parse(result.stdout);
     const entries = Array.isArray(value) ? value : record(value) && Array.isArray(value.items) ? value.items : null;
     if (!entries) throw new Error("Daytona sandbox list did not return items.");
@@ -53,7 +58,10 @@ async function daytonaSandboxes(): Promise<DaytonaSandboxSummary[]> {
         summaries.push({ identities, autoStopInterval: entry.autoStopInterval });
       }
     }
-    if (!record(value) || typeof value.totalPages !== "number" || page >= value.totalPages) break;
+    if (!record(value) || typeof value.nextCursor !== "string" || value.nextCursor.length === 0 || entries.length === 0) break;
+    if (seenCursors.has(value.nextCursor)) throw new Error("Daytona sandbox list repeated a pagination cursor.");
+    seenCursors.add(value.nextCursor);
+    cursor = value.nextCursor;
   }
   return summaries;
 }
