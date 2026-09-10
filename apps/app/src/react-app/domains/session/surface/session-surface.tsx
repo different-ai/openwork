@@ -1437,12 +1437,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!chatStreaming) setSteering(false);
   }, [chatStreaming]);
   const [evalThreadStatus, setEvalThreadStatus] = useState<ThreadStatus | null>(null);
+  const autoSendPayload = getComposerAutoSendPayload(props.sessionId, sessionOwner);
+  const autoSending = (Boolean(autoSendPayload)
+    || hasComposerAutoSend(props.sessionId))
+    && !sessionModelUnavailable;
   const status = useMemo((): ThreadStatus => {
     if (evalThreadStatus) return evalThreadStatus;
-    if (sending) {
-      return "submitted";
-    }
-
     if (liveStatus.type === "busy") {
       return "streaming";
     }
@@ -1451,8 +1451,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return "retrying";
     }
 
+    if (sending || autoSending) {
+      return "submitted";
+    }
+
     return "ready";
-  }, [evalThreadStatus, liveStatus, sending]);
+  }, [autoSending, evalThreadStatus, liveStatus, sending]);
   const [evalMarkdownMessages, setEvalMarkdownMessages] = useState<UIMessage[]>(EMPTY_TRANSCRIPT);
   useEffect(() => {
     setEvalMarkdownMessages(EMPTY_TRANSCRIPT);
@@ -1466,10 +1470,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const pendingMessages = useComposerStateStore((state) => state.pendingMessages[sessionOwner]);
   const [submittedMessage, setSubmittedMessage] = useState<{ owner: string; id: string } | null>(null);
   const failedDraft = useComposerStateStore((state) => state.failedDrafts[sessionOwner]?.[0]);
-  const autoSendPayload = getComposerAutoSendPayload(props.sessionId, sessionOwner);
-  const autoSending = (Boolean(autoSendPayload)
-    || hasComposerAutoSend(props.sessionId))
-    && !sessionModelUnavailable;
   const pendingReconciliation = useMemo(() => {
     const matchedIds = new Set<string>();
     const messages = [...baseRenderedMessages];
