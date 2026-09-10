@@ -112,9 +112,10 @@ export async function observeSidebarExpansion(surface: Surface) {
         cancelAnimationFrame(frame);
         clearTimeout(timer);
         document.removeEventListener("click", onClick, true);
-        document.removeEventListener("dragstart", onDragStart, true);
+        document.removeEventListener("dragstart", onDragStart);
       },
     };
+    // Bubble phase: the row's own dragstart handler has filled the payload by then.
     const onDragStart = (event: DragEvent) => {
       if (!event.isTrusted || !(event.target instanceof Element)) return;
       const row = event.target.closest<HTMLElement>("[data-sidebar-session-id]");
@@ -142,7 +143,7 @@ export async function observeSidebarExpansion(surface: Surface) {
       timer = setTimeout(() => cancelAnimationFrame(frame), 5_000);
     };
     document.addEventListener("click", onClick, true);
-    document.addEventListener("dragstart", onDragStart, true);
+    document.addEventListener("dragstart", onDragStart);
     window[key] = observer;
   }, [key]);
   return {
