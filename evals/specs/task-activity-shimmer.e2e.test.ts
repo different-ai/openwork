@@ -1,10 +1,12 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { taskActivity } from "../worlds/chat.ts";
+import { taskActivityWeb } from "../worlds/task-activity-web.ts";
 
-const test = spec.world(taskActivity);
+const test = spec.world(taskActivityWeb, {
+  resources: { surfaces: ["appWeb"], services: [] },
+});
 
-test("delegated-task activity stays with its original message after a follow-up", async ({ user, probe }) => {
+test("ACT-01 delegated-task activity stays with its original message after a follow-up", async ({ user, probe }) => {
   await user.see({ text: "Build isolated Azure repro" });
   await user.see({ text: "What is the update?" });
   // TODO(primitive): inspect the visual treatment classes on a delegated-task status row.

@@ -3,6 +3,9 @@ import { readdir, readFile } from 'node:fs/promises';
 // One home for CI grouping, readable names, and execution requirements.
 // Unlisted specs are discovered automatically as full-regression journeys.
 const definitions = {
+  'task-activity-shimmer.e2e.test.ts': {
+    cases: [{ id: 'ACT-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
+  },
   // Fixes a fault proxy in front of den-api before Den boots; only the local lane can do that.
   'mcp-oauth-start-unreadable-response.e2e.test.ts': { name: 'Read why a connection sign-in could not start', placement: 'local' },
   'app-smoke.e2e.test.ts': { name: 'Open a working desktop', critical: true },
