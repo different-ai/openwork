@@ -12,7 +12,7 @@ function includesExactlyOnce(values: string[], marker: string): boolean {
   return values.reduce((count, value) => count + value.split(marker).length - 1, 0) === 1;
 }
 
-test("local signed-out failed-task recovery, queued follow-ups, and truthful unfinished-tool lifecycle", async ({ world, user, seed, probe, agent, step, evidence }) => {
+test("local signed-out recovery and native next-step steering preserve FIFO and unfinished-tool lifecycle", async ({ world, user, seed, probe, agent, step, evidence }) => {
   evidence.recordAssertionEvidence(
     "Local configured-provider steering runs without cloud identity",
     `A read-only identity check found no desktop auth token and no server Den session before the ${world.engine} workflow.`,
@@ -30,6 +30,7 @@ test("local signed-out failed-task recovery, queued follow-ups, and truthful unf
   const relevantRequests = async (markers: string[]) => (await world.mock.agentRequests({ sinceIso: world.startedAt }))
     .filter((request) => request.kind !== "utility" && request.promptMarker !== null && markers.includes(request.promptMarker));
   const sendNowShortcut = await world.sendNowShortcut();
+  let acceptedDirectMessageId = "";
   const milestone = async (name: string, claim: string, run: () => Promise<void>) => {
     try {
       await step(name, run);
@@ -153,7 +154,7 @@ test("local signed-out failed-task recovery, queued follow-ups, and truthful unf
   });
 
   const recoveryBeforeBypass = await native.snapshot(world.recovery.sessionId);
-  await milestone("a direct busy send bypasses B/C without consuming or reordering their queue", "Local immediate UI direction preserves the pending FIFO queue", async () => {
+  await milestone("native busy-turn acceptance bypasses B/C without consuming or reordering their queue", "Native next-step steering preserves the pending FIFO queue", async () => {
     await agent.run("session.open", { sessionId: world.bypass.sessionId });
     await probe.eventually(() => world.dom(world.bypass.sessionId), {
       within: 30_000,
@@ -195,37 +196,42 @@ test("local signed-out failed-task recovery, queued follow-ups, and truthful unf
     await user.type("composer", world.bypassDirectPrompt, { verify: true });
     await user.press(sendNowShortcut);
     const handoff = await probe.eventually(async () => {
-      const [visible, rawSnapshot, requests] = await Promise.all([
+      const [visible, rawSnapshot, requests, admission] = await Promise.all([
         world.dom(world.bypass.sessionId),
         native.snapshot(world.bypass.sessionId),
         relevantRequests([world.bypassDirectMarker, world.bypassQueuedBMarker, world.bypassQueuedCMarker]),
+        world.nativeAdmission(world.bypass.sessionId, world.bypassDirectPrompt),
       ]);
       const snapshot = compactSnapshot(rawSnapshot);
-      return { visible, snapshot, requests };
+      return { visible, snapshot, requests, admission };
     }, {
       within: 15_000,
       intervalMs: 100,
-      label: "direct X is admitted while the original tool runs and B/C stay pending",
-      until: ({ visible, snapshot, requests }) => includesExactlyOnce(visible.users, world.bypassDirectMarker)
-        && requests.some((request) => request.promptMarker === world.bypassDirectMarker)
-        && requests.every((request) => request.promptMarker === world.bypassDirectMarker)
+      label: "native X acceptance while the original tool runs, before its next model step, with B/C pending",
+      until: ({ visible, snapshot, requests, admission }) => includesExactlyOnce(visible.users, world.bypassDirectMarker)
+        && admission.messages.length === 1 && admission.streamError === null
+        && requests.length === 0
         && visible.queued.length === 2
         && visible.queued[0]?.includes(world.bypassQueuedBMarker) === true
         && visible.queued[1]?.includes(world.bypassQueuedCMarker) === true
         && snapshot.data.messages.flatMap((message) => message.parts)
           .some((part) => part.tool === world.shellTool && part.status === "running" && part.input.command === world.bypassCommand),
     }).catch(async (error) => {
-      evidence.recordJsonArtifact("Failed immediate provider admission diagnostic", {
+      evidence.recordJsonArtifact("Failed native steering acceptance diagnostic", {
         error: error instanceof Error ? error.message : String(error),
         requests: await relevantRequests([world.bypassInitialMarker, world.bypassDirectMarker, world.bypassQueuedBMarker, world.bypassQueuedCMarker]),
         snapshot: compactSnapshot(await native.snapshot(world.bypass.sessionId)),
         visible: await world.dom(world.bypass.sessionId),
+        admission: await world.nativeAdmission(world.bypass.sessionId, world.bypassDirectPrompt),
       });
       throw error;
     });
     expect(handoff.snapshot.data.session?.id).toBe(world.bypass.sessionId);
-    expect(handoff.requests.map((request) => request.promptMarker)).toEqual([world.bypassDirectMarker]);
-    evidence.recordJsonArtifact("Immediate X admission with B and C held in FIFO order", handoff);
+    expect(handoff.admission.messages).toHaveLength(1);
+    acceptedDirectMessageId = handoff.admission.messages[0]!.id;
+    expect(acceptedDirectMessageId).not.toBe("");
+    expect(handoff.requests).toEqual([]);
+    evidence.recordJsonArtifact("Native X acceptance with B and C held in FIFO order", handoff);
     expect(handoff.visible.queued.every((text) => !text.includes(world.bypassDirectMarker))).toBe(true);
     expect(handoff.visible.users.some((text) => text.includes(world.bypassQueuedBMarker))).toBe(false);
     expect(handoff.visible.users.some((text) => text.includes(world.bypassQueuedCMarker))).toBe(false);
@@ -235,8 +241,8 @@ test("local signed-out failed-task recovery, queued follow-ups, and truthful unf
     expect(snapshotText(recoveryDuringBypass)).not.toContain(world.bypassDirectMarker);
     await user.screenshot();
     evidence.recordAssertionEvidence(
-      "Local immediate UI direction preserves the pending FIFO queue",
-      `X entered session ${world.bypass.sessionId} during its running shell; B then C remained queued, had no provider receipt, and the recovery session did not change.`,
+      "Native next-step steering preserves the pending FIFO queue",
+      `Native ${handoff.admission.source} accepted X as ${acceptedDirectMessageId} during its running shell; no X model call had started; B then C remained queued and the recovery session did not change.`,
       true,
     );
   });
@@ -254,7 +260,7 @@ test("local signed-out failed-task recovery, queued follow-ups, and truthful unf
     }, {
       within: 120_000,
       intervalMs: 250,
-      label: "the immediate reply and both queued replies complete in order",
+      label: "the next-step steering reply and both queued replies complete in order",
       until: ({ visible }) => includesExactlyOnce(visible.assistants, world.bypassDirectReply)
         && includesExactlyOnce(visible.assistants, world.bypassQueuedBReply)
         && includesExactlyOnce(visible.assistants, world.bypassQueuedCReply)
@@ -267,6 +273,13 @@ test("local signed-out failed-task recovery, queued follow-ups, and truthful unf
     expect(bypassShell).toHaveLength(1);
     expect(bypassShell[0]?.status).toBe("completed");
     expect(bypassShell[0]?.output).toContain(world.bypassShellMarker);
+    const nativeCompletion = await world.nativeCompletion(world.bypass.sessionId, world.bypassDirectPrompt, bypassShell[0]!.callId);
+    evidence.recordJsonArtifact("Accepted X identity persists and provider follows native tool completion", nativeCompletion);
+    expect(nativeCompletion.messages).toEqual([{ id: acceptedDirectMessageId, text: world.bypassDirectPrompt }]);
+    expect(nativeCompletion.completedAt).not.toBeNull();
+    const directRequest = complete.requests.find((request) => request.promptMarker === world.bypassDirectMarker);
+    expect(directRequest).toBeDefined();
+    expect(Date.parse(directRequest!.at)).toBeGreaterThanOrEqual(nativeCompletion.completedAt!);
     for (const marker of markers) expect(includesExactlyOnce(complete.visible.users, marker)).toBe(true);
     for (const reply of [world.bypassDirectReply, world.bypassQueuedBReply, world.bypassQueuedCReply]) {
       expect(includesExactlyOnce(complete.visible.assistants, reply)).toBe(true);
