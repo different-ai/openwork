@@ -37,11 +37,17 @@ export interface MockAgentWorkload {
   /** Chat Completions: match the latest user message and count only its tool rounds. */
   latestUserTurn?: boolean;
   promptMarker: string;
+  /** A dedicated mock may answer every main turn without changing user prompts. */
+  matchAll?: boolean;
   finalReply: string;
   /** Derive the final reply from the real tool result or model system instructions. */
   finalReplyFrom?: "last-tool-text" | "system-text";
   /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
   finalReplyChunkSize?: number;
+  /** Exact content-delta boundaries. Their concatenation must equal finalReply. */
+  finalReplyChunks?: string[];
+  /** Initially release this many exact chunks, then wait for releaseAgentReply(). */
+  finalReplyInitiallyReleasedChunks?: number;
   /** Hold the final response before sending headers, to exercise loading transitions. */
   finalReplyDelayMs?: number;
   /** Chat Completions: emit a reasoning block before the final answer. */
@@ -61,6 +67,18 @@ export interface MockAgentRequest {
   at: string;
 }
 
+export interface MockAgentReplyState {
+  promptMarker: string;
+  releasedChunks: number;
+  deliveredChunks: number;
+  totalChunks: number;
+  prefix: string;
+  complete: boolean;
+  waiting: number;
+  aborted: boolean;
+  timedOut: boolean;
+}
+
 export interface MockMcpHandle {
   url: string;
   mcpUrl: string;
@@ -77,6 +95,8 @@ export interface MockMcpHandle {
    */
   toolCalls(opts?: { name?: string; timeoutMs?: number; atLeast?: number; sinceIso?: string }): Promise<MockToolCall[]>;
   agentRequests(opts?: { promptMarker?: string; timeoutMs?: number; atLeast?: number; sinceIso?: string }): Promise<MockAgentRequest[]>;
+  agentReplyState(promptMarker: string): Promise<MockAgentReplyState>;
+  releaseAgentReply(promptMarker: string, count?: number): Promise<MockAgentReplyState>;
   handshakes(opts?: { timeoutMs?: number; atLeast?: number; sinceIso?: string }): Promise<MockAuthorizeRequest[]>;
   configureOAuthRedirectUris(redirectUris: readonly string[]): Promise<void>;
   resetOAuth(): Promise<void>;
@@ -120,6 +140,8 @@ export interface StartMockMcpOptions {
   /** Token requests from these clients fail with invalid_client (unsupported client authentication). Entries are a client id, "id:secret" to reject only that exact presented secret, or "@dynamic" for every dynamically registered client. */
   rejectTokenClientIds?: string[];
   allowUnauthenticatedMcp?: boolean;
+  /** Reject dynamic client registration when the submitted OAuth redirect URI is not allowlisted. */
+  rejectDynamicRedirectUris?: "invalid_redirect_uri" | "invalid_request";
   /** Serve this many additional synthetic mock_tool_<i> tools for scale specs. */
   extraToolCount?: number;
   /** Serve one app-visible MCP App launch tool (`_meta.ui.resourceUri`) under this name. */
@@ -128,6 +150,8 @@ export interface StartMockMcpOptions {
   agentWorkloads?: MockAgentWorkload[];
   /** Verify native provider requests retain this private model header. */
   agentRequiredHeader?: { name: string; value: string };
+  /** Spawn the mock with executable-discovery variables only, excluding inherited credentials. */
+  isolatedProcessEnv?: boolean;
 }
 
 export type EnterpriseMcpProfileId =
@@ -162,6 +186,41 @@ function parseRequests(value: unknown): MockAuthorizeRequest[] {
     const request = parseRequest(entry);
     return request ? [request] : [];
   });
+}
+
+function parseAgentReplyState(value: unknown): MockAgentReplyState {
+  if (!isRecord(value)
+    || typeof value.promptMarker !== "string"
+    || typeof value.releasedChunks !== "number"
+    || typeof value.deliveredChunks !== "number"
+    || typeof value.totalChunks !== "number"
+    || typeof value.prefix !== "string"
+    || typeof value.complete !== "boolean"
+    || typeof value.waiting !== "number"
+    || typeof value.aborted !== "boolean"
+    || typeof value.timedOut !== "boolean") {
+    throw new Error("Mock agent reply state was invalid");
+  }
+  return {
+    promptMarker: value.promptMarker,
+    releasedChunks: value.releasedChunks,
+    deliveredChunks: value.deliveredChunks,
+    totalChunks: value.totalChunks,
+    prefix: value.prefix,
+    complete: value.complete,
+    waiting: value.waiting,
+    aborted: value.aborted,
+    timedOut: value.timedOut,
+  };
+}
+
+function isolatedMockEnvironment(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of ["PATH", "TMPDIR", "SYSTEMROOT", "COMSPEC", "PATHEXT", "WINDIR"]) {
+    const value = process.env[key];
+    if (value) env[key] = value;
+  }
+  return env;
 }
 
 async function waitForHealth(url: string, output: () => string, child: ChildProcess | null): Promise<void> {
@@ -270,7 +329,7 @@ async function startEnterpriseProfileMock(options: StartMockMcpOptions): Promise
       cwd: REPO_ROOT,
       detached: true,
       env: {
-        ...process.env,
+        ...(options.isolatedProcessEnv ? isolatedMockEnvironment() : process.env),
         PORT: String(port),
         PROFILE_ID: profileId,
         ...(options.fault !== undefined ? { ACTIVE_FAULT_ID: options.fault } : {}),
@@ -307,6 +366,12 @@ async function startEnterpriseProfileMock(options: StartMockMcpOptions): Promise
     async agentRequests(opts = {}) {
       if ((opts.atLeast ?? 0) > 0) await sleep(opts.timeoutMs ?? 120_000);
       return [];
+    },
+    async agentReplyState() {
+      throw new Error("Enterprise MCP profile mocks do not serve agent reply gates.");
+    },
+    async releaseAgentReply() {
+      throw new Error("Enterprise MCP profile mocks do not serve agent reply gates.");
     },
     async handshakes(opts = {}) {
       if ((opts.atLeast ?? 0) > 0) await sleep(opts.timeoutMs ?? 120_000);
@@ -345,13 +410,14 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
     child = spawn(process.execPath, [options.scriptPath ?? join(REPO_ROOT, "scripts", "mock-oauth-mcp-server.mjs")], {
       cwd: REPO_ROOT,
       env: {
-        ...process.env,
-        HOST: "0.0.0.0",
+        ...(options.isolatedProcessEnv ? isolatedMockEnvironment() : process.env),
+        HOST: options.isolatedProcessEnv ? "127.0.0.1" : "0.0.0.0",
         PORT: String(port),
         ISSUER: options.issuer ?? url,
         AUTO_APPROVE: "1",
         ...(options.authorizationResponseIssuerSupported === undefined ? {} : { MOCK_AUTHORIZATION_RESPONSE_ISSUER: options.authorizationResponseIssuerSupported ? "1" : "0" }),
         ...(options.allowUnauthenticatedMcp ? { MOCK_ALLOW_UNAUTHENTICATED_MCP: "1" } : {}),
+        ...(options.rejectDynamicRedirectUris ? { MOCK_REJECT_DCR_REDIRECT_URIS: options.rejectDynamicRedirectUris } : {}),
         ...(options.rejectTokenClientIds?.length ? { MOCK_REJECT_TOKEN_CLIENT_IDS: options.rejectTokenClientIds.join(",") } : {}),
         ...(options.extraToolCount ? { MOCK_EXTRA_TOOL_COUNT: String(options.extraToolCount) } : {}),
         ...(options.appToolName ? { MOCK_APP_TOOL_NAME: options.appToolName } : {}),
@@ -497,6 +563,25 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
         completions = await readAgentRequests(opts.promptMarker, opts.sinceIso).catch(() => completions);
       }
       return completions;
+    },
+    async agentReplyState(promptMarker) {
+      const response = await fetch(`${url}/admin/agent-reply?promptMarker=${encodeURIComponent(promptMarker)}`, {
+        signal: AbortSignal.timeout(15_000),
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(`Mock agent reply state failed: HTTP ${response.status}`);
+      return parseAgentReplyState(body);
+    },
+    async releaseAgentReply(promptMarker, count = 1) {
+      const response = await fetch(`${url}/admin/agent-reply`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ promptMarker, count }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(`Mock agent reply release failed: HTTP ${response.status}`);
+      return parseAgentReplyState(body);
     },
     async handshakes(opts = {}) {
       const wanted = opts.atLeast ?? 0;

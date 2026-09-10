@@ -4,7 +4,19 @@ import { fileURLToPath } from "node:url";
 import { checkBrowserCode } from "./check-browser-code.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { compareBaseline, countRawEscapes } from "./spec-channel-ratchet.mjs";
+import { compareBaseline, countRawEscapes, compareWorldContracts } from "./spec-channel-ratchet.mjs";
+
+test("world contracts ratchet new bindings and explicit removals against source history", () => {
+  const header = 'import { spec as journey } from "@openwork/testkit";';
+  const legacy = `${header} const test = journey.world(arrange);`;
+  const explicit = `${header} const test = journey.world(arrange, { resources: { surfaces: ["appWeb"], services: [] } });`;
+  assert.deepEqual(compareWorldContracts("fixture.ts", legacy, legacy), []);
+  assert.deepEqual(compareWorldContracts("fixture.ts", explicit, legacy), []);
+  assert.match(compareWorldContracts("fixture.ts", legacy)[0], /new spec.world binding/);
+  assert.match(compareWorldContracts("fixture.ts", legacy, explicit)[0], /explicit resources removed/);
+  assert.match(compareWorldContracts("fixture.ts", `${legacy} const second = journey.world(other);`, legacy)[0], /second/);
+  assert.deepEqual(compareWorldContracts("fixture.ts", `${header} // spec.world(fake)\nconst text = 'spec.world(fake)';`), []);
+});
 
 test("countRawEscapes counts raw rails only when their exact syntax is present", () => {
   const source = `

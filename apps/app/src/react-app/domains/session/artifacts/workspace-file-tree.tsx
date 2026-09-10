@@ -6,6 +6,7 @@ import { RefreshCw, Search } from "lucide-react";
 
 import type { OpenworkServerClient, OpenworkWorkspaceCatalogEntry } from "@/app/lib/openwork-server";
 import { Button } from "@/components/ui/button";
+import { useNativeContextMenu } from "@/components/ui/action-context-menu";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { cn } from "@/lib/utils";
 
@@ -69,6 +70,9 @@ function treePath(entry: OpenworkWorkspaceCatalogEntry) {
 }
 
 export function WorkspaceFileTree({ client, workspaceId, workspaceName, selectedPath, onOpenFile, fileActions }: WorkspaceFileTreeProps) {
+  const showNativeMenu = useNativeContextMenu();
+  const showNativeMenuRef = useRef(showNativeMenu);
+  showNativeMenuRef.current = showNativeMenu;
   const query = useQuery({
     queryKey: ["workspace-file-tree", workspaceId] as const,
     queryFn: () => client.listWorkspaceFiles(workspaceId),
@@ -88,7 +92,21 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
       contextMenu: {
         triggerMode: "both",
         buttonVisibility: "when-needed",
+        onOpen: (item, context) => {
+          const show = showNativeMenuRef.current;
+          if (!show) return;
+          // Pierre supplies identity and positioning; no shadow-DOM inspection.
+          context.close();
+          if (item.kind !== "file") return;
+          const entry = entriesByPathRef.current.get(item.path.replace(/\/$/, ""));
+          const actions = fileActionsRef.current ?? [];
+          if (!entry || entry.kind !== "file" || actions.length === 0) return;
+          void show(actions.map((action) => ({
+            type: "item", id: action.id, label: action.label, onSelect: () => action.run(entry),
+          })), { point: { x: context.anchorRect.left, y: context.anchorRect.bottom } });
+        },
         render: (item, context) => {
+          if (showNativeMenuRef.current) return null;
           if (item.kind !== "file") return null;
           const entry = entriesByPathRef.current.get(item.path.replace(/\/$/, ""));
           const actions = fileActionsRef.current ?? [];

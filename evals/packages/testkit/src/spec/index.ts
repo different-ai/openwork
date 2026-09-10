@@ -1,10 +1,11 @@
-import { SkipError, unmetNeeds } from "@openwork/env";
+import { SkipError, unmetNeeds, validateWorldSurfaceSelection } from "@openwork/env";
 import { fixtureTest, wrapTestApi } from "../fixture.ts";
 import {
   BufferedEvidenceSink,
   SeedChannel,
   SpecRuntime,
   channels,
+  copyWorldResources,
   registerWorldDisposable,
   replayEvidence,
 } from "./runtime.ts";
@@ -60,12 +61,17 @@ function combinedNeeds(filepath: string, needs: TestNeeds | undefined): TestNeed
   };
 }
 
-async function buildWithTimeout<W>(worldFn: WorldFn<W>, seed: Seed, place: Place, timeout: number | undefined): Promise<W> {
-  if (timeout === undefined) return worldFn(seed, { place });
+async function buildWithTimeout<W>(worldFn: WorldFn<W>, seed: Seed, place: Place, stack: AsyncDisposableStack, timeout: number | undefined): Promise<W> {
+  const build = async () => {
+    const built = await worldFn(seed, { place });
+    await registerWorldDisposable(stack, built);
+    return built;
+  };
+  if (timeout === undefined) return build();
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
-      worldFn(seed, { place }),
+      build(),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => reject(new Error(`World setup timed out after ${timeout}ms.`)), timeout);
       }),
@@ -77,6 +83,7 @@ async function buildWithTimeout<W>(worldFn: WorldFn<W>, seed: Seed, place: Place
 
 function world<W>(worldFn: WorldFn<W>, options?: SpecWorldOptions): SpecTestApi<W>;
 function world<W>(worldFn: WorldFn<W>, options: SpecWorldOptions = {}) {
+  const resources = copyWorldResources(options.resources);
   const scope = options.scope ?? "test";
   const api = fixtureTest.extend<{
     specWorldState: WorldState<W>;
@@ -91,7 +98,7 @@ function world<W>(worldFn: WorldFn<W>, options: SpecWorldOptions = {}) {
     specWorldState: [async ({ place, task }, use) => {
       const stack = new AsyncDisposableStack();
       const buffer = new BufferedEvidenceSink();
-      const runtime = new SpecRuntime(place, stack, buffer, options.adapters);
+      const runtime = new SpecRuntime(place, stack, buffer, options.adapters, resources);
       try {
         const missing = unmetNeeds(combinedNeeds(task.file.filepath, options.needs), process.env);
         if (missing.length > 0) {
@@ -99,11 +106,13 @@ function world<W>(worldFn: WorldFn<W>, options: SpecWorldOptions = {}) {
           return;
         }
         try {
-          const built = await buildWithTimeout(worldFn, new SeedChannel(runtime), place, options.timeout);
-          registerWorldDisposable(stack, built);
+          if (resources !== undefined) validateWorldSurfaceSelection(resources, process.env.OPENWORK_EVAL_APP_SURFACE);
+          console.error(`[openwork/testkit] world=${worldFn.name || "anonymous"} resources=${JSON.stringify(resources ?? "legacy-undeclared")} placement=${place.kind}`);
+          const built = await buildWithTimeout(worldFn, new SeedChannel(runtime), place, stack, options.timeout);
           runtime.setPrimary(built);
           await use({ state: "ready", world: built, runtime, buffer });
         } catch (error) {
+          await stack.disposeAsync();
           if (error instanceof SkipError) {
             await use({ state: "skipped", reason: error.reason, runtime, buffer });
             return;
@@ -122,6 +131,7 @@ function world<W>(worldFn: WorldFn<W>, options: SpecWorldOptions = {}) {
         specWorldState.runtime.stack,
         evidence,
         options.adapters,
+        specWorldState.runtime.resources,
       );
       if (specWorldState.state === "skipped") {
         bodyRuntime.setOutcome("skipped", `needs: ${specWorldState.reason}`);

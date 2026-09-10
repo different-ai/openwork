@@ -51,6 +51,7 @@
     "test:session-switch": "pnpm --filter @openwork/app test:session-switch",
     "test:fs-engine": "pnpm --filter @openwork/app test:fs-engine",
     "test:eval-runner": "pnpm --dir evals run test",
+    "warden:check": "pnpm dlx @sentry/warden@0.43.0 --runtime pi --config-path warden.toml --log",
     "check:outbound-access": "node scripts/check-outbound-access.mjs",
     "test:e2e": "pnpm --filter @openwork/app test:e2e",
     "test:admin-scale": "pnpm --filter @openwork-ee/den-api test:admin-scale",

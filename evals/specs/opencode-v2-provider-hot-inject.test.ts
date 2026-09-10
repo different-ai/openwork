@@ -131,6 +131,7 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
         OPENCODE_CONFIG: baseConfig, OPENCODE_MODELS_URL: opencodeModelsUrl,
         OPENWORK_ENCRYPTION_KEY: "fixture-server-only", OPENWORK_TOKEN: "fixture-server-only",
         OPENWORK_HOST_TOKEN: "fixture-server-only", OPENWORK_SERVER_TOKEN: "fixture-server-only",
+        OPENWORK_POLICY_TOKEN: "fixture-server-only",
         OPENAI_API_KEY: "fixture-server-only", ANTHROPIC_API_KEY: "fixture-server-only",
         AWS_SECRET_ACCESS_KEY: "fixture-server-only", GITHUB_TOKEN: "fixture-server-only",
         DATABASE_URL: "fixture-server-only", CUSTOM_SERVICE_SECRET: "fixture-server-only",
@@ -151,7 +152,7 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
       expect(names).toContain("PATH");
       evidence.recordAssertionEvidence(
         "server credentials do not cross the sidecar process boundary",
-        "The live Linux sidecar retained PATH but contained none of the ten synthetic control-plane, provider, cloud, database, or arbitrary service credentials supplied through spawn options. Unknown environment keys were not inherited.",
+        "The live Linux sidecar retained PATH but contained none of the synthetic policy, control-plane, provider, cloud, database, or arbitrary service credentials supplied through spawn options. Unknown environment keys were not inherited.",
         true,
       );
     }
@@ -173,7 +174,7 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
     console.info(`[opencode-v2-spec] cold catalog readiness: ${catalogReadinessMs}ms`);
     evidence.recordAssertionEvidence(
       "C1 positive baseline and negative provider absence",
-      `The cold-cache v2 engine listed models after ${catalogReadinessMs}ms while containing neither witness A nor witness B before injection.`,
+      `The freshly booted v2 engine listed models after ${catalogReadinessMs}ms while containing neither witness A nor witness B before injection. The package cache is shared; this is not cold-cache installation proof.`,
       true,
     );
 
@@ -222,6 +223,29 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
     const idA = sessionId(sessionA.json);
     expect(idA).toBeTypeOf("string");
     if (idA === undefined) throw new Error("Provider A session response did not contain data.id");
+    const shellProbe = join(directory, "policy-boundary.cjs");
+    await writeFile(shellProbe, `console.log(JSON.stringify({ policy: Object.hasOwn(process.env, "OPENWORK_POLICY_TOKEN"), client: Object.hasOwn(process.env, "OPENWORK_SERVER_TOKEN"), ipc: typeof process.send === "function" }));\n`);
+    // The engine's login shell can replace PATH. Use the test runner's Node,
+    // rather than an unrelated system install, for this presence-only probe.
+    const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(shellProbe)}`;
+    const shell = await server.fetchJson(`/api/session/${idA}/shell`, {
+      method: "POST", directory, body: { command }, timeoutMs: 15_000,
+    });
+    expect(shell.status).toBe(204);
+    const shellMessages = await server.fetchJson(`/api/session/${idA}/message`, { directory });
+    const shellMessage: unknown = isRecord(shellMessages.json) && Array.isArray(shellMessages.json.data)
+      ? shellMessages.json.data.find((message: unknown) => isRecord(message) && message.type === "shell" && message.command === command)
+      : undefined;
+    expect(shellMessage, JSON.stringify(shellMessage)).toMatchObject({ status: "exited", exit: 0 });
+    if (!isRecord(shellMessage) || !isRecord(shellMessage.output) || typeof shellMessage.output.output !== "string") {
+      throw new Error("The policy boundary shell probe did not return output");
+    }
+    expect(JSON.parse(shellMessage.output.output.trim())).toEqual({ policy: false, client: false, ipc: false });
+    evidence.recordAssertionEvidence(
+      "shell execution cannot inherit the host policy credential or IPC channel",
+      "The real v2 shell completed a presence-only probe: neither policy nor client credentials nor a process IPC capability were inherited.",
+      true,
+    );
     const promptA = await server.fetchJson(`/api/session/${idA}/prompt`, {
       method: "POST",
       directory,
@@ -282,6 +306,8 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
       body: { text: "reply with anything" },
     });
     expect(promptB.status).toBe(200);
+    // Direct engine prompts no longer run the removed managed model hook.
+    // Server request admission and Den model authorization are separate journeys.
     await eventually(
       async () => JSON.stringify((await server?.fetchJson(`/api/session/${idB}/message`, { directory }))?.json),
       { within: 60_000, intervalMs: 250, label: "provider B witness response", until: (text) => text.includes(nonce) },

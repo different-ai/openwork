@@ -4,21 +4,11 @@ import { useCallback, useMemo } from "react";
 import type { createClient } from "../../../../app/lib/opencode";
 import type { OpenworkServerClient, OpenworkWorkspaceInfo } from "../../../../app/lib/openwork-server";
 import { deleteRouteSession } from "../../../shell/route-workspaces";
-import { setSessionArchived } from "../../../../app/lib/opencode-session";
 import type { ResolvedWorkspaceEndpoint } from "../../../../app/lib/workspace-endpoint";
-import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
-
-type SessionLike = {
-  id?: string;
-  title?: string;
-  time?: {
-    updated?: number;
-    created?: number;
-  };
-};
+import { controlWorkspaceLabel as workspaceLabel, listControlSessions, type ControlSessionLike as SessionLike } from "./list-control-sessions";
 
 type SessionControlWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -40,11 +30,8 @@ type UseSessionControlActionsInput = {
   createTaskInWorkspace: (workspaceId: string) => Promise<string | null> | string | null;
   openModelPicker: () => void;
   refreshRouteState: () => Promise<unknown> | unknown;
+  archiveSession: (sessionId: string, archived: boolean) => Promise<boolean>;
 };
-
-function workspaceLabel(workspace: SessionControlWorkspace) {
-  return workspace.displayName?.trim() || workspace.name?.trim() || workspace.path?.trim() || "workspace";
-}
 
 function findSessionWorkspace(
   workspaces: SessionControlWorkspace[],
@@ -86,6 +73,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     selectedWorkspaceRoot,
     sessionsByWorkspaceId,
     workspaces,
+    archiveSession,
   } = input;
   const pinnedIds = useSessionManagementStore((s) => s.pinnedIds);
 
@@ -107,25 +95,15 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.list_sessions",
     label: "List available sessions",
-    description: "Return sessions across workspaces. Entries include `pinned`, and pinned sessions come first.",
+    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
     kind: "query",
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
-    execute: () => {
-      const out: { sessionId: string; title: string; workspace: string; updatedAt: number; pinned: boolean }[] = [];
-      for (const workspace of workspaces) {
-        const list = sessionsByWorkspaceId[workspace.id] ?? [];
-        for (const session of list) {
-          const sessionId = session.id?.trim() ?? "";
-          if (!sessionId) continue;
-          const title = getDisplaySessionTitle(session.title ?? "");
-          const updatedAt = session.time?.updated ?? session.time?.created ?? 0;
-          out.push({ sessionId, title, workspace: workspaceLabel(workspace), updatedAt, pinned: pinnedIds.includes(sessionId) });
-        }
-      }
-      out.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt);
-      return out.slice(0, 30);
-    },
+    args: [
+      { name: "limit", type: "number", required: false, description: "Maximum sessions to return. Omit to return all loaded sessions." },
+      { name: "workspaceId", type: "string", required: false, description: "Workspace ID or display name. Omit to include every workspace." },
+    ],
+    execute: (args) => listControlSessions(args, { workspaces, sessionsByWorkspaceId, pinnedIds }),
   }), [pinnedIds, sessionsByWorkspaceId, workspaces]);
   useControlAction(listSessionsControlAction);
 
@@ -283,7 +261,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const archiveControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.archive",
     label: "Archive or unarchive a session",
-    description: archiveDisabledReason ?? "Archive a session (non-destructive, preserves context). Archived sessions move to the Archived section. Pass archived=false to unarchive.",
+    description: archiveDisabledReason ?? "Archive a session, preserving context. Working sessions require the user to confirm Stop and archive in the app. Pass archived=false to restore without restarting work.",
     sideEffect: "mutation",
     requiresArgs: true,
     args: [
@@ -296,13 +274,12 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       const archived = booleanArg(args, "archived");
       if (archiveDisabledReason) return { ok: false, error: archiveDisabledReason };
       if (!sessionId) return { ok: false, error: "sessionId is required" };
-      if (!opencodeClient) return { ok: false, error: "OpenCode client is not connected" };
-      const targetWorkspace = findSessionWorkspace(workspaces, sessionsByWorkspaceId, sessionId);
-      await setSessionArchived(opencodeClient, sessionId, archived, targetWorkspace?.path || selectedWorkspaceRoot || undefined);
-      await refreshRouteState();
-      return { ok: true, sessionId, archived };
+      const ok = await archiveSession(sessionId, archived);
+      return ok
+        ? { ok: true, sessionId, archived }
+        : { ok: false, sessionId, error: "Session archive was cancelled or could not be confirmed" };
     },
-  }), [archiveDisabledReason, opencodeClient, refreshRouteState, selectedWorkspaceRoot, sessionsByWorkspaceId, workspaces]);
+  }), [archiveDisabledReason, archiveSession, opencodeClient]);
   useControlAction(archiveControlAction);
 
   const groupCreateControlAction = useMemo<OpenworkControlAction>(() => ({

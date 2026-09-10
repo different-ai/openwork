@@ -437,6 +437,11 @@ function controlStringArg(args: unknown, key: string) {
 }
 
 export function SessionPage(props: SessionPageProps) {
+  const archivedInWorkspace = (workspaceId: string, sessionId: string | null) => {
+    const session = props.sidebar.workspaceSessionGroups.find(group => group.workspace.id === workspaceId)
+      ?.sessions.find(session => session.id === sessionId);
+    return session ? Boolean(session.time?.archived) : undefined;
+  };
   const { config: shellConfig } = useShellConfig();
   const platform = usePlatform();
   const denAuth = useDenAuth();
@@ -982,7 +987,11 @@ export function SessionPage(props: SessionPageProps) {
       workspaceTitle: workspaceName,
       primarySessionId: props.selectedSessionId,
       sessionsKnown: workspaceGroup?.status === "ready",
-      sessions: (workspaceGroup?.sessions ?? []).map((session) => ({
+      sessions: (workspaceGroup?.sessions ?? []).filter((session) => (
+        !session.time?.archived
+        || session.id === props.selectedSessionId
+        || (splitSession?.workspaceId === props.selectedWorkspaceId && splitSession.sessionId === session.id)
+      )).map((session) => ({
         workspaceId: props.selectedWorkspaceId,
         sessionId: session.id,
         title: getDisplaySessionTitle(session.title),
@@ -994,6 +1003,7 @@ export function SessionPage(props: SessionPageProps) {
     props.selectedWorkspaceId,
     props.sidebar.workspaceSessionGroups,
     syncWorkbench,
+    splitSession,
     workspaceName,
   ]);
   useEffect(() => {
@@ -1367,6 +1377,7 @@ export function SessionPage(props: SessionPageProps) {
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
           newTaskDisabled={props.sidebar.newTaskDisabled}
+          newTaskDraftScope={props.newTaskComposer?.draftScope ?? null}
           onSelectWorkspace={props.sidebar.onSelectWorkspace}
           onOpenSession={openSessionTab}
           onPrefetchSession={props.sidebar.onPrefetchSession}
@@ -1757,6 +1768,8 @@ export function SessionPage(props: SessionPageProps) {
                             environmentClient={props.environmentClient}
                             workspaceId={props.runtimeWorkspaceId!}
                             sessionId={props.selectedSessionId!}
+                            archived={archivedInWorkspace(props.selectedWorkspaceId, props.selectedSessionId)}
+                            onRestoreSession={async () => { await props.onArchiveSession?.(props.selectedSessionId!, false); }}
                             isControlTarget={activeWorkbenchPane === "primary"}
                             chatPane={canRenderSplitSurface ? "primary" : undefined}
                             opencodeBaseUrl={reactSessionBaseUrl}
@@ -1809,6 +1822,8 @@ export function SessionPage(props: SessionPageProps) {
                                   workspaceId={splitPaneRuntime.runtimeWorkspaceId}
                                   workspaceRoot={splitPaneRuntime.workspaceRoot}
                                   sessionId={splitSession.sessionId}
+                                  archived={archivedInWorkspace(splitSession.workspaceId, splitSession.sessionId)}
+                                  onRestoreSession={async () => { await props.onArchiveSession?.(splitSession.sessionId, false); }}
                                   isControlTarget={activeWorkbenchPane === "secondary"}
                                   chatPane="secondary"
                                   opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}
@@ -1907,6 +1922,10 @@ export function SessionPage(props: SessionPageProps) {
                   ) : (
                     <div className="flex flex-1 items-center justify-center py-16">
                       <SessionEmptyHero
+                        // Remount per draft owner so the hero reads that
+                        // workspace's persisted new-task draft instead of
+                        // carrying the previous workspace's text across.
+                        key={props.newTaskComposer?.draftOwnerKey}
                         providerCount={providerCount}
                         onRunTask={(prompt, attachments, handoff) =>
                           props.sidebar.onCreateTaskWithPrompt?.(props.selectedWorkspaceId, prompt, attachments, handoff)

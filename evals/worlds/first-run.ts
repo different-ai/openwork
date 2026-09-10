@@ -623,6 +623,19 @@ export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Pla
   };
 }
 
+/**
+ * A healthy desktop whose render tree is about to throw. The spec triggers the
+ * throw through the dev-only `eval.app.render_throw` control action and reads
+ * back what the recovery screen put on the clipboard.
+ */
+export async function renderCrashWorld(seed: Seed) {
+  const app = await seed.desktop({ name: "render-crash" });
+  return {
+    app,
+    readClipboard: () => seed.evalIn(app, () => (navigator.clipboard.readText()), { awaitPromise: true }),
+  };
+}
+
 async function installUpdaterRaceBridge(app: Awaited<ReturnType<typeof desktop>>, delayStable: boolean) {
   const installed = await evalIn(app, browserScript((delayStable) => {
     const nativeUpdater = window.__OPENWORK_ELECTRON__?.updater;
@@ -1179,6 +1192,12 @@ export async function managedVaultWorld(_seed: Seed, { place }: { place: Place }
   };
 }
 
+declare global {
+  interface Window {
+    __backgroundUpdateInstallAttempts: number;
+  }
+}
+
 export async function backgroundUpdateWorld(seed: Seed) {
   const app = await seed.desktop({ name: "background-update", signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("background-update"));
@@ -1187,6 +1206,7 @@ export async function backgroundUpdateWorld(seed: Seed) {
     const now = Date.now.bind(Date);
     const state: Window["__backgroundUpdateWitness"] = { checks: 0, downloads: 0, installs: 0, offset: 0, finishDownload: null, intervalCheck: null };
     window.__backgroundUpdateWitness = state;
+    window.__backgroundUpdateInstallAttempts = 0;
     const schedule = window.setInterval.bind(window);
     // The browser timer returns a numeric handle; Node's merged ambient overload does not apply here.
     const browserWindow: Window = window;
@@ -1209,9 +1229,24 @@ export async function backgroundUpdateWorld(seed: Seed) {
       },
       download: async () => {
         state.downloads++;
-        return new Promise(resolve => { state.finishDownload = () => resolve({ ok: true }); });
+        const attempt = state.downloads;
+        return new Promise((resolve, reject) => {
+          state.finishDownload = () => {
+            state.finishDownload = null;
+            if (attempt === 1) resolve({ ok: false, reason: "Update native preparation failed." });
+            else if (attempt === 2) reject(new Error("Update download connection failed."));
+            else resolve({ ok: true });
+          };
+        });
       },
-      installAndRestart: async () => { state.installs++; return { ok: true }; },
+      // Witness renderer handling of bridge outcomes, not native installer behavior.
+      installAndRestart: async () => {
+        const attempt = ++window.__backgroundUpdateInstallAttempts;
+        if (attempt === 1) return { ok: false, reason: "Update installer could not start." };
+        if (attempt === 2) throw new Error("Update installer connection failed.");
+        state.installs++;
+        return { ok: true };
+      },
       onDownloadProgress: () => () => {},
     };
     state.offset += 16 * 60 * 1000;
@@ -1223,6 +1258,8 @@ export async function backgroundUpdateWorld(seed: Seed) {
       const { checks, downloads, installs } = window.__backgroundUpdateWitness;
       return {
         checks, downloads, installs, route: location.hash,
+        installAttempts: window.__backgroundUpdateInstallAttempts,
+        automaticChecksEnabled: localStorage.getItem("openwork.react.settings.update-auto-check") !== "0",
         updateInTitlebar: Boolean(document.querySelector<HTMLElement>('header [data-update-button]')),
         updateInSidebar: Boolean(document.querySelector<HTMLElement>('[data-sidebar="footer"] [data-update-button]')),
         sidebarName: document.querySelector<HTMLElement>('[data-sidebar-brand]')?.textContent?.trim() ?? null,
@@ -1231,7 +1268,9 @@ export async function backgroundUpdateWorld(seed: Seed) {
     }),
     setCustomBranding: () => evalIn(app, () => {
       const logo = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="32"><rect width="120" height="32" rx="5" fill="#25262b"/><text x="12" y="22" font-family="sans-serif" font-size="18" fill="white">Studio</text></svg>');
-      window.__openworkApplyDesktopConfig({ brandAppName: "Studio", brandLogoUrl: logo });
+      const config = { brandAppName: "Studio", brandLogoUrl: logo };
+      window.__openworkApplyDesktopConfig(config);
+      window.__openworkSetDesktopConfigRefreshResult(config);
     }),
     tickUpdateInterval: () => evalIn(app, () => {
       const state = window.__backgroundUpdateWitness;
@@ -1239,11 +1278,70 @@ export async function backgroundUpdateWorld(seed: Seed) {
       state.offset += 15 * 60 * 1000;
       state.intervalCheck();
     }),
-    finishDownload: () => evalIn(app, () => (window.__backgroundUpdateWitness.finishDownload?.())),
+    finishDownload: () => evalIn(app, () => {
+      const finish = window.__backgroundUpdateWitness.finishDownload;
+      if (!finish) throw new Error("No update download is pending");
+      finish();
+    }),
     returnToApp: () => evalIn(app, () => {
       window.__backgroundUpdateWitness.offset += 16 * 60 * 1000;
       window.dispatchEvent(new Event("focus"));
       window.dispatchEvent(new Event("online"));
+    }),
+    openSettings: () => go(app, `/workspace/${workspace.workspaceId}/settings/updates`),
+    openWorkspace: () => go(app, `/workspace/${workspace.workspaceId}/session`),
+  };
+}
+
+/** A desktop signed in to a real Den whose organization pins allowed desktop
+ * versions. The updater feed is faked; the version policy is Den's own. */
+export async function revokedUpdateWorld(seed: Seed) {
+  const den = await seed.den({
+    org: { name: `Update policy ${Date.now()}`, admin: { name: "Update Policy Admin" } },
+  });
+  const allowVersions = async (versions: string[]) => {
+    const result = await seed.api(den.admin, "/v1/org", {
+      method: "PATCH", body: JSON.stringify({ allowedDesktopVersions: versions }),
+    });
+    if (!result.response.ok) throw new Error(`Setting allowed desktop versions failed: HTTP ${result.response.status} ${result.text.slice(0, 300)}`);
+  };
+  await allowVersions(["9.9.9"]);
+  const app = await seed.desktop({ name: "revoked-update", den, as: "admin" });
+  const workspace = await seed.workspace(app, seed.tmpPath("revoked-update"));
+  await evalIn(app, async () => {
+    // Report the real installed version: a different one would re-key the
+    // background auto-check and start a second check beside the manual one.
+    const { currentVersion } = await window.__OPENWORK_ELECTRON__.updater.getChannel();
+    const state: Window["__backgroundUpdateWitness"] = { checks: 0, downloads: 0, installs: 0, offset: 0, finishDownload: null, intervalCheck: null };
+    window.__backgroundUpdateWitness = state;
+    window.__openworkReadDesktopVersionMetadataEval = () => ({
+      minAppVersion: "0.1.0", latestAppVersion: "9.9.9", publishedDesktopVersions: ["9.9.9"],
+    });
+    window.__openworkUpdaterEvalBridge = {
+      getChannel: async () => ({ channel: "stable", currentVersion }),
+      setChannel: async (channel) => ({ channel, currentVersion }),
+      check: async () => {
+        state.checks++;
+        return { available: true, channel: "stable", currentVersion, latestVersion: "9.9.9" };
+      },
+      download: async () => {
+        state.downloads++;
+        return { ok: true };
+      },
+      installAndRestart: async () => {
+        state.installs++;
+        return { ok: true };
+      },
+      onDownloadProgress: () => () => {},
+    };
+  }, { awaitPromise: true });
+  return {
+    app,
+    den,
+    allowVersions,
+    snapshot: () => evalIn(app, () => {
+      const { downloads, installs } = window.__backgroundUpdateWitness;
+      return { downloads, installs };
     }),
     openSettings: () => go(app, `/workspace/${workspace.workspaceId}/settings/updates`),
     openWorkspace: () => go(app, `/workspace/${workspace.workspaceId}/session`),

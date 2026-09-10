@@ -359,6 +359,9 @@ export async function navigate(client: CdpClient, url: string): Promise<void> {
 }
 
 export async function captureScreenshot(client: CdpClient): Promise<Buffer> {
+  // OAuth can foreground another tab. Activate this explicit target so its
+  // compositor can produce the requested frame instead of stalling in the background.
+  await client.send("Page.bringToFront");
   const payload = await client.send("Page.captureScreenshot", { format: "png" });
   if (!isRecord(payload) || typeof payload.data !== "string") {
     throw new Error("Page.captureScreenshot did not return base64 PNG data.");

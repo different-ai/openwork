@@ -8,6 +8,7 @@ const verifiedArtifact = "https://releases.openwork.test/v1.8.2/OpenWork-darwin-
 test("a fatal desktop bootstrap failure offers one-click verified recovery without losing the profile", async ({ world, user, seed, probe }) => {
   await user.see({ text: /OpenWork (couldn't|could not) start/i });
   await user.see("Restore previous version");
+  await user.see({ role: "button", label: /^reload$/i });
   await user.notSee({ text: /EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE|invalid code signature/ });
   await user.notSee({ text: /GitHub|open an issue|download.*manually/i });
 

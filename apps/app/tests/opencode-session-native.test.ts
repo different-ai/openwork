@@ -3,7 +3,7 @@ import { focusManager } from "@tanstack/react-query";
 import type { Message, Part, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, createPromptMessageID, hasAcceptedPromptMessage, unwrap, type FieldsResult } from "../src/app/lib/opencode";
-import { interruptSessionTurn, sessionNeedsStop, submitAfterInterruption } from "../src/app/lib/opencode-interruption";
+import { holdSessionWork, interruptSessionTurn, sendSessionCommand, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption } from "../src/app/lib/opencode-interruption";
 import { createClientV2 } from "../src/app/lib/opencode-v2-adapter";
 import {
   composeNativeSessionSnapshot,
@@ -299,6 +299,147 @@ describe("native OpenCode session operations", () => {
 });
 
 describe("native Stop and follow-up handoff", () => {
+  test("archive holds share native submission coordination without blocking another runtime", async () => {
+    const baseUrl = endpoint.opencodeBaseUrl;
+    const id = "ses_archive_hold";
+    const release = holdSessionWork(baseUrl, id);
+    let sent = false;
+    try {
+      expect(sessionWorkHeld(`${baseUrl}/`, id)).toBe(true);
+      expect(sessionWorkHeld(baseUrl, "other")).toBe(false);
+      await expect(submitAfterInterruption(baseUrl, id, async () => { sent = true; })).rejects.toThrow("being archived");
+      expect(sent).toBe(false);
+      await submitAfterInterruption(`${baseUrl}/other`, id, async () => { sent = true; });
+      expect(sent).toBe(true);
+    } finally {
+      release();
+    }
+    expect(sessionWorkHeld(baseUrl, id)).toBe(false);
+    sent = false;
+    await submitAfterInterruption(baseUrl, id, async () => { sent = true; });
+    expect(sent).toBe(true);
+  });
+
+  test("proxy-accepted commands stay fenced through idle until their exact terminal reply is visible", async () => {
+    const root = { ...session, id: "ses_deferred_command" };
+    const baseUrl = endpoint.opencodeBaseUrl;
+    const messageID = createPromptMessageID();
+    let terminal = false;
+    await withSessionFetch((request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith(`/session/${root.id}`)) return Response.json(root);
+      if (path.endsWith("/command")) return Response.json({ accepted: true });
+      if (path.endsWith("/message")) return Response.json(terminal
+        ? turnMessages(root.id, [], messageID).map(message => message.info.role === "assistant" ? {
+          ...message, info: { ...message.info, parentID: messageID, finish: "stop", time: { created: 2, completed: 3 } },
+        } : message)
+        : turnMessages(root.id, [], "msg_unrelated"));
+      if (path.endsWith("/abort")) return Response.json(false);
+      if (path.endsWith("/status")) return Response.json({});
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    }, async requests => {
+      const client = createClient(baseUrl, root.directory);
+      await sendSessionCommand(baseUrl, client, { sessionID: root.id, messageID, command: "held", arguments: "" });
+      expect(sessionHasPendingSubmission(baseUrl, root.id)).toBe(true);
+      expect(sessionHasPendingSubmission(`${baseUrl}/other`, root.id)).toBe(false);
+      await expect(interruptSessionTurn(baseUrl, client, root.id, root.directory, { timeoutMs: 30 })).rejects.toThrow("timed out");
+      expect(requests.some(request => new URL(request.url).pathname.endsWith("/abort"))).toBe(true);
+      expect(sessionNeedsStop(baseUrl, root.id)).toBe(true);
+      terminal = true;
+      await interruptSessionTurn(baseUrl, client, root.id, root.directory, { timeoutMs: 1_000 });
+      expect(sessionHasPendingSubmission(baseUrl, root.id)).toBe(false);
+      expect(sessionNeedsStop(baseUrl, root.id)).toBe(false);
+      expect(requests.filter(request => new URL(request.url).pathname.endsWith("/command"))).toHaveLength(1);
+    });
+  });
+
+  test("an unknown admission with exact terminal evidence and fresh idle permits Stop even on abort false", async () => {
+    const root = { ...session, id: "ses_unknown_terminal" };
+    const messageID = createPromptMessageID();
+    await withSessionFetch(request => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith(`/session/${root.id}`)) return Response.json(root);
+      if (path.endsWith("/message")) return Response.json(turnMessages(root.id, [], messageID).map(message => message.info.role === "assistant" ? {
+        ...message, info: { ...message.info, parentID: messageID, finish: "stop", time: { created: 2, completed: 3 } },
+      } : message));
+      if (path.endsWith("/abort")) return Response.json(false);
+      if (path.endsWith("/status")) return Response.json({});
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    }, async () => {
+      const client = createClient(endpoint.opencodeBaseUrl, root.directory);
+      await interruptSessionTurn(endpoint.opencodeBaseUrl, client, root.id, root.directory, {
+        admissionUnknown: true, admissionMessageID: messageID,
+      });
+      expect(sessionNeedsStop(endpoint.opencodeBaseUrl, root.id)).toBe(false);
+    });
+  });
+
+  test("Stop re-aborts a command admitted after its first idle abort without waiting for natural completion", async () => {
+    const root = { ...session, id: "ses_late_command" };
+    const child = { ...session, id: "ses_late_command_child", parentID: root.id };
+    const messageID = createPromptMessageID();
+    const firstIdle = Promise.withResolvers<void>();
+    let admitted = false;
+    let terminal = false;
+    let childStopped = false;
+    const events: string[] = [];
+    await withSessionFetch(request => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith(`/session/${root.id}`)) return Response.json(root);
+      if (path.endsWith(`/session/${child.id}`)) return Response.json(child);
+      if (path.endsWith("/command")) { events.push("command-accepted"); return Response.json({ accepted: true }); }
+      if (path.endsWith(`/session/${child.id}/message`)) return Response.json(turnMessages(child.id));
+      if (path.endsWith(`/session/${root.id}/message`)) {
+        if (!admitted) return Response.json([]);
+        // Cancellation can remove task metadata: Stop must retain what it saw
+        // in the admitted command before issuing that cancellation.
+        return Response.json(turnMessages(root.id, terminal ? [] : [delegatedTool(child.id)], messageID).map(message =>
+          terminal && message.info.role === "assistant" ? {
+            ...message, info: { ...message.info, parentID: messageID, finish: "stop", time: { created: 2, completed: 3 } },
+          } : message));
+      }
+      if (path.endsWith(`/session/${root.id}/abort`)) {
+        events.push(admitted ? "abort-admitted-command" : "abort-idle-root");
+        if (admitted) terminal = true;
+        return Response.json(admitted);
+      }
+      if (path.endsWith(`/session/${child.id}/abort`)) {
+        events.push("abort-command-child");
+        childStopped = true;
+        return Response.json(true);
+      }
+      if (path.endsWith("/status")) {
+        if (!admitted) firstIdle.resolve();
+        return Response.json({
+          [root.id]: { type: admitted && !terminal ? "busy" : "idle" },
+          [child.id]: { type: admitted && !childStopped ? "busy" : "idle" },
+          ses_unrelated: { type: "busy" },
+        });
+      }
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    }, async requests => {
+      const client = createClient(endpoint.opencodeBaseUrl, root.directory);
+      await sendSessionCommand(endpoint.opencodeBaseUrl, client, { sessionID: root.id, messageID, command: "late", arguments: "" });
+      const stopping = interruptSessionTurn(endpoint.opencodeBaseUrl, client, root.id, root.directory, { timeoutMs: 1_000 });
+      await Promise.race([firstIdle.promise, stopping]);
+      expect(events).toEqual(["command-accepted", "abort-idle-root"]);
+      expect(terminal).toBe(false);
+      admitted = true;
+      events.push("command-admitted");
+      await stopping;
+      expect(terminal).toBe(true);
+      expect(childStopped).toBe(true);
+      expect(events.indexOf("abort-admitted-command")).toBeGreaterThan(events.indexOf("command-admitted"));
+      expect(events.indexOf("abort-command-child")).toBeGreaterThan(events.indexOf("abort-admitted-command"));
+      expect(sessionHasPendingSubmission(endpoint.opencodeBaseUrl, root.id)).toBe(false);
+      expect(sessionNeedsStop(endpoint.opencodeBaseUrl, root.id)).toBe(false);
+      expect(requests.filter(request => new URL(request.url).pathname.endsWith("/command"))).toHaveLength(1);
+      const stoppedIds = requests.flatMap(request => new URL(request.url).pathname.match(/\/session\/([^/]+)\/abort$/)?.[1] ?? []);
+      expect(new Set(stoppedIds)).toEqual(new Set([root.id, child.id]));
+      expect(requests.some(request => new URL(request.url).pathname.endsWith("/prompt_async"))).toBe(false);
+    });
+  });
+
   test("dispatches root abort before failed or hanging discovery reads can block Stop", async () => {
     for (const action of ["get", "message"]) {
       for (const failure of ["failed", "hanging"]) {

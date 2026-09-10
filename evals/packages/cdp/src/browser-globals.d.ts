@@ -36,6 +36,7 @@ declare global {
       };
     };
     __openwork: {
+      events(limit?: number): { at: number; name: string; data: unknown }[];
       slice(name: "composer"): {
         snapshotQuery: {
           status: "pending" | "error" | "success";

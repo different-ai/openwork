@@ -28,6 +28,8 @@ const BUNDLED_ICONS_BY_APEX: Record<string, string> = {
 };
 
 const SIMPLE_ICON_SLUG_BY_APEX: Record<string, string> = {
+  "githubcopilot.com": "github",
+  "github.com": "github",
   "slack.com": "slack",
   "granola.ai": "granola",
   "polar.sh": "polar",

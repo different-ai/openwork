@@ -1204,8 +1204,31 @@ jobs:
           name: openwork-server-npm-${{ env.RELEASE_VERSION }}
           path: ${{ runner.temp }}/openwork-server-npm
 
+      - name: Restore executable bits lost in the artifact round-trip
+        run: |
+          set -euo pipefail
+          chmod 755 "$RUNNER_TEMP/openwork-server-npm/bin/openwork-server.mjs" \
+            "$RUNNER_TEMP/openwork-server-npm/dist/bin/openwork-server"
+          test -x "$RUNNER_TEMP/openwork-server-npm/dist/bin/openwork-server"
+
+      - name: Pack and verify executable permissions
+        id: npm-pack
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/openwork-server-npm"
+          npm pack --json --pack-destination "$RUNNER_TEMP" > "$RUNNER_TEMP/npm-pack.json"
+          filename="$(node -p 'require(process.env.RUNNER_TEMP + "/npm-pack.json")[0].filename')"
+          tarball="$RUNNER_TEMP/$filename"
+          unpacked="$(mktemp -d)"
+          tar -xzf "$tarball" -C "$unpacked"
+          test -x "$unpacked/package/bin/openwork-server.mjs"
+          test -x "$unpacked/package/dist/bin/openwork-server"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
       - name: Publish openwork-server
-        run: npm publish "$RUNNER_TEMP/openwork-server-npm" --access public --provenance
+        env:
+          NPM_TARBALL: ${{ steps.npm-pack.outputs.tarball }}
+        run: npm publish "$NPM_TARBALL" --access public --provenance
 
   publish-daytona-snapshot:
     name: Build + Push Daytona Snapshot

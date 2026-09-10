@@ -24,14 +24,41 @@ function run(name, command, args, timeout, extraEnv = {}, cwd = repo) {
   if (result.status !== 0) throw new Error(`${name} failed (${result.signal || result.status})`);
 }
 
+// The cloud and enterprise flavors render a gate above the routes on first
+// launch. Only these artifacts contain that code path, so each one is packaged
+// and booted on a fresh profile; the public flavor is covered by app-smoke.
+const gatedFlavors = [
+  { flavor: "enterprise", config: "electron-builder.enterprise.yml", executable: "openwork-enterprise" },
+  { flavor: "cloud", config: "electron-builder.cloud.yml", executable: "openwork-cloud" },
+];
+const flavorOutput = (flavor) => join(output, flavor);
+
+function packageFlavor(name, config, directory) {
+  run(name, "pnpm", ["--dir", "apps/desktop", "exec", "electron-builder",
+    "--config", config, "--linux", "--dir", "--publish", "never",
+    `--config.directories.output=${directory}`], 120_000,
+  { CSC_IDENTITY_AUTO_DISCOVERY: "false" });
+}
+
+function bootPackagedDesktop(name, journey, binary, timeout) {
+  run(name, "xvfb-run", ["-a", "pnpm", "evals:e2e", journey, "--local"], timeout, {
+    OPENWORK_EVAL_ELECTRON_BINARY: binary,
+    OPENWORK_EVAL_ELECTRON_RESOURCES_PREPARED: "1",
+    OPENWORK_EVAL_ENGINE: "v1",
+    OPENWORK_EVAL_SURFACES_DIR: join(output, "profiles"),
+    ELECTRON_RUN_AS_NODE: "",
+    NODE_PATH: "", NODE_OPTIONS: "",
+  });
+}
+
 try {
   if (!process.argv.includes("--artifact-only")) {
     run("prepare", process.execPath, ["apps/desktop/scripts/electron-build.mjs",
       ...(process.argv.includes("--server-built") ? ["--server-built"] : [])], 240_000);
-    run("package", "pnpm", ["--dir", "apps/desktop", "exec", "electron-builder",
-      "--config", "electron-builder.yml", "--linux", "--dir", "--publish", "never",
-      `--config.directories.output=${output}`], 120_000,
-    { CSC_IDENTITY_AUTO_DISCOVERY: "false" });
+    packageFlavor("package", "electron-builder.yml", output);
+    for (const { flavor, config } of gatedFlavors) {
+      packageFlavor(`package-${flavor}`, config, flavorOutput(flavor));
+    }
   }
   const binary = join(output, "linux-unpacked/openwork");
   const resources = join(output, "linux-unpacked/resources");
@@ -45,14 +72,21 @@ try {
   run("server-import", binary, ["--input-type=module", "-e",
     `const server = await import(${JSON.stringify(embedded)}); if (typeof server.startEmbeddedServer !== "function") throw new Error("Missing embedded server export");`],
   15_000, { ELECTRON_RUN_AS_NODE: "1", NODE_PATH: "", NODE_OPTIONS: "" }, output);
-  run("desktop-boot", "xvfb-run", ["-a", "pnpm", "evals:e2e", "app-smoke", "--local"], 90_000, {
-    OPENWORK_EVAL_ELECTRON_BINARY: binary,
-    OPENWORK_EVAL_ELECTRON_RESOURCES_PREPARED: "1",
-    OPENWORK_EVAL_ENGINE: "v1",
-    OPENWORK_EVAL_SURFACES_DIR: join(output, "profiles"),
-    ELECTRON_RUN_AS_NODE: "",
-    NODE_PATH: "", NODE_OPTIONS: "",
-  });
+  bootPackagedDesktop("desktop-boot", "app-smoke", binary, 90_000);
+  for (const { flavor, executable } of gatedFlavors) {
+    const flavorBinary = join(flavorOutput(flavor), "linux-unpacked", executable);
+    accessSync(flavorBinary, constants.X_OK);
+    bootPackagedDesktop(`desktop-boot-${flavor}`, "packaged-first-launch", flavorBinary, 150_000);
+    // Only the enterprise flavor has an activation gate that must hold the updater back.
+    if (flavor === "enterprise") {
+      bootPackagedDesktop("desktop-updater-gate-enterprise", "packaged-preactivation-updater", flavorBinary, 300_000);
+    }
+  }
+  // The same enterprise artifact, booted as an already-activated install (the update path for existing customers).
+  bootPackagedDesktop("desktop-boot-enterprise-activated", "packaged-activated-launch", join(flavorOutput("enterprise"), "linux-unpacked", "openwork-enterprise"), 150_000);
+  // The same enterprise artifact asked to quit (SIGTERM and Browser.close, fresh and activated): it must exit 0 inside
+  // the bound. Linux has no crash reports to read, so the journey names that half skipped and the exit signal is the witness.
+  bootPackagedDesktop("desktop-quit-enterprise", "desktop-quit-path", join(flavorOutput("enterprise"), "linux-unpacked", "openwork-enterprise"), 300_000);
   report.passed = true;
 } finally {
   report.totalMilliseconds = Math.round(performance.now() - started);

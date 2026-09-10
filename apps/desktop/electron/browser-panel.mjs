@@ -1,4 +1,4 @@
-// Embedded browser panel: tab state, BrowserView lifecycle, menu overlay,
+// Embedded browser panel: tab state, BrowserView lifecycle, native context menus,
 // proxy configuration, and browser IPC registrations. Extracted from
 // main.mjs as a factory so the main process only owns window creation.
 import path from "node:path";
@@ -28,10 +28,6 @@ const BROWSER_NEW_TAB_URL = "https://www.google.com";
 // from a URL). This is a tab bound, not a Chromium process or memory limit.
 const MAX_BROWSER_TABS = 12;
 const BROWSER_TARGET_RESOLVE_TIMEOUT_MS = 2500;
-const MENU_OVERLAY_HTML = "overlay.html";
-const MENU_OVERLAY_WIDTH = 196;
-const MENU_OVERLAY_HEIGHT = 176;
-const MENU_OVERLAY_READY_TIMEOUT_MS = 2000;
 const BROWSER_SECURITY_PREFERENCES = Object.freeze({
   sandbox: true,
   contextIsolation: true,
@@ -45,7 +41,7 @@ const BROWSER_SECURITY_PREFERENCES = Object.freeze({
   webviewTag: false,
 });
 
-export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy }) {
+export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, showNativeContextMenu, closeNativeContextMenu }) {
   let browserSessionHooksInstalled = false;
   function installBrowserSessionHooks() {
     if (browserSessionHooksInstalled) return;
@@ -66,6 +62,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (["about:", "data:", "blob:"].some((scheme) => details.url.startsWith(scheme))) { callback({ cancel: false }); return; }
       const tab = [...browserTabs.values()].find((item) => item.view.webContents.id === details.webContentsId);
       const owner = registry.ownerOf(tab?.tabId);
+      const documentGeneration = tab?.documentGeneration;
       const guard = details.resourceType === "mainFrame" ? taskHost.navigationGuard(tab?.tabId) : null;
       const request = { url: details.url, method: details.method, hasUpload: Boolean(details.uploadData?.length) };
       Promise.resolve().then(async () => {
@@ -82,7 +79,20 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
             if (tab && details.resourceType === "mainFrame" && (getBrowserTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed() || registry.ownerOf(tab.tabId) !== owner)) throw new Error("Browser navigation owner changed");
           } catch { callback({ cancel: true }); return; }
           callback({ cancel: false });
-        }, () => callback({ cancel: true }));
+        }, (error) => {
+          if (tab && getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed()
+            && registry.ownerOf(tab.tabId) === owner && tab.documentGeneration === documentGeneration
+            && (error?.code === "policy_unavailable" || error?.code === "organization_policy_denied")) {
+            tab.loadError = {
+              code: error.code,
+              message: error.code === "organization_policy_denied"
+                ? "This page may be incomplete. Your organization's policy blocked a browser request."
+                : "This page may be incomplete. Your organization's policy could not be verified.",
+            };
+            sendBrowserState();
+          }
+          callback({ cancel: true });
+        });
     });
   }
   // tabId -> { tabId, view, favicon, background }. Order, ownership, the active
@@ -108,52 +118,19 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   const registry = createBrowserTabRegistry();
   let browserViewVisible = false;
   let backgroundWindow = null;
-  // Last browser panel bounds reported by the renderer, in renderer CSS pixels.
-  // Converted to window device-independent pixels at every setBounds call.
+  // Last accepted geometry in window DIPs. Reattaching must not scale an old
+  // CSS rectangle with a newer zoom while the renderer is still catching up.
   let lastBrowserBounds = null;
   let browserTabCounter = 0;
   // Active proxy for the built-in browser session: { rules, username, password }.
   let browserProxy = null;
   let browserControlEnabled = true;
-  let menuOverlayView = null;
-  let menuOverlayRequest = null;
-  let menuOverlayReady = false;
-  let menuOverlayReadyResolvers = [];
-  let menuOverlayShowSerial = 0;
+  let menuRequest = null;
+  let menuShowSerial = 0;
   const webMcpRefreshTimers = new Map();
 
   function window() {
     return getWindow?.() ?? null;
-  }
-
-  function resetMenuOverlayReady({ resolvePending = false } = {}) {
-    menuOverlayReady = false;
-    if (resolvePending) {
-      const resolvers = menuOverlayReadyResolvers.splice(0);
-      for (const resolve of resolvers) resolve(false);
-    }
-  }
-
-  function markMenuOverlayReady(view) {
-    if (!view || view.webContents.isDestroyed()) return;
-    menuOverlayReady = true;
-    const resolvers = menuOverlayReadyResolvers.splice(0);
-    for (const resolve of resolvers) resolve(true);
-  }
-
-  function waitForMenuOverlayReady(view) {
-    if (menuOverlayReady) return Promise.resolve(true);
-    return new Promise((resolve) => {
-      let timer = null;
-      const done = (ready) => {
-        if (timer) clearTimeout(timer);
-        menuOverlayReadyResolvers = menuOverlayReadyResolvers.filter((candidate) => candidate !== done);
-        resolve(ready);
-      };
-      timer = setTimeout(() => done(false), MENU_OVERLAY_READY_TIMEOUT_MS);
-      menuOverlayReadyResolvers.push(done);
-      if (!view || view.webContents.isDestroyed()) done(false);
-    });
   }
 
   /** Send an IPC message to the main renderer, guarding against disposed frames. */
@@ -311,6 +288,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       canGoForward: webContents.canGoForward(),
       ownerSessionId: registry.ownerOf(tabId),
       browserApproval: tab.browserApproval ?? null,
+      loadError: tab.loadError,
       browserTask: tab.browserTask ?? { status: "idle", operation: null },
       siteToolCount: Number.isInteger(tab.webMcpToolCount) ? tab.webMcpToolCount : 0,
       siteTools: Array.isArray(tab.webMcpTools) ? tab.webMcpTools : [],
@@ -370,7 +348,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
   }
 
-  function normalizeMenuOverlayPoint(point) {
+  function normalizeMenuPoint(point) {
     if (!point || typeof point !== "object") {
       return { x: 0, y: 0 };
     }
@@ -379,122 +357,30 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (!Number.isFinite(x) || !Number.isFinite(y)) {
       return { x: 0, y: 0 };
     }
-    return { x: Math.round(x), y: Math.round(y) };
+    return { x, y };
   }
 
-  function menuOverlayBounds(point, size = { width: MENU_OVERLAY_WIDTH, height: MENU_OVERLAY_HEIGHT }) {
-    const [contentWidth, contentHeight] = window()?.getContentSize?.() ?? [MENU_OVERLAY_WIDTH, MENU_OVERLAY_HEIGHT];
-    const width = Math.min(size.width, contentWidth);
-    const height = Math.min(size.height, contentHeight);
-    return {
-      x: Math.min(Math.max(point.x, 0), Math.max(contentWidth - width - 4, 0)),
-      y: Math.min(Math.max(point.y, 0), Math.max(contentHeight - height - 4, 0)),
-      width,
-      height,
-    };
-  }
-
-  function menuOverlayUrl() {
-    const currentUrl = window()?.webContents?.getURL?.();
-    if (currentUrl && /^https?:\/\//i.test(currentUrl)) {
-      return new URL(MENU_OVERLAY_HTML, currentUrl).toString();
-    }
-    return null;
-  }
-
-  async function loadMenuOverlayRenderer(view) {
-    const devUrl = menuOverlayUrl();
-    if (devUrl) {
-      await view.webContents.loadURL(devUrl);
-      return;
-    }
-
-    const packagedOverlayPath = path.join(process.resourcesPath, "app-dist", MENU_OVERLAY_HTML);
-    const devOverlayPath = path.resolve(__dirname, "../../app/dist", MENU_OVERLAY_HTML);
-    await view.webContents.loadFile(app.isPackaged ? packagedOverlayPath : devOverlayPath);
-  }
-
-  async function ensureMenuOverlayView() {
-    if (menuOverlayView && !menuOverlayView.webContents.isDestroyed()) {
-      return menuOverlayView;
-    }
-
-    const view = new WebContentsView({
-      webPreferences: {
-        // Electron only runs ESM preload scripts reliably with sandbox disabled.
-        // Keep the bridge isolated and node-free for the React overlay document.
-        backgroundThrottling: false,
-        sandbox: false,
-        contextIsolation: true,
-        nodeIntegration: false,
-        preload: path.join(__dirname, "menu-overlay-preload.mjs"),
-      },
-    });
-    view.setBackgroundColor?.("#00000000");
-    view.setVisible?.(false);
-    view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-    view.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
-      if (isMainFrame && !isInPlace) resetMenuOverlayReady();
-    });
-    view.webContents.once("destroyed", () => {
-      if (menuOverlayView === view) {
-        menuOverlayView = null;
-        menuOverlayRequest = null;
-        resetMenuOverlayReady({ resolvePending: true });
-      }
-    });
-
-    menuOverlayView = view;
-    resetMenuOverlayReady({ resolvePending: true });
-    await loadMenuOverlayRenderer(view);
-    return view;
-  }
-
-  function hideMenuOverlay() {
-    const view = menuOverlayView;
-    const mainWindow = window();
-    menuOverlayShowSerial += 1;
-    menuOverlayRequest = null;
-    if (!view || !mainWindow) return;
-    const restoreFocus = !view.webContents.isDestroyed() && view.webContents.isFocused?.();
-    view.setVisible?.(false);
-    if (!view.webContents.isDestroyed()) view.webContents.send("openwork:menu-overlay:hide");
-    try {
-      if (mainWindow.contentView.children.includes(view)) {
-        mainWindow.contentView.removeChildView(view);
-      }
-    } catch {
-      // already removed
-    }
-    if (restoreFocus && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.focus();
-  }
-
-  function bringMenuOverlayToTop(view) {
-    const mainWindow = window();
-    if (!mainWindow) return;
-    try {
-      if (mainWindow.contentView.children.includes(view)) {
-        mainWindow.contentView.removeChildView(view);
-      }
-    } catch {
-      // already removed
-    }
-    mainWindow.contentView.addChildView(view);
+  function hideContextMenu() {
+    if (!menuRequest) return;
+    menuShowSerial += 1;
+    menuRequest = null;
+    closeNativeContextMenu();
   }
 
   function tabMenuRequest(tab, point) {
     const url = browserTabUrl(tab);
     return {
-      id: `tab-menu:${tab.tabId}:${Date.now()}`,
       source: "tab",
       tabId: tab.tabId,
+      ownerSessionId: registry.ownerOf(tab.tabId),
       url,
-      bounds: menuOverlayBounds(normalizeMenuOverlayPoint(point)),
+      point: normalizeMenuPoint(point),
       items: [
-        { id: "copy-url", label: "Copy URL", iconName: "copy", disabled: !url },
-        { id: "open-external", label: "Open in Browser", iconName: "external", disabled: !(url && isHttpUrl(url)) },
-        { id: "close-tab", label: "Close Tab", iconName: "close", separatorBefore: true },
-        { id: "close-all-tabs", label: "Close All Tabs", iconName: "close" },
+        { type: "item", id: "copy-url", label: "Copy URL", enabled: !!url },
+        { type: "item", id: "open-external", label: "Open in Browser", enabled: !!url && isHttpUrl(url) },
+        { type: "separator" },
+        { type: "item", id: "close-tab", label: "Close Tab" },
+        { type: "item", id: "close-all-tabs", label: "Close All Tabs" },
       ],
     };
   }
@@ -503,8 +389,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = getBrowserTab(String(tabId ?? ""));
     if (!window() || !tab || tab.view.webContents.isDestroyed()) return;
 
-    const request = tabMenuRequest(tab, point ? scaleRendererPoint(point) : point);
-    await showMenuOverlay(request, ++menuOverlayShowSerial);
+    await showContextMenu(tabMenuRequest(tab, point));
   }
 
   async function showLinkContextMenu({ url, point, sessionId }) {
@@ -515,90 +400,155 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     // Capture ownership before discovery; a later focus change must not retarget
     // the link. Dismissals invalidate pending discovery through the serial.
     const ownerSessionId = normalizeSessionId(sessionId) ?? registry.visibleSessionId();
-    hideMenuOverlay();
-    const showSerial = ++menuOverlayShowSerial;
-    const browsers = await listInstalledBrowsers();
-    if (showSerial !== menuOverlayShowSerial) return;
-    const items = [
-      { id: "open-builtin", label: "Open in OpenWork" },
-      { id: "open-external", label: "Open in Default Browser" },
-      ...browsers.map(({ id, name }) => ({ id: `browser:${id}`, label: `Open in ${name}` })),
-      { id: "copy-url", label: "Copy Link Address", separatorBefore: true },
-    ];
-    await showMenuOverlay({
-      id: `link-menu:${showSerial}`,
+    await showContextMenu({
       source: "link",
       url,
       ownerSessionId,
-      browsers,
-      items,
-      bounds: menuOverlayBounds(scaleRendererPoint(point), { width: 264, height: items.length * 36 + 28 }),
-    }, showSerial);
-  }
-
-  async function showMenuOverlay(request, showSerial) {
-    const view = await ensureMenuOverlayView();
-    if (showSerial !== menuOverlayShowSerial || menuOverlayView !== view) return;
-    menuOverlayRequest = request;
-    view.setBounds(request.bounds);
-    view.setVisible?.(true);
-    bringMenuOverlayToTop(view);
-    const ready = await waitForMenuOverlayReady(view);
-    if (showSerial !== menuOverlayShowSerial || menuOverlayRequest !== request || menuOverlayView !== view) return;
-    if (!ready) {
-      console.warn("[menu-overlay] renderer did not signal readiness before show");
-    }
-    view.webContents.send("openwork:menu-overlay:show", {
-      id: request.id,
-      source: request.source,
-      items: request.items,
+      point: normalizeMenuPoint(point),
     });
-    view.webContents.focus();
   }
 
-  function handleMenuOverlayChoice(payload) {
-    if (!payload || payload.requestId !== menuOverlayRequest?.id) return;
-    const request = menuOverlayRequest;
-    if (!request.items.some((item) => item.id === payload.itemId && !item.disabled)) return;
-    const tab = getBrowserTab(request.tabId);
-    hideMenuOverlay();
+  async function showPageContextMenu(tab, params) {
+    if (!browserTabVisible(tab.tabId)) return;
+    const contents = tab.view.webContents;
+    const items = [];
+    const actions = new Map();
+    const add = (id, label, action, enabled = true) => {
+      items.push({ type: "item", id, label, enabled });
+      actions.set(id, action);
+    };
+    const separator = () => { if (items.length) items.push({ type: "separator" }); };
+    if (params.linkURL) {
+      add("open-new-tab", "Open Link in New Tab", null, isHttpUrl(params.linkURL));
+      add("copy-link", "Copy Link Address", () => clipboard.writeText(params.linkURL));
+    }
+    if (params.mediaType === "image") {
+      separator();
+      add("copy-image", "Copy Image", () => contents.copyImageAt(params.x, params.y), params.hasImageContents === true);
+      if (params.srcURL) add("copy-image-address", "Copy Image Address", () => clipboard.writeText(params.srcURL));
+    }
+    if (params.isEditable || params.selectionText) {
+      separator();
+      const edit = (id, label, flag) => add(id, label, () => contents[id](), params.editFlags?.[flag] === true);
+      if (params.isEditable) {
+        edit("undo", "Undo", "canUndo");
+        edit("redo", "Redo", "canRedo");
+        separator();
+        edit("cut", "Cut", "canCut");
+      }
+      edit("copy", "Copy", "canCopy");
+      if (params.isEditable) {
+        edit("paste", "Paste", "canPaste");
+        edit("selectAll", "Select All", "canSelectAll");
+      }
+    }
+    if (!params.isEditable && !params.selectionText && !params.linkURL && params.mediaType !== "image") {
+      add("back", "Back", () => contents.goBack(), contents.canGoBack());
+      add("forward", "Forward", () => contents.goForward(), contents.canGoForward());
+      add("reload", "Reload", () => contents.reload());
+    }
+    // Chromium supplies view-relative coordinates, already in window DIPs.
+    // Convert to app CSS pixels for the shared helper, not through page zoom.
+    const bounds = tab.view.getBounds();
+    const appZoom = window().webContents.getZoomFactor();
+    await showContextMenu({
+      source: "page", tabId: tab.tabId, ownerSessionId: registry.ownerOf(tab.tabId),
+      url: params.linkURL, items, actions,
+      point: { x: (bounds.x + params.x) / appZoom, y: (bounds.y + params.y) / appZoom },
+    });
+  }
 
-    if (request.source === "link" && payload.itemId !== "copy-url") {
-      runDetachedTask("open link", async () => {
-        try {
-          const external = payload.itemId !== "open-builtin";
-          await checkPolicy?.({ url: request.url, external });
-          if (!external) {
-            createBrowserTab(request.url, { ownerSessionId: request.ownerSessionId, initializeBlank: false });
-          } else if (payload.itemId === "open-external") {
-            await shell.openExternal(request.url);
-          } else {
-            const browser = request.browsers.find(({ id }) => `browser:${id}` === payload.itemId);
-            await browser.open(request.url);
-          }
-        } catch (error) {
-          const mainWindow = window();
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            await dialog.showMessageBox(mainWindow, {
-              type: "error", message: "Could not open this link",
-              detail: error instanceof Error ? error.message : "Your browser may be unavailable, or your organization may restrict this destination. You can copy the link address instead.",
-            });
-          }
+  async function showContextMenu(request) {
+    hideContextMenu();
+    const showSerial = ++menuShowSerial;
+    const mainWindow = window();
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+    const tab = request.tabId ? getBrowserTab(request.tabId) : null;
+    const isCurrent = () => showSerial === menuShowSerial && window() === mainWindow
+      && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()
+      && (!tab || (getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed() && registry.ownerOf(tab.tabId) === request.ownerSessionId))
+      && (request.source !== "page" || browserTabVisible(request.tabId));
+    const dismiss = () => { if (menuRequest === request) hideContextMenu(); };
+    const invalidate = () => {
+      if (showSerial !== menuShowSerial) return;
+      dismiss();
+      menuShowSerial += 1;
+    };
+    const navigated = (_event, _url, _isInPlace, isMainFrame) => { if (isMainFrame || request.source === "page") invalidate(); };
+    menuRequest = request;
+    mainWindow.on("blur", dismiss);
+    mainWindow.webContents.on("did-start-navigation", navigated);
+    mainWindow.webContents.on("destroyed", invalidate);
+    tab?.view.webContents.on("did-start-navigation", navigated);
+    try {
+      if (request.source === "link") {
+        request.browsers = await listInstalledBrowsers();
+        if (!isCurrent()) return;
+        request.items = [
+          { type: "item", id: "open-builtin", label: "Open in OpenWork" },
+          { type: "item", id: "open-external", label: "Open in Default Browser" },
+          ...request.browsers.map(({ id, name }) => ({ type: "item", id: `browser:${id}`, label: `Open in ${name}` })),
+          { type: "separator" },
+          { type: "item", id: "copy-url", label: "Copy Link Address" },
+        ];
+      }
+      // The native helper owns zoom conversion and resolves only an ID or null.
+      const itemId = await showNativeContextMenu({ items: request.items, point: request.point });
+      if (!isCurrent()) return;
+      menuRequest = null;
+      if (!request.items.some((item) => item.type === "item" && item.id === itemId && item.enabled !== false)) return;
+      // Once selected, changing conversations must not retarget or cancel the
+      // captured link. A newer menu or destroyed document still invalidates it.
+      await handleMenuChoice(request, itemId, isCurrent);
+    } finally {
+      dismiss();
+      mainWindow.removeListener("blur", dismiss);
+      mainWindow.webContents.removeListener("did-start-navigation", navigated);
+      mainWindow.webContents.removeListener("destroyed", invalidate);
+      tab?.view.webContents.removeListener("did-start-navigation", navigated);
+    }
+  }
+
+  async function handleMenuChoice(request, itemId, isCurrent) {
+    const tab = getBrowserTab(request.tabId);
+
+    if ((request.source === "link" && itemId !== "copy-url") || (request.source === "page" && itemId === "open-new-tab")) {
+      try {
+        const external = request.source === "link" && itemId !== "open-builtin";
+        await checkPolicy?.({ url: request.url, external });
+        if (!isCurrent()) return;
+        if (!external) {
+          createBrowserTab(request.url, { ownerSessionId: request.ownerSessionId, initializeBlank: false });
+        } else if (itemId === "open-external") {
+          await shell.openExternal(request.url);
+        } else {
+          const browser = request.browsers.find(({ id }) => `browser:${id}` === itemId);
+          await browser.open(request.url);
         }
-      });
+      } catch (error) {
+        if (isCurrent()) {
+          await dialog.showMessageBox(window(), {
+            type: "error", message: "Could not open this link",
+            detail: error instanceof Error ? error.message : "Your browser may be unavailable, or your organization may restrict this destination. You can copy the link address instead.",
+          });
+        }
+      }
       return;
     }
 
-    switch (payload.itemId) {
+    if (request.source === "page") {
+      request.actions.get(itemId)?.();
+      return;
+    }
+
+    switch (itemId) {
       case "copy-url":
         if (request.url) clipboard.writeText(request.url);
         break;
       case "open-external":
         if (request.url && isHttpUrl(request.url)) {
-          runDetachedTask("open browser tab externally", async () => {
-            await checkPolicy?.({ url: request.url, external: true });
-            await shell.openExternal(request.url);
-          });
+          await checkPolicy?.({ url: request.url, external: true });
+          if (isCurrent()) await shell.openExternal(request.url);
         }
         break;
       case "close-tab":
@@ -804,12 +754,18 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       /** @type {((error: Error | null) => void) | null} */
       finishSuspension: null,
       webMcpRevision: 0,
+      documentGeneration: 0,
+      /** @type {import("@openwork/browser-tabs").BrowserPanelTab["loadError"]} */
+      loadError: null,
       webMcpToolCount: 0,
       webMcpTools: [],
       webMcpActivity: [],
     };
     browserTabs.set(tabId, tab);
     if (!restoreTabId) registry.add({ tabId, ownerSessionId });
+    view.webContents.on("context-menu", (_event, params) => {
+      runDetachedTask("show browser page menu", () => showPageContextMenu(tab, params));
+    });
     view.webContents.once("dom-ready", () => {
       tab.domReady = true;
       if (tab.background) emulateBackgroundTab(tab);
@@ -892,7 +848,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       }
       sendToRenderer("openwork:browser:panel-opened", { ownerSessionId: registry.ownerOf(tabId) });
     });
-    view.webContents.on("did-navigate", () => sendBrowserState());
+    view.webContents.on("did-navigate", () => {
+      // Only a main-frame commit replaces the document. Aborts and downloads
+      // retain its warning; old resource failures cannot affect the new document.
+      tab.documentGeneration += 1;
+      tab.loadError = null;
+      sendBrowserState();
+    });
     view.webContents.on("did-navigate-in-page", () => sendBrowserState());
     view.webContents.on("page-title-updated", () => sendBrowserState());
     view.webContents.on("page-favicon-updated", (_event, favicons) => {
@@ -1037,42 +999,39 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const previous = registry.visibleSessionId();
     const next = registry.setVisibleSession(sessionId);
     if (next === previous) return next;
-    hideMenuOverlay();
+    hideContextMenu();
     applySurfacing();
     attachActiveBrowserView();
     sendBrowserState();
     return next;
   }
 
-  // The renderer reports bounds in CSS pixels, which Electron scales by the main
-  // window's zoom factor. Read the factor from the webContents at apply time so
-  // the conversion is always correct, no matter how the zoom was changed
-  // (shortcuts, native menu, or Chromium's persisted per-origin zoom).
   function mainWindowZoomFactor() {
     try {
       const factor = window()?.webContents.getZoomFactor();
-      return typeof factor === "number" && factor > 0 ? factor : 1;
+      return Number.isFinite(factor) && factor > 0 ? factor : 1;
     } catch {
       return 1;
     }
   }
 
-  function scaleRendererBounds(bounds) {
-    const zoom = mainWindowZoomFactor();
+  function acceptBrowserBounds(bounds) {
+    if (!bounds || ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)
+      || bounds.width <= 0 || bounds.height <= 0) return false;
+    const currentZoom = mainWindowZoomFactor();
+    // Unstamped callers retain the existing CSS-pixel IPC contract.
+    const zoom = bounds.zoomFactor === undefined ? currentZoom : bounds.zoomFactor;
+    if (!Number.isFinite(zoom) || zoom <= 0 || Math.abs(zoom - currentZoom) > 1e-6) return false;
     // Round edges (not width/height) so the far edge has no sub-pixel seam.
     const x = Math.round(bounds.x * zoom);
     const y = Math.round(bounds.y * zoom);
-    return {
+    lastBrowserBounds = {
       x,
       y,
       width: Math.round((bounds.x + bounds.width) * zoom) - x,
       height: Math.round((bounds.y + bounds.height) * zoom) - y,
     };
-  }
-
-  function scaleRendererPoint(point) {
-    const zoom = mainWindowZoomFactor();
-    return { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) };
+    return true;
   }
 
   // Automation clients (docs shots, screenshot skills, Playwright) attach to a
@@ -1125,7 +1084,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     tab.view.setVisible(!approvals.has(tab.tabId));
     detachIdleBrowserViews(tab.view);
     // Size before attaching so a restored view never flashes at stale bounds.
-    tab.view.setBounds(scaleRendererBounds(lastBrowserBounds));
+    tab.view.setBounds(lastBrowserBounds);
     if (!mainWindow.contentView.children.includes(tab.view)) {
       mainWindow.contentView.addChildView(tab.view);
     }
@@ -1135,7 +1094,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = browserTabs.get(tabId);
     if (!tab) throw new Error(`Unknown browser tab: ${tabId}`);
     if (tab.suspending) throw new Error("Browser tab is suspending.");
-    hideMenuOverlay();
+    hideContextMenu();
     const previousView = getActiveBrowserView();
     registry.select(tabId);
     if (registry.surfacingFor(tabId) === "foreground") {
@@ -1154,7 +1113,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     approvals.get(tabId)?.finish(false);
     taskHost.invalidate(tabId, { closed: true });
     if (!preserve) suspendedTabs.delete(tabId);
-    if (menuOverlayRequest?.tabId === tabId) hideMenuOverlay();
+    if (menuRequest?.tabId === tabId) hideContextMenu();
     const wasOnScreen = registry.onScreenTabId() === tabId;
     if (tab) {
       tab.background = false;
@@ -1330,31 +1289,31 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
    * @param {string | null} [opts.sessionId] - the conversation whose panel is showing
    */
   function attachBrowserView(bounds, { preloadDefault = false, ensureTab = false, sessionId } = {}) {
-    if (!window()) return;
-    lastBrowserBounds = bounds;
+    if (!window() || !acceptBrowserBounds(bounds)) return false;
     browserViewVisible = true;
     if (sessionId !== undefined) {
       const previous = registry.visibleSessionId();
-      if (registry.setVisibleSession(sessionId) !== previous) applySurfacing();
+      if (registry.setVisibleSession(sessionId) !== previous) {
+        hideContextMenu();
+        applySurfacing();
+      }
     }
     if (ensureTab && !registry.onScreenTabId()) {
       createBrowserTab("about:blank", { ownerSessionId: registry.visibleSessionId() });
     }
     const view = getActiveBrowserView();
     attachActiveBrowserView();
-    if (bounds.width > 0 && bounds.height > 0) {
-      view?.setBounds(scaleRendererBounds(bounds));
-    }
     resetViewportEmulation(view);
     const url = view?.webContents.getURL();
     if (preloadDefault && (!url || url === "about:blank")) {
       runDetachedTask("load browser default page", () => view?.webContents.loadURL(BROWSER_DEFAULT_URL));
     }
     sendBrowserState();
+    return true;
   }
 
   function hideBrowserView() {
-    hideMenuOverlay();
+    hideContextMenu();
     browserViewVisible = false;
     if (!window()) return;
     detachIdleBrowserViews();
@@ -1362,10 +1321,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   function destroyBrowserView() {
     hideBrowserView();
-    const overlayView = menuOverlayView;
-    menuOverlayView = null;
-    menuOverlayRequest = null;
-    try { overlayView?.webContents.close(); } catch { /* already destroyed */ }
+    menuShowSerial += 1;
     closeAllBrowserTabs();
     browserTabs.clear();
     suspendedTabs.clear();
@@ -1420,11 +1376,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       getActiveWebContents()?.reload();
     });
     ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
-      lastBrowserBounds = bounds;
+      if (!acceptBrowserBounds(bounds)) return false;
       const view = getActiveBrowserView();
-      if (view && browserViewVisible && bounds.width > 0 && bounds.height > 0) {
-        view.setBounds(scaleRendererBounds(bounds));
+      if (view && browserViewVisible) {
+        view.setBounds(lastBrowserBounds);
       }
+      return true;
     });
     ipcMain.handle("openwork:browser:state", () => ({
       ...browserStatePayload(),
@@ -1499,26 +1456,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       const mainContents = window()?.webContents;
       if (event.sender !== mainContents || event.senderFrame !== mainContents?.mainFrame) return;
       if (!payload || typeof payload !== "object") return;
-      runDetachedTask("show link context menu", () => showLinkContextMenu(payload));
+      const showing = showLinkContextMenu(payload);
+      runDetachedTask("show link context menu", () => showing);
     });
     ipcMain.handle("openwork:browser:destroy", () => destroyBrowserView());
-    ipcMain.on("openwork:menu-overlay:ready", (event) => {
-      if (event.sender !== menuOverlayView?.webContents) return;
-      markMenuOverlayReady(menuOverlayView);
-    });
-    ipcMain.on("openwork:menu-overlay:choose", (event, payload) => {
-      if (event.sender !== menuOverlayView?.webContents) return;
-      handleMenuOverlayChoice(payload);
-    });
-    ipcMain.on("openwork:menu-overlay:close", (event, payload) => {
-      if (event.sender !== menuOverlayView?.webContents) return;
-      if (payload?.requestId && payload.requestId !== menuOverlayRequest?.id) return;
-      hideMenuOverlay();
-    });
-    ipcMain.on("openwork:menu-overlay:dismiss", (event) => {
-      if (event.sender === menuOverlayView?.webContents) return;
-      hideMenuOverlay();
-    });
+    ipcMain.on("openwork:menu-overlay:dismiss", () => hideContextMenu());
     ipcMain.on("openwork:webmcp:tools-changed", (event) => {
       const tab = [...browserTabs.values()].find((candidate) => candidate.view.webContents === event.sender);
       if (!tab) return;

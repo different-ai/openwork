@@ -1,6 +1,9 @@
 import { create } from "zustand";
 
 const SESSION_SCROLL_STORAGE_KEY = "openwork:session-scroll:v1";
+const PERSIST_DELAY_MS = 250;
+
+export type SessionScrollAnchor = { messageId: string; offset: number };
 
 type StickyBottomSessionScrollState = {
   mode: "stickyBottom";
@@ -10,6 +13,7 @@ type StickyBottomSessionScrollState = {
 type ManualSessionScrollState = {
   mode: "manual";
   scrollTop: number;
+  anchor?: SessionScrollAnchor;
   topClippedMessageId: string | null;
 };
 
@@ -45,6 +49,10 @@ function normalizeSessionScrollState(value: unknown): SessionScrollState | null 
   return {
     mode: "manual",
     scrollTop: Math.max(0, Math.round(value.scrollTop)),
+    ...(isRecord(value.anchor) && typeof value.anchor.messageId === "string" && value.anchor.messageId.trim()
+      && typeof value.anchor.offset === "number" && Number.isFinite(value.anchor.offset)
+      ? { anchor: { messageId: value.anchor.messageId, offset: value.anchor.offset } }
+      : {}),
     topClippedMessageId,
   };
 }
@@ -74,7 +82,13 @@ function persistSessionScrollState(sessions: SessionScrollStateById): void {
   if (globalThis.window === undefined) return;
 
   try {
-    window.localStorage.setItem(SESSION_SCROLL_STORAGE_KEY, JSON.stringify(sessions));
+    // Clipped-message controls are presentation state, not a reading position.
+    const positions = Object.fromEntries(Object.entries(sessions).map(([id, state]) => [id,
+      state.mode === "manual"
+        ? { mode: state.mode, scrollTop: state.scrollTop, anchor: state.anchor }
+        : { mode: state.mode },
+    ]));
+    window.localStorage.setItem(SESSION_SCROLL_STORAGE_KEY, JSON.stringify(positions));
   } catch {
     return;
   }
@@ -125,6 +139,7 @@ function setSessionManualScroll(
   sessionId: string | null | undefined,
   scrollTop: number,
   topClippedMessageId: string | null,
+  anchor?: SessionScrollAnchor,
 ): SessionScrollStateById {
   if (!sessionId) return sessions;
 
@@ -133,6 +148,8 @@ function setSessionManualScroll(
   if (
     current.mode === "manual" &&
     current.scrollTop === nextScrollTop &&
+    current.anchor?.messageId === anchor?.messageId &&
+    current.anchor?.offset === anchor?.offset &&
     current.topClippedMessageId === topClippedMessageId
   ) {
     return sessions;
@@ -140,7 +157,7 @@ function setSessionManualScroll(
 
   return {
     ...sessions,
-    [sessionId]: { mode: "manual", scrollTop: nextScrollTop, topClippedMessageId },
+    [sessionId]: { mode: "manual", scrollTop: nextScrollTop, topClippedMessageId, anchor },
   };
 }
 
@@ -163,7 +180,7 @@ function setSessionTopClippedMessageId(
 type SessionScrollStore = {
   sessions: SessionScrollStateById;
   setStickyBottom: (sessionId: string | null | undefined, topClippedMessageId: string | null) => void;
-  setManualScroll: (sessionId: string | null | undefined, scrollTop: number, topClippedMessageId: string | null) => void;
+  setManualScroll: (sessionId: string | null | undefined, scrollTop: number, topClippedMessageId: string | null, anchor?: SessionScrollAnchor) => void;
   setTopClippedMessageId: (sessionId: string | null | undefined, topClippedMessageId: string | null) => void;
 };
 
@@ -171,10 +188,12 @@ export const useSessionScrollStore = create<SessionScrollStore>((set) => ({
   sessions: readPersistedSessionScrollState(),
   setStickyBottom: (sessionId, topClippedMessageId) => set((state) => {
     const sessions = setSessionStickyBottom(state.sessions, sessionId, topClippedMessageId);
+    schedulePersistence(getSessionScrollState(state.sessions, sessionId), getSessionScrollState(sessions, sessionId));
     return sessions === state.sessions ? state : { sessions };
   }),
-  setManualScroll: (sessionId, scrollTop, topClippedMessageId) => set((state) => {
-    const sessions = setSessionManualScroll(state.sessions, sessionId, scrollTop, topClippedMessageId);
+  setManualScroll: (sessionId, scrollTop, topClippedMessageId, anchor) => set((state) => {
+    const sessions = setSessionManualScroll(state.sessions, sessionId, scrollTop, topClippedMessageId, anchor);
+    schedulePersistence(getSessionScrollState(state.sessions, sessionId), getSessionScrollState(sessions, sessionId));
     return sessions === state.sessions ? state : { sessions };
   }),
   setTopClippedMessageId: (sessionId, topClippedMessageId) => set((state) => {
@@ -183,4 +202,21 @@ export const useSessionScrollStore = create<SessionScrollStore>((set) => ({
   }),
 }));
 
-useSessionScrollStore.subscribe((state) => persistSessionScrollState(state.sessions));
+let persistTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function flushSessionScrollState() {
+  if (persistTimer === undefined) return;
+  clearTimeout(persistTimer);
+  persistTimer = undefined;
+  persistSessionScrollState(useSessionScrollStore.getState().sessions);
+}
+
+function schedulePersistence(before: SessionScrollState, next: SessionScrollState) {
+  const changed = before.mode !== next.mode || (next.mode === "manual" && before.mode === "manual" && (
+    next.scrollTop !== before.scrollTop || next.anchor?.messageId !== before.anchor?.messageId
+    || next.anchor?.offset !== before.anchor?.offset
+  ));
+  if (!changed) return;
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(flushSessionScrollState, PERSIST_DELAY_MS);
+}

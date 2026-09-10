@@ -1,11 +1,7 @@
 import * as React from "react"
 import { X } from "lucide-react"
 
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { ImageLightbox } from "@/components/chat/image-lightbox"
 import { cn } from "@/lib/utils"
 
 type ImageAttachmentBadgeProps = {
@@ -54,16 +50,7 @@ export function ImageAttachmentBadge({
           <X className="size-3" />
         </button>
       ) : null}
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[95vh] w-auto max-w-[95vw] overflow-hidden border-none bg-transparent p-0 shadow-none ring-0 lg:w-max lg:max-w-[95vw]">
-          <DialogTitle className="sr-only">{alt}</DialogTitle>
-          <img
-            src={src}
-            alt={alt}
-            className="max-h-[92vh] w-auto max-w-full rounded-xl object-contain"
-          />
-        </DialogContent>
-      </Dialog>
+      <ImageLightbox src={src} alt={alt} open={open} onOpenChange={setOpen} />
     </div>
   )
 }

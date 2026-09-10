@@ -13,7 +13,7 @@
   "cross-workspace-split-view.e2e.test.ts": 14,
   "library-add-connector-discovery.e2e.test.ts": 13,
   "library-signed-in-render-stability.e2e.test.ts": 3,
-  "live-tool-visible-after-session-switch.e2e.test.ts": 8,
+  "live-tool-visible-after-session-switch.e2e.test.ts": 7,
   "llm-provider-access-parity.e2e.test.ts": 8,
   "org-api-key-authenticates.e2e.test.ts": 11,
   "org-model-analytics.e2e.test.ts": 3,

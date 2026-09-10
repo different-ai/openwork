@@ -180,12 +180,17 @@ test("team Admin grants are live, scoped, protected, and cleared across SCIM lif
   };
   await mapping("create_teams");
   const managedUserId = text(initial.members.find((member) => member.id === inheritedId)?.userId);
+  const addedUserId = text(initial.members.find((member) => member.id === directId)?.userId);
   const groupBody = (members = [managedUserId]) => ({ schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group"], displayName: "super-admin", members: members.map((value) => ({ value })) });
   const created = await scim("Groups", "POST", groupBody());
   expect(created.response.status, created.text).toBe(201);
-  const groupId = text(record(created.body).id);
+  const createdGroup = record(created.body);
+  const groupId = text(createdGroup.id);
+  expect(createdGroup.members).toEqual([expect.objectContaining({ value: managedUserId })]);
+  if (!Array.isArray(createdGroup.members)) throw new Error("Missing SCIM members");
   const managedTeam = (await context()).teams.find((team) => team.name === "super-admin");
   if (!managedTeam) throw new Error("Missing SCIM team");
+  expect(managedTeam.memberIds).toEqual([inheritedId]);
   expect(managedTeam.grantsOrganizationAdmin).toBe(false);
   await canReadAdmin(inherited, 403);
   await patchTeam(managedTeam.id, { grantsOrganizationAdmin: true });
@@ -194,9 +199,34 @@ test("team Admin grants are live, scoped, protected, and cleared across SCIM lif
   await patchTeam(managedTeam.id, { memberIds: [] }, owner, 409);
   await patchTeam(managedTeam.id, { name: "manual rename" }, owner, 409);
   expect((await request(owner, `/v1/teams/${managedTeam.id}`, "DELETE")).response.status).toBe(409);
+  const replaced = await scim(`Groups/${groupId}`, "PUT", {
+    ...createdGroup,
+    members: [...createdGroup.members, { value: addedUserId, display: null, $ref: null }],
+  });
+  expect(replaced.response.status, replaced.text).toBe(200);
+  expect(replaced.body).toMatchObject({ id: groupId, meta: { resourceType: "Group", location: record(createdGroup.meta).location } });
+  expect(record(replaced.body).members).toHaveLength(2);
+  expect(record(replaced.body).members).toEqual(expect.arrayContaining([
+    expect.objectContaining({ value: managedUserId }),
+    expect.objectContaining({ value: addedUserId }),
+  ]));
+  const replacedTeam = (await context()).teams.find((team) => team.id === managedTeam.id);
+  expect(replacedTeam?.memberIds.slice().sort()).toEqual([inheritedId, directId].sort());
+  for (const value of [undefined, null, 42, "", " "]) {
+    const malformed = await scim(`Groups/${groupId}`, "PUT", { ...createdGroup, members: [{ value, display: null, $ref: null }] });
+    expect(malformed.response.status, malformed.text).toBe(400);
+    expect(malformed.body).toMatchObject({ detail: "Invalid SCIM Group resource", status: "400" });
+    const unchanged = await scim(`Groups/${groupId}`, "GET");
+    expect(unchanged.response.status, unchanged.text).toBe(200);
+    expect(unchanged.body).toEqual(replaced.body);
+    expect((await context()).teams.find((team) => team.id === managedTeam.id)).toEqual(replacedTeam);
+  }
   const remove = await scim(`Groups/${groupId}`, "PATCH", { schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], Operations: [{ op: "remove", path: `members[value eq "${managedUserId}"]` }] });
   expect(remove.response.status, remove.text).toBe(200);
+  expect(record(remove.body).members).toEqual([expect.objectContaining({ value: addedUserId })]);
+  expect((await context()).teams.find((team) => team.id === managedTeam.id)?.memberIds).toEqual([directId]);
   await canReadAdmin(inherited, 403);
+  evidence.recordAssertionEvidence("SCIM PUT accepts null optional member metadata without relaxing member values", "PUT round-trips response id/meta, retains the initial member, and adds a member with null display/$ref in both the response and mapped team. Missing, null, numeric, empty, and whitespace-only values return 400 without changing the group or team. PATCH removes only the selected member.", true);
   expect((await scim(`Groups/${groupId}`, "PUT", groupBody())).response.status).toBe(200);
   await canReadAdmin(inherited, 200);
   await mapping("metadata_only");

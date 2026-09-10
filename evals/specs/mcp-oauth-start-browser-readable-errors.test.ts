@@ -11,6 +11,7 @@ import { isRecord } from "../worlds/openwork-server-cli.ts";
 // A response the browser cannot read collapses to "Failed to fetch" in the UI.
 test("Den OAuth-start answers browser preflights, successes and handshake failures with readable CORS headers", { timeout: 300_000 }, async ({ place, evidence }) => {
   needs({ commands: ["bun"] });
+  console.log(`placement: ${place.kind} (PR lane resolved by testkit)`);
   await using den = await server({
     place, web: false,
     mocks: { connector: mcpMock() },
@@ -48,6 +49,8 @@ test("Den OAuth-start answers browser preflights, successes and handshake failur
 
   const reachableId = await createConnection("Reachable provider", den.mocks.connector.mcpUrl);
   const startPath = (id: string) => `/v1/mcp-connections/${id}/connect/start`;
+  const redirectRejectionMessage = "The provider's sign-in server has not approved OpenWork's redirect address, so it refused to register OpenWork as an OAuth client. Retrying will not help until the provider allowlists it.";
+  const redirectRejectionAction = "Ask the provider to allowlist OpenWork's OAuth redirect URI (or approve its client metadata URL) on their MCP authorization server, or configure a pre-registered OAuth client if the provider offers one.";
 
   // 1. Preflight: the browser asks before sending Authorization and the org header.
   const preflight = await denFetch(den.admin, startPath(reachableId), {
@@ -73,8 +76,42 @@ test("Den OAuth-start answers browser preflights, successes and handshake failur
   expectReadableFor(started.response, "success");
   evidence.recordAssertionEvidence("Successful OAuth start is readable from the browser", `HTTP 200 needs_auth carried one allow-origin ${webOrigin} and allow-credentials true.`, true);
 
-  // 3. Downstream failure: the provider disappears after the connection was
-  //    saved. Den must answer its structured 502 with the same CORS headers so
+  // 3. A provider that only approves allowlisted redirect URIs gives the
+  //    browser a dedicated diagnostic and the callback URL it must approve.
+  const expectRedirectUriRejection = async (providerCode: "invalid_redirect_uri" | "invalid_request") => {
+    const { handle } = await mcpMock({ rejectDynamicRedirectUris: providerCode }).boot(place);
+    try {
+      const connectionId = await createConnection(`Redirect-rejecting provider ${providerCode}`, handle.mcpUrl);
+      const rejected = await denFetch(den.admin, startPath(connectionId), { headers: { ...headers, origin: webOrigin } });
+      expect(rejected.response.status, rejected.text).toBe(424);
+      expect(rejected.body).toMatchObject({
+        error: "oauth_handshake_failed",
+        diagnostic: {
+          phase: "AUTH_CLIENT_REGISTRATION",
+          category: "oauth_client_registration",
+          code: "MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED",
+          retryable: false,
+          actionOwner: "provider_admin",
+          operatorAction: redirectRejectionAction,
+          message: redirectRejectionMessage,
+          providerCode,
+        },
+      });
+      if (!isRecord(rejected.body) || typeof rejected.body.callbackUrl !== "string") throw new Error("OAuth callback URL missing");
+      expect(rejected.body.callbackUrl).toMatch(/\/v1\/mcp-connections\/oauth\/callback$/);
+      expect(rejected.text).not.toMatch(/code_verifier|client_secret|Bearer /);
+      expectReadableFor(rejected.response, `${providerCode} redirect rejection`);
+      evidence.recordAssertionEvidence(`OAuth ${providerCode} redirect rejection is actionable and browser-readable`, `HTTP 424 carried MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED, the shared callback URL, one allow-origin ${webOrigin}, and no secrets.`, true);
+    } finally {
+      await handle.stop();
+    }
+  };
+  await expectRedirectUriRejection("invalid_redirect_uri");
+  await expectRedirectUriRejection("invalid_request");
+
+  // 4. Negative half: the provider disappears after the connection was saved.
+  //    Den must keep a different diagnostic and omit the callback URL while
+  //    answering its structured 424 with the same CORS headers so
   //    the dashboard popup can show the diagnostic instead of "Failed to fetch".
   const { handle: vanishing } = await mcpMock().boot(place);
   let unreachableId: string;
@@ -84,20 +121,23 @@ test("Den OAuth-start answers browser preflights, successes and handshake failur
     await vanishing.stop();
   }
   const failed = await denFetch(den.admin, startPath(unreachableId), { headers: { ...headers, origin: webOrigin } });
-  expect(failed.response.status, failed.text).toBe(502);
+  expect(failed.response.status, failed.text).toBe(424);
   expect(failed.body).toMatchObject({ error: "oauth_handshake_failed", diagnostic: { referenceId: expect.any(String), phase: expect.any(String) } });
+  if (!isRecord(failed.body) || !isRecord(failed.body.diagnostic) || typeof failed.body.diagnostic.code !== "string") throw new Error("Handshake diagnostic code missing");
+  expect(failed.body.diagnostic.code).not.toBe("MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED");
+  expect(failed.body).not.toHaveProperty("callbackUrl");
   expect(failed.text).not.toMatch(/code_verifier|client_secret|Bearer /);
   expectReadableFor(failed.response, "handshake failure");
-  evidence.recordAssertionEvidence("OAuth handshake failure is readable from the browser", `HTTP 502 oauth_handshake_failed with a diagnostic reference carried one allow-origin ${webOrigin} and allow-credentials true; no secrets in the body.`, true);
+  evidence.recordAssertionEvidence("Unrelated OAuth handshake failure stays distinct and browser-readable", `HTTP 424 oauth_handshake_failed carried a different diagnostic, no callback URL, one allow-origin ${webOrigin}, and no secrets.`, true);
 
-  // 4. Authentication failure is readable too, so an expired session is not
+  // 5. Authentication failure is readable too, so an expired session is not
   //    reported as a network failure.
   const unauthenticated = await denFetch(den.admin, startPath(reachableId), { headers: { origin: webOrigin } });
   expect(unauthenticated.response.status, unauthenticated.text).toBe(401);
   expectReadableFor(unauthenticated.response, "unauthenticated");
   evidence.recordAssertionEvidence("Unauthenticated OAuth start is readable from the browser", `HTTP 401 carried allow-origin ${webOrigin} and allow-credentials true.`, true);
 
-  // 5. Negative half: an untrusted origin gets no allow-origin at all, on both
+  // 6. An untrusted origin gets no allow-origin at all, on both
   //    the preflight and the failing request.
   const untrustedPreflight = await denFetch(den.admin, startPath(reachableId), {
     method: "OPTIONS",
@@ -105,8 +145,8 @@ test("Den OAuth-start answers browser preflights, successes and handshake failur
   });
   expect(untrustedPreflight.response.headers.get("access-control-allow-origin")).toBeNull();
   const untrustedFailure = await denFetch(den.admin, startPath(unreachableId), { headers: { ...headers, origin: untrustedOrigin } });
-  expect(untrustedFailure.response.status, untrustedFailure.text).toBe(502);
+  expect(untrustedFailure.response.status, untrustedFailure.text).toBe(424);
   // Browsers gate on allow-origin; allow-credentials alone grants nothing.
   expect(untrustedFailure.response.headers.get("access-control-allow-origin")).toBeNull();
-  evidence.recordAssertionEvidence("Untrusted origins never receive CORS allowance", `Preflight and HTTP 502 for ${untrustedOrigin} carried no allow-origin header.`, true);
+  evidence.recordAssertionEvidence("Untrusted origins never receive CORS allowance", `Preflight and HTTP 424 for ${untrustedOrigin} carried no allow-origin header.`, true);
 });

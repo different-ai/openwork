@@ -1,10 +1,12 @@
 import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
-import { denFetch, evalIn, go, waitFor } from "@openwork/behaviors";
-import type { DenSession } from "@openwork/behaviors";
+import { evalIn, go, waitFor } from "@openwork/behaviors";
 import { screenshot, validate } from "@openwork/test-evidence";
-import { app, needs, server, test, unmetNeeds } from "@openwork/testkit";
+import { needs, spec, unmetNeeds } from "@openwork/testkit";
 import type { TestNeeds } from "@openwork/testkit";
+import { libraryConnectorDiscovery } from "../worlds/library.ts";
+
+const test = spec.world(libraryConnectorDiscovery);
 
 const requirements: TestNeeds = {
   optIn: ["OPENWORK_EVAL_E2E_TESTS"],
@@ -33,46 +35,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function organizationId(session: DenSession): Promise<string> {
-  const response = await denFetch(session, "/v1/me/orgs", {
-    headers: { authorization: `Bearer ${session.token}` },
-  });
-  const organizations = isRecord(response.body) && Array.isArray(response.body.orgs)
-    ? response.body.orgs.filter(isRecord)
-    : [];
-  const id = organizations[0] && typeof organizations[0].id === "string"
-    ? organizations[0].id
-    : "";
-  if (!response.response.ok || !id) {
-    throw new Error(`Resolving the test organization failed: HTTP ${response.response.status} ${response.text.slice(0, 500)}`);
-  }
-  return id;
-}
-
-test(title, async ({ evidence, place }) => {
+test(title, async ({ evidence, world, probe }) => {
   needs(requirements);
-  const stamp = Date.now();
-  await using den = await server({
-    place,
-    org: {
-      name: `Library connector discovery ${stamp}`,
-      admin: { name: "Library Connector Admin" },
-    },
+  const { app: desktop, workspaceId, organizationId: orgId, denWebUrl } = world;
+  await waitFor(desktop, () => document.body.innerText.includes("OpenWork Cloud account and organization."), {
+    timeoutMs: 30_000,
+    label: "Settings overview on an upgraded profile",
   });
-  const orgId = await organizationId(den.admin);
-  await using desktop = await app({
-    den,
-    as: "admin",
-    place,
-  });
-
-  await desktop.client.send("Emulation.setDeviceMetricsOverride", {
-    width: 820,
-    height: 760,
-    deviceScaleFactor: 1,
-    mobile: false,
-  });
-  await go(desktop, `/workspace/${desktop.workspaceId}/extensions`);
+  expect(await probe.storage("openwork.extension.enabled.google-workspace")).toBe(1);
+  const settingsText = await probe.text();
+  expect(settingsText).toContain("OpenWork Cloud account and organization.");
+  expect(settingsText).not.toContain("Google Workspace");
+  expect(settingsText).not.toMatch(/Google OAuth|Google Client ID|Google Client Secret/i);
+  evidence.recordAssertionEvidence(
+    "A stale local Google enabled flag cannot restore legacy Settings setup",
+    "The upgraded profile retains openwork.extension.enabled.google-workspace=1. Settings retains the Cloud account entry without restoring Google Workspace or local Google OAuth setup; hosted Connection discovery is checked below.",
+    true,
+  );
+  await go(desktop, `/workspace/${workspaceId}/extensions`);
   await waitFor(desktop, () => ([...document.querySelectorAll("button")]
     .some((button) => (button.textContent ?? "").trim() === "Add")), {
     timeoutMs: 90_000,
@@ -86,6 +66,7 @@ test(title, async ({ evidence, place }) => {
   expect(voiceModeVisible).toBe(false);
   const libraryText = await evalIn(desktop, () => document.body.innerText);
   expect(libraryText).not.toContain("Voice Mode");
+  expect(libraryText).not.toMatch(/Google OAuth|Google Client ID|Google Client Secret/i);
 
   const bootstrap = await evalIn(
     desktop,
@@ -97,7 +78,7 @@ test(title, async ({ evidence, place }) => {
     { awaitPromise: true },
   );
   expect(bootstrap).toMatchObject({
-    baseUrl: den.ref.webUrl,
+    baseUrl: denWebUrl,
     activeOrgId: orgId,
   });
 
@@ -306,10 +287,10 @@ test(title, async ({ evidence, place }) => {
   expect(modalCount).toBe(1);
   evidence.recordAssertionEvidence(
     "Connection keeps organization context and returns without duplicate modal state",
-    `The active bootstrap organization was ${orgId} on ${den.ref.webUrl}; Connection closed without a native creation modal and reopening produced ${modalCount} dialog.`,
+    `The active bootstrap organization was ${orgId} on ${denWebUrl}; Connection closed without a native creation modal and reopening produced ${modalCount} dialog.`,
     isRecord(bootstrap)
       && bootstrap.activeOrgId === orgId
-      && bootstrap.baseUrl === den.ref.webUrl
+      && bootstrap.baseUrl === denWebUrl
       && modalCount === 1,
   );
 });

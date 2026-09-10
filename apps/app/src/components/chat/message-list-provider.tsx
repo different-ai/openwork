@@ -10,6 +10,7 @@ import * as React from "react"
 import type { ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
 
 interface MessageListContextValue {
+  readOnly: boolean
   workspaceId: string
   sessionId: string
   showThinking: boolean
@@ -43,6 +44,7 @@ interface MessageListContextValue {
 const MessageListContext = React.createContext<MessageListContextValue | null>(null)
 
 interface MessageListProviderProps {
+  readOnly?: boolean
   children: React.ReactNode
   workspaceId: string
   sessionId: string
@@ -75,6 +77,7 @@ export interface DispatchAction {
 }
 
 export function MessageListProvider({
+  readOnly = false,
   children,
   workspaceId,
   sessionId,
@@ -154,6 +157,7 @@ export function MessageListProvider({
   const canResumeInterrupted = Boolean(onResumeInterrupted)
   const value = React.useMemo(
     () => ({
+      readOnly,
       workspaceId,
       sessionId,
       showThinking,
@@ -172,6 +176,7 @@ export function MessageListProvider({
         : undefined,
     }),
     [
+      readOnly,
       workspaceId,
       sessionId,
       showThinking,

@@ -1,9 +1,48 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { backgroundUpdateWorld } from "../worlds/first-run.ts";
+import { backgroundUpdateWorld, revokedUpdateWorld } from "../worlds/first-run.ts";
 import { restartUpdateTaskWorld } from "../worlds/chat.ts";
 
 const test = spec.world(backgroundUpdateWorld);
+const revokedTest = spec.world(revokedUpdateWorld);
+
+revokedTest("a downloaded update is not installed once the organization revokes its version", async ({ world, user, probe }) => {
+  const readyText = "Ready to install: v9.9.9";
+  const blockedText = "OpenWork 9.9.9 is available, but this installation is not eligible for it yet.";
+  const downloaded = (count: number) => (value: unknown) =>
+    typeof value === "object" && value !== null && Reflect.get(value, "downloads") === count;
+
+  await world.openSettings();
+  await user.click({ role: "button", text: "Check now" });
+  await probe.eventually(world.snapshot, { within: 30_000, label: "the allowed version downloads", until: downloaded(1) });
+  await user.see({ text: readyText });
+  await user.see({ text: "Restart to update" });
+
+  // Negative half: the organization drops 9.9.9 after the download completed.
+  await world.allowVersions(["0.18.0"]);
+  await user.click("Restart to update");
+  await user.see({ text: "Restart OpenWork?" });
+  await user.click("Restart & update");
+  await user.see({ text: blockedText }, { timeoutMs: 30_000 });
+  await user.notSee({ text: readyText });
+  await user.notSee({ text: "Restart to update" });
+  await user.notSee({ text: "Install & restart" });
+  expect(await world.snapshot()).toMatchObject({ downloads: 1, installs: 0 });
+  await user.screenshot();
+
+  // Positive control: the same version approved again installs from Settings.
+  await world.allowVersions(["9.9.9"]);
+  await user.click({ role: "button", text: "Check now" });
+  await probe.eventually(world.snapshot, { within: 30_000, label: "the re-approved version downloads again", until: downloaded(2) });
+  await user.see({ text: readyText });
+  await user.notSee({ text: blockedText });
+  await user.click({ role: "button", text: "Install & restart" });
+  await probe.eventually(world.snapshot, {
+    within: 10_000, label: "install proceeds while the version stays allowed",
+    until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "installs") === 1,
+  });
+  expect(await world.snapshot()).toMatchObject({ downloads: 2, installs: 1 });
+});
 
 test("updates download outside Settings and offer a persistent, optional restart", async ({ world, user, probe }) => {
   await probe.eventually(world.snapshot, {
@@ -25,6 +64,25 @@ test("updates download outside Settings and offer a persistent, optional restart
   await user.notSee({ text: "Restart to update" });
   await world.returnToApp();
   expect(await world.snapshot()).toMatchObject({ checks: 4, downloads: 1, installs: 0 });
+  for (const [index, message] of [
+    "Update native preparation failed.",
+    "Update download connection failed.",
+  ].entries()) {
+    await world.finishDownload();
+    await user.click({ role: "button", label: /^Notifications/ });
+    await user.see({ text: message });
+    await user.press("Escape");
+    await user.notSee({ text: "Restart to update" });
+    expect(await world.snapshot()).toMatchObject({ downloads: index + 1, installs: 0, installAttempts: 0 });
+    await world.openSettings();
+    await user.click({ role: "button", text: "Check now" });
+    await probe.eventually(world.snapshot, {
+      within: 5_000, label: "the user retries the failed download through Settings",
+      until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "downloads") === index + 2,
+    });
+    await world.openWorkspace();
+    await user.notSee({ text: "Restart to update" });
+  }
   await world.finishDownload();
   await user.see({ text: "Restart to update" });
   await user.notSee({ text: "Ready when you are." });
@@ -33,7 +91,7 @@ test("updates download outside Settings and offer a persistent, optional restart
   await world.openWorkspace();
   await world.returnToApp();
   await user.see({ text: "Restart to update" });
-  expect(await world.snapshot()).toMatchObject({ checks: 4, downloads: 1, installs: 0, updateInTitlebar: true, updateInSidebar: false });
+  expect(await world.snapshot()).toMatchObject({ checks: 6, downloads: 3, installs: 0, installAttempts: 0, updateInTitlebar: true, updateInSidebar: false });
   await user.looks([
     "A compact neutral Restart to update button sits in the titlebar with the app's other controls",
     "The OpenWork name remains above the sidebar navigation and no update card or banner covers the workspace",
@@ -43,22 +101,62 @@ test("updates download outside Settings and offer a persistent, optional restart
   await user.see({ text: "Restart OpenWork?" });
   await user.see({ text: /Eligible running tasks resume gradually after restart/ });
   await user.click("Keep working");
-  await user.notSee({ text: "Restart OpenWork?" });
-  expect(await world.snapshot()).toMatchObject({ installs: 0 });
+  await probe.eventually(async () => {
+    await user.notSee({ text: "Restart OpenWork?" }, { timeoutMs: 100 });
+    return true;
+  }, { within: 5_000, label: "Keep working dismisses the restart dialog", until: Boolean });
+  expect(await world.snapshot()).toMatchObject({ installs: 0, installAttempts: 0 });
 
+  // The background behavior above is proven. Isolate the manual install-error
+  // retries below from another background check after a fresh policy arrives.
+  await world.openSettings();
+  await user.click({ role: "switch", label: "Check automatically" });
+  expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: false });
+  await world.openWorkspace();
   await world.setCustomBranding();
   await probe.eventually(world.snapshot, {
     within: 5_000, label: "custom logo is preserved instead of the default wordmark",
     until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "customLogoLoaded") === true,
   });
   expect(await world.snapshot()).toMatchObject({ sidebarName: null, customLogoLoaded: true });
+  for (const [index, message] of [
+    "Update installer could not start.",
+    "Update installer connection failed.",
+  ].entries()) {
+    await user.click("Restart to update");
+    await user.see({ text: "Restart Studio?" });
+    expect(await world.snapshot()).toMatchObject({ installAttempts: index, installs: 0 });
+    await user.click("Restart & update");
+    await user.click({ role: "button", label: /^Notifications/ });
+    await user.see({ text: message });
+    await user.press("Escape");
+    await probe.eventually(async () => {
+      await user.notSee({ text: "Restart Studio?" }, { timeoutMs: 100 });
+      return true;
+    }, { within: 5_000, label: "the failed restart dismisses its dialog", until: Boolean });
+    await user.notSee({ text: "Restart to update" });
+    expect(await world.snapshot()).toMatchObject({ installAttempts: index + 1, installs: 0 });
+    await world.openSettings();
+    await user.click({ role: "button", text: "Check now" });
+    await probe.eventually(world.snapshot, {
+      within: 5_000, label: "the user re-downloads after the failed install through Settings",
+      until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "downloads") === index + 4,
+    });
+    await user.notSee({ text: "Restart to update" });
+    await world.finishDownload();
+    await world.openWorkspace();
+    await user.see({ text: "Restart to update" });
+    expect(await world.snapshot()).toMatchObject({ installAttempts: index + 1, installs: 0 });
+  }
   await user.click("Restart to update");
   await user.see({ text: "Restart Studio?" });
+  expect(await world.snapshot()).toMatchObject({ installAttempts: 2, installs: 0 });
   await user.click("Restart & update");
   await probe.eventually(world.snapshot, {
     within: 5_000, label: "restart only after confirmation",
     until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "installs") === 1,
   });
+  expect(await world.snapshot()).toMatchObject({ installAttempts: 3, installs: 1 });
 });
 
 const recoveryTest = spec.world(restartUpdateTaskWorld, { timeout: 600_000 });

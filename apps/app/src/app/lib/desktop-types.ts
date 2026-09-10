@@ -31,6 +31,8 @@ export type {
   ExecResult,
   LocalSkillCard,
   LocalSkillContent,
+  NativeContextMenuItem,
+  NativeContextMenuRequest,
   NukeManifestPreview,
   NukeOptions,
   NukeReceipt,

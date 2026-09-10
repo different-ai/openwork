@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
-import { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "../src/components/markdown/markdown";
+import { MarkdownBlock, renderHighlightedMarkdownHtml, renderMarkdownHtml } from "../src/components/markdown/markdown";
 import {
   codeWrapClassStates,
   renderHighlightedMarkdownHtml as renderPrimitiveHighlightedMarkdownHtml,
   renderMarkdownHtml as renderPrimitiveMarkdownHtml,
 } from "../src/components/markdown/markdown-primitive";
 import { textHighlightParts } from "../src/components/markdown/text-highlights";
+import { enhanceNearViewport } from "../src/components/markdown/near-viewport";
 
 const CODE = "const value = 1;\nconsole.log(value);";
 const MARKDOWN = `\`\`\`ts\n${CODE}\n\`\`\``;
@@ -146,4 +147,100 @@ describe("markdown text highlighting", () => {
       { text: " again", highlighted: false },
     ]);
   });
+});
+
+test("optional formatting waits for the reading viewport, runs once, and cancels on navigation", async () => {
+  const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
+  const ownedDom = typeof window === "undefined";
+  if (ownedDom) GlobalRegistrator.register();
+  const originalObserver = globalThis.IntersectionObserver;
+  const observers: TestObserver[] = [];
+  class TestObserver implements IntersectionObserver {
+    readonly root = null;
+    readonly rootMargin = "320px 0px";
+    readonly thresholds = [0];
+    readonly scrollMargin = "0px";
+    pending = new Set<Element>();
+    constructor(readonly callback: IntersectionObserverCallback, options: IntersectionObserverInit) {
+      expect(options.rootMargin).toBe(this.rootMargin);
+      observers.push(this);
+    }
+    observe(element: Element) { this.pending.add(element); }
+    unobserve(element: Element) { this.pending.delete(element); }
+    disconnect() { this.pending.clear(); }
+    takeRecords() { return []; }
+    notify(target: Element, isIntersecting: boolean) {
+      const rect = target.getBoundingClientRect();
+      this.callback([{ target, isIntersecting, time: 0, rootBounds: null,
+        boundingClientRect: rect, intersectionRect: rect, intersectionRatio: Number(isIntersecting) }], this);
+    }
+  }
+  Reflect.set(globalThis, "IntersectionObserver", TestObserver);
+  try {
+    const recent = document.createElement("div");
+    const older = document.createElement("div");
+    recent.innerHTML = renderMarkdownHtml(MARKDOWN);
+    older.innerHTML = renderMarkdownHtml(MARKDOWN);
+    const enhanced: HTMLElement[] = [];
+    const stop = enhanceNearViewport([recent, older], (element) => enhanced.push(element));
+    expect(recent.textContent).toContain(CODE);
+    expect(older.textContent).toContain(CODE);
+    expect(enhanced).toEqual([]);
+    const observer = observers[0];
+    observer.notify(older, false);
+    observer.notify(recent, true);
+    observer.notify(recent, true);
+    expect(enhanced).toEqual([recent]);
+    expect(observer.pending.has(older)).toBe(true);
+    observer.notify(older, true);
+    expect(enhanced).toEqual([recent, older]);
+    expect(observer.pending.size).toBe(0);
+    stop();
+
+    const cancel = enhanceNearViewport([older], (element) => enhanced.push(element));
+    cancel();
+    observers[1].notify(older, true);
+    expect(enhanced).toHaveLength(2);
+
+    Reflect.set(globalThis, "IntersectionObserver", undefined);
+    enhanceNearViewport([recent], (element) => enhanced.push(element));
+    expect(enhanced).toEqual([recent, older, recent]);
+
+    // Streaming and settled documents use different keyed DOM roots. The
+    // observer must follow the committed root, including an initially empty one.
+    Reflect.set(globalThis, "IntersectionObserver", TestObserver);
+    const { act, createElement } = await import("react");
+    const { createRoot } = await import("react-dom/client");
+    const previousActEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    try {
+      for (const initial of [{ text: MARKDOWN, streaming: true }, { text: "", streaming: false }]) {
+        await act(async () => root.render(createElement(MarkdownBlock, initial)));
+        const previousRoot = host.firstElementChild;
+        await act(async () => root.render(createElement(MarkdownBlock, { text: MARKDOWN, streaming: false })));
+        const settledRoot = host.firstElementChild;
+        if (!(settledRoot instanceof HTMLElement)) throw new Error("Missing settled markdown root");
+        expect(settledRoot).not.toBe(previousRoot);
+        const observer = observers.at(-1);
+        if (!observer) throw new Error("Missing settled-document observer");
+        expect(observer.pending.has(settledRoot)).toBe(true);
+        await act(async () => observer.notify(settledRoot, true));
+        for (let attempt = 0; attempt < 100 && !settledRoot.querySelector("pre.shiki"); attempt++) {
+          await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+        }
+        expect(settledRoot.querySelector("pre.shiki")).not.toBeNull();
+        await act(async () => root.render(null));
+      }
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+      Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousActEnvironment);
+    }
+  } finally {
+    Reflect.set(globalThis, "IntersectionObserver", originalObserver);
+    if (ownedDom) await GlobalRegistrator.unregister();
+  }
 });

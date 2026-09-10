@@ -123,6 +123,18 @@ test("concurrent marketplace lists seed one complete set of defaults", async () 
   expect(memberships).toHaveLength(plugins.length)
   expect(marketplaceGrants).toHaveLength(marketplaces.length)
   expect(pluginGrants).toHaveLength(plugins.length)
+  expect(plugins.some((plugin) => plugin.name === "Google Workspace")).toBe(false)
+  const openWorkMarketplace = marketplaces.find((marketplace) => marketplace.name === "OpenWork Marketplace")
+  expect(openWorkMarketplace).toBeDefined()
+  const openWorkPluginIds = new Set(memberships
+    .filter((membership) => membership.marketplaceId === openWorkMarketplace?.id)
+    .map((membership) => membership.pluginId))
+  expect(plugins.filter((plugin) => openWorkPluginIds.has(plugin.id)).map((plugin) => plugin.name).sort()).toEqual([
+    "Computer Use",
+    "Ollama",
+    "OpenAI Image Gen",
+    "OpenWork Browser",
+  ])
 
   await store.listMarketplaces({ context })
   const repeatedMemberships = await db.select().from(MarketplacePluginTable)

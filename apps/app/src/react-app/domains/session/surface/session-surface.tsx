@@ -1,15 +1,17 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { UIMessage } from "ai";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { Check, CirclePause, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
-import { interruptSessionTurn, sessionNeedsStop, submitAfterInterruption, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
+import { hasTerminalSessionReply, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
 import { createClient, createPromptMessageID, hasAcceptedPromptMessage, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
-import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
+import { createClientV2, isOpencodeV2BaseUrl, v2PromptText } from "@/app/lib/opencode-v2-adapter";
 import * as opencodeSessionNative from "@/app/lib/opencode-session-native";
 import type { NativeSessionSnapshotTarget } from "@/app/lib/opencode-session-native";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
@@ -58,6 +60,7 @@ import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMe
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
 import { parseConnectSkillToken } from "./composer/connect-skill-token";
+import { connectorPrompt, parseConnectorToken } from "./composer/connector-token";
 import { createPastedTextChip, resolvePastedTextPlaceholders } from "./composer/pasted-text";
 import {
   canAdmitNextQueuedItem,
@@ -119,6 +122,7 @@ import {
   getComposerRevertMessageId,
   getComposerSessionDraftScope,
   persistableComposerDraftText,
+  snapshotComposerSessionState,
   type ComposerSessionState,
   useComposerStateStore,
 } from "./composer-state-store";
@@ -601,7 +605,9 @@ export type SessionSurfaceProps = {
   onRefreshOrganizationModels?: () => void | Promise<void>;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef, variant?: string | null) => void;
-  onSendDraft: (draft: ComposerDraft, sessionId: string, onPrepared?: () => void) => Promise<CloudMcpSubmissionResult>;
+  archived?: boolean;
+  onRestoreSession?: () => Promise<void>;
+  onSendDraft: (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void) => Promise<CloudMcpSubmissionResult>;
   cloudMcpSubmissionState: CloudMcpSubmissionGateState;
   onOpenConnect: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
@@ -952,6 +958,46 @@ function revokeAttachmentPreview(attachment: { previewUrl?: string | undefined }
   URL.revokeObjectURL(attachment.previewUrl);
 }
 
+function revokeUnownedAttachmentPreviews(attachments: ComposerAttachment[]) {
+  const state = useComposerStateStore.getState();
+  const retained = [
+    ...Object.values(state.sessions),
+    ...Object.values(state.failedDrafts).flat(),
+    ...Object.values(state.queuedDrafts).flat().map((item) => item.draft),
+    ...Object.values(state.pendingMessages).flat().map((item) => item.draft),
+  ].flatMap((item) => item.attachments);
+  for (const attachment of attachments) {
+    if (!retained.some((item) => item.previewUrl === attachment.previewUrl)) revokeAttachmentPreview(attachment);
+  }
+}
+
+function pendingMessageParts(text: string, attachments: ComposerAttachment[], serverParts: UIMessage["parts"] = []) {
+  const parts = [...serverParts];
+  if (text && !parts.some((part) => part.type === "text" && part.text)) parts.unshift({ type: "text", text });
+  const matched = new Set<number>();
+  let attachmentsReady = true;
+  for (const attachment of attachments) {
+    const filename = resolveAttachmentFileMetadata(attachment.file).filename;
+    // Compression can change an image's extension, but never its submitted bytes here.
+    const compressedFilename = attachment.kind === "image"
+      ? resolveAttachmentFileMetadata({ name: `${attachment.file.name.replace(/\.[^.]+$/, "") || "image"}.jpg`, type: "image/jpeg" }).filename
+      : filename;
+    const index = serverParts.findIndex((part, index) => !matched.has(index) && part.type === "file"
+      && (part.filename === filename || part.filename === compressedFilename));
+    if (index >= 0) matched.add(index);
+    const part = serverParts[index];
+    const usable = part?.type === "file" && (attachment.kind === "image"
+      ? part.mediaType.startsWith("image/") && /^(data:image\/|https?:\/\/)/.test(part.url)
+      : /^(data:|file:\/\/|https?:\/\/)/.test(part.url));
+    if (usable) continue;
+    attachmentsReady = false;
+    const preview = { type: "file", filename: attachment.name, mediaType: attachment.mimeType, url: attachment.previewUrl ?? "" } satisfies UIMessage["parts"][number];
+    if (part) parts[parts.indexOf(part)] = preview;
+    else parts.push(preview);
+  }
+  return { parts, attachmentsReady };
+}
+
 function draftWithEditedText(draft: ComposerDraft, text: string): ComposerDraft {
   return {
     ...draft,
@@ -997,8 +1043,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   );
   const draft = useComposerStateStore((state) => getComposerDraft(state, props.sessionId));
   const attachments = useComposerStateStore((state) => getComposerAttachments(state, props.sessionId));
-  // True while a send with attachments is in flight (compression + inbox
-  // upload + prompt POST); drives the uploading overlay on composer chips.
+  // Preparation belongs to the submitted message, not the next composer draft.
   const [attachmentsUploading, setAttachmentsUploading] = useState(false);
   const mentions = useComposerStateStore((state) => getComposerMentions(state, props.sessionId));
   const pasteParts = useComposerStateStore((state) => getComposerPasteParts(state, props.sessionId));
@@ -1186,6 +1231,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [pendingSendSessions, setPendingSendSessions] = useState<string[]>([]);
   const pendingSendsRef = useRef(new Map<symbol, string>());
   const sending = pendingSendSessions.includes(sessionOwner);
+  const pendingStopsRef = useRef(new Set<string>());
+  const [pendingStopSessions, setPendingStopSessions] = useState<string[]>([]);
+  const stopping = pendingStopSessions.includes(sessionOwner);
+  const queryClient = useQueryClient();
   const cloudQueueBlockedRef = useRef(false);
   const evalSnapshotFailureRef = useRef(false);
   // Shared with promote-to-send so a manual send-now cannot race the idle drain.
@@ -1231,16 +1280,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
         throw new Error("eval: forced session snapshot failure");
       }
       const startedAt = Date.now();
+      // No `limit`: OpenCode pages `limit` as the NEWEST n messages and only
+      // signals older pages through a Link header nothing here follows, so a
+      // cap silently drops the start of any longer conversation.
       const item = useDesktopLoopbackSnapshotRetry
         ? await opencodeSessionNative.composeNativeSessionSnapshotWithRetry(
           sessionOwner,
           () => snapshotTargetRef.current,
-          { limit: 140, signal },
+          { signal },
         )
         : await opencodeSessionNative.composeNativeSessionSnapshot(
           { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
           props.sessionId,
-          { limit: 140, signal },
+          { signal },
         );
       markSessionSnapshotFetchStart(item, startedAt);
       return item;
@@ -1253,6 +1305,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
 
   const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
+  const archived = Boolean(props.archived || currentSnapshot?.session.time.archived);
+  const archiveStateKnown = props.archived !== undefined || currentSnapshot !== null;
+  const [restoringArchived, setRestoringArchived] = useState(false);
   const inspectorOpencodeBaseUrl = useMemo(() => {
     try {
       const url = new URL(props.opencodeBaseUrl);
@@ -1392,6 +1447,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     useCallback(() => sessionNeedsStop(props.opencodeBaseUrl, props.sessionId), [props.opencodeBaseUrl, props.sessionId]),
   );
   const chatStreaming = needsStop || sending || liveStatus.type === "busy" || liveStatus.type === "retry";
+  const archiveHeld = useSyncExternalStore(
+    useCallback((listener) => subscribeSessionInterruption(props.opencodeBaseUrl, props.sessionId, listener), [props.opencodeBaseUrl, props.sessionId]),
+    useCallback(() => sessionWorkHeld(props.opencodeBaseUrl, props.sessionId), [props.opencodeBaseUrl, props.sessionId]),
+  );
   // A busy status is a claim that decays: the sync layer revalidates it
   // continuously against /session/status, and once that validation keeps
   // failing (network drop, sleep, dead engine) the transcript must present
@@ -1436,41 +1495,59 @@ export function SessionSurface(props: SessionSurfaceProps) {
     [snapshot, transcriptState],
   );
   const pendingMessages = useComposerStateStore((state) => state.pendingMessages[sessionOwner]);
+  const [submittedMessage, setSubmittedMessage] = useState<{ owner: string; id: string } | null>(null);
   const failedDraft = useComposerStateStore((state) => state.failedDrafts[sessionOwner]?.[0]);
   const autoSendPayload = getComposerAutoSendPayload(props.sessionId, sessionOwner);
   const autoSending = (Boolean(autoSendPayload)
-    || (hasComposerAutoSend(props.sessionId) && attachments.length === 0))
+    || hasComposerAutoSend(props.sessionId))
     && !sessionModelUnavailable;
-  const unmatchedPendingMessages = useMemo(() => {
+  const pendingReconciliation = useMemo(() => {
     const matchedIds = new Set<string>();
-    const remaining = (pendingMessages ?? []).filter(({ draft: pending, previousMessageIds }) => {
+    const messages = [...baseRenderedMessages];
+    const remaining = (pendingMessages ?? []).flatMap((item) => {
+      const { draft: pending, previousMessageIds } = item;
+      const text = pending.resolvedText ?? pending.text;
+      // Native v2 assigns its own ID and may never expose files in the transcript.
+      // Upload paths and filename changes must come from the prepared request, not a guess.
+      const acknowledgementText = item.preparedText ?? (pending.attachments.length ? undefined : text);
       const match = baseRenderedMessages.find((message) => message.role === "user"
         && !matchedIds.has(message.id)
-        && (message.id === pending.messageId || (isOpencodeV2BaseUrl(props.opencodeBaseUrl) && !previousMessageIds.includes(message.id)
-          && message.parts.some((part) => part.type === "text" && part.text === (pending.resolvedText ?? pending.text)))));
-      if (!match) return true;
+        && (message.id === (item.serverMessageId ?? pending.messageId) || (!item.serverMessageId && isOpencodeV2BaseUrl(props.opencodeBaseUrl) && !previousMessageIds.includes(message.id)
+          && Boolean(acknowledgementText?.trim()) && v2PromptText(message.parts) === acknowledgementText)));
+      const { parts, attachmentsReady } = pendingMessageParts(text, pending.attachments, match?.parts);
+      if (!match) {
+        messages.push({ id: pending.messageId, role: "user", parts });
+        return [item];
+      }
       matchedIds.add(match.id);
-      return false;
+      messages[messages.indexOf(match)] = { ...match, parts };
+      const textReady = !text.trim()
+        || match.parts.some((part) => part.type === "text" && part.text.trim());
+      if (attachmentsReady && textReady && item.settled) return [];
+      return [item.serverMessageId === match.id ? item : { ...item, serverMessageId: match.id }];
     });
     // A server turn can acknowledge only one pending send, even when two
     // consecutive prompts have identical text and v2 assigns its own IDs.
-    return matchedIds.size ? remaining.map((item) => ({
-      ...item,
-      previousMessageIds: [...item.previousMessageIds, ...matchedIds],
-    })) : remaining;
+    return { messages, remaining: remaining.map((item) => {
+      const claimed = [...matchedIds].filter((id) => id !== item.serverMessageId && !item.previousMessageIds.includes(id));
+      return claimed.length ? { ...item, previousMessageIds: [...item.previousMessageIds, ...claimed] } : item;
+    }) };
   }, [baseRenderedMessages, pendingMessages, props.opencodeBaseUrl]);
+  const remainingPendingMessages = pendingReconciliation.remaining;
   useEffect(() => {
-    if (!pendingMessages || pendingMessages.length === unmatchedPendingMessages.length) return;
+    if (!pendingMessages || (pendingMessages.length === remainingPendingMessages.length
+      && pendingMessages.every((item, index) => item === remainingPendingMessages[index]))) return;
+    // Another pane or a completed send may have updated the same owner since render.
+    if (useComposerStateStore.getState().pendingMessages[sessionOwner] !== pendingMessages) return;
     useComposerStateStore.setState((state) => ({
-      pendingMessages: { ...state.pendingMessages, [sessionOwner]: unmatchedPendingMessages },
+      pendingMessages: { ...state.pendingMessages, [sessionOwner]: remainingPendingMessages },
     }));
-  }, [pendingMessages, sessionOwner, unmatchedPendingMessages]);
+    revokeUnownedAttachmentPreviews(pendingMessages
+      .filter((item) => !remainingPendingMessages.some((remaining) => remaining.draft === item.draft))
+      .flatMap((item) => item.draft.attachments));
+  }, [pendingMessages, sessionOwner, remainingPendingMessages]);
   const renderedMessages = useMemo(() => {
-    const pending: UIMessage[] = unmatchedPendingMessages.map(({ draft: item }) => ({
-      id: item.messageId,
-      role: "user",
-      parts: [{ type: "text", text: item.resolvedText ?? item.text }],
-    }));
+    const pending: UIMessage[] = [];
     if (autoSending) {
       const pendingComposer = autoSendPayload?.composer;
       const pendingText = pendingComposer?.draft ?? draft;
@@ -1478,11 +1555,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (pendingText.trim() || (pendingComposer?.attachments.length ?? attachments.length)) pending.push({
         id: `${props.sessionId}:first-send`,
         role: "user",
-        parts: [{ type: "text", text: resolvePastedTextPlaceholders(pendingText, pendingPasteParts).replace(/\[attachment [^\]]+\]/g, "") }],
+        parts: pendingMessageParts(resolvePastedTextPlaceholders(pendingText, pendingPasteParts).replace(/\[attachment [^\]]+\]/g, ""), pendingComposer?.attachments ?? attachments).parts,
       });
     }
-    return [...baseRenderedMessages, ...pending, ...evalMarkdownMessages];
-  }, [attachments.length, autoSendPayload, autoSending, baseRenderedMessages, draft, evalMarkdownMessages, pasteParts, props.sessionId, unmatchedPendingMessages]);
+    return [...pendingReconciliation.messages, ...pending, ...evalMarkdownMessages];
+  }, [attachments, autoSendPayload, autoSending, draft, evalMarkdownMessages, pasteParts, pendingReconciliation.messages, props.sessionId]);
   const renderedMessagesRef = useRef(renderedMessages);
   useEffect(() => {
     renderedMessagesRef.current = renderedMessages;
@@ -1879,8 +1956,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   ): ComposerDraft => {
     const sourceMentions = sourceComposer?.mentions ?? mentions;
     const sourcePasteParts = sourceComposer?.pasteParts ?? pasteParts;
-    const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/).flatMap((segment, index, segments) => {
+    const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|@[^\s@]+)/).flatMap((segment, index, segments) => {
       if (!segment) return [] as ComposerDraft["parts"];
+      const connectorName = parseConnectorToken(segment);
+      if (connectorName) {
+        return [{ type: "text", text: connectorPrompt(connectorName) } satisfies ComposerDraft["parts"][number]];
+      }
       const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
       if (attachmentMatch) {
         // Attachment chips are visual tokens only; bytes travel via draft.attachments.
@@ -1922,6 +2003,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return token ? `/${token.slug}` : match;
     });
     resolved = resolved.replace(/\[skill ([^\]]+)\]/g, (_match, name: string) => `the \"${name}\" skill`);
+    resolved = resolved.replace(/\[connector [^\]]+\]/g, (match) => {
+      const name = parseConnectorToken(match);
+      return name ? connectorPrompt(name) : match;
+    });
     for (const value of Object.keys(sourceMentions)) {
       resolved = resolved.replaceAll(`@${encodeComposerMentionValue(value)}`, `@${value}`);
     }
@@ -1964,7 +2049,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Core sender shared by initial send and steered follow-ups. OpenCode
   // accepts follow-up user turns mid-run (steering) — the running loop picks
   // up the new message — so this is safe to call while the agent is busy.
-  const sendDraft = useCallback(async (nextDraft: ComposerDraft, itemId: string, onPrepared?: () => void): Promise<CloudMcpSubmissionResult | { outcome: "unknown" }> => {
+  const sendDraft = useCallback(async (nextDraft: ComposerDraft, itemId: string, onPrepared?: (text?: string) => void): Promise<CloudMcpSubmissionResult | { outcome: "unknown" }> => {
     const messageId = nextDraft.messageId ?? createPromptMessageID();
     const generation = getQueuedSendGeneration(props.sessionId);
     const submissionId = Symbol();
@@ -1972,9 +2057,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setPendingSendSessions([...pendingSendsRef.current.values()]);
     setError(null);
     try {
+      if (archived || !archiveStateKnown) throw new Error("This session is read-only. Restore it before sending.");
       const result = await submitAfterInterruption(props.opencodeBaseUrl, props.sessionId,
         () => props.onSendDraft({ ...nextDraft, messageId }, props.sessionId, onPrepared), messageId);
-      dispatchQueuedDrain(props.sessionId, { type: "send_result", itemId, outcome: result.outcome, at: Date.now() });
+      dispatchQueuedDrain(props.sessionId, {
+        type: "send_result", itemId, outcome: result.outcome, at: Date.now(),
+        deferredMessageID: nextDraft.command ? messageId : undefined,
+        terminalObserved: nextDraft.mode === "shell",
+      });
       if (getQueuedSendGeneration(props.sessionId) !== generation) return result;
       if (result.outcome === "blocked" || result.outcome === "cancelled") return result;
       // Only report a run after the pre-send gate released the exact queued
@@ -1987,7 +2077,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return result;
     } catch (nextError) {
       if (isPromptAdmissionUnknown(nextError)) {
-        dispatchQueuedDrain(props.sessionId, { type: "send_unknown", itemId, messageID: messageId, at: Date.now() });
+        dispatchQueuedDrain(props.sessionId, { type: "send_unknown", itemId, messageID: messageId, at: Date.now(), deferred: Boolean(nextDraft.command) });
         if (activeSessionOwnerRef.current === sessionOwner) setAwaitingAssistantBaseline(null);
         return { outcome: "unknown" };
       }
@@ -2008,7 +2098,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       pendingSendsRef.current.delete(submissionId);
       setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
-  }, [appendComposerHistory, props.onSendDraft, props.opencodeBaseUrl, props.sessionId, props.workspaceId, renderedMessages.length, sessionOwner, setError]);
+  }, [archived, archiveStateKnown, appendComposerHistory, props.onSendDraft, props.opencodeBaseUrl, props.sessionId, props.workspaceId, renderedMessages.length, sessionOwner, setError]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
@@ -2018,48 +2108,52 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
   // share the same immediate path.
   const handleSend = useCallback(async (sourceComposer?: ComposerSessionState) => {
+    if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
-    const originalDraft = sourceComposer?.draft ?? draft;
-    const sourceAttachments = sourceComposer?.attachments ?? attachments;
+    const generation = getQueuedSendGeneration(props.sessionId);
+    const composerCheckpoint = useComposerStateStore.getState().sessions[props.sessionId];
+    const submittedComposer = sourceComposer ?? composerCheckpoint;
+    const originalDraft = submittedComposer?.draft ?? draft;
+    const sourceAttachments = submittedComposer?.attachments ?? attachments;
     const text = originalDraft.trim();
     if (!text && sourceAttachments.length === 0) return;
+    const savedComposer = snapshotComposerSessionState(submittedComposer ?? {
+      draft: originalDraft, attachments: sourceAttachments, mentions, pasteParts, revertMessageId: null,
+    });
+    const sentAttachments = savedComposer.attachments;
     const nextDraft = {
-      ...buildDraft(text, sourceAttachments, sourceComposer),
+      ...buildDraft(text, sentAttachments, savedComposer),
       messageId: createPromptMessageID(),
     };
     // Immediate sends and queued sends share the same slot across all panes.
     dispatchQueuedDrain(props.sessionId, { type: "user_retry" });
     if (!claimQueuedSend(props.sessionId, nextDraft.messageId, true)) return;
-    const sentAttachments = sourceAttachments;
-    const composerCheckpoint = useComposerStateStore.getState().sessions[props.sessionId];
-    const savedComposer = sourceComposer ?? composerCheckpoint;
-    let clearedComposer: typeof savedComposer;
-    let composerCleared = false;
-    let pendingRegistered = false;
-    const registerPending = () => {
-      if (pendingRegistered) return;
-      pendingRegistered = true;
-      useComposerStateStore.setState((state) => ({
-        pendingMessages: {
-          ...state.pendingMessages,
-          [sessionOwner]: [...(state.pendingMessages[sessionOwner] ?? []), {
-            draft: nextDraft,
-            previousMessageIds: baseRenderedMessages.map((message) => message.id),
-          }],
-        },
-      }));
-    };
-    const markPrepared = () => {
-      // Do not erase edits made while attachments were being prepared.
-      if (!sourceComposer
-        && useComposerStateStore.getState().sessions[props.sessionId] === composerCheckpoint
-        && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey) {
-        clearComposer();
-        clearedComposer = useComposerStateStore.getState().sessions[props.sessionId];
-        composerCleared = true;
-      }
-      registerPending();
+    for (const attachment of sentAttachments) {
+      if (attachment.kind === "image" && !attachment.previewUrl) attachment.previewUrl = URL.createObjectURL(attachment.file);
+    }
+    setSubmittedMessage({ owner: sessionOwner, id: nextDraft.messageId });
+    useComposerStateStore.setState((state) => ({
+      pendingMessages: {
+        ...state.pendingMessages,
+        [sessionOwner]: [...(state.pendingMessages[sessionOwner] ?? []), {
+          draft: nextDraft,
+          previousMessageIds: baseRenderedMessages.map((message) => message.id),
+          settled: false,
+        }],
+      },
+    }));
+    // A hero handoff owns the submitted snapshot, never a newer continuation.
+    if ((!sourceComposer || sourceComposer === composerCheckpoint)
+      && useComposerStateStore.getState().sessions[props.sessionId] === composerCheckpoint
+      && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey) clearComposer();
+    const clearedComposer = useComposerStateStore.getState().sessions[props.sessionId];
+    const markPrepared = (preparedText?: string) => {
       setAttachmentsUploading(false);
+      if (preparedText === undefined) return;
+      useComposerStateStore.setState((state) => ({ pendingMessages: {
+        ...state.pendingMessages,
+        [sessionOwner]: (state.pendingMessages[sessionOwner] ?? []).map((item) => item.draft === nextDraft ? { ...item, preparedText } : item),
+      } }));
     };
     const removePending = () => useComposerStateStore.setState((state) => ({
       pendingMessages: {
@@ -2069,52 +2163,42 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }));
     const restore = () => {
       removePending();
+      if (getQueuedSendGeneration(props.sessionId) !== generation) return;
       const state = useComposerStateStore.getState();
-      if (!composerCleared) {
-        if (!sourceComposer || !savedComposer) return;
-        if (state.sessions[props.sessionId] === composerCheckpoint
-          && !composerSessionHasContent(composerCheckpoint)
-          && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey) {
-          useComposerStateStore.setState({ sessions: { ...state.sessions, [props.sessionId]: savedComposer } });
-          props.onDraftChange(nextDraft);
-        } else {
-          useComposerStateStore.setState({ failedDrafts: {
-            ...state.failedDrafts,
-            [sessionOwner]: [...(state.failedDrafts[sessionOwner] ?? []), savedComposer],
-          } });
-        }
-        return;
-      }
       // Identity, not text equality: typing and then deleting is still a newer edit.
-      if (savedComposer && state.sessions[props.sessionId] === clearedComposer
+      if (!composerSessionHasContent(clearedComposer) && state.sessions[props.sessionId] === clearedComposer
         && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey) {
         useComposerStateStore.setState({ sessions: { ...state.sessions, [props.sessionId]: savedComposer } });
         props.onDraftChange(nextDraft);
-      } else if (savedComposer) {
+      } else {
         useComposerStateStore.setState({ failedDrafts: {
           ...state.failedDrafts,
           [sessionOwner]: [...(state.failedDrafts[sessionOwner] ?? []), savedComposer],
         } });
       }
     };
-    if (sourceComposer && sentAttachments.length) registerPending();
     if (sentAttachments.length) setAttachmentsUploading(true);
-    else markPrepared();
     try {
-      const result = await sendDraft(nextDraft, nextDraft.messageId, sentAttachments.length ? markPrepared : undefined);
+      const result = await sendDraft(nextDraft, nextDraft.messageId, markPrepared);
       if (result.outcome === "blocked" || result.outcome === "cancelled") {
         restore();
         return;
       }
-      if (result.outcome !== "unknown" && (nextDraft.command || nextDraft.mode === "shell")) removePending();
-      const retained = useComposerStateStore.getState().sessions[props.sessionId]?.attachments ?? [];
-      sentAttachments.filter((attachment) => !retained.some((item) => item.id === attachment.id)).forEach(revokeAttachmentPreview);
+      if (result.outcome !== "unknown" && (nextDraft.command || nextDraft.mode === "shell")) {
+        removePending();
+        revokeUnownedAttachmentPreviews(sentAttachments);
+      } else {
+        useComposerStateStore.setState((state) => ({ pendingMessages: {
+          ...state.pendingMessages,
+          [sessionOwner]: (state.pendingMessages[sessionOwner] ?? []).map((item) => item.draft === nextDraft ? { ...item, settled: true } : item),
+        } }));
+      }
     } catch {
       restore();
     } finally {
       setAttachmentsUploading(false);
     }
-  }, [attachments, baseRenderedMessages, buildDraft, clearComposer, draft, persistedDraftKey, props.onDraftChange, props.sessionId, sendDraft, sessionOwner]);
+  }, [archived, archiveStateKnown, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.opencodeBaseUrl, props.sessionId, sendDraft, sessionOwner]);
 
   // One-step run from the empty-state hero: the route keeps the continuation
   // in this session's composer and marks the submitted snapshot for auto-send.
@@ -2122,6 +2206,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // until then, leave both the scoped mark and continuation untouched.
   useEffect(() => {
     if (model.transitionState !== "idle") return;
+    if (archived || !archiveStateKnown || archiveHeld) return;
     if (chatStreaming) return;
     if (sessionModelUnavailable) return;
     const sourceComposer = autoSendPayload?.composer;
@@ -2135,7 +2220,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!draft.trim() && !attachments.length) return;
     if (!consumeComposerAutoSend(props.sessionId)) return;
     void handleSend();
-  }, [attachments.length, autoSendPayload, chatStreaming, draft, handleSend, model.transitionState, sessionModelUnavailable, props.sessionId, sessionOwner]);
+  }, [archived, archiveStateKnown, archiveHeld, attachments.length, autoSendPayload, chatStreaming, draft, handleSend, model.transitionState, sessionModelUnavailable, props.sessionId, sessionOwner]);
 
   const handleSteer = useCallback(async () => {
     setSteering(true);
@@ -2155,6 +2240,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Queue: hold the draft locally and clear the composer. The drain effect
   // sends it once the session reports idle.
   const handleQueue = useCallback(() => {
+    if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
@@ -2162,7 +2248,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!queuedDraft) return;
     appendQueuedDraft(props.sessionId, queuedDraft);
     clearComposer();
-  }, [appendQueuedDraft, attachments, buildDraft, clearComposer, draft, props.sessionId, sessionOwner]);
+  }, [archived, archiveStateKnown, appendQueuedDraft, attachments, buildDraft, clearComposer, draft, props.opencodeBaseUrl, props.sessionId, sessionOwner]);
 
   const removeQueuedDraft = useCallback((id: string) => {
     const target = queuedItems.find((item) => item.id === id);
@@ -2181,6 +2267,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // draft cannot be delivered twice.
   const [sendingQueued, setSendingQueued] = useState(false);
   const sendQueuedDraftNow = useCallback(async (id: string) => {
+    if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     if (drainingQueueRef.current || sendingQueued) return;
     const item = getComposerQueuedDrafts(useComposerStateStore.getState(), props.sessionId).find((queued) => queued.id === id);
     const target = withoutRevertTarget(item?.draft ?? null);
@@ -2205,10 +2292,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
         prependQueuedDrafts(props.sessionId, [{ id: item.id, draft: target }]);
       }
     } finally {
+      if (getQueuedSendGeneration(props.sessionId) !== generation) target.attachments.forEach(revokeAttachmentPreview);
       setSendingQueued(false);
     }
   }, [
+    archived,
+    archiveStateKnown,
     prependQueuedDrafts,
+    props.opencodeBaseUrl,
     props.sessionId,
     removeQueuedDraftFromStore,
     sendDraft,
@@ -2216,34 +2307,43 @@ export function SessionSurface(props: SessionSurfaceProps) {
   ]);
 
   const handleAbort = useCallback(async () => {
+    if (pendingStopsRef.current.has(sessionOwner)) return;
     const phase = getQueuedDrainState(props.sessionId).phase;
     if (!chatStreaming && phase.kind !== "sending" && phase.kind !== "admission_unknown") return;
-    setError(null);
-    // Stop means stop: drop queued follow-ups before aborting, otherwise the
-    // queue-drain effect below re-prompts the agent the moment the abort
-    // lands and the session reports idle (#2014).
-    getComposerQueuedDrafts(useComposerStateStore.getState(), props.sessionId)
-      .forEach((item) => item.draft.attachments.forEach(revokeAttachmentPreview));
-    clearQueuedDrafts(props.sessionId);
-    dispatchQueuedDrain(props.sessionId, { type: "queue_cleared" });
-    // The prompt was sent through a directory-scoped client (session-route
-    // passes the workspace root), so the abort must target the same scope —
-    // without it the server resolves the default project, finds no live run,
-    // and answers `200: false` while the stream keeps going (#2014).
+    pendingStopsRef.current.add(sessionOwner);
+    setPendingStopSessions([...pendingStopsRef.current]);
     try {
+      setError(null);
+      // Stop means stop: drop queued follow-ups before aborting, otherwise the
+      // queue-drain effect below re-prompts the agent the moment the abort
+      // lands and the session reports idle (#2014).
+      getComposerQueuedDrafts(useComposerStateStore.getState(), props.sessionId)
+        .forEach((item) => item.draft.attachments.forEach(revokeAttachmentPreview));
+      clearQueuedDrafts(props.sessionId);
+      dispatchQueuedDrain(props.sessionId, { type: "queue_cleared" });
+      // The prompt was sent through a directory-scoped client (session-route
+      // passes the workspace root), so the abort must target the same scope —
+      // without it the server resolves the default project, finds no live run,
+      // and answers `200: false` while the stream keeps going (#2014).
       await interruptSessionTurn(props.opencodeBaseUrl, opencodeClient, props.sessionId,
         props.workspaceRoot.trim() || undefined, {
           admissionUnknown: phase.kind === "admission_unknown",
+          admissionMessageID: phase.kind === "admission_unknown" ? phase.messageID : undefined,
           onStopped: () => dispatchQueuedDrain(props.sessionId, { type: "stop_confirmed" }),
         });
+      captureAnalyticsEvent("task_run_stopped", {});
+      // The surface survives navigation; refresh the stopped conversation, not
+      // whichever query the observer is showing when cancellation finishes.
+      await queryClient.refetchQueries({ queryKey: snapshotQueryKey, exact: true });
+      return true;
     } catch (error) {
       setError({ message: error instanceof Error ? error.message : t("session.stop_failed") });
       return false;
+    } finally {
+      pendingStopsRef.current.delete(sessionOwner);
+      setPendingStopSessions([...pendingStopsRef.current]);
     }
-    captureAnalyticsEvent("task_run_stopped", {});
-    await snapshotQuery.refetch();
-    return true;
-  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.opencodeBaseUrl, props.sessionId, props.workspaceRoot, snapshotQuery.refetch, setError]);
+  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.opencodeBaseUrl, props.sessionId, props.workspaceRoot, queryClient, sessionOwner, snapshotQueryKey, setError]);
 
   const checkUnknownAdmission = useCallback(async (notify = false) => {
     const phase = getQueuedDrainState(props.sessionId).phase;
@@ -2311,7 +2411,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
           const probed = result.data?.session.id === props.sessionId ? result.data.status : null;
           if (!probed) return;
           if (probed.type === "idle") {
-            dispatchQueuedDrain(props.sessionId, { type: "idle_reconciled", observedAt: startedAt });
+            const phase = getQueuedDrainState(props.sessionId).phase;
+            if (result.data) sessionHasPendingSubmission(props.opencodeBaseUrl, props.sessionId, result.data.messages);
+            dispatchQueuedDrain(props.sessionId, {
+              type: "idle_reconciled", observedAt: startedAt,
+              terminalObserved: phase.kind === "awaiting_observation" && Boolean(phase.messageID && result.data && hasTerminalSessionReply(result.data.messages, props.sessionId, phase.messageID)),
+            });
           } else {
             dispatchQueuedDrain(props.sessionId, { type: "busy_observed" });
           }
@@ -2324,10 +2429,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
       })();
     }, Math.max(0, probeAt - Date.now()));
     return () => window.clearTimeout(timer);
-  }, [checkUnknownAdmission, observationProbeVersion, props.sessionId, queuedDrainState, snapshotQuery.refetch]);
+  }, [checkUnknownAdmission, observationProbeVersion, props.opencodeBaseUrl, props.sessionId, queuedDrainState, snapshotQuery.refetch]);
 
   useEffect(() => {
     if (drainingQueueRef.current || sendingQueued) return;
+    if (archived || !archiveStateKnown) return;
+    if (sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     if (cloudQueueBlockedRef.current) return;
     if (queuedItems.length === 0) return;
     if (chatStreaming || liveStatus.type !== "idle") return;
@@ -2365,10 +2472,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
           prependQueuedDrafts(props.sessionId, [{ id: nextItem.id, draft: nextDraft }]);
         }
       } finally {
+        if (getQueuedSendGeneration(props.sessionId) !== generation) nextDraft.attachments.forEach(revokeAttachmentPreview);
         drainingQueueRef.current = false;
       }
     })();
-  }, [chatStreaming, cloudQueueRetryVersion, liveStatus.type, prependQueuedDrafts, props.sessionId, queuedDrainState, queuedItems, removeQueuedDraftFromStore, sendDraft, sendingQueued]);
+  }, [archived, archiveStateKnown, chatStreaming, cloudQueueRetryVersion, liveStatus.type, prependQueuedDrafts, props.opencodeBaseUrl, props.sessionId, queuedDrainState, queuedItems, removeQueuedDraftFromStore, sendDraft, sendingQueued]);
 
   useEffect(() => {
     if (props.cloudMcpSubmissionState.status !== "failed") {
@@ -2504,10 +2612,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [draft, props.sessionId, setComposerDraft]);
 
   const typeComposerText = useCallback(async (text: string, revertMessageId?: string | null) => {
+    if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     window.dispatchEvent(new Event("openwork:focusPrompt"));
     replaceComposerDraft(props.sessionId, text, revertMessageId);
     await waitForControl(40);
-  }, [props.sessionId, replaceComposerDraft]);
+  }, [archived, archiveStateKnown, props.opencodeBaseUrl, props.sessionId, replaceComposerDraft]);
 
   const composerSetTextControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "composer.set_text",
@@ -2515,6 +2624,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     description: "Replace the current session draft and type the supplied text visibly.",
     effects: { data: "none", ui: "focus", external: false },
     sideEffect: "none",
+    disabled: archived || !archiveStateKnown || archiveHeld,
     requiresArgs: true,
     args: [{ name: "text", type: "string", required: true, description: "Prompt text to place in the composer." }],
     previewArgs: { text: DEFAULT_COMPOSER_CONTROL_TEXT },
@@ -2526,7 +2636,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       props.onDraftChange(buildDraft(text, attachments));
       return { draftLength: text.length };
     },
-  }), [attachments, buildDraft, props.onDraftChange, typeComposerText]);
+  }), [archived, archiveStateKnown, archiveHeld, attachments, buildDraft, props.onDraftChange, typeComposerText]);
   useControlAction(props.isControlTarget ? composerSetTextControlAction : null);
 
   const composerSendControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -2534,13 +2644,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     label: "Send the composer prompt",
     description: "Send the currently visible composer draft to the active session.",
     sideEffect: "mutation",
-    disabled: sessionModelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle" || queuedDrainState.phase.kind === "admission_unknown",
+    disabled: archived || !archiveStateKnown || archiveHeld || sessionModelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle" || queuedDrainState.phase.kind === "admission_unknown",
     targetRef: composerShellRef,
     execute: async () => {
       await handleSend();
       return true;
     },
-  }), [attachments.length, draft, handleSend, model.transitionState, queuedDrainState.phase.kind, sessionModelUnavailable]);
+  }), [archived, archiveStateKnown, archiveHeld, attachments.length, draft, handleSend, model.transitionState, queuedDrainState.phase.kind, sessionModelUnavailable]);
   useControlAction(props.isControlTarget ? composerSendControlAction : null);
 
   const composerStopControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -2548,10 +2658,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     label: "Stop the current run",
     description: "Stop the current streaming session run.",
     sideEffect: "mutation",
-    disabled: !chatStreaming && queuedDrainState.phase.kind !== "sending" && queuedDrainState.phase.kind !== "admission_unknown",
+    disabled: stopping || (!chatStreaming && queuedDrainState.phase.kind !== "sending" && queuedDrainState.phase.kind !== "admission_unknown"),
     targetRef: composerShellRef,
     execute: handleAbort,
-  }), [chatStreaming, handleAbort, queuedDrainState.phase.kind]);
+  }), [chatStreaming, handleAbort, queuedDrainState.phase.kind, stopping]);
   useControlAction(props.isControlTarget ? composerStopControlAction : null);
 
   const listSkills = useCallback(async (): Promise<SkillCard[]> => {
@@ -2678,6 +2788,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const sessionScroll = useSessionScrollController({
     selectedSessionId: props.sessionId,
+    submittedMessageId: submittedMessage?.owner === sessionOwner ? submittedMessage.id : null,
+    historyReady: snapshot !== null,
     renderedMessages,
     containerRef: scrollRef,
     contentRef,
@@ -2745,6 +2857,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const resumeGuardRef = useRef(createSingleFlight());
   const [resuming, setResuming] = useState(false);
   const handleResumeInterrupted = useCallback(async (recoveryPrompt: string) => {
+    if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     await resumeGuardRef.current.run(async () => {
       const messageID = createPromptMessageID();
       dispatchQueuedDrain(props.sessionId, { type: "user_retry" });
@@ -2764,7 +2877,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         setResuming(false);
       }
     });
-  }, [props.sessionId, sendDraft]);
+  }, [archived, archiveStateKnown, props.opencodeBaseUrl, props.sessionId, sendDraft]);
   const handleResumeUnknownOutcome = useCallback(() => {
     void handleResumeInterrupted(interruptedTaskRecoveryPrompt);
   }, [handleResumeInterrupted]);
@@ -2883,6 +2996,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.sessionId, props.workspaceId]);
 
   const handleMcpRetry = useCallback(async (action: ChatToolReconnectAction) => {
+    if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     const prompt = `The ${action.connectionName} connection is restored. Search for the capability again and retry the previous request. Before repeating any write action, confirm it did not already complete.`;
     await typeComposerText(prompt);
     props.onDraftChange(buildDraft(prompt, attachments));
@@ -2891,11 +3005,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
       sessionId: props.sessionId,
       connectionId: action.connectionId,
     });
-  }, [attachments, buildDraft, props.onDraftChange, props.sessionId, props.workspaceId, typeComposerText]);
+  }, [archived, archiveStateKnown, attachments, buildDraft, props.onDraftChange, props.opencodeBaseUrl, props.sessionId, props.workspaceId, typeComposerText]);
 
   const handleRevertToUserMessage = useCallback((messageId: string) => {
+    if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     void props.onRevertToMessage?.(messageId, props.sessionId);
-  }, [props.onRevertToMessage, props.sessionId]);
+  }, [archived, archiveStateKnown, props.onRevertToMessage, props.opencodeBaseUrl, props.sessionId]);
 
   const handleForkAtMessage = useCallback((messageId: string) => {
     // OpenCode's fork copies messages strictly before the given id, so pass
@@ -2904,17 +3019,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.onForkAtMessage, props.sessionId]);
 
   const handleEditUserMessage = useCallback((messageId: string, text: string) => {
+    if (archived) return;
     // Preserve the boundary with the draft; the destructive revert is deferred
     // until the replacement prompt is actually sent.
     void typeComposerText(text, messageId);
-  }, [typeComposerText]);
+  }, [archived, typeComposerText]);
 
   const handleRestoreRevertedSession = useCallback(() => {
+    if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     if (!props.onRestoreRevertedSession || restoringRevertedMessages) return;
     setRestoringRevertedMessages(true);
     void props.onRestoreRevertedSession(props.sessionId)
       .finally(() => setRestoringRevertedMessages(false));
-  }, [props.onRestoreRevertedSession, props.sessionId, restoringRevertedMessages]);
+  }, [archived, archiveStateKnown, props.onRestoreRevertedSession, props.opencodeBaseUrl, props.sessionId, restoringRevertedMessages]);
 
   const sessionScrollTopControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.scroll_top",
@@ -2925,10 +3042,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     execute: () => {
       const container = scrollRef.current;
       if (!container) return { ok: false, error: "Session transcript is not mounted" };
+      sessionScroll.markScrollGesture(container);
       container.scrollTo({ top: 0, behavior: "smooth" });
       return { ok: true, position: "top" };
     },
-  }), []);
+  }), [sessionScroll.markScrollGesture]);
   useControlAction(props.isControlTarget ? sessionScrollTopControlAction : null);
 
   const sessionScrollBottomControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -3115,12 +3233,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     onApplyChanges={props.onApplyEnvironmentChanges}
                   >
                     <MessageListProvider
+                      readOnly={archived || !archiveStateKnown || archiveHeld}
                       workspaceId={props.workspaceId}
                       sessionId={props.sessionId}
                       showThinking={showThinking}
                       highlightQuery={findHighlightQuery}
                       developerMode={props.developerMode}
-                      displaySuggestions={shellConfig.starterCards && snapshot !== null && snapshot.messages.length === 0}
+                      displaySuggestions={!archived && shellConfig.starterCards && snapshot !== null && snapshot.messages.length === 0}
                       providerConnectedCount={props.providerConnectedCount ?? 0}
                       connectorIdentities={connectorIdentities}
                       syncDegraded={runSyncHealth.degraded}
@@ -3130,7 +3249,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onForkAtMessage={handleForkAtMessage}
                       onEditUserMessage={handleEditUserMessage}
                       onOpenSubagentSession={props.onOpenSubagentSession}
-                      onResumeInterrupted={handleResumeInterrupted}
+                      onResumeInterrupted={archived ? undefined : handleResumeInterrupted}
                       onMcpReconnect={handleMcpReconnect}
                       onMcpReopenAuthorization={handleMcpReopenAuthorization}
                       onMcpRetry={handleMcpRetry}
@@ -3147,7 +3266,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 </OpenTargetProvider>
               </DevProfiler>
             )}
-            {admissionOutcomeUnresolved && queuedDrainState.phase.kind !== "admission_unknown" && renderedMessages.length > 0 ? (
+            {!archived && admissionOutcomeUnresolved && queuedDrainState.phase.kind !== "admission_unknown" && renderedMessages.length > 0 ? (
               <AdmissionOutcomeUnknownCard
                 resuming={resuming}
                 onResume={handleResumeUnknownOutcome}
@@ -3200,6 +3319,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
             </button>
           </div>
         ) : null}
+        {archived ? (
+          <Alert data-testid="archived-session">
+            <AlertTitle>{t("session_management.archived_label")}</AlertTitle>
+            <AlertDescription>
+              {t("session_management.archived_read_only")}
+              <Button variant="outline" disabled={restoringArchived || !props.onRestoreSession} onClick={() => {
+                if (restoringArchived || !props.onRestoreSession) return;
+                setRestoringArchived(true);
+                void props.onRestoreSession().then(() => snapshotQuery.refetch())
+                  .finally(() => setRestoringArchived(false));
+              }}>{t("session_management.restore_session")}</Button>
+            </AlertDescription>
+          </Alert>
+        ) : <>
         {failedDraft ? (
           <div className="mx-3 mb-2 flex items-center gap-3 text-xs text-red-11">
             <span>Your unsent message is saved. Clear the current draft to restore it.</span>
@@ -3215,11 +3348,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
             }}>Restore unsent message</button>
           </div>
         ) : null}
-        {unmatchedPendingMessages.flatMap(({ draft: pending }) => pending.attachments.map((attachment) => (
-          <div key={attachment.id} className="mx-3 mb-2 text-xs text-muted-foreground" data-attachment-status={sending ? "uploading" : "ready"}>
-            {attachment.name}{sending ? " · Uploading…" : ""}
-          </div>
-        )))}
+        {attachmentsUploading ? <div role="status" className="mx-3 mb-2 text-xs text-muted-foreground" data-attachment-status="uploading">
+          Preparing attachments...
+        </div> : null}
         <ReactSessionComposer
           runModeControl={<WorkspaceRunModeMenu client={props.client} workspaceId={props.workspaceId} busy={chatStreaming || preparingCloudTools || Boolean(props.activePermission || props.activeQuestion)} />}
           draft={autoSendPayload ? draft : autoSending ? "" : draft}
@@ -3230,10 +3361,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onQueue={handleQueue}
         onStop={async () => { await handleAbort(); }}
         busy={chatStreaming}
+        stopping={stopping}
         steering={steering}
         submissionPreparing={preparingCloudTools || sending || autoSending}
         queuedCount={queuedItems.length}
-        disabled={model.transitionState !== "idle" || sessionModelUnavailable || queuedDrainState.phase.kind === "admission_unknown"}
+        disabled={!archiveStateKnown || archiveHeld || model.transitionState !== "idle" || sessionModelUnavailable || queuedDrainState.phase.kind === "admission_unknown"}
         modelUnavailable={sessionModelUnavailable}
         modelUnavailableMessage={sessionModelUnavailable ? props.modelUnavailableMessage : null}
         organizationModelsEmpty={props.organizationModelsEmpty}
@@ -3246,8 +3378,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onModelPickerOpenChange={handleModelPickerOpenChange}
         onModelChange={handleModelChange}
         sessionId={props.sessionId}
-        attachments={attachments}
-        attachmentsUploading={attachmentsUploading}
+        attachments={autoSending && !autoSendPayload ? [] : attachments}
         onAttachFiles={handleAttachFiles}
         onRemoveAttachment={handleRemoveAttachment}
         attachmentsEnabled={props.attachmentsEnabled}
@@ -3322,6 +3453,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
             ) : null
           }
         />
+        </>}
       </div>
       {/* Error display moved inline into the session conversation area */}
       {props.developerMode ? <SessionDebugPanel model={model} snapshot={snapshot} /> : null}

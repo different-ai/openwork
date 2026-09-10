@@ -107,14 +107,17 @@ export async function readBrowserState(app: Surface): Promise<BrowserState> {
   };
 }
 
-export async function readBrowserTabMetrics(app: Surface, targetId: string): Promise<{ width: number; height: number; hasFocus: boolean }> {
+export async function readBrowserTabMetrics(app: Surface, targetId: string): Promise<{ width: number; height: number; hasFocus: boolean; url: string; title: string; timeOrigin: number }> {
   const target = (await listTargets(app.handle.cdpUrl)).find((candidate) => candidate.id === targetId);
   if (!target) throw new Error("The exact browser tab target is no longer available.");
   const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
   try {
-    const value = await evaluate(client, () => ({ width: innerWidth, height: innerHeight, hasFocus: document.hasFocus() }));
-    if (!record(value) || typeof value.width !== "number" || typeof value.height !== "number" || typeof value.hasFocus !== "boolean") throw new Error("Invalid browser metrics.");
-    return { width: value.width, height: value.height, hasFocus: value.hasFocus };
+    const value = await evaluate(client, () => ({ width: innerWidth, height: innerHeight, hasFocus: document.hasFocus(),
+      url: location.href, title: document.title, timeOrigin: performance.timeOrigin }));
+    if (!record(value) || typeof value.width !== "number" || typeof value.height !== "number" || typeof value.hasFocus !== "boolean"
+      || typeof value.url !== "string" || typeof value.title !== "string" || typeof value.timeOrigin !== "number") throw new Error("Invalid browser metrics.");
+    return { width: value.width, height: value.height, hasFocus: value.hasFocus,
+      url: value.url, title: value.title, timeOrigin: value.timeOrigin };
   } finally { client.close(); }
 }
 

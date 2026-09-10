@@ -6,6 +6,7 @@ import {
   claimQueuedSend,
   dispatchQueuedDrain,
   getQueuedDrainState,
+  hasPendingQueuedAdmission,
   getQueuedSendGeneration,
   INITIAL_QUEUED_DRAIN_STATE,
   nextObservationProbeAt,
@@ -24,6 +25,20 @@ import {
 // the next queued item to be sent.
 
 const t0 = 1_000_000;
+
+test("queue cancellation preserves admissions until stop is confirmed", () => {
+  const sending = reduceQueuedDrain(INITIAL_QUEUED_DRAIN_STATE, { type: "send_started", itemId: "cancelled" });
+  const awaiting = reduceQueuedDrain(sending, { type: "send_result", itemId: "cancelled", outcome: "sent", at: t0 });
+  const running = reduceQueuedDrain(awaiting, { type: "busy_observed" });
+  const unknown = reduceQueuedDrain(sending, { type: "send_unknown", itemId: "cancelled", messageID: "msg_unknown", at: t0 });
+  for (const state of [sending, awaiting, running, unknown]) {
+    expect(hasPendingQueuedAdmission(state)).toBe(true);
+    expect(reduceQueuedDrain(state, { type: "queue_cleared" })).toBe(state);
+  }
+  expect(reduceQueuedDrain(sending, { type: "stop_confirmed" }).phase.kind).toBe("sending");
+  expect(reduceQueuedDrain(unknown, { type: "stop_confirmed" })).toBe(unknown);
+  expect(hasPendingQueuedAdmission(reduceQueuedDrain(awaiting, { type: "stop_confirmed" }))).toBe(false);
+});
 
 test("an immediate follow-up cannot inherit its interrupted predecessor's busy observation", () => {
   let state = reduceQueuedDrain(INITIAL_QUEUED_DRAIN_STATE, { type: "send_started", itemId: "old" });
@@ -50,6 +65,14 @@ function admit(state: QueuedDrainState, itemId: string, at: number): QueuedDrain
   return reduceQueuedDrain(sending, { type: "send_result", itemId, outcome: "sent", at });
 }
 
+test("a synchronous shell terminal response settles without needing a busy event, but accepted commands do not", () => {
+  const sending = reduceQueuedDrain(INITIAL_QUEUED_DRAIN_STATE, { type: "send_started", itemId: "shell" });
+  const completed = reduceQueuedDrain(sending, { type: "send_result", itemId: "shell", outcome: "sent", at: t0, terminalObserved: true });
+  expect(completed.phase.kind).toBe("ready");
+  expect(completed.lastResolution?.resolution).toBe("completed");
+  expect(reduceQueuedDrain(sending, { type: "send_result", itemId: "shell", outcome: "accepted", at: t0, terminalObserved: true }).phase.kind).toBe("awaiting_observation");
+});
+
 test("a dropped busy event after a successful admission cannot wedge the drain", () => {
   // Admission succeeds, but the engine's busy event never arrives (dropped
   // SSE event). The old boolean edge-wait stayed armed forever here.
@@ -68,33 +91,35 @@ test("a dropped busy event after a successful admission cannot wedge the drain",
   // waiting on the missing edge forever.
   expect(nextObservationProbeAt(state, null)).toBe(t0 + QUEUE_ADMISSION_OBSERVATION_TIMEOUT_MS);
 
-  // The probe observes an authoritative idle level at/after the admission:
-  // the run started and finished between observations. The item completes
-  // and the next queued item may be admitted.
+  // Ordinary prompt admission retains current-dev's authoritative idle recovery.
   const probedAt = t0 + QUEUE_ADMISSION_OBSERVATION_TIMEOUT_MS;
   state = reduceQueuedDrain(state, { type: "idle_reconciled", observedAt: probedAt });
   expect(state.lastResolution).toEqual({ itemId: "item-1", resolution: "completed" });
   expect(canAdmitNextQueuedItem(state)).toBe(true);
 });
 
-test("a message accepted by admission whose upstream dispatch fails still releases the queue", () => {
+test("an accepted deferred command never releases on idle alone or another turn's busy edge", () => {
   // The admission call returned accepted, but dispatch never produced a run:
   // no busy level ever exists. Progress must not depend on the busy event.
-  let state = admit(INITIAL_QUEUED_DRAIN_STATE, "item-1", t0);
+  let state = reduceQueuedDrain(INITIAL_QUEUED_DRAIN_STATE, { type: "send_started", itemId: "item-1" });
+  state = reduceQueuedDrain(state, { type: "busy_observed" });
+  state = reduceQueuedDrain(state, { type: "send_result", itemId: "item-1", outcome: "accepted", at: t0, deferredMessageID: "msg_command" });
+  expect(reduceQueuedDrain(state, { type: "busy_observed" })).toBe(state);
 
   // No busy is ever observed. The first probe is inconclusive (endpoint
   // briefly unreachable) — retries stay bounded and spaced.
   const firstProbeAt = t0 + QUEUE_ADMISSION_OBSERVATION_TIMEOUT_MS;
   expect(nextObservationProbeAt(state, firstProbeAt)).toBe(firstProbeAt + QUEUE_ADMISSION_PROBE_RETRY_MS);
 
-  // The retry probe reads the authoritative level: still idle, at a time
-  // after the admission. The admitted-but-never-ran item cannot block the
-  // queue: it resolves and the next item drains.
+  // No terminal acknowledgment means the command may still dispatch later.
   state = reduceQueuedDrain(state, {
     type: "idle_reconciled",
     observedAt: firstProbeAt + QUEUE_ADMISSION_PROBE_RETRY_MS,
   });
-  expect(state.lastResolution).toEqual({ itemId: "item-1", resolution: "completed" });
+  expect(state.phase.kind).toBe("awaiting_observation");
+  expect(canAdmitNextQueuedItem(state)).toBe(false);
+
+  state = reduceQueuedDrain(state, { type: "idle_reconciled", observedAt: firstProbeAt + QUEUE_ADMISSION_PROBE_RETRY_MS, terminalObserved: true });
   expect(canAdmitNextQueuedItem(state)).toBe(true);
 
   // Only a definite rejection/preflight failure is retryable, and even that
@@ -139,6 +164,17 @@ test("unknown admission survives idle, busy, retry, Stop, and remount until the 
   dispatchQueuedDrain(sessionId, { type: "idle_reconciled", observedAt: t0 + 110_000 });
   expect(claimQueuedSend(sessionId, "item-2")).toBe(true);
   resetQueuedDrainForTests();
+});
+
+test("observing a deferred command's user message cannot erase its terminal-evidence requirement", () => {
+  let state = reduceQueuedDrain(INITIAL_QUEUED_DRAIN_STATE, { type: "send_started", itemId: "command" });
+  state = reduceQueuedDrain(state, { type: "send_unknown", itemId: "command", messageID: "msg_command", at: t0, deferred: true });
+  state = reduceQueuedDrain(state, { type: "admission_observed", itemId: "command", messageID: "msg_command", at: t0 + 1 });
+  expect(state.phase).toEqual({ kind: "awaiting_observation", itemId: "command", messageID: "msg_command", admittedAt: t0 + 1 });
+  expect(reduceQueuedDrain(state, { type: "busy_observed" })).toBe(state);
+  expect(reduceQueuedDrain(state, { type: "queue_cleared" })).toBe(state);
+  expect(reduceQueuedDrain(state, { type: "idle_reconciled", observedAt: t0 + 100 })).toBe(state);
+  expect(canAdmitNextQueuedItem(reduceQueuedDrain(state, { type: "idle_reconciled", observedAt: t0 + 100, terminalObserved: true }))).toBe(true);
 });
 
 test("send now shares the current claim with the idle drain and every split pane", () => {
@@ -200,8 +236,7 @@ test("an event-stream disconnect and reconnect during admission is healed by lev
   expect(canAdmitNextQueuedItem(finished)).toBe(true);
 
   // Reconnect path B: the run already finished while disconnected; the
-  // reconciliation reports idle observed after the admission. That level —
-  // not a busy edge — releases the item.
+  // reconciliation reports authoritative idle after ordinary prompt admission.
   const reconnectIdle = reduceQueuedDrain(state, { type: "idle_reconciled", observedAt: t0 + 20_000 });
   expect(reconnectIdle.lastResolution).toEqual({ itemId: "item-1", resolution: "completed" });
   expect(canAdmitNextQueuedItem(reconnectIdle)).toBe(true);
@@ -280,6 +315,7 @@ test("blocked and cancelled sends classify as needs_input and rejected without w
   let blocked = reduceQueuedDrain(INITIAL_QUEUED_DRAIN_STATE, { type: "send_started", itemId: "item-1" });
   blocked = reduceQueuedDrain(blocked, { type: "send_result", itemId: "item-1", outcome: "blocked", at: t0 });
   expect(blocked.phase).toEqual({ kind: "halted", itemId: "item-1", reason: "needs_input" });
+  expect(hasPendingQueuedAdmission(blocked)).toBe(false);
   expect(blocked.lastResolution).toEqual({ itemId: "item-1", resolution: "needs_input" });
   expect(canAdmitNextQueuedItem(blocked)).toBe(false);
   const retried = reduceQueuedDrain(blocked, { type: "user_retry" });

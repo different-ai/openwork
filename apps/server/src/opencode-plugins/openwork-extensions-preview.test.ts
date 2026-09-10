@@ -149,7 +149,6 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
             firstFailure: null,
           },
           workspace: { resolution: "resolved", id: "ws_2", directory: "/tmp/archive" },
-          googleWorkspace: { legacyConfigured: false },
         });
       }
 

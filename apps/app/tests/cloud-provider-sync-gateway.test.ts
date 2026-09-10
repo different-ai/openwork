@@ -435,7 +435,9 @@ describe("cloud provider sync in server-capability mode", () => {
 
     releaseFirstRun();
     const outcomes = await Promise.all([first, ...sameContext, ...changedContext]);
-    expect(outcomes).toEqual(Array.from({ length: 5 }, () => ({ outcome: "handled_server_side" })));
+    // The old organization's callers are cancelled rather than publishing
+    // the replacement organization's result into their stale context.
+    expect(outcomes).toEqual([undefined, undefined, undefined, { outcome: "handled_server_side" }, { outcome: "handled_server_side" }]);
     expect(requests.filter((request) => new URL(request.url).pathname === "/cloud-provider-sync/run")).toHaveLength(2);
   });
 
@@ -494,7 +496,7 @@ describe("cloud provider sync in server-capability mode", () => {
 
     expect(await store.runCloudProviderSync("settings_cloud_opened")).toEqual({ outcome: "handled_server_side" });
     const sessionRequests = requests.filter((request) => request.method === "PUT" && new URL(request.url).pathname === "/den-session");
-    expect(sessionRequests).toHaveLength(1);
+    expect(sessionRequests).toHaveLength(2);
     expect(sessionRequests[0]?.body).toBe(JSON.stringify({
       baseUrl: "https://den.example/api/den",
       token: "den-token",

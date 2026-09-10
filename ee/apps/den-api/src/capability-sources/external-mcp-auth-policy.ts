@@ -6,7 +6,7 @@ function normalizedRemoteMcpUrl(value: string) {
   try {
     const url = new URL(value)
     const pathname = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, "") : url.pathname
-    return `${url.host.toLowerCase()}${pathname}`
+    return `${url.origin}${pathname}`
   } catch {
     return null
   }
@@ -44,8 +44,29 @@ export function requiredPluginMcpAuthType(input: {
   declaredAuthType: "oauth" | null
   url: string
 }): PluginMcpAuthType | null {
+  if (input.declaredAuthType) return input.declaredAuthType
   const preset = matchExternalMcpPresetForUrl(input.url)
-  return preset?.authType ?? input.declaredAuthType
+  if (preset?.supportedAuthTypes && preset.supportedAuthTypes.length > 1) return null
+  return preset?.authType ?? null
+}
+
+// Stored connections predate preset setup allowlists; only a required auth type
+// can disqualify them. New configuration must also pass the preset allowlist.
+export function existingPluginMcpAuthTypeCompatible(input: {
+  authType: PluginMcpAuthType
+  requiredAuthType: PluginMcpAuthType | null
+}): boolean {
+  return input.requiredAuthType === null || input.authType === input.requiredAuthType
+}
+
+export function pluginMcpAuthTypeCompatible(input: {
+  authType: PluginMcpAuthType
+  requiredAuthType: PluginMcpAuthType | null
+  url: string
+}): boolean {
+  if (!existingPluginMcpAuthTypeCompatible(input)) return false
+  const preset = matchExternalMcpPresetForUrl(input.url)
+  return !preset || (preset.supportedAuthTypes ?? [preset.authType]).includes(input.authType)
 }
 
 export function pluginMcpRequiresPreRegisteredOAuthClient(url: string): boolean {
@@ -54,8 +75,15 @@ export function pluginMcpRequiresPreRegisteredOAuthClient(url: string): boolean 
 
 export function resolveGithubPluginMcpImportAuthType(input: {
   declaredAuthType: "oauth" | null
-  requestedAuthType: "none" | "oauth"
+  existingAuthType?: PluginMcpAuthType
+  requestedAuthType: PluginMcpAuthType
   url: string
 }): PluginMcpAuthType {
-  return requiredPluginMcpAuthType(input) ?? input.requestedAuthType
+  if (input.declaredAuthType) return input.declaredAuthType
+  const preset = matchExternalMcpPresetForUrl(input.url)
+  if (input.existingAuthType && preset?.supportedAuthTypes && existingPluginMcpAuthTypeCompatible({
+    authType: input.existingAuthType,
+    requiredAuthType: requiredPluginMcpAuthType(input),
+  })) return input.existingAuthType
+  return preset?.authType ?? input.requestedAuthType
 }

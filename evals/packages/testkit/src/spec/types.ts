@@ -63,6 +63,8 @@ export interface Agent {
 }
 
 export interface Probe {
+  /** Applied CSS-to-DIP page zoom from Chromium, not the stored zoom preference. */
+  zoom(): Promise<number>;
   browserState(): Promise<import("@openwork/behaviors").BrowserState>;
   browserTabMetrics(targetId: string): ReturnType<typeof import("@openwork/behaviors").readBrowserTabMetrics>;
   browserFixtureState(origin: string): Promise<import("@openwork/env").BrowserFixtureState>;
@@ -71,6 +73,7 @@ export interface Probe {
   dom(selector: string): ReturnType<typeof import("@openwork/cdp").readDom>;
   has(text: string): Promise<boolean>;
   composer(): ReturnType<typeof import("@openwork/behaviors").readComposerState>;
+  connectorCatalog(): ReturnType<typeof import("@openwork/behaviors").readConnectorCatalog>;
   storage(key: string): Promise<unknown>;
   storage<T>(key: string, pick: (value: unknown) => T): Promise<T>;
   hash(): Promise<string>;
@@ -120,6 +123,8 @@ export interface SpecAdapters {
 }
 
 export interface SpecWorldOptions {
+  /** Frozen at registration and shared by arrangement/body. Omit only for bounded legacy migration. */
+  readonly resources?: import("@openwork/env").WorldResources;
   needs?: TestNeeds;
   timeout?: number;
   scope?: "test" | "file";
@@ -127,4 +132,4 @@ export interface SpecWorldOptions {
   adapters?: SpecAdapters;
 }
 
-export type { OrgConnectionInput, Seed, SeedDesktopOptions, SeedWebOptions } from "@openwork/env";
+export type { OrgConnectionInput, Seed, SeedAppWebOptions, SeedDesktopOptions, SeedWebOptions } from "@openwork/env";

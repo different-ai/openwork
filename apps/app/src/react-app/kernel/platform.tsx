@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { createContext, use, type ReactNode } from "react";
 
-import { desktopNotificationShow, openDesktopUrl, relaunchDesktopApp } from "../../app/lib/desktop";
+import { desktopBridge, desktopNotificationShow, openDesktopUrl, relaunchDesktopApp, type NativeContextMenuRequest } from "../../app/lib/desktop";
 import { platformCapabilities, type PlatformCapabilities } from "../../app/lib/platform-capabilities";
 import { isDesktopRuntime, isMacPlatform, isWindowsPlatform } from "../../app/utils";
 
@@ -25,6 +25,7 @@ export type Platform = {
   openLink(url: string): void;
   restart(): Promise<void>;
   notify(title: string, description?: string, href?: string): Promise<void>;
+  showContextMenu?: (request: NativeContextMenuRequest, signal?: AbortSignal) => Promise<string | null>;
   storage?: (name?: string) => SyncStorage | AsyncStorage;
   checkUpdate?: () => Promise<{ updateAvailable: boolean; version?: string }>;
   update?: () => Promise<void>;
@@ -72,6 +73,17 @@ export function createDefaultPlatform(): Platform {
     platform: desktop ? "desktop" : "web",
     os: desktop ? currentDesktopOs() : undefined,
     capabilities: platformCapabilities(),
+    showContextMenu: desktop ? async (request, signal) => {
+      if (signal?.aborted) return null;
+      const requestId = crypto.randomUUID();
+      const cancel = () => { void desktopBridge.__cancelContextMenu(requestId).catch(() => {}); };
+      signal?.addEventListener("abort", cancel, { once: true });
+      try {
+        return await desktopBridge.__showContextMenu({ ...request, requestId });
+      } finally {
+        signal?.removeEventListener("abort", cancel);
+      }
+    } : undefined,
     openLink(url: string) {
       if (isDesktopRuntime()) {
         void openDesktopUrl(url).catch(() => {

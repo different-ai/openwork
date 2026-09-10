@@ -4,6 +4,7 @@ import type { AttachedSurface, Surface } from "@openwork/cdp";
 import type { StartMockMcpOptions } from "@openwork/labs";
 import type { DaytonaExec, DesktopHandle } from "@openwork/hosts";
 import type { App } from "./desktop-app.ts";
+import type { AppWeb, SeedAppWebOptions } from "./app-web.ts";
 import type { Den, ServerOptions } from "./den.ts";
 import type { FaultProxy } from "./faults.ts";
 import type { MockBoot } from "./mock.ts";
@@ -93,6 +94,7 @@ export interface SeedDenLink extends AsyncDisposable {
 export interface Seed {
   den(options?: Omit<ServerOptions, "place">): Promise<Den>;
   desktop(options?: SeedDesktopOptions): Promise<App | DesktopHandle>;
+  appWeb(options: SeedAppWebOptions): Promise<AppWeb>;
   web(options: SeedWebOptions): Promise<AttachedSurface>;
   /** Ensure a selected workspace; create:true explicitly creates another workspace. */
   workspace(app: Surface, path?: string, options?: { create?: boolean }): Promise<{ workspaceId: string; route: string }>;
@@ -107,6 +109,8 @@ export interface Seed {
   denLink(den: Den, options?: SeedDenLinkOptions): Promise<SeedDenLink>;
   tmpPath(label: string): string;
   composerText(app: Surface, text: string): Promise<void>;
+  /** Deliver a fixture-owned link at the renderer ingress; does not exercise OS protocol registration. */
+  deepLink(app: Surface, url: string): Promise<void>;
   browserFixtureDiscovery(app: Surface, origin: string, action: "hold" | "release"): Promise<void>;
   /** Migration-only raw write escape hatch. New specs must not use it. */
   evalIn<T>(surface: Surface, expression: BrowserEvaluation<T>, options?: EvaluateOptions): Promise<Awaited<T>>;

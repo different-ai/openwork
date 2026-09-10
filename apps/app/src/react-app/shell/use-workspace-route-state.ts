@@ -552,8 +552,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         setLegacySelectedWorkspaceId(resolveWorkspaceListSelectedId(desktopList) || orderedDesktopWorkspaces[0]?.id || "");
         return;
       }
-      onHostInfo(hostInfo);
-
       // Update the local-server resolver synchronously, BEFORE we kick off any
       // workspace-scoped requests below. `endpointForWorkspace` reads from
       // this resolver synchronously; the render that mirrors `[baseUrl,
@@ -631,6 +629,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       setClient(openworkClient);
       setBaseUrl(normalizedBaseUrl);
       setToken(resolvedToken);
+      // Publish host credentials/generation with their endpoint, never before
+      // the awaited workspace refresh while React still holds the old port.
+      onHostInfo(hostInfo);
       setWorkspaces(nextWorkspaces);
       const nextSessionsByWorkspaceId = Object.fromEntries(cachedEntries.map((entry) => [entry.workspaceId, entry.sessions]));
       sessionsByWorkspaceIdRef.current = nextSessionsByWorkspaceId;

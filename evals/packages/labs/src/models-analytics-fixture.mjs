@@ -35,6 +35,23 @@ async function arrange(command, orgId, inferenceUrl) {
     else if (command === "resume-analytics") {
         await db.execute(sql.raw("RENAME TABLE models_analytics_event_unavailable TO models_analytics_event"));
     }
+    else if (command === "pagination" || command === "pagination-newest") {
+        const [settings] = await db.select().from(schema.ModelsAnalyticsSettingsTable).where(eq(schema.ModelsAnalyticsSettingsTable.org_id, id));
+        if (!settings?.enabled || !settings.consented_by) throw new Error("Pagination needs an opted-in fixture member");
+        const now = Date.now();
+        await db.insert(schema.ModelsAnalyticsEventTable).values(Array.from({ length: command === "pagination" ? 400 : 1 }, (_, index) => {
+            const suffix = command === "pagination" ? String(index + 1) : "newest";
+            const eventId = `pagination-${suffix}`;
+            const timestamp = new Date(now - index);
+            const event = { id: eventId, type: "model.call", timestamp: timestamp.toISOString(), sessionId: "pagination",
+                taskId: eventId, model: `pagination-model-${suffix}`, status: "completed", usageComplete: false };
+            return {
+                id: createHash("sha256").update(JSON.stringify([id, settings.consented_by, "inference", eventId])).digest("hex"),
+                event_id: eventId, org_id: id, member_id: settings.consented_by, source: "inference", type: event.type,
+                timestamp, session_id: event.sessionId, task_id: event.taskId, model: event.model, usage_complete: false, payload: event,
+            };
+        }));
+    }
     else if (command === "subscription") {
         await db.insert(schema.OrgSubscriptionTable).values({
             id: createDenTypeId("orgSubscription"), organization_id: id, type: "inference", status: "active",

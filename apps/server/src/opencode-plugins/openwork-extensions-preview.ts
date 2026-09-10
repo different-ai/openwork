@@ -1,5 +1,7 @@
 import { realpath } from "node:fs/promises";
+import { ApiError } from "../errors.js";
 import { uiBridgeRequest } from "./openwork-ui-bridge.js";
+import { createGmailAttachmentFulfillment, type GmailAttachmentDependencies } from "./gmail-attachment-fulfillment.js";
 import { z } from "zod";
 import { visualizationSchema } from "@openwork/types/visualization";
 import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
@@ -30,11 +32,11 @@ type ExtensionActionPayload = {
 };
 
 const listActionsArgsSchema = z.object({
-  extensionId: z.string().optional().describe("Optional extension id to filter by, such as google-workspace."),
+  extensionId: z.string().optional().describe("Optional extension id to filter by, such as openwork-cloud-uploads."),
 });
 
 const callArgsSchema = z.object({
-  extensionId: z.string().describe("Extension id, such as google-workspace."),
+  extensionId: z.string().describe("Extension id returned by extension.actions, such as openwork-cloud-uploads."),
   action: z.string().describe("Action id from extension.actions."),
   args: z.record(z.string(), z.unknown()).optional().describe("JSON arguments for the action."),
 });
@@ -888,7 +890,10 @@ function proposeAutomation(rawArgs: unknown, context: OpenCodeContext): object {
   };
 }
 
-async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>, signal?: AbortSignal, gmailAttachment = false): Promise<unknown> {
+  if (gmailAttachment && (!serverUrl() || !serverToken())) {
+    throw new ApiError(409, "gmail_host_unavailable", "OpenWork host transport is unavailable. Run this tool from OpenWork.");
+  }
   const { url, token } = requireOpenWorkServer();
   const response = await fetch(url + path, {
     signal,
@@ -901,6 +906,10 @@ async function postJson(path: string, body: ExtensionActionPayload | Record<stri
   });
   const payload = await parseResponse(response);
   if (!response.ok) {
+    if (gmailAttachment) {
+      throw new ApiError(response.status, getStringProperty(payload, "code") ?? "gmail_attachment_http_error",
+        errorMessage(payload, "OpenWork extension call failed"), isRecord(payload) ? payload.details : undefined);
+    }
     throw new Error(errorMessage(payload, "OpenWork extension call failed"));
   }
   return payload;
@@ -917,18 +926,26 @@ function contextPayload(context: OpenCodeContext) {
   };
 }
 
-export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
+export const OpenWorkExtensionsPreview = async (factoryInput?: unknown, _options?: unknown, dependencies?: GmailAttachmentDependencies) => {
   const factoryContext = normalizeOpenCodeContext(factoryInput);
+  const fulfillGmailAttachments = createGmailAttachmentFulfillment(
+    dependencies ?? { callExtension: (request, signal) => postJson("/experimental/extensions/call", request, AbortSignal.any([signal, AbortSignal.timeout(130_000)]), true) },
+    contextPayload(factoryContext),
+  );
   const engineMcpStatusClient = readEngineMcpStatusClient(factoryInput);
   const engineMcpStatusDirectory = factoryContext.directory ?? factoryContext.worktree;
   return {
+  "tool.execute.before": fulfillGmailAttachments.before,
+  event: fulfillGmailAttachments.event,
+  dispose: fulfillGmailAttachments.dispose,
   "chat.headers": async (input: { sessionID: string; model: { providerID: string }; message: { id: string } }, output: { headers: Record<string, string> }) => {
     if (input.model.providerID !== "openwork") return;
     output.headers["x-openwork-session-id"] = input.sessionID;
     output.headers["x-openwork-task-id"] = input.message.id;
   },
-  "tool.execute.after": async (_input: unknown, output: unknown) => {
-    // OpenCode 1.17.x keeps the text projection of an MCP result but drops
+  "tool.execute.after": async (input: unknown, output: unknown) => {
+    await fulfillGmailAttachments(input, output);
+    // OpenCode 1.18.18 keeps the text projection of an MCP result but drops
     // structuredContent and result _meta before persisting the completed tool
     // part. Preserve those standard fields in the existing metadata channel
     // so OpenWork can host the UI without replaying the tool call.

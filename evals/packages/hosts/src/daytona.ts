@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { resolveEvalEngineValue } from "./eval-engine.ts";
-import type { ChromeSurfaceOptions, DenServiceHandle, DenServiceOptions, ElectronSurfaceOptions, Host, ShareLinks, SurfaceHandle } from "./types.ts";
+import type { ChromeSurfaceOptions, DenServiceHandle, DenServiceOptions, ElectronSurfaceOptions, Host, RetainedElectronSurface, ShareLinks, SurfaceHandle } from "./types.ts";
 
 export interface DaytonaExecResult {
   stdout: string;
@@ -30,6 +30,7 @@ export interface DaytonaHostOptions {
 
 export interface DaytonaHost extends Host, AsyncDisposable {
   previewUrl(port: number): Promise<string>;
+  spawnElectronRetained(name: string, opts?: ElectronSurfaceOptions): Promise<RetainedElectronSurface>;
   startDen(opts?: DenServiceOptions): Promise<DenServiceHandle>;
   share(): Promise<ShareLinks>;
   stop(): Promise<void>;
@@ -545,6 +546,33 @@ function appendExtraEnv(assignments: Map<string, string>, env: Record<string, st
   }
 }
 
+function appendBlankProfileEnv(assignments: Map<string, string>, profileRoot: string, userDataDir: string): void {
+  const home = `${profileRoot}/home`;
+  const config = `${profileRoot}/openwork/config`;
+  assignments.set("HOME", home);
+  assignments.set("USERPROFILE", home);
+  assignments.set("XDG_CONFIG_HOME", `${profileRoot}/xdg/config`);
+  assignments.set("XDG_DATA_HOME", `${profileRoot}/xdg/data`);
+  assignments.set("XDG_CACHE_HOME", `${profileRoot}/xdg/cache`);
+  assignments.set("XDG_STATE_HOME", `${profileRoot}/xdg/state`);
+  assignments.set("APPDATA", `${profileRoot}/windows/app-data/roaming`);
+  assignments.set("LOCALAPPDATA", `${profileRoot}/windows/app-data/local`);
+  assignments.set("OPENWORK_ELECTRON_USERDATA", userDataDir);
+  assignments.set("OPENWORK_DESKTOP_BOOTSTRAP_PATH", `${config}/desktop-bootstrap.json`);
+  assignments.set("OPENWORK_SERVER_CONFIG", `${config}/server.json`);
+  assignments.set("OPENWORK_ENV_STORE", `${config}/env.json`);
+  assignments.set("OPENWORK_TOKEN_STORE", `${config}/tokens.json`);
+  assignments.set("OPENWORK_RUNTIME_DB", `${config}/runtime.sqlite`);
+  assignments.set("OPENWORK_DATA_DIR", `${profileRoot}/openwork/data`);
+  assignments.set("OPENCODE_CONFIG_DIR", `${profileRoot}/opencode/config`);
+  assignments.set("OPENCODE_DB", `${profileRoot}/opencode/data/opencode.db`);
+  assignments.set("OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION", "1");
+}
+
+function encodedFile(content: string): string {
+  return Buffer.from(content, "utf8").toString("base64");
+}
+
 export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
   const exec = options.exec ?? defaultDaytonaExec;
   const previewCache = new Map<number, string>();
@@ -575,7 +603,7 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
     return url;
   }
 
-  async function spawnElectron(name: string, opts: ElectronSurfaceOptions = {}): Promise<SurfaceHandle> {
+  async function launchElectron(name: string, opts: ElectronSurfaceOptions, retainStartupFailure: boolean): Promise<RetainedElectronSurface> {
     const sandbox = requireSandbox();
     const safeName = sanitizeName(name);
     const spawnStamp = timestamp();
@@ -590,6 +618,29 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
     // Per-spawn log so the integrity check below can never read a previous
     // run's lines.
     const logPath = `/tmp/electron-${safeName}-${spawnStamp}.log`;
+    const binaryPath = opts.devCommand ? undefined : opts.binaryPath?.trim();
+    if (opts.profile === "blank" && !binaryPath) {
+      releasePort(electronPorts, port);
+      throw new Error("A blank Daytona Electron profile requires an explicit binaryPath.");
+    }
+    if (binaryPath && (!binaryPath.startsWith("/") || binaryPath.includes("\0") || binaryPath.includes("\n"))) {
+      releasePort(electronPorts, port);
+      throw new Error("Daytona Electron binaryPath must be an absolute single-line path.");
+    }
+    if (opts.profile === "blank" && opts.bootstrap) {
+      releasePort(electronPorts, port);
+      throw new Error("A blank Daytona Electron profile cannot be seeded with bootstrap state.");
+    }
+
+    const handle: SurfaceHandle = {
+      name,
+      kind: "electron",
+      hostKind: "daytona",
+      cdpUrl: "",
+      sandboxId: sandbox,
+      profileDir: profileRoot,
+      meta: { cdpPort: String(port), log: logPath, profileOwner: callerOwnedProfile ? "caller" : "host" },
+    };
 
     try {
       await checkedExec(exec, ["exec", sandbox, "--", "mkdir", "-p", shellQuote(userDataDir)], `mkdir Daytona Electron profile ${userDataDir}`, { timeoutMs: 30_000 });
@@ -605,30 +656,140 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
       }
 
       const env = new Map<string, string>();
-      if (resolveEvalEngineValue(process.env.OPENWORK_EVAL_ENGINE) === "v2") env.set("OPENWORK_ENGINE_V2_PREVIEW", "1");
-      appendExtraEnv(env, opts.env);
+      if (opts.profile !== "blank") {
+        if (resolveEvalEngineValue(process.env.OPENWORK_EVAL_ENGINE) === "v2") env.set("OPENWORK_ENGINE_V2_PREVIEW", "1");
+        appendExtraEnv(env, opts.env);
+      }
       env.set("DAYTONA_ELECTRON_LOG", logPath);
       env.set("OPENWORK_ELECTRON_REMOTE_DEBUG_PORT", String(port));
       env.set("OPENWORK_ELECTRON_USERDATA", userDataDir);
-      env.set("OPENWORK_WORKSPACE_DIR", "/workspace");
-      env.set("OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT", "1");
-      const packagedBinary = process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim();
-      if (packagedBinary) env.set("OPENWORK_EVAL_ELECTRON_BINARY", packagedBinary);
       if (opts.bootstrap) env.set("OPENWORK_DESKTOP_BOOTSTRAP_PATH", bootstrapPath);
+      let remotePid = "";
+      if (binaryPath) {
+        env.set("DISPLAY", ":99");
+        env.set("ELECTRON_DISABLE_SANDBOX", "1");
+        env.set("ELECTRON_EXTRA_LAUNCH_ARGS", "--disable-gpu --disable-dev-shm-usage --enable-unsafe-swiftshader");
+        env.set("OPENWORK_REACT_DEVTOOLS", "0");
+        if (opts.profile === "blank") {
+          appendBlankProfileEnv(env, profileRoot, userDataDir);
+          env.set("OPENWORK_DEV_MODE", "0");
+        }
+        const vmHomeResult = await checkedExec(
+          exec,
+          ["exec", sandbox, "--", `bash -lc ${shellQuote('printf %s "$HOME"')}`],
+          `resolve Daytona VM home for ${name}`,
+          { timeoutMs: 30_000 },
+        );
+        const vmHome = vmHomeResult.stdout.trim();
+        if (!vmHome.startsWith("/") || vmHome.includes("\n")) throw new Error(`Daytona VM returned an invalid home path for ${name}.`);
+        const launcherPath = `${profileRoot}/launch-openwork`;
+        const browserLauncherPath = `${profileRoot}/launch-browser`;
+        const protocolHandlerPath = `${profileRoot}/xdg/data/applications/openwork-release-preview.desktop`;
+        const relaunchShortcutPath = `${vmHome}/Desktop/OpenWork Release ${safeName}.desktop`;
+        const browserShortcutPath = `${vmHome}/Desktop/Browser ${safeName}.desktop`;
+        const binaryArgs = [
+          "--no-sandbox",
+          "--disable-gpu",
+          "--disable-dev-shm-usage",
+          "--enable-unsafe-swiftshader",
+          ...(opts.launchArgs ?? []),
+        ];
+        const isolatedShell = `openwork_dbus="\${DBUS_SESSION_BUS_ADDRESS-}"
+openwork_xauthority="\${XAUTHORITY-}"
+for openwork_env_name in $(compgen -e); do unset "$openwork_env_name" 2>/dev/null || true; done
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export LANG=C.UTF-8
+if [ -n "$openwork_dbus" ]; then export DBUS_SESSION_BUS_ADDRESS="$openwork_dbus"; fi
+if [ -n "$openwork_xauthority" ]; then export XAUTHORITY="$openwork_xauthority"; fi
+${shellExport(env)}
+cd "$HOME"`;
+        const launcher = `#!/usr/bin/env bash\nset -euo pipefail\n${isolatedShell}\nexec ${shellQuote(binaryPath)} ${binaryArgs.map(shellQuote).join(" ")} "$@"\n`;
+        const browserLauncher = `#!/usr/bin/env bash\nset -euo pipefail\n${isolatedShell}\nBROWSER="$(command -v chromium || command -v google-chrome || command -v google-chrome-stable || true)"\nif [ -z "$BROWSER" ]; then exit 127; fi\nexec "$BROWSER" --user-data-dir=${shellQuote(`${profileRoot}/browser`)} --no-sandbox --disable-dev-shm-usage "$@"\n`;
+        const desktopEntry = `[Desktop Entry]\nType=Application\nVersion=1.0\nName=OpenWork Release\nExec=${launcherPath} %U\nTryExec=${launcherPath}\nTerminal=false\nCategories=Development;Utility;\nMimeType=x-scheme-handler/openwork;\n`;
+        const browserEntry = `[Desktop Entry]\nType=Application\nVersion=1.0\nName=Browser\nExec=${browserLauncherPath}\nTryExec=${browserLauncherPath}\nTerminal=false\nCategories=Network;WebBrowser;\n`;
+        const profileDirectories = [
+          userDataDir,
+          `${profileRoot}/home`,
+          `${vmHome}/Desktop`,
+          `${profileRoot}/xdg/config`,
+          `${profileRoot}/xdg/data/applications`,
+          `${profileRoot}/xdg/cache`,
+          `${profileRoot}/xdg/state`,
+          `${profileRoot}/windows/app-data/roaming`,
+          `${profileRoot}/windows/app-data/local`,
+          `${profileRoot}/openwork/config`,
+          `${profileRoot}/openwork/data`,
+          `${profileRoot}/opencode/config`,
+          `${profileRoot}/opencode/data`,
+          `${profileRoot}/browser`,
+        ];
+        const setupCommand = [
+          "set -euo pipefail",
+          `test -x ${shellQuote(binaryPath)}`,
+          `mkdir -p ${profileDirectories.map(shellQuote).join(" ")}`,
+          `printf %s ${encodedFile(launcher)} | base64 -d > ${shellQuote(launcherPath)}`,
+          `printf %s ${encodedFile(browserLauncher)} | base64 -d > ${shellQuote(browserLauncherPath)}`,
+          `printf %s ${encodedFile(desktopEntry)} | base64 -d > ${shellQuote(protocolHandlerPath)}`,
+          `printf %s ${encodedFile(desktopEntry)} | base64 -d > ${shellQuote(relaunchShortcutPath)}`,
+          `printf %s ${encodedFile(browserEntry)} | base64 -d > ${shellQuote(browserShortcutPath)}`,
+          `chmod +x ${[launcherPath, browserLauncherPath, protocolHandlerPath, relaunchShortcutPath, browserShortcutPath].map(shellQuote).join(" ")}`,
+          `${shellExport(env)} xdg-mime default openwork-release-preview.desktop x-scheme-handler/openwork`,
+          `${shellExport(env)} test "$(xdg-mime query default x-scheme-handler/openwork)" = openwork-release-preview.desktop`,
+          `gio set ${shellQuote(relaunchShortcutPath)} metadata::trusted true >/dev/null 2>&1 || true`,
+          `gio set ${shellQuote(browserShortcutPath)} metadata::trusted true >/dev/null 2>&1 || true`,
+        ].join("; ");
+        await checkedExec(exec, ["exec", sandbox, "--", `bash -lc ${shellQuote(setupCommand)}`], `prepare Daytona packaged Electron surface ${name}`, { timeoutMs: 60_000 });
+        handle.meta = {
+          ...handle.meta,
+          binary: binaryPath,
+          browserShortcut: browserShortcutPath,
+          protocolHandler: protocolHandlerPath,
+          relaunchShortcut: relaunchShortcutPath,
+        };
+        spawnedSurfaces.add(handle);
+        const startCommand = `python3 - <<PYEOF
+import subprocess
+log = open(${JSON.stringify(logPath)}, "ab", buffering=0)
+process = subprocess.Popen([${JSON.stringify(launcherPath)}], cwd=${JSON.stringify(`${profileRoot}/home`)}, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+print("OPENWORK_REMOTE_PID=" + str(process.pid))
+PYEOF`;
+        const started = await checkedExec(exec, ["exec", sandbox, "--", `bash -lc ${shellQuote(startCommand)}`], `start Daytona packaged Electron surface ${name}`, { timeoutMs: 60_000 });
+        remotePid = started.stdout.split(/\r?\n/).find((line) => line.startsWith("OPENWORK_REMOTE_PID="))?.slice("OPENWORK_REMOTE_PID=".length).trim() ?? "";
+        if (!/^\d+$/.test(remotePid)) throw new Error(`Daytona packaged Electron surface ${name} did not report its remote pid.`);
+        handle.meta.remotePid = remotePid;
+      } else {
+        env.set("OPENWORK_WORKSPACE_DIR", "/workspace");
+        const packagedBinary = process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim();
+        if (packagedBinary) env.set("OPENWORK_EVAL_ELECTRON_BINARY", packagedBinary);
+        const startCommand = `set -euo pipefail; cd /workspace; ${shellExport(env)} bash /workspace/.devcontainer/start-daytona-electron.sh --detach`;
+        spawnedSurfaces.add(handle);
+        await checkedExec(
+          exec,
+          ["exec", sandbox, "--", `bash -lc ${shellQuote(startCommand)}`],
+          `start Daytona Electron surface ${name}`,
+          { timeoutMs: 60_000 },
+        );
+      }
 
-      const startCommand = `set -euo pipefail; cd /workspace; ${shellExport(env)} bash /workspace/.devcontainer/start-daytona-electron.sh --detach`;
-      await checkedExec(
-        exec,
-        ["exec", sandbox, "--", `bash -lc ${shellQuote(startCommand)}`],
-        `start Daytona Electron surface ${name}`,
-        { timeoutMs: 60_000 },
-      );
-
-      const cdpUrl = await previewUrl(port);
+      handle.cdpUrl = await previewUrl(port);
       // SurfaceRegistry also waits 30s before attaching, but Daytona preview URLs
       // can route before cold Electron CDP is actually responsive; give remote
       // sandboxes a longer preflight here so attach remains a normal fast probe.
-      await waitForCdp(`${cleanBaseUrl(cdpUrl)}/json/list`, ELECTRON_CDP_WAIT_MS, `Electron CDP ${name}`);
+      try {
+        await waitForCdp(`${cleanBaseUrl(handle.cdpUrl)}/json/list`, opts.startupTimeoutMs ?? ELECTRON_CDP_WAIT_MS, `Electron CDP ${name}`);
+      } catch (startupError) {
+        if (!retainStartupFailure) throw startupError;
+        const local = await checkedExec(
+          exec,
+          ["exec", sandbox, "--", `bash -lc ${shellQuote(`if curl -sf --max-time 3 http://127.0.0.1:${port}/json/list >/dev/null; then echo CDP_LOCAL; else echo CDP_DOWN; fi; if kill -0 ${remotePid} 2>/dev/null; then echo PROCESS_ALIVE; else echo PROCESS_EXITED; fi`)}`],
+          `observe Daytona packaged Electron startup ${name}`,
+          { timeoutMs: 15_000 },
+        );
+        if (local.stdout.includes("CDP_LOCAL")) throw startupError;
+        const state = local.stdout.includes("PROCESS_ALIVE") ? "unresponsive" : "crashed";
+        surfacePorts.set(port, `electron:${name} CDP (${state})`);
+        return { handle, startup: { state, detail: `${state === "crashed" ? "Process exited" : "Process remained alive"} before CDP responded; inspect ${logPath}.` } };
+      }
       // Spawn integrity: the port serving CDP must belong to THIS spawn, not a
       // pre-existing instance. electron-dev.mjs logs the resolved CDP port; if
       // it differs from the one we exported, the bind failed (port collision)
@@ -651,22 +812,25 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
         );
       }
       surfacePorts.set(port, `electron:${name} CDP`);
-      const handle: SurfaceHandle = {
-        name,
-        kind: "electron",
-        hostKind: "daytona",
-        cdpUrl,
-        sandboxId: sandbox,
-        profileDir: profileRoot,
-        meta: { cdpPort: String(port), log: logPath, profileOwner: callerOwnedProfile ? "caller" : "host" },
-      };
-      spawnedSurfaces.add(handle);
-      return handle;
+      return { handle, startup: { state: "cdp-responsive", detail: `CDP responded on sandbox port ${port}.` } };
     } catch (error) {
-      releasePort(electronPorts, port);
-      surfacePorts.delete(port);
+      if (spawnedSurfaces.has(handle)) {
+        await disposeSurface(handle).catch((cleanupError: unknown) => options.log(`Daytona surface ${name} cleanup failed: ${messageText(cleanupError)}`));
+      } else {
+        releasePort(electronPorts, port);
+        surfacePorts.delete(port);
+      }
       throw error;
     }
+  }
+
+  async function spawnElectron(name: string, opts: ElectronSurfaceOptions = {}): Promise<SurfaceHandle> {
+    return (await launchElectron(name, opts, false)).handle;
+  }
+
+  async function spawnElectronRetained(name: string, opts: ElectronSurfaceOptions = {}): Promise<RetainedElectronSurface> {
+    if (!opts.binaryPath) throw new Error("Retained Daytona Electron launch requires an explicit binaryPath.");
+    return launchElectron(name, opts, true);
   }
 
   async function spawnChrome(name: string, opts: ChromeSurfaceOptions = {}): Promise<SurfaceHandle> {
@@ -760,12 +924,21 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
       const profilePattern = handle.profileDir
         ? electronProfilePattern(`${electronProfileRoot(handle.profileDir)}/electron-userdata`)
         : "";
+      const remotePid = handle.meta?.remotePid;
+      const binary = handle.meta?.binary;
+      const exactProcess = remotePid && /^\d+$/.test(remotePid) && binary
+        ? `if [ "$(readlink -f /proc/${remotePid}/exe 2>/dev/null || true)" = ${shellQuote(binary)} ]; then pgid=$(ps -o pgid= -p ${remotePid} | tr -d " "); if [ -n "$pgid" ]; then kill -TERM -"$pgid" 2>/dev/null || true; fi; fi`
+        : "true";
+      const shortcuts = [handle.meta?.relaunchShortcut, handle.meta?.browserShortcut]
+        .filter((path): path is string => typeof path === "string" && path.startsWith("/"));
       const stopCommand = [
+        exactProcess,
         profilePattern ? killGroupsForPatternCommand(profilePattern, "TERM") : "true",
         `pkill -f ${shellQuote(pattern)} || true`,
         "sleep 1",
         profilePattern ? killGroupsForPatternCommand(profilePattern, "KILL") : "true",
         `pkill -f ${shellQuote(pattern)} || true`,
+        shortcuts.length > 0 ? `rm -f ${shortcuts.map(shellQuote).join(" ")}` : "true",
       ].join("; ");
       await checkedExec(
         exec,
@@ -841,6 +1014,7 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
     workspaceRoot: "/workspace",
     previewUrl,
     spawnElectron,
+    spawnElectronRetained,
     spawnChrome,
     startDen,
     share,

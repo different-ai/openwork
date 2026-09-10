@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } from "bun:test"
 import { and, eq, inArray, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
@@ -526,6 +526,56 @@ describe("marketplace cloud readiness payload", () => {
     const resolved = await resolvedPlugin({ context: org.context, marketplaceId: org.marketplaceId, pluginId: plugin.pluginId })
     expect(resolved.cloudReadiness?.state).toBe("ready")
     expect(resolved.cloudReadiness?.connections[0]).toMatchObject({ id: connectionId, credentialMode: "shared", connectedForMe: true })
+  })
+
+  test("GitHub reimport preserves stored none with either credential-mode default and rejects explicit OAuth", async () => {
+    const org = await seedOrg()
+    const url = "https://api.githubcopilot.com/mcp/"
+    const connectionId = await seedConnection({ org, name: "Legacy GitHub", url, credentialMode: "shared" })
+    let oauth = false
+    const files: Record<string, string> = {
+      ".claude-plugin/plugin.json": JSON.stringify({ name: "legacy-github", mcpServers: "./.mcp.json" }),
+    }
+    const fetchMock = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const requestUrl = new URL(typeof input === "string" || input instanceof URL ? input : input.url)
+      if (requestUrl.origin !== "https://api.github.com") throw new Error("Unexpected provider request")
+      const path = requestUrl.pathname.replace("/repos/fixture/legacy-plugin", "")
+      if (path === "") return Response.json({ default_branch: "main", private: false })
+      if (path === "/commits/main") return Response.json({ sha: "head", commit: { tree: { sha: "tree" } } })
+      if (path === "/git/trees/tree") return Response.json({ tree: [".claude-plugin/plugin.json", ".mcp.json"].map((path) => ({ path, type: "blob", sha: path })) })
+      const file = path.slice("/contents/".length)
+      const text = file === ".mcp.json" ? JSON.stringify({ mcpServers: { github: { url, oauth } } }) : files[file]
+      if (!path.startsWith("/contents/") || !text) throw new Error(`Unexpected import request: ${path}`)
+      return Response.json({ encoding: "base64", content: Buffer.from(text).toString("base64") })
+    })
+    try {
+      for (const credentialMode of ["shared", "per_member"] as const) {
+        await store.importGithubPluginMcps({
+          authType: "none", credentialMode, context: org.context,
+          name: `Legacy GitHub ${credentialMode}`,
+          githubUrl: "https://github.com/fixture/legacy-plugin", marketplaceId: org.marketplaceId,
+        })
+      }
+      const bindings = await db.select().from(PluginMcpRequirementBindingTable).where(eq(PluginMcpRequirementBindingTable.organizationId, org.organizationId))
+      expect(bindings).toHaveLength(2)
+      for (const binding of bindings) {
+        expect(binding).toMatchObject({ externalMcpConnectionId: connectionId, requiredAuthType: "none" })
+        expect((await resolvedPlugin({ context: org.context, marketplaceId: org.marketplaceId, pluginId: binding.pluginId })).cloudReadiness?.state).toBe("ready")
+      }
+      expect(connectExternalMcpMock).toHaveBeenCalledTimes(2)
+      oauth = true
+      await expect(store.importGithubPluginMcps({
+        authType: "none", credentialMode: "shared", context: org.context,
+        name: "Explicit OAuth GitHub",
+        githubUrl: "https://github.com/fixture/legacy-plugin",
+      })).rejects.toMatchObject({ status: 409, error: "external_mcp_connection_config_mismatch" })
+      expect(connectExternalMcpMock).toHaveBeenCalledTimes(2)
+      const connections = await db.select().from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.organizationId, org.organizationId))
+      expect(connections).toHaveLength(1)
+      expect(connections[0]).toMatchObject({ id: connectionId, authType: "none", credentialMode: "shared" })
+    } finally {
+      fetchMock.mockRestore()
+    }
   })
 
   test("misclassified Slack bindings stay blocked until an admin repairs OAuth setup", async () => {

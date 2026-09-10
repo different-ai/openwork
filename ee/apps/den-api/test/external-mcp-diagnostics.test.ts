@@ -73,6 +73,24 @@ async function diagnosticForMcpJsonResponse(input: {
   return tracker.error(input.thrownError ?? new Error("SDK rejected provider response")).diagnostic
 }
 
+async function diagnosticForRegistrationResponse(responseBody: unknown, thrownError = new Error("SDK rejected client registration")) {
+  const tracker = new ExternalMcpDiagnosticTracker("req_registration")
+  const diagnosticFetch = createExternalMcpDiagnosticFetch({
+    endpoint: "https://mcp.example.invalid/mcp",
+    tracker,
+    fetch: async () => new Response(JSON.stringify(responseBody), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    }),
+  })
+  await diagnosticFetch("https://auth.example.invalid/register", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ redirect_uris: ["https://den.example.test/v1/mcp-connections/oauth/callback"] }),
+  })
+  return tracker.error(thrownError).diagnostic
+}
+
 function captureConsoleError<T>(run: () => T): { result: T; errors: unknown[][] } {
   const errors: unknown[][] = []
   const originalError = console.error
@@ -158,6 +176,54 @@ class RecordingOAuthProvider implements OAuthClientProvider {
 }
 
 describe("external MCP diagnostics", () => {
+  test.each([
+    ["invalid_redirect_uri", "The provided redirect URIs are not approved for use by this authorization server."],
+    ["invalid_request", "Invalid redirect_uri: redirect_uri host 'den.example.test' is not in the allowed list"],
+    ["invalid_client_metadata", "The redirect URI is not approved."],
+  ])("classifies registration %s redirect URI rejections", async (providerCode, errorDescription) => {
+    const diagnostic = await diagnosticForRegistrationResponse({
+      error: providerCode,
+      error_description: errorDescription,
+    })
+    expect(diagnostic).toMatchObject({
+      phase: "AUTH_CLIENT_REGISTRATION",
+      category: "oauth_client_registration",
+      code: "MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED",
+      retryable: false,
+      actionOwner: "provider_admin",
+      operatorAction: "Ask the provider to allowlist OpenWork's OAuth redirect URI (or approve its client metadata URL) on their MCP authorization server, or configure a pre-registered OAuth client if the provider offers one.",
+      message: "The provider's sign-in server has not approved OpenWork's redirect address, so it refused to register OpenWork as an OAuth client. Retrying will not help until the provider allowlists it.",
+      providerCode,
+      httpStatus: 400,
+    })
+  })
+
+  test("keeps unrelated registration HTTP 400 responses generic", async () => {
+    const diagnostic = await diagnosticForRegistrationResponse({
+      error: "invalid_request",
+      error_description: "Unsupported client authentication method.",
+    })
+    expect(diagnostic).toMatchObject({
+      phase: "AUTH_CLIENT_REGISTRATION",
+      category: "http_failure",
+      code: "MCP_HTTP_400",
+    })
+  })
+
+  test("maps a named client-metadata redirect URI rejection", () => {
+    const oauthError = Object.assign(new Error("The redirect URI is not approved."), {
+      name: "InvalidClientMetadataError",
+    })
+    const diagnostic = new ExternalMcpDiagnosticTracker("req_named_registration")
+      .error(oauthError, "AUTH_CLIENT_REGISTRATION")
+      .diagnostic
+    expect(diagnostic).toMatchObject({
+      code: "MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED",
+      providerCode: "invalid_client_metadata",
+      actionOwner: "provider_admin",
+    })
+  })
+
   test("maps enterprise OAuth contract expirations to specific owners and actions", () => {
     const cases = [
       {

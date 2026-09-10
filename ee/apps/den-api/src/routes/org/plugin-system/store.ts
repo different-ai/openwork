@@ -107,6 +107,7 @@ import { openworkYourConnectionsUrl } from "../../../mcp/connection-navigation.j
 import {
   declaredPluginMcpAuthType,
   requiredPluginMcpAuthType,
+  pluginMcpAuthTypeCompatible,
   resolveGithubPluginMcpImportAuthType,
   type PluginMcpAuthType,
 } from "../../../capability-sources/external-mcp-auth-policy.js"
@@ -834,32 +835,6 @@ const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = [
   },
   {
     schemaVersion: 1,
-    id: "google-workspace",
-    name: "Google Workspace",
-    description: "Let OpenWork help with meetings, selected Drive files, and Gmail drafts.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { simpleIconSlug: "google" },
-    composer: { prompt: "Use Google Workspace to " },
-    setup: { instructions: "Connect your Google account to use Calendar, Drive, and Gmail drafts in OpenWork." },
-    resources: [
-      { type: "provider", id: "google-oauth", label: "Google account", providerId: "google-workspace", required: true },
-      { type: "local-service", id: "google-workspace-connector", label: "Secure local connection", required: true },
-      { type: "tool", id: "google-calendar-read", label: "Calendar", required: true },
-      { type: "tool", id: "google-gmail-drafts", label: "Gmail drafts", required: true },
-      { type: "tool", id: "google-drive-selected-files", label: "Selected Drive files", required: true },
-      { type: "tool", id: "google-gmail-read", label: "Gmail read (opt-in)", required: false },
-      { type: "tool", id: "google-drive-full", label: "Full Drive access (opt-in)", required: false },
-      { type: "tool", id: "google-calendar-events", label: "Calendar events (opt-in)", required: false },
-      { type: "tool", id: "google-chat", label: "Google Chat (opt-in)", required: false },
-    ],
-    contributions: [
-      { type: "settings-panel", ref: "openwork.googleWorkspace.settings", location: "settings-detail" },
-      { type: "composer-prompt", prompt: "Use Google Workspace to ", location: "composer" },
-    ],
-    lifecycle: { reload: ["config"], detection: ["provider:google-workspace"] },
-  },
-  {
-    schemaVersion: 1,
     id: "ollama",
     name: "Ollama",
     description: "Local model provider at http://localhost:11434.",
@@ -879,6 +854,21 @@ const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = [
     lifecycle: { reload: ["config"], detection: ["provider:ollama"] },
   },
 ] as const
+
+// Render historical seeded records without re-seeding them or reviving local setup.
+const RETIRED_GOOGLE_WORKSPACE_MANIFEST = {
+  schemaVersion: 1,
+  id: "google-workspace",
+  name: "Google Workspace",
+  description: "Let OpenWork help with meetings, selected Drive files, and Gmail drafts.",
+  source: { format: "openwork-builtin", origin: "builtin", trusted: true },
+  icon: { simpleIconSlug: "google" },
+  setup: { instructions: "Google Workspace is available through OpenWork Cloud only. Sign in to OpenWork Cloud, then use Settings > Library > Connections to set up your Google Workspace connection. This retired local extension does not connect your account or indicate Cloud connection readiness." },
+  resources: [],
+  contributions: [
+    { type: "setup-instructions", ref: "openwork.googleWorkspace.setup", location: "settings-detail" },
+  ],
+} as const
 
 function defaultOpenWorkManifestForPlugin(row: PluginRow) {
   return DEFAULT_OPENWORK_EXTENSION_MANIFESTS.find((manifest) => manifest.name === row.name && manifest.description === row.description) ?? null
@@ -914,7 +904,9 @@ function serializedPluginSourceFormat(row: PluginRow) {
 }
 
 function serializePluginExtension(row: PluginRow, componentCounts: Record<string, number>) {
-  const builtInManifest = defaultOpenWorkManifestForPlugin(row)
+  const builtInManifest = row.name === RETIRED_GOOGLE_WORKSPACE_MANIFEST.name && row.description === RETIRED_GOOGLE_WORKSPACE_MANIFEST.description
+    ? RETIRED_GOOGLE_WORKSPACE_MANIFEST
+    : defaultOpenWorkManifestForPlugin(row)
   if (builtInManifest) {
     return {
       description: builtInManifest.description,
@@ -5466,15 +5458,23 @@ async function ensureImportedExternalMcpConnection(input: {
     .find((connection) => connection.kind === "external_mcp" && comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(serverUrl))
 
   if (existing) {
+    const authType = resolveGithubPluginMcpImportAuthType({
+      declaredAuthType: input.server.authType,
+      // Legacy none always used shared mode, regardless of the import's OAuth
+      // mode default. A shared PAT must not replace per-member OAuth.
+      existingAuthType: existing.authType === "none" || existing.credentialMode === input.credentialMode ? existing.authType : undefined,
+      requestedAuthType: input.authType,
+      url: serverUrl,
+    })
     await requireExistingExternalMcpConnectionMatchesImport({
-      authType: input.authType,
+      authType,
       credentialMode: input.credentialMode,
       existingAuthType: existing.authType,
       existingCredentialMode: existing.credentialMode,
     })
-    if (input.authType === "none") {
+    if (authType === "none") {
       try {
-        await validateConfiguredPluginMcpConnection({ authType: input.authType, connection: existing })
+        await validateConfiguredPluginMcpConnection({ authType, connection: existing })
       } catch (error) {
         await db.update(ExternalMcpConnectionTable).set({ connectedAt: null }).where(and(
           eq(ExternalMcpConnectionTable.organizationId, organizationId),
@@ -5594,11 +5594,13 @@ export async function configureMarketplacePluginMcpRequirement(input: {
     declaredAuthType: declaredPluginMcpAuthType(server.config),
     url: server.url,
   })
-  if (declaredRequiredAuthType && declaredRequiredAuthType !== input.authType) {
+  if (!pluginMcpAuthTypeCompatible({ authType: input.authType, requiredAuthType: declaredRequiredAuthType, url: server.url })) {
     throw new PluginArchRouteFailure(
       409,
       "mcp_auth_type_mismatch",
-      `This MCP requirement must use ${declaredRequiredAuthType} authentication.`,
+      declaredRequiredAuthType
+        ? `This MCP requirement must use ${declaredRequiredAuthType} authentication.`
+        : "This authentication type is not supported by the MCP server.",
     )
   }
   const requiredAuthType = declaredRequiredAuthType ?? input.authType
@@ -5788,19 +5790,20 @@ export async function importGithubPluginMcps(input: {
   const imported: Array<{ connectionId: string; name: string; url: string }> = []
   const importedSkills: Array<{ configObjectId: ConfigObjectId; name: string; sourcePath: string }> = []
   for (const server of supportedServers) {
-    const authType = resolveGithubPluginMcpImportAuthType({
+    const defaultAuthType = resolveGithubPluginMcpImportAuthType({
       declaredAuthType: server.authType,
       requestedAuthType: input.authType,
       url: server.url ?? "",
     })
     const importedConnection = await ensureImportedExternalMcpConnection({
       access,
-      authType,
+      authType: defaultAuthType,
       context: input.context,
       credentialMode: input.credentialMode,
       server,
     })
     const connection = importedConnection.connection
+    const authType = connection.authType
     if (importedConnection.ownedByImportedPlugin) importedOwnedConnectionIds.add(connection.id)
     const payload = importedConnectionBackedMcpPayload({
       authType,

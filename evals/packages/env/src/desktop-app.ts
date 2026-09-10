@@ -2,10 +2,10 @@ import { browserScript } from "@openwork/cdp";
 import { createAndSelectWorkspace, signInDesktopAs } from "@openwork/behaviors";
 import { attachSurface, evaluateOnSurface, isInteractive, probeAppStateOnSurface } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
-import { desktop } from "@openwork/hosts";
+import { desktop, retainedDesktop } from "@openwork/hosts";
 import { liveSharedProductionStateEnv } from "@openwork/hosts";
 import { progress, trackResource } from "@openwork/world";
-import type { AppReadiness, DesktopHandle, Host, InstalledProductionDesktopState } from "@openwork/hosts";
+import type { AppReadiness, DesktopHandle, DesktopRelease, Host, InstalledProductionDesktopState, RetainedDesktopHandle } from "@openwork/hosts";
 import type { Den } from "./den.ts";
 import type { Place } from "./place.ts";
 
@@ -46,6 +46,33 @@ export interface App extends DesktopHandle {
   workspaceId: string;
   /** Live-state launches may have no selected workspace; snapshots preserve that as null. */
   snapshotWorkspaceId?: string | null;
+}
+
+/** A published desktop with an isolated empty profile; no bootstrap, workspace, activation, or sign-in is seeded. */
+export async function blankReleaseApp(options: {
+  place: Place;
+  release: DesktopRelease;
+  startupTimeoutMs?: number;
+}): Promise<RetainedDesktopHandle> {
+  const host = options.place.host();
+  if (!host) throw new Error("Published desktop previews require a host.");
+  const electronStep = steps.step("electron-release-blank", "Electron (published blank release)");
+  try {
+    const stage = process.env.OPENWORK_WORLD_STAGE?.trim();
+    const surface = await retainedDesktop({
+      name: `release-${options.release.distribution}-${options.release.version}${stage ? `-${stage}` : ""}`,
+      host,
+      release: options.release,
+      ...(options.startupTimeoutMs === undefined ? {} : { startupTimeoutMs: options.startupTimeoutMs }),
+    });
+    await electronStep.note(`startup ${surface.startup.state}`);
+    await electronStep.note(`log ${surface.handle.meta?.log}`);
+    await electronStep.ok(surface.startup.state);
+    return surface;
+  } catch (error) {
+    await electronStep.fail(error instanceof Error ? error.message : String(error));
+    throw error;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
@@ -6,6 +6,27 @@ const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
 const NATIVE_MENU_CHECK_UPDATES_EVENT = "openwork:native-menu:check-updates";
 const NATIVE_MENU_ZOOM_EVENT = "openwork:native-menu:zoom";
 const AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT = "openwork:automation-runner:credential-rejected";
+const BROWSER_BOUNDS_INVALIDATED_EVENT = "openwork:browser:bounds-invalidated";
+
+let lastBrowserGeometry = null;
+
+async function sendBrowserGeometry(channel, bounds, ...args) {
+  // Capture zoom in the same renderer turn as the CSS measurement, not after IPC.
+  const geometry = { ...bounds, zoomFactor: webFrame.getZoomFactor() };
+  if (channel === "openwork:browser:bounds" && lastBrowserGeometry
+    && ["x", "y", "width", "height", "zoomFactor"].every((key) => geometry[key] === lastBrowserGeometry[key])) {
+    return true;
+  }
+  lastBrowserGeometry = geometry;
+  try {
+    const accepted = await ipcRenderer.invoke(channel, geometry, ...args);
+    if (accepted === false && lastBrowserGeometry === geometry) lastBrowserGeometry = null;
+    return accepted;
+  } catch (error) {
+    if (lastBrowserGeometry === geometry) lastBrowserGeometry = null;
+    throw error;
+  }
+}
 
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
@@ -49,9 +70,21 @@ function installMenuOverlayDismissListeners() {
   }
 }
 
-// Capture before message-bubble menus, but leave files, app routes, editable
-// text, and ordinary clicks to their existing handlers.
+// Selected text and ordinary editors use Chromium's native context-menu event.
+// Explicit editor action menus compose their own editing + formatting menu.
 window.addEventListener("contextmenu", (event) => {
+  const eventPath = event.composedPath();
+  const composedEditor = eventPath.some((node) => node instanceof HTMLElement && node.hasAttribute("data-native-context-menu-editable"));
+  const editable = eventPath.some((node) => node instanceof HTMLElement && (
+    node.isContentEditable || node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
+  ));
+  const selection = window.getSelection();
+  const selectedTarget = event.target instanceof Node && selection?.toString() && selection.containsNode(event.target, true);
+  if (!composedEditor && (editable || selectedTarget)) {
+    event.stopImmediatePropagation();
+    return;
+  }
+  if (composedEditor) return;
   const anchor = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
   if (!anchor || anchor.isContentEditable || anchor.hasAttribute("download")) return;
   const href = anchor.getAttribute("href") ?? "";
@@ -183,15 +216,18 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     },
   },
   browser: {
-    show(bounds, sessionId) { return ipcRenderer.invoke("openwork:browser:show", bounds, sessionId); },
-    hide() { return ipcRenderer.invoke("openwork:browser:hide"); },
+    show(bounds, sessionId) { return sendBrowserGeometry("openwork:browser:show", bounds, sessionId); },
+    hide() {
+      lastBrowserGeometry = null;
+      return ipcRenderer.invoke("openwork:browser:hide");
+    },
     openUrl(url, provider, options) { return ipcRenderer.invoke("openwork:browser:openUrl", url, provider, options); },
     setVisibleSession(sessionId) { return ipcRenderer.invoke("openwork:browser:setVisibleSession", sessionId); },
     navigate(url) { return ipcRenderer.invoke("openwork:browser:navigate", url); },
     back() { return ipcRenderer.invoke("openwork:browser:back"); },
     forward() { return ipcRenderer.invoke("openwork:browser:forward"); },
     reload() { return ipcRenderer.invoke("openwork:browser:reload"); },
-    setBounds(bounds) { return ipcRenderer.invoke("openwork:browser:bounds", bounds); },
+    setBounds(bounds) { return sendBrowserGeometry("openwork:browser:bounds", bounds); },
     getState() { return ipcRenderer.invoke("openwork:browser:state"); },
     createTab(url, sessionId) { return ipcRenderer.invoke("openwork:browser:createTab", url, sessionId); },
     closeTab(tabId) { return ipcRenderer.invoke("openwork:browser:closeTab", tabId); },
@@ -211,7 +247,10 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     getProxy() { return ipcRenderer.invoke("openwork:browser:getProxy"); },
     setControlEnabled(enabled) { return ipcRenderer.invoke("openwork:browser:setControlEnabled", enabled); },
     showTabContextMenu(tabId, point) { return ipcRenderer.invoke("openwork:browser:tabContextMenu", tabId, point); },
-    destroy() { return ipcRenderer.invoke("openwork:browser:destroy"); },
+    destroy() {
+      lastBrowserGeometry = null;
+      return ipcRenderer.invoke("openwork:browser:destroy");
+    },
     onStateChange(callback) {
       const handler = (_event, state) => callback(state);
       ipcRenderer.on("openwork:browser:state", handler);
@@ -310,6 +349,11 @@ ipcRenderer.on(NATIVE_MENU_CHECK_UPDATES_EVENT, () => {
 ipcRenderer.on(NATIVE_MENU_ZOOM_EVENT, (_event, action) => {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(NATIVE_MENU_ZOOM_EVENT, { detail: action }));
+});
+
+ipcRenderer.on(BROWSER_BOUNDS_INVALIDATED_EVENT, () => {
+  lastBrowserGeometry = null;
+  window.dispatchEvent(new Event(BROWSER_BOUNDS_INVALIDATED_EVENT));
 });
 
 if (!applyShellDocumentMarkers() && typeof document !== "undefined") {

@@ -40,6 +40,8 @@ export const MICROSOFT_365_PERMISSION_GROUPS: readonly Microsoft365PermissionGro
         detail: "Microsoft grants mailbox read/write access. This option does not send mail.",
       },
       { key: "mailRead", label: "Read Outlook mail", scope: "Mail.Read" },
+      { key: "mailSend", label: "Send Outlook email", scope: "Mail.Send", detail: "Sending requires an explicit request and confirmation; a saved draft is not sent automatically." },
+      { key: "mailManage", label: "Manage read status, categories, and mailbox folders", scope: "Mail.ReadWrite" },
     ],
   },
   {

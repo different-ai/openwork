@@ -49,6 +49,17 @@ function completionBody(marker: string, completedTools: number): Record<string, 
   };
 }
 
+async function pollUntil<T>(read: () => Promise<T>, accept: (value: T) => boolean): Promise<T> {
+  const deadline = Date.now() + 5_000;
+  let value = await read();
+  while (!accept(value) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    value = await read();
+  }
+  assert.equal(accept(value), true);
+  return value;
+}
+
 test("scripts and records deterministic OpenAI-compatible agent tool rounds", async () => {
   const marker = "agent-workload-unit-marker";
   await using mock = await startMockMcp({
@@ -92,6 +103,62 @@ test("scripts and records deterministic OpenAI-compatible agent tool rounds", as
   assert.deepEqual(requests.map((request) => request.kind), ["tool", "tool", "final"]);
   assert.deepEqual(requests.map((request) => request.completedTools), [0, 1, 2]);
   assert.deepEqual(requests.map((request) => request.matchedMarkers), [[marker], [marker], [marker]]);
+});
+
+test("gated agent replies bind hermetically and clear waiters when the client disconnects", async () => {
+  const marker = "agent-gate-unit-marker";
+  const chunks = ["chunk-one", "chunk-two", "chunk-three"];
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    isolatedProcessEnv: true,
+    agentWorkloads: [{
+      promptMarker: marker,
+      finalReply: chunks.join(""),
+      finalReplyChunks: chunks,
+      finalReplyInitiallyReleasedChunks: 1,
+      steps: [],
+    }],
+  });
+  const health = JSON.parse(await (await fetch(`${mock.url}/health`)).text());
+  assert.equal(health.host, "127.0.0.1");
+
+  const controller = new AbortController();
+  const response = await fetch(`${mock.url}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(completionBody(marker, 0)),
+    signal: controller.signal,
+  });
+  assert.equal(response.status, 200);
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Gated completion returned no response body");
+  const decoder = new TextDecoder();
+  let text = "";
+  while (!text.includes(chunks[0])) {
+    const item = await reader.read();
+    if (item.done) throw new Error("Gated completion ended before its initial chunk");
+    text += decoder.decode(item.value, { stream: true });
+  }
+  const firstHold = await pollUntil(
+    () => mock.agentReplyState(marker),
+    (state) => state.deliveredChunks === 1 && state.waiting === 1,
+  );
+  assert.equal(firstHold.complete, false);
+  await mock.releaseAgentReply(marker);
+  const secondHold = await pollUntil(
+    () => mock.agentReplyState(marker),
+    (state) => state.deliveredChunks === 2 && state.waiting === 1,
+  );
+  assert.equal(secondHold.prefix, chunks.slice(0, 2).join(""));
+
+  controller.abort();
+  await reader.read().catch(() => undefined);
+  const aborted = await pollUntil(
+    () => mock.agentReplyState(marker),
+    (state) => state.aborted && state.waiting === 0,
+  );
+  assert.equal(aborted.complete, false);
+  assert.equal(aborted.timedOut, false);
 });
 
 test("unadvertised calls require an explicit adversarial workload", async () => {
@@ -174,4 +241,65 @@ test("native Responses preserve the configured provider header", async () => {
   const events = (await accepted.text()).split("\n").filter(line => line.startsWith("data: ")).map(line => JSON.parse(line.slice(6)));
   assert.ok(events.some(event => event.type === "response.completed"));
   assert.equal(events.filter(event => event.type === "response.output_text.delta").map(event => event.delta).join(""), "The header reached the provider");
+});
+
+test("archive match-all workloads hold only main replies, release their remaining chunks, and discard disconnected replies", async () => {
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    agentWorkloads: [{ promptMarker: "archive-only", matchAll: true, latestUserTurn: true, finalReply: "Archive held reply.", finalReplyChunkSize: 5, steps: [] }],
+  });
+  const hold = async (held: boolean): Promise<{ held: boolean; pending: number }> => {
+    const response = await fetch(`${mock.url}/admin/agent-hold`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ held }),
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  await hold(true);
+  const request = (body: Record<string, unknown>, signal = AbortSignal.timeout(10_000)) => fetch(`${mock.url}/v1/chat/completions`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal,
+  });
+  const held = await request(completionBody("ordinary user task without a fixture marker", 0));
+  assert.equal(held.status, 200);
+  const reader = held.body?.getReader();
+  assert.ok(reader);
+  const first = await reader.read();
+  const prefix = new TextDecoder().decode(first.value);
+  assert.match(prefix, /"role":"assistant"/);
+  assert.doesNotMatch(prefix, /Archive held reply|\[DONE\]/);
+  assert.deepEqual(await hold(true), { held: true, pending: 1 });
+
+  const utility = await request({ ...completionBody("title generation", 0), tools: [] });
+  assert.match(await utility.text(), /Active session workload/);
+  assert.deepEqual(await hold(true), { held: true, pending: 1 });
+  assert.deepEqual(await hold(false), { held: false, pending: 0 });
+  let stream = prefix;
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    stream += new TextDecoder().decode(chunk.value);
+  }
+  const events = stream.split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+  assert.equal(events.filter(event => event.choices[0].delta.role === "assistant").length, 1);
+  assert.equal(events.map(event => event.choices[0].delta.content ?? "").join(""), "Archive held reply.");
+  assert.match(stream, /\[DONE\]/);
+
+  await hold(true);
+  const controller = new AbortController();
+  const cancelled = await request(completionBody("cancel this held task", 0), controller.signal);
+  const cancelledReader = cancelled.body?.getReader();
+  assert.ok(cancelledReader);
+  await cancelledReader.read();
+  assert.equal((await hold(true)).pending, 1);
+  controller.abort();
+  await assert.rejects(cancelledReader.read());
+  const deadline = Date.now() + 5_000;
+  let pending = 1;
+  while (pending && Date.now() < deadline) {
+    pending = (await hold(true)).pending;
+    if (pending) await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.equal(pending, 0);
+  assert.deepEqual(await hold(false), { held: false, pending: 0 });
+  assert.deepEqual((await mock.agentRequests()).map(request => request.kind), ["final", "utility", "final"]);
 });

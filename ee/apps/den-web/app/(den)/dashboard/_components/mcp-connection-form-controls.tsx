@@ -1,6 +1,6 @@
 "use client";
 
-import type { ExternalMcpAuthType, ExternalMcpCredentialMode } from "./mcp-connections-data";
+import type { ExternalMcpAuthType, ExternalMcpCredentialMode, ExternalMcpPreset } from "./mcp-connections-data";
 
 /**
  * Form controls shared by every surface that configures an MCP connection:
@@ -56,6 +56,12 @@ export const AUTH_TYPE_OPTIONS: SegmentedControlOption<ExternalMcpAuthType>[] = 
   { value: "apikey", label: "API key" },
   { value: "none", label: "None" },
 ];
+
+export function presetAuthTypeOptions(preset: ExternalMcpPreset | null): SegmentedControlOption<ExternalMcpAuthType>[] {
+  if (!preset) return AUTH_TYPE_OPTIONS;
+  const allowed = preset.supportedAuthTypes ?? [preset.authType];
+  return AUTH_TYPE_OPTIONS.filter((option) => allowed.includes(option.value));
+}
 
 export const CREDENTIAL_MODE_OPTIONS: SegmentedControlOption<ExternalMcpCredentialMode>[] = [
   { value: "per_member", label: "Individual accounts" },

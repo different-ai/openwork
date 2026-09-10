@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { clearDenSession } from "../src/app/lib/den";
+import { denSessionUpdatedEvent } from "../src/app/lib/den-session-events";
 import { createOpenworkServerClient } from "../src/app/lib/openwork-server";
 import { createClient } from "../src/app/lib/opencode";
 import type { ResolvedWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
@@ -37,6 +38,7 @@ type RecordedRequest = {
   method: string;
   body: string | null;
   headers: Record<string, string>;
+  signal?: AbortSignal | null;
 };
 
 function memoryStorage(): Storage {
@@ -130,6 +132,32 @@ function jsonResponse(payload: unknown, status = 200) {
   });
 }
 
+async function waitFor(predicate: () => boolean) {
+  const deadline = Date.now() + 2_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("Expected request did not arrive");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+function deferredResponse() {
+  let resolve: (response: Response) => void = () => undefined;
+  const promise = new Promise<Response>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function sessionPuts(requests: RecordedRequest[]) {
+  return requests.filter((request) => request.method === "PUT" && new URL(request.url).pathname === "/den-session");
+}
+
+function identityPuts(requests: RecordedRequest[]) {
+  return requests.filter((request) => request.method === "PUT" && new URL(request.url).pathname === "/den-session/identity");
+}
+
+function syncRuns(requests: RecordedRequest[]) {
+  return requests.filter((request) => new URL(request.url).pathname === "/cloud-provider-sync/run");
+}
+
 function cloudProviderPayload() {
   return {
     id: "lpr_test",
@@ -150,9 +178,15 @@ function installFetchMock(
   options: {
     runStatuses?: Array<{ status: "applied" | "noop" | "failed" | "no_session"; message?: string }>;
     providerResponse?: Promise<Response>;
+    sessionResponse?: (attempt: number) => Response | Promise<Response>;
+    identityResponse?: (attempt: number) => Response | Promise<Response>;
+    runResponse?: Promise<Response> | ((attempt: number) => Response | Promise<Response>);
+    statusResponse?: Promise<Response>;
   } = {},
 ) {
   let runIndex = 0;
+  let sessionIndex = 0;
+  let identityIndex = 0;
   Object.defineProperty(globalThis, "fetch", {
     configurable: true,
     value: async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -163,6 +197,7 @@ function installFetchMock(
         method,
         body: typeof init?.body === "string" ? init.body : null,
         headers: normalizeHeaders(init),
+        signal: init?.signal,
       });
 
       if (url.origin === "https://den.example" && url.pathname === "/api/den/v1/llm-providers") {
@@ -172,16 +207,21 @@ function installFetchMock(
         return jsonResponse({ llmProvider: cloudProviderPayload() });
       }
       if (url.pathname === "/den-session" && method === "PUT") {
-        return new Response(null, { status: 204 });
+        return options.sessionResponse?.(sessionIndex++) ?? new Response(null, { status: 204 });
+      }
+      if (url.pathname === "/den-session/identity" && method === "PUT") {
+        return options.identityResponse?.(identityIndex++) ?? new Response(null, { status: 204 });
       }
       if (url.pathname === "/cloud-provider-sync/run" && method === "POST") {
+        if (typeof options.runResponse === "function") return options.runResponse(runIndex++);
+        if (options.runResponse) return options.runResponse;
         const statuses = options.runStatuses ?? [{ status: "noop" }];
         const result = statuses[Math.min(runIndex, statuses.length - 1)];
         runIndex += 1;
         return jsonResponse(result);
       }
       if (url.pathname === "/cloud-provider-sync/status" && method === "GET") {
-        return jsonResponse({ hasSession: true, lastRun: null, providers: [] });
+        return options.statusResponse ?? jsonResponse({ hasSession: true, lastRun: null, providers: [] });
       }
       if (url.pathname === "/workspace/ws_1/config" && method === "GET") {
         return jsonResponse({ opencode: {}, openwork: {} });
@@ -229,7 +269,11 @@ function makeEndpoint(options: { origin: string; isRemote: boolean }): ResolvedW
 function createSessionRouteStore(options: {
   endpoint: ResolvedWorkspaceEndpoint | null;
   hostToken: string;
+  generation?: number;
   connectedProviderIds?: string[];
+  engineReady?: boolean;
+  workspaceReady?: boolean;
+  onProviderStateWrite?: () => void;
 }) {
   const opencodeClient = createClient("https://engine.example", "/tmp/workspace_test", {
     token: "engine-token",
@@ -248,7 +292,7 @@ function createSessionRouteStore(options: {
   let disabledProviders: string[] = [];
 
   return createProviderAuthStore({
-    client: () => opencodeClient,
+    client: () => options.engineReady === false ? null : opencodeClient,
     providers: () => providers,
     providerDefaults: () => providerDefaults,
     providerConnectedIds: () => providerConnectedIds,
@@ -256,26 +300,31 @@ function createSessionRouteStore(options: {
     checkDesktopAppRestriction: () => false,
     selectedWorkspaceDisplay: () => workspace,
     providerBaseUrl: () => "https://engine.example",
-    selectedWorkspaceRoot: () => "/tmp/workspace_test",
-    runtimeWorkspaceId: () => "ws_1",
+    selectedWorkspaceRoot: () => options.workspaceReady === false ? "" : "/tmp/workspace_test",
+    runtimeWorkspaceId: () => options.workspaceReady === false ? null : "ws_1",
     // The exact snapshot builder the session route mounts.
     openworkServer: createSessionOpenworkServer({
       endpoint: () => options.endpoint,
       hostToken: () => options.hostToken,
+      generation: () => options.generation ?? null,
     }),
     setProviders: (value) => {
+      options.onProviderStateWrite?.();
       providers = value;
     },
     setProviderDefaults: (value) => {
+      options.onProviderStateWrite?.();
       providerDefaults = value;
     },
     setProviderConnectedIds: (value) => {
+      options.onProviderStateWrite?.();
       providerConnectedIds = value;
     },
     setDisabledProviders: (value) => {
+      options.onProviderStateWrite?.();
       disabledProviders = value;
     },
-    markOpencodeConfigReloadRequired: () => undefined,
+    markOpencodeConfigReloadRequired: () => options.onProviderStateWrite?.(),
   });
 }
 
@@ -418,6 +467,206 @@ describe("session-route cloud provider sync wiring", () => {
     store.dispose();
   });
 
+  for (const trigger of ["startup/options", "sign_in"]) {
+    for (const missing of ["engine", "workspace", "engine and workspace"]) {
+      test(`${trigger} delivers the local Den session without ${missing} readiness and syncs only after recovery`, async () => {
+        const storage = installWindow();
+        const requests: RecordedRequest[] = [];
+        installFetchMock(requests);
+        let providerStateWrites = 0;
+        const options = {
+          endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+          hostToken: "host-token-live",
+          engineReady: missing === "workspace",
+          workspaceReady: missing === "engine",
+          onProviderStateWrite: () => { providerStateWrites += 1; },
+        };
+        const store = createSessionRouteStore(options);
+        try {
+          if (trigger === "startup/options") {
+            installCloudSession(storage);
+            store.start();
+            store.syncFromOptions();
+          } else {
+            store.start();
+            installCloudSession(storage);
+            window.dispatchEvent(new CustomEvent(denSessionUpdatedEvent, { detail: { status: "success" } }));
+          }
+          await waitFor(() => identityPuts(requests).length === 1);
+          await store.runCloudProviderSync("sign_in");
+          expect(identityPuts(requests)).toHaveLength(1);
+          expect(sessionPuts(requests)).toHaveLength(0);
+          expect(identityPuts(requests)[0]).toMatchObject({
+            url: `${LOCAL_SERVER_ORIGIN}/den-session/identity`,
+            headers: { "x-openwork-host-token": "host-token-live" },
+            body: JSON.stringify({ baseUrl: "https://den.example/api/den", token: "den-token", orgId: "org_test" }),
+          });
+          expect(syncRuns(requests)).toHaveLength(0);
+          expect(requests.filter((request) => request.method !== "GET")).toEqual(identityPuts(requests));
+          expect(providerStateWrites).toBe(0);
+
+          options.engineReady = true;
+          options.workspaceReady = true;
+          store.syncFromOptions();
+          await waitFor(() => providerStateWrites > 0);
+          expect(syncRuns(requests)).toHaveLength(1);
+          expect(sessionPuts(requests)).toHaveLength(1);
+          expect(identityPuts(requests)).toHaveLength(1);
+          expect(requests.indexOf(identityPuts(requests)[0]!)).toBeLessThan(requests.indexOf(sessionPuts(requests)[0]!));
+          expect(requests.indexOf(sessionPuts(requests)[0]!)).toBeLessThan(requests.indexOf(syncRuns(requests)[0]!));
+        } finally {
+          store.dispose();
+        }
+      });
+    }
+
+    for (const target of ["remote", "hostless", "non-loopback", "gateway"]) {
+      test(`${trigger} never delivers desktop credentials to ${target} with a null engine client`, async () => {
+        const storage = installWindow();
+        if (target === "gateway") window.__OPENWORK_GATEWAY__ = { version: 1 };
+        const requests: RecordedRequest[] = [];
+        installFetchMock(requests);
+        let providerStateWrites = 0;
+        const store = createSessionRouteStore({
+          endpoint: makeEndpoint({
+            origin: target === "remote" || target === "non-loopback" ? REMOTE_SERVER_ORIGIN : LOCAL_SERVER_ORIGIN,
+            isRemote: target === "remote",
+          }),
+          hostToken: target === "hostless" ? "" : "host-token-live",
+          engineReady: false,
+          onProviderStateWrite: () => { providerStateWrites += 1; },
+        });
+        try {
+          if (trigger === "startup/options") {
+            installCloudSession(storage);
+            store.start();
+            store.syncFromOptions();
+          } else {
+            store.start();
+            installCloudSession(storage);
+            window.dispatchEvent(new CustomEvent(denSessionUpdatedEvent, { detail: { status: "success" } }));
+          }
+          await store.runCloudProviderSync("sign_in");
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          expect(sessionPuts(requests)).toHaveLength(0);
+          expect(identityPuts(requests)).toHaveLength(0);
+          expect(syncRuns(requests)).toHaveLength(0);
+          expect(requests.filter((request) => request.method !== "GET")).toHaveLength(0);
+          expect(providerStateWrites).toBe(0);
+          if (target !== "gateway") {
+            expect(requests.every((request) => !request.headers["x-openwork-host-token"])).toBe(true);
+          }
+        } finally {
+          store.dispose();
+        }
+      });
+    }
+  }
+
+  for (const earlyStatus of [204, 404]) {
+    test(`readiness during early delivery (${earlyStatus}) waits then sends a full session`, async () => {
+      installCloudSession(installWindow());
+      const requests: RecordedRequest[] = [];
+      const early = deferredResponse();
+      installFetchMock(requests, { identityResponse: () => early.promise });
+      const options = {
+        endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+        hostToken: "host-token-live",
+        engineReady: false,
+      };
+      const store = createSessionRouteStore(options);
+      try {
+        const initial = store.runCloudProviderSync("sign_in");
+        await waitFor(() => identityPuts(requests).length === 1);
+        expect(sessionPuts(requests)).toHaveLength(0);
+        expect(syncRuns(requests)).toHaveLength(0);
+        options.engineReady = true;
+        const ready = store.runCloudProviderSync("app_launch");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(sessionPuts(requests)).toHaveLength(0);
+        early.resolve(new Response(null, { status: earlyStatus }));
+        await initial;
+        expect(await ready).toEqual({ outcome: "handled_server_side" });
+        expect(identityPuts(requests)).toHaveLength(1);
+        expect(sessionPuts(requests)).toHaveLength(1);
+        expect(syncRuns(requests)).toHaveLength(1);
+      } finally {
+        early.resolve(new Response(null, { status: earlyStatus }));
+        store.dispose();
+      }
+    });
+  }
+
+  test("an older server never gets the auto-sync PUT before readiness", async () => {
+    installCloudSession(installWindow());
+    const requests: RecordedRequest[] = [];
+    installFetchMock(requests, { identityResponse: () => jsonResponse({ code: "not_found" }, 404) });
+    const options = {
+      endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+      hostToken: "host-token-live",
+      engineReady: false,
+    };
+    const store = createSessionRouteStore(options);
+    try {
+      await store.runCloudProviderSync("sign_in");
+      expect(identityPuts(requests)).toHaveLength(1);
+      expect(sessionPuts(requests)).toHaveLength(0);
+      expect(syncRuns(requests)).toHaveLength(0);
+      options.engineReady = true;
+      expect(await store.runCloudProviderSync("app_launch")).toEqual({ outcome: "handled_server_side" });
+      expect(sessionPuts(requests)).toHaveLength(1);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  for (const cancel of ["dispose", "org", "runtime"]) {
+    test(`early delivery and queued readiness are cancelled on ${cancel}`, async () => {
+      const storage = installWindow();
+      installCloudSession(storage);
+      const requests: RecordedRequest[] = [];
+      const early = deferredResponse();
+      installFetchMock(requests, { identityResponse: (attempt) => attempt === 0 ? early.promise : new Response(null, { status: 204 }) });
+      const options = {
+        endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+        hostToken: "host-token-live",
+        engineReady: false,
+        generation: 1,
+      };
+      const store = createSessionRouteStore(options);
+      try {
+        const initial = store.runCloudProviderSync("sign_in");
+        await waitFor(() => identityPuts(requests).length === 1);
+        options.engineReady = true;
+        const ready = store.runCloudProviderSync("app_launch");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        options.engineReady = false;
+        if (cancel === "dispose") store.dispose();
+        else {
+          if (cancel === "org") storage.setItem("openwork.den.activeOrgId", "org_replacement");
+          else options.generation = 2;
+          store.syncFromOptions();
+        }
+        early.resolve(new Response(null, { status: 204 }));
+        await Promise.all([initial, ready]);
+        expect(identityPuts(requests)[0]!.signal?.aborted).toBe(true);
+        expect(sessionPuts(requests)).toHaveLength(0);
+        expect(syncRuns(requests)).toHaveLength(0);
+        if (cancel !== "dispose") {
+          await store.runCloudProviderSync("sign_in");
+          expect(identityPuts(requests)).toHaveLength(2);
+          options.engineReady = true;
+          expect(await store.runCloudProviderSync("app_launch")).toEqual({ outcome: "handled_server_side" });
+          expect(sessionPuts(requests)).toHaveLength(1);
+          expect(JSON.parse(sessionPuts(requests)[0]!.body!).orgId).toBe(cancel === "org" ? "org_replacement" : "org_test");
+        }
+      } finally {
+        early.resolve(new Response(null, { status: 204 }));
+        store.dispose();
+      }
+    });
+  }
+
   test("a local endpoint with a host token pushes the Den session and syncs server-side after sign-in", async () => {
     const storage = installWindow();
     installCloudSession(storage);
@@ -433,7 +682,7 @@ describe("session-route cloud provider sync wiring", () => {
     const sessionPuts = requests.filter(
       (request) => request.method === "PUT" && new URL(request.url).pathname === "/den-session",
     );
-    expect(sessionPuts).toHaveLength(1);
+    expect(sessionPuts).toHaveLength(2);
     expect(new URL(sessionPuts[0]?.url ?? "").origin).toBe(LOCAL_SERVER_ORIGIN);
     expect(sessionPuts[0]?.headers["x-openwork-host-token"]).toBe("host-token-live");
     expect(sessionPuts[0]?.body).toBe(JSON.stringify({
@@ -468,9 +717,364 @@ describe("session-route cloud provider sync wiring", () => {
     const sessionPuts = requests.filter(
       (request) => request.method === "PUT" && new URL(request.url).pathname === "/den-session",
     );
-    expect(sessionPuts).toHaveLength(1);
+    expect(sessionPuts).toHaveLength(2);
     expect(sessionPuts[0]?.headers["x-openwork-host-token"]).toBe("host-token-stored");
   });
+
+  test("the same store redelivers once when only the local runtime generation changes", async () => {
+    installCloudSession(installWindow());
+    const requests: RecordedRequest[] = [];
+    installFetchMock(requests);
+    const options = {
+      endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+      hostToken: "host-token-live",
+      generation: 1,
+    };
+    const store = createSessionRouteStore(options);
+    try {
+      store.syncFromOptions();
+      await store.runCloudProviderSync("manual");
+      expect(sessionPuts(requests)).toHaveLength(1);
+      options.generation = 2;
+      store.syncFromOptions();
+      store.syncFromOptions();
+      await store.runCloudProviderSync("manual");
+      expect(sessionPuts(requests)).toHaveLength(2);
+      expect(syncRuns(requests)).toHaveLength(2);
+      await store.runCloudProviderSync("manual");
+      expect(sessionPuts(requests)).toHaveLength(2);
+      const operations = requests.filter((request) =>
+        ["/den-session", "/cloud-provider-sync/run"].includes(new URL(request.url).pathname),
+      );
+      expect(operations.map((request) => request.method)).toEqual(["PUT", "POST", "PUT", "POST", "POST"]);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  for (const failure of ["network", "policy_unavailable", "server_unavailable"]) {
+    test(`retries transient ${failure} delivery and coalesces concurrent sync requests`, async () => {
+      installCloudSession(installWindow());
+      const requests: RecordedRequest[] = [];
+      installFetchMock(requests, {
+        sessionResponse: (attempt) => {
+          if (attempt > 0) return new Response(null, { status: 204 });
+          if (failure === "network") throw new TypeError("Failed to fetch");
+          return jsonResponse({ code: failure }, failure === "policy_unavailable" ? 403 : 503);
+        },
+      });
+      const store = createSessionRouteStore({
+        endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+        hostToken: "host-token-live",
+      });
+      try {
+        store.syncFromOptions();
+        const results = await Promise.all([
+          store.runCloudProviderSync("manual"),
+          store.runCloudProviderSync("app_resume"),
+        ]);
+        expect(results).toEqual([{ outcome: "handled_server_side" }, { outcome: "handled_server_side" }]);
+        expect(sessionPuts(requests)).toHaveLength(2);
+        expect(syncRuns(requests)).toHaveLength(1);
+        expect(requests.indexOf(syncRuns(requests)[0]!)).toBeGreaterThan(requests.indexOf(sessionPuts(requests)[1]!));
+      } finally {
+        store.dispose();
+      }
+    });
+  }
+
+  test("bounds failed refresh retries and redelivers on the next sync even when the server still has an old session", async () => {
+    const storage = installWindow();
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installFetchMock(requests, {
+      // Initial delivery succeeds. The next three PUTs fail without clearing
+      // the old server session; its run endpoint would still return noop.
+      sessionResponse: (attempt) => attempt > 0 && attempt < 4
+        ? jsonResponse({ code: "policy_unavailable" }, 403)
+        : new Response(null, { status: 204 }),
+    });
+    const store = createSessionRouteStore({
+      endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+      hostToken: "host-token-live",
+    });
+    try {
+      await store.runCloudProviderSync("manual");
+      storage.setItem("openwork.den.authToken", "refreshed-den-token");
+      store.syncFromOptions();
+      expect(await store.runCloudProviderSync("settings_cloud_opened")).toBeUndefined();
+      expect(sessionPuts(requests)).toHaveLength(4);
+      expect(syncRuns(requests)).toHaveLength(1);
+      expect(await store.runCloudProviderSync("manual")).toEqual({ outcome: "handled_server_side" });
+      expect(sessionPuts(requests)).toHaveLength(5);
+      expect(syncRuns(requests)).toHaveLength(2);
+      expect(JSON.parse(sessionPuts(requests)[4]!.body!).token).toBe("refreshed-den-token");
+    } finally {
+      store.dispose();
+    }
+  });
+
+  for (const { status, code } of [
+    { status: 401, code: "unauthorized" },
+    { status: 403, code: "organization_denied" },
+    { status: 409, code: "policy_identity_changed" },
+    { status: 429, code: "rate_limited" },
+  ]) {
+    test(`does not retry explicit ${code} delivery failure`, async () => {
+      installCloudSession(installWindow());
+      const requests: RecordedRequest[] = [];
+      installFetchMock(requests, { sessionResponse: () => jsonResponse({ code }, status) });
+      const store = createSessionRouteStore({
+        endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+        hostToken: "host-token-live",
+      });
+      try {
+        expect(await store.runCloudProviderSync("manual")).toBeUndefined();
+        expect(sessionPuts(requests)).toHaveLength(1);
+        expect(syncRuns(requests)).toHaveLength(0);
+      } finally {
+        store.dispose();
+      }
+    });
+  }
+
+  for (const cancel of ["signout", "dispose", "remote"]) {
+    test(`${cancel} cancels pending delivery retries without forwarding desktop credentials`, async () => {
+      installCloudSession(installWindow());
+      const requests: RecordedRequest[] = [];
+      installFetchMock(requests, { sessionResponse: () => jsonResponse({ code: "policy_unavailable" }, 403) });
+      const options = {
+        endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+        hostToken: "host-token-live",
+        generation: 1,
+      };
+      const store = createSessionRouteStore(options);
+      store.start();
+      try {
+        const pending = store.runCloudProviderSync("manual");
+        await waitFor(() => sessionPuts(requests).length === 1);
+        if (cancel === "signout") clearDenSession();
+        else if (cancel === "dispose") store.dispose();
+        else {
+          options.endpoint = makeEndpoint({ origin: REMOTE_SERVER_ORIGIN, isRemote: true });
+          options.generation = 2;
+          store.syncFromOptions();
+        }
+        await pending;
+        expect(sessionPuts(requests)).toHaveLength(1);
+        expect(sessionPuts(requests)[0]!.signal?.aborted).toBe(true);
+        expect(syncRuns(requests)).toHaveLength(0);
+        if (cancel === "remote") await store.runCloudProviderSync("manual");
+        expect(requests.filter((request) => new URL(request.url).origin === REMOTE_SERVER_ORIGIN).every((request) =>
+          !request.headers["x-openwork-host-token"] && !request.body?.includes("den-token"),
+        )).toBe(true);
+      } finally {
+        store.dispose();
+      }
+    });
+  }
+
+  test("an obsolete runtime PUT cannot satisfy delivery to the replacement runtime", async () => {
+    installCloudSession(installWindow());
+    const requests: RecordedRequest[] = [];
+    const old = deferredResponse();
+    installFetchMock(requests, { sessionResponse: (attempt) => attempt === 0 ? old.promise : new Response(null, { status: 204 }) });
+    const options = {
+      endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+      hostToken: "host-token-live",
+      generation: 1,
+    };
+    const store = createSessionRouteStore(options);
+    try {
+      const pending = store.runCloudProviderSync("manual");
+      await waitFor(() => sessionPuts(requests).length === 1);
+      options.generation = 2;
+      store.syncFromOptions();
+      old.resolve(new Response(null, { status: 204 }));
+      await pending;
+      await store.runCloudProviderSync("manual");
+      expect(sessionPuts(requests)).toHaveLength(2);
+      expect(syncRuns(requests)).toHaveLength(1);
+      expect(sessionPuts(requests)[0]!.signal?.aborted).toBe(true);
+    } finally {
+      old.resolve(new Response(null, { status: 204 }));
+      store.dispose();
+    }
+  });
+
+  test("a late successful PUT after signout cannot restore or memoize the old session", async () => {
+    const storage = installWindow();
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    const old = deferredResponse();
+    installFetchMock(requests, { sessionResponse: (attempt) => attempt === 0 ? old.promise : new Response(null, { status: 204 }) });
+    const store = createSessionRouteStore({
+      endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+      hostToken: "host-token-live",
+    });
+    store.start();
+    try {
+      const pending = store.runCloudProviderSync("manual");
+      await waitFor(() => sessionPuts(requests).length === 1);
+      clearDenSession();
+      expect(syncRuns(requests)).toHaveLength(0);
+      expect(store.getSnapshot().cloudProviderServerSync).toBeNull();
+      // Reusing the same credentials must not revive the old request's lease.
+      installCloudSession(storage);
+      const current = store.runCloudProviderSync("manual");
+      old.resolve(new Response(null, { status: 204 }));
+      await Promise.all([pending, current]);
+      expect(sessionPuts(requests)).toHaveLength(2);
+      expect(syncRuns(requests)).toHaveLength(1);
+    } finally {
+      old.resolve(new Response(null, { status: 204 }));
+      store.dispose();
+    }
+  });
+
+  test("a surviving store takes over a coalesced delivery when its owning store is disposed", async () => {
+    installCloudSession(installWindow());
+    const requests: RecordedRequest[] = [];
+    const old = deferredResponse();
+    installFetchMock(requests, { sessionResponse: (attempt) => attempt === 0 ? old.promise : new Response(null, { status: 204 }) });
+    const options = {
+      endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+      hostToken: "host-token-live",
+    };
+    const owner = createSessionRouteStore(options);
+    const survivor = createSessionRouteStore(options);
+    try {
+      const first = owner.runCloudProviderSync("manual");
+      await waitFor(() => sessionPuts(requests).length === 1);
+      const second = survivor.runCloudProviderSync("manual");
+      expect(sessionPuts(requests)).toHaveLength(1);
+      owner.dispose();
+      old.resolve(new Response(null, { status: 204 }));
+      expect(await first).toBeUndefined();
+      expect(await second).toEqual({ outcome: "handled_server_side" });
+      expect(sessionPuts(requests)).toHaveLength(2);
+      expect(syncRuns(requests)).toHaveLength(1);
+    } finally {
+      old.resolve(new Response(null, { status: 204 }));
+      owner.dispose();
+      survivor.dispose();
+    }
+  });
+
+  for (const action of ["dropped", "replaced"]) {
+    test(`a ${action} trailing batch cannot satisfy another store's runtime generation`, async () => {
+      installCloudSession(installWindow());
+      const requests: RecordedRequest[] = [];
+      const runs = [deferredResponse(), deferredResponse(), deferredResponse()];
+      installFetchMock(requests, {
+        runResponse: (attempt) => runs[attempt]?.promise ?? jsonResponse({ status: "noop" }),
+      });
+      const optionsA = {
+        endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+        hostToken: "host-token-live",
+        generation: 1,
+      };
+      const storeA = createSessionRouteStore(optionsA);
+      const storeB = createSessionRouteStore({ ...optionsA, generation: 2 });
+      const pending: Array<Promise<unknown>> = [];
+      try {
+        pending.push(storeA.runCloudProviderSync("manual"));
+        await waitFor(() => syncRuns(requests).length === 1);
+        let bSettled = false;
+        pending.push(storeB.runCloudProviderSync("manual").then((result) => {
+          bSettled = true;
+          return result;
+        }));
+        // A stale gen1 trigger drops B's gen2 batch; a gen3 trigger replaces
+        // it. Neither executed context may be accepted as B's own sync.
+        if (action === "replaced") optionsA.generation = 3;
+        pending.push(storeA.runCloudProviderSync("app_resume"));
+        expect(syncRuns(requests)).toHaveLength(1);
+        runs[0]!.resolve(jsonResponse({ status: "noop" }));
+        await waitFor(() => syncRuns(requests).length === 2);
+        expect(bSettled).toBe(false);
+        runs[1]!.resolve(jsonResponse({ status: "noop" }));
+        if (action === "replaced") {
+          await waitFor(() => syncRuns(requests).length === 3);
+          expect(bSettled).toBe(false);
+          runs[2]!.resolve(jsonResponse({ status: "noop" }));
+        }
+        const results = await Promise.all(pending);
+        expect(results[1]).toEqual({ outcome: "handled_server_side" });
+        expect(sessionPuts(requests)).toHaveLength(action === "replaced" ? 3 : 2);
+        expect(syncRuns(requests)).toHaveLength(action === "replaced" ? 3 : 2);
+      } finally {
+        storeA.dispose();
+        storeB.dispose();
+        for (const run of runs) run.resolve(jsonResponse({ status: "noop" }));
+        await Promise.allSettled(pending);
+      }
+    });
+  }
+
+  for (const delayed of ["run", "status"]) {
+    test(`discards a late server ${delayed} response after signout`, async () => {
+      installCloudSession(installWindow());
+      const requests: RecordedRequest[] = [];
+      const old = deferredResponse();
+      installFetchMock(requests, delayed === "run" ? { runResponse: old.promise } : { statusResponse: old.promise });
+      const store = createSessionRouteStore({
+        endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+        hostToken: "host-token-live",
+      });
+      store.start();
+      try {
+        const pending = store.runCloudProviderSync("manual");
+        await waitFor(() => delayed === "run"
+          ? syncRuns(requests).length === 1
+          : syncRuns(requests).length === 1 && requests.filter((request) => new URL(request.url).pathname === "/cloud-provider-sync/status").length >= 2);
+        clearDenSession();
+        old.resolve(jsonResponse(delayed === "run"
+          ? { status: "applied" }
+          : { hasSession: true, lastRun: null, providers: [], reloadPending: true }));
+        await pending;
+        expect(store.getSnapshot().cloudProviderServerSync).toBeNull();
+        expect(store.getSnapshot().importedCloudProviders).toEqual({});
+      } finally {
+        old.resolve(jsonResponse({}));
+        store.dispose();
+      }
+    });
+  }
+
+  for (const origin of [REMOTE_SERVER_ORIGIN, "http://192.0.2.10:7899", "https://localhost.example"]) {
+    test(`a local workspace override at ${origin} stays hostless`, async () => {
+      const storage = installWindow();
+      installCloudSession(storage);
+      storage.setItem("openwork.server.hostToken", "host-token-stored");
+      const requests: RecordedRequest[] = [];
+      installFetchMock(requests);
+      const endpoint = makeEndpoint({ origin, isRemote: false });
+      const adapter = createSessionOpenworkServer({
+        endpoint: () => endpoint,
+        hostToken: () => "host-token-live",
+        generation: () => 2,
+      });
+      expect(adapter.getSnapshot().openworkServerCapabilities?.providerSync).not.toBe(true);
+      expect(adapter.getSnapshot().openworkServerAuth?.hostToken).toBeUndefined();
+      expect(adapter.getSnapshot().openworkServerClient).toBe(endpoint.client);
+      const store = createSessionRouteStore({ endpoint, hostToken: "host-token-live", generation: 2 });
+      try {
+        await store.runCloudProviderSync("sign_in");
+        expect(sessionPuts(requests)).toHaveLength(0);
+        expect(syncRuns(requests)).toHaveLength(0);
+        const overrideRequests = requests.filter((request) => new URL(request.url).origin === origin);
+        expect(overrideRequests.length).toBeGreaterThan(0);
+        expect(overrideRequests.every((request) =>
+          !request.headers["x-openwork-host-token"] && !request.body?.includes("den-token"),
+        )).toBe(true);
+        // Config-only reconciliation still works with the endpoint's own token.
+        expect(overrideRequests.every((request) => request.headers.authorization === "Bearer client-token")).toBe(true);
+      } finally {
+        store.dispose();
+      }
+    });
+  }
 
   test("remote workspaces never receive the desktop's Den session and keep the legacy client path", async () => {
     const storage = installWindow();

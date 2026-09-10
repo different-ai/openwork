@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 
+import { EnvService } from "./env-file.js";
+import { callExperimentalExtensionAction } from "./extensions/index.js";
 import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import { startServer } from "./server.js";
 import type { ServerConfig } from "./types.js";
@@ -33,31 +35,19 @@ const connectStateResponseSchema = z.object({
   status: z.enum(["available", "missing", "invalid", "unreadable"]),
   connectEnabled: z.boolean(),
   cloudMcpPresent: z.boolean(),
-  googleWorkspace: z.object({ legacyConfigured: z.boolean() }),
 }).passthrough();
 
 const gatedCallSchema = z.object({
   ok: z.literal(false),
   error: z.literal("use_openwork_cloud"),
   message: z.string(),
-}).passthrough();
-
-const googleWorkspaceStatusSchema = z.object({
-  configured: z.boolean(),
-  missing: z.array(z.string()),
-  connected: z.boolean(),
-  connect: z.object({
-    enabled: z.literal(true),
-    cloudMcpPresent: z.boolean(),
-    guidance: z.string(),
-  }).optional(),
-}).passthrough();
-
-const googleWorkspaceStatusActionSchema = z.object({
-  ok: z.literal(true),
-  extensionId: z.literal("google-workspace"),
-  action: z.literal("status"),
-  result: googleWorkspaceStatusSchema,
+  nextAction: z.object({
+    code: z.string().optional(),
+    stage: z.string().optional(),
+    recommendedAction: z.string().optional(),
+    tool: z.string().optional(),
+    arguments: z.object({ query: z.string() }).optional(),
+  }),
 }).passthrough();
 
 type ActionItem = z.infer<typeof actionSchema>;
@@ -68,8 +58,12 @@ const previousEnv = {
   legacyGoogleClientSecret: process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET,
   tokenBrokerUrl: process.env.OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL,
   legacyTokenBrokerUrl: process.env.GOOGLE_WORKSPACE_TOKEN_BROKER_URL,
+  plaintextVault: process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT,
+  devMode: process.env.OPENWORK_DEV_MODE,
 };
 
+const nativeFetch = globalThis.fetch;
+const externalRequests: string[] = [];
 const stops: Array<() => void | Promise<void>> = [];
 const dirs: string[] = [];
 
@@ -105,14 +99,37 @@ function serverConfig(root: string): ServerConfig {
   };
 }
 
-async function boot() {
+async function boot(withLegacyData = false) {
   const root = await mkdtemp(join(tmpdir(), "openwork-connect-gating-"));
   dirs.push(root);
   process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
   const config = serverConfig(root);
+  const legacyFiles = new Map<string, string>();
+  if (withLegacyData) {
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "retired-test-secret";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "retired-test-secret";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL = "https://broker.example.test/token";
+    process.env.GOOGLE_WORKSPACE_TOKEN_BROKER_URL = "https://broker.example.test/token";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.OPENWORK_DEV_MODE = "1";
+    const directory = join(root, "extensions", "google-workspace");
+    await mkdir(directory, { recursive: true });
+    legacyFiles.set(join(directory, "oauth.dev-plaintext.json"), JSON.stringify({
+      version: 2,
+      activeAccountId: "legacy-account",
+      accounts: [{
+        account: { sub: "legacy-account", email: "legacy@example.test" },
+        scopes: ["openid", "https://www.googleapis.com/auth/calendar.readonly"],
+        token: { accessToken: "retired-access-token", refreshToken: "retired-refresh-token", expiresAt: 0 },
+      }],
+    }));
+    legacyFiles.set(join(directory, "oauth.vault"), "retired-encrypted-vault");
+    legacyFiles.set(join(root, "extensions", "vault.key"), "retired-vault-key");
+    for (const [path, bytes] of legacyFiles) await writeFile(path, bytes);
+  }
   const server = await startServer(config);
   stops.push(() => server.stop());
-  return { base: `http://127.0.0.1:${server.port}`, config, root };
+  return { base: `http://127.0.0.1:${server.port}`, config, root, legacyFiles };
 }
 
 function clientHeaders() {
@@ -132,8 +149,8 @@ async function readSchema<T>(response: Response, schema: z.ZodType<T>): Promise<
   return schema.parse(body);
 }
 
-async function listActions(base: string): Promise<ActionItem[]> {
-  const response = await fetch(`${base}/experimental/extensions/actions`, { headers: clientHeaders() });
+async function listActions(base: string, extensionId = ""): Promise<ActionItem[]> {
+  const response = await fetch(`${base}/experimental/extensions/actions?extensionId=${encodeURIComponent(extensionId)}`, { headers: clientHeaders() });
   expect(response.status).toBe(200);
   return (await readSchema(response, actionsResponseSchema)).actions;
 }
@@ -150,13 +167,13 @@ async function putConnectState(base: string, body: unknown): Promise<Response> {
   });
 }
 
-async function callCalendarListEvents(base: string): Promise<Response> {
+async function callLegacyAction(base: string, action = "calendar_list_events"): Promise<Response> {
   return fetch(`${base}/experimental/extensions/call`, {
     method: "POST",
     headers: clientJsonHeaders(),
     body: JSON.stringify({
       extensionId: "google-workspace",
-      action: "calendar_list_events",
+      action,
       args: {
         timeMin: "2026-01-01T00:00:00.000Z",
         timeMax: "2026-01-02T00:00:00.000Z",
@@ -166,38 +183,21 @@ async function callCalendarListEvents(base: string): Promise<Response> {
   });
 }
 
-async function callGoogleWorkspaceStatus(base: string): Promise<Response> {
-  return fetch(`${base}/experimental/extensions/call`, {
-    method: "POST",
-    headers: clientJsonHeaders(),
-    body: JSON.stringify({
-      extensionId: "google-workspace",
-      action: "status",
-      args: {},
-      context: {},
-    }),
-  });
-}
-
-async function expectLegacyCallPassesThrough(base: string) {
-  const response = await callCalendarListEvents(base);
-  expect(response.status).toBe(400);
-  const body = await readSchema(response, apiErrorSchema);
-  expect(body.code).toBe("google_workspace_not_connected");
-}
-
-function expectAllActions(actions: ActionItem[]) {
-  expect(actions).toHaveLength(18);
-  expect(actions.filter((action) => action.extensionId === "google-workspace")).toHaveLength(14);
-  expect(actions.filter((action) => action.extensionId === "openai-image-generation")).toHaveLength(2);
-  expect(actions.filter((action) => action.extensionId === "openwork-cloud-uploads")).toHaveLength(2);
-}
-
 beforeEach(() => {
   clearLegacyGoogleWorkspaceEnv();
+  externalRequests.length = 0;
+  globalThis.fetch = Object.assign(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : input.toString());
+    if (url.hostname !== "127.0.0.1") {
+      externalRequests.push(url.toString());
+      throw new Error("Unexpected external request in local Google retirement test");
+    }
+    return nativeFetch(input, init);
+  }, { preconnect: nativeFetch.preconnect });
 });
 
 afterEach(async () => {
+  globalThis.fetch = nativeFetch;
   while (stops.length) {
     await stops.pop()?.();
   }
@@ -210,92 +210,79 @@ afterEach(async () => {
   restoreEnv("OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", previousEnv.legacyGoogleClientSecret);
   restoreEnv("OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL", previousEnv.tokenBrokerUrl);
   restoreEnv("GOOGLE_WORKSPACE_TOKEN_BROKER_URL", previousEnv.legacyTokenBrokerUrl);
+  restoreEnv("OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT", previousEnv.plaintextVault);
+  restoreEnv("OPENWORK_DEV_MODE", previousEnv.devMode);
 });
 
-describe("Connect-aware legacy extension gating", () => {
-  test("defaults to unchanged legacy extension behavior when no connect state file exists", async () => {
-    const { base } = await boot();
+describe("Cloud-only Google Workspace extension retirement", () => {
+  for (const withLegacyData of [false, true]) {
+    for (const connectEnabled of [undefined, false, true]) {
+      test(`never lists or executes local Google actions with legacy data=${withLegacyData}, Connect=${connectEnabled}`, async () => {
+        const { base, legacyFiles } = await boot(withLegacyData);
+        if (connectEnabled !== undefined) {
+          expect((await putConnectState(base, { connectEnabled })).status).toBe(200);
+        }
+        expect(actionKeys(await listActions(base))).toEqual([
+          "openai-image-generation/image_generate",
+          "openai-image-generation/status",
+          "openwork-cloud-uploads/drive_upload_file",
+          "openwork-cloud-uploads/gmail_create_draft_with_attachments",
+        ]);
+        // A stale installed client can still request the retired extension id directly.
+        expect(await listActions(base, "google-workspace")).toEqual([]);
+        for (const action of [
+          "status", "calendar_list_events", "calendar_create_event", "gmail_create_draft",
+          "gmail_create_reply_draft", "gmail_list_messages", "gmail_get_message",
+          "gmail_download_attachment", "drive_search_files", "drive_read_file", "drive_update_file",
+          "chat_list_spaces", "chat_list_messages", "chat_send_message", "connect", "disconnect", "unknown",
+        ]) {
+          const response = await callLegacyAction(base, action);
+          expect(response.status).toBe(200);
+          const body = await readSchema(response, gatedCallSchema);
+          expect(body.nextAction.recommendedAction).toBe("Connect OpenWork Cloud");
+          expect(body.message).toContain("local credentials cannot be used");
+          expect(body).not.toHaveProperty("connected");
+          expect(body).not.toHaveProperty("result");
+        }
+        const state = await readSchema(
+          await fetch(`${base}/experimental/connect/state`, { headers: clientHeaders() }),
+          connectStateResponseSchema,
+        );
+        expect(state).not.toHaveProperty("googleWorkspace");
+        expect(externalRequests).toEqual([]);
+        for (const [path, bytes] of legacyFiles) expect(await readFile(path, "utf8")).toBe(bytes);
+      });
+    }
+  }
 
-    expectAllActions(await listActions(base));
-    await expectLegacyCallPassesThrough(base);
-  });
-
-  test("keeps legacy extension behavior unchanged when connectEnabled is false", async () => {
-    const { base } = await boot();
-    const put = await putConnectState(base, { connectEnabled: false });
-    expect(put.status).toBe(200);
-
-    expectAllActions(await listActions(base));
-    await expectLegacyCallPassesThrough(base);
-    const statusAction = await readSchema(await callGoogleWorkspaceStatus(base), googleWorkspaceStatusActionSchema);
-    expect(statusAction.result.connect).toBeUndefined();
-  });
-
-  test("keeps legacy extension behavior unchanged when legacy Google Workspace is configured", async () => {
-    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "test-secret";
-    const { base } = await boot();
-    const put = await putConnectState(base, { connectEnabled: true });
-    expect(put.status).toBe(200);
-
-    expectAllActions(await listActions(base));
-    await expectLegacyCallPassesThrough(base);
-    const statusAction = await readSchema(await callGoogleWorkspaceStatus(base), googleWorkspaceStatusActionSchema);
-    expect(statusAction.result.connect).toBeUndefined();
-    const state = await readSchema(
-      await fetch(`${base}/experimental/connect/state`, { headers: clientHeaders() }),
-      connectStateResponseSchema,
-    );
-    expect(state.googleWorkspace.legacyConfigured).toBe(true);
-  });
-
-  test("gates only non-status Google Workspace actions when Connect is enabled without legacy config", async () => {
-    const { base, config } = await boot();
-    const put = await putConnectState(base, { connectEnabled: true });
-    expect(put.status).toBe(200);
-
-    const actions = await listActions(base);
-    expect(actionKeys(actions)).toEqual([
-      "google-workspace/status",
-      "openai-image-generation/image_generate",
-      "openai-image-generation/status",
-      "openwork-cloud-uploads/drive_upload_file",
-      "openwork-cloud-uploads/gmail_create_draft_with_attachments",
-    ]);
-
-    const gated = await callCalendarListEvents(base);
-    expect(gated.status).toBe(200);
-    const gatedBody = await readSchema(gated, gatedCallSchema);
-    expect(gatedBody.message).toContain("Settings > Connect");
-    expect(gatedBody.message).toContain("Do not direct them to Settings > Extensions");
-
-    const statusAction = await readSchema(await callGoogleWorkspaceStatus(base), googleWorkspaceStatusActionSchema);
-    expect(statusAction.result.connect).toEqual({
-      enabled: true,
-      cloudMcpPresent: false,
-      guidance: gatedBody.message,
-    });
-
+  test("returns the exact Cloud health next action rather than inferring Google authorization", async () => {
+    const { base, config } = await boot(true);
     await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
       ...current,
-      mcp: {
-        ...current.mcp,
-        "openwork-cloud": { type: "remote", url: "https://cloud.example/mcp" },
-      },
+      mcp: { ...current.mcp, "openwork-cloud": { type: "remote", url: "https://cloud.example.test/mcp/agent" } },
     }));
-
-    const cloudGated = await callCalendarListEvents(base);
-    const cloudBody = await readSchema(cloudGated, gatedCallSchema);
-    expect(cloudBody.message).toContain("agent access needs attention for this workspace");
-    expect(cloudBody.message).not.toContain("not ready");
-    expect(cloudBody.message).not.toContain("Repair and test");
-    expect(cloudBody.message).toContain("Settings > Connect");
-
-    const cloudStatusAction = await readSchema(await callGoogleWorkspaceStatus(base), googleWorkspaceStatusActionSchema);
-    expect(cloudStatusAction.result.connect).toEqual({
-      enabled: true,
-      cloudMcpPresent: false,
-      guidance: cloudBody.message,
+    const stateSchema = z.object({
+      cloudHealth: z.object({
+        firstFailure: z.object({ code: z.string(), stage: z.string(), recommendedAction: z.string() }),
+      }),
     });
+    const state = await readSchema(await fetch(`${base}/experimental/connect/state`, { headers: clientHeaders() }), stateSchema);
+    const result = await readSchema(await callLegacyAction(base), gatedCallSchema);
+    expect(result.nextAction).toEqual(state.cloudHealth.firstFailure);
+    expect(result.message).not.toContain("Google Workspace is connected");
+    expect(externalRequests).toEqual([]);
+  });
+
+  test("missing snapshot never falls back to stored local OAuth or invents a member connection status", async () => {
+    const { config, root } = await boot(true);
+    const result = gatedCallSchema.parse(await callExperimentalExtensionAction(
+      config,
+      new EnvService({ path: join(root, "env.json") }),
+      { extensionId: "google-workspace", action: "calendar_list_events", args: {} },
+    ));
+    expect(result.nextAction).toEqual({ recommendedAction: "Open Settings > Library > Connections to check your Cloud connections, or Settings > Debug to diagnose OpenWork Cloud agent access for this workspace." });
+    expect(result).not.toHaveProperty("connected");
+    expect(externalRequests).toEqual([]);
   });
 
   test("validates and round-trips the persisted connect state route", async () => {
@@ -336,7 +323,7 @@ describe("Connect-aware legacy extension gating", () => {
     expect(putState.status).toBe("available");
     expect(putState.connectEnabled).toBe(true);
     expect(putState.cloudMcpPresent).toBe(false);
-    expect(putState.googleWorkspace.legacyConfigured).toBe(false);
+    expect(putState).not.toHaveProperty("googleWorkspace");
 
     const get = await fetch(`${base}/experimental/connect/state`, { headers: clientHeaders() });
     expect(get.status).toBe(200);
@@ -344,6 +331,6 @@ describe("Connect-aware legacy extension gating", () => {
     expect(getState.status).toBe("available");
     expect(getState.connectEnabled).toBe(putState.connectEnabled);
     expect(getState.cloudMcpPresent).toBe(putState.cloudMcpPresent);
-    expect(getState.googleWorkspace).toEqual(putState.googleWorkspace);
+    expect(getState).not.toHaveProperty("googleWorkspace");
   });
 });

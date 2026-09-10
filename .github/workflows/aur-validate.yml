@@ -377,7 +377,7 @@ jobs:
           pkg_file=$(ls -1 openwork-*.pkg.tar.* | head -n 1)
           pacman -U --noconfirm "$pkg_file"
 
-      - name: Smoke launch
+      - name: Validate installed launcher
         shell: bash
         run: |
           set -euo pipefail
@@ -388,25 +388,14 @@ jobs:
             exit 1
           fi
 
-          launch_bin=""
-          for candidate in \
-            "$(command -v openwork 2>/dev/null || true)" \
-            /usr/bin/openwork \
-            /opt/openwork/openwork \
-            /opt/openwork/openwork-desktop \
-            /opt/openwork/opencode
-          do
-            if [ -n "$candidate" ] && [ -x "$candidate" ]; then
-              launch_bin="$candidate"
-              break
-            fi
-          done
-
-          if [ -n "$launch_bin" ]; then
-            xvfb-run -a bash -lc '"$1" --help >/tmp/openwork-help.txt 2>&1 || "$1" --version >/tmp/openwork-version.txt 2>&1 || true' -- "$launch_bin"
-          else
-            echo "No runnable desktop binary found; install sanity check passed." 
+          if [ ! -x /usr/bin/openwork ]; then
+            echo "/usr/bin/openwork is missing or points at a non-executable target" >&2
+            ls -l /usr/bin/openwork >&2 || true
+            exit 1
           fi
+
+          test "$(readlink -f /usr/bin/openwork)" = /opt/openwork/openwork
+          echo "Installed launcher resolves to the expected executable. Desktop startup is not validated by this check." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish to AUR
         if: env.PUSH_TO_AUR == 'true'

@@ -58,7 +58,9 @@ const emitThemeChange = () => {
 
 const syncNativeTheme = (mode: ThemeMode) => {
   if (typeof window === "undefined") return;
-  void window.__OPENWORK_ELECTRON__?.invokeDesktop?.("__setNativeTheme", mode);
+  // Fire-and-forget window chrome: the shell refuses this before enterprise
+  // activation, and the window simply keeps its default theme then.
+  void window.__OPENWORK_ELECTRON__?.invokeDesktop?.("__setNativeTheme", mode)?.catch(() => undefined);
 };
 
 const getCurrentMode = () => {

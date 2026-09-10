@@ -41,6 +41,7 @@ Common misses:
 | `models.openworklabs.com` | Required in practice unless mirrored | Default OpenCode model catalog passed as `OPENCODE_MODELS_URL`. | Model selection can be stale, incomplete, or unavailable. |
 | `cdn.simpleicons.org` | Optional | Provider icons when no local icon exists. | Some icons are missing. |
 | `www.google.com` | Optional | Favicon image service and embedded browser new-tab page. | Favicons or the browser panel new tab may not load. |
+| `accounts.google.com` | Opt-in, browser sign-in | Google authorization opened by the Cloud connection flow. | Google Workspace sign-in cannot complete. |
 | `us.i.posthog.com` | Optional | Product analytics when analytics are enabled. | Analytics are dropped silently. |
 | `openworklabs.com`, `openwork.dev`, `discord.gg`, `ollama.com`, `opencode.ai`, `linear.app`, `mail.google.com` | Optional or link-only | Docs, feedback, community, provider help, local model links, sample links, and generated Gmail links. | Links do not open; core app behavior is unaffected. |
 
@@ -58,7 +59,13 @@ Approve Den separately from desktop clients. A self-hosted Den behind VPN or ins
 | Google Workspace hosts | Opt-in | Google OAuth and APIs. | Google sign-in or Workspace actions fail. |
 | Provider and MCP hosts | Opt-in | Calls to enabled model providers, OAuth/token endpoints, and MCP servers. | Only the enabled provider or MCP connection fails. |
 
-Google Workspace hostnames in the manifest are `accounts.google.com`, `oauth2.googleapis.com`, `www.googleapis.com`, `gmail.googleapis.com`, and `chat.googleapis.com`.
+For Google Workspace, Den calls `oauth2.googleapis.com` for token exchange and
+refresh, `www.googleapis.com` for profile, Calendar, and Drive APIs, and
+`gmail.googleapis.com` for Gmail APIs. These are Cloud server destinations, not
+local Google Workspace API requirements on the desktop. The client manifest
+keeps only the browser destinations `accounts.google.com` and `mail.google.com`.
+Set up Google through [Connect your services](/start-here/connect-your-stack/connect-services#google-workspace),
+not local OAuth environment variables.
 
 ## Deployment and image-pull destinations
 
@@ -76,7 +83,7 @@ These hosts are only needed when the corresponding feature, provider, connection
 | Feature group | Hostnames | What breaks when blocked |
 | --- | --- | --- |
 | OpenAI direct features | `api.openai.com` | Direct OpenAI Realtime voice and image-generation features fail for users who configured OpenAI. |
-| Google Workspace | `accounts.google.com`, `oauth2.googleapis.com`, `www.googleapis.com`, `gmail.googleapis.com`, `chat.googleapis.com`, `mail.google.com` | OAuth, profile, Calendar, Drive, Gmail, Chat, and generated Gmail links fail as applicable. |
+| Google Workspace through Cloud | Browser: `accounts.google.com`, `mail.google.com`. Den: `oauth2.googleapis.com`, `www.googleapis.com`, `gmail.googleapis.com`. | Browser sign-in and Gmail links, or Cloud token refresh and Workspace actions, fail on the component where access is blocked. |
 | Built-in MCP presets | `mcp.notion.com`, `mcp.linear.app`, `mcp.sentry.dev`, `mcp.stripe.com`, `mcp.context7.com`, `mcp.slack.com` | That specific MCP preset cannot connect. |
 | Example or custom MCP URLs | `api.githubcopilot.com` or the customer-configured MCP URL | Only the connection that points at that URL fails. |
 | GitHub plugin import | `api.github.com`, `raw.githubusercontent.com`, and optionally `github.com` links | GitHub plugin import cannot preview or download plugin contents. |

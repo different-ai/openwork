@@ -1,8 +1,13 @@
-import { browserScript, evaluate, type Surface } from "@openwork/cdp";
+import { addInitScript, browserScript, evaluate, type Surface } from "@openwork/cdp";
 
 type SurfaceExpectation = {
   sessionId?: string;
   pane: "primary" | "secondary";
+  role?: "user" | "assistant";
+  /** Exact non-empty rendered lines expected for the timed destination baseline. */
+  exact?: string;
+  /** Permit a measured warm catch-up before exact becomes the retained baseline. */
+  allowInitialCatchup?: boolean;
   required?: string[];
   forbidden?: string[];
 };
@@ -12,9 +17,26 @@ type SurfaceObservation = {
   shortSamples: number;
   longSamples: number;
   elapsedMs: number;
+  satisfiedAtMs: number | null;
+  actionCaptured: boolean;
+  actionElapsedMs: number | null;
+  satisfiedAfterActionMs: number | null;
   loaderSeen: boolean;
   text: string;
   violations: string[];
+  firstViolation: {
+    text: string;
+    violations: string[];
+    actionElapsedMs: number | null;
+    selectedElapsedMs: number;
+    source: "frame" | "mutation" | "initial";
+  } | null;
+  transitionSamples: Array<{
+    text: string;
+    actionElapsedMs: number | null;
+    selectedElapsedMs: number;
+    source: "frame" | "mutation" | "initial";
+  }>;
   expired: boolean;
 };
 
@@ -24,6 +46,13 @@ declare global {
     __chatCreation?: {
       workspaceLists: number; creates: number; reblocked: boolean; expired: boolean;
       lastCreateAt: number | null; restore(): void;
+    };
+    __chatEngineHttp?: {
+      streams: number;
+      chunks: number;
+      text: string;
+      errors: number;
+      promptPosts: Record<string, number>;
     };
   }
 }
@@ -41,18 +70,76 @@ function deferred() {
 /** Faults and observers only; navigation and creation remain trusted user actions. */
 export function chatContinuity(app: Surface, workspaceId: string) {
   return {
+    /** Read-only tee of real app event-stream responses, installed before a fixture reload. */
+    async observeEngineHttpEvents() {
+      const registration = await addInitScript(app.client, () => {
+        const state: NonNullable<Window["__chatEngineHttp"]> = {
+          streams: 0,
+          chunks: 0,
+          text: "",
+          errors: 0,
+          promptPosts: {},
+        };
+        const originalFetch = window.fetch.bind(window);
+        window.__chatEngineHttp = state;
+        window.fetch = async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+          const path = new URL(url, location.href).pathname;
+          const prompt = method === "POST"
+            ? path.match(/\/(?:opencode|opencode2\/api)\/session\/([^/]+)\/(?:prompt|prompt_async)$/)
+            : null;
+          if (prompt?.[1]) {
+            const sessionId = decodeURIComponent(prompt[1]);
+            state.promptPosts[sessionId] = (state.promptPosts[sessionId] ?? 0) + 1;
+          }
+          const response = await originalFetch(input, init);
+          if (response.headers.get("content-type")?.includes("text/event-stream") && /\/(?:event|events)(?:\?|$)/.test(url)) {
+            const body = response.clone().body;
+            if (body) {
+              state.streams += 1;
+              void (async () => {
+                const reader = body.getReader();
+                const decoder = new TextDecoder();
+                try {
+                  while (true) {
+                    const item = await reader.read();
+                    if (item.done) break;
+                    state.chunks += 1;
+                    state.text = (state.text + decoder.decode(item.value, { stream: true })).slice(-1_000_000);
+                  }
+                } catch {
+                  state.errors += 1;
+                }
+              })();
+            }
+          }
+          return response;
+        };
+      });
+      return {
+        read: () => evaluate(app.client, () => {
+          if (!window.__chatEngineHttp) throw new Error("Engine HTTP event witness lost its document");
+          return window.__chatEngineHttp;
+        }),
+        [Symbol.asyncDispose]: () => registration.dispose(),
+      };
+    },
+
     async observeSurface(expected: SurfaceExpectation) {
       await evaluate(app.client, browserScript((workspaceId, expected) => {
         if (window.__chatContinuity) throw new Error("A chat continuity observer is already active");
         const state: SurfaceObservation = {
-          frames: 0, mutations: 0, shortSamples: 0, longSamples: 0, elapsedMs: 0,
-          loaderSeen: false, text: "", violations: [], expired: false,
+          frames: 0, mutations: 0, shortSamples: 0, longSamples: 0, elapsedMs: 0, satisfiedAtMs: null,
+          actionCaptured: false, actionElapsedMs: null, satisfiedAfterActionMs: null,
+          loaderSeen: false, text: "", violations: [], firstViolation: null, transitionSamples: [], expired: false,
         };
         let selectedAt: number | undefined;
+        let actionAt: number | undefined;
         let frame = 0;
         const visible = (node: HTMLElement) => node.getClientRects().length > 0
           && getComputedStyle(node).visibility !== "hidden" && getComputedStyle(node).display !== "none";
-        const sample = () => {
+        const sample = (source: "frame" | "mutation" | "initial") => {
           const pane = document.querySelector<HTMLElement>('[data-workbench-pane="' + expected.pane + '"]');
           const surface = pane?.querySelector<HTMLElement>('[data-session-surface-id]');
           // Arm before the click and inspect the destination's first DOM commit.
@@ -61,34 +148,80 @@ export function chatContinuity(app: Surface, workspaceId: string) {
           const selected = surface && (!expected.sessionId || surface.dataset.sessionSurfaceId === expected.sessionId)
             && surface.dataset.sessionSurfaceWorkspaceId === workspaceId;
           if (selectedAt === undefined && !selected) return;
-          selectedAt ??= performance.now();
-          state.elapsedMs = performance.now() - selectedAt;
+          const now = performance.now();
+          selectedAt ??= now;
+          state.elapsedMs = now - selectedAt;
+          state.actionElapsedMs = actionAt === undefined ? null : now - actionAt;
           if (state.elapsedMs < 1500) state.shortSamples++;
           if (state.elapsedMs > 2200) state.longSamples++;
-          state.text = [...(pane?.querySelectorAll<HTMLElement>('[data-message-role]') ?? [])]
+          const roleSelector = expected.role ? '[data-message-role="' + expected.role + '"]' : '[data-message-role]';
+          const rendered = [...(pane?.querySelectorAll<HTMLElement>(roleSelector) ?? [])]
             .filter(visible).map(node => node.innerText).join("\n");
+          state.text = expected.role || expected.exact !== undefined
+            ? rendered.split("\n").map(line => line.trim()).filter(Boolean).join("\n")
+            : rendered;
           const text = pane?.innerText ?? "";
           const starters = ["Try one of these:", "Try one of your organization's prompts:", "Connect a model provider to get started:"]
             .some(label => text.includes(label));
           const loader = text.includes("Opening session") || text.includes("Switching session");
           state.loaderSeen ||= loader;
+          const missing = (expected.required ?? []).filter(text => !state.text.includes(text));
+          const forbidden = (expected.forbidden ?? []).filter(text => state.text.includes(text));
+          const exactMismatch = expected.exact !== undefined && state.text !== expected.exact;
           const violations = [
             ...(starters ? ["starters in pending or historical conversation"] : []),
             ...(loader && state.elapsedMs < 1500 ? ["loader appeared before its own delay"] : []),
-            ...(expected.forbidden ?? []).filter(text => state.text.includes(text)).map(text => "foreign message: " + text),
-            ...(expected.required ?? []).filter(text => !state.text.includes(text)).map(text => "cached message missing: " + text),
+            ...forbidden.map(text => "foreign message: " + text),
+            ...missing.map(text => "cached message missing: " + text),
+            ...(exactMismatch && (!expected.allowInitialCatchup || state.satisfiedAtMs !== null)
+              ? ["cached transcript did not equal the authoritative prefix"] : []),
           ];
+          if (!exactMismatch && violations.length === 0 && state.satisfiedAtMs === null) {
+            state.satisfiedAtMs = state.elapsedMs;
+            state.satisfiedAfterActionMs = state.actionElapsedMs;
+          }
+          const lastSample = state.transitionSamples.at(-1);
+          if (state.transitionSamples.length < 24 && lastSample?.text !== state.text) {
+            state.transitionSamples.push({
+              text: state.text,
+              actionElapsedMs: state.actionElapsedMs,
+              selectedElapsedMs: state.elapsedMs,
+              source,
+            });
+          }
+          if (violations.length > 0 && state.firstViolation === null) {
+            state.firstViolation = {
+              text: state.text,
+              violations: [...violations],
+              actionElapsedMs: state.actionElapsedMs,
+              selectedElapsedMs: state.elapsedMs,
+              source,
+            };
+          }
           for (const violation of violations) {
             if (!state.violations.includes(violation)) state.violations.push(violation);
           }
         };
-        const paint = () => { state.frames++; sample(); frame = requestAnimationFrame(paint); };
-        const observer = new MutationObserver(() => { state.mutations++; sample(); });
+        const captureAction = (event: MouseEvent) => {
+          if (actionAt !== undefined || !expected.sessionId || !(event.target instanceof Element)) return;
+          const target = event.target.closest<HTMLElement>("[data-sidebar-session-id], [data-session-tab-id]");
+          if (target?.dataset.sidebarSessionId !== expected.sessionId && target?.dataset.sessionTabId !== expected.sessionId) return;
+          actionAt = performance.now();
+          state.actionCaptured = true;
+        };
+        document.addEventListener("click", captureAction, true);
+        const paint = () => { state.frames++; sample("frame"); frame = requestAnimationFrame(paint); };
+        const observer = new MutationObserver(() => { state.mutations++; sample("mutation"); });
         observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
         frame = requestAnimationFrame(paint);
-        sample();
+        sample("initial");
         const timer = setTimeout(() => { state.expired = true; stop(); }, 60000);
-        function stop() { clearTimeout(timer); observer.disconnect(); cancelAnimationFrame(frame); }
+        function stop() {
+          clearTimeout(timer);
+          observer.disconnect();
+          cancelAnimationFrame(frame);
+          document.removeEventListener("click", captureAction, true);
+        }
         window.__chatContinuity = { state, stop };
       }, [workspaceId, expected]));
       let disposed = false;

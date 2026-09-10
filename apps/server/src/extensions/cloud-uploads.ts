@@ -13,6 +13,7 @@ const DIRECT_UPLOAD_TIMEOUT_MS = 2 * 60 * 1000;
 export type CloudUploadDependencies = {
   readCloudMcp?: typeof readConnectCloudMcp;
   fetchImpl?: typeof externalFetch;
+  signal?: AbortSignal;
 };
 
 const workspacePathProperty = {
@@ -25,7 +26,7 @@ export const OPENWORK_CLOUD_UPLOAD_ACTIONS = [
     extensionId: OPENWORK_CLOUD_UPLOADS_EXTENSION_ID,
     action: "drive_upload_file",
     title: "Upload a workspace file to Google Drive",
-    description: "Uploads a workspace file up to 4 MiB directly to Google Drive outside model context. OpenWork preserves the file bytes, basename, and source MIME type; it does not convert Office files.",
+    description: "Uploads a workspace file up to 4 MiB to Google Drive through OpenWork Cloud outside model context. OpenWork preserves the file bytes, basename, and source MIME type; it does not convert Office files. Uses the member's default Google Workspace connection. This Drive bridge cannot select a different named connection; do not substitute it for a requested account unless it is confirmed to be the default.",
     inputSchema: {
       type: "object",
       properties: {
@@ -40,7 +41,7 @@ export const OPENWORK_CLOUD_UPLOAD_ACTIONS = [
     extensionId: OPENWORK_CLOUD_UPLOADS_EXTENSION_ID,
     action: "gmail_create_draft_with_attachments",
     title: "Create a Gmail draft with workspace attachments",
-    description: "Creates a reviewable Gmail draft with up to 4 MiB of attachments uploaded directly from authorized workspace paths outside model context. This does not send email.",
+    description: "Creates a reviewable Gmail draft with up to 4 MiB of attachments uploaded from authorized workspace paths through OpenWork Cloud outside model context. This does not send email. Pass connectionId to preserve the selected Google Workspace connection; omitting it uses the member's default connection.",
     inputSchema: {
       type: "object",
       properties: {
@@ -50,6 +51,7 @@ export const OPENWORK_CLOUD_UPLOAD_ACTIONS = [
         subject: { type: "string", description: "Draft subject." },
         body: { type: "string", description: "Plain-text draft body." },
         threadId: { type: "string", description: "Optional Gmail thread id for a reply draft." },
+        connectionId: { type: "string", pattern: "^(google-workspace|emc_[A-Za-z0-9]+)$", description: "Optional selected native Google Workspace connection namespace." },
         paths: {
           type: "array",
           items: workspacePathProperty,
@@ -187,16 +189,23 @@ async function cloudUploadEndpoint(config: ServerConfig, suffix: string, depende
   return { url, authorization };
 }
 
+function assertGmailUploadActive(signal?: AbortSignal) {
+  if (signal?.aborted) throw new ApiError(499, "gmail_attachment_cancelled", "Gmail attachment upload cancelled before dispatch.");
+}
+
 async function appendWorkspaceFiles(
   form: FormData,
   config: ServerConfig,
   context: Record<string, unknown>,
   requestedPaths: string[],
+  signal?: AbortSignal,
 ) {
   let totalBytes = 0;
   for (const requested of requestedPaths) {
+    assertGmailUploadActive(signal);
     const path = await resolveAuthorizedFile(config, context, requested);
     const bytes = await readFile(path);
+    assertGmailUploadActive(signal);
     totalBytes += bytes.byteLength;
     if (totalBytes > DIRECT_UPLOAD_MAX_BYTES) {
       throw new ApiError(413, "files_too_large", `Direct uploads support ${DIRECT_UPLOAD_MAX_BYTES} bytes per request.`);
@@ -211,18 +220,25 @@ async function postDirectUpload(
   suffix: string,
   form: FormData,
   dependencies: CloudUploadDependencies,
+  signal?: AbortSignal,
 ) {
+  assertGmailUploadActive(signal);
   const endpoint = await cloudUploadEndpoint(config, suffix, dependencies);
+  // Last check before remote multipart dispatch, including cancellation while
+  // reading files or resolving the member's transport credentials.
+  assertGmailUploadActive(signal);
   const response = await (dependencies.fetchImpl ?? externalFetch)(endpoint.url.toString(), {
     method: "POST",
     headers: { authorization: endpoint.authorization },
     body: form,
-    signal: AbortSignal.timeout(DIRECT_UPLOAD_TIMEOUT_MS),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(DIRECT_UPLOAD_TIMEOUT_MS)]) : AbortSignal.timeout(DIRECT_UPLOAD_TIMEOUT_MS),
   });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const message = isRecord(payload) && typeof payload.message === "string" ? payload.message : `HTTP ${response.status}`;
-    throw new ApiError(response.status || 502, "cloud_upload_failed", `OpenWork Cloud could not upload the file: ${message}`);
+    throw new ApiError(response.status || 502, "cloud_upload_failed", `OpenWork Cloud could not upload the file: ${message}`, {
+      upstreamCode: isRecord(payload) && typeof payload.error === "string" ? payload.error : undefined,
+    });
   }
   return payload;
 }
@@ -248,12 +264,15 @@ async function createGmailDraftWithAttachments(
   context: Record<string, unknown>,
   dependencies: CloudUploadDependencies,
 ) {
+  if (args.connectionId !== undefined && (typeof args.connectionId !== "string" || !/^(google-workspace|emc_[A-Za-z0-9]+)$/.test(args.connectionId))) {
+    throw new ApiError(400, "invalid_payload", "connectionId must be a native Google Workspace connection namespace.");
+  }
   const paths = readPaths(args.paths);
   if (paths.length < 1 || paths.length > 10) {
     throw new ApiError(400, "invalid_payload", "paths must contain between one and ten workspace files.");
   }
   const form = new FormData();
-  await appendWorkspaceFiles(form, config, context, paths);
+  await appendWorkspaceFiles(form, config, context, paths, dependencies.signal);
   form.append("payload", JSON.stringify({
     to: readString(args, "to"),
     cc: readString(args, "cc") || undefined,
@@ -261,8 +280,9 @@ async function createGmailDraftWithAttachments(
     subject: readString(args, "subject"),
     body: typeof args.body === "string" ? args.body : "",
     threadId: readString(args, "threadId") || undefined,
+    connectionId: args.connectionId,
   }));
-  return postDirectUpload(config, "/v1/direct-uploads/google-workspace/gmail-drafts", form, dependencies);
+  return postDirectUpload(config, "/v1/direct-uploads/google-workspace/gmail-drafts", form, dependencies, dependencies.signal);
 }
 
 export async function callOpenWorkCloudUploadAction(

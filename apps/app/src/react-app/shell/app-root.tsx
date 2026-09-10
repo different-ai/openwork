@@ -1,7 +1,7 @@
 import { ComputerUseControls } from "../domains/session/surface/computer-use-controls";
 /** @jsxImportSource react */
 
-import { useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 
 import { captureAnalyticsEvent, initAnalytics } from "../../app/lib/analytics";
@@ -28,6 +28,7 @@ import { ForcedSigninPage } from "../domains/cloud/forced-signin-page";
 import { EnterpriseActivationGate } from "../domains/cloud/enterprise-activation-gate";
 import { OpenWorkWebAccessGate } from "../domains/cloud/openwork-web-access-gate";
 import { OrgOnboardingPage } from "../domains/cloud/org-onboarding-page";
+import { ChatDeepLinkListener } from "./chat-deep-link-listener";
 import { NewProvidersListener } from "./new-providers-listener";
 import { useDesktopFontZoomBehavior } from "./font-zoom";
 import { LoadingOverlay } from "./loading-overlay";
@@ -50,6 +51,7 @@ import { ShellConfigProvider } from "./shell-config";
 import { WelcomeRoute } from "./welcome-route";
 import { readOrgSelectionPending } from "../../app/lib/den-sign-in-intent";
 import { signedInRoute } from "./den-signin-routing";
+import { StartupScreen } from "./startup-screen";
 
 
 type DenSigninGateProps = {
@@ -75,7 +77,7 @@ const subscribeToDenBootstrap = (onStoreChange: () => void) => {
  * never let users land on `/signin` — redirect them to `/session` instead.
  *
  * While we're still checking the Den session AND sign-in is required, we
- * render nothing so the transcript/settings never flash behind the gate.
+ * show startup progress without mounting transcript/settings behind the gate.
  */
 function DenSigninGate({ children }: DenSigninGateProps) {
   const denAuth = useDenAuth();
@@ -185,7 +187,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   }, [navigate]);
 
   if (requireSignin && denAuth.status === "checking") {
-    return null;
+    return <StartupScreen message="Checking your sign-in" />;
   }
 
   if (redirectingPreparedWorkspace) return <Navigate to="/onboarding" replace />;
@@ -346,6 +348,28 @@ function BrandThemeControlActions() {
   }, []);
   useControlAction(relaunchAction);
 
+  const [renderThrow, setRenderThrow] = useState<string | null>(null);
+  const renderThrowAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+    return {
+      id: "eval.app.render_throw",
+      label: "Throw during render for eval",
+      description: "Dev-only eval hook that throws during React render so the app-level recovery screen can be exercised.",
+      sideEffect: "mutation",
+      requiresArgs: true,
+      args: [{ name: "message", type: "string", required: true, description: "Error message to throw." }],
+      execute: (args) => {
+        if (typeof args !== "object" || args === null || !("message" in args) || typeof args.message !== "string") {
+          return { ok: false, error: "message is required" };
+        }
+        setRenderThrow(args.message);
+        return undefined;
+      },
+    };
+  }, []);
+  useControlAction(renderThrowAction);
+  if (renderThrow) throw new Error(renderThrow);
+
   return null;
 }
 
@@ -384,6 +408,7 @@ export function AppRoot() {
         <AppMenuProvider>
         <OpenworkControlProvider>
           <OpenworkRouteControlActions />
+          <ChatDeepLinkListener />
           <OpenworkContextPublisher />
           <DenAuthControlActions />
           <BrandThemeControlActions />
