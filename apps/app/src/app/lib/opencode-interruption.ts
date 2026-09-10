@@ -284,7 +284,22 @@ async function stopForegroundTree(
   while (true) {
     signal.throwIfAborted();
     const statuses = unwrap(await client.session.status({ directory }, options));
-    if ([...targets].every((id) => !statuses[id] || statuses[id].type === "idle")) return;
+    if ([...targets].every((id) => !statuses[id] || statuses[id].type === "idle")) break;
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  }
+  await withdrawQuestions(client, targets, directory, options);
+}
+
+/** The engine marks an interrupted tool part as aborted but keeps its unanswered
+ * question pending (tools run on detached fibers), so the stopped tree would keep
+ * asking in every pane and after reload. Withdraw what nothing can answer anymore. */
+async function withdrawQuestions(client: Client, sessions: ReadonlySet<string>, directory: string | undefined, options: { signal: AbortSignal }) {
+  try {
+    const questions = unwrap(await client.question.list({ directory }, options));
+    for (const question of questions) {
+      if (sessions.has(question.sessionID)) unwrap(await client.question.reject({ requestID: question.id, directory }, options));
+    }
+  } catch {
+    // The tree is already stopped; a failed withdrawal only leaves a stale prompt.
   }
 }

@@ -764,6 +764,7 @@ describe("native Stop and follow-up handoff", () => {
     const idle = Promise.withResolvers<Response>();
     const idleReached = Promise.withResolvers<void>();
     const aborted: string[] = [];
+    const withdrawn: string[] = [];
     const sent: boolean[] = [];
     let admissionReconciled = false;
     let statusReads = 0;
@@ -780,6 +781,17 @@ describe("native Stop and follow-up handoff", () => {
         idleReached.resolve();
         return idle.promise;
       }
+      // The engine keeps an interrupted child's question pending; only the
+      // stopped tree's questions may be withdrawn, never another root's.
+      if (path.endsWith("/question")) {
+        expect(statusReads).toBeGreaterThan(1);
+        return Response.json([
+          { id: "que_nested", sessionID: "ses_nested", questions: [] },
+          { id: "que_unrelated", sessionID: "ses_unrelated", questions: [] },
+        ]);
+      }
+      const rejected = path.match(/\/question\/([^/]+)\/reject$/)?.[1];
+      if (request.method === "POST" && rejected) { withdrawn.push(rejected); return Response.json(true); }
       const [, id, action] = path.match(/\/session\/([^/]+)(?:\/([^/]+))?$/) ?? [];
       if (request.method === "POST" && action === "prompt_async") return new Response(null, { status: 204 });
       if (request.method === "POST" && action === "abort" && id) {
@@ -828,12 +840,13 @@ describe("native Stop and follow-up handoff", () => {
         idle.resolve(Response.json({ [root.id]: { type: "idle" }, ses_unrelated: { type: "busy" }, ses_old: { type: "busy" } }));
         await Promise.all([stop, followUp]);
         expect(sent).toEqual([true]);
+        expect(withdrawn).toEqual(["que_nested"]);
         expect(sessionNeedsStop(baseUrl, root.id)).toBe(false);
         expect(requests.filter((request) => /\/session\/ses_[^/]+$/.test(new URL(request.url).pathname))
           .map((request) => new URL(request.url).pathname.split("/").at(-1)))
           .toEqual([root.id, "ses_child", "ses_nested", "ses_late"]);
         for (const request of requests) {
-          expect(request.url.startsWith(`${baseUrl}/session/`)).toBe(true);
+          expect(request.url.startsWith(`${baseUrl}/session/`) || request.url.startsWith(`${baseUrl}/question`)).toBe(true);
           expect(request.headers.get("Authorization")).toBe(`Bearer ${endpoint.token}`);
           if (!request.url.endsWith("/prompt_async")) expect(new URL(request.url).searchParams.get("directory")).toBe(root.directory);
         }
