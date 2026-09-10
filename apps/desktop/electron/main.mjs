@@ -397,7 +397,11 @@ async function resolveArchitectureInfo() {
   const version = app.getVersion();
   const targetArch = systemArch === "arm64" || systemArch === "x64" ? systemArch : appArch;
   const assetName = `openwork-${platformDownloadSlug()}-${downloadAssetArch(targetArch)}-${version}.${downloadAssetExtension()}`;
-  const latestDownloadUrl = await resolveCorrectArchitectureDownloadUrl(targetArch);
+  // The public release manifest only matters when the installed build does not
+  // match the machine; a matching install never shows a download, so it must
+  // not contact the release host (an unactivated enterprise install in
+  // particular has no business reaching anything before its Den is known).
+  const latestDownloadUrl = appArch === systemArch ? null : await resolveCorrectArchitectureDownloadUrl(targetArch);
   const hasCorrectArchitectureDownload = Boolean(latestDownloadUrl);
   return {
     appArch,
