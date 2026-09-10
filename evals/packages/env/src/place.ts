@@ -3,6 +3,7 @@ import { connect } from "node:net";
 import { provisionDesktopSandbox, deleteSandboxes, daytonaSandbox } from "@openwork/hosts";
 import { createConnection } from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
+import { daytonaPlacement, resolveEvalRef } from "./eval-ref.ts";
 import type {
   ChromeSurfaceOptions,
   ElectronSurfaceOptions,
@@ -328,13 +329,9 @@ class DaytonaPlace implements Place {
 
 /** Resolve placement once; resources never inspect placement environment again. */
 export function resolvePlace(env: NodeJS.ProcessEnv = process.env): Place {
-  const worldPlace = env.OPENWORK_WORLD_PLACE?.trim() || undefined;
-  const useDaytona = worldPlace === "daytona"
-    || (worldPlace === undefined && env.OPENWORK_EVAL_DAYTONA?.trim() === "1");
-  if (useDaytona) {
-    const ref = env.OPENWORK_EVAL_REF?.trim() || env.GITHUB_SHA?.trim() || "dev";
+  if (daytonaPlacement(env)) {
     return new DaytonaPlace(
-      ref,
+      resolveEvalRef(env),
       env.OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX?.trim(),
     );
   }
