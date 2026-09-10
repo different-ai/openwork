@@ -1,9 +1,7 @@
 {
-  "warnings": 229,
+  "warnings": 164,
   "byRule": {
-    "operation-description": 42,
-    "ow-200-has-content": 6,
     "ow-list-pagination": 26,
-    "ow-timestamps-date-time": 155
+    "ow-timestamps-date-time": 138
   }
 }
