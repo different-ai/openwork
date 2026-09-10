@@ -225,7 +225,9 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
     if (idA === undefined) throw new Error("Provider A session response did not contain data.id");
     const shellProbe = join(directory, "policy-boundary.cjs");
     await writeFile(shellProbe, `console.log(JSON.stringify({ policy: Object.hasOwn(process.env, "OPENWORK_POLICY_TOKEN"), client: Object.hasOwn(process.env, "OPENWORK_SERVER_TOKEN"), ipc: typeof process.send === "function" }));\n`);
-    const command = `node "${shellProbe}"`;
+    // The engine's login shell can replace PATH. Use the test runner's Node,
+    // rather than an unrelated system install, for this presence-only probe.
+    const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(shellProbe)}`;
     const shell = await server.fetchJson(`/api/session/${idA}/shell`, {
       method: "POST", directory, body: { command }, timeoutMs: 15_000,
     });
@@ -234,7 +236,7 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
     const shellMessage: unknown = isRecord(shellMessages.json) && Array.isArray(shellMessages.json.data)
       ? shellMessages.json.data.find((message: unknown) => isRecord(message) && message.type === "shell" && message.command === command)
       : undefined;
-    expect(shellMessage).toMatchObject({ status: "exited", exit: 0 });
+    expect(shellMessage, JSON.stringify(shellMessage)).toMatchObject({ status: "exited", exit: 0 });
     if (!isRecord(shellMessage) || !isRecord(shellMessage.output) || typeof shellMessage.output.output !== "string") {
       throw new Error("The policy boundary shell probe did not return output");
     }
