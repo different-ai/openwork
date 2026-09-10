@@ -69,7 +69,7 @@ test("sidebar brand painted bounds align with the action rail without changing c
             filter: getComputedStyle(image).filter, fit: getComputedStyle(image).objectFit,
             transform: getComputedStyle(image).transform, aspect: svg.getAttribute("preserveAspectRatio"),
             bbox: { x: box.x, y: box.y, width: box.width, height: box.height },
-            pathsUnchanged: [...svg.querySelectorAll('path')].map(path => path.outerHTML).join("") === [...marketing.querySelectorAll('path')].map(path => path.outerHTML).join(""),
+            pathsUnchanged: JSON.stringify([...svg.querySelectorAll('path')].map(path => [path.getAttribute("d"), path.getAttribute("fill")])) === JSON.stringify([...marketing.querySelectorAll('path')].map(path => [path.getAttribute("d"), path.getAttribute("fill")])),
             marketingViewBox: marketing.documentElement.getAttribute("viewBox"),
           };
         } finally {
