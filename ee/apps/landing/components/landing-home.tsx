@@ -38,24 +38,6 @@ type Props = {
 const CLOUD_SIGNUP_URL = "https://app.openworklabs.com";
 const GATEWAY_URL = "https://api.openworklabs.com/mcp/agent";
 
-type ProviderLogoName =
-  | "openai"
-  | "anthropic"
-  | "gemini"
-  | "aws"
-  | "openrouter"
-  | "mistral";
-
-const providers: { label: string; logo?: ProviderLogoName }[] = [
-  { label: "OpenAI", logo: "openai" },
-  { label: "Anthropic", logo: "anthropic" },
-  { label: "Gemini", logo: "gemini" },
-  { label: "Bedrock", logo: "aws" },
-  { label: "Azure AI Foundry" },
-  { label: "OpenRouter", logo: "openrouter" },
-  { label: "Mistral", logo: "mistral" }
-];
-
 export function LandingHome(props: Props) {
   const [activeDemoId, setActiveDemoId] = useState(defaultLandingDemoFlowId);
   const activeDemo = useMemo(
@@ -158,7 +140,7 @@ export function LandingHome(props: Props) {
           </section>
 
           <div className="mt-12 grid gap-4 border-y border-[var(--lp-border)] py-6 text-[13px] text-[var(--lp-body)] sm:grid-cols-3 sm:gap-0 lg:mt-16">
-            <a href="#models" className="flex items-center justify-between gap-3 transition-colors hover:text-[var(--lp-ink)] sm:pr-6">
+            <a href="/docs" className="flex items-center justify-between gap-3 transition-colors hover:text-[var(--lp-ink)] sm:pr-6">
               Choose your models <ArrowRight size={15} aria-hidden="true" />
             </a>
             <a href="/enterprise" className="flex items-center justify-between gap-3 transition-colors hover:text-[var(--lp-ink)] sm:border-x sm:border-[var(--lp-border)] sm:px-6">
@@ -169,36 +151,7 @@ export function LandingHome(props: Props) {
             </a>
           </div>
 
-          <section className="mt-20 scroll-mt-24 lg:mt-[120px]" id="models">
-            <div className="mb-8">
-              <h2 className="max-w-[680px] text-[16px] font-normal text-[var(--lp-ink)]">
-                Bring any model, or provision centrally for your whole org
-              </h2>
-            </div>
-            <div className="rounded-[24px] bg-[var(--lp-tonal)] px-6 py-7 md:px-10">
-              <div className="grid grid-cols-2 gap-x-5 gap-y-5 sm:grid-cols-3 md:flex md:items-center md:justify-between md:gap-6">
-                {providers.map((provider) => (
-                  <div
-                    key={provider.label}
-                    className="group flex items-center gap-2.5 text-[14px] font-medium text-[var(--lp-muted)] opacity-70 transition-opacity duration-150 hover:opacity-100 md:shrink-0 md:text-[15px]"
-                  >
-                    {provider.logo ? (
-                      <BrandLogo
-                        name={provider.logo}
-                        className="lp-logo h-[21px] w-[21px] shrink-0"
-                      />
-                    ) : null}
-                    <span>{provider.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="mt-5">
-              <LpArrowLink href="/docs">See all 50+ providers</LpArrowLink>
-            </div>
-          </section>
-
-          <section className="mt-[120px]" id="comparison">
+          <section className="mt-20 lg:mt-[120px]" id="comparison">
             <LpSectionHeader
               label="OpenWork vs Claude Cowork"
               heading="Feature parity. Zero lock-in."
