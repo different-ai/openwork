@@ -75,10 +75,58 @@ env -u OPENWORK_EVAL_DEN_API_URL -u OPENWORK_EVAL_DEN_WEB_URL \
 not uploaded automatically; the local harness/start script must match the same
 revision. Do not substitute a local lane for a red Daytona result.
 
-## Verdict boundary
+## Post-publication CI repair
+
+The first published head was `e1ac615aaa46386b6769e1e413bbee9f0f8f022f`.
+Its pinned Daytona desktop runner passed (1/0/0), and the three PR suites were
+rerun cold on Vitest 4.1.11 (1, 1 and 3 passed; zero failed/skipped). Visual
+judgments remain pending; the lifecycle test has ordinary runner assertions but
+does not capture claim-evidence records. Composed evidence publication is blocked
+until `OPENWORK_REVIEW_URL` is configured. Neither gap is counted as passing proof.
+
+GitHub checks for that head ran on synthetic merge commit
+`e5ad36ab95bfeb1fbe839e120eaa17514f6b5154` and found additional integration defects:
+
+- API and Inference images built, but their Node health smoke checks exited 1:
+  `ERR_MODULE_NOT_FOUND` for `packages/types/src/den/inference.js` imported by
+  source `gateway.ts`. The Gateway default package export now selects compiled
+  `dist/den/gateway.js`, and tsup builds that entry. Development/types exports
+  remain source-based.
+- Schema and SDK preparation used bare Drizzle CLI entrypoints which could not
+  resolve the same NodeNext `.js` specifier to its `.ts` source. Both now use
+  `node --import tsx`, matching the already-working generation/build convention.
+  SDK comparison itself was skipped by that CI failure, not shown to drift.
+- Once the loader was repaired, isolated replay exposed a test-fixture defect:
+  ownership discovery recognized only the first pair in the atomic multi-table
+  0097 rename and pre-seeded the other destinations. The safety preflight correctly
+  rejected those existing tables. Ownership parsing now collects all destinations;
+  three regressions cover single, multiple and multiline renames. Production SQL,
+  migration history, preflight guards and schema equality assertions are unchanged.
+
+Serial verification against the repaired working tree:
+
+| Check | Result |
+| --- | --- |
+| Types build and bare-Node production Gateway import | Exit 0; 4 import/parser assertions |
+| `pnpm --filter @openwork-ee/den-db db:generate` | Exit 0; 110 tables, no schema changes |
+| `pnpm --filter @openwork-ee/den-db test` | Exit 0; 55 passed, 0 failed, 0 skipped |
+| Updated isolated SDK schema preparation via `node --import tsx` | Exit 0 |
+| `pnpm sdk:check` and `pnpm sdk:build` | Exit 0; no generated drift |
+
+Only newly owned MySQL 8.4 containers/databases were used, with cleared
+environments, explicit fixtures, loopback ports and tmpfs storage. Each container
+was removed after identity/ownership verification. Earlier failed iterations
+are retained: overlong temporary IPC socket path before discovery; replay
+51/52 before the ownership fix; invalid empty optional database fields in the
+SDK fixture before omitting them. No failure is labelled pre-existing.
+
+These repair checks precede their commit. Rerun final-head journeys and inspect
+the new CI jobs; do not reuse the old head's receipts as proof of a new head.
+
+## Remaining rollout boundary
 
 **Incomplete for rollout.** Scoped component/API/Helm checks do not prove real
-Den Web network behavior, a desktop-sync journey, an installed-cluster upgrade,
+Den Web network behavior, visually validated desktop presentation, an installed-cluster upgrade,
 production packaging, live origins/TLS, or deployment readiness. No production
 deployment, shared database migration, secret rotation or existing-service
 restart is part of this validation.
