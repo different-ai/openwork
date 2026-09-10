@@ -152,6 +152,9 @@ beforeAll(async () => {
     { id: scimUserId, name: "SCIM Removed", email: scimEmail, emailVerified: true },
   ])
   await db.insert(schema.OrganizationTable).values({ id: organizationId, name: "Member Removal Rejoin Test", slug: singleOrgSlug })
+  // Invitation roles are validated against the organization's role table, so a
+  // directly inserted org must carry the default roles a real org is born with.
+  await orgs.seedDefaultOrganizationRoles(organizationId)
   await db.insert(schema.MemberTable).values({ id: ownerMemberId, organizationId, userId: ownerUserId, role: "owner" })
 })
 
