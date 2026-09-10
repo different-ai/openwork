@@ -38,6 +38,7 @@ import type { Located, Surface, Target } from "@openwork/cdp";
 import {
   app as startApp,
   appWeb as startAppWeb,
+  isAppWeb,
   faultProxy as startFaultProxy,
   mcpMock,
   server,
@@ -566,7 +567,17 @@ export class SeedChannel implements Seed {
 
   workspace(app: Surface, path = `/tmp/openwork-spec-${Date.now()}`, options: { create?: boolean } = {}) {
     return this.#runtime.call("seed", "workspace", `workspace(${path})`, app, async () => {
-      const result = await import("@openwork/behaviors").then(({ createAndSelectWorkspace }) => createAndSelectWorkspace(app, { path, ...options }));
+      const { createAndSelectWorkspace, go } = await import("@openwork/behaviors");
+      const result = isAppWeb(app) && options.create
+        ? await (async () => {
+          const { workspaceId } = await app.provisionWorkspace(path);
+          await reload(app);
+          await waitUntilInteractive(app);
+          const route = `/workspace/${workspaceId}/session`;
+          await go(app, route);
+          return { workspaceId, route };
+        })()
+        : await createAndSelectWorkspace(app, { path, ...options });
       await eventually(() => callFunctionOnSurface(app, (workspaceId) => {
         const workspace = window.__openwork?.slice?.("route")?.workspaces?.find(item => item.id === workspaceId);
         return workspace ? { exists: true, loading: workspace.loading } : { exists: false };

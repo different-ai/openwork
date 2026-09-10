@@ -29,6 +29,8 @@ export interface MockToolCall {
 }
 
 export interface MockAgentToolStep {
+  /** Assistant progress text emitted before this tool starts (not a final answer). */
+  text?: string;
   /** Emit an unadvertised tool call to exercise the engine's rejection boundary. */
   allowUnadvertisedTool?: boolean;
   /** Derive the handoff from the actual model input instead of fixture arguments. */

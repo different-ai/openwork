@@ -256,8 +256,11 @@ function validateAgentWorkloads(value) {
       if (step.allowUnadvertisedTool !== undefined && typeof step.allowUnadvertisedTool !== "boolean") {
         throw new Error(`agent workload ${promptMarker} allowUnadvertisedTool must be a boolean`);
       }
+      if (step.text !== undefined && typeof step.text !== "string") {
+        throw new Error(`agent workload ${promptMarker} tool text must be a string`);
+      }
       return { tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom,
-        allowUnadvertisedTool: step.allowUnadvertisedTool === true };
+        text: step.text, allowUnadvertisedTool: step.allowUnadvertisedTool === true };
     });
     if (workload.matchAll !== undefined && typeof workload.matchAll !== "boolean")
       throw new Error(`agent workload ${promptMarker} matchAll must be a boolean`);
@@ -624,6 +627,7 @@ async function handleAgentCompletion(req, res, entry) {
   };
   agentStream(res, model, [
     agentChunk(model, { role: "assistant" }),
+    ...(step.text ? [agentChunk(model, { content: step.text })] : []),
     agentChunk(model, {
       tool_calls: [{
         index: 0,

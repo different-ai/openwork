@@ -248,7 +248,7 @@ async function splitPaneQuestions(
   name: string,
   agentWorkloads: MockAgentWorkload[],
   policy: Record<string, unknown> = { permission: { question: "allow" } },
-  surface: AppSurface = "electron",
+  surface: AppSurface | "local" = "electron",
 ) {
   const providerId = "split-send-mock";
   const modelId = "split-send-model";
@@ -273,7 +273,9 @@ async function splitPaneQuestions(
     agentMock = configured;
   } else {
     const den = await seed.den({ mocks: { agent: mock } });
-    app = await seed.desktop({ name, den, as: "admin", model: `${providerId}/${modelId}` });
+    app = surface === "local"
+      ? await seed.desktop({ name, model: `${providerId}/${modelId}` })
+      : await seed.desktop({ name, den, as: "admin", model: `${providerId}/${modelId}` });
     agentMock = den.mocks.agent;
   }
   const workspace = await seed.workspace(app, workspacePath);
@@ -301,6 +303,145 @@ async function splitPaneQuestions(
     },
   });
   return { app, workspace, mock: agentMock };
+}
+
+export async function steeringRecovery(
+  seed: Seed,
+  arrange: (...args: Parameters<typeof splitPaneQuestions>) => Promise<
+    Omit<Awaited<ReturnType<typeof splitPaneQuestions>>, "app"> & { app: Surface }
+  > = splitPaneQuestions,
+) {
+  const engine = resolveEvalEngine();
+  const shellTool = engine === "v2" ? "shell" : "bash";
+  const runId = `${Date.now().toString(36)}-${process.pid}`;
+  const recoveryFailureMarker = `RECOVERY-FAIL-${runId}`;
+  const recoveryPromptMarker = `RECOVERY-SEND-NOW-${runId}`;
+  const recoveryShellMarker = `RECOVERY-SHELL-DONE-${runId}`;
+  const recoveryFailurePrompt = `Start the deterministic failure workload ${recoveryFailureMarker}.`;
+  const recoveryPrompt = `Continue from completed work without repeating it ${recoveryPromptMarker}.`;
+  const recoveryReply = `Recovered progress ${recoveryPromptMarker}.`;
+  const failureSentinelTool = "required_recovery_sentinel";
+  const recoveryCommand = `sleep 4 && printf '%s\\n' '${recoveryShellMarker}'`;
+
+  const bypassInitialMarker = `BYPASS-LONG-${runId}`;
+  const bypassDirectMarker = `BYPASS-DIRECT-X-${runId}`;
+  const bypassQueuedBMarker = `BYPASS-QUEUED-B-${runId}`;
+  const bypassQueuedCMarker = `BYPASS-QUEUED-C-${runId}`;
+  const bypassShellMarker = `BYPASS-SHELL-DONE-${runId}`;
+  const bypassInitialPrompt = `Start the controlled busy workload ${bypassInitialMarker}.`;
+  const bypassDirectPrompt = `Apply immediate direction X ${bypassDirectMarker}.`;
+  const bypassQueuedBPrompt = `Queued follow-up B ${bypassQueuedBMarker}.`;
+  const bypassQueuedCPrompt = `Queued follow-up C ${bypassQueuedCMarker}.`;
+  const bypassDirectReply = `Immediate X reply ${bypassDirectMarker}.`;
+  const bypassQueuedBReply = `Queued B reply ${bypassQueuedBMarker}.`;
+  const bypassQueuedCReply = `Queued C reply ${bypassQueuedCMarker}.`;
+  const bypassCommand = `sleep 20 && printf '%s\\n' '${bypassShellMarker}'`;
+  const shellArguments = (command: string, description: string) => ({
+    command,
+    timeout: 45_000,
+    ...(engine === "v1" ? { description } : {}),
+  });
+  const directReply = (promptMarker: string, finalReply: string): MockAgentWorkload => ({
+    promptMarker,
+    latestUserTurn: true,
+    finalReply,
+    steps: [],
+  });
+  const base = await arrange(seed, "local-steering-recovery", [
+    {
+      promptMarker: recoveryFailureMarker,
+      latestUserTurn: true,
+      finalReply: `Unexpected recovery failure completion ${runId}.`,
+      steps: [
+        {
+          tool: shellTool,
+          arguments: shellArguments(recoveryCommand, `Complete recovery setup ${recoveryFailureMarker}`),
+        },
+        { tool: failureSentinelTool, arguments: { marker: recoveryFailureMarker } },
+      ],
+    },
+    directReply(recoveryPromptMarker, recoveryReply),
+    {
+      promptMarker: bypassInitialMarker,
+      latestUserTurn: true,
+      finalReply: `Unexpected original busy reply ${runId}.`,
+      steps: [{
+        tool: shellTool,
+        arguments: shellArguments(bypassCommand, `Hold the busy lane ${bypassInitialMarker}`),
+      }],
+    },
+    directReply(bypassDirectMarker, bypassDirectReply),
+    directReply(bypassQueuedBMarker, bypassQueuedBReply),
+    directReply(bypassQueuedCMarker, bypassQueuedCReply),
+  ], { permission: { question: "allow", bash: "allow" } }, "local");
+  const signedOutWithoutServerDenSession = await seed.evalIn(base.app, browserScript(async () => {
+    if ((localStorage.getItem("openwork.den.authToken") ?? "").trim()) return false;
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    if (!port || !token) return false;
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/cloud-provider-sync/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const status: unknown = response.ok ? await response.json() : null;
+      return typeof status === "object" && status !== null && "hasSession" in status && status.hasSession === false;
+    } catch {
+      return false;
+    }
+  }, []), { awaitPromise: true, timeoutMs: 15_000 });
+  const bypass = await seedSessionRetry(seed, base.app, { title: "Busy queue bypass proof" });
+  const recovery = await seedSessionRetry(seed, base.app, { title: "Failure steering recovery proof" });
+  const dom = (sessionId: string) => evalIn(base.app, browserScript((sessionId) => {
+    const surface = document.querySelector<HTMLElement>(`[data-session-surface-id="${CSS.escape(sessionId)}"]`);
+    const composer = surface?.querySelector<HTMLElement>('[contenteditable="true"]');
+    const messageTexts = (role: "user" | "assistant") => [...(surface?.querySelectorAll<HTMLElement>(`[data-message-role="${role}"]`) ?? [])]
+      .filter((node) => node.getClientRects().length > 0)
+      .map((node) => (node.innerText ?? "").trim());
+    const queued = [...(surface?.querySelectorAll<HTMLButtonElement>('button[aria-label="Send now"]') ?? [])]
+      .map((button) => (button.closest<HTMLElement>("[draggable]")?.innerText ?? "").trim());
+    return {
+      sessionId: surface?.getAttribute("data-session-surface-id") ?? "",
+      users: messageTexts("user"),
+      assistants: messageTexts("assistant"),
+      queued,
+      runTask: surface?.querySelectorAll<HTMLButtonElement>('button[aria-label="Run task"]').length ?? 0,
+      stop: surface?.querySelectorAll<HTMLButtonElement>('button[aria-label="Stop"]').length ?? 0,
+      composerEditable: composer?.isContentEditable === true && composer.getClientRects().length > 0,
+      composerText: (composer?.innerText ?? "").trim(),
+    };
+  }, [sessionId]));
+  return {
+    ...base,
+    engine,
+    shellTool,
+    recovery,
+    recoveryFailureMarker,
+    recoveryFailurePrompt,
+    recoveryPromptMarker,
+    recoveryPrompt,
+    recoveryReply,
+    recoveryShellMarker,
+    recoveryCommand,
+    failureSentinelTool,
+    bypass,
+    bypassInitialMarker,
+    bypassInitialPrompt,
+    bypassDirectMarker,
+    bypassDirectPrompt,
+    bypassQueuedBMarker,
+    bypassQueuedBPrompt,
+    bypassQueuedCMarker,
+    bypassQueuedCPrompt,
+    bypassDirectReply,
+    bypassQueuedBReply,
+    bypassQueuedCReply,
+    bypassShellMarker,
+    bypassCommand,
+    signedOutWithoutServerDenSession,
+    dom,
+    sendNowShortcut: () => evalIn(base.app, () => (/Mac|iPhone|iPad|iPod/.test(navigator.platform)) ? "Meta+Enter" : "Control+Enter"),
+    startedAt: new Date().toISOString(),
+  };
 }
 
 export async function delegatedQuestionHandoff(seed: Seed) {

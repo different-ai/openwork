@@ -2,48 +2,33 @@ import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import {
   control,
-  createAndSelectWorkspace,
   engineSessionProbe,
   evalIn,
+  go,
   selectModel,
   waitFor,
+  waitForText,
   writeComposerText,
 } from "@openwork/behaviors";
 import { resolveEvalEngine } from "@openwork/env";
 import { screenshot } from "@openwork/test-evidence";
 import {
-  app,
   eventually,
-  localMysqlIsRunning,
-  localRedisIsRunning,
-  mcpMock,
-  needs,
-  server,
   spec,
-  test,
 } from "@openwork/testkit";
-import type { App } from "@openwork/testkit";
+import type { Surface as App } from "@openwork/cdp";
 import { sessionSwitchLatencyWeb } from "../worlds/session-switch-latency.ts";
+import { queuedSessionSwitchWeb } from "../worlds/queued-session-switch-web.ts";
 
 const providerId = "live-tool-switch-mock";
 const modelId = "live-tool-switch-model";
 const modelName = "Live tool switch model";
 const evalEngine = resolveEvalEngine();
 const shellToolName = evalEngine === "v2" ? "shell" : "bash";
-const e2eTestsEnabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
-const daytonaEnabled = process.env.OPENWORK_EVAL_DAYTONA === "1";
-const configuredDen = Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());
-const localServicesRequired = !daytonaEnabled && !configuredDen;
-const mysqlOpen = await localMysqlIsRunning();
-const redisOpen = await localRedisIsRunning();
-const runnable = e2eTestsEnabled && (!localServicesRequired || (mysqlOpen && redisOpen));
-const skipSuffix = !e2eTestsEnabled
-  ? " skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1"
-  : localServicesRequired && !mysqlOpen
-    ? " skipped — needs MySQL on 127.0.0.1:3306"
-    : localServicesRequired && !redisOpen
-      ? " skipped — needs Redis on 127.0.0.1:6379"
-      : "";
+const queueSwitchTest = spec.world(queuedSessionSwitchWeb, {
+  timeout: 12 * 60_000,
+  resources: { surfaces: ["appWeb"], services: ["mock"] },
+});
 
 interface ToolFact {
   tool: string;
@@ -82,11 +67,12 @@ function parseVisibleToolFact(value: unknown): VisibleToolFact {
 
 async function configureWorkspaces(appSurface: App, workspaceIds: string[], baseUrl: string): Promise<void> {
   const result = await evalIn(appSurface, browserScript(async (workspaceIds, providerId, modelName, value, modelId, inputModelName, inputProviderId, inputModelId, inputValue) => {
-    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-    if (!info?.running || !info.baseUrl) return "local_server_unavailable";
-    const root = String(info.baseUrl).replace(/\/+$/, "");
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    if (!port || !token) return "local_server_unavailable";
+    const root = `http://127.0.0.1:${port}`;
     const headers = {
-      Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     };
     for (const workspaceId of workspaceIds) {
@@ -156,12 +142,22 @@ async function createSession(appSurface: App): Promise<string> {
   throw new Error(`session.create_task did not return a session id: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
+async function openNewTask(appSurface: App, workspaceId: string): Promise<void> {
+  await go(appSurface, `/workspace/${workspaceId}/session`);
+  await waitFor(appSurface, browserScript((workspaceId) => {
+    const button = document.querySelector<HTMLButtonElement>(`[data-sidebar-workspace-id="${workspaceId}"] [data-workspace-new-task]`);
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
+  }, [workspaceId]), { timeoutMs: 30_000, label: "workspace new-task action available" });
+  await waitForText(appSurface, "What do you need done?", { timeoutMs: 60_000 });
+}
+
 async function clickSessionRow(appSurface: App, workspaceId: string, sessionId: string): Promise<void> {
   const clicked = await evalIn(appSurface, browserScript((value, inputValue) => {
     const row = document.querySelector<HTMLElement>(value);
     const control = row?.querySelector<HTMLElement>(inputValue);
     if (!(row instanceof HTMLElement) || !(control instanceof HTMLElement)) return false;
-    row.scrollIntoView({ block: "center" });
     control.click();
     return true;
   }, [`[data-sidebar-session-id="${sessionId}"][data-sidebar-session-workspace-id="${workspaceId}"]`, `[data-session-tab-id="${sessionId}"]`]));
@@ -173,12 +169,16 @@ async function clickSessionRow(appSurface: App, workspaceId: string, sessionId: 
   }, [sessionId, workspaceId]), { timeoutMs: 60_000, label: `workspace ${workspaceId} session ${sessionId} visible after sidebar click` });
 }
 
+async function nativeProbe(appSurface: App, workspaceId: string) {
+  const endpoint = await evalIn(appSurface, browserScript(() => ({
+    serverUrl: `http://127.0.0.1:${localStorage.getItem("openwork.server.port")}`,
+    token: localStorage.getItem("openwork.server.token") ?? "",
+  }), []));
+  return engineSessionProbe({ ...endpoint, engine: evalEngine, workspaceId });
+}
+
 async function readSessionFacts(appSurface: App, workspaceId: string, sessionId: string): Promise<SessionFacts> {
-  const probe = engineSessionProbe({
-    engine: evalEngine,
-    surface: appSurface,
-    workspaceId,
-  });
+  const probe = await nativeProbe(appSurface, workspaceId);
   const snapshot = await probe.snapshot(sessionId);
   if (!snapshot.ok) return { sessionId: "", text: "", tools: [] };
   const parts = snapshot.data.messages.flatMap((message) => message.parts);
@@ -199,11 +199,7 @@ async function readSessionFacts(appSurface: App, workspaceId: string, sessionId:
 }
 
 async function approvePendingPermission(appSurface: App, workspaceId: string, sessionId: string): Promise<number> {
-  const statuses = await engineSessionProbe({
-    engine: evalEngine,
-    surface: appSurface,
-    workspaceId,
-  }).approvePendingPermissions(sessionId);
+  const statuses = await (await nativeProbe(appSurface, workspaceId)).approvePendingPermissions(sessionId);
   if (statuses.some((status) => status < 200 || status >= 300)) {
     throw new Error(`Permission approval failed: ${JSON.stringify(statuses)}`);
   }
@@ -260,71 +256,58 @@ async function readVisibleTool(
   return parseVisibleToolFact(value);
 }
 
-test.skipIf(!runnable)(
-  `a tool started while away is visible after returning to its chat${skipSuffix}`,
+async function readTranscript(appSurface: App, sessionId: string) {
+  return evalIn(appSurface, browserScript((sessionId) => {
+    const surface = document.querySelector<HTMLElement>(`[data-session-surface-id="${sessionId}"]`);
+    return {
+      sessionId: surface?.getAttribute("data-session-surface-id") ?? "",
+      text: surface?.innerText ?? "",
+      userText: [...(surface?.querySelectorAll<HTMLElement>('[data-message-role="user"]') ?? [])]
+        .map((message) => message.innerText).join("\n"),
+      assistantText: [...(surface?.querySelectorAll<HTMLElement>('[data-message-role="assistant"]') ?? [])]
+        .map((message) => message.innerText).join("\n"),
+    };
+  }, [sessionId]));
+}
+
+async function queueFollowUp(appSurface: App, sessionId: string, text: string, count: number) {
+  await writeComposerText(appSurface, text);
+  // Enter is the user-facing queue action while busy; composer.send would steer.
+  expect(await evalIn(appSurface, browserScript((sessionId) => {
+    const editor = document.querySelector<HTMLElement>(`[data-session-surface-id="${sessionId}"] [contenteditable="true"]`);
+    if (!editor) return false;
+    editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+    return true;
+  }, [sessionId]))).toBe(true);
+  await waitForText(appSurface, `${count} queued`, { timeoutMs: 10_000 });
+  expect((await readTranscript(appSurface, sessionId)).text).toContain(text);
+}
+
+// Run the identical journey with OPENWORK_EVAL_ENGINE=v1 and v2. Keep the
+// cross-workspace regression as well as creating a second task in one workspace.
+for (const [caseId, scope] of [["QUEUE-01", "same workspace"], ["QUEUE-02", "different workspaces"]]) {
+queueSwitchTest(
+  `${caseId} two long-running chats restore live transcripts and drain isolated queues — ${scope}, ${evalEngine}`,
   { timeout: 12 * 60_000 },
-  async ({ evidence, place }) => {
-    needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
-    const runId = `${Date.now().toString(36)}-${process.pid}`;
-    const promptMarker = `LIVE-TOOL-SWITCH-${runId}`;
-    const firstMarker = `FIRST-${promptMarker}`;
-    const firstToolDescription = `First tool in chat A — ${promptMarker}`;
-    const toolDescription = `Waiting in chat A — ${promptMarker}`;
-    const completionMarker = `DONE-${promptMarker}`;
-    const firstCommand = `sleep 15 && printf '%s\\n' '${firstMarker}'`;
-    const command = `sleep 45 && printf '%s\\n' '${completionMarker}'`;
+  async ({ evidence, world }) => {
+    const { app: desktopApp, agentMock, runId, promptMarker, firstMarker, firstToolDescription,
+      toolDescription, completionMarker, replyA, promptB, replyB, progressA, continuedProgressA,
+      progressB, queuedA, queuedB, queuedRepliesA, queuedReplyB, commandB, firstCommand, command, continuedCommand } = world;
     const matchesDescription = (tool: ToolFact, description: string) =>
       evalEngine === "v2" || tool.description === description;
 
-    await using den = await server({
-      place,
-      mocks: {
-        agent: mcpMock({
-          agentWorkloads: [{
-            promptMarker,
-            finalReply: completionMarker,
-            steps: [
-              {
-                tool: shellToolName,
-                arguments: {
-                  command: firstCommand,
-                  timeout: 30_000,
-                  ...(evalEngine === "v1" ? { description: firstToolDescription } : {}),
-                },
-              },
-              {
-                tool: shellToolName,
-                arguments: {
-                  command,
-                  timeout: 90_000,
-                  ...(evalEngine === "v1" ? { description: toolDescription } : {}),
-                },
-              },
-            ],
-          }],
-        }),
-      },
-      org: {
-        name: "Live Tool Switch",
-        admin: { name: "Switch Admin" },
-        members: { member: { name: "Switch Member" } },
-      },
+    const workspaceA = world.workspaceA;
+    const workspaceB = scope === "same workspace" ? workspaceA : world.workspaceB;
+    expect(workspaceA.workspaceId === workspaceB.workspaceId).toBe(scope === "same workspace");
+    await configureWorkspaces(desktopApp, [...new Set([workspaceA.workspaceId, workspaceB.workspaceId])], agentMock.url);
+    const arrangedTimeOrigin = await evalIn(desktopApp, () => performance.timeOrigin);
+    evidence.recordJsonArtifact("Configured native workspace providers", {
+      a: await world.providerState(workspaceA.workspaceId),
+      b: await world.providerState(workspaceB.workspaceId),
     });
-    await using desktopApp = await app({ den, as: "member", place });
-
-    const workspaceB = await createAndSelectWorkspace(desktopApp, {
-      path: `/tmp/openwork-live-tool-switch-${runId}-b`,
-    });
-    const chatB = await createSession(desktopApp);
-    await control(desktopApp, "session.rename", { sessionId: chatB, title: "Chat B" });
-
-    const workspaceA = await createAndSelectWorkspace(desktopApp, {
-      path: `/tmp/openwork-live-tool-switch-${runId}-a`,
-    });
-    await configureWorkspaces(desktopApp, [workspaceA.workspaceId, workspaceB.workspaceId], den.mocks.agent.url);
+    await openNewTask(desktopApp, workspaceA.workspaceId);
     const chatA = await createSession(desktopApp);
     await control(desktopApp, "session.rename", { sessionId: chatA, title: "Chat A" });
-    expect(chatA).not.toBe(chatB);
 
     await clickSessionRow(desktopApp, workspaceA.workspaceId, chatA);
     const selected = await selectModel(desktopApp, modelId);
@@ -364,16 +347,48 @@ test.skipIf(!runnable)(
     expect(visibleBeforeSwitch.visible).toBe(true);
     await expectLeftSessionIndicator(desktopApp, chatA, "loading");
 
+    // The second session must not exist until A is observably still loading.
+    await openNewTask(desktopApp, workspaceB.workspaceId);
+    const chatB = await createSession(desktopApp);
+    expect(chatB).not.toBe(chatA);
+    await control(desktopApp, "session.rename", { sessionId: chatB, title: "Chat B" });
     await clickSessionRow(desktopApp, workspaceB.workspaceId, chatB);
+    expect((await selectModel(desktopApp, modelId)).id).toBe(modelId);
+    await writeComposerText(desktopApp, `Run the deterministic tool identified by ${promptB}.`);
+    await control(desktopApp, "composer.send", undefined, { timeoutMs: 120_000 });
+    const runningB = await eventually(async () => {
+      await approvePendingPermission(desktopApp, workspaceB.workspaceId, chatB);
+      return readSessionFacts(desktopApp, workspaceB.workspaceId, chatB);
+    }, {
+      within: 60_000,
+      intervalMs: 500,
+      label: "newly created chat B has its own long-running tool",
+      until: (facts) => facts.sessionId === chatB && facts.tools.some((tool) =>
+        tool.tool === shellToolName && tool.status === "running" && tool.command === commandB),
+    });
+    const toolB = runningB.tools.find((tool) => tool.command === commandB);
+    if (!toolB?.callId) throw new Error("Chat B's running tool has no call ID");
+    const overlappingA = await readSessionFacts(desktopApp, workspaceA.workspaceId, chatA);
+    expect(overlappingA.tools.some((tool) => tool.status === "running")).toBe(true);
+    await expectLeftSessionIndicator(desktopApp, chatA, "loading");
+    await expectLeftSessionIndicator(desktopApp, chatB, "loading");
+    evidence.recordAssertionEvidence(
+      "Creating a second long-running session does not stop the first",
+      `${evalEngine}, ${scope}: B was created after A's first tool was visibly running; both sessions have running tools and loading indicators.`,
+      true,
+    );
     const absentFromChatB = await readVisibleTool(desktopApp, chatB, runningTool.callId);
     expect(absentFromChatB.currentSessionId).toBe(chatB);
     expect(absentFromChatB.found).toBe(false);
+    expect((await readTranscript(desktopApp, chatB)).text).not.toContain(promptMarker);
+    await queueFollowUp(desktopApp, chatB, queuedB, 1);
+    expect((await readSessionFacts(desktopApp, workspaceB.workspaceId, chatB)).text).not.toContain(queuedB);
 
     const laterRunning = await eventually(async () => {
       await approvePendingPermission(desktopApp, workspaceA.workspaceId, chatA);
       return readSessionFacts(desktopApp, workspaceA.workspaceId, chatA);
     }, {
-      within: 30_000,
+      within: 60_000,
       intervalMs: 500,
       label: "second chat A tool started while workspace B is visible",
       until: (facts) => facts.tools.some((tool) => tool.tool === shellToolName
@@ -404,6 +419,27 @@ test.skipIf(!runnable)(
     expect(visibleAfterReturn.found, JSON.stringify(visibleAfterReturn)).toBe(true);
     expect(visibleAfterReturn.visible, JSON.stringify(visibleAfterReturn)).toBe(true);
     expect(visibleAfterReturn.text).toContain(completionMarker);
+    expect((await readVisibleTool(desktopApp, chatA, toolB.callId)).found).toBe(false);
+    const beforeCompletion = await eventually(() => readTranscript(desktopApp, chatA), {
+      within: 10_000,
+      intervalMs: 250,
+      label: "user message and intermediate assistant text restored before completion",
+      until: (fact) => fact.userText.includes(promptMarker) && fact.assistantText.includes(progressA),
+    });
+    expect(beforeCompletion.userText).toContain(promptMarker);
+    expect(beforeCompletion.assistantText).toContain(progressA);
+    expect(beforeCompletion.text).not.toContain(promptB);
+    expect(beforeCompletion.assistantText).not.toContain(replyA);
+    expect(beforeCompletion.assistantText).not.toContain(replyB);
+    // Check AFTER the DOM assertions: waiting until completion must not pass.
+    expect((await readSessionFacts(desktopApp, workspaceA.workspaceId, chatA)).tools
+      .some((tool) => tool.callId === laterTool.callId && tool.status === "running")).toBe(true);
+    await queueFollowUp(desktopApp, chatA, queuedA[0], 1);
+    await queueFollowUp(desktopApp, chatA, queuedA[1], 2);
+    const heldA = await readSessionFacts(desktopApp, workspaceA.workspaceId, chatA);
+    expect(heldA.text).not.toContain(queuedA[0]);
+    expect(heldA.text).not.toContain(queuedA[1]);
+    expect(heldA.tools.some((tool) => tool.status === "running")).toBe(true);
     evidence.recordAssertionEvidence(
       "A tool that started while away is visible when the user returns to its chat",
       `The first tool completed and tool ${laterTool.callId} started while workspace B chat ${chatB} was visible; after returning to workspace A chat ${chatA}, scoped CDP found its visible row with text ${JSON.stringify(visibleAfterReturn.text)}.`,
@@ -411,39 +447,186 @@ test.skipIf(!runnable)(
     );
     await screenshot(desktopApp);
 
-    await clickSessionRow(desktopApp, workspaceB.workspaceId, chatB);
+    const continuedTool = await eventually(() => readSessionFacts(desktopApp, workspaceA.workspaceId, chatA), {
+      within: 60_000,
+      intervalMs: 250,
+      label: "a new tool starts after returning to A without another navigation",
+      until: (facts) => facts.tools.some((tool) => tool.command === continuedCommand && tool.status === "running"),
+    });
+    const continuedCall = continuedTool.tools.find((tool) => tool.command === continuedCommand);
+    if (!continuedCall?.callId) throw new Error("Chat A's next live tool has no call ID");
+    expect((await eventually(() => readVisibleTool(desktopApp, chatA, continuedCall.callId), {
+      within: 10_000,
+      intervalMs: 250,
+      label: "the resumed stream renders the new tool while it runs",
+      until: (fact) => fact.visible,
+    })).visible).toBe(true);
+    const liveContinuation = await eventually(() => readTranscript(desktopApp, chatA), {
+      within: 10_000,
+      intervalMs: 250,
+      label: "the resumed stream renders new assistant progress before completion",
+      until: (fact) => fact.assistantText.includes(continuedProgressA),
+    });
+    expect(liveContinuation.assistantText).toContain(continuedProgressA);
+    expect(liveContinuation.assistantText).not.toContain(replyA);
+    expect((await readSessionFacts(desktopApp, workspaceA.workspaceId, chatA)).tools
+      .some((tool) => tool.callId === continuedCall.callId && tool.status === "running")).toBe(true);
+    const pendingA = await readTranscript(desktopApp, chatA);
+    evidence.recordJsonArtifact("Queue A remains pending through its next native tool", {
+      transcript: pendingA,
+      native: await readSessionFacts(desktopApp, workspaceA.workspaceId, chatA),
+      provider: await agentMock.agentRequests(),
+      arrangedTimeOrigin,
+      currentTimeOrigin: await evalIn(desktopApp, () => performance.timeOrigin),
+    });
+    expect(pendingA.text).toContain("2 queued");
+    for (const prompt of queuedA) {
+      expect(pendingA.text).toContain(prompt);
+      expect(pendingA.userText).not.toContain(prompt);
+    }
+    await screenshot(desktopApp);
+
     const completed = await eventually(
       () => readSessionFacts(desktopApp, workspaceA.workspaceId, chatA),
       {
         within: 90_000,
         intervalMs: 500,
         label: `chat A unique ${shellToolName} tool completed`,
-        until: (facts) => facts.text.includes(completionMarker)
+        until: (facts) => facts.text.includes(replyA)
           && facts.tools.some((tool) => tool.tool === shellToolName
             && tool.status === "completed" && tool.command === command),
       },
     );
-    expect(completed.text).toContain(completionMarker);
-    await expectLeftSessionIndicator(desktopApp, chatA, "attention");
+    expect(completed.tools).toHaveLength(3);
+    expect(completed.tools.every((tool) => tool.status === "completed")).toBe(true);
+    expect(completed.text).not.toContain(replyB);
+    const continuedA = await eventually(() => readTranscript(desktopApp, chatA), {
+      within: 30_000,
+      intervalMs: 250,
+      label: "returned chat A receives its new assistant reply without another navigation or reload",
+      until: (fact) => fact.sessionId === chatA && fact.assistantText.includes(replyA),
+    });
+    expect(continuedA.assistantText.split(replyA)).toHaveLength(2);
+    expect(continuedA.text).not.toContain(replyB);
+    const drainedA = await eventually(() => readTranscript(desktopApp, chatA), {
+      within: 45_000,
+      intervalMs: 250,
+      label: "both queued A follow-ups execute as separate turns in order",
+      until: (fact) => queuedRepliesA.every((reply) => fact.assistantText.includes(reply)),
+    }).catch(async (error) => {
+      evidence.recordJsonArtifact("Queue A failed drain diagnostics", {
+        arrangedTimeOrigin,
+        currentTimeOrigin: await evalIn(desktopApp, () => performance.timeOrigin),
+        devLog: await world.devLog(),
+        error: String(error),
+        native: await readSessionFacts(desktopApp, workspaceA.workspaceId, chatA),
+        provider: await agentMock.agentRequests(),
+        inspector: await evalIn(desktopApp, browserScript(() => ({ composer: window.__openwork?.slice("composer"), events: window.__openwork?.events(200) }), [])),
+      });
+      throw error;
+    });
+    const drainedTimeOrigin = await evalIn(desktopApp, () => performance.timeOrigin);
+    evidence.recordJsonArtifact("Queue A native deliveries and renderer continuity", {
+      arrangedTimeOrigin,
+      currentTimeOrigin: drainedTimeOrigin,
+      devLog: await world.devLog(),
+      native: await readSessionFacts(desktopApp, workspaceA.workspaceId, chatA),
+      provider: await agentMock.agentRequests(),
+      events: await evalIn(desktopApp, browserScript(() => window.__openwork?.events(200), [])),
+    });
+    expect(drainedTimeOrigin).toBe(arrangedTimeOrigin);
+    for (const prompt of queuedA) expect(drainedA.userText.split(prompt)).toHaveLength(2);
+    for (const reply of queuedRepliesA) expect(drainedA.assistantText.split(reply)).toHaveLength(2);
+    expect(drainedA.assistantText.indexOf(replyA)).toBeLessThan(drainedA.assistantText.indexOf(queuedRepliesA[0]));
+    expect(drainedA.assistantText.indexOf(queuedRepliesA[0])).toBeLessThan(drainedA.assistantText.indexOf(queuedRepliesA[1]));
+    expect(drainedA.text).not.toMatch(/\d+ queued/);
+    expect(drainedA.text).not.toContain(queuedB);
+    expect(drainedA.text).not.toContain(queuedReplyB);
+    const queuedRequestsA = (await agentMock.agentRequests())
+      .filter((request) => request.kind === "final" && queuedA.includes(request.promptMarker ?? ""));
+    expect(queuedRequestsA.map((request) => request.promptMarker)).toEqual(queuedA);
     evidence.recordAssertionEvidence(
-      "Session activity and unread completion use the same left indicator slot",
-      "During the run and after completion in another chat, exactly one visible indicator was positioned before chat A's title; no second status indicator remained on the right.",
+      "The returned transcript continues live, without duplicates or the other chat's content",
+      `${evalEngine}, ${scope}: A restored its prompt, assistant progress and running tool, then rendered new assistant progress and a third running tool before completion without navigating or reloading. All three tools completed and the final answer appeared exactly once; B's content was absent from A.`,
       true,
     );
     await screenshot(desktopApp);
+
+    await clickSessionRow(desktopApp, workspaceB.workspaceId, chatB);
+    const stillRunningB = await readSessionFacts(desktopApp, workspaceB.workspaceId, chatB);
+    expect(stillRunningB.tools.some((tool) => tool.callId === toolB.callId && tool.status === "running")).toBe(true);
+    const visibleB = await eventually(() => readVisibleTool(desktopApp, chatB, toolB.callId), {
+      within: 15_000,
+      intervalMs: 250,
+      label: "chat B also restores its own in-flight tool",
+      until: (fact) => fact.currentSessionId === chatB && fact.visible,
+    });
+    expect(visibleB.visible).toBe(true);
+    const restoredB = await readTranscript(desktopApp, chatB);
+    expect(restoredB.userText).toContain(promptB);
+    expect(restoredB.assistantText).toContain(progressB);
+    expect(restoredB.text).toContain("1 queued");
+    expect(restoredB.text).toContain(queuedB);
+    expect(restoredB.text).not.toContain(replyA);
+    expect((await readSessionFacts(desktopApp, workspaceB.workspaceId, chatB)).tools
+      .some((tool) => tool.callId === toolB.callId && tool.status === "running")).toBe(true);
+    await clickSessionRow(desktopApp, workspaceA.workspaceId, chatA);
+    const completedB = await eventually(() => readSessionFacts(desktopApp, workspaceB.workspaceId, chatB), {
+      within: 150_000,
+      intervalMs: 500,
+      label: "chat B completes in the background",
+      until: (facts) => facts.text.includes(replyB) && facts.text.includes(queuedReplyB) && facts.tools.some((tool) =>
+        tool.callId === toolB.callId && tool.status === "completed"),
+    });
+    expect(completedB.tools).toHaveLength(1);
+    expect(completedB.text).not.toContain(replyA);
+    for (const prompt of queuedA) expect(completedB.text).not.toContain(prompt);
+    for (const reply of queuedRepliesA) expect(completedB.text).not.toContain(reply);
+    await expectLeftSessionIndicator(desktopApp, chatB, "attention");
+    expect((await readTranscript(desktopApp, chatA)).text).not.toContain(replyB);
+    await screenshot(desktopApp);
+    await clickSessionRow(desktopApp, workspaceB.workspaceId, chatB);
+    const continuedB = await eventually(() => readTranscript(desktopApp, chatB), {
+      within: 30_000,
+      intervalMs: 250,
+      label: "chat B restores its completed transcript",
+      until: (fact) => fact.sessionId === chatB && fact.assistantText.includes(replyB) && fact.assistantText.includes(queuedReplyB),
+    });
+    expect(continuedB.assistantText.split(replyB)).toHaveLength(2);
+    expect(continuedB.text).toContain(promptB);
+    expect(continuedB.text).not.toContain(promptMarker);
+    expect(continuedB.text).not.toContain(replyA);
+    expect(continuedB.userText.split(queuedB)).toHaveLength(2);
+    expect(continuedB.assistantText.split(queuedReplyB)).toHaveLength(2);
+    expect(continuedB.assistantText.indexOf(replyB)).toBeLessThan(continuedB.assistantText.indexOf(queuedReplyB));
+    expect(continuedB.text).not.toMatch(/\d+ queued/);
+    const queuedRequestsB = (await agentMock.agentRequests({ promptMarker: queuedB }))
+      .filter((request) => request.kind === "final");
+    expect(queuedRequestsB).toHaveLength(1);
+    evidence.recordAssertionEvidence(
+      "Queued follow-ups wait for completion, drain exactly once in order, and stay in their own session",
+      `${evalEngine}, ${scope}: A held two follow-ups while busy, then rendered each prompt and answer once in order. B preserved its queue across navigation and delivered its follow-up while unmounted. Neither session received the other's queued content.`,
+      true,
+    );
+    evidence.recordAssertionEvidence(
+      "The second chat survives switching and background completion without mixing transcripts",
+      `${evalEngine}, ${scope}: B restored its original running tool, completed it exactly once while A was visible, showed one left-side attention indicator, and restored exactly one final assistant reply with no A prompt or reply.`,
+      true,
+    );
     await clickSessionRow(desktopApp, workspaceA.workspaceId, chatA);
     const visibleAfterCompletion = await eventually(
       () => readVisibleTool(desktopApp, chatA, laterTool.callId),
       {
         within: 30_000,
         intervalMs: 250,
-        label: "completed tool remains visibly rendered",
+        label: "completed tool is visible in the natural navigation return viewport",
         until: (fact) => fact.currentSessionId === chatA && fact.found && fact.visible,
       },
     );
     expect(visibleAfterCompletion.visible).toBe(true);
   },
 );
+}
 
 const latencyTest = spec.world(sessionSwitchLatencyWeb, {
   timeout: 8 * 60_000,
